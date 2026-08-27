@@ -1,0 +1,17 @@
+{
+  "name": "schematic-spawner",
+  "version": "0.1.0",
+  "description": "Programmatic/agent-assisted circuit schematic generator. Connectivity-based model rendered to SVG.",
+  "type": "module",
+  "scripts": {
+    "cli": "node src/cli/index.js",
+    "serve": "node src/web/serve.js",
+    "start": "bash start.sh",
+    "test": "node --test \"test/**/*.test.js\"",
+    "snapshot": "node src/cli/index.js png data/preview.png"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

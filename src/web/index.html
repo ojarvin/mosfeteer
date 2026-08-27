@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schematic Spawner</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="boot-banner" class="boot-banner">
+    Loading schematic-spawner&hellip; If this stays visible, the app could not start: open it
+    through the server (<code>npm run serve</code> then visit <code>http://127.0.0.1:8080/</code>).
+    Double-clicking this file doesn't work — browsers block ES modules over <code>file://</code>.
+  </div>
+
+  <header class="toolbar">
+    <h1 class="title">Schematic Spawner</h1>
+
+    <div class="toolbar-actions">
+      <button id="btn-demo">Demo</button>
+      <button id="btn-clear">Clear</button>
+      <button id="btn-export">Export SVG</button>
+    </div>
+
+    <div class="palette" id="palette"></div>
+  </header>
+
+  <div class="hint" id="hint">normal: h j k l move · r/R rotate · x/X mirror · dd delete · yy/p copy-paste · w wire · Tab select · F fit · u undo · i insert · : command · ? help</div>
+
+  <main class="layout">
+      <section class="canvas-pane">
+      <div class="canvas" id="canvas"></div>
+    </section>
+
+    <aside class="side-panel">
+      <section class="panel-group">
+        <h2 class="panel-heading">Components</h2>
+        <div class="list" id="components-list"></div>
+      </section>
+
+      <section class="panel-group">
+        <h2 class="panel-heading">Nets</h2>
+        <div class="list" id="nets-list"></div>
+      </section>
+
+      <section class="panel-group">
+        <h2 class="panel-heading">Terminals</h2>
+        <div class="detail" id="detail"></div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="console">
+    <div class="status" id="status"></div>
+    <div class="console-row">
+      <button id="btn-help" title="Show command help in the log">Help</button>
+      <input id="cmd-input" type="text" placeholder="Enter a command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)" autocomplete="off" spellcheck="false" />
+    </div>
+    <pre class="log" id="log"></pre>
+  </footer>
+
+  <script type="module" src="main.js?v=6"></script>
+</body>
+</html>
