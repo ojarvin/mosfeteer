@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit, ComponentInstance, Net, parseTermRef } from '../src/core/model.js';
-import { GRID, onGrid } from '../src/core/grid.js';
+import { Circuit, ComponentInstance, Net, parseTermRef, LabelInstance } from '../src/core/model.js';
+import { GRID, snap, onGrid } from '../src/core/grid.js';
 
 test('parseTermRef parses REFDES.TERM and rejects malformed', () => {
   assert.deepEqual(parseTermRef('R1.a'), { comp: 'R1', term: 'a' });
@@ -104,15 +104,15 @@ test('terminalWorld applies transform and stays on grid', () => {
   const c = new Circuit();
   const r = c.addComponent('resistor', { x: 400, y: 0 });
   assert.deepEqual(r.terminalWorld('a'), { x: 400, y: 0 });
-  assert.deepEqual(r.terminalWorld('b'), { x: 520, y: 0 });
+  assert.deepEqual(r.terminalWorld('b'), { x: 560, y: 0 });
 });
 
 test('terminalWorld with rotation 90', () => {
   const c = new Circuit();
   const r = c.addComponent('resistor', { x: 400, y: 0, rotation: 90 });
-  // local a=(0,0)->(0,0); b=(120,0) rotate 90: (-y,x) -> (0,120) -> translate (400,120)
+  // local a=(0,0)->(0,0); b=(160,0) rotate 90: (-y,x) -> (0,160) -> translate (400,160)
   assert.deepEqual(r.terminalWorld('a'), { x: 400, y: 0 });
-  assert.deepEqual(r.terminalWorld('b'), { x: 400, y: 120 });
+  assert.deepEqual(r.terminalWorld('b'), { x: 400, y: 160 });
 });
 
 test('worldTerminals and bboxWorld', () => {
@@ -120,9 +120,9 @@ test('worldTerminals and bboxWorld', () => {
   const r = c.addComponent('resistor', { x: 400, y: 0 });
   assert.deepEqual(r.worldTerminals(), [
     { name: 'a', x: 400, y: 0 },
-    { name: 'b', x: 520, y: 0 },
+    { name: 'b', x: 560, y: 0 },
   ]);
-  assert.deepEqual(r.bboxWorld(), { x: 400, y: -40, w: 120, h: 80 });
+  assert.deepEqual(r.bboxWorld(), { x: 400, y: -40, w: 160, h: 80 });
 });
 
 test('countTerminals counts all symbol terminals', () => {
@@ -222,7 +222,7 @@ test('net.points routes between terminals', () => {
   const net = c.connect(`${r1.refdes}.b`, `${r2.refdes}.a`);
   const pts = net.points();
   assert.ok(pts.length >= 2, 'has points');
-  assert.deepEqual(pts[0], { x: 520, y: 0 });
+  assert.deepEqual(pts[0], { x: 560, y: 0 });
   assert.deepEqual(pts[pts.length - 1], { x: 400, y: 120 });
   for (const p of pts) {
     assert.ok(onGrid(p.x) && onGrid(p.y), `point on grid (${p.x},${p.y})`);
@@ -296,4 +296,122 @@ test('toJSON / fromJSON round-trips refs, positions, transforms, net membership,
 
 test('fromJSON rejects bad version', () => {
   assert.throws(() => Circuit.fromJSON({ version: 99 }), /unsupported state/);
+});
+
+// ----- labels -------------------------------------------------
+
+test('addLabel places a standalone label with a grid-aligned anchor', () => {
+  const c = new Circuit();
+  const l = c.addLabel({ text: 'hello', x: 123, y: 57 });
+  assert.ok(l.id);
+  assert.equal(l.owner, null);
+  assert.deepEqual(l.anchor, { x: 120, y: 40 }, 'anchor snaps to grid');
+  const b = l.bbox();
+  assert.equal(b.h, GRID);
+  assert.ok(Number.isInteger(b.w / GRID), `bbox width ${b.w} is a grid multiple`);
+  assert.ok(Number.isInteger(b.x / GRID), `bbox x ${b.x} on grid`);
+  // center alignment: the box is centered on the anchor
+  assert.equal(b.x + b.w / 2, l.anchor.x);
+});
+
+test('label align shifts the box relative to its fixed anchor', () => {
+  const c = new Circuit();
+  const l = c.addLabel({ text: 'M1', x: 400, y: 0 });
+  const center = l.bbox();
+  assert.equal(center.x + center.w / 2, 400);
+  l.setAlign('left');
+  const left = l.bbox();
+  assert.equal(left.x, 400, 'left-aligned box starts at the anchor');
+  l.setAlign('right');
+  const right = l.bbox();
+  assert.equal(right.x + right.w, 400, 'right-aligned box ends at the anchor');
+});
+
+test('setText resizes the bbox but keeps the anchor fixed', () => {
+  const c = new Circuit();
+  const l = c.addLabel({ text: 'R', x: 400, y: 0 });
+  const w1 = l.bbox().w;
+  l.setText('longer');
+  const w2 = l.bbox().w;
+  assert.ok(w2 >= w1, 'longer text widens the box');
+  assert.equal(l.bbox().x + l.bbox().w / 2, 400);
+});
+
+test('owned label anchorWorld follows the component transform', () => {
+  const c = new Circuit();
+  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  const lab = c.labelOf(m1.refdes);
+  assert.ok(lab, 'nmos gets a dedicated instance label');
+  assert.equal(lab.text, 'M1');
+  assert.equal(lab.owner, m1.refdes);
+  // default offset (40,120) transforms to (440,120) at the origin
+  assert.deepEqual(lab.anchorWorld(), { x: 440, y: 120 });
+  c.moveComponent(m1.refdes, 560, 80);
+  assert.deepEqual(lab.anchorWorld(), { x: 600, y: 200 });
+});
+
+test('owned label moveTo translates its local offset, keeping it on grid', () => {
+  const c = new Circuit();
+  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  const lab = c.labelOf(m1.refdes);
+  lab.moveTo(440, 160);
+  assert.deepEqual(lab.anchorWorld(), { x: 440, y: 160 });
+  lab.moveTo(95, 82);
+  assert.deepEqual(lab.anchorWorld(), { x: 80, y: 80 }, 'offset snaps to grid');
+});
+
+test('non-transistor symbols do not auto-create instance labels', () => {
+  const c = new Circuit();
+  const r = c.addComponent('resistor', { x: 400, y: 0 });
+  assert.equal(c.labels.size, 0);
+  assert.equal(c.labelOf(r.refdes), null);
+});
+
+test('nextRefdes reuses the smallest available index', () => {
+  const c = new Circuit();
+  const r1 = c.addComponent('resistor');
+  const r2 = c.addComponent('resistor');
+  const r3 = c.addComponent('resistor');
+  c.removeComponent(r2.refdes);
+  assert.equal(c.addComponent('resistor').refdes, 'R2', 'R2 freed, reused next');
+  assert.equal(c.addComponent('resistor').refdes, 'R4', 'R3 still in use, so skip to R4');
+});
+
+test('removeComponent removes its owned instance label', () => {
+  const c = new Circuit();
+  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  assert.equal(c.labels.size, 1);
+  const m2 = c.addComponent('pmos', { x: 600, y: 0 });
+  assert.equal(c.labels.size, 2);
+  c.removeComponent(m1.refdes);
+  assert.equal(c.labels.size, 1);
+  assert.equal(c.labelOf(m2.refdes)?.owner, m2.refdes);
+});
+
+test('labels round-trip through toJSON/fromJSON (standalone and owned)', () => {
+  const c = new Circuit();
+  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  c.addLabel({ text: 'test point', x: 280, y: 240, align: 'left' });
+  const lab = c.labelOf(m1.refdes);
+  lab.moveTo(440, 160); // custom offset
+
+  const c2 = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.equal(c2.labels.size, 2);
+  const owned = [...c2.labels.values()].find((l) => l.owner);
+  assert.equal(owned.owner, 'M1');
+  assert.equal(owned.text, 'M1');
+  assert.deepEqual(owned.anchorWorld(), { x: 440, y: 160 });
+  const free = [...c2.labels.values()].find((l) => !l.owner);
+  assert.equal(free.text, 'test point');
+  assert.equal(free.align, 'left');
+  assert.deepEqual(free.anchor, { x: 280, y: 240 });
+});
+
+test('fromJSON drops orphaned owned labels (owner missing)', () => {
+  const c = new Circuit();
+  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  const data = c.toJSON();
+  data.labels[0].owner = 'M99';
+  const c2 = Circuit.fromJSON(data);
+  assert.equal(c2.labels.size, 0);
 });

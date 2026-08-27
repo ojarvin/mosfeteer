@@ -13,8 +13,8 @@ export function demoCircuit() {
   const c = new Circuit();
   const vcc = c.addComponent('supply', { x: 400, y: 0, value: '5V' });
   const r1 = c.addComponent('resistor', { x: 560, y: 0, value: '1k' });
-  const r2 = c.addComponent('resistor', { x: 720, y: 0, rotation: 90, value: '2k' });
-  const gnd = c.addComponent('ground', { x: 720, y: 120 });
+  const r2 = c.addComponent('resistor', { x: 800, y: 0, rotation: 90, value: '2k' });
+  const gnd = c.addComponent('ground', { x: 800, y: 200 });
   const out = c.addComponent('output', { x: 680, y: -80, value: 'OUT' });
 
   const nVcc = c.connect(`${vcc.refdes}.p`, `${r1.refdes}.a`);

@@ -22,6 +22,7 @@ export const pnp = defineSymbol({
     { kind: 'path', d: 'M 113 33 L 105 40 L 113 47 Z' },
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
-  refPos: { x: 60, y: 48, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: 40, y: 80 },
   defaultValue: '',
 });

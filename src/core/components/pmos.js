@@ -24,6 +24,7 @@ export const pmos = defineSymbol({
     { kind: 'path', d: 'M 76 40 L 120 40' },
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
-  refPos: { x: 60, y: 48, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: 40, y: 80 },
   defaultValue: '',
 });

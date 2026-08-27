@@ -168,15 +168,15 @@ test('REGRESSION: demo circuit evaluates clean with expected metrics', () => {
   assert.deepEqual(rep.overlappingBBoxes, []);
   assert.deepEqual(rep.wireThroughBBoxes, []);
   assert.deepEqual(rep.gridViolations, []);
-  assert.deepEqual(rep.bounds, { x: 360, y: -120, w: 400, h: 280 });
+  assert.deepEqual(rep.bounds, { x: 360, y: -120, w: 480, h: 360 });
 });
 
 test('REGRESSION: demo circuit nets carry id/name/n/length', () => {
   const rep = evaluate(demoCircuit());
   const byName = Object.fromEntries(rep.nets.map((n) => [n.name, n]));
   assert.deepEqual(byName.vcc, { id: 'N1', name: 'vcc', n: 2, length: 160 });
-  assert.deepEqual(byName.out, { id: 'N2', name: 'out', n: 3, length: 200 });
-  assert.deepEqual(byName.gnd, { id: 'N3', name: 'gnd', n: 2, length: 0 });
+  assert.deepEqual(byName.out, { id: 'N2', name: 'out', n: 3, length: 320 });
+  assert.deepEqual(byName.gnd, { id: 'N3', name: 'gnd', n: 2, length: 40 });
 });
 
 test('demo command loads the demo circuit', () => {
@@ -199,12 +199,12 @@ test('evaluate flags a wire drilling through its own source body', () => {
   c.addComponent('resistor', { refdes: 'R2', x: 640, y: 0 });
   const net = c.connect('R1.a', 'R2.b');
   // straight line leaving pin "a" right through R1's body
-  net.route = [{ x: 240, y: 0 }, { x: 760, y: 0 }];
+  net.route = [{ x: 240, y: 0 }, { x: 800, y: 0 }];
   const rep = evaluate(c);
   assert.ok(rep.wireThroughBBoxes.length >= 1, 'through-own-pin drill is a violation');
   assert.match(rep.wireThroughBBoxes.join('\n'), /through R1\(resistor\) bbox/);
   // same pins but routed over the top boundary hugs exactly y=-40 (legal)
-  c.nets.get(net.id).route = [{ x: 240, y: 0 }, { x: 240, y: -40 }, { x: 760, y: -40 }, { x: 760, y: 0 }];
+  c.nets.get(net.id).route = [{ x: 240, y: 0 }, { x: 240, y: -40 }, { x: 800, y: -40 }, { x: 800, y: 0 }];
   const rep2 = evaluate(c);
   assert.deepEqual(rep2.wireThroughBBoxes, [], 'boundary-hugging route is clean');
 });

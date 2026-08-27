@@ -173,12 +173,14 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'clear') {
     circuit.components.clear();
     circuit.nets.clear();
+    circuit.labels.clear();
     return result('cleared', null, true);
   }
   if (cmd === 'demo') {
     const fresh = demoCircuit();
     circuit.components = fresh.components;
     circuit.nets = fresh.nets;
+    circuit.labels = fresh.labels;
     return result('loaded demo circuit', fresh.toJSON(), true);
   }
   if (cmd === 'list') {
@@ -278,6 +280,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
     for (const net of circuit.nets.values()) {
       for (const t of net.terminals) if (t.comp === pos[0]) t.comp = newName;
     }
+    // the instance label follows its owner (its text mirrors the refdes)
+    const lab = circuit.labelOf(c.refdes);
+    if (lab) {
+      lab.owner = newName;
+      if (lab.text === pos[0]) lab.text = newName;
+    }
     return result(`renamed ${pos[0]} -> ${newName}`, { from: pos[0], to: newName }, true);
   }
   if (cmd === 'rm' || cmd === 'remove') {
@@ -333,6 +341,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const fresh = Circuit.fromJSON(data);
     circuit.components = fresh.components;
     circuit.nets = fresh.nets;
+    circuit.labels = fresh.labels;
     return result(`loaded state from ${file}`, fresh.toJSON(), true);
   }
 

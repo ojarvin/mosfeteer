@@ -29,6 +29,8 @@ export const nmos = defineSymbol({
     { kind: 'path', d: 'M 120 30 L 120 80' },
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
-  refPos: { x: 60, y: 48, anchor: 'middle' },
+  refPos: null,
+  // Instance label (dedicated label object) sits on the bulk side, below the body.
+  labelOffset: { x: 40, y: 120 },
   defaultValue: '',
 });

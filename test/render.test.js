@@ -81,3 +81,20 @@ test('svgString renders net wires for connected terminals', () => {
   assert.ok(svg.includes(`data-ref="${r1.refdes}"`));
   assert.ok(svg.includes(`data-ref="${r2.refdes}"`));
 });
+
+test('svgString renders standalone label text with its alignment anchor', () => {
+  const c = new Circuit();
+  c.addLabel({ text: 'TP1', x: 400, y: 0, align: 'left' });
+  const svg = svgString(c);
+  assert.ok(svg.includes('>TP1<'), 'standalone label text present');
+  assert.ok(svg.includes('text-anchor="start"'), 'left-aligned label anchors start');
+});
+
+test('transistor instance label renders as a dedicated label object (no duplicate refPos)', () => {
+  const c = new Circuit();
+  c.addComponent('nmos', { x: 400, y: 0 });
+  const svg = svgString(c);
+  // exactly one M1 text element (the owned label), not the built-in refPos one
+  assert.equal((svg.match(/>M1</g) || []).length, 1);
+  assert.ok(svg.includes('>M1<'));
+});

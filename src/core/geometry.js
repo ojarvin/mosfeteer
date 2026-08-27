@@ -43,6 +43,23 @@ export function transformRect(t, r) {
   return rectFromPoints(pts);
 }
 
+/** Inverse of applyTransform: the local point for a world point under t. */
+export function inverseTransform(t, x, y) {
+  let px = x - t.x;
+  let py = y - t.y;
+  const r = ((t.rotation % 360) + 360) % 360;
+  if (r === 90) {
+    [px, py] = [py, -px];
+  } else if (r === 180) {
+    [px, py] = [-px, -py];
+  } else if (r === 270) {
+    [px, py] = [-py, px];
+  }
+  if (t.mirrorX) px = -px;
+  if (t.mirrorY) py = -py;
+  return { x: px, y: py };
+}
+
 /** Bounding rect of a list of {x,y} points. */
 export function rectFromPoints(pts) {
   let x0 = Infinity;

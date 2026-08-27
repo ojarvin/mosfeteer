@@ -12,14 +12,14 @@
  */
 export const LINE = {
   stroke: '#111',
-  width: 5,
+  width: 6,
   cap: 'round',
   join: 'round',
 };
 
 export const THICK = {
   stroke: '#111',
-  width: Math.round(LINE.width * 1.5),
+  width: Math.round(LINE.width * 1.4),
   cap: 'flat',
   join: 'round',
 };

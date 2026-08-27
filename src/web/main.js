@@ -47,6 +47,7 @@ let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
 let selected = null; // primary refdes
 let multi = new Set(); // all selected component refdes (always includes selected)
+let selLabel = null; // id of the selected label object (exclusive with component selection)
 let selectedNets = new Set(); // ids of highlighted nets
 let cursor = { x: 0, y: 0 };
 let wire = null; // { source: {refdes, term} | null }
@@ -117,6 +118,7 @@ function applyJson(blob) {
   circuit = Circuit.fromJSON(JSON.parse(blob));
   if (selected && !circuit.components.has(selected)) selected = null;
   multi = new Set([...multi].filter((r) => circuit.components.has(r)));
+  if (selLabel && !circuit.labels.has(selLabel)) selLabel = null;
   selectedNets.clear();
 }
 
@@ -168,6 +170,22 @@ function setSelection(refs, primary = refs[0]) {
   multi = new Set(refs);
   selected = refs.length ? (refs.includes(primary) ? primary : refs[0]) : null;
   if (selected && !circuit.components.has(selected)) selected = null;
+  selLabel = null;
+}
+
+function selectedLabel() {
+  return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
+}
+
+/** Match a world point against label bboxes (labels draw on top of everything). */
+function pickLabel(w) {
+  const x = snap(w.x);
+  const y = snap(w.y);
+  for (const label of circuit.labels.values()) {
+    const r = label.bbox();
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
+  }
+  return null;
 }
 
 function selectedComps() {
@@ -177,6 +195,68 @@ function selectedComps() {
     if (c) out.push(c);
   }
   return out;
+}
+
+/** Grid-snapped centroid of the selected components' bounding boxes. */
+function selectionCentroid() {
+  const comps = selectedComps();
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const c of comps) {
+    const r = c.bboxWorld();
+    x0 = Math.min(x0, r.x);
+    y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.w);
+    y1 = Math.max(y1, r.y + r.h);
+  }
+  if (!Number.isFinite(x0)) return { x: 0, y: 0 };
+  return { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
+}
+
+/** Rotate every selected component about the selection centroid by ±90° increments. */
+function rotateSelectionAbout(deg) {
+  const p = selectionCentroid();
+  commit(() => {
+    for (const c of selectedComps()) {
+      const t = c.transform;
+      // Rotate the component's origin about P, then spin the symbol by the same amount.
+      let nx;
+      let ny;
+      if (deg === 90) {
+        nx = p.x - (t.y - p.y);
+        ny = p.y + (t.x - p.x);
+      } else if (deg === 180) {
+        nx = 2 * p.x - t.x;
+        ny = 2 * p.y - t.y;
+      } else {
+        nx = p.x + (t.y - p.y);
+        ny = p.y - (t.x - p.x);
+      }
+      circuit.moveComponent(c.refdes, nx, ny);
+      circuit.setTransform(c.refdes, { rotation: (((t.rotation + deg) % 360) + 360) % 360 });
+    }
+    rerouteAffected(selectedComps().map((c) => c.refdes));
+  });
+}
+
+/** Mirror every selected component about the vertical (x) or horizontal (y) centroid axis. */
+function mirrorSelectionAbout(axis) {
+  const p = selectionCentroid();
+  commit(() => {
+    for (const c of selectedComps()) {
+      const t = c.transform;
+      if (axis === 'x') {
+        circuit.moveComponent(c.refdes, 2 * p.x - t.x, t.y);
+        circuit.setTransform(c.refdes, { mirrorX: !t.mirrorX });
+      } else {
+        circuit.moveComponent(c.refdes, t.x, 2 * p.y - t.y);
+        circuit.setTransform(c.refdes, { mirrorY: !t.mirrorY });
+      }
+    }
+    rerouteAffected(selectedComps().map((c) => c.refdes));
+  });
 }
 
 function moveCursor(cellsX, cellsY) {
@@ -254,6 +334,18 @@ function placeAtCursor(type) {
   }
 }
 
+/** Place a dedicated label object at the cursor (anchor = cursor). */
+function placeLabelAtCursor(text = 'label') {
+  try {
+    const label = circuit.addLabel({ text, x: cursor.x, y: cursor.y, align: 'center' });
+    setSelection([]);
+    selLabel = label.id;
+    logLine(`placed label "${label.text}" @ (${label.anchor.x},${label.anchor.y}); double-click to edit`);
+  } catch (err) {
+    logLine(`Error placing label: ${err.message}`);
+  }
+}
+
 // ----- render -----------------------------------------------------------
 
 function render() {
@@ -291,6 +383,7 @@ function renderCanvas() {
   const overlay = editorOverlay(circuit, {
     cursor,
     selection: [...multi],
+    selLabel,
     nets,
     rubber: drag && drag.rubber ? drag.rubber : undefined,
     wirePreview,
@@ -577,6 +670,27 @@ function canvasMouseDown(ev) {
     return;
   }
 
+  // Labels draw on top of everything: picking one selects/drags it first.
+  const labelHit = pickLabel(startWorld);
+  if (labelHit) {
+    const a = labelHit.anchorWorld();
+    cursor = { x: snap(a.x), y: snap(a.y) };
+    setSelection([]);
+    selLabel = labelHit.id;
+    drag = {
+      mode: 'labelmove',
+      labelId: labelHit.id,
+      startClient,
+      startWorld,
+      startAnchor: { x: a.x, y: a.y },
+      moved: false,
+      committed: false,
+      rubber: null,
+    };
+    render();
+    return;
+  }
+
   const hit = pickAt(startWorld);
   if (hit && circuit.components.has(hit.refdes)) {
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
@@ -692,6 +806,28 @@ function canvasMouseMove(ev) {
     return;
   }
 
+if (drag.mode === 'labelmove') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      if (!drag.committed) {
+        drag.committed = true;
+        history.push(snapshot());
+        if (history.length > 200) history.shift();
+        future.length = 0;
+      }
+      const label = circuit.labels.get(drag.labelId);
+      if (label) {
+        const dwx = w.x - drag.startWorld.x;
+        const dwy = w.y - drag.startWorld.y;
+        label.moveTo(drag.startAnchor.x + dwx, drag.startAnchor.y + dwy);
+        const a = label.anchorWorld();
+        cursor = { x: a.x, y: a.y };
+      }
+    }
+    render();
+    return;
+  }
+
   if (drag.mode === 'move') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
@@ -767,6 +903,48 @@ canvasEl.addEventListener('mousemove', canvasMouseMove);
 window.addEventListener('mouseup', canvasMouseUp);
 canvasEl.addEventListener('contextmenu', (ev) => ev.preventDefault());
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
+
+// Double-click a label to edit its text inline.
+canvasEl.addEventListener('dblclick', (ev) => {
+  const w = clientToWorld(ev.clientX, ev.clientY);
+  const label = pickLabel(w);
+  if (label) inlineEditLabel(label);
+});
+
+/** Overlay an <input> on the label's anchor; Enter/blur commits, Escape cancels. */
+function inlineEditLabel(label) {
+  if (!label) return;
+  const a = label.anchorWorld();
+  const pane = document.querySelector('.canvas-pane');
+  const r = pane.getBoundingClientRect();
+  const sx = r.left + ((a.x - view.x) / view.w) * r.width;
+  const sy = r.top + ((a.y - view.y) / view.h) * r.height;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = label.text;
+  input.spellcheck = false;
+  input.style.cssText = `position:absolute;left:${sx}px;top:${sy}px;transform:translate(-50%,-50%);z-index:30;font:12px sans-serif;padding:2px 4px;min-width:60px;`;
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+  let closed = false;
+  const done = (applyText) => {
+    if (closed) return;
+    closed = true;
+    const v = input.value.trim();
+    input.remove();
+    if (applyText && v && v !== label.text) {
+      commit(() => label.setText(v));
+    }
+    render();
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') done(true);
+    else if (ev.key === 'Escape') done(false);
+  });
+  input.addEventListener('blur', () => done(true));
+}
 
 // Mouse wheel: zoom about the pointer (in on scroll-up, out on scroll-down).
 canvasEl.addEventListener(
@@ -874,6 +1052,37 @@ function renderNets() {
 
 function renderDetail() {
   detailEl.innerHTML = '';
+  const label = selectedLabel();
+  if (label) {
+    const meta = document.createElement('div');
+    meta.className = 'detail-meta';
+    meta.textContent = `label "${label.text}"  align: ${label.align}${label.owner ? `  owned by ${label.owner}` : ''}  — double-click to edit text, Shift+Left/Right to align`;
+    detailEl.appendChild(meta);
+
+    const table = document.createElement('table');
+    const row = document.createElement('tr');
+    const a = label.anchorWorld();
+    const b = label.bbox();
+    for (const [k, v] of [
+      ['Text', label.text],
+      ['Align', label.align],
+      ['Anchor', `${a.x},${a.y}`],
+      ['BBox', `${b.x},${b.y} ${b.w}x${b.h}`],
+      ['Owner', label.owner || '—'],
+    ]) {
+      const th = document.createElement('td');
+      th.textContent = k;
+      th.style.fontWeight = '600';
+      const td = document.createElement('td');
+      td.textContent = v;
+      row.appendChild(th);
+      row.appendChild(td);
+    }
+    table.appendChild(row);
+    detailEl.appendChild(table);
+    return;
+  }
+
   const comp = selectedComp();
   if (!comp) {
     detailEl.innerHTML = '<div class="no-items">Select a component to see its terminals</div>';
@@ -994,7 +1203,10 @@ const INSERT_MOVE = {
 };
 
 function onInsertKey(key) {
-  if (PLACEMENT[key]) {
+  if (key === 'T') {
+    commit(() => placeLabelAtCursor());
+    render();
+  } else if (PLACEMENT[key]) {
     commit(() => placeAtCursor(PLACEMENT[key]));
     render();
   } else if (INSERT_MOVE[key]) {
@@ -1036,49 +1248,54 @@ function onNormalKey(key) {
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       cursor = { x: primary.transform.x, y: primary.transform.y };
     } else {
-      moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
+      const lab = selectedLabel();
+      if (lab) {
+        const dx = nudgeKey[0] * count * 40;
+        const dy = nudgeKey[1] * count * 40;
+        commit(() => lab.translate(dx, dy));
+        const a = lab.anchorWorld();
+        cursor = { x: a.x, y: a.y };
+      } else {
+        moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
+      }
     }
     render();
     return;
   }
 
   if (key === 'r' || key === 'R') {
-    const comps = selectedComps();
-    if (!comps.length) {
+    if (!selectedComps().length) {
       logLine('nothing selected to rotate');
     } else {
-      const dir = key === 'r' ? 1 : -1;
-      commit(() => {
-        for (const c of comps) {
-          const t = c.transform;
-          circuit.setTransform(c.refdes, { rotation: (((t.rotation + dir * 90 * count) % 360) + 360) % 360 });
-        }
-        rerouteAffected(comps.map((c) => c.refdes));
-      });
+      const total = (((key === 'r' ? 90 : -90) * count) % 360 + 360) % 360;
+      if (total) rotateSelectionAbout(total);
+      const primary = selectedComp() || selectedComps()[0];
+      cursor = { x: primary.transform.x, y: primary.transform.y };
       render();
     }
     return;
   }
 
   if (key === 'x' || key === 'X') {
-    const comps = selectedComps();
-    if (!comps.length) {
+    if (!selectedComps().length) {
       logLine('nothing selected to mirror');
     } else {
-      commit(() => {
-        for (const c of comps) {
-          const t = c.transform;
-          if (key === 'x') circuit.setTransform(c.refdes, { mirrorX: !t.mirrorX });
-          else circuit.setTransform(c.refdes, { mirrorY: !t.mirrorY });
-        }
-        rerouteAffected(comps.map((c) => c.refdes));
-      });
+      mirrorSelectionAbout(key === 'x' ? 'x' : 'y');
       render();
     }
     return;
   }
 
   if (key === 'Enter') {
+    const lab = pickLabel(cursor);
+    if (lab) {
+      const a = lab.anchorWorld();
+      cursor = { x: snap(a.x), y: snap(a.y) };
+      setSelection([]);
+      selLabel = lab.id;
+      render();
+      return;
+    }
     const hit = matchAt(cursor.x, cursor.y);
     if (hit) {
       cursor = { x: circuit.components.get(hit.refdes).transform.x, y: circuit.components.get(hit.refdes).transform.y };
@@ -1108,6 +1325,14 @@ function onNormalKey(key) {
 
   if (key === 'd') {
     if (pendingKey && pendingKey.key === 'd' && Date.now() - pendingKey.at < 800) {
+      if (selLabel) {
+        commit(() => circuit.removeLabel(selLabel));
+        setSelection([]);
+        selLabel = null;
+        render();
+        pendingKey = null;
+        return;
+      }
       const doomed = selectedComps();
       const touched = netsTouching(doomed.map((c) => c.refdes));
       commit(() => {
@@ -1153,6 +1378,12 @@ function onNormalKey(key) {
     return;
   }
 
+  if (key === 't') {
+    commit(() => placeLabelAtCursor());
+    render();
+    return;
+  }
+
   if (key === 'i' || key === 'I' || key === 'A') {
     mode = 'insert';
     render();
@@ -1182,6 +1413,13 @@ function onNormalKey(key) {
   }
 
   if (key === 'Delete' || key === 'Backspace') {
+    if (selLabel) {
+      commit(() => circuit.removeLabel(selLabel));
+      setSelection([]);
+      selLabel = null;
+      render();
+      return;
+    }
     const doomed = selectedComps();
     if (doomed.length) {
       const touched = netsTouching(doomed.map((c) => c.refdes));
@@ -1207,6 +1445,7 @@ function onNormalKey(key) {
   if (key === 'Escape') {
     pendingKey = null;
     setSelection([]);
+    selLabel = null;
     selectedNets.clear();
     render();
     return;
@@ -1223,6 +1462,7 @@ function logKeymap() {
       'dd          delete selected     yy   yank selected',
       'p           paste yanked component at cursor',
       'w           wire (pick terminal letters)',
+      't           label object at the cursor',
       'Tab         cycle selection',
       'Ctrl-A      select all components',
       'Enter       select component under cursor',
@@ -1238,7 +1478,14 @@ function logKeymap() {
       'n P b p     nmos pmos npn pnp',
       'g s i o O   ground supply input output inout-io',
       'a           solder dot (junction annotation)',
+      'T           label object (text, double-click to edit)',
       'arrows      also move cursor   Esc back to normal',
+      '-- labels --',
+      'T           insert a label at the cursor',
+      'alt         Shift+Left / Shift+Right align left / right (centre default)',
+      'h j k l     move a selected label (set its offset if it belongs to a part)',
+      'dd / Del    delete the selected label',
+      'double-click  edit the label text inline',
       '-- mouse --',
       'left        click select · drag marquee-select · drag comp to move',
       'wire        w, then click START terminal, click TARGET terminal',
@@ -1293,10 +1540,15 @@ function runLine(line) {
 
 function renderStatus() {
   const comp = selectedComp();
-  const sel = comp ? `${comp.refdes}${multi.size > 1 ? ` +${multi.size - 1}` : ''}` : '-';
+  const label = selectedLabel();
+  const sel = label
+    ? `lab "${label.text}"`
+    : comp
+      ? `${comp.refdes}${multi.size > 1 ? ` +${multi.size - 1}` : ''}`
+      : '-';
   const parts = [mode === 'insert' ? 'INSERT' : 'NORMAL', `sel ${sel}`, `@${cursor.x},${cursor.y}`];
   if (mode === 'insert') {
-    parts.push('place r c L d n P b p g s i o O · move h j k l');
+    parts.push('place r c L d n P b p g s i o O a · T label · move h j k l');
   }
   if (wire) {
     parts.push(wire.source ? `WIRE ${wire.source.refdes}.${wire.source.term} ->` : 'WIRE: click a terminal');
@@ -1320,6 +1572,14 @@ function buildPalette() {
     });
     paletteEl.appendChild(btn);
   }
+  const labelBtn = document.createElement('button');
+  labelBtn.textContent = 'label';
+  labelBtn.title = 'Place a text label object at the cursor';
+  labelBtn.addEventListener('click', () => {
+    commit(() => placeLabelAtCursor());
+    render();
+  });
+  paletteEl.appendChild(labelBtn);
 }
 
 document.getElementById('btn-demo').addEventListener('click', () => {
@@ -1396,6 +1656,18 @@ window.addEventListener('keydown', (ev) => {
   const key = ev.key;
   if (key.startsWith('F') && /^F\d+$/.test(key)) return;
 
+  // Shift+Left/Right set a selected label's alignment (cycle through center).
+  if (ev.shiftKey && !wire && mode === 'normal' && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+    const lab = selectedLabel();
+    if (lab) {
+      const want = key === 'ArrowRight' ? (lab.align === 'right' ? 'center' : 'right') : lab.align === 'left' ? 'center' : 'left';
+      commit(() => lab.setAlign(want));
+      render();
+      ev.preventDefault();
+      return;
+    }
+  }
+
   if (wire) {
     onWireKey(key);
   } else if (mode === 'insert') {
@@ -1423,6 +1695,7 @@ cmdInput.addEventListener('keydown', (ev) => {
 window.__circuit = () => ({
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
   nets: [...circuit.nets.values()].map((net) => ({ id: net.id, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, pts: net.points() })),
+  labels: [...circuit.labels.values()].map((l) => ({ ...l.toJSON(), world: l.anchorWorld() })),
 });
 
 view = viewFromCenter(0, 0);

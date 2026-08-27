@@ -141,10 +141,11 @@ export function svgString(circuit, opts = {}) {
     }
   }
 
-  // Labels (drawn upright, never mirrored).
+  // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
+  // label (def.labelOffset) skip the built-in refPos text.
   for (const c of comps) {
     const def = c.def;
-    if (def.refPrefix && def.refPos) {
+    if (def.refPrefix && def.refPos && !def.labelOffset) {
       const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
       parts.push(textEl(p.x, p.y, c.refdes, def.refPos.anchor, 12));
     }
@@ -152,6 +153,13 @@ export function svgString(circuit, opts = {}) {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
       parts.push(textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333'));
     }
+  }
+
+  // Dedicated / instance label objects.
+  const labelAnchor = (align) => (align === 'center' ? 'middle' : align === 'left' ? 'start' : 'end');
+  for (const label of circuit.labels.values()) {
+    const a = label.anchorWorld();
+    parts.push(textEl(a.x, a.y, label.text, labelAnchor(label.align), 12, label.owner ? '#111' : '#333'));
   }
 
   parts.push('</svg>');
@@ -173,6 +181,16 @@ export function editorOverlay(circuit, opts = {}) {
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
     if (c) parts.push(halo(c.bboxWorld()));
+  }
+
+  if (opts.selLabel) {
+    const label = circuit.labels.get(opts.selLabel);
+    if (label) {
+      const b = label.bbox();
+      const a = label.anchorWorld();
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#e3970b" stroke-width="2" rx="2"/>`);
+      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="#e3970b"/>`);
+    }
   }
 
   for (const net of opts.nets || []) {

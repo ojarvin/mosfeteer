@@ -23,6 +23,7 @@ export const npn = defineSymbol({
     { kind: 'path', d: 'M 107 33 L 115 40 L 107 47 Z' },
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
-  refPos: { x: 60, y: 48, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: 40, y: 80 },
   defaultValue: '',
 });
