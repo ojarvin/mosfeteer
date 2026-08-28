@@ -1,7 +1,8 @@
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
-import { autoRoute, balancedPaths, smartRoute } from './router.js';
+import { autoRoute, balancedPaths, balancedRoute, smartRoute } from './router.js';
+import { collapseCollinear } from './wireedit.js';
 
 /** Nominal world units of text width per character (font-size 12 sans-serif). */
 export const LABEL_CHAR_W = 7;
@@ -538,6 +539,88 @@ export class Circuit {
       }
     }
     return { rects, pins, wires: [] };
+  }
+
+  /** Re-route a net, preserving hand-drawn wire shapes. `moved` (optional) is a
+   *  Map of refdes -> {dx,dy} for components that just moved: polylines whose
+   *  endpoints ride the SAME moved component slide with it (manual loops are
+   *  kept), one-end-moved legs get re-anchored at the new pin with their drawn
+   *  body intact, and untouched polylines stay byte-identical. Routes that were
+   *  never hand-drawn are laid out fresh. This is the general-purpose router —
+   *  no symbol- or net-type special cases. */
+  rerouteNet(net, moved = null) {
+    const env = this._netEnv();
+    const anchors = net.anchorWorlds();
+    if (anchors.length < 2) {
+      net.route = null;
+      net.branches = null;
+      return;
+    }
+    if (net.branches && net.branches.length) {
+      net.branches = net.branches.map((b) => this._reroutePolyline(net, b, moved, env));
+      net.route = net.branches[0] ? net.branches[0].map((p) => ({ ...p })) : null;
+      return;
+    }
+    if (net.route && net.route.length >= 2) {
+      net.route = this._reroutePolyline(net, net.route, moved, env);
+      return;
+    }
+    // No drawn shape to preserve: lay out fresh from the anchors.
+    if (net.junctions.length) {
+      const path = [{ ...anchors[0] }];
+      for (let i = 1; i < anchors.length; i++) {
+        const seg = smartRoute(path[path.length - 1], anchors[i], env);
+        if (seg && seg.length >= 2) for (let k = 1; k < seg.length; k++) path.push({ ...seg[k] });
+      }
+      collapseCollinear(path);
+      net.route = path.slice();
+      net.branches = [net.route.slice()];
+    } else if (anchors.length === 2) {
+      net.route = smartRoute(anchors[0], anchors[1], env);
+      net.branches = null;
+    } else {
+      net.route = balancedRoute(anchors, env);
+      net.branches = null;
+    }
+  }
+
+  /** Re-anchor one drawn polyline after a component move (see rerouteNet). */
+  _reroutePolyline(net, poly, moved, env) {
+    if (!poly || poly.length < 2) return poly;
+    const n = poly.length;
+    const classify = (p) => {
+      if (!moved) return null;
+      for (const [refdes, delta] of moved) {
+        const c = this.components.get(refdes);
+        if (!c) continue;
+        for (const t of c.def.terminals) {
+          const cur = c.terminalWorld(t.name);
+          const old = { x: cur.x - delta.dx, y: cur.y - delta.dy };
+          if (Math.abs(p.x - old.x) <= 1 && Math.abs(p.y - old.y) <= 1) return { refdes, cur, delta };
+        }
+      }
+      return null;
+    };
+    const a0 = classify(poly[0]);
+    const a1 = classify(poly[n - 1]);
+    if (a0 && a1 && a0.refdes === a1.refdes) {
+      // Both ends ride the same moved component: slide the whole drawn body.
+      return poly.map((p) => ({ x: p.x + a0.delta.dx, y: p.y + a0.delta.dy }));
+    }
+    if (a0) {
+      // The start pin moved: re-anchor the first leg, keep the drawn body.
+      const leg = smartRoute({ x: a0.cur.x, y: a0.cur.y }, poly[1], env);
+      const out = leg && leg.length >= 2 ? [...leg, ...poly.slice(1)] : [{ x: a0.cur.x, y: a0.cur.y }, ...poly.slice(1)];
+      collapseCollinear(out);
+      return out;
+    }
+    if (a1) {
+      const leg = smartRoute({ x: a1.cur.x, y: a1.cur.y }, poly[n - 2], env);
+      const out = leg && leg.length >= 2 ? [...poly.slice(0, n - 1), ...leg] : [...poly.slice(0, n - 1), { x: a1.cur.x, y: a1.cur.y }];
+      collapseCollinear(out);
+      return out;
+    }
+    return poly.map((p) => ({ ...p }));
   }
 
   resolveTerm(ref) {

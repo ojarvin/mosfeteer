@@ -15,7 +15,7 @@ import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { snap, GRID } from '../core/grid.js';
-import { balancedRoute, smartRoute } from '../core/router.js';
+import { smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
 import { wireRunAt, collapseCollinear, moveWireRun } from '../core/wireedit.js';
 
@@ -459,11 +459,13 @@ function mirrorSelectionAbout(axis) {
   });
 }
 
-/** Re-route every net touching the given components (holistic, from terminals). */
-function rerouteTouchedNets(refs) {
+/** Re-route every net touching the given components (holistic, from terminals).
+ *  `moved` (optional) is a Map of refdes -> {dx,dy} so drawn wire shapes are
+ *  preserved instead of recomputed when a component is dragged. */
+function rerouteTouchedNets(refs, moved) {
   for (const id of netsTouching(refs)) {
     const net = circuit.nets.get(id);
-    if (net) rerouteNet(net);
+    if (net) rerouteNet(net, moved);
   }
 }
 
@@ -712,8 +714,14 @@ function dragMoved(startWorld, startClient, w, ev) {
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
   if (drag && drag.mode === 'wireseg') {
-    if (drag.hadRoute) drag.net.route = drag.orig.map((p) => ({ ...p }));
-    else drag.net.route = null;
+    if (drag.branch !== undefined && drag.net.branches && drag.net.branches[drag.branch]) {
+      drag.net.branches[drag.branch] = drag.orig.map((p) => ({ ...p }));
+      if (drag.branch === 0) drag.net.route = drag.net.branches[0].map((p) => ({ ...p }));
+    } else if (drag.hadRoute) {
+      drag.net.route = drag.orig.map((p) => ({ ...p }));
+    } else {
+      drag.net.route = null;
+    }
   }
   drag = null;
   render();
@@ -804,7 +812,9 @@ function distToSegment(px, py, a, b) {
   return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
 }
 
-/** Pick the nearest net route within a forgiving screen-sized hit area. */
+/** Pick the nearest net route within a forgiving screen-sized hit area.
+ *  Considers EVERY drawn branch of a multi-way net, so a joined/connected wire
+ *  is selectable and draggable anywhere along it. */
 function pickWire(w) {
   const p = paneSize();
   const pxPerUnit = p ? view.w / p.w : 1;
@@ -813,15 +823,18 @@ function pickWire(w) {
   let best = null;
   let bestD = tol;
   for (const net of circuit.nets.values()) {
-    const pts = net.points();
-    for (let i = 1; i < pts.length; i++) {
-      const d = Math.min(
-        distToSegment(w.x, w.y, pts[i - 1], pts[i]),
-        distToSegment(snapped.x, snapped.y, pts[i - 1], pts[i]),
-      );
-      if (d < bestD) {
-        bestD = d;
-        best = { net, seg: i };
+    const paths = net.branches && net.branches.length ? net.branches : [net.points()];
+    for (let bi = 0; bi < paths.length; bi++) {
+      const pts = paths[bi];
+      for (let i = 1; i < pts.length; i++) {
+        const d = Math.min(
+          distToSegment(w.x, w.y, pts[i - 1], pts[i]),
+          distToSegment(snapped.x, snapped.y, pts[i - 1], pts[i]),
+        );
+        if (d < bestD) {
+          bestD = d;
+          best = { net, branch: bi, seg: i, pts };
+        }
       }
     }
   }
@@ -907,33 +920,8 @@ function netEnv(excludeNetId = null) {
 }
 
 /** Recompute the explicit route of a net (pairwise through its terminals in order). */
-function rerouteNet(net) {
-  const env = netEnv(net.id);
-  const anchors = net.anchorWorlds();
-  if (anchors.length < 2) {
-    net.route = null;
-    net.branches = null;
-    return;
-  }
-  // Nets with mid-wire junctions are walked through every anchor (terminals +
-  // junctions) in order; two-terminal nets keep the preview's pin-escaped
-  // outside bend; larger nets get the balanced T-junction routing.
-  if (net.junctions.length) {
-    const path = [{ ...anchors[0] }];
-    for (let i = 1; i < anchors.length; i++) {
-      const seg = smartRoute(path[path.length - 1], anchors[i], env);
-      if (seg && seg.length >= 2) for (let k = 1; k < seg.length; k++) path.push({ ...seg[k] });
-    }
-    collapseCollinear(path);
-    net.route = path.slice();
-    net.branches = [net.route.slice()];
-  } else if (anchors.length === 2) {
-    net.route = smartRoute(anchors[0], anchors[1], env);
-    net.branches = null;
-  } else {
-    net.route = balancedRoute(anchors, env);
-    net.branches = null;
-  }
+function rerouteNet(net, moved) {
+  circuit.rerouteNet(net, moved);
 }
 
 /** Ids of every net that touches any of the given components. */
@@ -970,9 +958,10 @@ function connectTwo(src, dst, points) {
   if (srcRoute || dstRoute) {
     // The new leg attaches to an already-drawn wire: keep the original
     // polyline(s) exactly as they were and add the draft as a separate branch.
-    // A wire that meets a component pin needs no solder dot (the pin is the
-    // junction). This also applies to a direct terminal-to-terminal click with
-    // no bend points — the existing net's wire must never be recomputed.
+    // A solder dot marks where the new wire meets the existing one (a pin on an
+    // existing wire is a visible junction, not just a bare terminal). This also
+    // applies to a direct terminal-to-terminal click with no bend points — the
+    // existing net's wire must never be recomputed.
     const branches = [];
     for (const existing of [srcRoute, dstRoute]) {
       if (existing && !branches.some((b) => JSON.stringify(b) === JSON.stringify(existing))) {
@@ -982,6 +971,14 @@ function connectTwo(src, dst, points) {
     branches.push(draft);
     net.route = draft.slice();
     net.branches = branches;
+    // Mark the meet point(s): where the draft touches an existing wire's pin.
+    const meet = new Set();
+    if (dstRoute) meet.add(`${end.x},${end.y}`);
+    if (srcRoute) meet.add(`${start.x},${start.y}`);
+    for (const key of meet) {
+      const [mx, my] = key.split(',').map(Number);
+      circuit.addComponent('solder', { x: mx, y: my });
+    }
   } else if (pts.length) {
     net.route = draft;
   } else {
@@ -1418,15 +1415,16 @@ function canvasMouseDown(ev) {
   const wireHit = pickWire(startWorld);
   if (wireHit) {
     const net = wireHit.net;
-    // The run is found from the drawn route, materialized into a local array so
-    // a plain click never mutates the net — only an actual drag attaches a route
-    // (and Escape restores `orig`).
-    const pts = net.route && net.route.length >= 2 ? net.route : net.points().slice();
+    // The run is found from the drawn polyline (a specific branch for joined
+    // nets), materialized into a local array so a plain click never mutates the
+    // net — only an actual drag attaches a route (and Escape restores `orig`).
+    const pts = (wireHit.pts && wireHit.pts.length >= 2 ? wireHit.pts : net.route && net.route.length >= 2 ? net.route : net.points().slice());
     const run = wireRunAt(pts, wireHit.seg);
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
     drag = {
       mode: 'wireseg',
       net,
+      branch: wireHit.branch !== undefined ? wireHit.branch : undefined,
       pts,
       orig: pts.map((p) => ({ ...p })),
       hadRoute: !!(net.route && net.route.length >= 2),
@@ -1497,9 +1495,9 @@ function canvasMouseMove(ev) {
       cursor = { x: snap(w.x), y: snap(w.y) };
       if (!drag.committed) {
         drag.committed = true;
-        // A drag owns the route: attach the working array so live edits render
-        // (a plain click never reaches this point, so the net stays untouched).
-        drag.net.route = drag.pts;
+        // A drag owns the polyline: for a plain route we attach it so live
+        // edits render; a branch array is already live inside net.branches.
+        if (drag.branch === undefined) drag.net.route = drag.pts;
       }
       const axis = drag.orient === 'h' ? w.y : w.x;
       const target = drag.startLine + (axis - drag.startAxis);
@@ -1545,9 +1543,14 @@ if (drag.mode === 'labelmove') {
       }
       const dwx = w.x - drag.startWorld.x;
       const dwy = w.y - drag.startWorld.y;
+      const moved = new Map();
       for (const [r, o] of drag.origins) {
         const c = circuit.components.get(r);
-        if (c) circuit.moveComponent(r, snap(o.x + dwx), snap(o.y + dwy));
+        if (!c) continue;
+        const nx = snap(o.x + dwx);
+        const ny = snap(o.y + dwy);
+        moved.set(r, { dx: nx - o.x, dy: ny - o.y });
+        circuit.moveComponent(r, nx, ny);
       }
       // Free labels selected alongside components follow the drag (owned labels
       // already track their component's transform).
@@ -1559,8 +1562,10 @@ if (drag.mode === 'labelmove') {
       }
       // The net is treated as a holistic set: re-route its wires from the
       // terminals + environment rather than hand-carrying a wire body, so a
-      // drag can never leave wires dangling or collapsed.
-      rerouteTouchedNets([...drag.origins.keys()]);
+      // drag can never leave wires dangling or collapsed. The deltas let drawn
+      // wire shapes (manual loops) slide with the moved component instead of
+      // being recomputed back to an auto-route.
+      rerouteTouchedNets([...drag.origins.keys()], moved);
       cursor = { x: snap(drag.startCursor.x + dwx), y: snap(drag.startCursor.y + dwy) };
     }
     render();
@@ -1582,8 +1587,13 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'wireseg') {
     if (!drag.moved || JSON.stringify(drag.pts) === JSON.stringify(drag.orig)) {
       // A plain click (or a jittery gesture that never actually moved the run):
-      // select the net and leave the route exactly as it was.
-      if (!drag.hadRoute) drag.net.route = null; // don't materialize a route on a click
+      // select the net and leave the polyline exactly as it was.
+      if (drag.branch !== undefined && drag.net.branches && drag.net.branches[drag.branch]) {
+        drag.net.branches[drag.branch] = drag.orig.map((p) => ({ ...p }));
+        if (drag.branch === 0) drag.net.route = drag.net.branches[0].map((p) => ({ ...p }));
+      } else if (!drag.hadRoute) {
+        drag.net.route = null; // don't materialize a route on a click
+      }
       selectedNets = new Set([drag.net.id]);
       render();
       return;

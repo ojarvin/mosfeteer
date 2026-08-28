@@ -43,8 +43,10 @@ function routeNet(circuit, net) {
   }
 }
 
-/** Re-route every net that touches any of the given component refdes. */
-function rerouteNetsFor(circuit, refs) {
+/** Re-route every net that touches any of the given component refdes.
+ *  `moved` (optional) is a Map of refdes -> {dx,dy} so hand-drawn wire shapes
+ *  are preserved (slid / re-anchored) instead of recomputed. */
+function rerouteNetsFor(circuit, refs, moved) {
   const touched = new Set();
   for (const r of refs) {
     const c = circuit.components.get(r);
@@ -54,35 +56,9 @@ function rerouteNetsFor(circuit, refs) {
       if (net) touched.add(net.id);
     }
   }
-  const rects = [];
-  const pins = new Map();
-  for (const comp of circuit.components.values()) {
-    if (comp.type === 'solder') continue;
-    rects.push(comp.bboxWorld());
-    for (const t of comp.worldTerminals()) {
-      pins.set(`${t.x},${t.y}`, pinDir(comp, t.x, t.y));
-    }
-  }
-  const wires = [];
-  for (const net of circuit.nets.values()) {
-    if (!touched.has(net.id)) wires.push(net.points());
-  }
   for (const id of touched) {
     const net = circuit.nets.get(id);
-    if (!net) continue;
-    const world = net.terminalWorlds().filter(Boolean);
-    if (world.length < 2) {
-      net.route = null;
-      continue;
-    }
-    const env = { rects, pins, wires };
-    const path = [{ x: world[0].x, y: world[0].y }];
-    for (let i = 1; i < world.length; i++) {
-      const seg = smartRoute(path[path.length - 1], world[i], env);
-      if (!seg || seg.length < 2) continue;
-      for (let k = 1; k < seg.length; k++) path.push({ x: seg[k].x, y: seg[k].y });
-    }
-    net.route = path.length >= 2 ? path : null;
+    if (net) circuit.rerouteNet(net, moved);
   }
 }
 
@@ -341,8 +317,11 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if (cmd === 'move') {
     const c = circuit.getComponent(pos[0]);
+    const ox = c.transform.x;
+    const oy = c.transform.y;
     circuit.moveComponent(c.refdes, Number(pos[1]), Number(pos[2]));
-    rerouteNetsFor(circuit, [c.refdes]);
+    const moved = new Map([[c.refdes, { dx: c.transform.x - ox, dy: c.transform.y - oy }]]);
+    rerouteNetsFor(circuit, [c.refdes], moved);
     // Touching pins connect at the committed position (a pin that lands exactly
     // on another component's pin joins its net); re-route any merged net.
     if (circuit.connectCoincident(c.refdes) > 0) {
