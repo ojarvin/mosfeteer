@@ -174,7 +174,7 @@ test('REGRESSION: demo circuit evaluates clean with expected metrics', () => {
 test('REGRESSION: demo circuit nets carry id/name/n/length', () => {
   const rep = evaluate(demoCircuit());
   const byName = Object.fromEntries(rep.nets.map((n) => [n.name, n]));
-  assert.deepEqual(byName.vcc, { id: 'N1', name: 'vcc', n: 2, length: 160 });
+  assert.deepEqual(byName.vcc, { id: 'N1', name: 'vcc', n: 2, length: 240 });
   assert.deepEqual(byName.out, { id: 'N2', name: 'out', n: 3, length: 320 });
   assert.deepEqual(byName.gnd, { id: 'N3', name: 'gnd', n: 2, length: 40 });
 });

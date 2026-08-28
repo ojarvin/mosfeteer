@@ -1,7 +1,7 @@
-import { applyTransform, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
+import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
-import { autoRoute, balancedPaths } from './router.js';
+import { autoRoute, balancedPaths, smartRoute } from './router.js';
 
 /** Nominal world units of text width per character (font-size 12 sans-serif). */
 export const LABEL_CHAR_W = 7;
@@ -293,6 +293,9 @@ export class Net {
     this.route = opts.route || null;
     /** Grid points where other wires join this net (mid-wire junctions). */
     this.junctions = opts.junctions ? opts.junctions.map((p) => ({ x: p.x, y: p.y })) : [];
+    /** Optional list of wire branches (each a polyline) for multi-way joined
+     *  nets; when present the renderer draws every branch. */
+    this.branches = opts.branches ? opts.branches.map((b) => b.map((p) => ({ x: p.x, y: p.y }))) : null;
   }
 
   terminalCount() {
@@ -309,19 +312,47 @@ export class Net {
     return [...this.terminalWorlds().filter(Boolean), ...this.junctions];
   }
 
-  /** Resulting wire polyline (grid points). Auto-laid-out unless a route was set. */
+  /** Resulting wire polyline (grid points). Auto-laid-out unless a route was set.
+ *  For multi-branch joined nets the primary (first) branch is returned. */
   points() {
-    const pts = this.terminalWorlds().filter(Boolean);
-    if (pts.length === 0) return [];
+    const anchors = this.anchorWorlds();
+    if (anchors.length === 0) return [];
     if (this.route && this.route.length >= 2) return this.route.slice();
-    return autoRoute(pts);
+    if (this.branches && this.branches.length) return this.branches[0].slice();
+    const env = this.circuit._netEnv();
+    if (this.junctions.length) {
+      const path = [{ ...anchors[0] }];
+      for (let i = 1; i < anchors.length; i++) {
+        const seg = smartRoute(path[path.length - 1], anchors[i], env);
+        if (seg && seg.length >= 2) for (let k = 1; k < seg.length; k++) path.push({ ...seg[k] });
+      }
+      return path;
+    }
+    if (anchors.length === 2) {
+      // Match the editor preview: two-terminal nets escape each pin one cell
+      // outward before bending, so a committed wire never drills a body.
+      return smartRoute(anchors[0], anchors[1], env);
+    }
+    return autoRoute(anchors);
   }
 
-  /** Total manhattan length of the drawn wire. */
+  /** Every drawn polyline of the net (all branches), for bounds and evaluation. */
+  pathPoints() {
+    if (this.branches && this.branches.length) {
+      const out = [];
+      for (const b of this.branches) for (const p of b) out.push(p);
+      return out;
+    }
+    return this.points();
+  }
+
+  /** Total manhattan length of the drawn wire(s). */
   length() {
-    const pts = this.points();
+    const polylines = this.branches && this.branches.length ? this.branches : [this.points()];
     let sum = 0;
-    for (let i = 1; i < pts.length; i++) sum += Math.abs(pts[i].x - pts[i - 1].x) + Math.abs(pts[i].y - pts[i - 1].y);
+    for (const pts of polylines) {
+      for (let i = 1; i < pts.length; i++) sum += Math.abs(pts[i].x - pts[i - 1].x) + Math.abs(pts[i].y - pts[i - 1].y);
+    }
     return sum;
   }
 
@@ -332,6 +363,7 @@ export class Net {
       terminals: this.terminals.map((t) => ({ ...t })),
       route: this.route ? this.route.map((p) => ({ ...p })) : null,
       junctions: this.junctions.map((p) => ({ ...p })),
+      branches: this.branches ? this.branches.map((b) => b.map((p) => ({ ...p }))) : null,
     };
   }
 }
@@ -476,6 +508,37 @@ export class Circuit {
   }
 
   // ----- connectivity -------------------------------------------------
+
+  /** Outward pin direction honoring the terminal's explicit `dir` (via the
+   *  transform), falling back to the bbox-centre heuristic — matches the editor. */
+  _pinDir(c, t, wx, wy) {
+    if (t.dir) {
+      const d = applyDir(c.transform, t.dir.x, t.dir.y);
+      if (d.x !== 0 || d.y !== 0) return d;
+    }
+    const r = c.bboxWorld();
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    const ndx = r.w === 0 ? 0 : (wx - cx) / (r.w / 2);
+    const ndy = r.h === 0 ? 0 : (wy - cy) / (r.h / 2);
+    if (Math.abs(ndx) >= Math.abs(ndy)) return { x: Math.sign(ndx), y: 0 };
+    return { x: 0, y: Math.sign(ndy) };
+  }
+
+  /** Routing environment for a net's default route: component bboxes + pins. */
+  _netEnv() {
+    const rects = [];
+    const pins = new Map();
+    for (const c of this.components.values()) {
+      if (c.type === 'solder') continue;
+      rects.push(c.bboxWorld());
+      for (const t of c.def.terminals) {
+        const w = c.terminalWorld(t.name);
+        pins.set(`${w.x},${w.y}`, this._pinDir(c, t, w.x, w.y));
+      }
+    }
+    return { rects, pins, wires: [] };
+  }
 
   resolveTerm(ref) {
     const { comp, term } = typeof ref === 'string' ? parseTermRef(ref) : ref;
@@ -632,7 +695,7 @@ export class Circuit {
     for (const c of this.components.values()) rects.push(c.bboxWorld());
     for (const label of this.labels.values()) rects.push(label.bbox());
     for (const net of this.nets.values()) {
-      const pts = net.points();
+      const pts = net.pathPoints();
       if (pts.length) rects.push(rectFromPoints(pts));
     }
     if (rects.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
@@ -674,6 +737,7 @@ export class Circuit {
       for (const t of n.terminals) net.terminals.push(t);
       net.route = n.route || null;
       if (Array.isArray(n.junctions)) net.junctions = n.junctions.map((p) => ({ x: p.x, y: p.y }));
+      if (Array.isArray(n.branches)) net.branches = n.branches.map((b) => b.map((p) => ({ x: p.x, y: p.y })));
     }
     for (const l of data.labels || []) {
       const label = circuit.addLabel({

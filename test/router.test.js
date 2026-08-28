@@ -135,18 +135,33 @@ test('smartRoute detours around an in-line blocker over the clean top channel', 
     pin(480, 0, -1, 0), pin(600, 0, 1, 0),
   ];
   const pts = runRobots({ x: 240, y: 0 }, { x: 760, y: 0 }, rects, pins);
-  // Pin-conformant route: each pin leaves one cell outward (left/right) before
-  // bending over the blockers, so the wire never touches the bodies.
+  // Pin-conformant and clearance-keeping: each pin leaves one cell outward
+  // (left/right) before bending; the crossing row sits one full grid cell clear
+  // of the blocker bodies (y=-80) rather than hugging their y=-40 top edge.
   assert.deepEqual(pts, [
     { x: 240, y: 0 },
     { x: 200, y: 0 },
-    { x: 200, y: -40 },
-    { x: 800, y: -40 },
+    { x: 200, y: -80 },
+    { x: 800, y: -80 },
     { x: 800, y: 0 },
     { x: 760, y: 0 },
   ]);
   for (const rect of rects) {
     for (let i = 1; i < pts.length; i++) assert.equal(segThroughInterior(pts[i - 1], pts[i], rect), false);
+  }
+  // every body segment keeps at least one grid cell of clearance
+  for (const rect of rects) {
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+      const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+      const dx = x0 > rect.x + rect.w ? x0 - (rect.x + rect.w) : x1 < rect.x ? rect.x - x1 : 0;
+      const dy = y0 > rect.y + rect.h ? y0 - (rect.y + rect.h) : y1 < rect.y ? rect.y - y1 : 0;
+      const d = Math.hypot(dx, dy);
+      if (i === 1 || i === pts.length - 1) continue; // pin legs exempt
+      assert.ok(d >= 40, `segment ${i} keeps >=1 cell clearance (${d})`);
+    }
   }
   allOnGrid(pts);
 });

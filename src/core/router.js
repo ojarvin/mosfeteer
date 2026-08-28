@@ -205,7 +205,8 @@ export function segThroughInterior(a, b, r) {
 //   wires   [[{x,y},...]]          existing net polylines (avoid crossing)
 // }
 // Preference order (lexicographic): fewest bbox interiors crossed, fewest
-// other-wire crossings, fewest collinear overlaps, best straight-on pin access,
+// other-wire crossings, fewest collinear overlaps, most clearance (>= 1 grid
+// cell from every body, barring the pin legs), best straight-on pin access,
 // fewest bends, then shortest.
 // ---------------------------------------------------------------------------
 
@@ -268,6 +269,38 @@ function axisOf(seg) {
     : { x: Math.sign(seg[1].x - seg[0].x), y: 0 };
 }
 
+/** Distance from an axis-aligned segment to a rect (0 when they intersect or
+ *  touch). Used to keep wires at least one grid cell clear of component bodies. */
+function segRectDist(a, b, r) {
+  const x0 = Math.min(a.x, b.x);
+  const x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const y1 = Math.max(a.y, b.y);
+  const dx = x0 > r.x + r.w ? x0 - (r.x + r.w) : x1 < r.x ? r.x - x1 : 0;
+  const dy = y0 > r.y + r.h ? y0 - (r.y + r.h) : y1 < r.y ? r.y - y1 : 0;
+  return Math.hypot(dx, dy);
+}
+
+/** Number of body segments that pass within a grid cell of a component bbox
+ *  (excluding the two pin-connected segments, which must touch their pins). The
+ *  router prefers routes with full clearance, even if they take a longer way
+ *  around. */
+function clearanceScore(pts, env) {
+  let n = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (i === 1 || i === pts.length - 1) continue;
+    const a = pts[i - 1];
+    const b = pts[i];
+    for (const r of env.rects || []) {
+      if (segRectDist(a, b, r) < STEP) {
+        n++;
+        break;
+      }
+    }
+  }
+  return n;
+}
+
 /** 0 = aligned with the outward direction, 1 = perpendicular, 2 = inward. */
 function dirScore(dx, dy, dir) {
   if (!dir) return 0;
@@ -312,7 +345,7 @@ function cmpScore(a, b) {
 
 function scoreCandidate(pts, env) {
   const { cross, overlap } = wireConflicts(pts, env);
-  return [bboxCrossings(pts, env), cross, overlap, conformScore(pts, env), Math.max(0, pts.length - 2), routeLength(pts)];
+  return [bboxCrossings(pts, env), cross, overlap, clearanceScore(pts, env), conformScore(pts, env), Math.max(0, pts.length - 2), routeLength(pts)];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */

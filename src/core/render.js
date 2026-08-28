@@ -129,7 +129,11 @@ export function svgString(circuit, opts = {}) {
 
   // Nets first so components draw on top of wire ends.
   for (const net of circuit.nets.values()) {
-    const paths = !net.route && net.terminals.length >= 3 ? balancedPaths(net.terminalWorlds()) : [net.points()];
+    const paths = net.branches
+      ? net.branches
+      : !net.route && net.terminals.length >= 3
+        ? balancedPaths(net.terminalWorlds())
+        : [net.points()];
     for (const pts of paths) {
       if (pts.length < 2) continue;
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');

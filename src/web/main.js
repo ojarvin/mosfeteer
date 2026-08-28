@@ -826,6 +826,7 @@ function rerouteNet(net) {
   const anchors = net.anchorWorlds();
   if (anchors.length < 2) {
     net.route = null;
+    net.branches = null;
     return;
   }
   // Nets with mid-wire junctions are walked through every anchor (terminals +
@@ -837,11 +838,15 @@ function rerouteNet(net) {
       const seg = smartRoute(path[path.length - 1], anchors[i], env);
       if (seg && seg.length >= 2) for (let k = 1; k < seg.length; k++) path.push({ ...seg[k] });
     }
-    net.route = collapseCollinear(path);
+    collapseCollinear(path);
+    net.route = path.slice();
+    net.branches = [net.route.slice()];
   } else if (anchors.length === 2) {
     net.route = smartRoute(anchors[0], anchors[1], env);
+    net.branches = null;
   } else {
     net.route = balancedRoute(anchors, env);
+    net.branches = null;
   }
 }
 
@@ -995,18 +1000,20 @@ function joinWireToNet(wireHit) {
   for (const t of targetNet.terminals) sourceNet.terminals.push(t);
   circuit.nets.delete(targetNet.id);
   sourceNet.junctions.push(P);
-  // Route: the draft from the source terminal through the built points into P,
-  // then a walk of the target wire that covers both halves from P (so every
-  // terminal stays on the drawn wire).
+  // The joined net is a multi-way tree, stored as explicit branches:
+  //   - the draft from the source terminal through the built points into P
+  //   - each half of the target wire away from the junction P
+  // This keeps every terminal on a drawn branch without a backtracking walk.
   const srcTerm = circuit.components.get(src.refdes).terminalWorld(src.term);
   const draft = [srcTerm, ...wire.points.map((p) => ({ x: snap(p.x), y: snap(p.y) })), P];
   const draftPath = orthogonalize(draft);
   collapseCollinear(draftPath);
-  // The walk traces BOTH halves of the target wire from the junction P (a
-  // backtracking polyline — its collinear vertices must NOT be collapsed, or a
-  // far side of the target would disappear).
-  const walk = [P, ...route.slice(k + 1), ...route.slice(0, k + 1)];
-  sourceNet.route = [...draftPath, ...walk];
+  const halfA = [P, ...route.slice(k + 1)];
+  const halfB = [P, ...route.slice(0, k + 1)];
+  sourceNet.route = draftPath;
+  sourceNet.branches = [draftPath, halfA, halfB];
+  // The merged net is a wire junction — give it a real (persistent) solder dot.
+  circuit.addComponent('solder', { x: P.x, y: P.y });
   // The merged net is a wire junction — give it a real (persistent) solder dot.
   circuit.addComponent('solder', { x: P.x, y: P.y });
   history.push(before);

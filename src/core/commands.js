@@ -36,6 +36,7 @@ function routeNet(circuit, net) {
       if (seg && seg.length >= 2) for (let k = 1; k < seg.length; k++) path.push({ ...seg[k] });
     }
     net.route = path;
+    net.branches = [path.map((p) => ({ ...p }))];
   } else if (anchors.length === 2) {
     net.route = smartRoute(anchors[0], anchors[1], env);
   } else {
@@ -199,7 +200,7 @@ export function evaluate(circuit) {
   // its own body too, while allowing wires that hug the boundary line.
   const boxViolations = [];
   for (const net of circuit.nets.values()) {
-    const pts = net.points();
+    const pts = net.pathPoints();
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1];
       const b = pts[i];

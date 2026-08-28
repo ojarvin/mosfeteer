@@ -242,16 +242,18 @@ test('net.points routes between terminals', () => {
   }
 });
 
-test('net.length is manhattan length', () => {
+test('net.length is the manhattan length of its routed polyline', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor');
+  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
   const r2 = c.addComponent('resistor', { x: 0, y: 120 });
   const net = c.connect(`${r1.refdes}.b`, `${r2.refdes}.a`);
-  const len = net.length();
-  const manhattan = (r1.terminalWorld('b').x - r2.terminalWorld('a').x) +
-    (r2.terminalWorld('a').y - r1.terminalWorld('b').y);
-  assert.equal(len, manhattan);
-  assert.ok(len > 0);
+  const pts = net.points();
+  assert.deepEqual(pts[0], { x: 160, y: 0 });
+  assert.deepEqual(pts[pts.length - 1], { x: 0, y: 120 });
+  let sum = 0;
+  for (let i = 1; i < pts.length; i++) sum += Math.abs(pts[i].x - pts[i - 1].x) + Math.abs(pts[i].y - pts[i - 1].y);
+  assert.equal(net.length(), sum);
+  assert.ok(net.length() > 0);
 });
 
 test('empty circuit bounds is zero', () => {
