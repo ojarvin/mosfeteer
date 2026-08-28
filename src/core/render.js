@@ -231,6 +231,15 @@ export function editorOverlay(circuit, opts = {}) {
     if (c) parts.push(halo(c.bboxWorld()));
   }
 
+  // Components carrying a terminal on a highlighted net (ports, grounds,
+  // supplies, devices) get the same halo so the net's parts stand out.
+  if (opts.netComps && opts.netComps.length) {
+    for (const ref of opts.netComps) {
+      const c = circuit.components.get(ref);
+      if (c && !(opts.selection || []).includes(ref)) parts.push(halo(c.bboxWorld()));
+    }
+  }
+
   if (opts.selLabels && opts.selLabels.length) {
     for (const id of opts.selLabels) {
       const label = circuit.labels.get(id);

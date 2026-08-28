@@ -4,8 +4,9 @@
  * Modes:
  *   NORMAL   h/j/k/l move (selected comp or cursor), r/R rotate, x/X mirror,
  *            dd delete, yy/p copy-paste, w persistent wire mode, Tab cycle, Enter select-at-cursor,
- *            u/Ctrl-Z undo, U/Ctrl-Y/Ctrl-R redo, i insert, ':' ex-mode, ? keymap.
- *   INSERT   letters place components at the cursor, arrows move cursor, Esc back.
+ *            u/Ctrl-Z undo, U/Ctrl-Y/Ctrl-R redo, v visual mode, i insert (fuzzy search), ':' ex-mode, ? keymap.
+ *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
+ *   VISUAL   hjkl grows a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
 
@@ -54,6 +55,8 @@ let selLabel = null; // primary id of the selected label object (exclusive with 
 let selLabels = new Set(); // all selected label ids (always includes selLabel if any)
 let selectedNets = new Set(); // ids of highlighted nets
 let cursor = { x: 0, y: 0 };
+let visual = null; // visual mode: anchor grid point {x,y} the selection box starts from
+let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
 let counts = 0;
 let pendingKey = null; // { key, at } for yy / dd chords
@@ -640,6 +643,12 @@ function renderCanvas() {
     viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
   });
   const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
+  // Every component that carries a terminal on a highlighted net gets a halo too,
+  // so ports, grounds and supplies belonging to the net stand out.
+  const netComps = new Set();
+  for (const net of nets) {
+    for (const t of net.terminals) netComps.add(t.comp);
+  }
   const ghost =
     mode === 'insert' && pendingPlace
       ? pendingPlace.kind === 'label'
@@ -666,7 +675,12 @@ function renderCanvas() {
     selLabel,
     selLabels: [...selLabels],
     nets,
-    rubber: drag && drag.rubber ? drag.rubber : undefined,
+    netComps: [...netComps],
+    rubber: visual
+      ? { x0: Math.min(visual.x, cursor.x), y0: Math.min(visual.y, cursor.y), x1: Math.max(visual.x, cursor.x), y1: Math.max(visual.y, cursor.y), color: '#2e7d32' }
+      : drag && drag.rubber
+        ? drag.rubber
+        : undefined,
     wirePreview,
     wireMode: !!wire,
     wireSource: wire && wire.source ? { ...wire.source } : undefined,
@@ -679,10 +693,21 @@ function renderCanvas() {
 
 // ----- mouse ------------------------------------------------------------
 
-const DRAG_THRESH = 4; // px before a press becomes a drag
+const DRAG_THRESH = 6; // px before a press becomes a drag
 let drag = null;
 let inlineInput = null; // the active inline-edit <input>, if any
 let lastLabelClick = null; // { id, x, y, at } of the previous label click (for double-click fallback)
+
+/** Abort an in-progress mouse drag. A cancelled wire run is restored to its
+ *  pre-drag polyline so nothing is left half-edited. */
+function cancelDrag() {
+  if (drag && drag.mode === 'wireseg') {
+    if (drag.hadRoute) drag.net.route = drag.orig.map((p) => ({ ...p }));
+    else drag.net.route = null;
+  }
+  drag = null;
+  render();
+}
 
 /** Convert client (pane-relative) coordinates to world, using `refView` for the
  *  mapping. During a pan/zoom drag the reference must be the view captured at
@@ -712,6 +737,37 @@ function worldRect(a, b) {
 
 function rectOverlap(r, box) {
   return r.x < box.x1 && box.x0 < r.x + r.w && r.y < box.y1 && box.y0 < r.y + r.h;
+}
+
+/** Select everything inside a world box (components by bbox, labels by bbox,
+ *  nets by route). With `shift` the box adds to the current selection. Shared
+ *  by the mouse marquee and visual-mode Enter. */
+function applyBoxSelection(x0, y0, x1, y1, shift) {
+  const box = worldRect({ x: x0, y: y0 }, { x: x1, y: y1 });
+  const found = [];
+  for (const c of circuit.components.values()) {
+    if (rectOverlap(c.bboxWorld(), box)) found.push(c.refdes);
+  }
+  const foundLabels = [];
+  for (const label of circuit.labels.values()) {
+    if (rectOverlap(label.bbox(), box)) foundLabels.push(label.id);
+  }
+  const nets = [];
+  for (const net of circuit.nets.values()) {
+    if (netInBox(net, box)) nets.push(net.id);
+  }
+  if (shift) {
+    const set = new Set(multi);
+    for (const r of found) set.add(r);
+    setSelection([...set]);
+    const labSet = new Set(selLabels);
+    for (const id of foundLabels) labSet.add(id);
+    setLabelSelection([...labSet]);
+  } else {
+    setSelection(found);
+    setLabelSelection(foundLabels);
+  }
+  selectedNets = new Set(nets);
 }
 
 function pickAt(w) {
@@ -1353,7 +1409,8 @@ function canvasMouseDown(ev) {
   if (wireHit) {
     const net = wireHit.net;
     // The run is found from the drawn route, materialized into a local array so
-    // a plain click never mutates the net — only an actual drag attaches a route.
+    // a plain click never mutates the net — only an actual drag attaches a route
+    // (and Escape restores `orig`).
     const pts = net.route && net.route.length >= 2 ? net.route : net.points().slice();
     const run = wireRunAt(pts, wireHit.seg);
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
@@ -1361,6 +1418,9 @@ function canvasMouseDown(ev) {
       mode: 'wireseg',
       net,
       pts,
+      orig: pts.map((p) => ({ ...p })),
+      hadRoute: !!(net.route && net.route.length >= 2),
+      startSnapshot: snapshot(),
       orient: run.orient,
       line: run.val,
       startAxis: run.orient === 'h' ? startWorld.y : startWorld.x,
@@ -1427,11 +1487,8 @@ function canvasMouseMove(ev) {
       cursor = { x: snap(w.x), y: snap(w.y) };
       if (!drag.committed) {
         drag.committed = true;
-        history.push(snapshot());
-        if (history.length > 200) history.shift();
-        future.length = 0;
-        // A drag owns the route: attach the working array so edits stick (a
-        // plain click never reaches this point, so the net stays untouched).
+        // A drag owns the route: attach the working array so live edits render
+        // (a plain click never reaches this point, so the net stays untouched).
         drag.net.route = drag.pts;
       }
       const axis = drag.orient === 'h' ? w.y : w.x;
@@ -1520,34 +1577,14 @@ function canvasMouseUp(ev) {
       render();
       return;
     }
-    // dragging moved the route; record the committed state already handled in move
+    // The drag re-routed the run live; record it as one undo step.
+    history.push(drag.startSnapshot);
+    if (history.length > 200) history.shift();
+    future.length = 0;
   } else if (drag.mode === 'marquee') {
     if (drag.moved) {
       const box = worldRect(drag.startWorld, w);
-      const found = [];
-      for (const c of circuit.components.values()) {
-        if (rectOverlap(c.bboxWorld(), box)) found.push(c.refdes);
-      }
-      const foundLabels = [];
-      for (const label of circuit.labels.values()) {
-        if (rectOverlap(label.bbox(), box)) foundLabels.push(label.id);
-      }
-      const nets = [];
-      for (const net of circuit.nets.values()) {
-        if (netInBox(net, box)) nets.push(net.id);
-      }
-      if (ev.shiftKey) {
-        const set = new Set(drag.startSelection);
-        for (const r of found) set.add(r);
-        setSelection([...set]);
-        const labSet = new Set(drag.startLabelSelection || []);
-        for (const id of foundLabels) labSet.add(id);
-        setLabelSelection([...labSet]);
-      } else {
-        setSelection(found);
-        setLabelSelection(foundLabels);
-      }
-      selectedNets = new Set(nets);
+      applyBoxSelection(box.x0, box.y0, box.x1, box.y1, ev.shiftKey);
     }
   } else if (drag.mode === 'wirepick') {
     if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit);
@@ -1707,6 +1744,7 @@ function renderNets() {
     const ref = document.createElement('span');
     ref.className = 'ref';
     ref.textContent = net.name || net.id;
+    ref.title = 'Double-click to rename';
 
     const meta = document.createElement('span');
     meta.className = 'meta';
@@ -1720,6 +1758,38 @@ function renderNets() {
       const pt = net.points()[Math.floor(net.points().length / 2)];
       if (pt) cursor = { x: pt.x, y: pt.y };
       render();
+    });
+
+    row.addEventListener('dblclick', () => {
+      selectedNets = new Set([net.id]);
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'rename-input';
+      input.value = net.name || '';
+      input.placeholder = net.id;
+      input.spellcheck = false;
+      ref.replaceWith(input);
+      input.focus();
+      input.select();
+      let closed = false;
+      const done = (applyText) => {
+        if (closed) return;
+        closed = true;
+        const v = input.value.trim();
+        input.replaceWith(ref);
+        if (applyText && v && v !== net.name) {
+          commit(() => {
+            net.name = v;
+          });
+        }
+        render();
+      };
+      input.addEventListener('keydown', (ev) => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') done(true);
+        else if (ev.key === 'Escape') done(false);
+      });
+      input.addEventListener('blur', () => done(true));
     });
 
     netsListEl.appendChild(row);
@@ -1880,18 +1950,34 @@ const PLACEMENT = {
 
 const PLACEMENT_BY_TYPE = new Map(Object.entries(PLACEMENT).map(([key, type]) => [type, key]));
 
-const INSERT_MOVE = {
-  h: [-1, 0],
-  j: [0, 1],
-  k: [0, -1],
-  l: [1, 0],
-  ArrowLeft: [-1, 0],
-  ArrowDown: [0, 1],
-  ArrowUp: [0, -1],
-  ArrowRight: [1, 0],
-};
+/** Rank a component/label name against a fuzzy query (subsequence match).
+ *  Returns a score >= 0 for a match (higher = better) or -1 for no match.
+ *  Prefix hits beat substring hits, which beat pure subsequences; shorter
+ *  names win ties. */
+function fuzzyScore(q, name) {
+  const s = String(name).toLowerCase();
+  const query = String(q).toLowerCase();
+  if (!query) return 0;
+  if (s.startsWith(query)) return 100 - s.length;
+  if (s.includes(query)) return 80 - s.length;
+  let i = 0;
+  for (const ch of s) {
+    if (ch === query[i]) i++;
+    if (i === query.length) return 60 - s.length;
+  }
+  return -1;
+}
 
 function onInsertKey(key) {
+  // Arrow keys move the cursor; all other printable keys go into the fuzzy
+  // search query (hjkl are NOT cursor keys here — you type them).
+  const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
+  if (arrow) {
+    moveCursor(arrow[0], arrow[1]);
+    render();
+    return;
+  }
+
   // With a ghost selected, R/X rotate/mirror the about-to-be-placed component.
   if (pendingPlace && pendingPlace.kind === 'component' && (key === 'r' || key === 'R')) {
     pendingPlace.rotation = (((pendingPlace.rotation || 0) + (key === 'r' ? 90 : -90)) % 360 + 360) % 360;
@@ -1905,27 +1991,76 @@ function onInsertKey(key) {
     return;
   }
 
-  // Placement keys select a ghost (follows the cursor; click/Enter commits).
-  if (key === 't') {
-    pendingPlace = { kind: 'label' };
-    render();
-  } else if (PLACEMENT[key]) {
-    pendingPlace = { kind: 'component', type: PLACEMENT[key], rotation: 0, mirrorX: null, mirrorY: null };
-    render();
-  } else if (key === 'Enter') {
-    if (pendingPlace) {
+  // A placement ghost is pending: Enter/click commits it; Esc drops it back to
+  // the search picker so a different component can be typed.
+  if (pendingPlace) {
+    if (key === 'Enter') {
       placePending();
+    } else if (key === 'Escape' || key === 'Backspace') {
+      pendingPlace = null;
+      insertQuery = '';
+      render();
     }
-  } else if (INSERT_MOVE[key]) {
-    moveCursor(INSERT_MOVE[key][0], INSERT_MOVE[key][1]);
+    return;
+  }
+
+  // Fuzzy search picker (no ghost): type to filter, Enter picks the best match.
+  if (key === 'Enter') {
+    const entries = insertMenuEntries();
+    if (insertQuery && entries.length) {
+      const [, type] = entries[0];
+      pendingPlace = type === 'label' ? { kind: 'label' } : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null };
+      insertQuery = '';
+      render();
+    }
+    return;
+  }
+  if (key === 'Escape') {
+    mode = 'normal';
+    insertQuery = '';
     render();
-  } else if (key === 'Escape') {
-    if (pendingPlace) pendingPlace = null; // back to the component-selection menu
-    else mode = 'normal';
+    return;
+  }
+  if (key === 'Backspace') {
+    insertQuery = insertQuery.slice(0, -1);
     render();
-  } else if (key === 'Backspace') {
-    if (pendingPlace) pendingPlace = null; // back to the component-selection menu
+    return;
+  }
+  if (key.length === 1) {
+    insertQuery += key;
     render();
+    return;
+  }
+}
+
+/** Visual mode: hjkl moves the cursor to grow a selection box; Enter commits
+ *  the box selection and leaves visual mode, Escape cancels without selecting. */
+function onVisualKey(key) {
+  const move = {
+    h: [-1, 0],
+    j: [0, 1],
+    k: [0, -1],
+    l: [1, 0],
+    ArrowLeft: [-1, 0],
+    ArrowDown: [0, 1],
+    ArrowUp: [0, -1],
+    ArrowRight: [1, 0],
+  }[key];
+  if (move) {
+    moveCursor(move[0], move[1]);
+    render();
+    return;
+  }
+  if (key === 'Enter') {
+    applyBoxSelection(visual.x, visual.y, cursor.x, cursor.y, false);
+    visual = null;
+    render();
+    return;
+  }
+  if (key === 'Escape' || key === 'v') {
+    visual = null;
+    render();
+    return;
   }
 }
 
@@ -2068,6 +2203,15 @@ function onNormalKey(key) {
     return;
   }
 
+  if (key === 'v') {
+    // Visual mode: the box grows from the cursor as you move with hjkl; Enter
+    // commits the box selection (like a marquee), Esc cancels.
+    visual = { x: cursor.x, y: cursor.y };
+    selectedNets.clear();
+    render();
+    return;
+  }
+
   if (key === 'i' || key === 'I' || key === 'A') {
     mode = 'insert';
     pendingPlace = null;
@@ -2142,21 +2286,17 @@ function logKeymap() {
       'u / C-z     undo    U / C-y / C-r  redo',
       'F / f       fit view to contents',
       'Esc         deselect everything',
-      'i           insert mode (place components & labels)',
+      'v           visual mode: hjkl grows a box · Enter selects · Esc cancels',
+      'i           insert mode (fuzzy-search component & label placement)',
       ':           ex-mode command line (e.g. :connect R1.a R2.a)',
       '?           this help',
       '-- insert --',
-      'h j k l     move cursor between placements (vim home row)',
-      'r c L d     resistor capacitor inductor diode',
-      'n p N P     nmos pmos npn pnp',
-      'i v C       current src · voltage src · current sink',
-      'g s         ground supply',
-      'u A b       opamp · AND gate · buffer',
-      'I o O       input output inout-io',
-      'x X a t     switch open · switch closed · solder · label',
-      '(more components in the insert menu next to the cursor)',
+      'type        fuzzy-search component names (e.g. nmos, curr, sw, output)',
+      'Enter       pick the best match as a placement ghost',
       'Enter/click place ghost at cursor · R/X rotate/mirror ghost',
-      'Esc/Backspace  cancel ghost (back to menu)   Esc exits insert',
+      'arrows      move cursor between placements',
+      'Backspace   edit the search string',
+      'Esc/Backspace  cancel ghost (back to search)   Esc exits insert',
       'arrows      also move cursor',
       '-- labels --',
       't (insert)  place a label (double-click to edit text)',
@@ -2224,9 +2364,12 @@ function renderStatus() {
     : comp
       ? `${comp.refdes}${multi.size > 1 ? ` +${multi.size - 1}` : ''}`
       : '-';
-  const parts = [mode === 'insert' ? 'INSERT' : 'NORMAL', `sel ${sel}`, `@${cursor.x},${cursor.y}`];
+  const parts = [visual ? 'VISUAL' : mode === 'insert' ? 'INSERT' : 'NORMAL', `sel ${sel}`, `@${cursor.x},${cursor.y}`];
+  if (visual) {
+    parts.push('box from cursor · hjkl grow · Enter select · Esc cancel');
+  }
   if (mode === 'insert') {
-    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · R/X · Esc cancel` : 'pick r c L d n p N P g s x X i o O a · t label');
+    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · R/X · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type to filter · Esc exit');
   }
   if (wire) {
     parts.push(
@@ -2249,12 +2392,16 @@ function renderStatus() {
 // cursor. `pointer-events: none` keeps it from intercepting clicks/drags.
 let insertMenu = null;
 // Every registered symbol type appears in the menu; the hotkey column shows the
-// assigned key (blank when none) so new components surface automatically.
+// assigned key (blank when none) so new components surface automatically. The
+// list is fuzzy-filtered by the live `insertQuery` while typing.
 function insertMenuEntries() {
-  return [
-    ...symbolTypeNames.map((type) => [PLACEMENT_BY_TYPE.get(type) || '', type]),
-    ['t', 'label'],
-  ];
+  const all = [...symbolTypeNames.map((type) => [PLACEMENT_BY_TYPE.get(type) || '', type]), ['', 'label']];
+  if (!insertQuery) return all;
+  return all
+    .map(([key, type]) => [key, type, fuzzyScore(insertQuery, type)])
+    .filter(([, , score]) => score >= 0)
+    .sort((a, b) => b[2] - a[2] || a[1].localeCompare(b[1]))
+    .map(([key, type]) => [key, type]);
 }
 
 function updateInsertMenu() {
@@ -2269,28 +2416,33 @@ function updateInsertMenu() {
     insertMenu = document.createElement('div');
     insertMenu.id = 'insert-menu';
     insertMenu.className = 'insert-menu';
-    insertMenu._entries = insertMenuEntries();
-    for (const [key, type] of insertMenu._entries) {
-      const item = document.createElement('div');
-      item.className = 'insert-menu-item';
-      const kbd = document.createElement('span');
-      kbd.className = 'insert-menu-key';
-      kbd.textContent = key || '·';
-      const name = document.createElement('span');
-      name.textContent = type;
-      item.appendChild(kbd);
-      item.appendChild(name);
-      insertMenu.appendChild(item);
-    }
     document.body.appendChild(insertMenu);
   }
-  // Highlight the currently selected ghost, if any.
-  const entries = insertMenu._entries;
-  for (let i = 0; i < entries.length; i++) {
-    const [key, type] = entries[i];
-    const item = insertMenu.children[i];
-    const active = pendingPlace ? (pendingPlace.kind === 'label' ? type === 'label' : pendingPlace.type === type) : false;
-    item.classList.toggle('active', active);
+  // Rebuild the entries every render so the live query filter is reflected.
+  insertMenu.textContent = '';
+  const query = document.createElement('div');
+  query.className = 'insert-menu-query';
+  query.textContent = insertQuery ? `~ ${insertQuery}` : 'type to filter…';
+  insertMenu.appendChild(query);
+  const entries = insertMenuEntries();
+  insertMenu._entries = entries;
+  if (!entries.length) {
+    const none = document.createElement('div');
+    none.className = 'insert-menu-none';
+    none.textContent = 'no match';
+    insertMenu.appendChild(none);
+  }
+  for (const [key, type] of entries) {
+    const item = document.createElement('div');
+    item.className = 'insert-menu-item';
+    const kbd = document.createElement('span');
+    kbd.className = 'insert-menu-key';
+    kbd.textContent = key || '·';
+    const name = document.createElement('span');
+    name.textContent = type;
+    item.appendChild(kbd);
+    item.appendChild(name);
+    insertMenu.appendChild(item);
   }
   const p = worldToClient(cursor.x, cursor.y);
   insertMenu.style.display = 'block';
@@ -2394,6 +2546,13 @@ window.addEventListener('keydown', (ev) => {
   const key = ev.key;
   if (key.startsWith('F') && /^F\d+$/.test(key)) return;
 
+  // Escape cancels an in-progress mouse drag (e.g. a stuck wire re-route).
+  if (key === 'Escape' && drag) {
+    ev.preventDefault();
+    cancelDrag();
+    return;
+  }
+
   // Shift+Left/Right set a selected label's alignment (cycle through center).
   if (ev.shiftKey && !wire && mode === 'normal' && (key === 'ArrowLeft' || key === 'ArrowRight')) {
     const lab = selectedLabel();
@@ -2410,6 +2569,8 @@ window.addEventListener('keydown', (ev) => {
     onWireKey(key);
   } else if (mode === 'insert') {
     onInsertKey(key);
+  } else if (visual) {
+    onVisualKey(key);
   } else {
     onNormalKey(key);
   }

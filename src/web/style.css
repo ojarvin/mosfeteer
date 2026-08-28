@@ -220,6 +220,19 @@ button:active {
   min-width: 56px;
 }
 
+.row .rename-input {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 4px;
+  min-width: 80px;
+  outline: none;
+}
+
 .row .meta {
   color: var(--text-dim);
   font-size: 12px;
@@ -389,6 +402,22 @@ button:active {
   padding: 4px 8px;
   border-radius: 5px;
   white-space: nowrap;
+}
+
+.insert-menu-query {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-weight: 700;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+  padding: 2px 6px 6px;
+  white-space: nowrap;
+}
+
+.insert-menu-none {
+  color: var(--text-dim);
+  padding: 4px 8px;
+  font-style: italic;
 }
 
 .insert-menu-item.active {
