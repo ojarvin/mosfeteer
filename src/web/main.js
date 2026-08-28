@@ -47,7 +47,8 @@ let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
 let selected = null; // primary refdes
 let multi = new Set(); // all selected component refdes (always includes selected)
-let selLabel = null; // id of the selected label object (exclusive with component selection)
+let selLabel = null; // primary id of the selected label object (exclusive with component selection)
+let selLabels = new Set(); // all selected label ids (always includes selLabel if any)
 let selectedNets = new Set(); // ids of highlighted nets
 let cursor = { x: 0, y: 0 };
 let wire = null; // { source: {refdes, term} | null }
@@ -119,6 +120,7 @@ function applyJson(blob) {
   if (selected && !circuit.components.has(selected)) selected = null;
   multi = new Set([...multi].filter((r) => circuit.components.has(r)));
   if (selLabel && !circuit.labels.has(selLabel)) selLabel = null;
+  selLabels = new Set([...selLabels].filter((id) => circuit.labels.has(id)));
   selectedNets.clear();
 }
 
@@ -171,6 +173,17 @@ function setSelection(refs, primary = refs[0]) {
   selected = refs.length ? (refs.includes(primary) ? primary : refs[0]) : null;
   if (selected && !circuit.components.has(selected)) selected = null;
   selLabel = null;
+  selLabels.clear();
+}
+
+/** Replace the label selection. `primary` defaults to the first element. */
+function setLabelSelection(ids, primary = ids[0]) {
+  selLabels = new Set(ids);
+  selLabel = ids.length ? (ids.includes(primary) ? primary : ids[0]) : null;
+}
+
+function selectedLabels() {
+  return [...selLabels].map((id) => circuit.labels.get(id)).filter(Boolean);
 }
 
 function selectedLabel() {
@@ -334,13 +347,15 @@ function placeAtCursor(type) {
   }
 }
 
-/** Place a dedicated label object at the cursor (anchor = cursor). */
+/** Place a dedicated label object at the cursor (anchor = cursor), then open the inline editor. */
 function placeLabelAtCursor(text = 'label') {
   try {
     const label = circuit.addLabel({ text, x: cursor.x, y: cursor.y, align: 'center' });
     setSelection([]);
-    selLabel = label.id;
-    logLine(`placed label "${label.text}" @ (${label.anchor.x},${label.anchor.y}); double-click to edit`);
+    setLabelSelection([label.id]);
+    logLine(`placed label "${label.text}" @ (${label.anchor.x},${label.anchor.y})`);
+    render();
+    inlineEditLabel(label);
   } catch (err) {
     logLine(`Error placing label: ${err.message}`);
   }
@@ -384,6 +399,7 @@ function renderCanvas() {
     cursor,
     selection: [...multi],
     selLabel,
+    selLabels: [...selLabels],
     nets,
     rubber: drag && drag.rubber ? drag.rubber : undefined,
     wirePreview,
@@ -396,6 +412,7 @@ function renderCanvas() {
 
 const DRAG_THRESH = 4; // px before a press becomes a drag
 let drag = null;
+let inlineInput = null; // the active inline-edit <input>, if any
 
 /** Convert client (pane-relative) coordinates to world, using `refView` for the
  *  mapping. During a pan/zoom drag the reference must be the view captured at
@@ -675,14 +692,43 @@ function canvasMouseDown(ev) {
   if (labelHit) {
     const a = labelHit.anchorWorld();
     cursor = { x: snap(a.x), y: snap(a.y) };
+    // Second click of a double-click: open the inline editor right here. This
+    // is more reliable than waiting for the native `dblclick` event (which some
+    // environments/headless drivers never fire), and the guard in inlineEditLabel
+    // prevents a second input from the dblclick listener.
+    if (ev.detail >= 2) {
+      setSelection([]);
+      setLabelSelection([labelHit.id]);
+      render();
+      inlineEditLabel(labelHit);
+      return;
+    }
+    if (ev.shiftKey) {
+      if (selLabels.has(labelHit.id)) {
+        selLabels.delete(labelHit.id);
+        if (selLabel === labelHit.id) selLabel = selLabels.size ? [...selLabels][0] : null;
+      } else {
+        selLabels.add(labelHit.id);
+        if (!selLabel) selLabel = labelHit.id;
+      }
+      setSelection([]);
+      setLabelSelection([...selLabels]);
+      render();
+      return;
+    }
     setSelection([]);
-    selLabel = labelHit.id;
+    setLabelSelection([labelHit.id]);
+    const startAnchors = new Map();
+    for (const id of selLabels) {
+      const l = circuit.labels.get(id);
+      if (l) startAnchors.set(id, { x: l.anchorWorld().x, y: l.anchorWorld().y });
+    }
     drag = {
       mode: 'labelmove',
       labelId: labelHit.id,
       startClient,
       startWorld,
-      startAnchor: { x: a.x, y: a.y },
+      startAnchors,
       moved: false,
       committed: false,
       rubber: null,
@@ -751,7 +797,7 @@ function canvasMouseDown(ev) {
     setSelection([]);
     selectedNets.clear();
   }
-  drag = { mode: 'marquee', startClient, startWorld, startSelection: new Set(multi), moved: false, rubber: null };
+  drag = { mode: 'marquee', startClient, startWorld, startSelection: new Set(multi), startLabelSelection: new Set(selLabels), moved: false, rubber: null };
   render();
 }
 
@@ -815,12 +861,15 @@ if (drag.mode === 'labelmove') {
         if (history.length > 200) history.shift();
         future.length = 0;
       }
-      const label = circuit.labels.get(drag.labelId);
-      if (label) {
-        const dwx = w.x - drag.startWorld.x;
-        const dwy = w.y - drag.startWorld.y;
-        label.moveTo(drag.startAnchor.x + dwx, drag.startAnchor.y + dwy);
-        const a = label.anchorWorld();
+      const dwx = w.x - drag.startWorld.x;
+      const dwy = w.y - drag.startWorld.y;
+      for (const [id, sa] of drag.startAnchors) {
+        const label = circuit.labels.get(id);
+        if (label) label.moveTo(sa.x + dwx, sa.y + dwy);
+      }
+      const primary = circuit.labels.get(drag.labelId);
+      if (primary) {
+        const a = primary.anchorWorld();
         cursor = { x: a.x, y: a.y };
       }
     }
@@ -843,6 +892,7 @@ if (drag.mode === 'labelmove') {
         const c = circuit.components.get(r);
         if (c) circuit.moveComponent(r, snap(o.x + dwx), snap(o.y + dwy));
       }
+      rerouteAffected([...drag.origins.keys()]);
       cursor = { x: snap(drag.startCursor.x + dwx), y: snap(drag.startCursor.y + dwy) };
     }
     render();
@@ -875,6 +925,10 @@ function canvasMouseUp(ev) {
       for (const c of circuit.components.values()) {
         if (rectOverlap(c.bboxWorld(), box)) found.push(c.refdes);
       }
+      const foundLabels = [];
+      for (const label of circuit.labels.values()) {
+        if (rectOverlap(label.bbox(), box)) foundLabels.push(label.id);
+      }
       const nets = [];
       for (const net of circuit.nets.values()) {
         if (netInBox(net, box)) nets.push(net.id);
@@ -883,8 +937,12 @@ function canvasMouseUp(ev) {
         const set = new Set(drag.startSelection);
         for (const r of found) set.add(r);
         setSelection([...set]);
+        const labSet = new Set(drag.startLabelSelection || []);
+        for (const id of foundLabels) labSet.add(id);
+        setLabelSelection([...labSet]);
       } else {
         setSelection(found);
+        setLabelSelection(foundLabels);
       }
       selectedNets = new Set(nets);
     }
@@ -913,7 +971,7 @@ canvasEl.addEventListener('dblclick', (ev) => {
 
 /** Overlay an <input> on the label's anchor; Enter/blur commits, Escape cancels. */
 function inlineEditLabel(label) {
-  if (!label) return;
+  if (!label || inlineInput) return;
   const a = label.anchorWorld();
   const pane = document.querySelector('.canvas-pane');
   const r = pane.getBoundingClientRect();
@@ -925,12 +983,14 @@ function inlineEditLabel(label) {
   input.spellcheck = false;
   input.style.cssText = `position:absolute;left:${sx}px;top:${sy}px;transform:translate(-50%,-50%);z-index:30;font:12px sans-serif;padding:2px 4px;min-width:60px;`;
   document.body.appendChild(input);
+  inlineInput = input;
   input.focus();
   input.select();
   let closed = false;
   const done = (applyText) => {
     if (closed) return;
     closed = true;
+    inlineInput = null;
     const v = input.value.trim();
     input.remove();
     if (applyText && v && v !== label.text) {
@@ -1180,9 +1240,9 @@ const PLACEMENT = {
   L: 'inductor',
   d: 'diode',
   n: 'nmos',
-  P: 'pmos',
-  b: 'npn',
-  p: 'pnp',
+  p: 'pmos',
+  N: 'npn',
+  P: 'pnp',
   g: 'ground',
   s: 'supply',
   i: 'input',
@@ -1248,12 +1308,14 @@ function onNormalKey(key) {
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       cursor = { x: primary.transform.x, y: primary.transform.y };
     } else {
-      const lab = selectedLabel();
-      if (lab) {
+      const labs = selectedLabels();
+      if (labs.length) {
         const dx = nudgeKey[0] * count * 40;
         const dy = nudgeKey[1] * count * 40;
-        commit(() => lab.translate(dx, dy));
-        const a = lab.anchorWorld();
+        commit(() => {
+          for (const lab of labs) lab.translate(dx, dy);
+        });
+        const a = labs[0].anchorWorld();
         cursor = { x: a.x, y: a.y };
       } else {
         moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
@@ -1292,7 +1354,7 @@ function onNormalKey(key) {
       const a = lab.anchorWorld();
       cursor = { x: snap(a.x), y: snap(a.y) };
       setSelection([]);
-      selLabel = lab.id;
+      setLabelSelection([lab.id]);
       render();
       return;
     }
@@ -1325,10 +1387,12 @@ function onNormalKey(key) {
 
   if (key === 'd') {
     if (pendingKey && pendingKey.key === 'd' && Date.now() - pendingKey.at < 800) {
-      if (selLabel) {
-        commit(() => circuit.removeLabel(selLabel));
+      if (selLabels.size) {
+        commit(() => {
+          for (const id of selLabels) circuit.removeLabel(id);
+        });
         setSelection([]);
-        selLabel = null;
+        setLabelSelection([]);
         render();
         pendingKey = null;
         return;
@@ -1413,10 +1477,12 @@ function onNormalKey(key) {
   }
 
   if (key === 'Delete' || key === 'Backspace') {
-    if (selLabel) {
-      commit(() => circuit.removeLabel(selLabel));
+    if (selLabels.size) {
+      commit(() => {
+        for (const id of selLabels) circuit.removeLabel(id);
+      });
       setSelection([]);
-      selLabel = null;
+      setLabelSelection([]);
       render();
       return;
     }
@@ -1445,7 +1511,7 @@ function onNormalKey(key) {
   if (key === 'Escape') {
     pendingKey = null;
     setSelection([]);
-    selLabel = null;
+    setLabelSelection([]);
     selectedNets.clear();
     render();
     return;
@@ -1475,7 +1541,7 @@ function logKeymap() {
       '-- insert --',
       'h j k l     move cursor between placements (vim home row)',
       'r c L d     resistor capacitor inductor diode',
-      'n P b p     nmos pmos npn pnp',
+      'n p N P     nmos pmos npn pnp',
       'g s i o O   ground supply input output inout-io',
       'a           solder dot (junction annotation)',
       'T           label object (text, double-click to edit)',
@@ -1542,13 +1608,13 @@ function renderStatus() {
   const comp = selectedComp();
   const label = selectedLabel();
   const sel = label
-    ? `lab "${label.text}"`
+    ? `lab "${label.text}"${selLabels.size > 1 ? ` +${selLabels.size - 1}` : ''}`
     : comp
       ? `${comp.refdes}${multi.size > 1 ? ` +${multi.size - 1}` : ''}`
       : '-';
   const parts = [mode === 'insert' ? 'INSERT' : 'NORMAL', `sel ${sel}`, `@${cursor.x},${cursor.y}`];
   if (mode === 'insert') {
-    parts.push('place r c L d n P b p g s i o O a · T label · move h j k l');
+    parts.push('place r c L d n p N P g s i o O a · T label · move h j k l');
   }
   if (wire) {
     parts.push(wire.source ? `WIRE ${wire.source.refdes}.${wire.source.term} ->` : 'WIRE: click a terminal');
@@ -1647,6 +1713,7 @@ window.addEventListener('keydown', (ev) => {
     } else if (ev.key.toLowerCase() === 'a') {
       ev.preventDefault();
       setSelection([...circuit.components.keys()]);
+      setLabelSelection([...circuit.labels.keys()]);
       selectedNets.clear();
       render();
     }

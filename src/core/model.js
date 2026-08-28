@@ -6,6 +6,28 @@ import { autoRoute } from './router.js';
 /** Nominal world units of text width per character (font-size 12 sans-serif). */
 export const LABEL_CHAR_W = 7;
 
+/** Font-size (world units) used for every label; both label kinds render at this. */
+export const LABEL_FONT_SIZE = 40;
+
+// Per-glyph width model for a label line (no DOM in the core model, so we use
+// narrow / default / wide buckets scaled to the label font size) to give a
+// "tight" text bounding box.
+const _UNIT = LABEL_FONT_SIZE * (LABEL_CHAR_W / 12); // ~23.33 per default char
+const _NARROW = new Set(`i l I t f r j 1 2 3 . , : ; ' " ! | ( ) [ ] - / * ~ ^ \` _ space-empty`);
+const _WIDE = new Set(`m w M W @ # $ % & 0 6 8 9`);
+
+const _NARROW_SET = new Set(_NARROW);
+const _WIDE_SET = new Set(_WIDE);
+function charWidth(c) {
+  if (c === ' ') return _UNIT * 0.5;
+  if (_NARROW_SET.has(c)) return _UNIT * 0.5;
+  if (_WIDE_SET.has(c) || (c >= 'A' && c <= 'Z')) return _UNIT * 1.1;
+  return _UNIT;
+}
+
+/** Tight height (world units) of a rendered label line (cap height). */
+export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
+
 let _uid = 0;
 function uid() {
   return `x${(_uid++).toString(36)}${Date.now().toString(36).slice(-4)}`;
@@ -20,12 +42,13 @@ export function parseTermRef(s) {
 
 /**
  * A free-floating or component-owned text label. The label's ANCHOR is always
- * a grid point. The auto-sized bbox (width rounded up to a grid multiple; the
- * text vertically centered, height one grid cell) is derived from the text:
- *   center  — bbox is horizontally centered on the anchor (width rounded to an
- *             even number of cells so the center stays on grid)
- *   left    — bbox starts at the anchor's x
- *   right   — bbox ends at the anchor's x
+ * a grid point. The label's rendered box is derived from the tight bounding
+ * box of its text metric, then expanded so BOTH dimensions are even multiples
+ * of a grid square (2, 4, 6 ... cells) and the whole box is centered on the
+ * anchor — so the box center always lands on a grid point, and the text (which
+ * is vertically centered, and horizontally aligned left/center/right within the
+ * box) is always symmetric about the grid. The box always updates as the text
+ * changes (setText).
  * Owned labels ("instance labels", e.g. M1 on a transistor) live in local
  * component space via `offset` and follow the owner's transform.
  */
@@ -54,18 +77,67 @@ export class LabelInstance {
     return { x: this.anchor.x, y: this.anchor.y };
   }
 
-  /** Bbox width in grid cells; center-aligned widths are even so the center stays on grid. */
-  colWidth() {
-    let n = Math.ceil((this.text.length * LABEL_CHAR_W) / GRID);
-    if (this.align === 'center') n += n % 2;
-    return Math.max(1, n);
+  /** Tight width (world units) of the rendered text line. */
+  textWidth() {
+    let w = 0;
+    for (const ch of this.text) w += charWidth(ch);
+    return w;
   }
 
+  /** Tight height (world units) of the rendered text line. */
+  textHeight() {
+    return LABEL_CAP_H;
+  }
+
+  /** Even number of grid cells >= 2 needed to hold the text horizontally. */
+  colWidth() {
+    let n = Math.ceil(this.textWidth() / GRID);
+    n += n % 2; // even so the centered box's center stays on a grid point
+    return Math.max(2, n);
+  }
+
+  /** Even number of grid cells >= 2 needed to hold the text vertically. */
+  rowHeight() {
+    let n = Math.ceil(this.textHeight() / GRID);
+    n += n % 2;
+    return Math.max(2, n);
+  }
+
+  /**
+   * The rendered box, centered on the anchor (a grid point) with its
+   * width/height as even multiples of a grid square. Independent of align:
+   * alignment only positions the text inside this box.
+   */
   bbox() {
     const a = this.anchorWorld();
     const w = this.colWidth() * GRID;
-    const x = this.align === 'center' ? a.x - w / 2 : this.align === 'left' ? a.x : a.x - w;
-    return { x, y: a.y - GRID / 2, w, h: GRID };
+    const h = this.rowHeight() * GRID;
+    return { x: a.x - w / 2, y: a.y - h / 2, w, h };
+  }
+
+  /**
+   * Where to draw the text and its text-anchor so the text is horizontally
+   * aligned within the box (left/center/right) and vertically centered on the
+   * anchor. Returns {x, y, anchor} for an SVG <text> element.
+   */
+  textPos() {
+    const a = this.anchorWorld();
+    const b = this.bbox();
+    let x, anchor;
+    if (this.align === 'left') {
+      x = b.x;
+      anchor = 'start';
+    } else if (this.align === 'right') {
+      x = b.x + b.w;
+      anchor = 'end';
+    } else {
+      x = a.x;
+      anchor = 'middle';
+    }
+    // Baseline sits below the box center so the cap height is vertically
+    // centered on the anchor (grid point).
+    const y = a.y + LABEL_CAP_H / 2;
+    return { x, y, anchor };
   }
 
   setText(text) {
@@ -120,8 +192,8 @@ export class ComponentInstance {
       x: snapPoint(opts.x || 0, opts.y || 0).x,
       y: snapPoint(opts.x || 0, opts.y || 0).y,
       rotation: opts.rotation || 0,
-      mirrorX: !!opts.mirrorX,
-      mirrorY: !!opts.mirrorY,
+      mirrorX: opts.mirrorX !== undefined ? !!opts.mirrorX : !!(this.def && this.def.defaultMirrorX),
+      mirrorY: opts.mirrorY !== undefined ? !!opts.mirrorY : !!(this.def && this.def.defaultMirrorY),
     };
   }
 

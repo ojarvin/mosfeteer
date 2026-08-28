@@ -2,7 +2,7 @@ import { defineSymbol } from './defineSymbol.js';
 
 /**
  * N-channel MOSFET. Terminals g (left), d (top-right), s (bottom-right).
- * Dummy graphics (replace later).
+ * Source arrow points outward (away from channel).
  */
 export const nmos = defineSymbol({
   type: 'nmos',
@@ -13,7 +13,7 @@ export const nmos = defineSymbol({
     { name: 'd', x: 120, y: -80, direction: 'drain' },
     { name: 's', x: 120, y: 80, direction: 'source' },
   ],
-  bbox: { x: 0, y: -80, w: 120, h: 160},
+  bbox: { x: 0, y: -80, w: 120, h: 160 },
   graphics: [
     // Gate wire
     { kind: 'path', d: 'M 0 0 L 40 0' },
@@ -27,10 +27,13 @@ export const nmos = defineSymbol({
     // Source wires
     { kind: 'path', d: 'M 60 30 L 120 30' },
     { kind: 'path', d: 'M 120 30 L 120 80' },
+    // Source arrow (points outward, away from channel)
+    { kind: 'path', d: 'M 53 38 L 60 30 L 53 22 Z' },
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
   refPos: null,
-  // Instance label (dedicated label object) sits on the bulk side, below the body.
-  labelOffset: { x: 40, y: 120 },
+  // Instance label (dedicated label object) sits on the bulk side (opposite the
+  // gate), vertically centered at the gate height.
+  labelOffset: { x: 120, y: 0 },
   defaultValue: '',
 });

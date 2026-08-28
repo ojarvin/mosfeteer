@@ -2,10 +2,64 @@ import { Circuit } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap } from './geometry.js';
-import { segThroughInterior } from './router.js';
+import { segThroughInterior, smartRoute } from './router.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
 import { demoCircuit } from './templates.js';
+
+/** Re-route every net that touches any of the given component refdes. */
+function rerouteNetsFor(circuit, refs) {
+  const touched = new Set();
+  for (const r of refs) {
+    const c = circuit.components.get(r);
+    if (!c) continue;
+    for (const t of c.def.terminals) {
+      const net = circuit.netOfTerminal({ comp: c.refdes, term: t.name });
+      if (net) touched.add(net.id);
+    }
+  }
+  const rects = [];
+  const pins = new Map();
+  for (const comp of circuit.components.values()) {
+    if (comp.type === 'solder') continue;
+    rects.push(comp.bboxWorld());
+    for (const t of comp.worldTerminals()) {
+      pins.set(`${t.x},${t.y}`, pinDir(comp, t.x, t.y));
+    }
+  }
+  const wires = [];
+  for (const net of circuit.nets.values()) {
+    if (!touched.has(net.id)) wires.push(net.points());
+  }
+  for (const id of touched) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    const world = net.terminalWorlds().filter(Boolean);
+    if (world.length < 2) {
+      net.route = null;
+      continue;
+    }
+    const env = { rects, pins, wires };
+    const path = [{ x: world[0].x, y: world[0].y }];
+    for (let i = 1; i < world.length; i++) {
+      const seg = smartRoute(path[path.length - 1], world[i], env);
+      if (!seg || seg.length < 2) continue;
+      for (let k = 1; k < seg.length; k++) path.push({ x: seg[k].x, y: seg[k].y });
+    }
+    net.route = path.length >= 2 ? path : null;
+  }
+}
+
+/** Outward direction from a component body toward a world terminal pin. */
+function pinDir(c, wx, wy) {
+  const r = c.bboxWorld();
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const ndx = r.w === 0 ? 0 : (wx - cx) / (r.w / 2);
+  const ndy = r.h === 0 ? 0 : (wy - cy) / (r.h / 2);
+  if (Math.abs(ndx) >= Math.abs(ndy)) return { x: Math.sign(ndx), y: 0 };
+  return { x: 0, y: Math.sign(ndy) };
+}
 
 const FLAG_ARITY = {
   at: 2,
@@ -248,12 +302,14 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'move') {
     const c = circuit.getComponent(pos[0]);
     circuit.moveComponent(c.refdes, Number(pos[1]), Number(pos[2]));
+    rerouteNetsFor(circuit, [c.refdes]);
     return result(`moved ${c.refdes} to ${pp(c.transform.x, c.transform.y)}`, { refdes: c.refdes, x: c.transform.x, y: c.transform.y }, true);
   }
   if (cmd === 'rotate') {
     const c = circuit.getComponent(pos[0]);
     const deg = pos[1] !== undefined ? Number(pos[1]) : 90;
     circuit.setTransform(c.refdes, { rotation: c.transform.rotation + deg });
+    rerouteNetsFor(circuit, [c.refdes]);
     return result(`rotated ${c.refdes} to ${c.transform.rotation}°`, { refdes: c.refdes, rotation: c.transform.rotation }, true);
   }
   if (cmd === 'mirror') {
@@ -262,6 +318,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (axis === 'x') circuit.setTransform(c.refdes, { mirrorX: !c.transform.mirrorX });
     else if (axis === 'y') circuit.setTransform(c.refdes, { mirrorY: !c.transform.mirrorY });
     else throw new Error('mirror axis must be x or y');
+    rerouteNetsFor(circuit, [c.refdes]);
     return result(`mirrored ${c.refdes} along ${axis}`, { refdes: c.refdes, axis }, true);
   }
   if (cmd === 'value' || cmd === 'setvalue') {

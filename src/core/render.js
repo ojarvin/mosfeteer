@@ -1,7 +1,7 @@
 import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
-import { strokeAttrs } from './style.js';
+import { fontAttrs, strokeAttrs } from './style.js';
 
 function fmt(n) {
   return Number.isInteger(n) ? String(n) : n.toFixed(2);
@@ -28,6 +28,11 @@ function graphicsToSvg(g) {
 
 function textEl(x, y, text, anchor, size, fill) {
   return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${fill || '#111'}" stroke="none">${text}</text>`;
+}
+
+// Label-object text with one of the style.js font kinds ("instance" | "label").
+function labelTextEl(x, y, text, anchor, kind) {
+  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${fontAttrs(kind)} stroke="none">${text}</text>`;
 }
 
 /**
@@ -155,11 +160,12 @@ export function svgString(circuit, opts = {}) {
     }
   }
 
-  // Dedicated / instance label objects.
-  const labelAnchor = (align) => (align === 'center' ? 'middle' : align === 'left' ? 'start' : 'end');
+  // Dedicated / instance label objects (instance identifiers are bold+italic and
+  // larger than free-standing annotation labels). Text is aligned inside the
+  // label's rendered box (left/center/right) and vertically centered.
   for (const label of circuit.labels.values()) {
-    const a = label.anchorWorld();
-    parts.push(textEl(a.x, a.y, label.text, labelAnchor(label.align), 12, label.owner ? '#111' : '#333'));
+    const t = label.textPos();
+    parts.push(labelTextEl(t.x, t.y, label.text, t.anchor, label.owner ? 'instance' : 'label'));
   }
 
   parts.push('</svg>');
@@ -183,7 +189,16 @@ export function editorOverlay(circuit, opts = {}) {
     if (c) parts.push(halo(c.bboxWorld()));
   }
 
-  if (opts.selLabel) {
+  if (opts.selLabels && opts.selLabels.length) {
+    for (const id of opts.selLabels) {
+      const label = circuit.labels.get(id);
+      if (!label) continue;
+      const b = label.bbox();
+      const a = label.anchorWorld();
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#e3970b" stroke-width="2" rx="2"/>`);
+      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="#e3970b"/>`);
+    }
+  } else if (opts.selLabel) {
     const label = circuit.labels.get(opts.selLabel);
     if (label) {
       const b = label.bbox();

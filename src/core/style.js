@@ -24,10 +24,28 @@ export const THICK = {
   join: 'round',
 };
 
+/**
+ * Text styles for schematic labels. `INSTANCE_FONT` is for component
+ * identifiers (e.g. M1 on a transistor) — bold + italic, larger than plain
+ * text. `LABEL_FONT` is for free-standing annotation labels.
+ */
+export const INSTANCE_FONT = { size: 40, fill: '#111', weight: 'bold', italic: true };
+export const LABEL_FONT = { size: 40, fill: '#333' };
+
 const STYLES = { thick: THICK };
 
 /** SVG stroke attribute string for a graphic; defaults to the LINE style. */
 export function strokeAttrs(styleName) {
   const s = STYLES[styleName] || LINE;
   return `stroke="${s.stroke}" stroke-width="${s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"`;
+}
+
+/** SVG attributes for a label font style ("instance" | "label"). */
+export function fontAttrs(kind) {
+  const f = kind === 'instance' ? INSTANCE_FONT : kind === 'label' ? LABEL_FONT : null;
+  if (!f) return '';
+  const parts = [`font-size="${f.size}"`, `fill="${f.fill}"`];
+  if (f.weight) parts.push(`font-weight="${f.weight}"`);
+  if (f.italic) parts.push(`font-style="italic"`);
+  return parts.join(' ');
 }

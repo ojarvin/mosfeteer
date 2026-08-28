@@ -307,24 +307,37 @@ test('addLabel places a standalone label with a grid-aligned anchor', () => {
   assert.equal(l.owner, null);
   assert.deepEqual(l.anchor, { x: 120, y: 40 }, 'anchor snaps to grid');
   const b = l.bbox();
-  assert.equal(b.h, GRID);
+  assert.equal(b.h, 2 * GRID, 'box height is an even (2-cell) grid multiple');
   assert.ok(Number.isInteger(b.w / GRID), `bbox width ${b.w} is a grid multiple`);
+  assert.ok(Number.isInteger(b.w / GRID) && b.w / GRID % 2 === 0, `bbox width ${b.w} is an even grid multiple`);
   assert.ok(Number.isInteger(b.x / GRID), `bbox x ${b.x} on grid`);
-  // center alignment: the box is centered on the anchor
+  // center alignment: the box is centered on the anchor (a grid point)
   assert.equal(b.x + b.w / 2, l.anchor.x);
+  assert.equal(b.y + b.h / 2, l.anchor.y);
 });
 
-test('label align shifts the box relative to its fixed anchor', () => {
+test('label align keeps the box centered and aligns the text inside it', () => {
   const c = new Circuit();
   const l = c.addLabel({ text: 'M1', x: 400, y: 0 });
+  // box is always centered on the anchor regardless of align
   const center = l.bbox();
-  assert.equal(center.x + center.w / 2, 400);
+  assert.equal(center.x + center.w / 2, 400, 'center: box centered on anchor');
+  assert.equal(center.y + center.h / 2, 0);
+  let t = l.textPos();
+  assert.equal(t.anchor, 'middle');
+  assert.equal(t.x, 400);
   l.setAlign('left');
   const left = l.bbox();
-  assert.equal(left.x, 400, 'left-aligned box starts at the anchor');
+  assert.equal(left.x + left.w / 2, 400, 'left: box still centered on anchor');
+  t = l.textPos();
+  assert.equal(t.anchor, 'start');
+  assert.equal(t.x, left.x, 'left: text starts at the box left edge');
   l.setAlign('right');
   const right = l.bbox();
-  assert.equal(right.x + right.w, 400, 'right-aligned box ends at the anchor');
+  assert.equal(right.x + right.w / 2, 400, 'right: box still centered on anchor');
+  t = l.textPos();
+  assert.equal(t.anchor, 'end');
+  assert.equal(t.x, right.x + right.w, 'right: text ends at the box right edge');
 });
 
 test('setText resizes the bbox but keeps the anchor fixed', () => {
@@ -344,10 +357,10 @@ test('owned label anchorWorld follows the component transform', () => {
   assert.ok(lab, 'nmos gets a dedicated instance label');
   assert.equal(lab.text, 'M1');
   assert.equal(lab.owner, m1.refdes);
-  // default offset (40,120) transforms to (440,120) at the origin
-  assert.deepEqual(lab.anchorWorld(), { x: 440, y: 120 });
+  // default offset (120,0) transforms to (520,0) at the origin (bulk side, gate height)
+  assert.deepEqual(lab.anchorWorld(), { x: 520, y: 0 });
   c.moveComponent(m1.refdes, 560, 80);
-  assert.deepEqual(lab.anchorWorld(), { x: 600, y: 200 });
+  assert.deepEqual(lab.anchorWorld(), { x: 680, y: 80 });
 });
 
 test('owned label moveTo translates its local offset, keeping it on grid', () => {
