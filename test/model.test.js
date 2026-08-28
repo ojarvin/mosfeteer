@@ -37,6 +37,23 @@ test('addComponent snaps position and sets defaults', () => {
   assert.equal(r.transform.mirrorY, false);
 });
 
+test('symbol defaultMirror flags apply when not overridden', () => {
+  const c = new Circuit();
+  // output ports face outward by default (terminal on the circuit side)
+  const o = c.addComponent('output');
+  assert.equal(o.transform.mirrorX, true, 'output defaults to mirrorX');
+  const i = c.addComponent('input');
+  assert.equal(i.transform.mirrorX, false, 'input stays un-mirrored');
+  const io = c.addComponent('inputoutput');
+  assert.equal(io.transform.mirrorX, false, 'inputoutput stays un-mirrored');
+  // pmos source points up by default
+  const p = c.addComponent('pmos');
+  assert.equal(p.transform.mirrorY, true, 'pmos defaults to mirrorY');
+  // an explicit mirror flag still wins over the default
+  const o2 = c.addComponent('output', { mirrorX: false });
+  assert.equal(o2.transform.mirrorX, false, 'explicit mirrorX overrides the output default');
+});
+
 test('addComponent rejects duplicate refdes', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R9' });

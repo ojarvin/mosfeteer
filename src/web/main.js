@@ -13,7 +13,6 @@ import { Circuit } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
-import { demoCircuit } from '../core/templates.js';
 import { snap, GRID } from '../core/grid.js';
 import { balancedRoute, smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
@@ -465,6 +464,27 @@ function rerouteTouchedNets(refs) {
   }
 }
 
+/** Delete all selected components and labels together in one undo step.
+ *  Owned labels ride along with their component; only free labels are removed explicitly. */
+function deleteSelection() {
+  const comps = selectedComps();
+  const labels = selectedLabels();
+  if (!comps.length && !labels.length) return false;
+  const touched = netsTouching(comps.map((c) => c.refdes));
+  commit(() => {
+    for (const lab of labels) if (!lab.owner) circuit.removeLabel(lab.id);
+    for (const c of comps) circuit.removeComponent(c.refdes);
+    for (const id of touched) {
+      const net = circuit.nets.get(id);
+      if (net) rerouteNet(net);
+    }
+  });
+  setSelection([]);
+  setLabelSelection([]);
+  selectedNets.clear();
+  return true;
+}
+
 function moveCursor(cellsX, cellsY) {
   cursor = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
 }
@@ -600,9 +620,8 @@ function renderCanvas() {
   const wirePreview =
     wire && wire.source
       ? (() => {
-          const comp = circuit.components.get(wire.source.refdes);
-          if (!comp) return undefined;
-          const from = comp.terminalWorld(wire.source.term);
+          const from = wireOrigin(wire.source);
+          if (!from) return undefined;
           // The draft wire being built: the accumulated click-through segments
           // plus the live segment to the cursor. The final leg to the cursor is
           // suggested by the router so it bends cleanly around bodies.
@@ -650,6 +669,7 @@ function renderCanvas() {
     rubber: drag && drag.rubber ? drag.rubber : undefined,
     wirePreview,
     wireMode: !!wire,
+    wireSource: wire && wire.source ? { ...wire.source } : undefined,
     ghost,
   });
   svg = svg.replace('</svg>', `${overlay}\n</svg>`);
@@ -866,17 +886,38 @@ function netsTouching(refs) {
 
 /** Connect two terminals, re-route the resulting net, commit history once.
  *  When `points` is given the wire follows that hand-drawn path instead of the
- *  auto route (the path is made orthogonal and collinear runs are collapsed). */
+ *  auto route (the path is made orthogonal and collinear runs are collapsed).
+ *  If either endpoint already belongs to a wired net (e.g. a diode G-D link),
+ *  that wire is preserved untouched and the draft is spliced in as a branch —
+ *  joining to it never rewrites the existing route. */
 function connectTwo(src, dst, points) {
   const before = snapshot();
+  const existingRoute = (n) => (n && n.terminals.length > 1 ? (n.route && n.route.length >= 2 ? n.route : n.points()) : null);
+  const srcRoute = existingRoute(circuit.netOfTerminal(`${src.refdes}.${src.term}`));
+  const dstRoute = existingRoute(circuit.netOfTerminal(`${dst.refdes}.${dst.term}`));
   const net = circuit.connect(`${src.refdes}.${src.term}`, `${dst.refdes}.${dst.term}`);
   if (points && points.length) {
     const start = circuit.components.get(src.refdes).terminalWorld(src.term);
     const end = circuit.components.get(dst.refdes).terminalWorld(dst.term);
     const route = [start, ...points.map((p) => ({ x: snap(p.x), y: snap(p.y) })), end];
-    const full = orthogonalize(route);
-    collapseCollinear(full);
-    net.route = full;
+    const draft = orthogonalize(route);
+    collapseCollinear(draft);
+    if (srcRoute || dstRoute) {
+      // The draft attaches to an already-drawn wire: keep the original polyline
+      // exactly as it was and add the draft as a separate branch. A wire that
+      // meets a component pin needs no solder dot (the pin is the junction).
+      const branches = [];
+      for (const existing of [srcRoute, dstRoute]) {
+        if (existing && !branches.some((b) => JSON.stringify(b) === JSON.stringify(existing))) {
+          branches.push(existing.map((p) => ({ ...p })));
+        }
+      }
+      branches.push(draft);
+      net.route = draft.slice();
+      net.branches = branches;
+    } else {
+      net.route = draft;
+    }
   } else {
     rerouteNet(net);
   }
@@ -903,78 +944,22 @@ function orthogonalize(route) {
   return out;
 }
 
-function doWireClick(x, y, terminalHit) {
-  const hit = terminalHit || matchAt(x, y);
-  if (hit && hit.term) {
-    if (!wire.source) {
-      wire.source = { refdes: hit.refdes, term: hit.term };
-      wire.points = [];
-      cursor = { x: hit.x ?? x, y: hit.y ?? y };
-      logLine(`wire from ${hit.refdes}.${hit.term} — click points, then click/Enter on the target`);
-    } else if (hit.refdes === wire.source.refdes && hit.term === wire.source.term) {
-      logLine('same terminal — click the other terminal');
-    } else {
-      try {
-        connectTwo(wire.source, hit, wire.points);
-      } catch (err) {
-        logLine(String(err.message || err));
-      }
-    }
-  } else if (wire.source) {
-    // Build the wire in segments: each empty-space click appends a bend point.
-    wire.points.push({ x, y });
-    cursor = { x, y };
-    logLine(`wire segment @ (${x},${y}) — click more points or commit`);
-  } else {
-    cursor = { x, y };
+/** World point of a wire source: a component terminal or a free point. */
+function wireOrigin(src) {
+  if (!src) return null;
+  if (src.refdes) {
+    const comp = circuit.components.get(src.refdes);
+    return comp ? comp.terminalWorld(src.term) : null;
   }
-  render();
+  return { x: src.x, y: src.y };
 }
 
-/** Pressing Enter in wire mode commits the draft wire at the cursor: onto a
- *  component terminal (connect) or onto another wire (join nets + solder). */
-function commitWireAtCursor() {
-  if (!wire || !wire.source) {
-    logLine('start a wire by clicking a terminal first');
-    return;
-  }
-  const hit = nearestTerminal(cursor);
-  if (hit) {
-    try {
-      connectTwo(wire.source, hit, wire.points);
-    } catch (err) {
-      logLine(String(err.message || err));
-    }
-    render();
-    return;
-  }
-  const wireHit = pickWire(cursor);
-  if (wireHit) {
-    joinWireToNet(wireHit);
-    render();
-    return;
-  }
-  logLine('point the cursor at a terminal or a wire to commit (Esc cancels)');
-}
-
-/** Join the draft wire into an existing net at the cursor's point on that net's
- *  route: the two nets merge, the junction becomes a mid-wire anchor, and a
- *  solder dot marks the connection. */
-function joinWireToNet(wireHit) {
-  const targetNet = wireHit.net;
-  const src = wire.source;
-  // The source terminal may be unconnected (a brand-new wire); give it a net
-  // first so the merge has something to grow.
-  let sourceNet = circuit.netOfTerminal(`${src.refdes}.${src.term}`);
-  if (!sourceNet) sourceNet = circuit.connect(`${src.refdes}.${src.term}`);
-  if (sourceNet.id === targetNet.id) {
-    logLine('already the same net');
-    return;
-  }
-  const route = targetNet.route && targetNet.route.length >= 2 ? targetNet.route : targetNet.points();
-  const snapped = { x: snap(cursor.x), y: snap(cursor.y) };
-  // Project the cursor onto each axis-aligned segment of the target wire and
-  // snap to grid; the nearest such point is the junction.
+/** Grid-snapped projection of `w` onto the nearest segment of `net`'s drawn
+ *  route. Returns { P, k, route } — P the snapped projection, k the route
+ *  segment index it falls on, route the net's drawn polyline. */
+function projectOnNet(net, w) {
+  const route = net.route && net.route.length >= 2 ? net.route : net.points();
+  const snapped = { x: snap(w.x), y: snap(w.y) };
   let P = snapped;
   let k = -1;
   let bestD = Infinity;
@@ -992,35 +977,224 @@ function joinWireToNet(wireHit) {
       k = i;
     }
   }
+  return { P, k, route };
+}
+
+function doWireClick(x, y, terminalHit) {
+  const hit = terminalHit || matchAt(x, y);
+  if (hit && hit.term) {
+    if (!wire.source) {
+      wire.source = { refdes: hit.refdes, term: hit.term };
+      wire.points = [];
+      cursor = { x: hit.x ?? x, y: hit.y ?? y };
+      logLine(`wire from ${hit.refdes}.${hit.term} — click points, then click/Enter on the target`);
+    } else if (hit.refdes === wire.source.refdes && hit.term === wire.source.term) {
+      logLine('same terminal — click the other terminal');
+    } else {
+      try {
+        connectWireToTerminal(hit);
+      } catch (err) {
+        logLine(String(err.message || err));
+      }
+    }
+  } else if (wire.source) {
+    // Build the wire in segments: each empty-space click appends a bend point.
+    wire.points.push({ x, y });
+    cursor = { x, y };
+    logLine(`wire segment @ (${x},${y}) — click more points or commit`);
+  } else {
+    // Starting a wire needs no terminal: click any grid point (or a wire) and
+    // the draft grows from there.
+    startWireAt({ x, y });
+  }
+  render();
+}
+
+/** Begin a wire from a non-terminal point: empty space starts a free-floating
+ *  draft; a point on an existing wire records that net as the origin (the
+ *  junction + solder are materialized on commit so a cancelled wire leaves no
+ *  orphan dot). */
+function startWireAt(w) {
+  const wireHit = pickWire(w);
+  if (wireHit) {
+    const { P, k } = projectOnNet(wireHit.net, w);
+    if (k < 0) {
+      logLine('no junction point on that wire');
+      return;
+    }
+    wire.source = { x: P.x, y: P.y, netId: wireHit.net.id };
+    wire.points = [];
+    cursor = { x: P.x, y: P.y };
+    logLine(`wire from net ${wireHit.net.id} @ (${P.x},${P.y}) — click points, then click/Enter on a target`);
+  } else {
+    wire.source = { x: snap(w.x), y: snap(w.y) };
+    wire.points = [];
+    cursor = { x: snap(w.x), y: snap(w.y) };
+    logLine('wire from a free point — click points, then click/Enter on a target');
+  }
+}
+
+/** Pressing Enter in wire mode commits the draft wire at the cursor: onto a
+ *  component terminal (connect) or onto another wire (join nets + solder). */
+function commitWireAtCursor() {
+  if (!wire || !wire.source) {
+    logLine('start a wire by clicking a terminal (or any point) first');
+    return;
+  }
+  const hit = nearestTerminal(cursor);
+  if (hit) {
+    try {
+      connectWireToTerminal(hit);
+    } catch (err) {
+      logLine(String(err.message || err));
+    }
+    render();
+    return;
+  }
+  const wireHit = pickWire(cursor);
+  if (wireHit) {
+    joinWireToNet(wireHit);
+    render();
+    return;
+  }
+  logLine('point the cursor at a terminal or a wire to commit (Esc cancels)');
+}
+
+/** Commit the draft wire onto a component terminal. Terminal-origin wires go
+ *  through connectTwo; free-point / on-wire-origin drafts splice into the
+ *  target net without disturbing its existing wire. */
+function connectWireToTerminal(dst) {
+  const src = wire.source;
+  if (src.refdes) {
+    connectTwo(src, dst, wire.points);
+    return;
+  }
+  const before = snapshot();
+  const start = { x: snap(src.x), y: snap(src.y) };
+  const end = circuit.components.get(dst.refdes).terminalWorld(dst.term);
+  const draft = orthogonalize([start, ...wire.points.map((p) => ({ x: snap(p.x), y: snap(p.y) })), end]);
+  collapseCollinear(draft);
+  const dstNet = circuit.netOfTerminal(`${dst.refdes}.${dst.term}`);
+  const originNet = src.netId ? circuit.nets.get(src.netId) : null;
+  let net = originNet || dstNet;
+  if (!net) net = circuit.connect(`${dst.refdes}.${dst.term}`);
+  if (dstNet && dstNet !== net) {
+    for (const t of dstNet.terminals) net.terminals.push(t);
+    circuit.nets.delete(dstNet.id);
+  }
+  if (!net.terminals.some((t) => t.comp === dst.refdes && t.term === dst.term)) {
+    net.terminals.push({ comp: dst.refdes, term: dst.term });
+  }
+  if (src.netId) {
+    // The draft started on an existing wire: mark that origin as a junction.
+    net.junctions.push({ x: src.x, y: src.y });
+    circuit.addComponent('solder', { x: src.x, y: src.y });
+  }
+  circuit.syncJunctionSolders();
+  const existing = net.route && net.route.length >= 2 ? net.route : net.points();
+  const branches = existing.length >= 2 ? [existing.map((p) => ({ ...p })), draft] : [draft];
+  net.route = draft.slice();
+  net.branches = branches;
+  history.push(before);
+  future.length = 0;
+  wire = { source: null, points: [] };
+  selectedNets = new Set([net.id]);
+  logLine(`wired into net ${net.id} at ${dst.refdes}.${dst.term}; len=${net.length()}`);
+}
+
+/** Join the draft wire into an existing net at the cursor's point on that net's
+ *  route: the two nets merge, the junction becomes a mid-wire anchor, and a
+ *  solder dot marks the connection. Terminal-origin drafts keep the source
+ *  terminal's net as the grower; free-point/on-wire origins join into the
+ *  target net directly. */
+function joinWireToNet(wireHit) {
+  const targetNet = wireHit.net;
+  const src = wire.source;
+  const origin = wireOrigin(src);
+  if (!origin) {
+    logLine('wire origin missing');
+    return;
+  }
+  const { P, k, route } = projectOnNet(targetNet, cursor);
   if (k < 0) {
     logLine('no junction point on that wire');
     return;
   }
   const before = snapshot();
-  for (const t of targetNet.terminals) sourceNet.terminals.push(t);
-  circuit.nets.delete(targetNet.id);
-  sourceNet.junctions.push(P);
-  // The joined net is a multi-way tree, stored as explicit branches:
-  //   - the draft from the source terminal through the built points into P
-  //   - each half of the target wire away from the junction P
-  // This keeps every terminal on a drawn branch without a backtracking walk.
-  const srcTerm = circuit.components.get(src.refdes).terminalWorld(src.term);
-  const draft = [srcTerm, ...wire.points.map((p) => ({ x: snap(p.x), y: snap(p.y) })), P];
-  const draftPath = orthogonalize(draft);
+  if (src.refdes) {
+    // The source terminal may be unconnected (a brand-new wire); give it a net
+    // first so the merge has something to grow.
+    let sourceNet = circuit.netOfTerminal(`${src.refdes}.${src.term}`);
+    if (!sourceNet) sourceNet = circuit.connect(`${src.refdes}.${src.term}`);
+    if (sourceNet.id === targetNet.id) {
+      logLine('already the same net');
+      return;
+    }
+    for (const t of targetNet.terminals) sourceNet.terminals.push(t);
+    circuit.nets.delete(targetNet.id);
+    sourceNet.junctions.push(P);
+    // The joined net is a multi-way tree, stored as explicit branches:
+    //   - the draft from the source terminal through the built points into P
+    //   - each half of the target wire away from the junction P
+    // This keeps every terminal on a drawn branch without a backtracking walk.
+    const draftPath = orthogonalize([origin, ...wire.points.map((p) => ({ x: snap(p.x), y: snap(p.y) })), P]);
+    collapseCollinear(draftPath);
+    const halfA = [P, ...route.slice(k + 1)];
+    const halfB = [P, ...route.slice(0, k + 1)];
+    sourceNet.route = draftPath;
+    sourceNet.branches = [draftPath, halfA, halfB];
+    // The merged net is a wire junction — give it a real (persistent) solder dot.
+    circuit.addComponent('solder', { x: P.x, y: P.y });
+    history.push(before);
+    future.length = 0;
+    wire = { source: null, points: [] };
+    selectedNets = new Set([sourceNet.id]);
+    logLine(`joined ${src.refdes}.${src.term} into net ${sourceNet.id} at (${P.x},${P.y})`);
+    return;
+  }
+  // Free-point / on-wire origin: grow the target net (or the origin's net) with
+  // the draft, preserving whatever wire was already drawn.
+  let net = src.netId ? circuit.nets.get(src.netId) : null;
+  if (net && net !== targetNet) {
+    for (const t of targetNet.terminals) net.terminals.push(t);
+    circuit.nets.delete(targetNet.id);
+  } else {
+    net = targetNet;
+  }
+  if (src.netId) {
+    // The draft started on an existing wire: mark that origin as a junction.
+    net.junctions.push({ x: src.x, y: src.y });
+    circuit.addComponent('solder', { x: src.x, y: src.y });
+  }
+  net.junctions.push(P);
+  const draftPath = orthogonalize([origin, ...wire.points.map((p) => ({ x: snap(p.x), y: snap(p.y) })), P]);
   collapseCollinear(draftPath);
-  const halfA = [P, ...route.slice(k + 1)];
-  const halfB = [P, ...route.slice(0, k + 1)];
-  sourceNet.route = draftPath;
-  sourceNet.branches = [draftPath, halfA, halfB];
-  // The merged net is a wire junction — give it a real (persistent) solder dot.
-  circuit.addComponent('solder', { x: P.x, y: P.y });
-  // The merged net is a wire junction — give it a real (persistent) solder dot.
+  const branches = [];
+  const addUnique = (poly) => {
+    if (!poly || poly.length < 2) return;
+    const key = JSON.stringify(poly);
+    if (!branches.some((b) => JSON.stringify(b) === key)) branches.push(poly.map((p) => ({ ...p })));
+  };
+  if (src.netId && net.id !== src.netId) {
+    // Merging a different target wire: preserve the origin net's own wire too.
+    const own = net.route && net.route.length >= 2 ? net.route : net.points();
+    addUnique(own);
+  }
+  if (net.branches && net.branches.length) {
+    for (const b of net.branches) addUnique(b);
+  } else {
+    addUnique([P, ...route.slice(k + 1)]);
+    addUnique([P, ...route.slice(0, k + 1)]);
+  }
+  addUnique(draftPath);
+  net.route = draftPath.slice();
+  net.branches = branches;
   circuit.addComponent('solder', { x: P.x, y: P.y });
   history.push(before);
   future.length = 0;
   wire = { source: null, points: [] };
-  selectedNets = new Set([sourceNet.id]);
-  logLine(`joined ${src.refdes}.${src.term} into net ${sourceNet.id} at (${P.x},${P.y})`);
+  selectedNets = new Set([net.id]);
+  logLine(`joined into net ${net.id} at (${P.x},${P.y})`);
 }
 
 function canvasMouseDown(ev) {
@@ -1178,13 +1352,15 @@ function canvasMouseDown(ev) {
   const wireHit = pickWire(startWorld);
   if (wireHit) {
     const net = wireHit.net;
-    if (!net.route || net.route.length < 2) net.route = net.points().slice();
-    const run = wireRunAt(net.route, wireHit.seg);
+    // The run is found from the drawn route, materialized into a local array so
+    // a plain click never mutates the net — only an actual drag attaches a route.
+    const pts = net.route && net.route.length >= 2 ? net.route : net.points().slice();
+    const run = wireRunAt(pts, wireHit.seg);
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
     drag = {
       mode: 'wireseg',
       net,
-      pts: net.route,
+      pts,
       orient: run.orient,
       line: run.val,
       startAxis: run.orient === 'h' ? startWorld.y : startWorld.x,
@@ -1254,6 +1430,9 @@ function canvasMouseMove(ev) {
         history.push(snapshot());
         if (history.length > 200) history.shift();
         future.length = 0;
+        // A drag owns the route: attach the working array so edits stick (a
+        // plain click never reaches this point, so the net stays untouched).
+        drag.net.route = drag.pts;
       }
       const axis = drag.orient === 'h' ? w.y : w.x;
       const target = drag.startLine + (axis - drag.startAxis);
@@ -1335,6 +1514,8 @@ function canvasMouseUp(ev) {
     }
   } else if (drag.mode === 'wireseg') {
     if (!drag.moved) {
+      // A plain click selects the net and highlights it — dragging the wire is
+      // what re-routes a run.
       selectedNets = new Set([drag.net.id]);
       render();
       return;
@@ -1663,7 +1844,7 @@ function onWireKey(key) {
       logLine('same terminal');
     } else {
       try {
-        connectTwo(wire.source, { refdes: comp.refdes, term: key });
+        connectWireToTerminal({ refdes: comp.refdes, term: key });
       } catch (err) {
         logLine(String(err.message || err));
       }
@@ -1853,28 +2034,7 @@ function onNormalKey(key) {
 
   if (key === 'd') {
     if (pendingKey && pendingKey.key === 'd' && Date.now() - pendingKey.at < 800) {
-      if (selLabels.size) {
-        commit(() => {
-          for (const id of selLabels) circuit.removeLabel(id);
-        });
-        setSelection([]);
-        setLabelSelection([]);
-        render();
-        pendingKey = null;
-        return;
-      }
-      const doomed = selectedComps();
-      const touched = netsTouching(doomed.map((c) => c.refdes));
-      commit(() => {
-        for (const c of doomed) circuit.removeComponent(c.refdes);
-        for (const id of touched) {
-          const net = circuit.nets.get(id);
-          if (net) rerouteNet(net);
-        }
-      });
-      setSelection([]);
-      selectedNets.clear();
-      render();
+      if (deleteSelection()) render();
       pendingKey = null;
     } else {
       pendingKey = { key: 'd', at: Date.now() };
@@ -1943,29 +2103,8 @@ function onNormalKey(key) {
   }
 
   if (key === 'Delete' || key === 'Backspace') {
-    if (selLabels.size) {
-      commit(() => {
-        for (const id of selLabels) circuit.removeLabel(id);
-      });
-      setSelection([]);
-      setLabelSelection([]);
-      render();
-      return;
-    }
-    const doomed = selectedComps();
-    if (doomed.length) {
-      const touched = netsTouching(doomed.map((c) => c.refdes));
-      commit(() => {
-        for (const c of doomed) circuit.removeComponent(c.refdes);
-        for (const id of touched) {
-          const net = circuit.nets.get(id);
-          if (net) rerouteNet(net);
-        }
-      });
-      setSelection([]);
-      selectedNets.clear();
-      render();
-    }
+    deleteSelection();
+    render();
     return;
   }
 
@@ -2090,7 +2229,13 @@ function renderStatus() {
     parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · R/X · Esc cancel` : 'pick r c L d n p N P g s x X i o O a · t label');
   }
   if (wire) {
-    parts.push(wire.source ? `WIRE ${wire.source.refdes}.${wire.source.term} ->` : 'WIRE: click a terminal');
+    parts.push(
+      wire.source
+        ? wire.source.refdes
+          ? `WIRE ${wire.source.refdes}.${wire.source.term} ->`
+          : `WIRE (${wire.source.x},${wire.source.y}) ->`
+        : 'WIRE: click a terminal or any point',
+    );
   }
   if (selectedNets.size) parts.push(`nets ${selectedNets.size}`);
   statusEl.textContent = parts.join('  ·  ');
@@ -2157,17 +2302,6 @@ function updateInsertMenu() {
   insertMenu.style.left = `${left}px`;
   insertMenu.style.top = `${top}px`;
 }
-
-document.getElementById('btn-demo').addEventListener('click', () => {
-  history.push(snapshot());
-  future.length = 0;
-  circuit = demoCircuit();
-  setSelection([]);
-  selectedNets.clear();
-  cursor = { x: 400, y: 0 };
-  fitView();
-  logLine('Loaded demo circuit.');
-});
 
 document.getElementById('btn-clear').addEventListener('click', () => {
   history.push(snapshot());

@@ -1,11 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runCommand, commandHelp, evaluate, splitArgs, parseArgs } from '../src/core/commands.js';
-import { demoCircuit } from '../src/core/templates.js';
 import { Circuit } from '../src/core/model.js';
 
 function fresh() {
   return new Circuit();
+}
+
+/** A tiny wired circuit for report-shape / svg tests. */
+function smallCircuit() {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 640, y: 0 });
+  c.connect('R1.b', 'R2.a');
+  return c;
 }
 
 test('splitArgs honors double-quoted strings', () => {
@@ -140,7 +148,7 @@ test('command result includes json and mutated flags', () => {
 });
 
 test('evaluate() returns structured report keys', () => {
-  const rep = evaluate(demoCircuit());
+  const rep = evaluate(smallCircuit());
   for (const k of [
     'components',
     'terminalCount',
@@ -159,36 +167,19 @@ test('evaluate() returns structured report keys', () => {
   }
 });
 
-test('REGRESSION: demo circuit evaluates clean with expected metrics', () => {
-  const rep = evaluate(demoCircuit());
-  assert.equal(rep.components.length, 5);
-  assert.equal(rep.terminalCount, 7);
-  assert.deepEqual(rep.unconnectedTerminals, []);
-  assert.equal(rep.nets.length, 3);
+test('evaluate() reports a clean wired circuit with expected metrics', () => {
+  const rep = evaluate(smallCircuit());
+  assert.equal(rep.components.length, 2);
+  assert.equal(rep.terminalCount, 4);
+  assert.equal(rep.unconnectedTerminals.length, 2);
+  assert.equal(rep.nets.length, 1);
   assert.deepEqual(rep.overlappingBBoxes, []);
   assert.deepEqual(rep.wireThroughBBoxes, []);
   assert.deepEqual(rep.gridViolations, []);
-  assert.deepEqual(rep.bounds, { x: 360, y: -120, w: 480, h: 440 });
-});
-
-test('REGRESSION: demo circuit nets carry id/name/n/length', () => {
-  const rep = evaluate(demoCircuit());
-  const byName = Object.fromEntries(rep.nets.map((n) => [n.name, n]));
-  assert.deepEqual(byName.vcc, { id: 'N1', name: 'vcc', n: 2, length: 240 });
-  assert.deepEqual(byName.out, { id: 'N2', name: 'out', n: 3, length: 320 });
-  assert.deepEqual(byName.gnd, { id: 'N3', name: 'gnd', n: 2, length: 40 });
-});
-
-test('demo command loads the demo circuit', () => {
-  const c = fresh();
-  const res = runCommand(c, 'demo');
-  assert.equal(res.mutated, true);
-  assert.equal(c.components.size, 5);
-  assert.equal(c.nets.size, 3);
 });
 
 test('svg command returns SVG via json when no file I/O', () => {
-  const c = demoCircuit();
+  const c = smallCircuit();
   const res = runCommand(c, 'svg');
   assert.ok(res.json.svg.startsWith('<svg'));
 });

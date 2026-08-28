@@ -36,8 +36,8 @@ export const SUPPLY = { stroke: '#111', width: 7.2, cap: 'butt', join: 'miter' }
  * identifiers (e.g. M1 on a transistor) — bold + italic, larger than plain
  * text. `LABEL_FONT` is for free-standing annotation labels.
  */
-export const INSTANCE_FONT = { size: 36, fill: '#111', weight: 'bold', italic: true };
-export const LABEL_FONT = { size: 36, fill: '#111' };
+export const INSTANCE_FONT = { size: 38, fill: '#111', weight: 'bold', italic: true };
+export const LABEL_FONT = { size: 38, fill: '#111' };
 
 const STYLES = { thick: THICK, symbol: SYMBOL, emph: EMPH, ground: GROUND, supply: SUPPLY };
 

@@ -5,7 +5,6 @@ import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
 import { segThroughInterior, smartRoute, balancedRoute } from './router.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
-import { demoCircuit } from './templates.js';
 
 /** Build the routing environment for a circuit (component bboxes + pin dirs). */
 function routeEnv(circuit) {
@@ -231,7 +230,6 @@ export function commandHelp() {
     'Commands',
     '  help | version',
     '  clear                          - start an empty circuit',
-    '  demo                           - load the demo circuit',
     '  add <type> [refdes] [--at X Y] [--rot D] [--mirrorX] [--mirrorY] [--value V]',
     '                                  types: ' + symbolTypeNames.join(' '),
     '  move <refdes> <X> <Y>          - move (snapped to 40-grid)',
@@ -276,13 +274,6 @@ function dispatch(circuit, cmd, pos, flags, io) {
     circuit.nets.clear();
     circuit.labels.clear();
     return result('cleared', null, true);
-  }
-  if (cmd === 'demo') {
-    const fresh = demoCircuit();
-    circuit.components = fresh.components;
-    circuit.nets = fresh.nets;
-    circuit.labels = fresh.labels;
-    return result('loaded demo circuit', fresh.toJSON(), true);
   }
   if (cmd === 'list') {
     const rows = [];
@@ -337,8 +328,10 @@ function dispatch(circuit, cmd, pos, flags, io) {
       x,
       y,
       rotation: flags.rot ? Number(flags.rot[0]) : 0,
-      mirrorX: !!flags.mirrorX,
-      mirrorY: !!flags.mirrorY,
+      // Omit the mirror flags when not given so the symbol's own defaults apply
+      // (e.g. output ports default to mirrorX, pmos to mirrorY).
+      mirrorX: flags.mirrorX ? true : undefined,
+      mirrorY: flags.mirrorY ? true : undefined,
       value: flags.value ? flags.value[0] : undefined,
     });
     const terms = c.worldTerminals().map((t) => `${t.name}=${pp(t.x, t.y)}`);

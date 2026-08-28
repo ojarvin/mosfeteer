@@ -254,16 +254,23 @@ export function editorOverlay(circuit, opts = {}) {
     const pts = net && typeof net.points === 'function' ? net.points() : net;
     if (!pts || pts.length < 2) continue;
     const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-    parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="6" opacity="0.25"/>`);
-    parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="1.6"/>`);
+    parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="12" opacity="0.45" stroke-linecap="round" stroke-linejoin="round"/>`);
+    parts.push(`<path d="${d}" fill="none" stroke="#2563eb" stroke-width="2.4"/>`);
   }
 
   if (opts.wireMode) {
+    const src = opts.wireSource;
     for (const comp of circuit.components.values()) {
       for (const terminal of comp.worldTerminals()) {
         const connected = circuit.netOfTerminal({ comp: comp.refdes, term: terminal.name });
+        const isSource = src && src.refdes === comp.refdes && src.term === terminal.name;
         const color = connected ? '#2563eb' : '#dc2626';
-        parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="4.5" fill="#fff" stroke="${color}" stroke-width="2"/>`);
+        if (isSource) {
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="11" fill="#d97706" opacity="0.16"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="#d97706" stroke="#fff" stroke-width="2"/>`);
+        } else {
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="#fff" stroke="${color}" stroke-width="2.5"/>`);
+        }
       }
     }
   }
