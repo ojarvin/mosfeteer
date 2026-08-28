@@ -378,7 +378,6 @@ export class Circuit {
     const p = snapPoint(x, y);
     c.transform.x = p.x;
     c.transform.y = p.y;
-    this.connectCoincident(refdes);
     return c;
   }
 
@@ -399,7 +398,12 @@ export class Circuit {
    * wire that keeps them joined. Returns the number of connections made.
    */
   connectCoincident(refdes) {
-    const comps = refdes ? [this.components.get(refdes)].filter(Boolean) : [...this.components.values()];
+    let comps;
+    if (Array.isArray(refdes)) {
+      comps = refdes.map((r) => this.components.get(r)).filter(Boolean);
+    } else {
+      comps = refdes ? [this.components.get(refdes)].filter(Boolean) : [...this.components.values()];
+    }
     if (comps.length === 0) return 0;
     // Position -> every component terminal sitting there (a point may be shared
     // by more than two pins).

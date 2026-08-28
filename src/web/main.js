@@ -17,7 +17,7 @@ import { demoCircuit } from '../core/templates.js';
 import { snap, GRID } from '../core/grid.js';
 import { balancedRoute, smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
-import { wireRunAt, collapseCollinear, moveWireRun } from '../core/wireedit.js';
+import { wireRunAt, moveWireRun } from '../core/wireedit.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -391,8 +391,6 @@ function rotateSelectionAbout(deg) {
   const p = selectionCentroid();
   const refs = selectedComps().map((c) => c.refdes);
   commit(() => {
-    const before = terminalPositions(refs);
-    prepareRoutesForMoves(refs);
     for (const c of selectedComps()) {
       const t = c.transform;
       // Rotate the component's origin about P, then spin the symbol by the same amount.
@@ -429,7 +427,7 @@ function rotateSelectionAbout(deg) {
       }
       lab.moveTo(nx, ny);
     }
-    preserveAffectedRoutes(refs, before);
+    rerouteTouchedNets(refs);
   });
 }
 
@@ -438,8 +436,6 @@ function mirrorSelectionAbout(axis) {
   const p = selectionCentroid();
   const refs = selectedComps().map((c) => c.refdes);
   commit(() => {
-    const before = terminalPositions(refs);
-    prepareRoutesForMoves(refs);
     for (const c of selectedComps()) {
       const t = c.transform;
       if (axis === 'x') {
@@ -457,8 +453,16 @@ function mirrorSelectionAbout(axis) {
       if (axis === 'x') lab.moveTo(2 * p.x - a.x, a.y);
       else lab.moveTo(a.x, 2 * p.y - a.y);
     }
-    preserveAffectedRoutes(refs, before);
+    rerouteTouchedNets(refs);
   });
+}
+
+/** Re-route every net touching the given components (holistic, from terminals). */
+function rerouteTouchedNets(refs) {
+  for (const id of netsTouching(refs)) {
+    const net = circuit.nets.get(id);
+    if (net) rerouteNet(net);
+  }
 }
 
 function moveCursor(cellsX, cellsY) {
@@ -819,7 +823,10 @@ function rerouteNet(net) {
     net.route = null;
     return;
   }
-  net.route = balancedRoute(world, env);
+  // Two-terminal nets keep the preview's pin-escaped outside bend; larger nets
+  // get the balanced T-junction routing (which already routes branch legs with
+  // smartRoute pin escapes).
+  net.route = world.length === 2 ? smartRoute(world[0], world[1], env) : balancedRoute(world, env);
 }
 
 /** Ids of every net that touches any of the given components. */
@@ -834,59 +841,6 @@ function netsTouching(refs) {
     }
   }
   return touched;
-}
-
-function terminalPositions(refs) {
-  const positions = new Map();
-  for (const ref of refs) {
-    const comp = circuit.components.get(ref);
-    if (!comp) continue;
-    for (const terminal of comp.worldTerminals()) {
-      positions.set(`${ref}.${terminal.name}`, { x: terminal.x, y: terminal.y });
-    }
-  }
-  return positions;
-}
-
-function prepareRoutesForMoves(refs) {
-  for (const id of netsTouching(refs)) {
-    const net = circuit.nets.get(id);
-    if (net && (!net.route || net.route.length < 2)) net.route = net.points().slice();
-  }
-}
-
-function ensureOrthogonal(route) {
-  for (let i = 1; i < route.length; i++) {
-    const a = route[i - 1];
-    const b = route[i];
-    if (a.x !== b.x && a.y !== b.y) {
-      route.splice(i, 0, { x: b.x, y: a.y });
-      i++;
-    }
-  }
-}
-
-/** Move only route points attached to terminals; preserve the existing wire body. */
-function preserveAffectedRoutes(refs, before) {
-  for (const id of netsTouching(refs)) {
-    const net = circuit.nets.get(id);
-    if (!net || !net.route || net.route.length < 2) continue;
-    for (const { comp, term } of net.terminals) {
-      const old = before.get(`${comp}.${term}`);
-      const component = circuit.components.get(comp);
-      if (!old || !component) continue;
-      const now = component.terminalWorld(term);
-      if (old.x === now.x && old.y === now.y) continue;
-      for (const point of net.route) {
-        if (point.x === old.x && point.y === old.y) {
-          point.x = now.x;
-          point.y = now.y;
-        }
-      }
-    }
-    ensureOrthogonal(net.route);
-    collapseCollinear(net.route);
-  }
 }
 
 /** Connect two terminals, re-route the resulting net, commit history once. */
@@ -1056,8 +1010,6 @@ function canvasMouseDown(ev) {
       if (c) origins.set(r, { x: c.transform.x, y: c.transform.y });
     }
     const refs = [...origins.keys()];
-    const terminalOrigin = terminalPositions(refs);
-    prepareRoutesForMoves(refs);
     // If labels are part of the same selection, move them along with the components.
     const labelOrigins = new Map();
     for (const id of selLabels) {
@@ -1070,7 +1022,6 @@ function canvasMouseDown(ev) {
       startWorld,
       startCursor: { ...cursor },
       origins,
-      terminalPositions: terminalOrigin,
       labelOrigins,
       moved: false,
       rubber: null,
@@ -1216,8 +1167,10 @@ if (drag.mode === 'labelmove') {
           if (l && !l.owner) l.moveTo(o.x + dwx, o.y + dwy);
         }
       }
-      preserveAffectedRoutes([...drag.origins.keys()], drag.terminalPositions);
-      drag.terminalPositions = terminalPositions([...drag.origins.keys()]);
+      // The net is treated as a holistic set: re-route its wires from the
+      // terminals + environment rather than hand-carrying a wire body, so a
+      // drag can never leave wires dangling or collapsed.
+      rerouteTouchedNets([...drag.origins.keys()]);
       cursor = { x: snap(drag.startCursor.x + dwx), y: snap(drag.startCursor.y + dwy) };
     }
     render();
@@ -1275,7 +1228,15 @@ function canvasMouseUp(ev) {
     if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit);
   } else if (drag.mode === 'move') {
     if (drag.moved) {
-      preserveAffectedRoutes([...drag.origins.keys()], drag.terminalPositions);
+      const refs = [...drag.origins.keys()];
+      // Touching pins connect at the COMMITTED position only (never mid-drag,
+      // where a pin merely passing over another would merge nets).
+      if (circuit.connectCoincident(refs) > 0) {
+        for (const id of netsTouching(refs)) {
+          const net = circuit.nets.get(id);
+          if (net) rerouteNet(net);
+        }
+      }
       // Re-sync junction solder dots to the moved topology.
       circuit.syncJunctionSolders();
     }
@@ -1666,13 +1627,11 @@ function onNormalKey(key) {
       const dy = nudgeKey[1] * count * 40;
       commit(() => {
         const refs = comps.map((c) => c.refdes);
-        const before = terminalPositions(refs);
-        prepareRoutesForMoves(refs);
         for (const c of comps) circuit.moveComponent(c.refdes, c.transform.x + dx, c.transform.y + dy);
         // Only free labels are moved explicitly — owned labels follow their
         // component's transform automatically (avoid double-moving them).
         for (const lab of labs) if (!lab.owner) lab.translate(dx, dy);
-        preserveAffectedRoutes(refs, before);
+        rerouteTouchedNets(refs);
       });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;

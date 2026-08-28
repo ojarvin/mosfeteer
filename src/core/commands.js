@@ -2,10 +2,33 @@ import { Circuit } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
-import { segThroughInterior, smartRoute } from './router.js';
+import { segThroughInterior, smartRoute, balancedRoute } from './router.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
 import { demoCircuit } from './templates.js';
+
+/** Build the routing environment for a circuit (component bboxes + pin dirs). */
+function routeEnv(circuit) {
+  const rects = [];
+  const pins = new Map();
+  for (const comp of circuit.components.values()) {
+    if (comp.type === 'solder') continue;
+    rects.push(comp.bboxWorld());
+    for (const t of comp.worldTerminals()) pins.set(`${t.x},${t.y}`, pinDir(comp, t.x, t.y));
+  }
+  return { rects, pins, wires: [] };
+}
+
+/** Materialize a net's route with the pin-escaped outside bends: two-terminal
+ *  nets route via smartRoute; larger nets get the balanced T-junction. */
+function routeNet(circuit, net) {
+  const world = net.terminalWorlds().filter(Boolean);
+  if (world.length < 2) {
+    net.route = null;
+    return;
+  }
+  net.route = world.length === 2 ? smartRoute(world[0], world[1], routeEnv(circuit)) : balancedRoute(world, routeEnv(circuit));
+}
 
 /** Re-route every net that touches any of the given component refdes. */
 function rerouteNetsFor(circuit, refs) {
@@ -313,7 +336,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const c = circuit.getComponent(pos[0]);
     circuit.moveComponent(c.refdes, Number(pos[1]), Number(pos[2]));
     rerouteNetsFor(circuit, [c.refdes]);
-    circuit.syncJunctionSolders();
+    // Touching pins connect at the committed position (a pin that lands exactly
+    // on another component's pin joins its net); re-route any merged net.
+    if (circuit.connectCoincident(c.refdes) > 0) {
+      const touched = new Set();
+      for (const id of [...circuit.nets.keys()]) {
+        if (circuit.nets.get(id).terminals.some((t) => t.comp === c.refdes)) touched.add(id);
+      }
+      for (const id of touched) routeNet(circuit, circuit.nets.get(id));
+    }
     return result(`moved ${c.refdes} to ${pp(c.transform.x, c.transform.y)}`, { refdes: c.refdes, x: c.transform.x, y: c.transform.y }, true);
   }
   if (cmd === 'rotate') {
@@ -369,6 +400,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (pos.length < 2) throw new Error('usage: connect REF.TERM REF.TERM [...]');
     const net = circuit.connect(...pos);
     if (flags.name && flags.name[0]) net.name = flags.name[0];
+    // Materialize the pin-escaped route so the committed wire matches the
+    // editor preview (a clean outside bend, never drilling a body).
+    routeNet(circuit, net);
     const terms = net.terminals.map((t) => termInfo(circuit, t.comp, t.term));
     return result(`net ${net.id}${net.name ? ` "${net.name}"` : ''}: ${terms.join('  ')}; len=${net.length()}`, { netId: net.id, name: net.name, terminals: net.terminals.map((t) => ({ ...t })), length: net.length() }, true);
   }
@@ -436,6 +470,7 @@ function netCommand(circuit, pos, result) {
   const op = pos[1];
   if (op === 'add') {
     circuit.connectTo(net.id, pos[2]);
+    routeNet(circuit, net);
     return result(`added ${pos[2]} to net ${net.id}`, net.toJSON(), true);
   }
   if (op === 'drop') {
@@ -444,6 +479,7 @@ function netCommand(circuit, pos, result) {
       if (`${t.comp}.${t.term}` === pos[2]) {
         net.terminals.splice(i, 1);
         if (net.terminals.length === 0) circuit.nets.delete(net.id);
+        else routeNet(circuit, net);
         circuit.syncJunctionSolders();
         return result(`dropped ${pos[2]} from net ${net.id}`, null, true);
       }
