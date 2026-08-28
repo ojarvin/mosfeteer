@@ -3,6 +3,11 @@
 A successful schematic is electrically correct, readable, editable, and easy
 to review. Passing a parser check alone is not sufficient.
 
+This is the quality standard the drawing process must meet; produce the drawing
+through the live editor following `agent-operations.md` (how to drive it) and
+`agent-workflow.md` (the process), with the layout discipline in
+`placement.md`.
+
 ## Electrical Correctness
 
 - Implement the requested topology, not merely the requested component count.
@@ -31,6 +36,25 @@ to review. Passing a parser check alone is not sufficient.
   terminal connection portions needed to keep pins attached.
 - Avoid wire crossings. If a crossing is unavoidable, make the connectivity
   distinction obvious and use a junction only when the net is actually joined.
+
+### Spacing: airy and balanced, never crammed
+
+A professional schematic has room to breathe. Crammed layouts are the most
+common readability failure — they look "correct but busy".
+
+- **Use even-cell gaps** (2, 4, 6, 8 … grid cells) between rows and columns so
+  shared nodes sit on grid points and the layout reads as deliberate.
+- **Keep bodies apart**: at least one full empty cell around every device, and
+  a wide pitch for matched pairs/mirrors so each half has its own label space
+  and a clean wire corridor.
+- **Plan the wire lanes**: after placing devices, every net should have a short,
+  straight, unobstructed path. If a wire must detour around a body, widen the
+  layout rather than forcing the route.
+- **When in doubt, space it out.** Extra whitespace costs nothing and prevents
+  label collisions and tangled wires. A drawing that is slightly large but
+  clearly readable is better than a tight one that is hard to follow.
+- Review the fitted view (F), not just the report: if any two labels overlap or
+  a wire threads tightly between bodies, increase spacing and re-check.
 
 ## Visual Structure
 
@@ -80,17 +104,28 @@ branch off the terminal row so a real T-junction (not a collinear line) exists.
 An ordinary corner does not receive a dot, and different nets that merely cross
 never share one.
 
+## Naming
+
+Signal names are lowercase-free, typed signal names with a leading voltage or
+current letter and a subscript for the rest: `V_{INP}`, `V_{INN}`, `V_{BIAS}`,
+`V_{OUT}`, `V_{DD}`, `I_{BIAS}`, `V_{REF}`. In JSON, net names and port refdes
+use the plain form (`VINP`, `VOUT`, `BIAS`); the label text carries the markup
+(`V_{INP}`). Name nets for their purpose (`TAIL`, `GND`, `VDD`, `VOUT`,
+`DIODE`, `BIAS`) — a net's name appears in the editor's net list, so it should
+tell the reader what the node does.
+
 ## Labels
 
 Use labels for external interfaces and important internal nodes. At minimum,
 label:
 
-- supply rails;
-- ground;
-- every input;
-- every output;
+- every input and output (the port labels);
 - bias/reference nodes;
 - feedback or mirror nodes when their purpose is not obvious.
+
+**Do not label supply or ground.** The supply and ground symbols already say it;
+adding "VDD"/"GND" text is redundant clutter. Rail *names* still matter for the
+net name (a net named `VDD` is fine).
 
 Labels are separate `LabelInstance` objects, not component types. Owned instance
 labels identify components; free labels identify circuit signals. Keep free labels
@@ -98,14 +133,19 @@ off component bodies and route paths.
 
 **No font-12 value/refdes text.** Component identifiers are dedicated owned label
 objects. Ports auto-create their identifier label from the refdes (refPrefix
-`I`/`O`/`IO`, so `add input VINP` labels the pin "VINP"). Supply, ground, and
-solder carry no automatic labels — place a free label for a rail name such as
-"VDD". Do not set component `value` text to convey names.
+`I`/`O`/`IO`, so `add input VINP` labels the pin "VINP"). Do not set component
+`value` text to convey names.
 
 Label text supports subscripts with `_{...}` markup (e.g. `C_{GS}`, `M_{1}`);
 owned instance labels render trailing digits as a subscript (M1 → M with
 subscript 1) for the textbook look. Alignment (center/left/right), anchors, and
 the grid-snapped box model are unchanged.
+
+**Port labels sit one grid square from the port symbol, aligned toward it.**
+Left-of-port labels are `align: right`; right-of-port labels are `align: left`.
+The label box edge is 40 units clear of the port box — never overlapping the
+symbol. Horizontal ports are the common case; keep the same one-square rule for
+any label near a symbol.
 
 Do not add extra descriptive text or component values by default. Unless the user
 asks for values or annotations, the only component text should be the inherent

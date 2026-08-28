@@ -26,7 +26,18 @@ export function normalizePath(path = []) {
     if (last && last.x === p.x && last.y === p.y) continue;
     if (last && out.length > 1) {
       const prev = out[out.length - 2];
-      if ((prev.x === last.x && last.x === p.x) || (prev.y === last.y && last.y === p.y)) {
+      // Merge a collinear middle point ONLY when the run is monotonic. A point
+      // where the polyline reverses direction (an out-and-back such as the
+      // balanced route's visit to a terminal: (120,120)->(120,80)->(120,120))
+      // is a real vertex and must be preserved, otherwise the terminal's wire
+      // leg silently disappears.
+      const horiz = prev.y === last.y && last.y === p.y;
+      const vert = prev.x === last.x && last.x === p.x;
+      if (horiz && (p.x - last.x) * (last.x - prev.x) >= 0) {
+        out[out.length - 1] = p;
+        continue;
+      }
+      if (vert && (p.y - last.y) * (last.y - prev.y) >= 0) {
         out[out.length - 1] = p;
         continue;
       }

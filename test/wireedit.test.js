@@ -90,6 +90,21 @@ test('normalizePath produces a minimal orthogonal grid path', () => {
   ]);
 });
 
+test('normalizePath keeps a terminal out-and-back (route reversal is a real vertex)', () => {
+  // A balanced 3-way junction route visits a terminal by running out and back:
+  // (360,120) -> (120,120) -> (120,80) -> (120,120). The middle point is a
+  // collinear REVERSAL that must be preserved, otherwise the terminal's wire
+  // leg silently disappears from the loaded/render path.
+  const path = [
+    { x: 360, y: 160 }, { x: 360, y: 120 }, { x: 120, y: 120 }, { x: 120, y: 80 },
+    { x: 120, y: 120 }, { x: 600, y: 120 }, { x: 600, y: 80 },
+  ];
+  assert.deepEqual(normalizePath(path), [
+    { x: 360, y: 160 }, { x: 360, y: 120 }, { x: 120, y: 120 }, { x: 120, y: 80 },
+    { x: 120, y: 120 }, { x: 600, y: 120 }, { x: 600, y: 80 },
+  ]);
+});
+
 test('deleting a segment splits a branch without moving its remaining geometry', () => {
   const paths = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 160, y: 80 }]];
   const next = deleteWireSegment(paths, 0, 1);
