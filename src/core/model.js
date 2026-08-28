@@ -731,14 +731,21 @@ export class Circuit {
         noLabel: true, // instance labels come from data.labels below
       });
     }
+    let maxNetId = 0;
     for (const n of data.nets) {
-      const net = circuit._createNet(n.name);
+      const net = new Net(circuit, { name: n.name });
       net.id = n.id;
       for (const t of n.terminals) net.terminals.push(t);
       net.route = n.route || null;
       if (Array.isArray(n.junctions)) net.junctions = n.junctions.map((p) => ({ x: p.x, y: p.y }));
       if (Array.isArray(n.branches)) net.branches = n.branches.map((b) => b.map((p) => ({ x: p.x, y: p.y })));
+      circuit.nets.set(net.id, net);
+      const num = parseInt(String(n.id).replace(/\D/g, ''), 10) || 0;
+      if (num > maxNetId) maxNetId = num;
     }
+    // Keep the id counter ahead of every loaded net so new nets never collide
+    // with (and silently overwrite) a loaded one.
+    circuit._netId = maxNetId;
     for (const l of data.labels || []) {
       const label = circuit.addLabel({
         id: l.id,

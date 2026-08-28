@@ -698,6 +698,16 @@ let drag = null;
 let inlineInput = null; // the active inline-edit <input>, if any
 let lastLabelClick = null; // { id, x, y, at } of the previous label click (for double-click fallback)
 
+/** A press becomes a drag once the pointer has moved BOTH more than the pixel
+ *  threshold (a few px of click jitter is never a drag) AND more than half a
+ *  grid cell in world units (zoom-independent — at any zoom a click that stays
+ *  within a cell is a plain click, never a drag). */
+function dragMoved(startWorld, startClient, w, ev) {
+  const world = Math.hypot(w.x - startWorld.x, w.y - startWorld.y);
+  const client = Math.hypot(ev.clientX - startClient.x, ev.clientY - startClient.y);
+  return world > GRID / 2 && client > DRAG_THRESH;
+}
+
 /** Abort an in-progress mouse drag. A cancelled wire run is restored to its
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
@@ -944,7 +954,7 @@ function netsTouching(refs) {
  *  When `points` is given the wire follows that hand-drawn path instead of the
  *  auto route (the path is made orthogonal and collinear runs are collapsed).
  *  If either endpoint already belongs to a wired net (e.g. a diode G-D link),
- *  that wire is preserved untouched and the draft is spliced in as a branch —
+ *  that wire is preserved untouched and the new leg is spliced in as a branch —
  *  joining to it never rewrites the existing route. */
 function connectTwo(src, dst, points) {
   const before = snapshot();
@@ -952,28 +962,28 @@ function connectTwo(src, dst, points) {
   const srcRoute = existingRoute(circuit.netOfTerminal(`${src.refdes}.${src.term}`));
   const dstRoute = existingRoute(circuit.netOfTerminal(`${dst.refdes}.${dst.term}`));
   const net = circuit.connect(`${src.refdes}.${src.term}`, `${dst.refdes}.${dst.term}`);
-  if (points && points.length) {
-    const start = circuit.components.get(src.refdes).terminalWorld(src.term);
-    const end = circuit.components.get(dst.refdes).terminalWorld(dst.term);
-    const route = [start, ...points.map((p) => ({ x: snap(p.x), y: snap(p.y) })), end];
-    const draft = orthogonalize(route);
-    collapseCollinear(draft);
-    if (srcRoute || dstRoute) {
-      // The draft attaches to an already-drawn wire: keep the original polyline
-      // exactly as it was and add the draft as a separate branch. A wire that
-      // meets a component pin needs no solder dot (the pin is the junction).
-      const branches = [];
-      for (const existing of [srcRoute, dstRoute]) {
-        if (existing && !branches.some((b) => JSON.stringify(b) === JSON.stringify(existing))) {
-          branches.push(existing.map((p) => ({ ...p })));
-        }
+  const start = circuit.components.get(src.refdes).terminalWorld(src.term);
+  const end = circuit.components.get(dst.refdes).terminalWorld(dst.term);
+  const pts = points && points.length ? points.map((p) => ({ x: snap(p.x), y: snap(p.y) })) : [];
+  const draft = orthogonalize([start, ...pts, end]);
+  collapseCollinear(draft);
+  if (srcRoute || dstRoute) {
+    // The new leg attaches to an already-drawn wire: keep the original
+    // polyline(s) exactly as they were and add the draft as a separate branch.
+    // A wire that meets a component pin needs no solder dot (the pin is the
+    // junction). This also applies to a direct terminal-to-terminal click with
+    // no bend points — the existing net's wire must never be recomputed.
+    const branches = [];
+    for (const existing of [srcRoute, dstRoute]) {
+      if (existing && !branches.some((b) => JSON.stringify(b) === JSON.stringify(existing))) {
+        branches.push(existing.map((p) => ({ ...p })));
       }
-      branches.push(draft);
-      net.route = draft.slice();
-      net.branches = branches;
-    } else {
-      net.route = draft;
     }
+    branches.push(draft);
+    net.route = draft.slice();
+    net.branches = branches;
+  } else if (pts.length) {
+    net.route = draft;
   } else {
     rerouteNet(net);
   }
@@ -1460,7 +1470,7 @@ function canvasMouseMove(ev) {
     return;
   }
 
-  const movedOut = Math.abs(ev.clientX - drag.startClient.x) > DRAG_THRESH || Math.abs(ev.clientY - drag.startClient.y) > DRAG_THRESH;
+  const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
 
   if (drag.mode === 'pan') {
     // Map the pointer back against the mousedown view (startView) so the pan
@@ -1560,7 +1570,7 @@ if (drag.mode === 'labelmove') {
 
 function canvasMouseUp(ev) {
   if (!drag) return;
-  const movedOut = Math.abs(ev.clientX - drag.startClient.x) > DRAG_THRESH || Math.abs(ev.clientY - drag.startClient.y) > DRAG_THRESH;
+  const movedOut = dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
   const w = clientToWorld(ev.clientX, ev.clientY);
 
   if (drag.mode === 'zoom') {
@@ -1570,9 +1580,10 @@ function canvasMouseUp(ev) {
       zoomToWorldRect(worldRect(drag.startWorld, w));
     }
   } else if (drag.mode === 'wireseg') {
-    if (!drag.moved) {
-      // A plain click selects the net and highlights it — dragging the wire is
-      // what re-routes a run.
+    if (!drag.moved || JSON.stringify(drag.pts) === JSON.stringify(drag.orig)) {
+      // A plain click (or a jittery gesture that never actually moved the run):
+      // select the net and leave the route exactly as it was.
+      if (!drag.hadRoute) drag.net.route = null; // don't materialize a route on a click
       selectedNets = new Set([drag.net.id]);
       render();
       return;
@@ -1738,6 +1749,7 @@ function renderNets() {
     return;
   }
   for (const net of circuit.nets.values()) {
+    if (!net.terminals.length) continue; // never show empty/ghost nets
     const row = document.createElement('div');
     row.className = 'row' + (selectedNets.has(net.id) ? ' selected' : '');
 
@@ -2595,7 +2607,7 @@ window.__run = (line) => { runLine(line); };
 window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); fitView(); };
 window.__circuit = () => ({
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
-  nets: [...circuit.nets.values()].map((net) => ({ id: net.id, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, pts: net.points() })),
+  nets: [...circuit.nets.values()].map((net) => ({ id: net.id, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, branches: net.branches, junctions: net.junctions, pts: net.points() })),
   labels: [...circuit.labels.values()].map((l) => ({ ...l.toJSON(), world: l.anchorWorld() })),
 });
 
