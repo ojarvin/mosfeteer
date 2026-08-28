@@ -368,7 +368,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   // ---------- files / render ----------
   if (cmd === 'svg' || cmd === 'export') {
     const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.svg';
-    const svg = svgString(circuit, { grid: !!flags.grid, background: true });
+    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true });
     if (io) {
       io.writeTextFile(file, svg);
       return result(`wrote ${file} (${svg.length} bytes)`, null);
@@ -379,7 +379,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.png';
     if (!io) return result('PNG export requires CLI (file I/O); use svg/--json instead', null);
     const svgFile = file.replace(/\.png$/i, '') + '.svg';
-    io.writeTextFile(svgFile, svgString(circuit, { grid: !!flags.grid, background: true }));
+    io.writeTextFile(svgFile, svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true }));
     const out = io.rasterize(svgFile, file);
     return result(`wrote ${file} via ${out.tool}`, null);
   }

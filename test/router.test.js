@@ -62,6 +62,21 @@ test('autoRoute multi-point chain preserves all intermediate grid lines', () => 
   allOnGrid(chain);
 });
 
+test('autoRoute balances a centered three-way branch', () => {
+  const route = autoRoute([
+    { x: 120, y: 0 },
+    { x: 360, y: 0 },
+    { x: 240, y: 80 },
+  ]);
+  assert.deepEqual(route, [
+    { x: 240, y: 80 },
+    { x: 240, y: 40 },
+    { x: 120, y: 40 },
+    { x: 120, y: 0 },
+    { x: 360, y: 0 },
+  ]);
+});
+
 test('segmentsCross detects interior orthogonal crossings', () => {
   // vertical a-b crossing horizontal c-d at interior points
   assert.equal(segmentsCross({ x: 20, y: -10 }, { x: 20, y: 50 }, { x: -10, y: 20 }, { x: 50, y: 20 }), true);

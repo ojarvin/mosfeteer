@@ -82,6 +82,16 @@ test('svgString renders net wires for connected terminals', () => {
   assert.ok(svg.includes(`data-ref="${r2.refdes}"`));
 });
 
+test('svgString marks generated balanced net junctions with a solder dot', () => {
+  const c = new Circuit();
+  const left = c.addComponent('nmos', { x: 0, y: -80 });
+  const right = c.addComponent('nmos', { x: 480, y: -80, mirrorX: true });
+  const tail = c.addComponent('nmos', { x: 120, y: 160 });
+  c.connect(`${left.refdes}.s`, `${right.refdes}.s`, `${tail.refdes}.d`);
+  const svg = svgString(c, { terminals: false, junctions: false });
+  assert.ok(svg.includes('cx="240" cy="40" r="5"'), 'balanced junction dot present');
+});
+
 test('svgString renders standalone label text with its alignment anchor', () => {
   const c = new Circuit();
   c.addLabel({ text: 'TP1', x: 400, y: 0, align: 'left' });

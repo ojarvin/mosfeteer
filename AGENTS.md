@@ -5,6 +5,14 @@ Git repo (root commit `e868342`, label commit `dd750f6`) → private `ojarvin/sc
 **Push only over HTTPS** (SSH permanently unavailable headless, "Permission denied (publickey)");
 `origin` = HTTPS URL, `gh` is the credential helper.
 
+## Agent generation instructions
+
+For agent-driven circuit generation, read these guides first:
+
+- `guidelines/agent-operations.md` — live server, browser/API operations, JSON connectivity, iteration, and saving.
+- `guidelines/diagram-quality.md` — electrical, geometric, routing, labeling, and review requirements.
+- `guidelines/agent-workflow.md` — inspecting prior circuits and maintaining circuit-specific `learnings.md`.
+
 ## Do NOT modify (user-owned style guide)
 - `src/core/components/resistor.js` geometry (terminals/bbox/graphics) or `src/core/style.js` values.
   Only `refPos`/`textPos` ("the label in resistor") may be tweaked. Treat current working-tree versions as canonical.

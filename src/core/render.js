@@ -1,6 +1,6 @@
 import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
-import { autoRoute } from './router.js';
+import { autoRoute, balancedPaths } from './router.js';
 import { fontAttrs, strokeAttrs } from './style.js';
 
 function fmt(n) {
@@ -101,13 +101,35 @@ export function svgString(circuit, opts = {}) {
 
   // Nets first so components draw on top of wire ends.
   for (const net of circuit.nets.values()) {
-    const pts = net.points();
-    if (pts.length < 2) continue;
-    const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-    parts.push(`<path d="${d}" fill="none" ${strokeAttrs()}/>`);
-    if (o.netNames && net.name) {
-      const mid = pts[Math.floor(pts.length / 2)];
-      parts.push(textEl(mid.x + 6, mid.y - 6, net.name, 'start', 11, '#666'));
+    const paths = !net.route && net.terminals.length >= 3 ? balancedPaths(net.terminalWorlds()) : [net.points()];
+    for (const pts of paths) {
+      if (pts.length < 2) continue;
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path d="${d}" fill="none" ${strokeAttrs()}/>`);
+      if (o.netNames && net.name) {
+        const mid = pts[Math.floor(pts.length / 2)];
+        parts.push(textEl(mid.x + 6, mid.y - 6, net.name, 'start', 11, '#666'));
+      }
+    }
+    if (!net.route && net.terminals.length >= 3) {
+      const solderPoints = new Set(
+        [...circuit.components.values()]
+          .filter((component) => component.type === 'solder')
+          .map((component) => `${component.transform.x},${component.transform.y}`),
+      );
+      const endpoints = new Map();
+      for (const path of paths) {
+        for (const point of [path[0], path[path.length - 1]]) {
+          if (!point) continue;
+          const key = `${point.x},${point.y}`;
+          endpoints.set(key, { point, count: (endpoints.get(key)?.count || 0) + 1 });
+        }
+      }
+      for (const { point, count } of endpoints.values()) {
+        if (count >= 3 && !solderPoints.has(`${point.x},${point.y}`)) {
+          parts.push(`<circle cx="${fmt(point.x)}" cy="${fmt(point.y)}" r="5" fill="#111" stroke="none"/>`);
+        }
+      }
     }
   }
 

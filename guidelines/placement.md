@@ -1,5 +1,10 @@
 # Placement, Wiring & Layout Guidelines (Analog)
 
+> Agent workflow, live-server operations, current symbol geometry, and circuit
+> learnings are documented in `agent-operations.md`, `diagram-quality.md`, and
+> `agent-workflow.md`. Those documents and `AGENTS.md` are authoritative when
+> this older reference conflicts with the current working-tree symbols.
+
 Rules for placing components, drawing wires, and laying out clean,
 **textbook-grade** analog schematics with `node src/cli/index.js <command>`.
 The reference standard is the "Razavi look": ordered transistor arrays, straight
@@ -105,13 +110,21 @@ and mirrored pairs share a boundary — never overlap.
 - Differential nets (`INP/INN`, `INM/INT`, `OUTP/OUTN`, …) must read as **mirror
   images**. The two matched devices go side by side; **one side carries
   `--mirrorX`** so the pair opens like a mirror.
-- Mirrored placement of two NMOS at `x=0` and `x=240` (second with `--mirrorX`)
-  makes their `d` and `s` **coincide on the center line** — the textbook shared
-  source/drain region of a diff pair. The loop of the pair is then a single
-  straight (zero-length) wire; the differential *inputs* stay as separate nets on
-  the outer gates, drawn explicity.
-- Keep the two halves **identically oriented** except for the mirror — no extra
-  rotation on one side.
+- Choose a pitch that leaves label clearance and puts a 40-grid point at the
+  exact symmetry axis. Mirror the right-hand device with `--mirrorX`; do not
+  merely place two identical unmirrored symbols side by side.
+- Align corresponding drain/collector terminals on one row and
+  source/emitter terminals on another. Center shared tail/source circuitry on
+  the symmetry axis and orient its gate/base toward its bias source.
+- Keep the two halves identically oriented except for the intentional mirror.
+- For a three-terminal shared node, route to a centered junction, then split
+  into balanced left/right branches. Add a solder dot only at that true
+  multi-branch junction or at a crossing, never at an ordinary bend.
+
+These rules apply equally to NMOS, PMOS, BJT, folded, cascode, active-load, and
+complementary differential structures. Change the polarity and terminal names as
+needed, but retain equal spacing, matched mirroring, aligned rows, and centered
+shared circuitry.
 
 ### 4.6 Labels
 

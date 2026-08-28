@@ -37,6 +37,11 @@ export function compressElbow(pts) {
  *  no explicit route. */
 export function autoRoute(points) {
   if (points.length === 0) return [];
+  if (points.length >= 3 && hasCenteredBranch(points)) return balancedRoute(points);
+  return pruneRoute(simpleAutoRoute(points), points);
+}
+
+function simpleAutoRoute(points) {
   const out = [{ x: points[0].x, y: points[0].y }];
   for (let i = 1; i < points.length; i++) {
     const a = out[out.length - 1];
@@ -61,6 +66,104 @@ export function autoRoute(points) {
     out.push({ x: cx, y: a.y }, { x: cx, y: b.y }, { x: b.x, y: b.y });
   }
   return out;
+}
+
+function hasCenteredBranch(points) {
+  const terminals = points.map(snapP);
+  for (let i = 0; i < terminals.length; i++) {
+    for (let j = i + 1; j < terminals.length; j++) {
+      const a = terminals[i];
+      const b = terminals[j];
+      if (a.y === b.y) {
+        if (terminals.some((p, k) => k !== i && k !== j && p.x > Math.min(a.x, b.x) && p.x < Math.max(a.x, b.x) && p.y !== a.y)) return true;
+      } else if (a.x === b.x) {
+        if (terminals.some((p, k) => k !== i && k !== j && p.y > Math.min(a.y, b.y) && p.y < Math.max(a.y, b.y) && p.x !== a.x)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function samePoint(a, b) {
+  return a.x === b.x && a.y === b.y;
+}
+
+/** Remove non-terminal 180-degree stubs and closed loops from a route. */
+export function pruneRoute(points, protectedPoints = []) {
+  const protectedSet = new Set(protectedPoints.map((p) => `${snap(p.x)},${snap(p.y)}`));
+  const out = points.map(snapP);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 1; i < out.length - 1; i++) {
+      if (!samePoint(out[i - 1], out[i + 1])) continue;
+      const key = `${out[i].x},${out[i].y}`;
+      if (protectedSet.has(key)) continue;
+      out.splice(i, 2);
+      changed = true;
+      break;
+    }
+  }
+  return out;
+}
+
+function median(values) {
+  const sorted = values.slice().sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function appendBalancedRoute(out, target, env) {
+  const a = out[out.length - 1];
+  const b = { x: snap(target.x), y: snap(target.y) };
+  if (a.x === b.x && a.y === b.y) return;
+  const segment = smartRoute(a, b, env);
+  for (let i = 1; i < segment.length; i++) out.push(segment[i]);
+}
+
+/**
+ * Route a multi-terminal net through a median grid junction. The polyline
+ * walks each branch from the junction and back because the state format stores
+ * one ordered path, while the resulting geometry is a balanced Manhattan tree.
+ */
+export function balancedRoute(points, env = { rects: [], pins: new Map(), wires: [] }) {
+  const terminals = points.map(snapP);
+  if (terminals.length < 3 || !hasCenteredBranch(terminals)) return pruneRoute(simpleAutoRoute(terminals), terminals);
+  const pair = terminals.find((p, i) => terminals.some((q, j) => j !== i && p.y === q.y && terminals.some((r, k) => k !== i && k !== j && r.x > Math.min(p.x, q.x) && r.x < Math.max(p.x, q.x))))
+    || terminals.find((p, i) => terminals.some((q, j) => j !== i && p.x === q.x && terminals.some((r, k) => k !== i && k !== j && r.y > Math.min(p.y, q.y) && r.y < Math.max(p.y, q.y))));
+  if (!pair) return pruneRoute(simpleAutoRoute(terminals), terminals);
+  const pairIndex = terminals.indexOf(pair);
+  const other = terminals.find((p, i) => i !== pairIndex && (p.y === pair.y || p.x === pair.x));
+  const branch = terminals.find((p, i) => i !== pairIndex && p !== other);
+  const junction = pair.y === other.y
+    ? { x: median(terminals.map((p) => p.x)), y: snap((pair.y + branch.y) / 2) }
+    : { x: snap((pair.x + branch.x) / 2), y: median(terminals.map((p) => p.y)) };
+  const start = branch || terminals[0];
+  const out = [{ ...start }];
+  appendBalancedRoute(out, junction, env);
+  appendBalancedRoute(out, pair, env);
+  appendBalancedRoute(out, other || terminals[terminals.length - 1], env);
+  return pruneRoute(out, terminals);
+}
+
+/** Renderable branch paths for a centered T-junction. */
+export function balancedPaths(points, env = { rects: [], pins: new Map(), wires: [] }) {
+  const terminals = points.map(snapP);
+  if (terminals.length < 3 || !hasCenteredBranch(terminals)) return [simpleAutoRoute(terminals)];
+  const pair = terminals.find((p, i) => terminals.some((q, j) => j !== i && p.y === q.y && terminals.some((r, k) => k !== i && k !== j && r.x > Math.min(p.x, q.x) && r.x < Math.max(p.x, q.x))))
+    || terminals.find((p, i) => terminals.some((q, j) => j !== i && p.x === q.x && terminals.some((r, k) => k !== i && k !== j && r.y > Math.min(p.y, q.y) && r.y < Math.max(p.y, q.y))));
+  if (!pair) return [simpleAutoRoute(terminals)];
+  const pairIndex = terminals.indexOf(pair);
+  const other = terminals.find((p, i) => i !== pairIndex && (p.y === pair.y || p.x === pair.x));
+  const branch = terminals.find((p, i) => i !== pairIndex && p !== other);
+  const junction = pair.y === other.y
+    ? { x: median(terminals.map((p) => p.x)), y: snap((pair.y + branch.y) / 2) }
+    : { x: snap((pair.x + branch.x) / 2), y: median(terminals.map((p) => p.y)) };
+  const makePath = (a, b) => {
+    const path = [{ ...a }];
+    appendBalancedRoute(path, b, env);
+    return pruneRoute(path, terminals);
+  };
+  return [makePath(branch, junction), makePath(junction, pair), makePath(junction, other)];
 }
 
 /** True if segments (a->b) and (c->d) cross at an interior point (both x- and y-spans). */

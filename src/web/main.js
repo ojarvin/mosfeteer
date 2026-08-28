@@ -15,7 +15,7 @@ import { runCommand, commandHelp } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { demoCircuit } from '../core/templates.js';
 import { snap, GRID } from '../core/grid.js';
-import { smartRoute } from '../core/router.js';
+import { balancedRoute, smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
 import { wireRunAt, collapseCollinear, moveWireRun } from '../core/wireedit.js';
 
@@ -66,6 +66,7 @@ let currentCircuitName = '';
 let lastSavedSnapshot = '';
 let draftReady = false;
 const DRAFT_KEY = 'schematic-spawner:draft';
+let remoteConflictLogged = false;
 
 function paneSize() {
   const pane = document.querySelector('.canvas-pane');
@@ -203,6 +204,7 @@ async function loadCircuit(name = circuitSelectEl.value) {
     setSelection([]);
     cursor = { x: 0, y: 0 };
     currentCircuitName = data.name;
+    remoteConflictLogged = false;
     circuitNameEl.value = data.name;
     circuitSelectEl.value = data.name;
     lastSavedSnapshot = snapshot();
@@ -211,6 +213,31 @@ async function loadCircuit(name = circuitSelectEl.value) {
     logLine(`Loaded ${data.name}.`);
   } catch (err) {
     logLine(`Could not load circuit: ${err.message}`, 'error');
+  }
+}
+
+async function syncActiveCircuit() {
+  if (!currentCircuitName) return;
+  try {
+    const response = await fetch(`/api/circuits/${encodeURIComponent(currentCircuitName)}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const data = await response.json();
+    const remoteSnapshot = JSON.stringify(data.state);
+    if (remoteSnapshot === snapshot()) return;
+    if (snapshot() !== lastSavedSnapshot) {
+      if (!remoteConflictLogged) {
+        logLine(`Remote changes to ${currentCircuitName} were not loaded because this circuit has unsaved local changes.`, 'error');
+        remoteConflictLogged = true;
+      }
+      return;
+    }
+    applyJson(remoteSnapshot);
+    lastSavedSnapshot = remoteSnapshot;
+    remoteConflictLogged = false;
+    fitView();
+    logLine(`Updated ${currentCircuitName} from the live agent session.`);
+  } catch {
+    // A transient server restart should not interrupt editing.
   }
 }
 
@@ -767,13 +794,7 @@ function rerouteNet(net) {
     net.route = null;
     return;
   }
-  const path = [{ x: world[0].x, y: world[0].y }];
-  for (let i = 1; i < world.length; i++) {
-    const seg = smartRoute(path[path.length - 1], world[i], env);
-    if (!seg || seg.length < 2) continue;
-    for (let k = 1; k < seg.length; k++) path.push({ x: seg[k].x, y: seg[k].y });
-  }
-  net.route = path.length >= 2 ? path : null;
+  net.route = balancedRoute(world, env);
 }
 
 /** Ids of every net that touches any of the given components. */
@@ -2038,7 +2059,7 @@ document.getElementById('btn-save-circuit').addEventListener('click', saveCircui
 circuitSelectEl.addEventListener('change', () => loadCircuit());
 
 document.getElementById('btn-export').addEventListener('click', () => {
-  const svg = svgString(circuit, { grid: true, terminals: true, junctions: true, background: true });
+  const svg = svgString(circuit, { grid: true, terminals: false, junctions: false, background: true });
   const blob = new Blob([svg], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2133,7 +2154,7 @@ cmdInput.addEventListener('keydown', (ev) => {
 // ----- boot ------------------------------------------------------------
 
 window.__run = (line) => { runLine(line); };
-window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); render(); };
+window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); fitView(); };
 window.__circuit = () => ({
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
   nets: [...circuit.nets.values()].map((net) => ({ id: net.id, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, pts: net.points() })),
@@ -2147,6 +2168,7 @@ try {
   draftReady = true;
   render();
   refreshCircuitList();
+  window.setInterval(syncActiveCircuit, 500);
   logLine('Schematic Spawner ready. Press ? for the keymap. Normal: i to insert, w to wire, u undo.');
 } catch (err) {
   const b = banner();

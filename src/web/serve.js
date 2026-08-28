@@ -95,7 +95,7 @@ async function handleCircuitApi(req, res, url) {
       await mkdir(dir, { recursive: true });
       await writeFile(statePath, JSON.stringify(circuit.toJSON(), null, 2));
       await writeFile(join(dir, 'circuit.svg'), svgString(circuit, {
-        grid: true, terminals: true, junctions: true, background: true, netNames: true,
+        grid: true, terminals: false, junctions: false, background: true, netNames: true,
       }));
       json(res, 200, { name, files: ['circuit.json', 'circuit.svg'] });
     } catch (err) {
