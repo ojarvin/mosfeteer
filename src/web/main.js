@@ -16,6 +16,8 @@ import { svgString, editorOverlay } from '../core/render.js';
 import { demoCircuit } from '../core/templates.js';
 import { snap, GRID } from '../core/grid.js';
 import { smartRoute } from '../core/router.js';
+import { applyDir } from '../core/geometry.js';
+import { wireRunAt, collapseCollinear, moveWireRun } from '../core/wireedit.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -605,10 +607,20 @@ function zoomToWorldRect(r) {
   view.y = (r.y0 + r.y1) / 2 - th / 2;
 }
 
+// ----- wire segment editing (see src/core/wireedit.js) ----------------------
+// wireRunAt, collapseCollinear, findRunLine, moveWireRun are pure polyline
+// helpers imported from src/core/wireedit.js (unit tested there).
+
 // ----- smart net routing ----------------------------------------------------
 
-/** Outward direction from a component body toward a world terminal pin. */
-function pinDir(c, wx, wy) {
+/** Outward direction from a component body toward a world terminal pin. Uses the
+ *  terminal's explicit local direction (honoring the component transform) when
+ *  present, otherwise infers it from the terminal's position vs the bbox centre. */
+function pinDir(c, t, wx, wy) {
+  if (t.dir) {
+    const d = applyDir(c.transform, t.dir.x, t.dir.y);
+    if (d.x !== 0 || d.y !== 0) return d;
+  }
   const r = c.bboxWorld();
   const cx = r.x + r.w / 2;
   const cy = r.y + r.h / 2;
@@ -625,7 +637,10 @@ function netEnv(excludeNetId = null) {
   for (const c of circuit.components.values()) {
     if (c.type === 'solder') continue;
     rects.push(c.bboxWorld());
-    for (const t of c.worldTerminals()) pins.set(`${t.x},${t.y}`, pinDir(c, t.x, t.y));
+    for (const t of c.def.terminals) {
+      const w = c.terminalWorld(t.name);
+      pins.set(`${w.x},${w.y}`, pinDir(c, t, w.x, w.y));
+    }
   }
   const wires = [];
   for (const n of circuit.nets.values()) {
@@ -707,52 +722,6 @@ function doWireClick(x, y) {
     cursor = { x, y };
   }
   render();
-}
-
-/** Maximal collinear run of the route containing segment `seg` (pts[seg-1]->pts[seg]). */
-function wireRunAt(pts, seg) {
-  const n = pts.length;
-  const i = Math.max(1, Math.min(seg, n - 1));
-  const orient = pts[i - 1].y === pts[i].y ? 'h' : 'v';
-  const val = orient === 'h' ? pts[i].y : pts[i].x;
-  const same = (p) => (orient === 'h' ? p.y === val : p.x === val);
-  let lo = i - 1;
-  let hi = i;
-  while (lo > 0 && same(pts[lo - 1])) lo--;
-  while (hi < n - 1 && same(pts[hi + 1])) hi++;
-  return { lo, hi, orient, val };
-}
-
-/** Move the run [lo..hi] perpendicular by `delta` (world units on grid), keeping all
- *  segments axis-aligned. Neighbours that are fixed keep the run from sliding past
- *  them (no inverted folds). Returns true if anything changed. */
-function moveWireRun(pts, run, delta) {
-  const lo = run.lo;
-  const hi = run.hi;
-  const n = pts.length;
-  let lower = -Infinity;
-  let upper = Infinity;
-  const neighborVal = (idx) => (run.orient === 'h' ? pts[idx].y : pts[idx].x);
-  if (lo > 0) {
-    const nv = neighborVal(lo - 1);
-    if (nv < run.val) lower = Math.max(lower, nv);
-    else upper = Math.min(upper, nv);
-  }
-  if (hi < n - 1) {
-    const nv = neighborVal(hi + 1);
-    if (nv < run.val) lower = Math.max(lower, nv);
-    else upper = Math.min(upper, nv);
-  }
-  if (lower + 40 > upper - 40) return false;
-  let raw = snap(run.val + delta);
-  raw = Math.max(raw, lower + 40);
-  raw = Math.min(raw, upper - 40);
-  if (raw === run.val) return false;
-  for (let i = lo; i <= hi; i++) {
-    if (run.orient === 'h') pts[i].y = raw;
-    else pts[i].x = raw;
-  }
-  return true;
 }
 
 function canvasMouseDown(ev) {
@@ -902,12 +871,15 @@ function canvasMouseDown(ev) {
   if (wireHit) {
     const net = wireHit.net;
     if (!net.route || net.route.length < 2) net.route = net.points().slice();
+    const run = wireRunAt(net.route, wireHit.seg);
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
     drag = {
       mode: 'wireseg',
       net,
       pts: net.route,
-      run: wireRunAt(net.route, wireHit.seg),
+      orient: run.orient,
+      line: run.val,
+      axisLast: run.orient === 'h' ? startWorld.y : startWorld.x,
       startClient,
       startWorld,
       moved: false,
@@ -973,8 +945,11 @@ function canvasMouseMove(ev) {
         if (history.length > 200) history.shift();
         future.length = 0;
       }
-      const delta = drag.run.orient === 'h' ? w.y - drag.startWorld.y : w.x - drag.startWorld.x;
-      if (moveWireRun(drag.pts, drag.run, delta)) render();
+      const axis = drag.orient === 'h' ? w.y : w.x;
+      const dAxis = axis - drag.axisLast;
+      drag.axisLast = axis;
+      drag.line = moveWireRun(drag.pts, drag.orient, drag.line, drag.line + dAxis);
+      render();
     }
     return;
   }

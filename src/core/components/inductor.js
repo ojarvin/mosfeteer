@@ -9,17 +9,17 @@ export const inductor = defineSymbol({
   refPrefix: 'L',
   terminals: [
     { name: 'a', x: 0, y: 0 },
-    { name: 'b', x: 120, y: 0 },
+    { name: 'b', x: 160, y: 0 },
   ],
-  bbox: { x: 0, y: -40, w: 120, h: 80 },
+  bbox: { x: 0, y: -40, w: 160, h: 80 },
   graphics: [
     {
       kind: 'path',
-      d: 'M 0 0 L 30 0 A 9 9 0 0 0 48 0 A 9 9 0 0 0 66 0 A 9 9 0 0 0 84 0 A 9 9 0 0 0 102 0 L 120 0',
+      d: 'M 0 0 L 40 0 A 5 10 0 0 0 60 0 A 5 10 0 0 0 80 0 A 5 10 0 0 0 100 0 A 5 10 0 0 0 120 0 L 160 0',
     },
   ],
-  textPos: { x: 60, y: -30, anchor: 'middle' },
+  textPos: { x: 80, y: -30, anchor: 'middle' },
   refPos: null,
-  labelOffset: { x: 60, y: 80 },
+  labelOffset: { x: 80, y: 80 },
   defaultValue: '',
 });

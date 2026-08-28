@@ -19,9 +19,9 @@ export const LINE = {
 
 export const THICK = {
   stroke: '#111',
-  width: Math.round(LINE.width * 1.4),
+  width: Math.round(LINE.width * 1.5),
   cap: 'flat',
-  join: 'round',
+  join: 'flat',
 };
 
 /**

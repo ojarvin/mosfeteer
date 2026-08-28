@@ -11,7 +11,7 @@ export const solder = defineSymbol({
   refPrefix: 'J',
   terminals: [],
   bbox: { x: -40, y: -40, w: 80, h: 80 },
-  graphics: [{ kind: 'dot', cx: 0, cy: 0, r: 4 }],
+  graphics: [{ kind: 'dot', cx: 0, cy: 0, r: 12 }],
   textPos: null,
   refPos: null,
   defaultValue: '',

@@ -25,6 +25,23 @@ export function applyTransform(t, x, y) {
   return { x: t.x + px, y: t.y + py };
 }
 
+/** Transform a unit DIRECTION vector (not a point) under a component transform:
+ *  mirror (flip the affected axis) then rotate, same order as applyTransform.
+ *  Translations do not affect a direction. */
+export function applyDir(t, dx, dy) {
+  let px = t.mirrorX ? -dx : dx;
+  let py = t.mirrorY ? -dy : dy;
+  const r = ((t.rotation % 360) + 360) % 360;
+  if (r === 90) {
+    [px, py] = [-py, px];
+  } else if (r === 180) {
+    [px, py] = [-px, -py];
+  } else if (r === 270) {
+    [px, py] = [py, -px];
+  }
+  return { x: px, y: py };
+}
+
 /** SVG transform attribute for a group wrapping symbol-local geometry. */
 export function transformToSvg(t) {
   const s = `${t.mirrorX ? -1 : 1} ${t.mirrorY ? -1 : 1}`;

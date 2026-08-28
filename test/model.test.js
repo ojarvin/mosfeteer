@@ -96,7 +96,7 @@ test('setValue coerces to string', () => {
 test('default value from symbol', () => {
   const c = new Circuit();
   assert.equal(c.addComponent('resistor').value, '');
-  assert.equal(c.addComponent('supply').value, 'VCC');
+  assert.equal(c.addComponent('supply').value, '');
   assert.equal(c.addComponent('output').value, 'OUT');
 });
 

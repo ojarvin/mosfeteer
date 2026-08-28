@@ -11,9 +11,9 @@ export const pmos = defineSymbol({
   description: 'PMOS Transistor',
   refPrefix: 'M',
   terminals: [
-    { name: 'g', x: 0, y: 0, direction: 'gate' },
-    { name: 'd', x: 120, y: -80, direction: 'drain' },
-    { name: 's', x: 120, y: 80, direction: 'source' },
+    { name: 'g', x: 0, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
+    { name: 'd', x: 120, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
+    { name: 's', x: 120, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
   ],
   bbox: { x: 0, y: -80, w: 120, h: 160 },
   graphics: [
@@ -29,8 +29,10 @@ export const pmos = defineSymbol({
     // Source wires
     { kind: 'path', d: 'M 60 30 L 120 30' },
     { kind: 'path', d: 'M 120 30 L 120 80' },
-    // Source arrow (points INTO the channel, reverse of NMOS)
-    { kind: 'path', d: 'M 67 38 L 60 30 L 67 22 Z' },
+    // Source arrow (points INTO the channel, reverse of NMOS) sits on the
+    // horizontal source wire at y=30, its tip touching the source-drain bar
+    // (x=60) on the left.
+    { kind: 'path', d: 'M 70 30 L 90 22 L 90 38 Z', style: 'thick' },
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
   refPos: null,

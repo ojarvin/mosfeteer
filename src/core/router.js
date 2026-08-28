@@ -122,6 +122,25 @@ function bboxCrossings(pts, env) {
   return n;
 }
 
+/** True if a new-route segment and an existing wire segment run collinearly on
+ *  top of each other with a shared non-zero span (not just touching at a point).
+ *  Only axis-aligned segments are considered (routes are always orthogonal). */
+function overlapSpan(a, b, c, d) {
+  if (a.x === b.x && c.x === d.x && a.x === c.x) {
+    // both vertical on the same line x
+    const lo = Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
+    const hi = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y));
+    return hi - lo > 0;
+  }
+  if (a.y === b.y && c.y === d.y && a.y === c.y) {
+    // both horizontal on the same line y
+    const lo = Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
+    const hi = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x));
+    return hi - lo > 0;
+  }
+  return false;
+}
+
 function wireConflicts(pts, env) {
   let cross = 0;
   let overlap = 0;
@@ -130,22 +149,10 @@ function wireConflicts(pts, env) {
     const b = pts[i];
     for (const wire of env.wires || []) {
       for (let j = 1; j < wire.length; j++) {
-        if (segmentsCross(a, b, wire[j - 1], wire[j])) cross++;
-      }
-    }
-  }
-  const onSeg = (p, a, b) => {
-    if (p.x === a.x && p.x === b.x) return p.y > Math.min(a.y, b.y) && p.y < Math.max(a.y, b.y);
-    if (p.y === a.y && p.y === b.y) return p.x > Math.min(a.x, b.x) && p.x < Math.max(a.x, b.x);
-    return false;
-  };
-  for (const p of pts) {
-    for (const wire of env.wires || []) {
-      for (let j = 1; j < wire.length; j++) {
-        if (onSeg(p, wire[j - 1], wire[j])) {
-          overlap++;
-          break;
-        }
+        const c = wire[j - 1];
+        const d = wire[j];
+        if (segmentsCross(a, b, c, d)) cross++;
+        else if (overlapSpan(a, b, c, d)) overlap++;
       }
     }
   }
@@ -158,8 +165,17 @@ function axisOf(seg) {
     : { x: Math.sign(seg[1].x - seg[0].x), y: 0 };
 }
 
-/** 0..2: penalties for the first/last segment not leaving the source pin
- *  outward and not entering the target pin straight-on. */
+/** 0 = aligned with the outward direction, 1 = perpendicular, 2 = inward. */
+function dirScore(dx, dy, dir) {
+  if (!dir) return 0;
+  if (dx === dir.x && dy === dir.y) return 0;
+  if (dx === -dir.x && dy === -dir.y) return 2;
+  return 1;
+}
+
+/** Penalties for the first segment not leaving the source pin outward (and the
+ *  last segment not entering the target pin straight-on). Inward (going up into
+ *  the component) is the worst penalty; sideways is a lighter one. */
 function conformScore(pts, env) {
   if (pts.length < 2) return 0;
   let s = 0;
@@ -168,11 +184,11 @@ function conformScore(pts, env) {
   const dst = pins.get(`${pts[pts.length - 1].x},${pts[pts.length - 1].y}`);
   if (src) {
     const a = axisOf([pts[0], pts[1]]);
-    if (a.x !== src.x || a.y !== src.y) s++;
+    s += dirScore(a.x, a.y, src);
   }
   if (dst) {
     const b = axisOf([pts[pts.length - 2], pts[pts.length - 1]]);
-    if (b.x !== -dst.x || b.y !== -dst.y) s++;
+    s += dirScore(b.x, b.y, { x: -dst.x, y: -dst.y });
   }
   return s;
 }
@@ -193,7 +209,7 @@ function cmpScore(a, b) {
 
 function scoreCandidate(pts, env) {
   const { cross, overlap } = wireConflicts(pts, env);
-  return [bboxCrossings(pts, env), cross, overlap, Math.max(0, pts.length - 2), conformScore(pts, env), routeLength(pts)];
+  return [bboxCrossings(pts, env), cross, overlap, conformScore(pts, env), Math.max(0, pts.length - 2), routeLength(pts)];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */

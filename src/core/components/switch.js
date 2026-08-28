@@ -16,18 +16,19 @@ export const switch_open = defineSymbol({
   bbox: { x: 0, y: -40, w: 160, h: 80 },
   graphics: [
     // Left wire to the blade root
-    { kind: 'path', d: 'M 0 0 L 50 0' },
+    // { kind: 'path', d: 'M 0 0 L 40 0' },
     // Open blade: angles up, clear of the contact
-    { kind: 'path', d: 'M 50 0 L 78 -30' },
+    { kind: 'path', d: 'M 0 0 L 40 0 L 100 -30' },
     // Right wire from the contact
-    { kind: 'path', d: 'M 100 0 L 160 0' },
-    // Contact dot
-    { kind: 'circle', cx: 100, cy: 0, r: 4 },
+    { kind: 'path', d: 'M 120 0 L 160 0' },
+    // Contact dots
+    { kind: 'circle', cx: 40, cy: 0, r: 6 },
+    { kind: 'circle', cx: 120, cy: 0, r: 6 },
   ],
   textPos: { x: 60, y: -30, anchor: 'middle' },
   refPos: null,
-  labelOffset: { x: 80, y: 80 },
-  defaultValue: 'open',
+  labelOffset: { x: 80, y: 40 },
+  defaultValue: '',
 });
 
 export const switch_closed = defineSymbol({
@@ -41,16 +42,17 @@ export const switch_closed = defineSymbol({
   bbox: { x: 0, y: -40, w: 160, h: 80 },
   graphics: [
     // Left wire to the blade root
-    { kind: 'path', d: 'M 0 0 L 50 0' },
+    // { kind: 'path', d: 'M 0 0 L 50 0' },
     // Closed blade: rests on the contact
-    { kind: 'path', d: 'M 50 0 L 100 0' },
+    { kind: 'path', d: 'M 0 0 L 40 0 L 120 0' },
     // Right wire from the contact
-    { kind: 'path', d: 'M 100 0 L 160 0' },
-    // Contact dot
-    { kind: 'circle', cx: 100, cy: 0, r: 4 },
+    { kind: 'path', d: 'M 120 0 L 160 0' },
+    // Contact dots
+    { kind: 'circle', cx: 40, cy: 0, r: 6 },
+    { kind: 'circle', cx: 120, cy: 0, r: 6 },
   ],
   textPos: { x: 60, y: -30, anchor: 'middle' },
   refPos: null,
-  labelOffset: { x: 80, y: 80 },
-  defaultValue: 'closed',
+  labelOffset: { x: 80, y: 40 },
+  defaultValue: '',
 });

@@ -9,9 +9,9 @@ export const pnp = defineSymbol({
   description: 'PNP Transistor',
   refPrefix: 'Q',
   terminals: [
-    { name: 'b', x: 0, y: 0, direction: 'base' },
-    { name: 'c', x: 120, y: -40, direction: 'collector' },
-    { name: 'e', x: 120, y: 40, direction: 'emitter' },
+    { name: 'b', x: 0, y: 0, direction: 'base', dir: { x: -1, y: 0 } },
+    { name: 'c', x: 120, y: -40, direction: 'collector', dir: { x: 0, y: -1 } },
+    { name: 'e', x: 120, y: 40, direction: 'emitter', dir: { x: 0, y: 1 } },
   ],
   bbox: { x: 0, y: -40, w: 120, h: 80 },
   graphics: [

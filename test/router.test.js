@@ -159,3 +159,53 @@ test('smartRoute falls back to A* when the direct path is sealed off (maze-like)
   }
   allOnGrid(pts);
 });
+
+test('smartRoute prefers the terminal outward direction (a down-pointing NMOS source goes down first)', () => {
+  // NMOS source terminal at (120,80) points DOWN (0,1) because the source wire
+  // leaves the body downward. The first segment must leave down, not left/right,
+  // and never back up into the body.
+  const env = {
+    rects: [{ x: 0, y: -80, w: 120, h: 160 }],
+    pins: new Map([
+      ['120,80', { x: 0, y: 1 }], // source outward = down
+    ]),
+    wires: [],
+  };
+  const pts = smartRoute({ x: 120, y: 80 }, { x: 320, y: 240 }, env);
+  const d = { x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y };
+  assert.equal(d.x, 0, `first segment leaves straight down, got ${JSON.stringify(d)}`);
+  assert.ok(d.y > 0, `first segment leaves downward, got ${JSON.stringify(d)}`);
+  allOnGrid(pts);
+});
+
+test('smartRoute does not route the first segment up INTO the component from a downward pin', () => {
+  const env = {
+    rects: [{ x: 0, y: -80, w: 120, h: 160 }],
+    pins: new Map([['120,80', { x: 0, y: 1 }]]),
+    wires: [],
+  };
+  // target is above the source; even so the wire must not initially go up into the body
+  const pts = smartRoute({ x: 120, y: 80 }, { x: 120, y: -240 }, env);
+  assert.deepEqual(pts[0], { x: 120, y: 80 });
+  // going straight up through the body would be a bbox interior crossing
+  let interior = false;
+  for (let i = 1; i < pts.length; i++) {
+    if (segThroughInterior(pts[i - 1], pts[i], { x: 0, y: -80, w: 120, h: 160 })) interior = true;
+  }
+  assert.equal(interior, false, `no segment through the component body: ${JSON.stringify(pts)}`);
+  allOnGrid(pts);
+});
+
+test('smartRoute avoids running parallel on top of an existing wire', () => {
+  // an existing wire already occupies the y=40 channel; a straight route along
+  // y=40 would overlap it, so the router must prefer a non-overlapping line.
+  const wire = [{ x: 0, y: 40 }, { x: 400, y: 40 }];
+  const env = { rects: [], pins: new Map(), wires: [wire] };
+  const pts = smartRoute({ x: 0, y: 40 }, { x: 400, y: 40 }, env);
+  assert.deepEqual(pts[0], { x: 0, y: 40 });
+  assert.deepEqual(pts[pts.length - 1], { x: 400, y: 40 });
+  // not an overlapping straight run along y=40
+  const overlap = pts.length > 2 || pts[0].y !== 40 || pts[1].y !== 40;
+  assert.ok(pts.length > 2 && pts.some((p) => p.y !== 40), `detoured off the shared line: ${JSON.stringify(pts)}`);
+  allOnGrid(pts);
+});
