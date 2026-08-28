@@ -10,6 +10,7 @@ import { ground } from './ground.js';
 import { supply } from './supply.js';
 import { portInput, portOutput, portInputOutput } from './port.js';
 import { solder } from './solder.js';
+import { switch_open, switch_closed } from './switch.js';
 
 /** All registered symbol definitions, keyed by type name. */
 export const symbolTypes = {
@@ -27,6 +28,8 @@ export const symbolTypes = {
   output: portOutput,
   inputoutput: portInputOutput,
   solder,
+  switch_open,
+  switch_closed,
 };
 
 /** Ordered list of type names (for palettes / docs). */

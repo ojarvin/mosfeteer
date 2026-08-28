@@ -19,6 +19,7 @@ export const capacitor = defineSymbol({
     { kind: 'path', d: 'M 72 0 L 120 0' },
   ],
   textPos: { x: 60, y: -30, anchor: 'middle' },
-  refPos: { x: 60, y: 32, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: 60, y: 80 },
   defaultValue: '',
 });

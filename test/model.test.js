@@ -357,10 +357,10 @@ test('owned label anchorWorld follows the component transform', () => {
   assert.ok(lab, 'nmos gets a dedicated instance label');
   assert.equal(lab.text, 'M1');
   assert.equal(lab.owner, m1.refdes);
-  // default offset (120,0) transforms to (520,0) at the origin (bulk side, gate height)
-  assert.deepEqual(lab.anchorWorld(), { x: 520, y: 0 });
+  // default offset (160,0) transforms to (560,0) at the origin (bulk side, gate height)
+  assert.deepEqual(lab.anchorWorld(), { x: 560, y: 0 });
   c.moveComponent(m1.refdes, 560, 80);
-  assert.deepEqual(lab.anchorWorld(), { x: 680, y: 80 });
+  assert.deepEqual(lab.anchorWorld(), { x: 720, y: 80 });
 });
 
 test('owned label moveTo translates its local offset, keeping it on grid', () => {
@@ -373,11 +373,14 @@ test('owned label moveTo translates its local offset, keeping it on grid', () =>
   assert.deepEqual(lab.anchorWorld(), { x: 80, y: 80 }, 'offset snaps to grid');
 });
 
-test('non-transistor symbols do not auto-create instance labels', () => {
+test('all component types auto-create an owned instance label for their id', () => {
   const c = new Circuit();
   const r = c.addComponent('resistor', { x: 400, y: 0 });
-  assert.equal(c.labels.size, 0);
-  assert.equal(c.labelOf(r.refdes), null);
+  assert.equal(c.labels.size, 1);
+  const lab = c.labelOf(r.refdes);
+  assert.ok(lab, 'resistor gets an owned instance label like every other symbol');
+  assert.equal(lab.owner, r.refdes);
+  assert.equal(lab.text, r.refdes);
 });
 
 test('nextRefdes reuses the smallest available index', () => {

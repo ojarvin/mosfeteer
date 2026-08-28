@@ -33,7 +33,7 @@ export const nmos = defineSymbol({
   textPos: { x: 94, y: -30, anchor: 'middle' },
   refPos: null,
   // Instance label (dedicated label object) sits on the bulk side (opposite the
-  // gate), vertically centered at the gate height.
-  labelOffset: { x: 120, y: 0 },
+  // gate), vertically centered at the gate height, one square clear of the body.
+  labelOffset: { x: 160, y: 0 },
   defaultValue: '',
 });

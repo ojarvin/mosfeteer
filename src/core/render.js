@@ -152,7 +152,11 @@ export function svgString(circuit, opts = {}) {
     const def = c.def;
     if (def.refPrefix && def.refPos && !def.labelOffset) {
       const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
-      parts.push(textEl(p.x, p.y, c.refdes, def.refPos.anchor, 12));
+      // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
+      // matching the dedicated instance labels used by transistors (e.g. nmos).
+      parts.push(
+        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none">${c.refdes}</text>`,
+      );
     }
     if (def.textPos && c.value !== undefined && c.value !== '') {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
@@ -238,7 +242,23 @@ export function editorOverlay(circuit, opts = {}) {
 
   if (opts.cursor) {
     const { x, y } = opts.cursor;
-    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="4" fill="#7a7d85" stroke="#3d4046" stroke-width="1.5"/>`);
+    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="4" fill="none" stroke="#7a7d85" stroke-width="1.5"/>`);
+  }
+
+  // Placement ghost: a faded preview of the component (or label) that will be
+  // placed at the snapped cursor once the user clicks or presses Enter.
+  if (opts.ghost) {
+    const g = opts.ghost;
+    if (g.label) {
+      const x = fmt(g.x);
+      const y = fmt(g.y);
+      parts.push(`<rect x="${fmt(g.x - 40)}" y="${fmt(g.y - 20)}" width="80" height="40" fill="rgba(128,132,142,0.10)" stroke="#9aa0ab" stroke-width="1.5" stroke-dasharray="4 3"/>`);
+      parts.push(`<text x="${x}" y="${fmt(g.y + 5)}" text-anchor="middle" fill="#9aa0ab" font-family="sans-serif" font-size="14">label</text>`);
+    } else if (g.def) {
+      const t = transformToSvg({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY });
+      const body = g.def.graphics.map((gg) => graphicsToSvg(gg)).join('');
+      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>`);
+    }
   }
 
   return parts.join('\n');

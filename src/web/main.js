@@ -4,17 +4,17 @@
  * Modes:
  *   NORMAL   h/j/k/l move (selected comp or cursor), r/R rotate, x/X mirror,
  *            dd delete, yy/p copy-paste, w wire, Tab cycle, Enter select-at-cursor,
- *            u undo, Ctrl-R redo, i insert, ':' ex-mode commands, ? keymap.
+ *            u/Ctrl-Z undo, U/Ctrl-Y/Ctrl-R redo, i insert, ':' ex-mode, ? keymap.
  *   INSERT   letters place components at the cursor, arrows move cursor, Esc back.
  *   WIRE     terminal letters pick/complete connections.
  */
 
 import { Circuit } from '../core/model.js';
-import { symbolTypeNames } from '../core/components/index.js';
+import { symbolTypeNames, getSymbol } from '../core/components/index.js';
 import { runCommand, commandHelp } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { demoCircuit } from '../core/templates.js';
-import { snap } from '../core/grid.js';
+import { snap, GRID } from '../core/grid.js';
 import { smartRoute } from '../core/router.js';
 
 // ----- boot failure surface --------------------------------------
@@ -45,6 +45,7 @@ const paletteEl = document.getElementById('palette');
 
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
+let pendingPlace = null; // insert-mode ghost: { kind:'component', type, rotation, mirrorX, mirrorY } | { kind:'label' }
 let selected = null; // primary refdes
 let multi = new Set(); // all selected component refdes (always includes selected)
 let selLabel = null; // primary id of the selected label object (exclusive with component selection)
@@ -210,7 +211,7 @@ function selectedComps() {
   return out;
 }
 
-/** Grid-snapped centroid of the selected components' bounding boxes. */
+/** Grid-snapped centroid of the selected components' bounding boxes and labels' anchors. */
 function selectionCentroid() {
   const comps = selectedComps();
   let x0 = Infinity;
@@ -219,6 +220,13 @@ function selectionCentroid() {
   let y1 = -Infinity;
   for (const c of comps) {
     const r = c.bboxWorld();
+    x0 = Math.min(x0, r.x);
+    y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.w);
+    y1 = Math.max(y1, r.y + r.h);
+  }
+  for (const lab of selectedLabels()) {
+    const r = lab.bbox();
     x0 = Math.min(x0, r.x);
     y0 = Math.min(y0, r.y);
     x1 = Math.max(x1, r.x + r.w);
@@ -250,6 +258,24 @@ function rotateSelectionAbout(deg) {
       circuit.moveComponent(c.refdes, nx, ny);
       circuit.setTransform(c.refdes, { rotation: (((t.rotation + deg) % 360) + 360) % 360 });
     }
+    // Free labels rotate about P too (owned labels follow their component).
+    for (const lab of selectedLabels()) {
+      if (lab.owner) continue;
+      const a = lab.anchorWorld();
+      let nx;
+      let ny;
+      if (deg === 90) {
+        nx = p.x - (a.y - p.y);
+        ny = p.y + (a.x - p.x);
+      } else if (deg === 180) {
+        nx = 2 * p.x - a.x;
+        ny = 2 * p.y - a.y;
+      } else {
+        nx = p.x + (a.y - p.y);
+        ny = p.y - (a.x - p.x);
+      }
+      lab.moveTo(nx, ny);
+    }
     rerouteAffected(selectedComps().map((c) => c.refdes));
   });
 }
@@ -267,6 +293,13 @@ function mirrorSelectionAbout(axis) {
         circuit.moveComponent(c.refdes, t.x, 2 * p.y - t.y);
         circuit.setTransform(c.refdes, { mirrorY: !t.mirrorY });
       }
+    }
+    // Free labels mirror about P too (owned labels follow their component).
+    for (const lab of selectedLabels()) {
+      if (lab.owner) continue;
+      const a = lab.anchorWorld();
+      if (axis === 'x') lab.moveTo(2 * p.x - a.x, a.y);
+      else lab.moveTo(a.x, 2 * p.y - a.y);
     }
     rerouteAffected(selectedComps().map((c) => c.refdes));
   });
@@ -361,6 +394,32 @@ function placeLabelAtCursor(text = 'label') {
   }
 }
 
+/**
+ * Commit the current insert-mode ghost at the cursor. Stays on the same
+ * pendingPlace so the user can place several of the same component in a row.
+ */
+function placePending() {
+  if (!pendingPlace) return;
+  if (pendingPlace.kind === 'label') {
+    const label = circuit.addLabel({ text: 'label', x: cursor.x, y: cursor.y, align: 'center' });
+    setSelection([]);
+    setLabelSelection([label.id]);
+    logLine(`placed label @ (${label.anchor.x},${label.anchor.y})`);
+  } else {
+    const comp = circuit.addComponent(pendingPlace.type, {
+      x: cursor.x,
+      y: cursor.y,
+      rotation: pendingPlace.rotation || 0,
+      mirrorX: pendingPlace.mirrorX === null ? undefined : pendingPlace.mirrorX,
+      mirrorY: pendingPlace.mirrorY === null ? undefined : pendingPlace.mirrorY,
+      noLabel: false,
+    });
+    setSelection([comp.refdes]);
+    logLine(`placed ${comp.refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
+  }
+  render();
+}
+
 // ----- render -----------------------------------------------------------
 
 function render() {
@@ -369,6 +428,7 @@ function render() {
   renderNets();
   renderDetail();
   renderStatus();
+  updateInsertMenu();
   if (window.__app) {
     window.__app.renders.push({ t: performance.now(), view: { ...view } });
     if (window.__app.renders.length > 500) window.__app.renders.shift();
@@ -395,6 +455,26 @@ function renderCanvas() {
     viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
   });
   const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
+  const ghost =
+    mode === 'insert' && pendingPlace
+      ? pendingPlace.kind === 'label'
+        ? { label: true, x: cursor.x, y: cursor.y }
+        : (() => {
+            try {
+              const def = getSymbol(pendingPlace.type);
+              return {
+                def,
+                x: cursor.x,
+                y: cursor.y,
+                rotation: pendingPlace.rotation || 0,
+                mirrorX: pendingPlace.mirrorX !== null ? pendingPlace.mirrorX : !!def.defaultMirrorX,
+                mirrorY: pendingPlace.mirrorY !== null ? pendingPlace.mirrorY : !!def.defaultMirrorY,
+              };
+            } catch {
+              return undefined;
+            }
+          })()
+      : undefined;
   const overlay = editorOverlay(circuit, {
     cursor,
     selection: [...multi],
@@ -403,6 +483,7 @@ function renderCanvas() {
     nets,
     rubber: drag && drag.rubber ? drag.rubber : undefined,
     wirePreview,
+    ghost,
   });
   svg = svg.replace('</svg>', `${overlay}\n</svg>`);
   canvasEl.innerHTML = svg;
@@ -413,6 +494,7 @@ function renderCanvas() {
 const DRAG_THRESH = 4; // px before a press becomes a drag
 let drag = null;
 let inlineInput = null; // the active inline-edit <input>, if any
+let lastLabelClick = null; // { id, x, y, at } of the previous label click (for double-click fallback)
 
 /** Convert client (pane-relative) coordinates to world, using `refView` for the
  *  mapping. During a pan/zoom drag the reference must be the view captured at
@@ -424,6 +506,15 @@ function clientToWorld(clientX, clientY, refView = view) {
   return {
     x: refView.x + ((clientX - r.left) / r.width) * refView.w,
     y: refView.y + ((clientY - r.top) / r.height) * refView.h,
+  };
+}
+
+function worldToClient(wx, wy, refView = view) {
+  const pane = document.querySelector('.canvas-pane');
+  const r = pane.getBoundingClientRect();
+  return {
+    x: r.left + ((wx - refView.x) / refView.w) * r.width,
+    y: r.top + ((wy - refView.y) / refView.h) * r.height,
   };
 }
 
@@ -687,20 +778,47 @@ function canvasMouseDown(ev) {
     return;
   }
 
+  // Insert mode with a ghost selected: a left-click places the ghost at the
+  // snapped cursor and stays on the same component so more can be placed.
+  if (mode === 'insert' && pendingPlace) {
+    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    commit(() => placePending());
+    return;
+  }
+
   // Labels draw on top of everything: picking one selects/drags it first.
   const labelHit = pickLabel(startWorld);
   if (labelHit) {
     const a = labelHit.anchorWorld();
     cursor = { x: snap(a.x), y: snap(a.y) };
-    // Second click of a double-click: open the inline editor right here. This
-    // is more reliable than waiting for the native `dblclick` event (which some
-    // environments/headless drivers never fire), and the guard in inlineEditLabel
-    // prevents a second input from the dblclick listener.
+    // Second click of a double-click: open the inline editor. It's deferred with
+    // setTimeout so focus is set AFTER the mousedown->mouseup completes — opening
+    // and focusing an <input> in the middle of the click sequence lets the
+    // following mouseup (and its document blur) immediately close the editor.
     if (ev.detail >= 2) {
+      lastLabelClick = null;
       setSelection([]);
       setLabelSelection([labelHit.id]);
       render();
-      inlineEditLabel(labelHit);
+      setTimeout(() => inlineEditLabel(labelHit), 0);
+      return;
+    }
+    // Manual double-click detection (timing + position) as a fallback for
+    // environments that don't set ev.detail (some headless drivers).
+    const prev = lastLabelClick;
+    lastLabelClick = { id: labelHit.id, x: startWorld.x, y: startWorld.y, at: Date.now() };
+    if (
+      prev &&
+      prev.id === labelHit.id &&
+      Date.now() - prev.at < 500 &&
+      Math.abs(startWorld.x - prev.x) <= GRID &&
+      Math.abs(startWorld.y - prev.y) <= GRID
+    ) {
+      lastLabelClick = null;
+      setSelection([]);
+      setLabelSelection([labelHit.id]);
+      render();
+      setTimeout(() => inlineEditLabel(labelHit), 0);
       return;
     }
     if (ev.shiftKey) {
@@ -736,6 +854,8 @@ function canvasMouseDown(ev) {
     render();
     return;
   }
+  // Clicking anywhere that isn't a label resets any pending double-click state.
+  lastLabelClick = null;
 
   const hit = pickAt(startWorld);
   if (hit && circuit.components.has(hit.refdes)) {
@@ -757,12 +877,19 @@ function canvasMouseDown(ev) {
       const c = circuit.components.get(r);
       if (c) origins.set(r, { x: c.transform.x, y: c.transform.y });
     }
+    // If labels are part of the same selection, move them along with the components.
+    const labelOrigins = new Map();
+    for (const id of selLabels) {
+      const l = circuit.labels.get(id);
+      if (l) labelOrigins.set(id, { x: l.anchorWorld().x, y: l.anchorWorld().y });
+    }
     drag = {
       mode: 'move',
       startClient,
       startWorld,
       startCursor: { ...cursor },
       origins,
+      labelOrigins,
       moved: false,
       rubber: null,
     };
@@ -892,6 +1019,14 @@ if (drag.mode === 'labelmove') {
         const c = circuit.components.get(r);
         if (c) circuit.moveComponent(r, snap(o.x + dwx), snap(o.y + dwy));
       }
+      // Free labels selected alongside components follow the drag (owned labels
+      // already track their component's transform).
+      if (drag.labelOrigins) {
+        for (const [id, o] of drag.labelOrigins) {
+          const l = circuit.labels.get(id);
+          if (l && !l.owner) l.moveTo(o.x + dwx, o.y + dwy);
+        }
+      }
       rerouteAffected([...drag.origins.keys()]);
       cursor = { x: snap(drag.startCursor.x + dwx), y: snap(drag.startCursor.y + dwy) };
     }
@@ -972,6 +1107,7 @@ canvasEl.addEventListener('dblclick', (ev) => {
 /** Overlay an <input> on the label's anchor; Enter/blur commits, Escape cancels. */
 function inlineEditLabel(label) {
   if (!label || inlineInput) return;
+  lastLabelClick = null; // starting an edit clears any pending double-click state
   const a = label.anchorWorld();
   const pane = document.querySelector('.canvas-pane');
   const r = pane.getBoundingClientRect();
@@ -1245,6 +1381,8 @@ const PLACEMENT = {
   P: 'pnp',
   g: 'ground',
   s: 'supply',
+  x: 'switch_open',
+  X: 'switch_closed',
   i: 'input',
   o: 'output',
   O: 'inputoutput',
@@ -1263,17 +1401,39 @@ const INSERT_MOVE = {
 };
 
 function onInsertKey(key) {
-  if (key === 'T') {
-    commit(() => placeLabelAtCursor());
+  // With a ghost selected, R/X rotate/mirror the about-to-be-placed component.
+  if (pendingPlace && pendingPlace.kind === 'component' && (key === 'r' || key === 'R')) {
+    pendingPlace.rotation = (((pendingPlace.rotation || 0) + (key === 'r' ? 90 : -90)) % 360 + 360) % 360;
+    render();
+    return;
+  }
+  if (pendingPlace && pendingPlace.kind === 'component' && (key === 'x' || key === 'X')) {
+    if (key === 'x') pendingPlace.mirrorX = pendingPlace.mirrorX === null ? true : !pendingPlace.mirrorX;
+    else pendingPlace.mirrorY = pendingPlace.mirrorY === null ? true : !pendingPlace.mirrorY;
+    render();
+    return;
+  }
+
+  // Placement keys select a ghost (follows the cursor; click/Enter commits).
+  if (key === 't') {
+    pendingPlace = { kind: 'label' };
     render();
   } else if (PLACEMENT[key]) {
-    commit(() => placeAtCursor(PLACEMENT[key]));
+    pendingPlace = { kind: 'component', type: PLACEMENT[key], rotation: 0, mirrorX: null, mirrorY: null };
     render();
+  } else if (key === 'Enter') {
+    if (pendingPlace) {
+      placePending();
+    }
   } else if (INSERT_MOVE[key]) {
     moveCursor(INSERT_MOVE[key][0], INSERT_MOVE[key][1]);
     render();
   } else if (key === 'Escape') {
-    mode = 'normal';
+    if (pendingPlace) pendingPlace = null; // back to the component-selection menu
+    else mode = 'normal';
+    render();
+  } else if (key === 'Backspace') {
+    if (pendingPlace) pendingPlace = null; // back to the component-selection menu
     render();
   }
 }
@@ -1298,28 +1458,23 @@ function onNormalKey(key) {
   }[key];
   if (nudgeKey) {
     const comps = selectedComps();
-    if (comps.length) {
+    const labs = selectedLabels();
+    if (comps.length || labs.length) {
       const dx = nudgeKey[0] * count * 40;
       const dy = nudgeKey[1] * count * 40;
       commit(() => {
         for (const c of comps) circuit.moveComponent(c.refdes, c.transform.x + dx, c.transform.y + dy);
+        // Only free labels are moved explicitly — owned labels follow their
+        // component's transform automatically (avoid double-moving them).
+        for (const lab of labs) if (!lab.owner) lab.translate(dx, dy);
         rerouteAffected(comps.map((c) => c.refdes));
       });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
-      cursor = { x: primary.transform.x, y: primary.transform.y };
+      const a = labs.length ? labs[0].anchorWorld() : null;
+      if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
+      else if (a) cursor = { x: a.x, y: a.y };
     } else {
-      const labs = selectedLabels();
-      if (labs.length) {
-        const dx = nudgeKey[0] * count * 40;
-        const dy = nudgeKey[1] * count * 40;
-        commit(() => {
-          for (const lab of labs) lab.translate(dx, dy);
-        });
-        const a = labs[0].anchorWorld();
-        cursor = { x: a.x, y: a.y };
-      } else {
-        moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
-      }
+      moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
     }
     render();
     return;
@@ -1442,14 +1597,9 @@ function onNormalKey(key) {
     return;
   }
 
-  if (key === 't') {
-    commit(() => placeLabelAtCursor());
-    render();
-    return;
-  }
-
   if (key === 'i' || key === 'I' || key === 'A') {
     mode = 'insert';
+    pendingPlace = null;
     render();
     return;
   }
@@ -1468,6 +1618,11 @@ function onNormalKey(key) {
 
   if (key === 'u') {
     undo();
+    return;
+  }
+
+  if (key === 'U') {
+    redo();
     return;
   }
 
@@ -1528,14 +1683,13 @@ function logKeymap() {
       'dd          delete selected     yy   yank selected',
       'p           paste yanked component at cursor',
       'w           wire (pick terminal letters)',
-      't           label object at the cursor',
       'Tab         cycle selection',
       'Ctrl-A      select all components',
       'Enter       select component under cursor',
-      'u           undo    Ctrl-R  redo',
+      'u / C-z     undo    U / C-y / C-r  redo',
       'F / f       fit view to contents',
       'Esc         deselect everything',
-      'i           insert mode (place components)',
+      'i           insert mode (place components & labels)',
       ':           ex-mode command line (e.g. :connect R1.a R2.a)',
       '?           this help',
       '-- insert --',
@@ -1543,12 +1697,13 @@ function logKeymap() {
       'r c L d     resistor capacitor inductor diode',
       'n p N P     nmos pmos npn pnp',
       'g s i o O   ground supply input output inout-io',
-      'a           solder dot (junction annotation)',
-      'T           label object (text, double-click to edit)',
-      'arrows      also move cursor   Esc back to normal',
+      'x X a t     switch open · switch closed · solder · label',
+      'Enter/click place ghost at cursor · R/X rotate/mirror ghost',
+      'Esc/Backspace  cancel ghost (back to menu)   Esc exits insert',
+      'arrows      also move cursor',
       '-- labels --',
-      'T           insert a label at the cursor',
-      'alt         Shift+Left / Shift+Right align left / right (centre default)',
+      't (insert)  place a label (double-click to edit text)',
+      'Shift+Left / Shift+Right  align left / right (centre default)',
       'h j k l     move a selected label (set its offset if it belongs to a part)',
       'dd / Del    delete the selected label',
       'double-click  edit the label text inline',
@@ -1614,7 +1769,7 @@ function renderStatus() {
       : '-';
   const parts = [mode === 'insert' ? 'INSERT' : 'NORMAL', `sel ${sel}`, `@${cursor.x},${cursor.y}`];
   if (mode === 'insert') {
-    parts.push('place r c L d n p N P g s i o O a · T label · move h j k l');
+    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · R/X · Esc cancel` : 'pick r c L d n p N P g s x X i o O a · t label');
   }
   if (wire) {
     parts.push(wire.source ? `WIRE ${wire.source.refdes}.${wire.source.term} ->` : 'WIRE: click a terminal');
@@ -1622,6 +1777,76 @@ function renderStatus() {
   if (selectedNets.size) parts.push(`nets ${selectedNets.size}`);
   statusEl.textContent = parts.join('  ·  ');
   statusEl.className = mode === 'insert' ? 'status insert' : 'status normal';
+}
+
+// ----- insert-mode menu ----------------------------------------------------
+// A read-only, non-interactive dropdown next to the cursor (shown in insert
+// mode) listing the placable components with their hotkey. Selection is via
+// the hotkeys themselves; the menu just mirrors the options and follows the
+// cursor. `pointer-events: none` keeps it from intercepting clicks/drags.
+let insertMenu = null;
+const INSERT_MENU_ENTRIES = [
+  ['r', 'resistor'],
+  ['c', 'capacitor'],
+  ['L', 'inductor'],
+  ['d', 'diode'],
+  ['n', 'nmos'],
+  ['p', 'pmos'],
+  ['N', 'npn'],
+  ['P', 'pnp'],
+  ['g', 'ground'],
+  ['s', 'supply'],
+  ['x', 'switch_open'],
+  ['X', 'switch_closed'],
+  ['i', 'input'],
+  ['o', 'output'],
+  ['O', 'inputoutput'],
+  ['a', 'solder'],
+  ['t', 'label'],
+];
+
+function updateInsertMenu() {
+  // The picker only needs to be visible when insert mode has no ghost selected;
+  // once a placement (component/label) is pending it would just be in the way.
+  if (mode !== 'insert' || pendingPlace) {
+    if (insertMenu) insertMenu.remove();
+    insertMenu = null;
+    return;
+  }
+  if (!insertMenu) {
+    insertMenu = document.createElement('div');
+    insertMenu.id = 'insert-menu';
+    insertMenu.className = 'insert-menu';
+    for (const [key, type] of INSERT_MENU_ENTRIES) {
+      const item = document.createElement('div');
+      item.className = 'insert-menu-item';
+      const kbd = document.createElement('span');
+      kbd.className = 'insert-menu-key';
+      kbd.textContent = key;
+      const name = document.createElement('span');
+      name.textContent = type;
+      item.appendChild(kbd);
+      item.appendChild(name);
+      insertMenu.appendChild(item);
+    }
+    document.body.appendChild(insertMenu);
+  }
+  // Highlight the currently selected ghost, if any.
+  for (let i = 0; i < INSERT_MENU_ENTRIES.length; i++) {
+    const [key, type] = INSERT_MENU_ENTRIES[i];
+    const item = insertMenu.children[i];
+    const active = pendingPlace ? (pendingPlace.kind === 'label' ? type === 'label' : pendingPlace.type === type) : false;
+    item.classList.toggle('active', active);
+  }
+  const p = worldToClient(cursor.x, cursor.y);
+  insertMenu.style.display = 'block';
+  const rect = insertMenu.getBoundingClientRect();
+  let left = p.x + 14;
+  let top = p.y - rect.height / 2;
+  if (left + 160 > window.innerWidth - 8) left = p.x - 160 - 14;
+  top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, top));
+  insertMenu.style.left = `${left}px`;
+  insertMenu.style.top = `${top}px`;
 }
 
 // ----- toolbox -------------------------------------------------------------
@@ -1707,10 +1932,17 @@ window.addEventListener('keydown', (ev) => {
   }
 
   if (ev.metaKey || ev.ctrlKey) {
-    if (ev.key.toLowerCase() === 'r') {
+    const k = ev.key.toLowerCase();
+    if (k === 'z') {
+      ev.preventDefault();
+      undo();
+    } else if (k === 'y') {
       ev.preventDefault();
       redo();
-    } else if (ev.key.toLowerCase() === 'a') {
+    } else if (k === 'r') {
+      ev.preventDefault();
+      redo();
+    } else if (k === 'a') {
       ev.preventDefault();
       setSelection([...circuit.components.keys()]);
       setLabelSelection([...circuit.labels.keys()]);

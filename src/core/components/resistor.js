@@ -22,6 +22,7 @@ export const resistor = defineSymbol({
     { kind: 'path', d: 'M 110 0 L 160 0' },
   ],
   textPos: { x: 60, y: -30, anchor: 'middle' },
-  refPos: { x: 60, y: 32, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: 80, y: 80 },
   defaultValue: '',
 });
