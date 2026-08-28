@@ -1,10 +1,10 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * P-channel MOSFET. Body is a copy of NMOS (no gate bubble); only the source
- * arrow differs — it points INTO the channel (toward the body), the reverse of
- * the NMOS arrow. `defaultMirrorY` flips the symbol vertically so the source
- * points up by default (NMOS source points down).
+ * P-channel MOSFET (Razavi style). Same body as NMOS; only the source arrow
+ * differs — it points INTO the channel (reverse of NMOS). `defaultMirrorY`
+ * flips the symbol vertically so the source points up by default (NMOS source
+ * points down).
  */
 export const pmos = defineSymbol({
   type: 'pmos',
@@ -17,27 +17,20 @@ export const pmos = defineSymbol({
   ],
   bbox: { x: 0, y: -80, w: 120, h: 160 },
   graphics: [
-    // Gate wire
-    { kind: 'path', d: 'M 0 0 L 40 0' },
-    // Gate bar
-    { kind: 'path', d: 'M 40 -40 L 40 40', style: 'thick' },
-    // Source-drain bar
-    { kind: 'path', d: 'M 60 -50 L 60 50', style: 'thick' },
-    // Drain wires
-    { kind: 'path', d: 'M 60 -30 L 120 -30' },
-    { kind: 'path', d: 'M 120 -30 L 120 -80' },
-    // Source wires
-    { kind: 'path', d: 'M 60 30 L 120 30' },
-    { kind: 'path', d: 'M 120 30 L 120 80' },
-    // Source arrow (points INTO the channel, reverse of NMOS) sits on the
-    // horizontal source wire at y=30, its tip touching the source-drain bar
-    // (x=60) on the left.
-    { kind: 'path', d: 'M 70 30 L 90 22 L 90 38 Z', style: 'thick' },
+    // Gate lead
+    { kind: 'path', d: 'M 0 0 L 44.42 0', style: 'symbol' },
+    // Gate bars (filled)
+    { kind: 'polygon', points: [{ x: 32.79, y: -38.37 }, { x: 44.42, y: -38.37 }, { x: 44.42, y: 38.37 }, { x: 32.79, y: 38.37 }], fill: 'foreground' },
+    { kind: 'polygon', points: [{ x: 53.72, y: -50 }, { x: 65.36, y: -50 }, { x: 65.36, y: 50 }, { x: 53.72, y: 50 }], fill: 'foreground' },
+    // Drain stub
+    { kind: 'path', d: 'M 63.02 -27.91 L 120 -27.91 L 120 -80', style: 'symbol' },
+    // Source stub with filled arrow pointing INTO the channel (PMOS)
+    { kind: 'path', d: 'M 65.35 27.91 L 120 27.91 L 120 80', style: 'symbol' },
+    { kind: 'polygon', points: [{ x: 65.35, y: 28.49 }, { x: 102.56, y: 12.21 }, { x: 102.56, y: 44.77 }], fill: 'foreground' },
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
   refPos: null,
-  // Instance label (dedicated label object) sits on the bulk side (opposite the
-  // gate), vertically centered at the gate height, one square clear of the body.
+  // Instance label sits on the bulk side (opposite the gate), one square clear.
   labelOffset: { x: 160, y: 0 },
   // Source points up by default (mirror of NMOS down).
   defaultMirrorY: true,

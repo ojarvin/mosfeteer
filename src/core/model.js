@@ -25,6 +25,51 @@ function charWidth(c) {
   return _UNIT;
 }
 
+/**
+ * Parse label text into rich-text runs. `_{...}` and `^{...}` mark subscript /
+ * superscript runs (e.g. "C_{GS}", "V^{DD}"). Owned instance labels
+ * (autoSubscript) additionally subscript a trailing numeric suffix so a refdes
+ * like "M1" renders as M with a subscript 1. Returns [{text, sub, super}].
+ */
+export function parseLabelRuns(text, opts = {}) {
+  const auto = opts.autoSubscript;
+  const str = String(text);
+  const runs = [];
+  let normal = '';
+  let i = 0;
+  const flush = () => {
+    if (!normal) return;
+    if (auto && !normal.includes('_') && !normal.includes('^')) {
+      const m = normal.match(/^([^\d]+)(\d+)$/);
+      if (m) {
+        runs.push({ text: m[1] });
+        runs.push({ text: m[2], sub: true });
+        normal = '';
+        return;
+      }
+    }
+    runs.push({ text: normal });
+    normal = '';
+  };
+  while (i < str.length) {
+    const c = str[i];
+    if ((c === '_' || c === '^') && str[i + 1] === '{') {
+      const end = str.indexOf('}', i + 2);
+      if (end !== -1) {
+        flush();
+        runs.push({ text: str.slice(i + 2, end), sub: c === '_', super: c === '^' });
+        i = end + 1;
+        continue;
+      }
+    }
+    normal += c;
+    i++;
+  }
+  flush();
+  if (runs.length === 0) runs.push({ text: str });
+  return runs;
+}
+
 /** Tight height (world units) of a rendered label line (cap height). */
 export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
@@ -77,11 +122,21 @@ export class LabelInstance {
     return { x: this.anchor.x, y: this.anchor.y };
   }
 
-  /** Tight width (world units) of the rendered text line. */
+  /** Tight width (world units) of the rendered text line. Sub/superscript runs
+   *  render smaller (0.62 em) so they contribute less width to the box. */
   textWidth() {
+    const runs = this.runs();
     let w = 0;
-    for (const ch of this.text) w += charWidth(ch);
+    for (const r of runs) {
+      const scale = r.sub || r.super ? 0.62 : 1;
+      for (const ch of r.text) w += charWidth(ch) * scale;
+    }
     return w;
+  }
+
+  /** Rich-text runs of this label's text (subscripts for owned instance ids). */
+  runs() {
+    return parseLabelRuns(this.text, { autoSubscript: !!this.owner });
   }
 
   /** Tight height (world units) of the rendered text line. */

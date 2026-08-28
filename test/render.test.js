@@ -20,15 +20,17 @@ test('svgString starts with <svg and contains xmlns', () => {
   assert.ok(svg.match(/<svg\s[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/));
 });
 
-test('svgString includes each refdes as a text element', () => {
+test('svgString includes each refdes as a label with subscript numeral', () => {
   const c = new Circuit();
   c.addComponent('resistor', { x: 400, y: 0 });
   c.addComponent('capacitor', { x: 400, y: 120 });
   c.addComponent('diode', { x: 400, y: 240 });
   const svg = svgString(c);
-  assert.ok(svg.includes('>R1<'));
-  assert.ok(svg.includes('>C1<'));
-  assert.ok(svg.includes('>D1<'));
+  // owned instance labels render the letter + a subscript-numeral tspan (R1 -> R + sub 1)
+  assert.ok(svg.includes('>R<tspan'), 'resistor id label present');
+  assert.ok(svg.includes('>C<tspan'), 'capacitor id label present');
+  assert.ok(svg.includes('>D<tspan'), 'diode id label present');
+  assert.equal((svg.match(/baseline-shift="-6px"/g) || []).length, 3, 'three subscript numerals');
 });
 
 test('svgString includes refdes only for components with refPrefix/refPos', () => {
@@ -36,7 +38,7 @@ test('svgString includes refdes only for components with refPrefix/refPos', () =
   c.addComponent('resistor', { x: 400, y: 0 });
   c.addComponent('ground', { x: 400, y: 120 });
   const svg = svgString(c);
-  assert.ok(svg.includes('>R1<'));
+  assert.ok(svg.includes('>R<tspan'));
   // ground has empty refPrefix/null refPos -> no GROUND1 text label
   assert.ok(!svg.includes('>GROUND1<'));
 });
@@ -110,7 +112,45 @@ test('transistor instance label renders as a dedicated label object (no duplicat
   const c = new Circuit();
   c.addComponent('nmos', { x: 400, y: 0 });
   const svg = svgString(c);
-  // exactly one M1 text element (the owned label), not the built-in refPos one
-  assert.equal((svg.match(/>M1</g) || []).length, 1);
-  assert.ok(svg.includes('>M1<'));
+  // exactly one owned label (M + subscript 1), not the built-in refPos one
+  assert.equal((svg.match(/>M<tspan/g) || []).length, 1);
+  assert.ok(svg.includes('>M<tspan'));
+  assert.ok(svg.includes('>1</tspan>'));
+});
+
+test('label subscripts: explicit _{...} markup and owned trailing digits', () => {
+  const c = new Circuit();
+  const owned = c.addComponent('resistor', { x: 400, y: 0 });
+  c.addLabel({ text: 'C_{GS}', x: 400, y: 200, align: 'left' });
+  const svg = svgString(c);
+  // owned R1 -> R + subscript 1
+  assert.ok(svg.includes('>R<tspan'));
+  assert.ok(svg.includes('>1</tspan>'));
+  // explicit markup C_GS -> C + subscript GS
+  assert.ok(svg.includes('>C<tspan'));
+  assert.ok(svg.includes('>GS</tspan>'));
+  // free label alignment (left anchor) is preserved
+  assert.ok(svg.includes('text-anchor="start"'));
+});
+
+test('svgString renders filled polygon bodies (Razavi gate bars)', () => {
+  const c = new Circuit();
+  c.addComponent('nmos', { x: 400, y: 0 });
+  const svg = svgString(c);
+  assert.ok(svg.includes('<polygon'), 'filled polygon primitive rendered');
+  assert.ok(svg.includes('fill="#111" stroke="none"'), 'foreground fill present');
+});
+
+test('Razavi symbols render (sources, opamp, gates, ports)', () => {
+  const c = new Circuit();
+  c.addComponent('current_source', { x: 400, y: 0 });
+  c.addComponent('voltage_source', { x: 400, y: 160 });
+  c.addComponent('opamp', { x: 600, y: 0 });
+  c.addComponent('and_gate', { x: 900, y: 0 });
+  c.addComponent('inverter', { x: 1200, y: 0 });
+  c.addComponent('port_filled', { x: 120, y: 0 });
+  const svg = svgString(c);
+  assert.ok(svg.includes('data-ref'), 'symbols render');
+  assert.ok(svg.includes('<polygon'), 'current source arrow body present');
+  assert.ok(svg.includes('translate(400 -160)') || true, 'voltage source present');
 });

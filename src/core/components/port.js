@@ -9,7 +9,7 @@ import { defineSymbol } from './defineSymbol.js';
  * Input arrows point right (signal emitted into the circuit); output arrows
  * point left (signal enters the port); IO shows a double-headed arrow.
  */
-function port(type, description, prefix, arrowGraphics) {
+function makePort(type, description, prefix, arrowGraphics) {
   return defineSymbol({
     type,
     description,
@@ -31,15 +31,40 @@ function port(type, description, prefix, arrowGraphics) {
   });
 }
 
-export const portInput = port('input', 'Input Port', 'I', [
+export const portInput = makePort('input', 'Input Port', 'I', [
   { kind: 'path', d: 'M -26 -4 L -18 0 L -26 4 Z' },
 ]);
 
-export const portOutput = port('output', 'Output Port', 'O', [
+export const portOutput = makePort('output', 'Output Port', 'O', [
   { kind: 'path', d: 'M -16 -4 L -24 0 L -16 4 Z' },
 ]);
 
-export const portInputOutput = port('inputoutput', 'Input/Output Port', 'IO', [
+export const portInputOutput = makePort('inputoutput', 'Input/Output Port', 'IO', [
   { kind: 'path', d: 'M -30 -4 L -22 0 L -30 4 Z' },
   { kind: 'path', d: 'M -16 -4 L -24 0 L -16 4 Z' },
 ]);
+
+/**
+ * Razavi-style terminal markers: a small circle (open or filled) on a lead,
+ * used as a generic node/pin stub (no label box).
+ */
+const marker = (type, description, filled) =>
+  defineSymbol({
+    type,
+    description,
+    refPrefix: '',
+    terminals: [{ name: 'p', x: 0, y: 0, direction: 'port' }],
+    bbox: { x: -80, y: -40, w: 80, h: 80 },
+    graphics: [
+      filled
+        ? { kind: 'dot', cx: -68.35, cy: 0, r: 9.92 }
+        : { kind: 'circle', cx: -68.35, cy: 0, r: 9.92, style: 'symbol' },
+      { kind: 'path', d: 'M 0 0 L -58.4 0', style: 'symbol' },
+    ],
+    textPos: null,
+    refPos: null,
+    defaultValue: '',
+  });
+
+export const port = marker('port', 'Port (terminal)', false);
+export const port_filled = marker('port_filled', 'Port (filled terminal)', true);

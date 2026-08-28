@@ -1,8 +1,10 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * N-channel MOSFET. Terminals g (left), d (top-right), s (bottom-right).
- * Source arrow points outward (away from channel).
+ * N-channel MOSFET (Razavi style). Terminals g (left), d (top-right),
+ * s (bottom-right). The gate is drawn as two filled bars (thin lead-in bar and
+ * thicker main bar); drain/source stubs exit the channel to the right, and the
+ * source arrow points OUT of the channel (down-right).
  */
 export const nmos = defineSymbol({
   type: 'nmos',
@@ -15,26 +17,20 @@ export const nmos = defineSymbol({
   ],
   bbox: { x: 0, y: -80, w: 120, h: 160 },
   graphics: [
-    // Gate wire
-    { kind: 'path', d: 'M 0 0 L 40 0' },
-    // Gate bar
-    { kind: 'path', d: 'M 40 -40 L 40 40', style: 'thick' },
-    // Source-drain bar
-    { kind: 'path', d: 'M 60 -50 L 60 50', style: 'thick' },
-    // Drain wires
-    { kind: 'path', d: 'M 60 -30 L 120 -30' },
-    { kind: 'path', d: 'M 120 -30 L 120 -80' },
-    // Source wires
-    { kind: 'path', d: 'M 60 30 L 120 30' },
-    { kind: 'path', d: 'M 120 30 L 120 80' },
-    // Source arrow (points outward, away from channel) sits on the horizontal
-    // source wire at y=30, its tip aligned to the vertical source wire (x=120).
-    { kind: 'path', d: 'M 110 30 L 90 22 L 90 38 Z', style: 'thick'},
+    // Gate lead
+    { kind: 'path', d: 'M 0 0 L 44.42 0', style: 'symbol' },
+    // Gate bars (filled)
+    { kind: 'polygon', points: [{ x: 32.79, y: -38.37 }, { x: 44.42, y: -38.37 }, { x: 44.42, y: 38.37 }, { x: 32.79, y: 38.37 }], fill: 'foreground' },
+    { kind: 'polygon', points: [{ x: 53.72, y: -50 }, { x: 65.36, y: -50 }, { x: 65.36, y: 50 }, { x: 53.72, y: 50 }], fill: 'foreground' },
+    // Drain stub
+    { kind: 'path', d: 'M 63.02 -27.91 L 120 -27.91 L 120 -80', style: 'symbol' },
+    // Source stub with filled arrow pointing OUT of the channel
+    { kind: 'path', d: 'M 65.35 27.91 L 120 27.91 L 120 80', style: 'symbol' },
+    { kind: 'polygon', points: [{ x: 122.32, y: 27.91 }, { x: 85.12, y: 11.63 }, { x: 85.12, y: 44.19 }], fill: 'foreground' },
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
   refPos: null,
-  // Instance label (dedicated label object) sits on the bulk side (opposite the
-  // gate), vertically centered at the gate height, one square clear of the body.
+  // Instance label sits on the bulk side (opposite the gate), one square clear.
   labelOffset: { x: 160, y: 0 },
   defaultValue: '',
 });

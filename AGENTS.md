@@ -13,17 +13,20 @@ For agent-driven circuit generation, read these guides first:
 - `guidelines/diagram-quality.md` — electrical, geometric, routing, labeling, and review requirements.
 - `guidelines/agent-workflow.md` — inspecting prior circuits and maintaining circuit-specific `learnings.md`.
 
-## Do NOT modify (user-owned style guide)
-- `src/core/components/resistor.js` geometry (terminals/bbox/graphics) or `src/core/style.js` values.
-  Only `refPos`/`textPos` ("the label in resistor") may be tweaked. Treat current working-tree versions as canonical.
+## Symbol style (Razavi look — restyled this session)
+- All symbols re-skinned to the classic textbook look: **filled gate bars / arrowheads / power slabs** via a new `polygon` primitive with `fill:'foreground'`; symbol linework uses **butt caps / miter joins**.
+- `style.js` stroke roles (select with `style:'…'` in a graphic): `symbol` (normal, butt), `emph` (9.6), `ground` (11.6), `supply` (7.2), plus the legacy `LINE` (round, wires) / `THICK`. `fontAttrs('instance'|'label')` unchanged.
+- **Labels support subscripts:** `_{...}` markup (e.g. `C_{GS}`); owned instance labels auto-subscript a trailing numeral (M1 → M with subscript 1). Alignment/anchors/bbox model unchanged (`textWidth` scales sub/super runs ×0.62).
 
 ## Current symbol geometry (affects tests/wire tests)
-- resistor: terminals `a`(0,0)/`b`(160,0), bbox `{0,-40,160,80}`, 5-segment zigzag.
-- `style.js`: `LINE {stroke:'#111', width:6, cap:'round', join:'round'}`, `THICK` = 8, cap flat. (working tree: `INSTANCE_FONT`/`LABEL_FONT` both `size:36`, bold+italic instance.)
-- **ALL components carry their id as a dedicated `LabelInstance`** (`refPos:null` + `labelOffset`), so every id renders in the same instance font (bold+italic, via `fontAttrs('instance')`). No refdes is drawn as plain font-12 `refPos` text anymore. labelOffsets: nmos/pmos `{x:160,y:0}` (bulk side = right of gate, gate height; M1 at (160,0) when placed at (0,0), PMOS M2 at (200,0) when at (40,0)); npn/pnp `{x:40,y:80}`; resistor/switch_open/switch_closed (160 wide) `{x:80,y:80}` (below body); capacitor/inductor/diode (120 wide) `{x:60,y:80}` (below body). Transistors confirmed world anchors: NMOS `M1` at (160,0), PMOS `M2` at (200,0).
-- nmos: terminals `g`(0,0), `d`(120,-80), `s`(120,80), bbox `{0,-80,120,160}`; source arrow `M 53 38 L 60 30 L 53 22 Z` points OUT of the channel (down-right).
-- pmos: BODY = exact NMOS copy (no gate balloon), only the source arrow differs — `M 67 38 L 60 30 L 67 22 Z` points INTO the channel (reverse of NMOS). `defaultMirrorY:true` → when placed, source points UP (source at top-right world, drain bottom-right); confirmed terminal `s` world y=-80, `d` world y=+80.
-- `ComponentInstance` applies `def.defaultMirrorY`/`def.defaultMirrorX` when `opts.mirror*` is undefined (only used by pmos for now).
+- resistor/capacitor/inductor/diode/switch*/variable_*: terminals `a`(left)/`b`(right) on the 40-grid; resistor bbox `{0,-40,160,80}`, 120-wide passives bbox `{0,-40,120,80}`, switch bbox `{0,-40,160,80}`.
+- nmos/pmos: terminals `g`(0,0), `d`(120,-80), `s`(120,80), bbox `{0,-80,120,160}`; gate = two filled bars (x 32.8..44.4, 53.7..65.4); NMOS source arrow (filled) points OUT, PMOS points INTO the channel. `defaultMirrorY:true` on pmos → placed source-up; `ComponentInstance` applies `defaultMirrorY` only when `opts.mirror*` is undefined — but the `add` command always passes `mirrorX/Y:false`, so **PMOS must be added with `--mirrorY`**.
+- npn/pnp: `b`(0,0), `c`(160,-120), `e`(160,120) [pnp: c bottom, e top]; filled emitter arrow; base bar `emph`. bbox `{0,-120,160,240}`.
+- ground: `gnd`(0,0), stub to y40, three `ground`-width bars (y 40/63.26/84.19), bbox `{0,0,80,120}`. supply: `p`(0,0), filled slab above, bbox `{-40,-80,80,80}`.
+- current_source/current_sink/voltage_source: `a`(0,-80)/`b`(0,80), circle r43, filled arrow (or ± marks); bbox `{-80,-80,160,160}`. refPrefix I / V.
+- opamp: `ip`(-200,40), `im`(-200,-40), `o`(160,0). inverter/buffer: `a`(-120,0),`y`(120|80,0). gates (and/or/nand/nor): `a`(-120,-40),`b`(-120,40),`y`(120,0); xor/xnor `y`(160,0). refPrefix U.
+- port/port_filled (Razavi circle markers): `p`(0,0), circle left of the lead. input/output/inputoutput remain labeled boxes (refPrefix I/O/IO + owned id label).
+- labelOffsets: nmos/pmos `{160,0}`; npn/pnp `{80,160}`; resistor/switch/variable (160 wide) `{80,80}`; cap/inductor/diode (120 wide) `{80,80}`; sources `{80,0}`; logic/opamp below body.
 
 ## Label model (implemented)
 - Labels are NOT a component/symbol type: separate `circuit.labels: Map<id,LabelInstance>` (like solder — no terminals, don't block routing in netEnv).

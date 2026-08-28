@@ -168,7 +168,7 @@ test('REGRESSION: demo circuit evaluates clean with expected metrics', () => {
   assert.deepEqual(rep.overlappingBBoxes, []);
   assert.deepEqual(rep.wireThroughBBoxes, []);
   assert.deepEqual(rep.gridViolations, []);
-  assert.deepEqual(rep.bounds, { x: 360, y: -120, w: 480, h: 400 });
+  assert.deepEqual(rep.bounds, { x: 360, y: -120, w: 480, h: 440 });
 });
 
 test('REGRESSION: demo circuit nets carry id/name/n/length', () => {

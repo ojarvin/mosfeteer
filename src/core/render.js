@@ -2,12 +2,18 @@ import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
 import { fontAttrs, strokeAttrs } from './style.js';
+import { parseLabelRuns } from './model.js';
 
 function fmt(n) {
   return Number.isInteger(n) ? String(n) : n.toFixed(2);
 }
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
+}
+
+function polygonPoints(g) {
+  if (typeof g.points === 'string') return g.points;
+  return (g.points || []).map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' ');
 }
 
 function graphicsToSvg(g) {
@@ -18,6 +24,13 @@ function graphicsToSvg(g) {
       return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${strokeAttrs(g.style)}/>`;
     case 'rect':
       return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${strokeAttrs(g.style)}/>`;
+    case 'polygon':
+      // Filled bodies (Razavi gate bars, arrowheads, power slabs) fill with the
+      // foreground color and no stroke; otherwise the polygon is stroked open.
+      if (g.fill === 'foreground') {
+        return `<polygon points="${polygonPoints(g)}" fill="#111" stroke="none"/>`;
+      }
+      return `<polygon points="${polygonPoints(g)}" fill="${g.fill || 'none'}" ${strokeAttrs(g.style)}/>`;
     case 'dot':
       // Solder dot: a plain black dot marking a connection at a wire crossing.
       return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${g.fill || '#111'}" stroke="none"/>`;
@@ -31,8 +44,23 @@ function textEl(x, y, text, anchor, size, fill) {
 }
 
 // Label-object text with one of the style.js font kinds ("instance" | "label").
-function labelTextEl(x, y, text, anchor, kind) {
-  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${fontAttrs(kind)} stroke="none">${text}</text>`;
+// Runs with `sub`/`super` render as tspans (baseline-shift + smaller size) so
+// instance labels like M1 render as M with a subscript 1, keeping the text's
+// alignment/anchor untouched (alignment is handled by the parent <text>).
+function labelTextEl(x, y, runs, anchor, kind) {
+  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${fontAttrs(kind)} stroke="none"`;
+  if (runs.length === 1 && !runs[0].sub && !runs[0].super) {
+    return `<text ${attrs}>${runs[0].text}</text>`;
+  }
+  const body = runs
+    .map((r) => {
+      if (!r.sub && !r.super) return r.text;
+      const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
+      const size = r.sub || r.super ? ' font-size="0.62em"' : '';
+      return `<tspan ${shift}${size}>${r.text}</tspan>`;
+    })
+    .join('');
+  return `<text ${attrs}>${body}</text>`;
 }
 
 /**
@@ -174,7 +202,7 @@ export function svgString(circuit, opts = {}) {
   // label's rendered box (left/center/right) and vertically centered.
   for (const label of circuit.labels.values()) {
     const t = label.textPos();
-    parts.push(labelTextEl(t.x, t.y, label.text, t.anchor, label.owner ? 'instance' : 'label'));
+    parts.push(labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label'));
   }
 
   parts.push('</svg>');

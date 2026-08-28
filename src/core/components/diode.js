@@ -1,23 +1,23 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Diode. Anode = terminal a (left, triangle), cathode = terminal b (right, bar).
- * Dummy graphics (replace later).
+ * Diode (Razavi style): open triangle (anode a, left) with a thick cathode bar
+ * (cathode b, right).
  */
 export const diode = defineSymbol({
   type: 'diode',
   description: 'Diode',
   refPrefix: 'D',
   terminals: [
-    { name: 'a', x: 0, y: 0, direction: 'anode' },
-    { name: 'b', x: 160, y: 0, direction: 'cathode' },
+    { name: 'a', x: 0, y: 0, direction: 'anode', dir: { x: -1, y: 0 } },
+    { name: 'b', x: 120, y: 0, direction: 'cathode', dir: { x: 1, y: 0 } },
   ],
-  bbox: { x: 0, y: -40, w: 160, h: 80 },
+  bbox: { x: 0, y: -40, w: 120, h: 80 },
   graphics: [
-    { kind: 'path', d: 'M 0 0 L 60 0' },
-    { kind: 'path', d: 'M 60 -25 L 60 25 L 100 0 Z' },
-    { kind: 'path', d: 'M 100 -25 L 100 25', style: 'thick' },
-    { kind: 'path', d: 'M 100 0 L 160 0' },
+    { kind: 'path', d: 'M 0 0 L 35 0', style: 'symbol' },
+    { kind: 'path', d: 'M 35 -20.25 L 35 20.25 L 77.5 0 Z', style: 'symbol' },
+    { kind: 'path', d: 'M 80 -22 L 80 22', style: 'emph' },
+    { kind: 'path', d: 'M 80 0 L 120 0', style: 'symbol' },
   ],
   textPos: { x: 60, y: -30, anchor: 'middle' },
   refPos: null,

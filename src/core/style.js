@@ -4,11 +4,13 @@
  * LINE  — general wiring and component linework. The default; use unless a
  *         symbol part explicitly says otherwise. Rounded caps/joins keep
  *         routing intersections and corners from looking jagged.
- * THICK — heavier linework (~1.75x the default) for selected features of some
+ * THICK — heavier linework (~1.5x the default) for selected features of some
  *         symbols (e.g. a MOSFET gate bar, bold power/ground rails).
  *
- * A symbol graphic selects the thick style with `style: 'thick'`; anything
- * else uses LINE.
+ * Razavi-style symbol roles (butt caps / miter joins for the crisp textbook
+ * look). Symbols select a role via `style`: 'symbol' (normal), 'emph'
+ * (emphasis), 'ground', 'supply'. Filled body shapes (gate bars, arrowheads,
+ * power slabs) use the 'polygon' primitive with fill:'foreground'.
  */
 export const LINE = {
   stroke: '#111',
@@ -24,6 +26,11 @@ export const THICK = {
   join: 'flat',
 };
 
+export const SYMBOL = { stroke: '#111', width: 6, cap: 'butt', join: 'miter' };
+export const EMPH = { stroke: '#111', width: 9.6, cap: 'butt', join: 'miter' };
+export const GROUND = { stroke: '#111', width: 11.6, cap: 'butt', join: 'miter' };
+export const SUPPLY = { stroke: '#111', width: 7.2, cap: 'butt', join: 'miter' };
+
 /**
  * Text styles for schematic labels. `INSTANCE_FONT` is for component
  * identifiers (e.g. M1 on a transistor) — bold + italic, larger than plain
@@ -32,7 +39,7 @@ export const THICK = {
 export const INSTANCE_FONT = { size: 36, fill: '#111', weight: 'bold', italic: true };
 export const LABEL_FONT = { size: 36, fill: '#111' };
 
-const STYLES = { thick: THICK };
+const STYLES = { thick: THICK, symbol: SYMBOL, emph: EMPH, ground: GROUND, supply: SUPPLY };
 
 /** SVG stroke attribute string for a graphic; defaults to the LINE style. */
 export function strokeAttrs(styleName) {
