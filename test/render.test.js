@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { svgString } from '../src/core/render.js';
 import { Circuit } from '../src/core/model.js';
+import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 
 test('svgString of an empty circuit renders without throwing', () => {
   const c = new Circuit();
@@ -82,14 +83,19 @@ test('svgString renders net wires for connected terminals', () => {
   assert.ok(svg.includes(`data-ref="${r2.refdes}"`));
 });
 
-test('svgString marks generated balanced net junctions with a solder dot', () => {
+test('routing places an actual solder component at a balanced net junction', () => {
   const c = new Circuit();
   const left = c.addComponent('nmos', { x: 0, y: -80 });
   const right = c.addComponent('nmos', { x: 480, y: -80, mirrorX: true });
   const tail = c.addComponent('nmos', { x: 120, y: 160 });
   c.connect(`${left.refdes}.s`, `${right.refdes}.s`, `${tail.refdes}.d`);
+  const dot = [...c.components.values()].find((comp) => comp.type === 'solder');
+  assert.ok(dot, 'routing auto-places a real solder component at the junction');
+  assert.equal(dot.value, 'junction');
+  assert.deepEqual({ x: dot.transform.x, y: dot.transform.y }, { x: 240, y: 40 });
   const svg = svgString(c, { terminals: false, junctions: false });
-  assert.ok(svg.includes('cx="240" cy="40" r="5"'), 'balanced junction dot present');
+  assert.ok(svg.includes('translate(240 40)'), 'solder component grouped at the junction');
+  assert.ok(svg.includes(`r="${SOLDER_DOT_RADIUS}"`), 'solder component renders at the full solder radius');
 });
 
 test('svgString renders standalone label text with its alignment anchor', () => {

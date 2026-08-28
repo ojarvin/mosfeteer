@@ -111,27 +111,10 @@ export function svgString(circuit, opts = {}) {
         parts.push(textEl(mid.x + 6, mid.y - 6, net.name, 'start', 11, '#666'));
       }
     }
-    if (!net.route && net.terminals.length >= 3) {
-      const solderPoints = new Set(
-        [...circuit.components.values()]
-          .filter((component) => component.type === 'solder')
-          .map((component) => `${component.transform.x},${component.transform.y}`),
-      );
-      const endpoints = new Map();
-      for (const path of paths) {
-        for (const point of [path[0], path[path.length - 1]]) {
-          if (!point) continue;
-          const key = `${point.x},${point.y}`;
-          endpoints.set(key, { point, count: (endpoints.get(key)?.count || 0) + 1 });
-        }
-      }
-      for (const { point, count } of endpoints.values()) {
-        if (count >= 3 && !solderPoints.has(`${point.x},${point.y}`)) {
-          parts.push(`<circle cx="${fmt(point.x)}" cy="${fmt(point.y)}" r="5" fill="#111" stroke="none"/>`);
-        }
-      }
-    }
   }
+  // Junction dots are placed by the routing algorithm as actual `solder`
+  // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
+  // circle at net junctions.
 
   // Junction dots at multi-terminal net connection points.
   if (o.junctions) {

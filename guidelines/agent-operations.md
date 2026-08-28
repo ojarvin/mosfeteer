@@ -78,6 +78,28 @@ ground:    gnd
 supply:    p
 ```
 
+## Symbol placement gotchas (verified against the model)
+
+- **PMOS must be added with an explicit `--mirrorY`.** The `add` command passes
+  `mirrorY:false` by default, which OVERRIDES the symbol's `defaultMirrorY:true`,
+  so `add pmos` alone places the source pointing DOWN (drain at top). Always use
+  `add pmos M1 --at X Y --mirrorY` (mirrored right-hand pair devices also get
+  `--mirrorX`). Verify the terminal output: with `--mirrorY`, `s` is at y−80
+  (top) and `d` at y+80 (bottom) relative to the gate row.
+- **Junction solder dots are placed by the routing algorithm — never add one by
+  hand.** Connecting 3+ terminals of one net auto-creates an actual `solder`
+  component at the balanced junction (`Circuit#syncJunctionSolders`, also run on
+  load, move, rotate, mirror, and delete). The junction only forms when the
+  shared terminal is NOT collinear with the other two (keep the tail/branch
+  device off the source row so a real T-junction exists). Auto-placed solders
+  carry `value:"junction"` and are pruned when their junction dissolves.
+- **Port identifiers are owned label objects.** Ports have refPrefix `I`/`O`/`IO`
+  and a `labelOffset`, so `add input VINP` auto-creates a bold-italic identifier
+  label reading "VINP" (or "I1"/"O1"/"IO1" if unnamed). Font-12 `value` text is
+  not rendered — do not set port/supply values to convey names.
+- **Supply and ground carry no automatic labels.** Identify the VDD rail with a
+  free label object when its name must appear.
+
 Use `Circuit.fromJSON` semantics when creating or reloading states. This ensures
 the current symbol geometry is applied to old designs. Never duplicate symbol
 geometry in a circuit file.

@@ -73,8 +73,12 @@ cascode differential cores, active loads, and complementary pairs.
 
 For a three-terminal shared node, route the branch to a center junction first,
 then route balanced left and right branches. Do not let JSON terminal order create
-an asymmetric visual tree. Place a solder dot only at the actual multi-branch
-junction or crossing; an ordinary corner does not receive a dot.
+an asymmetric visual tree. Multi-branch junctions (3+ terminals of one net) are
+marked automatically: the routing algorithm places an actual `solder` component
+at the balanced junction, so the agent never adds one by hand. Keep the shared
+branch off the terminal row so a real T-junction (not a collinear line) exists.
+An ordinary corner does not receive a dot, and different nets that merely cross
+never share one.
 
 ## Labels
 
@@ -92,6 +96,17 @@ Labels are separate `LabelInstance` objects, not component types. Owned instance
 labels identify components; free labels identify circuit signals. Keep free labels
 off component bodies and route paths.
 
+**No font-12 value/refdes text.** Component identifiers are dedicated owned label
+objects. Ports auto-create their identifier label from the refdes (refPrefix
+`I`/`O`/`IO`, so `add input VINP` labels the pin "VINP"). Supply, ground, and
+solder carry no automatic labels — place a free label for a rail name such as
+"VDD". Do not set component `value` text to convey names.
+
+Label text supports subscripts with `_{...}` markup (e.g. `C_{GS}`, `M_{1}`);
+owned instance labels render trailing digits as a subscript (M1 → M with
+subscript 1) for the textbook look. Alignment (center/left/right), anchors, and
+the grid-snapped box model are unchanged.
+
 Do not add extra descriptive text or component values by default. Unless the user
 asks for values or annotations, the only component text should be the inherent
 instance label. For mirror-symmetric parts such as resistors, capacitors,
@@ -99,11 +114,6 @@ inductors, diodes, and switches, choose the available mirror/orientation that
 places the instance label in the clearest open space. For example, a horizontal
 resistor with room above should be mirrored vertically so its label is above the
 body rather than below it.
-
-At every wire crossing, determine whether the crossing wires belong to the same
-named net. If they do, place a `solder` dot at the crossing. Same-net crossings
-must never be left visually ambiguous. Do not add a solder dot to crossings of
-different nets.
 
 ## Evaluation Checklist
 

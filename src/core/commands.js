@@ -303,6 +303,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const c = circuit.getComponent(pos[0]);
     circuit.moveComponent(c.refdes, Number(pos[1]), Number(pos[2]));
     rerouteNetsFor(circuit, [c.refdes]);
+    circuit.syncJunctionSolders();
     return result(`moved ${c.refdes} to ${pp(c.transform.x, c.transform.y)}`, { refdes: c.refdes, x: c.transform.x, y: c.transform.y }, true);
   }
   if (cmd === 'rotate') {
@@ -310,6 +311,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const deg = pos[1] !== undefined ? Number(pos[1]) : 90;
     circuit.setTransform(c.refdes, { rotation: c.transform.rotation + deg });
     rerouteNetsFor(circuit, [c.refdes]);
+    circuit.syncJunctionSolders();
     return result(`rotated ${c.refdes} to ${c.transform.rotation}°`, { refdes: c.refdes, rotation: c.transform.rotation }, true);
   }
   if (cmd === 'mirror') {
@@ -319,6 +321,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     else if (axis === 'y') circuit.setTransform(c.refdes, { mirrorY: !c.transform.mirrorY });
     else throw new Error('mirror axis must be x or y');
     rerouteNetsFor(circuit, [c.refdes]);
+    circuit.syncJunctionSolders();
     return result(`mirrored ${c.refdes} along ${axis}`, { refdes: c.refdes, axis }, true);
   }
   if (cmd === 'value' || cmd === 'setvalue') {
@@ -431,6 +434,7 @@ function netCommand(circuit, pos, result) {
       if (`${t.comp}.${t.term}` === pos[2]) {
         net.terminals.splice(i, 1);
         if (net.terminals.length === 0) circuit.nets.delete(net.id);
+        circuit.syncJunctionSolders();
         return result(`dropped ${pos[2]} from net ${net.id}`, null, true);
       }
     }
@@ -442,6 +446,7 @@ function netCommand(circuit, pos, result) {
   }
   if (op === 'rm') {
     circuit.nets.delete(net.id);
+    circuit.syncJunctionSolders();
     return result(`removed net ${net.id}`, null, true);
   }
   throw new Error('usage: net <id> add|drop|name|rm');

@@ -22,9 +22,9 @@ test('addComponent assigns refdes from prefix', () => {
   assert.equal(c.addComponent('npn').refdes, 'Q1');
   assert.equal(c.addComponent('ground').refdes, 'GROUND1');
   assert.equal(c.addComponent('supply').refdes, 'SUPPLY1');
-  assert.equal(c.addComponent('input').refdes, 'INPUT1');
-  assert.equal(c.addComponent('output').refdes, 'OUTPUT1');
-  assert.equal(c.addComponent('inputoutput').refdes, 'INPUTOUTPUT1');
+  assert.equal(c.addComponent('input').refdes, 'I1');
+  assert.equal(c.addComponent('output').refdes, 'O1');
+  assert.equal(c.addComponent('inputoutput').refdes, 'IO1');
 });
 
 test('addComponent snaps position and sets defaults', () => {
@@ -97,7 +97,7 @@ test('default value from symbol', () => {
   const c = new Circuit();
   assert.equal(c.addComponent('resistor').value, '');
   assert.equal(c.addComponent('supply').value, '');
-  assert.equal(c.addComponent('output').value, 'OUT');
+  assert.equal(c.addComponent('output').value, '');
 });
 
 test('terminalWorld applies transform and stays on grid', () => {

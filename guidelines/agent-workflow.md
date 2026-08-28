@@ -67,8 +67,15 @@ Use this order for new diagrams:
 1. Place the functional components first, without input/output pins.
 2. Apply connectivity-aware mirroring, rotation, spacing, and alignment. For
    differential structures, establish the center grid line and align D/S rows.
-3. Wire the functional components and add solder dots at true same-net
-   cross-sections.
+   Remember: place PMOS with an explicit `--mirrorY` (source up); `add pmos`
+   alone leaves the drain on top.
+3. Wire the functional components. Junction solder dots at multi-terminal nodes
+   are placed automatically by the routing, so do not add `solder` components by
+   hand — keep the shared branch off the terminal row so the junction is a real T.
 4. Add ground and supply symbols.
 5. Add input and output pins last, routing them from the already-established
    circuit rather than allowing them to dictate device placement.
+
+Existing saved circuits are revalidated through `Circuit.fromJSON` on load, so
+current symbol geometry and auto-placed junction solders are applied even to old
+designs.

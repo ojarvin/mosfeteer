@@ -1,7 +1,7 @@
 import { applyTransform, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
-import { autoRoute } from './router.js';
+import { autoRoute, balancedPaths } from './router.js';
 
 /** Nominal world units of text width per character (font-size 12 sans-serif). */
 export const LABEL_CHAR_W = 7;
@@ -344,6 +344,7 @@ export class Circuit {
     }
     for (const [id, l] of [...this.labels]) if (l.owner === refdes) this.labels.delete(id);
     this.components.delete(refdes);
+    this.syncJunctionSolders();
     return true;
   }
 
@@ -426,6 +427,7 @@ export class Circuit {
       const key = `${r.comp}.${r.term}`;
       if (!involved.has(key)) net.terminals.push(r);
     }
+    this.syncJunctionSolders();
     return net;
   }
 
@@ -436,27 +438,75 @@ export class Circuit {
     const r = this.resolveTerm(ref);
     if (net.terminals.some((t) => t.comp === r.comp && t.term === r.term)) return net;
     net.terminals.push(r);
+    this.syncJunctionSolders();
     return net;
   }
 
   /** Remove a single terminal from its net. Empty nets are dropped (returns null). */
   disconnect(ref) {
     const r = this.resolveTerm(ref);
+    let removed = null;
     for (const net of [...this.nets.values()]) {
       const before = net.terminals.length;
       net.terminals = net.terminals.filter((t) => !(t.comp === r.comp && t.term === r.term));
       if (net.terminals.length === before) continue;
-      if (net.terminals.length === 0) {
-        this.nets.delete(net.id);
-        return net;
-      }
-      return net;
+      if (net.terminals.length === 0) this.nets.delete(net.id);
+      removed = net;
+      break;
     }
-    throw new Error(`terminal ${ref} is not connected to any net`);
+    if (!removed) throw new Error(`terminal ${ref} is not connected to any net`);
+    this.syncJunctionSolders();
+    return removed;
   }
 
   removeNet(netId) {
     return this.nets.delete(netId);
+  }
+
+  /**
+   * The routing algorithm places an ACTUAL `solder` component at every junction
+   * where >=3 branches of a net meet (the shared point of the balanced path
+   * layout). Idempotent: a point already carrying a solder (manual or prior) is
+   * left alone. Auto-placed solders are tagged with value "junction" so a later
+   * pass can drop the ones whose junction no longer exists (e.g. after moving
+   * or deleting a device); manually placed dots (empty value) are preserved.
+   * Returns the newly added solders.
+   */
+  syncJunctionSolders() {
+    const at = (c) => `${c.transform.x},${c.transform.y}`;
+    const solders = new Map();
+    for (const c of this.components.values()) {
+      if (c.type === 'solder') solders.set(at(c), c);
+    }
+    const junctions = new Set();
+    for (const net of this.nets.values()) {
+      if (net.terminals.length < 3) continue;
+      const paths = balancedPaths(net.terminalWorlds());
+      const counts = new Map();
+      for (const path of paths) {
+        for (const p of [path[0], path[path.length - 1]]) {
+          if (!p) continue;
+          const key = `${p.x},${p.y}`;
+          counts.set(key, (counts.get(key) || 0) + 1);
+        }
+      }
+      for (const [key, count] of counts) {
+        if (count >= 3) junctions.add(key);
+      }
+    }
+    const added = [];
+    for (const key of junctions) {
+      if (solders.has(key)) continue;
+      const [x, y] = key.split(',').map(Number);
+      added.push(this.addComponent('solder', { x, y, value: 'junction' }));
+    }
+    // Prune auto-placed solders whose junction has dissolved.
+    for (const [key, comp] of solders) {
+      if (comp.value === 'junction' && !junctions.has(key)) {
+        this.components.delete(comp.refdes);
+      }
+    }
+    return added;
   }
 
   countTerminals() {
@@ -526,6 +576,10 @@ export class Circuit {
       });
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
     }
+    // The routing algorithm back-fills real solder components at any junctions
+    // that exist in the loaded topology (e.g. a mirrored differential pair's
+    // tail node), so old designs never depend on the agent placing dots.
+    circuit.syncJunctionSolders();
     return circuit;
   }
 }

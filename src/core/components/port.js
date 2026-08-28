@@ -3,15 +3,17 @@ import { defineSymbol } from './defineSymbol.js';
 /**
  * Port symbols. A labeled box with a single terminal on its right edge.
  * Direction (input/output/inputoutput) is drawn as an arrow inside the box.
- * The port name is stored as the component value (e.g. "IN"/"OUT").
+ * The port name is the component's refdes and is rendered as a dedicated
+ * owned LabelInstance (I1 / O1 / IO1 by default, or a custom name such as
+ * VINP). No font-12 value text is drawn — identifiers use label objects.
  * Input arrows point right (signal emitted into the circuit); output arrows
  * point left (signal enters the port); IO shows a double-headed arrow.
  */
-function port(type, description, defaultValue, arrowGraphics) {
+function port(type, description, prefix, arrowGraphics) {
   return defineSymbol({
     type,
     description,
-    refPrefix: '',
+    refPrefix: prefix,
     terminals: [{ name: 'p', x: 0, y: 0, direction: 'port' }],
     bbox: { x: -40, y: -40, w: 40, h: 80 },
     graphics: [
@@ -19,17 +21,21 @@ function port(type, description, defaultValue, arrowGraphics) {
       { kind: 'path', d: 'M -4 0 L 0 0' },
       ...arrowGraphics,
     ],
-    textPos: { x: -20, y: 10, anchor: 'middle' },
+    textPos: null,
     refPos: null,
-    defaultValue,
+    // Instance label sits one square below the port box; the offset mirrors
+    // with mirrorX (ports mirrored on the right edge keep their label on the
+    // outer side), and the label always lands in open space under the pin.
+    labelOffset: { x: 0, y: 80 },
+    defaultValue: '',
   });
 }
 
-export const portInput = port('input', 'Input Port', 'IN', [
+export const portInput = port('input', 'Input Port', 'I', [
   { kind: 'path', d: 'M -26 -4 L -18 0 L -26 4 Z' },
 ]);
 
-export const portOutput = port('output', 'Output Port', 'OUT', [
+export const portOutput = port('output', 'Output Port', 'O', [
   { kind: 'path', d: 'M -16 -4 L -24 0 L -16 4 Z' },
 ]);
 

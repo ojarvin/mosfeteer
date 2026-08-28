@@ -1247,7 +1247,11 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'wirepick') {
     if (!movedOut) doWireClick(snap(w.x), snap(w.y));
   } else if (drag.mode === 'move') {
-    if (drag.moved) preserveAffectedRoutes([...drag.origins.keys()], drag.terminalPositions);
+    if (drag.moved) {
+      preserveAffectedRoutes([...drag.origins.keys()], drag.terminalPositions);
+      // Re-sync junction solder dots to the moved topology.
+      circuit.syncJunctionSolders();
+    }
   }
 
   drag = null;
