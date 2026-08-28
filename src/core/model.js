@@ -291,6 +291,8 @@ export class Net {
     this.terminals = [];
     /** Optional explicit grid-snapped wire path points. null => auto-route. */
     this.route = opts.route || null;
+    /** Grid points where other wires join this net (mid-wire junctions). */
+    this.junctions = opts.junctions ? opts.junctions.map((p) => ({ x: p.x, y: p.y })) : [];
   }
 
   terminalCount() {
@@ -300,6 +302,11 @@ export class Net {
   /** World points of the terminals in connection order. */
   terminalWorlds() {
     return this.terminals.map(({ comp, term }) => this.circuit.components.get(comp)?.terminalWorld(term));
+  }
+
+  /** All connection anchors: component terminals plus wire junctions. */
+  anchorWorlds() {
+    return [...this.terminalWorlds().filter(Boolean), ...this.junctions];
   }
 
   /** Resulting wire polyline (grid points). Auto-laid-out unless a route was set. */
@@ -324,6 +331,7 @@ export class Net {
       name: this.name,
       terminals: this.terminals.map((t) => ({ ...t })),
       route: this.route ? this.route.map((p) => ({ ...p })) : null,
+      junctions: this.junctions.map((p) => ({ ...p })),
     };
   }
 }
@@ -665,6 +673,7 @@ export class Circuit {
       net.id = n.id;
       for (const t of n.terminals) net.terminals.push(t);
       net.route = n.route || null;
+      if (Array.isArray(n.junctions)) net.junctions = n.junctions.map((p) => ({ x: p.x, y: p.y }));
     }
     for (const l of data.labels || []) {
       const label = circuit.addLabel({

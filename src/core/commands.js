@@ -20,14 +20,27 @@ function routeEnv(circuit) {
 }
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
- *  nets route via smartRoute; larger nets get the balanced T-junction. */
+ *  nets route via smartRoute; larger nets get the balanced T-junction; nets
+ *  with mid-wire junctions are walked through every anchor in order. */
 function routeNet(circuit, net) {
-  const world = net.terminalWorlds().filter(Boolean);
-  if (world.length < 2) {
+  const anchors = net.anchorWorlds();
+  if (anchors.length < 2) {
     net.route = null;
     return;
   }
-  net.route = world.length === 2 ? smartRoute(world[0], world[1], routeEnv(circuit)) : balancedRoute(world, routeEnv(circuit));
+  const env = routeEnv(circuit);
+  if (net.junctions.length) {
+    const path = [{ ...anchors[0] }];
+    for (let i = 1; i < anchors.length; i++) {
+      const seg = smartRoute(path[path.length - 1], anchors[i], env);
+      if (seg && seg.length >= 2) for (let k = 1; k < seg.length; k++) path.push({ ...seg[k] });
+    }
+    net.route = path;
+  } else if (anchors.length === 2) {
+    net.route = smartRoute(anchors[0], anchors[1], env);
+  } else {
+    net.route = balancedRoute(anchors, env);
+  }
 }
 
 /** Re-route every net that touches any of the given component refdes. */
