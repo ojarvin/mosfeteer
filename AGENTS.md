@@ -38,7 +38,7 @@ Git repo (root commit `e868342`, label commit `dd750f6`) → private `ojarvin/sc
 7. **Hotkeys:** insert mode `n`=nmos, `p`=pmos, `N`=npn, `P`=pnp (was `n P b p`).
 8. **Label bbox revise:** tight per-glyph text box expanded to even-cell multiples in both dims, box centered on anchor (grid point), text aligned inside (left/center/right) + vertically centered; box updates on `setText`.
 
-**Still pending (user-reported):** none of the two prior label to-dos remain. Remaining: `astar()` dead-code cleanup in `src/core/router.js`.
+**Still pending:** none of the label/double-click to-dos remain. The old "`astar()` dead-code cleanup in `src/core/router.js`" note is **stale — do not act on it**: `astar()` is live, wired in as `smartRoute`'s fallback (router.js:344) and covered by the passing test `smartRoute falls back to A* ...`. Nothing to clean up in router.js.
 
 **Font styles (this session, working-tree):** `src/core/style.js` working tree has `INSTANCE_FONT`/`LABEL_FONT` (both `size:40`; instance = bold+italic for refdes), render.js applies them via `fontAttrs(kind)`. Not modified this session.
 
@@ -50,7 +50,7 @@ Git repo (root commit `e868342`, label commit `dd750f6`) → private `ojarvin/sc
   - `/tmp/opencode/wire_test.mjs` — wiring/smart-router/preview/undo/segment-drag with wider-resistor coords (grab point (440,-40), R2.b at 800).
   - `/tmp/opencode/mouse_test.mjs` — cursor/select/drag-move/marquee/pan/zoom/fit.
 - `demo circuit` evaluate: bounds `{x:360,y:-120,w:480,h:360}`; nets `vcc n2,160` / `out n3,320` / `gnd n2,40`; no overlapping/bounds through-bbox/grid violations.
-- Router: scoring `[bboxCrossings, wireCross, overlap, turns, length]` with diagonal filtering; `segThroughInterior` (wires leaving a boundary pin straight through own body are violations; boundary-hugging legal); `evaluate().wireThroughBBoxes` uses it. `astar()` dead-code cleanup in `src/core/router.js` still pending.
+- Router: scoring `[bboxCrossings, wireCross, overlap, turns, length]` with diagonal filtering; `segThroughInterior` (wires leaving a boundary pin straight through own body are violations; boundary-hugging legal); `evaluate().wireThroughBBoxes` uses it. `astar()` is the live `smartRoute` fallback (NOT dead code).
 - `window.__circuit()` debug hook returns `{comps, nets, labels}` where labels include a `world` anchor.
 
 ## Test-env facts
