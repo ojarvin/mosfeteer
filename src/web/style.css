@@ -121,17 +121,14 @@ button:active {
   gap: 8px;
 }
 
-.palette {
-  display: flex;
-  gap: 6px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  margin-left: auto;
-  scrollbar-width: thin;
+#circuit-select,
+#circuit-name {
+  min-width: 9rem;
+  max-width: 13rem;
 }
 
-.palette button {
-  text-transform: capitalize;
+#circuit-name {
+  width: 9rem;
 }
 
 /* ----- main layout --------------------------------------------- */
@@ -317,6 +314,15 @@ button:active {
 .status.insert {
   color: var(--ok);
   font-weight: 600;
+}
+
+.status.wire {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.canvas.wire-mode svg {
+  cursor: crosshair;
 }
 
 .console-row {

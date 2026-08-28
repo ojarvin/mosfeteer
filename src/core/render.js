@@ -181,6 +181,7 @@ export function svgString(circuit, opts = {}) {
  * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
  * halos around each selected component's bbox. opts.nets [net]: highlight
  * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
+ * opts.wireMode: show all component terminals, colored by net membership.
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
  */
 export function editorOverlay(circuit, opts = {}) {
@@ -220,6 +221,16 @@ export function editorOverlay(circuit, opts = {}) {
     parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="1.6"/>`);
   }
 
+  if (opts.wireMode) {
+    for (const comp of circuit.components.values()) {
+      for (const terminal of comp.worldTerminals()) {
+        const connected = circuit.netOfTerminal({ comp: comp.refdes, term: terminal.name });
+        const color = connected ? '#2563eb' : '#dc2626';
+        parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="4.5" fill="#fff" stroke="${color}" stroke-width="2"/>`);
+      }
+    }
+  }
+
   if (opts.rubber) {
     const r = opts.rubber;
     const x = Math.min(r.x0, r.x1);
@@ -242,7 +253,12 @@ export function editorOverlay(circuit, opts = {}) {
 
   if (opts.cursor) {
     const { x, y } = opts.cursor;
-    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="4" fill="none" stroke="#7a7d85" stroke-width="1.5"/>`);
+    const color = opts.wireMode ? '#d97706' : '#7a7d85';
+    const radius = opts.wireMode ? 8 : 4;
+    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${radius}" fill="none" stroke="${color}" stroke-width="${opts.wireMode ? 2 : 1.5}"/>`);
+    if (opts.wireMode && !opts.wirePreview) {
+      parts.push(`<path d="M ${fmt(x - 14)} ${fmt(y)} L ${fmt(x + 14)} ${fmt(y)} M ${fmt(x)} ${fmt(y - 14)} L ${fmt(x)} ${fmt(y + 14)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="3 2"/>`);
+    }
   }
 
   // Placement ghost: a faded preview of the component (or label) that will be

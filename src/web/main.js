@@ -3,14 +3,14 @@
  *
  * Modes:
  *   NORMAL   h/j/k/l move (selected comp or cursor), r/R rotate, x/X mirror,
- *            dd delete, yy/p copy-paste, w wire, Tab cycle, Enter select-at-cursor,
+ *            dd delete, yy/p copy-paste, w persistent wire mode, Tab cycle, Enter select-at-cursor,
  *            u/Ctrl-Z undo, U/Ctrl-Y/Ctrl-R redo, i insert, ':' ex-mode, ? keymap.
  *   INSERT   letters place components at the cursor, arrows move cursor, Esc back.
  *   WIRE     terminal letters pick/complete connections.
  */
 
 import { Circuit } from '../core/model.js';
-import { symbolTypeNames, getSymbol } from '../core/components/index.js';
+import { getSymbol } from '../core/components/index.js';
 import { runCommand, commandHelp } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { demoCircuit } from '../core/templates.js';
@@ -41,7 +41,8 @@ const detailEl = document.getElementById('detail');
 const statusEl = document.getElementById('status');
 const logEl = document.getElementById('log');
 const cmdInput = document.getElementById('cmd-input');
-const paletteEl = document.getElementById('palette');
+const circuitSelectEl = document.getElementById('circuit-select');
+const circuitNameEl = document.getElementById('circuit-name');
 
 // ----- editor state ----------------------------------------------
 
@@ -61,6 +62,10 @@ let history = []; // undo stack (JSON blobs)
 let future = []; // redo stack
 let zoom = 0.7; // px per world unit (a 40-unit cell renders as 28px)
 let view = { x: -640, y: -480, w: 1280, h: 960 }; // fixed world window (infinite canvas)
+let currentCircuitName = '';
+let lastSavedSnapshot = '';
+let draftReady = false;
+const DRAFT_KEY = 'schematic-spawner:draft';
 
 function paneSize() {
   const pane = document.querySelector('.canvas-pane');
@@ -116,6 +121,97 @@ function commit(fn) {
 
 function snapshot() {
   return JSON.stringify(circuit.toJSON());
+}
+
+function persistDraft() {
+  if (!draftReady) return;
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      name: currentCircuitName,
+      state: circuit.toJSON(),
+      savedSnapshot: lastSavedSnapshot,
+    }));
+  } catch (err) {
+    logLine(`Could not preserve browser draft: ${err.message}`, 'error');
+  }
+}
+
+function restoreDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    if (!draft || !draft.state) {
+      lastSavedSnapshot = snapshot();
+      return;
+    }
+    applyJson(JSON.stringify(draft.state));
+    currentCircuitName = draft.name || '';
+    circuitNameEl.value = currentCircuitName;
+    lastSavedSnapshot = draft.savedSnapshot || snapshot();
+  } catch (err) {
+    logLine(`Could not restore browser draft: ${err.message}`, 'error');
+    lastSavedSnapshot = snapshot();
+  }
+}
+
+async function refreshCircuitList() {
+  try {
+    const response = await fetch('/api/circuits', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`server returned ${response.status}`);
+    const data = await response.json();
+    circuitSelectEl.replaceChildren(new Option('Open circuit...', ''));
+    for (const name of data.circuits || []) circuitSelectEl.appendChild(new Option(name, name));
+    if (currentCircuitName) circuitSelectEl.value = currentCircuitName;
+  } catch (err) {
+    logLine(`Could not list circuits: ${err.message}`, 'error');
+  }
+}
+
+async function saveCircuit() {
+  const name = circuitNameEl.value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) {
+    logLine('Circuit name must start with a letter or number and contain only letters, numbers, _ or -.', 'error');
+    circuitNameEl.focus();
+    return;
+  }
+  try {
+    const response = await fetch(`/api/circuits/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: circuit.toJSON() }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `server returned ${response.status}`);
+    currentCircuitName = name;
+    lastSavedSnapshot = snapshot();
+    persistDraft();
+    await refreshCircuitList();
+    logLine(`Saved ${name} (circuit.json and circuit.svg).`);
+  } catch (err) {
+    logLine(`Could not save circuit: ${err.message}`, 'error');
+  }
+}
+
+async function loadCircuit(name = circuitSelectEl.value) {
+  if (!name) return;
+  try {
+    const response = await fetch(`/api/circuits/${encodeURIComponent(name)}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `server returned ${response.status}`);
+    history.push(snapshot());
+    future.length = 0;
+    applyJson(JSON.stringify(data.state));
+    setSelection([]);
+    cursor = { x: 0, y: 0 };
+    currentCircuitName = data.name;
+    circuitNameEl.value = data.name;
+    circuitSelectEl.value = data.name;
+    lastSavedSnapshot = snapshot();
+    fitView();
+    render();
+    logLine(`Loaded ${data.name}.`);
+  } catch (err) {
+    logLine(`Could not load circuit: ${err.message}`, 'error');
+  }
 }
 
 function applyJson(blob) {
@@ -241,7 +337,10 @@ function selectionCentroid() {
 /** Rotate every selected component about the selection centroid by ±90° increments. */
 function rotateSelectionAbout(deg) {
   const p = selectionCentroid();
+  const refs = selectedComps().map((c) => c.refdes);
   commit(() => {
+    const before = terminalPositions(refs);
+    prepareRoutesForMoves(refs);
     for (const c of selectedComps()) {
       const t = c.transform;
       // Rotate the component's origin about P, then spin the symbol by the same amount.
@@ -278,14 +377,17 @@ function rotateSelectionAbout(deg) {
       }
       lab.moveTo(nx, ny);
     }
-    rerouteAffected(selectedComps().map((c) => c.refdes));
+    preserveAffectedRoutes(refs, before);
   });
 }
 
 /** Mirror every selected component about the vertical (x) or horizontal (y) centroid axis. */
 function mirrorSelectionAbout(axis) {
   const p = selectionCentroid();
+  const refs = selectedComps().map((c) => c.refdes);
   commit(() => {
+    const before = terminalPositions(refs);
+    prepareRoutesForMoves(refs);
     for (const c of selectedComps()) {
       const t = c.transform;
       if (axis === 'x') {
@@ -303,7 +405,7 @@ function mirrorSelectionAbout(axis) {
       if (axis === 'x') lab.moveTo(2 * p.x - a.x, a.y);
       else lab.moveTo(a.x, 2 * p.y - a.y);
     }
-    rerouteAffected(selectedComps().map((c) => c.refdes));
+    preserveAffectedRoutes(refs, before);
   });
 }
 
@@ -425,6 +527,7 @@ function placePending() {
 // ----- render -----------------------------------------------------------
 
 function render() {
+  persistDraft();
   renderCanvas();
   renderComponents();
   renderNets();
@@ -451,8 +554,8 @@ function renderCanvas() {
 
   let svg = svgString(circuit, {
     grid: true,
-    terminals: true,
-    junctions: true,
+    terminals: false,
+    junctions: false,
     background: true,
     viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
   });
@@ -485,10 +588,12 @@ function renderCanvas() {
     nets,
     rubber: drag && drag.rubber ? drag.rubber : undefined,
     wirePreview,
+    wireMode: !!wire,
     ghost,
   });
   svg = svg.replace('</svg>', `${overlay}\n</svg>`);
   canvasEl.innerHTML = svg;
+  canvasEl.classList.toggle('wire-mode', !!wire);
 }
 
 // ----- mouse ------------------------------------------------------------
@@ -552,17 +657,21 @@ function distToSegment(px, py, a, b) {
   return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
 }
 
-/** Pick the net whose route passes within ~6px of the point; returns {net, seg}. */
+/** Pick the nearest net route within a forgiving screen-sized hit area. */
 function pickWire(w) {
   const p = paneSize();
   const pxPerUnit = p ? view.w / p.w : 1;
-  const tol = 6 / pxPerUnit;
+  const tol = 12 / pxPerUnit;
+  const snapped = { x: snap(w.x), y: snap(w.y) };
   let best = null;
   let bestD = tol;
   for (const net of circuit.nets.values()) {
     const pts = net.points();
     for (let i = 1; i < pts.length; i++) {
-      const d = distToSegment(w.x, w.y, pts[i - 1], pts[i]);
+      const d = Math.min(
+        distToSegment(w.x, w.y, pts[i - 1], pts[i]),
+        distToSegment(snapped.x, snapped.y, pts[i - 1], pts[i]),
+      );
       if (d < bestD) {
         bestD = d;
         best = { net, seg: i };
@@ -681,11 +790,56 @@ function netsTouching(refs) {
   return touched;
 }
 
-/** Re-route every net that touches any of the given components. */
-function rerouteAffected(refs) {
+function terminalPositions(refs) {
+  const positions = new Map();
+  for (const ref of refs) {
+    const comp = circuit.components.get(ref);
+    if (!comp) continue;
+    for (const terminal of comp.worldTerminals()) {
+      positions.set(`${ref}.${terminal.name}`, { x: terminal.x, y: terminal.y });
+    }
+  }
+  return positions;
+}
+
+function prepareRoutesForMoves(refs) {
   for (const id of netsTouching(refs)) {
     const net = circuit.nets.get(id);
-    if (net) rerouteNet(net);
+    if (net && (!net.route || net.route.length < 2)) net.route = net.points().slice();
+  }
+}
+
+function ensureOrthogonal(route) {
+  for (let i = 1; i < route.length; i++) {
+    const a = route[i - 1];
+    const b = route[i];
+    if (a.x !== b.x && a.y !== b.y) {
+      route.splice(i, 0, { x: b.x, y: a.y });
+      i++;
+    }
+  }
+}
+
+/** Move only route points attached to terminals; preserve the existing wire body. */
+function preserveAffectedRoutes(refs, before) {
+  for (const id of netsTouching(refs)) {
+    const net = circuit.nets.get(id);
+    if (!net || !net.route || net.route.length < 2) continue;
+    for (const { comp, term } of net.terminals) {
+      const old = before.get(`${comp}.${term}`);
+      const component = circuit.components.get(comp);
+      if (!old || !component) continue;
+      const now = component.terminalWorld(term);
+      if (old.x === now.x && old.y === now.y) continue;
+      for (const point of net.route) {
+        if (point.x === old.x && point.y === old.y) {
+          point.x = now.x;
+          point.y = now.y;
+        }
+      }
+    }
+    ensureOrthogonal(net.route);
+    collapseCollinear(net.route);
   }
 }
 
@@ -696,7 +850,8 @@ function connectTwo(src, dst) {
   rerouteNet(net);
   history.push(before);
   future.length = 0;
-  wire = null;
+  // Stay in wiring mode so the next click can start another connection.
+  wire = { source: null };
   selectedNets = new Set([net.id]);
   setSelection([dst.refdes]);
   logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}; len=${net.length()}`);
@@ -743,8 +898,14 @@ function canvasMouseDown(ev) {
   if (b !== 0) return;
 
   if (wire) {
-    drag = { mode: 'wirepick', startClient, startWorld, rubber: null };
-    return;
+    // In persistent wiring mode, terminal/empty-space clicks pick wire ends;
+    // an interior wire click must remain available for segment dragging.
+    const terminalHit = matchAt(snap(startWorld.x), snap(startWorld.y));
+    const wireHit = pickWire(startWorld);
+    if ((terminalHit && terminalHit.term) || !wireHit) {
+      drag = { mode: 'wirepick', startClient, startWorld, rubber: null };
+      return;
+    }
   }
 
   // Insert mode with a ghost selected: a left-click places the ghost at the
@@ -846,6 +1007,9 @@ function canvasMouseDown(ev) {
       const c = circuit.components.get(r);
       if (c) origins.set(r, { x: c.transform.x, y: c.transform.y });
     }
+    const refs = [...origins.keys()];
+    const terminalOrigin = terminalPositions(refs);
+    prepareRoutesForMoves(refs);
     // If labels are part of the same selection, move them along with the components.
     const labelOrigins = new Map();
     for (const id of selLabels) {
@@ -858,6 +1022,7 @@ function canvasMouseDown(ev) {
       startWorld,
       startCursor: { ...cursor },
       origins,
+      terminalPositions: terminalOrigin,
       labelOrigins,
       moved: false,
       rubber: null,
@@ -879,7 +1044,8 @@ function canvasMouseDown(ev) {
       pts: net.route,
       orient: run.orient,
       line: run.val,
-      axisLast: run.orient === 'h' ? startWorld.y : startWorld.x,
+      startAxis: run.orient === 'h' ? startWorld.y : startWorld.x,
+      startLine: run.val,
       startClient,
       startWorld,
       moved: false,
@@ -939,6 +1105,7 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'wireseg') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
+      cursor = { x: snap(w.x), y: snap(w.y) };
       if (!drag.committed) {
         drag.committed = true;
         history.push(snapshot());
@@ -946,9 +1113,8 @@ function canvasMouseMove(ev) {
         future.length = 0;
       }
       const axis = drag.orient === 'h' ? w.y : w.x;
-      const dAxis = axis - drag.axisLast;
-      drag.axisLast = axis;
-      drag.line = moveWireRun(drag.pts, drag.orient, drag.line, drag.line + dAxis);
+      const target = drag.startLine + (axis - drag.startAxis);
+      drag.line = moveWireRun(drag.pts, drag.orient, drag.line, target);
       render();
     }
     return;
@@ -1002,7 +1168,8 @@ if (drag.mode === 'labelmove') {
           if (l && !l.owner) l.moveTo(o.x + dwx, o.y + dwy);
         }
       }
-      rerouteAffected([...drag.origins.keys()]);
+      preserveAffectedRoutes([...drag.origins.keys()], drag.terminalPositions);
+      drag.terminalPositions = terminalPositions([...drag.origins.keys()]);
       cursor = { x: snap(drag.startCursor.x + dwx), y: snap(drag.startCursor.y + dwy) };
     }
     render();
@@ -1059,7 +1226,7 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'wirepick') {
     if (!movedOut) doWireClick(snap(w.x), snap(w.y));
   } else if (drag.mode === 'move') {
-    if (drag.moved) rerouteAffected([...drag.origins.keys()]);
+    if (drag.moved) preserveAffectedRoutes([...drag.origins.keys()], drag.terminalPositions);
   }
 
   drag = null;
@@ -1438,11 +1605,14 @@ function onNormalKey(key) {
       const dx = nudgeKey[0] * count * 40;
       const dy = nudgeKey[1] * count * 40;
       commit(() => {
+        const refs = comps.map((c) => c.refdes);
+        const before = terminalPositions(refs);
+        prepareRoutesForMoves(refs);
         for (const c of comps) circuit.moveComponent(c.refdes, c.transform.x + dx, c.transform.y + dy);
         // Only free labels are moved explicitly — owned labels follow their
         // component's transform automatically (avoid double-moving them).
         for (const lab of labs) if (!lab.owner) lab.translate(dx, dy);
-        rerouteAffected(comps.map((c) => c.refdes));
+        preserveAffectedRoutes(refs, before);
       });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
@@ -1657,7 +1827,7 @@ function logKeymap() {
       'x / X       mirror selected on x / y',
       'dd          delete selected     yy   yank selected',
       'p           paste yanked component at cursor',
-      'w           wire (pick terminal letters)',
+      'w           enter persistent wire mode (Esc exits)',
       'Tab         cycle selection',
       'Ctrl-A      select all components',
       'Enter       select component under cursor',
@@ -1751,7 +1921,7 @@ function renderStatus() {
   }
   if (selectedNets.size) parts.push(`nets ${selectedNets.size}`);
   statusEl.textContent = parts.join('  ·  ');
-  statusEl.className = mode === 'insert' ? 'status insert' : 'status normal';
+  statusEl.className = wire ? 'status wire' : mode === 'insert' ? 'status insert' : 'status normal';
 }
 
 // ----- insert-mode menu ----------------------------------------------------
@@ -1824,30 +1994,6 @@ function updateInsertMenu() {
   insertMenu.style.top = `${top}px`;
 }
 
-// ----- toolbox -------------------------------------------------------------
-
-function buildPalette() {
-  paletteEl.innerHTML = '';
-  for (const type of symbolTypeNames) {
-    const btn = document.createElement('button');
-    btn.textContent = type;
-    btn.title = `Place ${type} at the cursor`;
-    btn.addEventListener('click', () => {
-      commit(() => placeAtCursor(type));
-      render();
-    });
-    paletteEl.appendChild(btn);
-  }
-  const labelBtn = document.createElement('button');
-  labelBtn.textContent = 'label';
-  labelBtn.title = 'Place a text label object at the cursor';
-  labelBtn.addEventListener('click', () => {
-    commit(() => placeLabelAtCursor());
-    render();
-  });
-  paletteEl.appendChild(labelBtn);
-}
-
 document.getElementById('btn-demo').addEventListener('click', () => {
   history.push(snapshot());
   future.length = 0;
@@ -1870,6 +2016,26 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   render();
   logLine('Cleared circuit.');
 });
+
+document.getElementById('btn-new-circuit').addEventListener('click', () => {
+  const name = window.prompt('New circuit name:');
+  if (name === null) return;
+  circuitNameEl.value = name.trim();
+  currentCircuitName = '';
+  history.push(snapshot());
+  future.length = 0;
+  circuit = new Circuit();
+  setSelection([]);
+  selectedNets.clear();
+  cursor = { x: 0, y: 0 };
+  view = viewFromCenter(0, 0);
+  render();
+  logLine(`Started new circuit "${circuitNameEl.value}". Save to create its directory.`);
+});
+
+document.getElementById('btn-load-circuit').addEventListener('click', () => loadCircuit());
+document.getElementById('btn-save-circuit').addEventListener('click', saveCircuit);
+circuitSelectEl.addEventListener('change', () => loadCircuit());
 
 document.getElementById('btn-export').addEventListener('click', () => {
   const svg = svgString(circuit, { grid: true, terminals: true, junctions: true, background: true });
@@ -1966,6 +2132,8 @@ cmdInput.addEventListener('keydown', (ev) => {
 
 // ----- boot ------------------------------------------------------------
 
+window.__run = (line) => { runLine(line); };
+window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); render(); };
 window.__circuit = () => ({
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
   nets: [...circuit.nets.values()].map((net) => ({ id: net.id, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, pts: net.points() })),
@@ -1975,8 +2143,10 @@ window.__circuit = () => ({
 view = viewFromCenter(0, 0);
 
 try {
-  buildPalette();
+  restoreDraft();
+  draftReady = true;
   render();
+  refreshCircuitList();
   logLine('Schematic Spawner ready. Press ? for the keymap. Normal: i to insert, w to wire, u undo.');
 } catch (err) {
   const b = banner();
@@ -1988,6 +2158,13 @@ try {
 }
 const bb = banner();
 if (bb) bb.remove();
+
+window.addEventListener('beforeunload', (ev) => {
+  persistDraft();
+  if (snapshot() === lastSavedSnapshot) return;
+  ev.preventDefault();
+  ev.returnValue = 'You have unsaved schematic changes.';
+});
 
 const paneEl = document.querySelector('.canvas-pane');
 if (paneEl && typeof ResizeObserver !== 'undefined') {

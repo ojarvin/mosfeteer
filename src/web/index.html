@@ -19,13 +19,19 @@
     <div class="toolbar-actions">
       <button id="btn-demo">Demo</button>
       <button id="btn-clear">Clear</button>
+      <button id="btn-new-circuit">New</button>
+      <select id="circuit-select" aria-label="Open circuit">
+        <option value="">Open circuit...</option>
+      </select>
+      <input id="circuit-name" type="text" placeholder="Circuit name" autocomplete="off" spellcheck="false" />
+      <button id="btn-load-circuit">Load</button>
+      <button id="btn-save-circuit">Save</button>
       <button id="btn-export">Export SVG</button>
     </div>
 
-    <div class="palette" id="palette"></div>
   </header>
 
-  <div class="hint" id="hint">normal: h j k l move · r/R rotate · x/X mirror · dd delete · yy/p copy-paste · w wire · Tab select · F fit · u undo · i insert (components &amp; labels) · : command · ? help</div>
+  <div class="hint" id="hint">normal: h j k l move · r/R rotate · x/X mirror · dd delete · w persistent wiring · Esc normal · Tab select · F fit · u undo · i insert (components &amp; labels) · : command · ? help</div>
 
   <main class="layout">
       <section class="canvas-pane">
