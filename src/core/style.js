@@ -37,7 +37,8 @@ export const SUPPLY = { stroke: '#111', width: 7.2, cap: 'butt', join: 'miter' }
  * text. `LABEL_FONT` is for free-standing annotation labels.
  */
 export const INSTANCE_FONT = { size: 38, fill: '#111', weight: 'bold', italic: true };
-export const LABEL_FONT = { size: 38, fill: '#111' };
+export const LABEL_FONT = { size: 38, fill: '#111', weight: 'bold', italic: true };
+// export const LABEL_FONT = { size: 38, fill: '#111' };
 
 const STYLES = { thick: THICK, symbol: SYMBOL, emph: EMPH, ground: GROUND, supply: SUPPLY };
 

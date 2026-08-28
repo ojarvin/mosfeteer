@@ -1,0 +1,190 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { Circuit } from '../src/core/model.js';
+
+/** Assert the structural invariants the editor must preserve after any wiring
+ *  and dragging: every branch is orthogonal, every branch endpoint is attached
+ *  to a terminal or a real junction, and the solder-dot count equals the number
+ *  of real junctions. */
+function assertNetClean(circuit, net, expectedDots) {
+  const branches = net.paths();
+  for (const path of branches) {
+    for (let i = 1; i < path.length; i++) {
+      assert.ok(
+        path[i].x === path[i - 1].x || path[i].y === path[i - 1].y,
+        `no diagonal segment in ${JSON.stringify(path)}`
+      );
+    }
+  }
+  const terminalKeys = new Set(
+    net.terminals.map((t) => {
+      const p = circuit.getComponent(t.comp).terminalWorld(t.term);
+      return `${p.x},${p.y}`;
+    })
+  );
+  // A branch endpoint is attached if it is a terminal or is shared with another
+  // branch (a corner or junction). Count point occurrences across all branches.
+  const occurrence = new Map();
+  for (const path of branches) for (const p of path) {
+    const k = `${p.x},${p.y}`;
+    occurrence.set(k, (occurrence.get(k) || 0) + 1);
+  }
+  for (const path of branches) {
+    for (const p of [path[0], path[path.length - 1]]) {
+      const k = `${p.x},${p.y}`;
+      assert.ok(terminalKeys.has(k) || (occurrence.get(k) || 0) >= 2, `branch endpoint ${k} is attached`);
+    }
+  }
+  const dots = [...circuit.components.values()].filter((c) => c.type === 'solder');
+  assert.equal(dots.length, expectedDots, `solder dot count (branches=${JSON.stringify(branches)})`);
+  return net;
+}
+
+function scenario() {
+  const c = new Circuit();
+  // R1.a(0,0) R1.b(160,0)   R2.a(400,0) R2.b(560,0)   R3.a(280,-200) R3.b(440,-200)
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 280, y: -200 });
+  return c;
+}
+
+test('two terminals wired, then a third joined mid-wire: one junction, one dot', () => {
+  const c = scenario();
+  const n = c.wireTo('R1.b', { x: 400, y: 0 }); // R1.b -> R2.a straight
+  assert.equal(n.terminals.length, 2);
+  assertNetClean(c, n, 0);
+
+  const joined = c.wireTo('R3.b', { x: 280, y: 0 }); // join mid-wire at (280,0)
+  assert.equal(joined, n);
+  assert.equal(n.terminals.length, 3);
+  assertNetClean(c, n, 1);
+});
+
+test('third terminal joined onto an existing terminal: one junction, one dot', () => {
+  const c = scenario();
+  const n = c.wireTo('R1.b', { x: 400, y: 0 });
+  c.wireTo('R3.b', { x: 160, y: 0 }); // join at R1.b position
+  assert.equal(n.terminals.length, 3);
+  assertNetClean(c, n, 1);
+});
+
+test('four terminals joined in stages keep exactly the real junction count', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 280, y: -200 });
+  c.addComponent('resistor', { refdes: 'R4', x: 280, y: 200 });
+  const n = c.wireTo('R1.b', { x: 400, y: 0 }); // R1.b -> R2.a
+  c.wireTo('R3.b', { x: 280, y: 0 }); // join mid-wire
+  c.wireTo('R4.a', { x: 280, y: 0 }); // join at the same junction
+  assert.equal(n.terminals.length, 4);
+  // R3/R4 both land at (280,0): still a single junction, so one dot.
+  assertNetClean(c, n, 1);
+});
+
+test('dragging the joined devices around never detaches or adds dots', () => {
+  const c = scenario();
+  const n = c.wireTo('R1.b', { x: 400, y: 0 });
+  c.wireTo('R3.b', { x: 280, y: 0 });
+  assertNetClean(c, n, 1);
+
+  // Move R1 (source end) and R3 (joined branch) in several steps like a real drag.
+  const moves = [
+    ['R1', 0, 120],
+    ['R3', 280, -360],
+    ['R1', 120, 120],
+    ['R2', 400, 160],
+    ['R3', 400, -360],
+  ];
+  for (const [refdes, x, y] of moves) {
+    const comp = c.getComponent(refdes);
+    const dx = x - comp.transform.x;
+    const dy = y - comp.transform.y;
+    c.moveComponent(refdes, x, y);
+    c.rerouteNet(n, new Map([[refdes, { dx, dy }]]));
+    assert.equal(c.netOfTerminal('R1.b'), n, 'R1.b stays connected');
+    assert.equal(c.netOfTerminal('R2.a'), n, 'R2.a stays connected');
+    assert.equal(c.netOfTerminal('R3.b'), n, 'R3.b stays connected');
+    assertNetClean(c, n, 1);
+  }
+});
+
+test('joining into a wire at different points never creates diagonals or extra dots', () => {
+  for (const [mx, my] of [[200, 0], [320, 0], [280, 0]]) {
+    const c = scenario();
+    const n = c.wireTo('R1.b', { x: 400, y: 0 });
+    c.wireTo('R3.b', { x: mx, y: my });
+    assert.equal(n.terminals.length, 3, `meet (${mx},${my})`);
+    assertNetClean(c, n, 1);
+  }
+});
+
+test('deleting a segment shortens the net and preserves the remaining branches', () => {
+  const c = scenario();
+  const n = c.wireTo('R1.b', { x: 400, y: 0 });
+  c.wireTo('R3.b', { x: 280, y: 0 });
+  const before = n.length();
+  c.deleteWireSegment(n.id, 0, 1); // delete the R1.b side of the junction
+  // The junction branch to R2/R3 survives; R1.b is now a dangling stub.
+  const byTerminal = (id) => c.netOfTerminal(id);
+  assert.ok(byTerminal('R1.b') !== byTerminal('R2.a'), 'R1.b detached from R2.a');
+  const remaining = c.nets.get(byTerminal('R2.a').id);
+  assert.equal(remaining.terminals.length, 2, 'R2.a and R3.b stay connected');
+  // total length shrank, and no branch was auto-regenerated (no growth)
+  const after = [...c.nets.values()].reduce((s, x) => s + x.length(), 0);
+  assert.ok(after < before, `net shrank: ${before} -> ${after}`);
+  assert.equal(remaining.branches.length, 2, 'remaining branches preserved, not re-routed');
+  assertNetClean(c, remaining, 0);
+});
+
+test('loading stale overlapping branches splits them so dragging never loops or adds dots', () => {
+  // A hand-authored state whose bottom branch was not split at the junction
+  // (the historical bug). Loaded, it must be split so each side of the dot is
+  // its own segment, and dragging the far terminal stays clean.
+  const c = Circuit.fromJSON({
+    version: 1, grid: 40,
+    components: [
+      { refdes: 'C1', type: 'capacitor', value: '', transform: { x: -240, y: -400, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'C2', type: 'capacitor', value: '', transform: { x: -240, y: 80, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'C3', type: 'capacitor', value: '', transform: { x: 480, y: 80, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'C4', type: 'capacitor', value: '', transform: { x: -240, y: 600, rotation: 0, mirrorX: false, mirrorY: false } },
+    ],
+    nets: [{
+      id: 'N1', name: '',
+      terminals: [{ comp: 'C4', term: 'b' }, { comp: 'C3', term: 'b' }, { comp: 'C1', term: 'b' }, { comp: 'C2', term: 'b' }],
+      route: [{ x: -120, y: 600 }, { x: 720, y: 600 }, { x: 720, y: 80 }, { x: 600, y: 80 }],
+      junctions: [{ x: 360, y: 600 }],
+      branches: [
+        [{ x: -120, y: 600 }, { x: 720, y: 600 }, { x: 720, y: 80 }, { x: 600, y: 80 }],
+        [{ x: 360, y: 600 }, { x: 720, y: 600 }, { x: 720, y: 80 }, { x: 600, y: 80 }],
+        [{ x: -120, y: -400 }, { x: 720, y: -400 }, { x: 720, y: 80 }, { x: 600, y: 80 }],
+        [{ x: -120, y: 80 }, { x: 160, y: 80 }, { x: 160, y: 600 }, { x: 360, y: 600 }],
+      ],
+    }],
+    labels: [],
+  });
+  const n = c.nets.get('N1');
+  // No branch may pass through another branch's vertex (no unsplit interior).
+  for (const path of n.branches) {
+    for (let i = 1; i < path.length; i++) {
+      assert.ok(path[i].x === path[i - 1].x || path[i].y === path[i - 1].y, 'orthogonal');
+    }
+  }
+  const snap = n.branches.map((b) => b.map((p) => ({ ...p })));
+  const c4 = c.getComponent('C4');
+  const sx = c4.transform.x, sy = c4.transform.y;
+  const attached = () => n.terminals.every((t) => {
+    const p = c.getComponent(t.comp).terminalWorld(t.term);
+    return n.branches.some((b) => b.some((q) => q.x === p.x && q.y === p.y));
+  });
+  const dots = () => [...c.components.values()].filter((x) => x.type === 'solder').length;
+  for (const [x, y] of [[-240, 480], [-240, 360], [-240, 240]]) {
+    const dx = x - sx, dy = y - sy;
+    c.moveComponent('C4', x, y);
+    n.branches = snap.map((b) => b.map((p) => ({ ...p })));
+    c.rerouteNet(n, new Map([['C4', { dx, dy }]]));
+    assert.ok(attached(), `terminals attached after C4@${x},${y}`);
+  }
+  assert.equal(dots(), 2, 'no additional dots after dragging');
+});

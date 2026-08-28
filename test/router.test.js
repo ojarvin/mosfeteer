@@ -250,6 +250,25 @@ test('smartRoute does not route the first segment up INTO the component from a d
   allOnGrid(pts);
 });
 
+test('smartRoute approaches a pin on a body boundary with a straight segment, not a detour', () => {
+  // A free point directly above M2.d (a drain pin on the body top-right corner)
+  // must connect with a straight vertical segment. The clearance check must
+  // recognize the touch at the pin, not force a detour through the neighbour.
+  const rects = [{ x: 400, y: -80, w: 120, h: 160 }];
+  const pins = new Map([
+    ['400,0', { x: -1, y: 0 }],
+    ['520,-80', { x: 0, y: -1 }],
+    ['520,80', { x: 0, y: 1 }],
+  ]);
+  const pts = smartRoute({ x: 520, y: -120 }, { x: 520, y: -80 }, { rects, pins, wires: [] });
+  assert.deepEqual(pts, [{ x: 520, y: -120 }, { x: 520, y: -80 }]);
+});
+
+test('smartRoute returns a straight line to a pin one cell below a free point', () => {
+  const pts = runRobots({ x: 520, y: -120 }, { x: 520, y: -80 }, [R(400, -80)], [pin(520, -80, 0, -1)]);
+  assert.deepEqual(pts, [{ x: 520, y: -120 }, { x: 520, y: -80 }]);
+});
+
 test('smartRoute avoids running parallel on top of an existing wire', () => {
   // an existing wire already occupies the y=40 channel; a straight route along
   // y=40 would overlap it, so the router must prefer a non-overlapping line.

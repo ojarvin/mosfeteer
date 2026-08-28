@@ -25,6 +25,7 @@ export const npn = defineSymbol({
   ],
   textPos: { x: 94, y: -30, anchor: 'middle' },
   refPos: null,
-  labelOffset: { x: 80, y: 160 },
+  // Instance label one square right of the body edge — like the MOS devices.
+  labelOffset: { x: 200, y: 0 },
   defaultValue: '',
 });

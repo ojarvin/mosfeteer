@@ -97,6 +97,27 @@ test('rotate defaults to +90 and wraps', () => {
   assert.equal(c.getComponent('R1').transform.rotation, 0);
 });
 
+test('rotating a routed-in component re-routes the net to the new terminal', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor --at 0 0'); // R1 (a at 0,0)
+  runCommand(c, 'add resistor --at 400 0'); // R2 (a at 400,0)
+  runCommand(c, 'connect R1.b R2.a'); // R1.b at (160,0) -> R2.a at (400,0)
+  const net = [...c.nets.values()][0];
+  assert.equal(net.route[net.route.length - 1].x, 400);
+  runCommand(c, 'rotate R2');
+  assert.deepEqual(net.route[net.route.length - 1], c.getComponent('R2').terminalWorld('a'));
+});
+
+test('mirroring a routed-in component re-routes the net to the new terminal', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor --at 0 0'); // R1 (b at 160,0)
+  runCommand(c, 'add resistor --at 400 0'); // R2 (a at 400,0)
+  runCommand(c, 'connect R1.b R2.a');
+  const net = [...c.nets.values()][0];
+  runCommand(c, 'mirror R2 x'); // a flips from (400,0) to (280,0)
+  assert.deepEqual(net.route[net.route.length - 1], c.getComponent('R2').terminalWorld('a'));
+});
+
 test('connect joins terminals into a net and names it', () => {
   const c = fresh();
   runCommand(c, 'add resistor --at 400 0'); // R1
@@ -106,6 +127,16 @@ test('connect joins terminals into a net and names it', () => {
   assert.equal(res.json.name, 'rail');
   assert.equal(res.json.terminals.length, 2);
   assert.equal(c.nets.size, 1);
+});
+
+test('net segment-rm deletes wire geometry through the agent command', () => {
+  const c = smallCircuit();
+  const net = [...c.nets.values()][0];
+  net.branches = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 160, y: 80 }, { x: 160, y: 0 }]];
+  net.route = net.branches[0];
+  const out = runCommand(c, 'net N1 segment-rm 0 2');
+  assert.equal(out.mutated, true);
+  assert.equal(c.nets.size, 2);
 });
 
 test('connect with too few refs throws', () => {

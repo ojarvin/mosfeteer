@@ -301,6 +301,34 @@ function clearanceScore(pts, env) {
   return n;
 }
 
+// Clearance is a hard invariant for committed routes. A segment may touch a
+// component body only at a terminal pin on that body; otherwise it must stay at
+// least one grid cell clear.
+function onBodyBoundary(p, r) {
+  return ((p.x === r.x || p.x === r.x + r.w) && p.y >= r.y && p.y <= r.y + r.h) ||
+    ((p.y === r.y || p.y === r.y + r.h) && p.x >= r.x && p.x <= r.x + r.w);
+}
+
+function hardSafe(pts, env) {
+  const pins = env.pins || new Map();
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    for (const r of env.rects || []) {
+      if (segThroughInterior(a, b, r)) return false;
+      if (segRectDist(a, b, r) < STEP) {
+        const aPin = pins.has(`${a.x},${a.y}`) && onBodyBoundary(a, r);
+        const bPin = pins.has(`${b.x},${b.y}`) && onBodyBoundary(b, r);
+        if (!aPin && !bPin) return false;
+      }
+    }
+    for (const wire of env.wires || []) for (let j = 1; j < wire.length; j++) {
+      if (overlapSpan(a, b, wire[j - 1], wire[j])) return false;
+    }
+  }
+  return true;
+}
+
 /** 0 = aligned with the outward direction, 1 = perpendicular, 2 = inward. */
 function dirScore(dx, dy, dir) {
   if (!dir) return 0;
@@ -345,7 +373,9 @@ function cmpScore(a, b) {
 
 function scoreCandidate(pts, env) {
   const { cross, overlap } = wireConflicts(pts, env);
-  return [bboxCrossings(pts, env), cross, overlap, clearanceScore(pts, env), conformScore(pts, env), Math.max(0, pts.length - 2), routeLength(pts)];
+  // Crossing is a legal visual operation; collinear overlap is not. Prefer
+  // separate wire channels before minimizing crossings.
+  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), conformScore(pts, env), Math.max(0, pts.length - 2), routeLength(pts)];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */
@@ -386,9 +416,13 @@ function astar(from, to, env) {
     const blocked = (cx, cy) => {
       if ((cx === sx && cy === sy) || (cx === tx && cy === ty)) return false;
       const w = { x: cx * STEP, y: cy * STEP };
-      for (const r of env.rects || []) if (strictlyInside(w, r)) return true;
+      for (const r of env.rects || []) {
+        const clear = { x: r.x - STEP, y: r.y - STEP, w: r.w + 2 * STEP, h: r.h + 2 * STEP };
+        if (strictlyInside(w, clear)) return true;
+      }
       return false;
     };
+    const occupied = (a, b) => (env.wires || []).some((wire) => wire.some((p, i) => i > 0 && overlapSpan(a, b, wire[i - 1], p)));
     const TURN = 6;
     const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     const g = new Map();
@@ -401,6 +435,7 @@ function astar(from, to, env) {
       const nx = sx + D[d][0];
       const ny = sy + D[d][1];
       if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
+      if (occupied({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
       g.set(`${nx},${ny},${d}`, 1);
       back.set(`${nx},${ny},${d}`, `${sx},${sy},-1`);
       addOpen(1, nx, ny, d);
@@ -423,6 +458,7 @@ function astar(from, to, env) {
         const nx = cx0 + D[nd][0];
         const ny = cy0 + D[nd][1];
         if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
+        if (occupied({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
         const nc = cost + 1 + (nd === d ? 0 : TURN);
         const nk = `${nx},${ny},${nd}`;
         if (nc < (g.get(nk) ?? Infinity)) {
@@ -509,16 +545,18 @@ export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: 
   if (f2 && t2) for (const c of routeCandidates(f2, t2)) cands.push(wrap(c));
   if (f2 && !t2) for (const c of routeCandidates(f2, t)) cands.push(wrap(c));
   if (!f2 && t2) for (const c of routeCandidates(f, t2)) cands.push(wrap(c));
-  let best = cands[0];
+  const viable = cands.filter((candidate) => hardSafe(candidate, env));
+  const pool = viable.length ? viable : cands;
+  let best = pool[0];
   let bestScore = scoreCandidate(best, env);
-  for (let i = 1; i < cands.length; i++) {
-    const s = scoreCandidate(cands[i], env);
+  for (let i = 1; i < pool.length; i++) {
+    const s = scoreCandidate(pool[i], env);
     if (cmpScore(s, bestScore) < 0) {
-      best = cands[i];
+      best = pool[i];
       bestScore = s;
     }
   }
-  if (bestScore[0] > 0) {
+  if (bestScore[0] > 0 || !hardSafe(best, env)) {
     const ast = astar(f, t, env);
     if (ast) {
       const s = scoreCandidate(ast, env);

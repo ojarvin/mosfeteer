@@ -46,7 +46,7 @@ function routeNet(circuit, net) {
 /** Re-route every net that touches any of the given component refdes.
  *  `moved` (optional) is a Map of refdes -> {dx,dy} so hand-drawn wire shapes
  *  are preserved (slid / re-anchored) instead of recomputed. */
-function rerouteNetsFor(circuit, refs, moved) {
+function rerouteNetsFor(circuit, refs, moved, fresh = false) {
   const touched = new Set();
   for (const r of refs) {
     const c = circuit.components.get(r);
@@ -58,7 +58,7 @@ function rerouteNetsFor(circuit, refs, moved) {
   }
   for (const id of touched) {
     const net = circuit.nets.get(id);
-    if (net) circuit.rerouteNet(net, moved);
+    if (net) circuit.rerouteNet(net, fresh ? 'refresh' : moved);
   }
 }
 
@@ -174,17 +174,20 @@ export function evaluate(circuit) {
   // segThroughInterior counts a segment leaving a boundary pin straight across
   // its own body too, while allowing wires that hug the boundary line.
   const boxViolations = [];
+  const diagonalViolations = [];
   for (const net of circuit.nets.values()) {
-    const pts = net.pathPoints();
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1];
-      const b = pts[i];
-      for (const comp of comps) {
-        if (annotated(comp)) continue;
-        if (segThroughInterior(a, b, comp.bboxWorld())) {
-          boxViolations.push(
-            `net ${net.id} seg (${a.x},${a.y})-(${b.x},${b.y}) through ${comp.refdes}(${comp.type}) bbox`
-          );
+    for (const pts of net.paths()) {
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        if (a.x !== b.x && a.y !== b.y) diagonalViolations.push(`net ${net.id} diagonal (${a.x},${a.y})-(${b.x},${b.y})`);
+        for (const comp of comps) {
+          if (annotated(comp)) continue;
+          if (segThroughInterior(a, b, comp.bboxWorld())) {
+            boxViolations.push(
+              `net ${net.id} seg (${a.x},${a.y})-(${b.x},${b.y}) through ${comp.refdes}(${comp.type}) bbox`
+            );
+          }
         }
       }
     }
@@ -196,6 +199,7 @@ export function evaluate(circuit) {
     nets,
     overlappingBBoxes: overlaps,
     wireThroughBBoxes: boxViolations,
+    diagonalWireSegments: diagonalViolations,
     gridViolations: violations,
     bounds: circuit.bounds(),
   };
@@ -217,7 +221,7 @@ export function commandHelp() {
     '  connect REF.TERM REF.TERM ... [--name N]  (alias wire)',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  nets                           - list nets with terminals and length',
-    '  net <id> add|drop|name|rm ...  - manage a net:',
+    '  net <id> add|drop|name|rm ...  - manage a net (segment-rm BRANCH SEG deletes wire geometry)',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
     '  list                           - list components',
@@ -337,7 +341,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const c = circuit.getComponent(pos[0]);
     const deg = pos[1] !== undefined ? Number(pos[1]) : 90;
     circuit.setTransform(c.refdes, { rotation: c.transform.rotation + deg });
-    rerouteNetsFor(circuit, [c.refdes]);
+    rerouteNetsFor(circuit, [c.refdes], null, true);
     circuit.syncJunctionSolders();
     return result(`rotated ${c.refdes} to ${c.transform.rotation}°`, { refdes: c.refdes, rotation: c.transform.rotation }, true);
   }
@@ -347,7 +351,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (axis === 'x') circuit.setTransform(c.refdes, { mirrorX: !c.transform.mirrorX });
     else if (axis === 'y') circuit.setTransform(c.refdes, { mirrorY: !c.transform.mirrorY });
     else throw new Error('mirror axis must be x or y');
-    rerouteNetsFor(circuit, [c.refdes]);
+    rerouteNetsFor(circuit, [c.refdes], null, true);
     circuit.syncJunctionSolders();
     return result(`mirrored ${c.refdes} along ${axis}`, { refdes: c.refdes, axis }, true);
   }
@@ -475,6 +479,13 @@ function netCommand(circuit, pos, result) {
   if (op === 'name') {
     net.name = pos[2] || '';
     return result(`net ${net.id} name = "${net.name}"`, net.toJSON(), true);
+  }
+  if (op === 'segment-rm') {
+    const branch = Number(pos[2]);
+    const segment = Number(pos[3]);
+    if (!Number.isInteger(branch) || !Number.isInteger(segment)) throw new Error('usage: net <id> segment-rm BRANCH SEG');
+    circuit.deleteWireSegment(net.id, branch, segment);
+    return result(`deleted segment ${branch}:${segment} from net ${net.id}`, net.toJSON(), true);
   }
   if (op === 'rm') {
     circuit.nets.delete(net.id);

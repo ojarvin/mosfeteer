@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit, ComponentInstance, Net, parseTermRef, LabelInstance } from '../src/core/model.js';
+import { Circuit, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup } from '../src/core/model.js';
 import { GRID, snap, onGrid } from '../src/core/grid.js';
+import { segThroughInterior } from '../src/core/router.js';
 
 test('parseTermRef parses REFDES.TERM and rejects malformed', () => {
   assert.deepEqual(parseTermRef('R1.a'), { comp: 'R1', term: 'a' });
@@ -175,6 +176,23 @@ test('connect merges existing nets into one', () => {
   assert.equal(c.netOfTerminal(`${r2.refdes}.b`), merged);
 });
 
+test('merging nets preserves both established wire paths', () => {
+  const c = new Circuit();
+  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
+  const r3 = c.addComponent('resistor', { x: 800, y: 0 });
+  const a = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
+  const b = c.connect(`${r2.refdes}.b`, `${r3.refdes}.b`);
+  a.branches = [[{ x: 0, y: 0 }, { x: 0, y: 160 }, { x: 400, y: 160 }]];
+  a.route = a.branches[0];
+  b.branches = [[{ x: 560, y: 0 }, { x: 560, y: -160 }, { x: 800, y: -160 }]];
+  b.route = b.branches[0];
+  const merged = c.connect(`${r1.refdes}.a`, `${r3.refdes}.b`);
+  assert.equal(merged.branches.length, 2);
+  assert.deepEqual(merged.branches[0], a.branches[0]);
+  assert.deepEqual(merged.branches[1], b.branches[0]);
+});
+
 test('connect throws on self-connection', () => {
   const c = new Circuit();
   const r1 = c.addComponent('resistor');
@@ -209,6 +227,172 @@ test('disconnect of the last terminal succeeds and drops the empty net', () => {
   const back = c.disconnect(`${r2.refdes}.a`);
   assert.equal(back, net);
   assert.equal(c.nets.size, 0);
+});
+
+test('wire paths are canonical and deleting a segment splits terminal connectivity', () => {
+  const c = new Circuit();
+  const a = c.addComponent('resistor', { x: 0, y: 0 });
+  const b = c.addComponent('resistor', { x: 400, y: 0 });
+  const n = c.connect(`${a.refdes}.a`, `${b.refdes}.a`);
+  n.branches = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 400, y: 80 }, { x: 400, y: 0 }]];
+  n.route = n.branches[0];
+  c.deleteWireSegment(n.id, 0, 2);
+  assert.equal(c.netOfTerminal(`${a.refdes}.a`)?.id, n.id);
+  assert.notEqual(c.netOfTerminal(`${b.refdes}.a`)?.id, n.id);
+  assert.equal(c.nets.size, 2);
+});
+
+test('solder dots are absent from ordinary elbows and floating space', () => {
+  const c = new Circuit();
+  const a = c.addComponent('resistor', { x: 0, y: 0 });
+  const b = c.addComponent('resistor', { x: 400, y: 0 });
+  const n = c.connect(`${a.refdes}.a`, `${b.refdes}.a`);
+  n.branches = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 400, y: 80 }, { x: 400, y: 0 }]];
+  n.route = n.branches[0];
+  c.syncJunctionSolders();
+  assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
+  c.addComponent('solder', { x: 1000, y: 1000 });
+  c.syncJunctionSolders();
+  assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
+});
+
+test('solder dots belong to one net junction, not another net crossing', () => {
+  const c = new Circuit();
+  const a = c.addComponent('resistor', { x: 0, y: 0 });
+  const b = c.addComponent('resistor', { x: 400, y: 0 });
+  const d = c.addComponent('resistor', { x: 0, y: 400 });
+  const e = c.addComponent('resistor', { x: 400, y: 400 });
+  const n1 = c.connect(`${a.refdes}.a`, `${b.refdes}.a`);
+  const n2 = c.connect(`${d.refdes}.a`, `${e.refdes}.a`);
+  n1.branches = [[{ x: 0, y: 0 }, { x: 400, y: 0 }]];
+  n2.branches = [[{ x: 200, y: -200 }, { x: 200, y: 200 }]];
+  c.syncJunctionSolders();
+  assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
+  n1.branches = [[{ x: 0, y: 0 }, { x: 200, y: 0 }], [{ x: 200, y: 0 }, { x: 400, y: 0 }], [{ x: 200, y: 0 }, { x: 200, y: 80 }]];
+  c.syncJunctionSolders();
+  const dots = [...c.components.values()].filter((x) => x.type === 'solder');
+  assert.deepEqual(dots.map((x) => [x.transform.x, x.transform.y]), [[200, 0]]);
+});
+
+test('an auto solder dot can be removed without being regenerated', () => {
+  const c = new Circuit();
+  const a = c.addComponent('resistor', { x: 0, y: 0 });
+  const b = c.addComponent('resistor', { x: 400, y: 0 });
+  const d = c.addComponent('resistor', { x: 200, y: 400 });
+  const n = c.connect(`${a.refdes}.a`, `${b.refdes}.a`, `${d.refdes}.a`);
+  n.branches = [[{ x: 0, y: 0 }, { x: 200, y: 0 }], [{ x: 200, y: 0 }, { x: 400, y: 0 }], [{ x: 200, y: 0 }, { x: 200, y: 400 }]];
+  n.route = n.branches[0];
+  c.syncJunctionSolders();
+  const dot = [...c.components.values()].find((x) => x.type === 'solder');
+  assert.ok(dot);
+  c.removeComponent(dot.refdes);
+  c.syncJunctionSolders();
+  assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
+});
+
+test('repeated component moves keep route endpoints attached and outside the body', () => {
+  const c = new Circuit();
+  const a = c.addComponent('resistor', { x: 0, y: 0 });
+  const b = c.addComponent('resistor', { x: 400, y: 0 });
+  const n = c.connect(`${a.refdes}.b`, `${b.refdes}.a`);
+  n.branches = [[{ x: 160, y: 0 }, { x: 160, y: 160 }, { x: 400, y: 160 }, { x: 400, y: 0 }]];
+  n.route = n.branches[0];
+  c.moveComponent(a.refdes, 0, 80);
+  c.rerouteNet(n, new Map([[a.refdes, { dx: 0, dy: 80 }]]));
+  c.moveComponent(a.refdes, 0, 160);
+  c.rerouteNet(n, new Map([[a.refdes, { dx: 0, dy: 80 }]]));
+  const path = n.branches[0];
+  assert.deepEqual(path[0], a.terminalWorld('b'));
+  assert.deepEqual(path[path.length - 1], b.terminalWorld('a'));
+  assert.equal(n.wiringErrors().length, 0);
+  for (let i = 1; i < path.length; i++) assert.equal(segThroughInterior(path[i - 1], path[i], a.bboxWorld()), false);
+});
+
+test('moving a component with one wired terminal preserves its wire stub', () => {
+  const c = new Circuit();
+  const r = c.addComponent('resistor', { x: 0, y: 0 });
+  const n = c.connect(`${r.refdes}.a`);
+  n.branches = [[{ x: 0, y: 0 }, { x: 0, y: 160 }, { x: 200, y: 160 }]];
+  n.route = n.branches[0];
+  c.moveComponent(r.refdes, 80, 0);
+  c.rerouteNet(n, new Map([[r.refdes, { dx: 80, dy: 0 }]]));
+  assert.equal(c.netOfTerminal(`${r.refdes}.a`), n);
+  assert.deepEqual(n.branches[0][0], r.terminalWorld('a'));
+  assert.equal(n.wiringErrors().length, 0);
+});
+
+test('moving the target component keeps the target endpoint attached to its net', () => {
+  const c = new Circuit();
+  const source = c.addComponent('resistor', { x: 0, y: 0 });
+  const target = c.addComponent('resistor', { x: 400, y: 0 });
+  const n = c.connect(`${source.refdes}.b`, `${target.refdes}.a`);
+  n.route = [{ x: 160, y: 0 }, { x: 160, y: 160 }, { x: 400, y: 160 }, { x: 400, y: 0 }];
+  c.moveComponent(target.refdes, 400, 160);
+  c.rerouteNet(n, new Map([[target.refdes, { dx: 0, dy: 160 }]]));
+  const path = n.route;
+  assert.deepEqual(new Set([path[0], path.at(-1)].map((p) => `${p.x},${p.y}`)), new Set([
+    `${source.terminalWorld('b').x},${source.terminalWorld('b').y}`,
+    `${target.terminalWorld('a').x},${target.terminalWorld('a').y}`,
+  ]));
+  assert.equal(n.wiringErrors().length, 0);
+});
+
+test('placing a component on an existing terminal connects it and later movement keeps the net', () => {
+  const c = new Circuit();
+  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 160, y: 0 });
+  const n = c.netOfTerminal(`${r2.refdes}.a`);
+  assert.ok(n);
+  assert.equal(n, c.netOfTerminal(`${r1.refdes}.b`));
+  c.moveComponent(r2.refdes, 160, 160);
+  c.rerouteNet(n, new Map([[r2.refdes, { dx: 0, dy: 160 }]]));
+  assert.equal(c.netOfTerminal(`${r2.refdes}.a`), n);
+  const path = n.branches?.[0] || n.route || n.points();
+  assert.deepEqual(new Set(path.slice(0, 1).concat(path.slice(-1)).map((p) => `${p.x},${p.y}`)), new Set([
+    `${r1.terminalWorld('b').x},${r1.terminalWorld('b').y}`,
+    `${r2.terminalWorld('a').x},${r2.terminalWorld('a').y}`,
+  ]));
+});
+
+test('automatic routing never shorts two terminals through a component body', () => {
+  const c = new Circuit();
+  const r = c.addComponent('resistor', { x: 0, y: 0 });
+  const n = c.connect(`${r.refdes}.a`, `${r.refdes}.b`);
+  for (let i = 1; i < n.points().length; i++) assert.equal(segThroughInterior(n.points()[i - 1], n.points()[i], r.bboxWorld()), false);
+});
+
+test('moving a diode-connected MOSFET before joining a third terminal never creates diagonal branches', () => {
+  const c = new Circuit();
+  const m1 = c.addComponent('nmos', { x: 0, y: 0 });
+  const m2 = c.addComponent('nmos', { x: 400, y: 0 });
+  const m3 = c.addComponent('nmos', { x: 800, y: 0 });
+  const n = c.connect(`${m1.refdes}.g`, `${m1.refdes}.d`);
+  c.rerouteNet(n);
+  c.moveComponent(m1.refdes, 200, 0);
+  c.rerouteNet(n, new Map([[m1.refdes, { dx: 200, dy: 0 }]]));
+  c.connect(`${m1.refdes}.g`, `${m2.refdes}.d`);
+  c.rerouteNet(n);
+  c.connect(`${m3.refdes}.d`, `${m1.refdes}.g`);
+  c.rerouteNet(n);
+  for (const path of n.paths()) for (let i = 1; i < path.length; i++) {
+    assert.ok(path[i].x === path[i - 1].x || path[i].y === path[i - 1].y, `diagonal branch: ${JSON.stringify(path)}`);
+  }
+});
+
+test('loading a malformed diagonal route normalizes it before it can be rendered', () => {
+  const c = Circuit.fromJSON({
+    version: 1,
+    grid: 40,
+    components: [
+      { refdes: 'R1', type: 'resistor', value: '', transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'R2', type: 'resistor', value: '', transform: { x: 400, y: 400, rotation: 0, mirrorX: false, mirrorY: false } },
+    ],
+    nets: [{ id: 'N1', name: '', terminals: [{ comp: 'R1', term: 'a' }, { comp: 'R2', term: 'a' }], route: [{ x: 0, y: 0 }, { x: 400, y: 400 }], branches: null }],
+    labels: [],
+  });
+  for (const path of c.nets.get('N1').paths()) for (let i = 1; i < path.length; i++) {
+    assert.ok(path[i].x === path[i - 1].x || path[i].y === path[i - 1].y);
+  }
 });
 
 test('removeComponent sweeps terminals and drops empty nets', () => {
@@ -380,6 +564,23 @@ test('setText resizes the bbox but keeps the anchor fixed', () => {
   const w2 = l.bbox().w;
   assert.ok(w2 >= w1, 'longer text widens the box');
   assert.equal(l.bbox().x + l.bbox().w / 2, 400);
+});
+
+test('applyMarkup wraps, unwraps, and reverts mixed selections', () => {
+  // wrap a plain selection in subscript markup
+  let r = applyMarkup('CGS', 1, 3, '_');
+  assert.deepEqual(r, { text: 'C_{GS}', selStart: 3, selEnd: 5 });
+  // selecting the subscripted text and pressing again unwraps it
+  r = applyMarkup(r.text, r.selStart, r.selEnd, '_');
+  assert.deepEqual(r, { text: 'CGS', selStart: 1, selEnd: 3 });
+  // superscript uses ^{...}
+  r = applyMarkup('VDD', 0, 1, '^');
+  assert.deepEqual(r, { text: '^{V}DD', selStart: 2, selEnd: 3 });
+  // a selection spanning markup + plain text reverts everything to normal
+  r = applyMarkup('V_{IN}OUT', 1, 5, '_');
+  assert.deepEqual(r, { text: 'VINOUT', selStart: 1, selEnd: 5 });
+  // no selection -> null
+  assert.equal(applyMarkup('abc', 1, 1, '_'), null);
 });
 
 test('owned label anchorWorld follows the component transform', () => {

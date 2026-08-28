@@ -260,11 +260,18 @@ export function editorOverlay(circuit, opts = {}) {
   }
 
   for (const net of opts.nets || []) {
-    const pts = net && typeof net.points === 'function' ? net.points() : net;
-    if (!pts || pts.length < 2) continue;
-    const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-    parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="12" opacity="0.45" stroke-linecap="round" stroke-linejoin="round"/>`);
-    parts.push(`<path d="${d}" fill="none" stroke="#2563eb" stroke-width="2.4"/>`);
+    const paths = net && typeof net.paths === 'function' ? net.paths() : [net];
+    for (const pts of paths) {
+      if (!pts || pts.length < 2) continue;
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="12" opacity="0.45" stroke-linecap="round" stroke-linejoin="round"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="#2563eb" stroke-width="2.4"/>`);
+    }
+  }
+
+  if (opts.wireSegment) {
+    const { a, b } = opts.wireSegment;
+    parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="#f59e0b" stroke-width="8" opacity="0.7" stroke-linecap="round"/>`);
   }
 
   if (opts.wireMode) {

@@ -3,12 +3,17 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
 import { autoRoute, balancedPaths, balancedRoute, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
+import { clonePath, deleteWireSegment, junctionPoints, normalizeBranches, pathLength, pointOnPath, splitBranchAt, splitByComponent, validateWiring } from './wiring.js';
 
-/** Nominal world units of text width per character (font-size 12 sans-serif). */
-export const LABEL_CHAR_W = 7;
+/** Nominal world units of text width per character (font-size 12 sans-serif).
+ *  Raised for the bold+italic label font (INSTANCE_FONT / LABEL_FONT are both
+ *  bold italic) — bold/italic glyphs are measurably wider than the regular
+ *  face. */
+export const LABEL_CHAR_W = 8;
 
-/** Font-size (world units) used for every label; both label kinds render at this. */
-export const LABEL_FONT_SIZE = 40;
+/** Font-size (world units) used for every label; both label kinds render at this
+ *  (style.js INSTANCE_FONT / LABEL_FONT size). */
+export const LABEL_FONT_SIZE = 38;
 
 // Per-glyph width model for a label line (no DOM in the core model, so we use
 // narrow / default / wide buckets scaled to the label font size) to give a
@@ -73,6 +78,56 @@ export function parseLabelRuns(text, opts = {}) {
 
 /** Tight height (world units) of a rendered label line (cap height). */
 export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
+
+/**
+ * Toggle subscript ('_') or superscript ('^') markup on the selected range of a
+ * raw label string (used by the inline label editor's Ctrl+, / Ctrl+. ).
+ * Returns {text, selStart, selEnd} or null when there is no selection.
+ *  - A selection fully inside one `_{...}`/`^{...}` group unwraps that group
+ *    (pressing the hotkey again reverts the subscript).
+ *  - A selection that overlaps any markup unwraps every group it touches
+ *    (mixed sub/super + plain text reverts to plain).
+ *  - Otherwise (plain text) the selection is wrapped in the markup.
+ */
+export function applyMarkup(text, s, e, mark) {
+  if (s === e || s > e) return null;
+  const groups = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === mark && text[i + 1] === '{') {
+      const j = text.indexOf('}', i + 2);
+      if (j !== -1 && j > i + 2) {
+        groups.push({ open: i, contentStart: i + 2, contentEnd: j, close: j });
+        i = j;
+      }
+    }
+  }
+  const inside = groups.find((g) => g.contentStart <= s && e <= g.contentEnd);
+  if (inside) {
+    // Selecting the subscripted text: undo the markup (remove that group's braces).
+    const len = inside.contentEnd - inside.contentStart;
+    return {
+      text: text.slice(0, inside.open) + text.slice(inside.contentStart, inside.contentEnd) + text.slice(inside.close + 1),
+      selStart: inside.open,
+      selEnd: inside.open + len,
+    };
+  }
+  const overlapping = groups.filter((g) => g.open < e && g.close >= s);
+  if (overlapping.length) {
+    // Mixed selection: revert every touched group to plain text.
+    let t = text;
+    for (const g of [...overlapping].sort((a, b) => b.open - a.open)) {
+      t = t.slice(0, g.open) + t.slice(g.contentStart, g.contentEnd) + t.slice(g.close + 1);
+    }
+    return { text: t, selStart: Math.min(s, t.length), selEnd: Math.min(e, t.length) };
+  }
+  // Plain text: wrap the selection.
+  const open = mark + '{';
+  return {
+    text: text.slice(0, s) + open + text.slice(s, e) + '}' + text.slice(e),
+    selStart: s + open.length,
+    selEnd: e + open.length,
+  };
+}
 
 let _uid = 0;
 function uid() {
@@ -291,12 +346,12 @@ export class Net {
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
     /** Optional explicit grid-snapped wire path points. null => auto-route. */
-    this.route = opts.route || null;
+    this.route = opts.route ? clonePath(opts.route) : null;
     /** Grid points where other wires join this net (mid-wire junctions). */
     this.junctions = opts.junctions ? opts.junctions.map((p) => ({ x: p.x, y: p.y })) : [];
     /** Optional list of wire branches (each a polyline) for multi-way joined
      *  nets; when present the renderer draws every branch. */
-    this.branches = opts.branches ? opts.branches.map((b) => b.map((p) => ({ x: p.x, y: p.y }))) : null;
+    this.branches = opts.branches ? opts.branches.map(clonePath) : null;
   }
 
   terminalCount() {
@@ -337,25 +392,29 @@ export class Net {
     return autoRoute(anchors);
   }
 
+  /** Canonical editable paths. Automatic nets are deliberately not materialized. */
+  paths() {
+    if (this.branches && this.branches.length) return this.branches.map(clonePath);
+    if (this.route && this.route.length >= 2) return [clonePath(this.route)];
+    const pts = this.points();
+    return pts.length >= 2 ? [pts] : [];
+  }
+
+  wireSegments() {
+    return this.paths().flatMap((path, branch) => path.slice(1).map((b, i) => ({ branch, index: i + 1, a: path[i], b })));
+  }
+
   /** Every drawn polyline of the net (all branches), for bounds and evaluation. */
   pathPoints() {
-    if (this.branches && this.branches.length) {
-      const out = [];
-      for (const b of this.branches) for (const p of b) out.push(p);
-      return out;
-    }
-    return this.points();
+    return this.paths().flatMap((b) => b);
   }
 
   /** Total manhattan length of the drawn wire(s). */
   length() {
-    const polylines = this.branches && this.branches.length ? this.branches : [this.points()];
-    let sum = 0;
-    for (const pts of polylines) {
-      for (let i = 1; i < pts.length; i++) sum += Math.abs(pts[i].x - pts[i - 1].x) + Math.abs(pts[i].y - pts[i - 1].y);
-    }
-    return sum;
+    return this.paths().reduce((sum, pts) => sum + pathLength(pts), 0);
   }
+
+  wiringErrors() { return validateWiring(this); }
 
   toJSON() {
     return {
@@ -375,6 +434,8 @@ export class Circuit {
     this.nets = new Map();
     this.labels = new Map();
     this._netId = 0;
+    /** Junction annotations explicitly removed by the user stay removed. */
+    this.suppressedJunctions = new Set();
   }
 
   // ----- components -------------------------------------------------
@@ -480,6 +541,7 @@ export class Circuit {
 
   removeComponent(refdes) {
     const c = this.getComponent(refdes);
+    if (c.type === 'solder') this.suppressedJunctions.add(`${c.transform.x},${c.transform.y}`);
     for (const net of this.nets.values()) {
       net.terminals = net.terminals.filter((t) => t.comp !== refdes);
       if (net.terminals.length === 0) this.nets.delete(net.id);
@@ -541,6 +603,17 @@ export class Circuit {
     return { rects, pins, wires: [] };
   }
 
+  /** Routing environment that also treats every existing wire as an obstacle
+   *  (collinear overlap is forbidden, crossing is allowed). Used when routing a
+   *  new branch so it never runs along an existing wire. */
+  _routingEnv() {
+    const env = this._netEnv();
+    const wires = [];
+    for (const n of this.nets.values()) wires.push(...this._explicitBranches(n));
+    env.wires = wires;
+    return env;
+  }
+
   /** Re-route a net, preserving hand-drawn wire shapes. `moved` (optional) is a
    *  Map of refdes -> {dx,dy} for components that just moved: polylines whose
    *  endpoints ride the SAME moved component slide with it (manual loops are
@@ -551,21 +624,32 @@ export class Circuit {
   rerouteNet(net, moved = null) {
     const env = this._netEnv();
     const anchors = net.anchorWorlds();
-    if (anchors.length < 2) {
-      net.route = null;
+    // A non-translation transform (rotate/mirror) relocates terminals in a way
+    // the drawn body cannot follow; lay the net out fresh from its terminals.
+    if (moved === 'refresh') {
       net.branches = null;
+      net.route = null;
+      this._layoutFresh(net, anchors, env);
       return;
     }
     if (net.branches && net.branches.length) {
-      net.branches = net.branches.map((b) => this._reroutePolyline(net, b, moved, env));
-      net.route = net.branches[0] ? net.branches[0].map((p) => ({ ...p })) : null;
+      net.branches = net.branches.map((b) => clonePath(this._reroutePolyline(net, b, moved, env)));
+      net.route = net.branches[0] ? clonePath(net.branches[0]) : null;
       return;
     }
     if (net.route && net.route.length >= 2) {
-      net.route = this._reroutePolyline(net, net.route, moved, env);
+      net.route = clonePath(this._reroutePolyline(net, net.route, moved, env));
       return;
     }
+    // A one-terminal net may own a deliberate wire stub. Never erase that
+    // geometry merely because it has no second electrical endpoint yet.
+    if (anchors.length < 2) return;
     // No drawn shape to preserve: lay out fresh from the anchors.
+    this._layoutFresh(net, anchors, env);
+  }
+
+  /** Lay a net out from its terminals without consulting any existing route. */
+  _layoutFresh(net, anchors, env) {
     if (net.junctions.length) {
       const path = [{ ...anchors[0] }];
       for (let i = 1; i < anchors.length; i++) {
@@ -615,8 +699,11 @@ export class Circuit {
       return out;
     }
     if (a1) {
-      const leg = smartRoute({ x: a1.cur.x, y: a1.cur.y }, poly[n - 2], env);
-      const out = leg && leg.length >= 2 ? [...poly.slice(0, n - 1), ...leg] : [...poly.slice(0, n - 1), { x: a1.cur.x, y: a1.cur.y }];
+      // The path is stored in start-to-end order. Route forward from the old
+      // penultimate point to the moved end pin; routing in the opposite order
+      // leaves the visible branch ending at the old penultimate point.
+      const leg = smartRoute(poly[n - 2], { x: a1.cur.x, y: a1.cur.y }, env);
+      const out = leg && leg.length >= 2 ? [...poly.slice(0, n - 2), ...leg] : [...poly.slice(0, n - 1), { x: a1.cur.x, y: a1.cur.y }];
       collapseCollinear(out);
       return out;
     }
@@ -675,6 +762,13 @@ export class Circuit {
         if (other === net) continue;
         // merge other into net
         for (const t of other.terminals) net.terminals.push(t);
+        const paths = other.paths();
+        if (paths.length) {
+          const own = net.branches && net.branches.length ? net.branches : net.route ? [net.route] : [];
+          net.branches = [...own, ...paths].map(clonePath);
+          net.route = net.branches[0] ? clonePath(net.branches[0]) : null;
+        }
+        for (const p of other.junctions) if (!net.junctions.some((q) => q.x === p.x && q.y === p.y)) net.junctions.push({ ...p });
         this.nets.delete(other.id);
       }
     }
@@ -684,6 +778,193 @@ export class Circuit {
     }
     this.syncJunctionSolders();
     return net;
+  }
+
+  /** Explicit (hand-authored or committed) branch geometry of a net, ignoring
+   *  the auto-route fallback so join logic never duplicates it. */
+  _explicitBranches(net) {
+    if (net.branches && net.branches.length) return net.branches.map(clonePath);
+    if (net.route && net.route.length >= 2) return [clonePath(net.route)];
+    return [];
+  }
+
+  /** Junction points of a net's branches, counting each terminal as an arm. */
+  _netJunctions(net, paths) {
+    const terminals = net.terminals.map((t) => this.getComponent(t.comp)?.terminalWorld(t.term)).filter(Boolean);
+    return junctionPoints(paths, terminals);
+  }
+
+  /**
+   * Wire a terminal to a grid point `meet` by routing a new orthogonal branch
+   * and attaching it to the net `meet` belongs to (an existing terminal or an
+   * existing wire). `points` are optional hand-drawn waypoints between the
+   * terminal and `meet`. If `meet` lies in the interior of an existing branch,
+   * that branch is split at `meet`. Terminal membership and cross-net merging
+   * are handled here, and junction solder dots are recomputed from the geometry
+   * (never placed by hand). Returns the resulting net.
+   */
+  wireTo(termRef, meet, points = []) {
+    const term = this.resolveTerm(termRef);
+    const srcPos = this.getComponent(term.comp).terminalWorld(term.term);
+    const P = snapPoint(meet.x, meet.y);
+
+    // The net `meet` belongs to: either a terminal exactly there, or a branch.
+    let targetNet = null;
+    for (const net of this.nets.values()) {
+      for (const t of net.terminals) {
+        const p = this.getComponent(t.comp).terminalWorld(t.term);
+        if (p.x === P.x && p.y === P.y) { targetNet = net; break; }
+      }
+      if (targetNet) break;
+    }
+    if (!targetNet) {
+      for (const net of this.nets.values()) {
+        if (this._explicitBranches(net).some((path) => pointOnPath(P, path))) { targetNet = net; break; }
+      }
+    }
+
+    const srcNet = this.netOfTerminal(term);
+
+    // Merge the source terminal's net with the target net when they differ.
+    let net;
+    if (srcNet && targetNet && srcNet !== targetNet) {
+      net = srcNet;
+      for (const t of targetNet.terminals) net.terminals.push(t);
+      net.branches = [...this._explicitBranches(net), ...this._explicitBranches(targetNet)];
+      this.nets.delete(targetNet.id);
+    } else {
+      net = srcNet || targetNet || this._createNet();
+    }
+
+    // Ensure the wired terminal (and any terminal exactly at `meet`) is a member.
+    if (!net.terminals.some((t) => t.comp === term.comp && t.term === term.term)) {
+      net.terminals.push({ comp: term.comp, term: term.term });
+    }
+    for (const c of this.components.values()) {
+      for (const t of c.def.terminals) {
+        const p = c.terminalWorld(t.name);
+        if (p.x === P.x && p.y === P.y && !net.terminals.some((q) => q.comp === c.refdes && q.term === t.name)) {
+          net.terminals.push({ comp: c.refdes, term: t.name });
+        }
+      }
+    }
+
+    // Split any branch whose interior contains the meet point.
+    const branches = [];
+    for (const path of this._explicitBranches(net)) {
+      const split = splitBranchAt(path, P);
+      if (split) branches.push(...split.filter((h) => h.length >= 2));
+      else branches.push(clonePath(path));
+    }
+    // Route the new branch from the terminal to the meet point.
+    const waypoints = points.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
+    const newPath = waypoints.length
+      ? clonePath([srcPos, ...waypoints, P])
+      : (smartRoute(srcPos, P, this._routingEnv()) || [{ ...srcPos }, { ...P }]);
+    branches.push(clonePath(newPath));
+
+    net.branches = branches;
+    net.route = branches.length ? clonePath(branches[0]) : null;
+    net.junctions = this._netJunctions(net, branches);
+    this.syncJunctionSolders();
+    return net;
+  }
+
+  /**
+   * Route a wire from a free grid point (or a point on an existing wire via
+   * `netId`) to `meet`, splicing into the target net. Terminal membership is
+   * untouched here; use wireTo for terminal origins. Junction solder dots are
+   * derived from the resulting geometry.
+   */
+  wirePointTo(point, meet, points = [], netId = null) {
+    const P0 = snapPoint(point.x, point.y);
+    const P = snapPoint(meet.x, meet.y);
+
+    let targetNet = null;
+    for (const net of this.nets.values()) {
+      for (const t of net.terminals) {
+        const p = this.getComponent(t.comp).terminalWorld(t.term);
+        if (p.x === P.x && p.y === P.y) { targetNet = net; break; }
+      }
+      if (targetNet) break;
+    }
+    if (!targetNet) {
+      for (const net of this.nets.values()) {
+        if (this._explicitBranches(net).some((path) => pointOnPath(P, path))) { targetNet = net; break; }
+      }
+    }
+
+    const originNet = netId ? this.nets.get(netId) : null;
+    let net = originNet || targetNet || this._createNet();
+    if (originNet && targetNet && originNet !== targetNet) {
+      for (const t of targetNet.terminals) net.terminals.push(t);
+      net.branches = [...this._explicitBranches(net), ...this._explicitBranches(targetNet)];
+      this.nets.delete(targetNet.id);
+    }
+    for (const c of this.components.values()) {
+      for (const t of c.def.terminals) {
+        const p = c.terminalWorld(t.name);
+        if (p.x === P.x && p.y === P.y && !net.terminals.some((q) => q.comp === c.refdes && q.term === t.name)) {
+          net.terminals.push({ comp: c.refdes, term: t.name });
+        }
+      }
+    }
+
+    const branches = [];
+    for (const path of this._explicitBranches(net)) {
+      const s0 = splitBranchAt(path, P0);
+      if (s0) { branches.push(...s0.filter((h) => h.length >= 2)); continue; }
+      const s = splitBranchAt(path, P);
+      if (s) branches.push(...s.filter((h) => h.length >= 2));
+      else branches.push(clonePath(path));
+    }
+    const waypoints = points.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
+    const newPath = waypoints.length
+      ? clonePath([P0, ...waypoints, P])
+      : (smartRoute(P0, P, this._routingEnv()) || [{ ...P0 }, { ...P }]);
+    branches.push(clonePath(newPath));
+
+    net.branches = branches;
+    net.route = branches.length ? clonePath(branches[0]) : null;
+    net.junctions = this._netJunctions(net, branches);
+    this.syncJunctionSolders();
+    return net;
+  }
+
+  /** Delete one visual segment and update the owning net's topology. */
+  deleteWireSegment(netId, branch, segment) {
+    const net = this.nets.get(netId);
+    if (!net) throw new Error(`unknown net "${netId}"`);
+    const paths = net.paths();
+    const next = deleteWireSegment(paths, branch, segment);
+    net.branches = next.length ? next.map(clonePath) : null;
+    net.route = net.branches?.[0] ? clonePath(net.branches[0]) : null;
+    net.junctions = this._netJunctions(net, next);
+    this._splitDisconnectedNet(net);
+    this.syncJunctionSolders();
+    return net;
+  }
+
+  /** Rebuild terminal membership after geometry deletion. A deleted wire is
+   * allowed to split a net into the connected components of the remaining
+   * geometry, each preserving its remaining branches. */
+  _splitDisconnectedNet(net) {
+    const paths = net.branches && net.branches.length ? net.branches : [];
+    if (!paths.length || net.terminals.length < 2) return;
+    const terminals = net.terminals.map((t) => ({ ...t, point: this.components.get(t.comp)?.terminalWorld(t.term) }));
+    const components = splitByComponent(paths, terminals.filter((t) => t.point));
+    if (components.length < 2) return;
+    const apply = (n, comp) => {
+      n.terminals = comp.terminals.map(({ comp, term }) => ({ comp, term }));
+      n.branches = comp.paths.length ? comp.paths.map(clonePath) : null;
+      n.route = n.branches && n.branches.length ? clonePath(n.branches[0]) : null;
+      n.junctions = this._netJunctions(n, comp.paths);
+    };
+    apply(net, components[0]);
+    for (let i = 1; i < components.length; i++) {
+      const child = this._createNet(net.name);
+      apply(child, components[i]);
+    }
   }
 
   /** Add one terminal to an existing net. */
@@ -715,7 +996,9 @@ export class Circuit {
   }
 
   removeNet(netId) {
-    return this.nets.delete(netId);
+    const removed = this.nets.delete(netId);
+    if (removed) this.syncJunctionSolders();
+    return removed;
   }
 
   /**
@@ -733,31 +1016,46 @@ export class Circuit {
     for (const c of this.components.values()) {
       if (c.type === 'solder') solders.set(at(c), c);
     }
-    const junctions = new Set();
+    const junctions = new Map();
+    const mark = (key, net) => {
+      if (!junctions.has(key)) junctions.set(key, new Set());
+      junctions.get(key).add(net.id);
+    };
     for (const net of this.nets.values()) {
-      if (net.terminals.length < 3) continue;
-      const paths = balancedPaths(net.terminalWorlds());
-      const counts = new Map();
-      for (const path of paths) {
-        for (const p of [path[0], path[path.length - 1]]) {
-          if (!p) continue;
-          const key = `${p.x},${p.y}`;
-          counts.set(key, (counts.get(key) || 0) + 1);
+      const paths = net.branches && net.branches.length ? net.branches : net.terminals.length >= 3 ? balancedPaths(net.terminalWorlds(), this._netEnv()) : [];
+      for (const p of this._netJunctions(net, paths)) mark(`${p.x},${p.y}`, net);
+      // A terminal landing on the interior of an existing branch is also a
+      // visible electrical junction, even when the net has only two terminals.
+      for (const t of net.terminals) {
+        const c = this.components.get(t.comp);
+        if (!c) continue;
+        const p = c.terminalWorld(t.term);
+        for (const path of paths) for (let i = 1; i < path.length; i++) {
+          const a = path[i - 1]; const b = path[i];
+          // A terminal at the end of its only branch is not a junction. Only
+          // terminals landing in the interior of another wire need a dot.
+          if ((a.x === b.x && p.x === a.x && p.y > Math.min(a.y, b.y) && p.y < Math.max(a.y, b.y)) ||
+              (a.y === b.y && p.y === a.y && p.x > Math.min(a.x, b.x) && p.x < Math.max(a.x, b.x))) mark(`${p.x},${p.y}`, net);
         }
-      }
-      for (const [key, count] of counts) {
-        if (count >= 3) junctions.add(key);
       }
     }
     const added = [];
-    for (const key of junctions) {
-      if (solders.has(key)) continue;
+    for (const [key, netIds] of junctions) {
+      if (this.suppressedJunctions.has(key)) continue;
+      const existing = solders.get(key);
+      if (existing) {
+        if (existing.value === 'junction' || existing.value?.startsWith('junction:')) {
+          existing.value = netIds.size === 1 ? 'junction' : `junction:${[...netIds].sort().join('|')}`;
+        }
+        continue;
+      }
       const [x, y] = key.split(',').map(Number);
-      added.push(this.addComponent('solder', { x, y, value: 'junction' }));
+      added.push(this.addComponent('solder', { x, y, value: netIds.size === 1 ? 'junction' : `junction:${[...netIds].sort().join('|')}` }));
     }
-    // Prune auto-placed solders whose junction has dissolved.
+    // Prune every dot that is not on a current same-net junction. This keeps
+    // both auto and manually inserted solder annotations from floating.
     for (const [key, comp] of solders) {
-      if (comp.value === 'junction' && !junctions.has(key)) {
+      if (!junctions.has(key)) {
         this.components.delete(comp.refdes);
       }
     }
@@ -795,12 +1093,14 @@ export class Circuit {
       components: [...this.components.values()].map((c) => c.toJSON()),
       nets: [...this.nets.values()].map((n) => n.toJSON()),
       labels: [...this.labels.values()].map((l) => l.toJSON()),
+      suppressedJunctions: [...this.suppressedJunctions],
     };
   }
 
   static fromJSON(data) {
     if (!data || data.version !== 1) throw new Error('unsupported state version');
     const circuit = new Circuit();
+    circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit._loading = true;
     for (const c of data.components) {
       circuit.addComponent(c.type, {
@@ -819,9 +1119,9 @@ export class Circuit {
       const net = new Net(circuit, { name: n.name });
       net.id = n.id;
       for (const t of n.terminals) net.terminals.push(t);
-      net.route = n.route || null;
+      net.route = n.route ? clonePath(n.route) : null;
       if (Array.isArray(n.junctions)) net.junctions = n.junctions.map((p) => ({ x: p.x, y: p.y }));
-      if (Array.isArray(n.branches)) net.branches = n.branches.map((b) => b.map((p) => ({ x: p.x, y: p.y })));
+      if (Array.isArray(n.branches)) net.branches = n.branches.map(clonePath);
       circuit.nets.set(net.id, net);
       const num = parseInt(String(n.id).replace(/\D/g, ''), 10) || 0;
       if (num > maxNetId) maxNetId = num;
@@ -845,6 +1145,17 @@ export class Circuit {
     // algorithm back-fills real solder components at any remaining junctions.
     circuit._loading = false;
     circuit.connectCoincident();
+    // Repair any stale/overlapping geometry: split branches at shared points so
+    // every junction is a real vertex, and drop duplicate branches.
+    for (const net of circuit.nets.values()) {
+      const paths = circuit._explicitBranches(net);
+      if (paths.length) {
+        const terminals = net.terminals.map((t) => circuit.getComponent(t.comp)?.terminalWorld(t.term)).filter(Boolean);
+        net.branches = normalizeBranches(paths, terminals);
+        net.route = net.branches.length ? clonePath(net.branches[0]) : null;
+        net.junctions = circuit._netJunctions(net, net.branches);
+      }
+    }
     circuit.syncJunctionSolders();
     return circuit;
   }

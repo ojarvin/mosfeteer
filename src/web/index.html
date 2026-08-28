@@ -17,15 +17,17 @@
     <h1 class="title">Schematic Spawner</h1>
 
     <div class="toolbar-actions">
-      <button id="btn-clear">Clear</button>
-      <button id="btn-new-circuit">New</button>
-      <select id="circuit-select" aria-label="Open circuit">
+      <button id="btn-clear" title="Clear the circuit (delete everything)">Clear</button>
+      <button id="btn-new-circuit" title="Start a new, empty circuit">New</button>
+      <select id="circuit-select" aria-label="Open circuit" title="Open a saved circuit">
         <option value="">Open circuit...</option>
       </select>
-      <input id="circuit-name" type="text" placeholder="Circuit name" autocomplete="off" spellcheck="false" />
-      <button id="btn-load-circuit">Load</button>
-      <button id="btn-save-circuit">Save</button>
-      <button id="btn-export">Export SVG</button>
+      <input id="circuit-name" type="text" placeholder="Circuit name" autocomplete="off" spellcheck="false" title="Name for the circuit when saving" />
+      <button id="btn-load-circuit" title="Load the named circuit">Load</button>
+      <button id="btn-save-circuit" title="Save the circuit to the server">Save</button>
+      <button id="btn-export" title="Export the circuit as an SVG file">Export SVG</button>
+      <button id="btn-grid" title="Hide the placement grid (#)">Grid</button>
+      <button id="btn-theme" title="Switch to dark theme">Dark</button>
     </div>
 
   </header>
@@ -64,6 +66,6 @@
     <pre class="log" id="log"></pre>
   </footer>
 
-  <script type="module" src="main.js?v=8"></script>
+  <script type="module" src="main.js?v=9"></script>
 </body>
 </html>

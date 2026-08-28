@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wireRunAt, collapseCollinear, moveWireRun } from '../src/core/wireedit.js';
+import { deleteWireSegment, junctionPoints, normalizePath } from '../src/core/wiring.js';
 import { onGrid } from '../src/core/grid.js';
 
 function ortho(pts) {
@@ -81,4 +82,26 @@ test('collapseCollinear preserves endpoints even when they coincide with an inte
   const pts = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 200, y: 0 }];
   collapseCollinear(pts);
   assert.deepEqual(pts, [{ x: 0, y: 0 }, { x: 200, y: 0 }]);
+});
+
+test('normalizePath produces a minimal orthogonal grid path', () => {
+  assert.deepEqual(normalizePath([{ x: 1, y: 1 }, { x: 40, y: 1 }, { x: 80, y: 1 }, { x: 80, y: 80 }]), [
+    { x: 0, y: 0 }, { x: 80, y: 0 }, { x: 80, y: 80 },
+  ]);
+});
+
+test('deleting a segment splits a branch without moving its remaining geometry', () => {
+  const paths = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 160, y: 80 }]];
+  const next = deleteWireSegment(paths, 0, 1);
+  assert.deepEqual(next, [
+    [{ x: 0, y: 80 }, { x: 160, y: 80 }],
+  ]);
+  assert.ok(!next.flat().some((p, i, all) => i && p.x === all[i - 1].x && p.y === all[i - 1].y), 'no duplicate join segment');
+});
+
+test('junctionPoints finds T and four-way intersections but not a plain crossing', () => {
+  assert.deepEqual(junctionPoints([
+    [{ x: 0, y: 40 }, { x: 160, y: 40 }],
+    [{ x: 80, y: 40 }, { x: 80, y: 120 }],
+  ]), [{ x: 80, y: 40 }]);
 });

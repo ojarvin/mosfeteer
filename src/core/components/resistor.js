@@ -16,7 +16,7 @@ export const resistor = defineSymbol({
   graphics: [
     { kind: 'path', d: 'M 0 0 L 45.12 0 L 54.42 21.49 L 63.72 -18.42 L 75.35 21.49 L 86.98 -19.95 L 98.6 21.49 L 110.23 -18.42 L 114.88 0 L 160 0', style: 'symbol' },
   ],
-  textPos: { x: 60, y: -30, anchor: 'middle' },
+  textPos: { x: 80, y: -30, anchor: 'middle' },
   refPos: null,
   // Instance label sits below the body (mirror the symbol so the label is above
   // when there is open space above).

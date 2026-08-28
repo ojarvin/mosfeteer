@@ -154,3 +154,36 @@ test('Razavi symbols render (sources, opamp, gates, ports)', () => {
   assert.ok(svg.includes('<polygon'), 'current source arrow body present');
   assert.ok(svg.includes('translate(400 -160)') || true, 'voltage source present');
 });
+
+test('fully differential opamp shares the opamp footprint with two outputs', () => {
+  const c = new Circuit();
+  c.addComponent('opamp', { x: 0, y: 0 });
+  c.addComponent('opamp_diff', { x: 0, y: 0, rotation: 0 });
+  const o = c.components.get('U1');
+  const diff = c.components.get('U2');
+  // Same footprint: identical bbox and matching input rows.
+  assert.deepEqual(diff.bboxWorld(), o.bboxWorld());
+  assert.deepEqual(diff.terminalWorld('ip'), { x: -200, y: 40 });
+  assert.deepEqual(diff.terminalWorld('im'), { x: -200, y: -40 });
+  // Two outputs on the grid at the same x=160 as the plain opamp's pin.
+  // Polarity is flipped vs the inputs: op (+) rides the top row, om (-) bottom.
+  assert.deepEqual(diff.terminalWorld('op'), { x: 160, y: -40 });
+  assert.deepEqual(diff.terminalWorld('om'), { x: 160, y: 40 });
+  const svg = svgString(c);
+  assert.ok(svg.includes('data-ref="U2"'), 'differential opamp rendered');
+  // Two output leads (top row and bottom row).
+  const om = svg.match(/M 12\.8 -40 L 160 -40/g);
+  const op = svg.match(/M 12\.81 40 L 160 40/g);
+  assert.ok(om && op, 'both output leads rendered');
+  // Polarity marks are the SAME size as the input marks (28 units), aligned on
+  // the same rows, and sit clear of the slanted edges: inputs at x=-76, outputs
+  // (flipped) at x=-38.
+  const inPlus = svg.match(/M -76 26 L -76 54/g);
+  const inMinus = svg.match(/M -90 -40 L -62 -40/g);
+  const outPlus = svg.match(/M -38 -54 L -38 -26/g);
+  const outMinus = svg.match(/M -52 40 L -24 40/g);
+  assert.ok(inPlus && inMinus, 'input polarity marks rendered');
+  assert.ok(outPlus && outMinus, 'flipped output polarity marks rendered');
+  // Owned instance label (same as every component) still renders its id.
+  assert.ok(svg.includes('>U<tspan'), 'U2 instance label rendered');
+});
