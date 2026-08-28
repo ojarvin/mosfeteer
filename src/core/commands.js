@@ -1,7 +1,7 @@
 import { Circuit } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
-import { rectsOverlap } from './geometry.js';
+import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
 import { segThroughInterior, smartRoute } from './router.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
@@ -50,8 +50,18 @@ function rerouteNetsFor(circuit, refs) {
   }
 }
 
-/** Outward direction from a component body toward a world terminal pin. */
+/** Outward direction from a component body toward a world terminal pin.
+ *  Honors the terminal's explicit local direction (via the transform) first,
+ *  matching the editor's pinDir, then falls back to the bbox-centre heuristic. */
 function pinDir(c, wx, wy) {
+  const t = c.def.terminals.find((term) => {
+    const p = applyTransform(c.transform, term.x, term.y);
+    return p.x === wx && p.y === wy;
+  });
+  if (t && t.dir) {
+    const d = applyDir(c.transform, t.dir.x, t.dir.y);
+    if (d.x !== 0 || d.y !== 0) return d;
+  }
   const r = c.bboxWorld();
   const cx = r.x + r.w / 2;
   const cy = r.y + r.h / 2;

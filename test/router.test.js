@@ -135,15 +135,39 @@ test('smartRoute detours around an in-line blocker over the clean top channel', 
     pin(480, 0, -1, 0), pin(600, 0, 1, 0),
   ];
   const pts = runRobots({ x: 240, y: 0 }, { x: 760, y: 0 }, rects, pins);
+  // Pin-conformant route: each pin leaves one cell outward (left/right) before
+  // bending over the blockers, so the wire never touches the bodies.
   assert.deepEqual(pts, [
     { x: 240, y: 0 },
-    { x: 240, y: -40 },
-    { x: 760, y: -40 },
+    { x: 200, y: 0 },
+    { x: 200, y: -40 },
+    { x: 800, y: -40 },
+    { x: 800, y: 0 },
     { x: 760, y: 0 },
   ]);
   for (const rect of rects) {
     for (let i = 1; i < pts.length; i++) assert.equal(segThroughInterior(pts[i - 1], pts[i], rect), false);
   }
+  allOnGrid(pts);
+});
+
+test('smartRoute extends a pin one cell outward in its direction before bending', () => {
+  // gate (faces west) to drain (faces north): leave the gate left, approach the
+  // drain from above — a clean outside bend around the body.
+  const rects = [{ x: 0, y: -80, w: 120, h: 160 }];
+  const pins = [
+    pin(0, 0, -1, 0),
+    pin(120, -80, 0, -1),
+    pin(120, 80, 0, 1),
+  ];
+  const pts = runRobots({ x: 0, y: 0 }, { x: 120, y: -80 }, rects, pins);
+  assert.deepEqual(pts, [
+    { x: 0, y: 0 },
+    { x: -40, y: 0 },
+    { x: -40, y: -120 },
+    { x: 120, y: -120 },
+    { x: 120, y: -80 },
+  ]);
   allOnGrid(pts);
 });
 

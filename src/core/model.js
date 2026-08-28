@@ -360,6 +360,10 @@ export class Circuit {
     if (inst.def.labelOffset && !opts.noLabel) {
       this.addLabel({ text: inst.refdes, owner: inst.refdes, offset: inst.def.labelOffset, align: 'center' });
     }
+    // Touching pins connect: a newly placed component whose terminal lands on
+    // another component's terminal joins that net immediately. Skipped while a
+    // state is being loaded (fromJSON) so explicit nets are not pre-empted.
+    if (!this._loading) this.connectCoincident(inst.refdes);
     return inst;
   }
 
@@ -374,6 +378,7 @@ export class Circuit {
     const p = snapPoint(x, y);
     c.transform.x = p.x;
     c.transform.y = p.y;
+    this.connectCoincident(refdes);
     return c;
   }
 
@@ -382,7 +387,44 @@ export class Circuit {
     if (rotation !== undefined) c.transform.rotation = ((Math.round(rotation / 90) % 4) + 4) % 4 * 90;
     if (mirrorX !== undefined) c.transform.mirrorX = !!mirrorX;
     if (mirrorY !== undefined) c.transform.mirrorY = !!mirrorY;
+    this.connectCoincident(refdes);
     return c;
+  }
+
+  /**
+   * Connect any terminal of `refdes` (or of every component when omitted) that
+   * sits EXACTLY on another component's terminal — touching pins connect, like
+   * dropping a ground symbol onto a transistor source. Once connected the two
+   * terminals share a net, so dragging either component apart simply routes a
+   * wire that keeps them joined. Returns the number of connections made.
+   */
+  connectCoincident(refdes) {
+    const comps = refdes ? [this.components.get(refdes)].filter(Boolean) : [...this.components.values()];
+    if (comps.length === 0) return 0;
+    // Position -> every component terminal sitting there (a point may be shared
+    // by more than two pins).
+    const at = new Map();
+    for (const other of this.components.values()) {
+      for (const t of other.worldTerminals()) {
+        const key = `${t.x},${t.y}`;
+        if (!at.has(key)) at.set(key, []);
+        at.get(key).push({ comp: other.refdes, term: t.name });
+      }
+    }
+    let made = 0;
+    for (const c of comps) {
+      for (const t of c.worldTerminals()) {
+        for (const hit of at.get(`${t.x},${t.y}`) || []) {
+          if (hit.comp === c.refdes) continue;
+          const mine = this.netOfTerminal({ comp: c.refdes, term: t.name });
+          const theirs = this.netOfTerminal(hit);
+          if (mine && theirs && mine.id === theirs.id) continue;
+          this.connect(`${c.refdes}.${t.name}`, `${hit.comp}.${hit.term}`);
+          made++;
+        }
+      }
+    }
+    return made;
   }
 
   setValue(refdes, value) {
@@ -601,6 +643,7 @@ export class Circuit {
   static fromJSON(data) {
     if (!data || data.version !== 1) throw new Error('unsupported state version');
     const circuit = new Circuit();
+    circuit._loading = true;
     for (const c of data.components) {
       circuit.addComponent(c.type, {
         refdes: c.refdes,
@@ -631,9 +674,10 @@ export class Circuit {
       });
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
     }
-    // The routing algorithm back-fills real solder components at any junctions
-    // that exist in the loaded topology (e.g. a mirrored differential pair's
-    // tail node), so old designs never depend on the agent placing dots.
+    // Touching pins connect (e.g. a ground dropped on a source) and the routing
+    // algorithm back-fills real solder components at any remaining junctions.
+    circuit._loading = false;
+    circuit.connectCoincident();
     circuit.syncJunctionSolders();
     return circuit;
   }

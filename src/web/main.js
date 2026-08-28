@@ -10,7 +10,7 @@
  */
 
 import { Circuit } from '../core/model.js';
-import { getSymbol } from '../core/components/index.js';
+import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { demoCircuit } from '../core/templates.js';
@@ -282,6 +282,31 @@ function matchAt(x, y) {
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return { refdes: c.refdes };
   }
   return null;
+}
+
+/**
+ * Nearest terminal within a click-tolerant radius of a world point. Wire-mode
+ * clicks use this so a slightly-off click on (or near) a pin still starts/ends
+ * a wire instead of selecting the component. Tolerance mirrors the wire hit
+ * tolerance but at least half a grid cell, so genuine wire-interior clicks
+ * (far from any pin) keep working for segment dragging.
+ */
+function nearestTerminal(w) {
+  const p = paneSize();
+  const pxPerUnit = p ? view.w / p.w : 1;
+  const tol = Math.max(GRID / 2, 12 / pxPerUnit);
+  let best = null;
+  let bestD = Infinity;
+  for (const c of sortedComps()) {
+    for (const t of c.worldTerminals()) {
+      const d = Math.hypot(t.x - w.x, t.y - w.y);
+      if (d < bestD) {
+        bestD = d;
+        best = { refdes: c.refdes, term: t.name, x: t.x, y: t.y };
+      }
+    }
+  }
+  return bestD <= tol ? best : null;
 }
 
 function compUnderCursor() {
@@ -878,12 +903,12 @@ function connectTwo(src, dst) {
   logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}; len=${net.length()}`);
 }
 
-function doWireClick(x, y) {
-  const hit = matchAt(x, y);
+function doWireClick(x, y, terminalHit) {
+  const hit = terminalHit || matchAt(x, y);
   if (hit && hit.term) {
     if (!wire.source) {
       wire.source = { refdes: hit.refdes, term: hit.term };
-      cursor = { x, y };
+      cursor = { x: hit.x ?? x, y: hit.y ?? y };
       logLine(`wire from ${hit.refdes}.${hit.term} — click the target terminal`);
     } else if (hit.refdes === wire.source.refdes && hit.term === wire.source.term) {
       logLine('same terminal — click the other terminal');
@@ -921,10 +946,12 @@ function canvasMouseDown(ev) {
   if (wire) {
     // In persistent wiring mode, terminal/empty-space clicks pick wire ends;
     // an interior wire click must remain available for segment dragging.
-    const terminalHit = matchAt(snap(startWorld.x), snap(startWorld.y));
+    // Terminal proximity (not just an exact grid hit) always wins, so a slightly
+    // off click on a pin starts/ends the wire instead of selecting the body.
+    const terminalHit = nearestTerminal(startWorld);
     const wireHit = pickWire(startWorld);
-    if ((terminalHit && terminalHit.term) || !wireHit) {
-      drag = { mode: 'wirepick', startClient, startWorld, rubber: null };
+    if (terminalHit || !wireHit) {
+      drag = { mode: 'wirepick', startClient, startWorld, rubber: null, terminalHit: terminalHit || null };
       return;
     }
   }
@@ -1245,7 +1272,7 @@ function canvasMouseUp(ev) {
       selectedNets = new Set(nets);
     }
   } else if (drag.mode === 'wirepick') {
-    if (!movedOut) doWireClick(snap(w.x), snap(w.y));
+    if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit);
   } else if (drag.mode === 'move') {
     if (drag.moved) {
       preserveAffectedRoutes([...drag.origins.keys()], drag.terminalPositions);
@@ -1550,11 +1577,19 @@ const PLACEMENT = {
   s: 'supply',
   x: 'switch_open',
   X: 'switch_closed',
-  i: 'input',
+  i: 'current_source',
+  v: 'voltage_source',
+  C: 'current_sink',
+  u: 'opamp',
+  A: 'and_gate',
+  b: 'buffer',
+  I: 'input',
   o: 'output',
   O: 'inputoutput',
   a: 'solder',
 };
+
+const PLACEMENT_BY_TYPE = new Map(Object.entries(PLACEMENT).map(([key, type]) => [type, key]));
 
 const INSERT_MOVE = {
   h: [-1, 0],
@@ -1866,8 +1901,12 @@ function logKeymap() {
       'h j k l     move cursor between placements (vim home row)',
       'r c L d     resistor capacitor inductor diode',
       'n p N P     nmos pmos npn pnp',
-      'g s i o O   ground supply input output inout-io',
+      'i v C       current src · voltage src · current sink',
+      'g s         ground supply',
+      'u A b       opamp · AND gate · buffer',
+      'I o O       input output inout-io',
       'x X a t     switch open · switch closed · solder · label',
+      '(more components in the insert menu next to the cursor)',
       'Enter/click place ghost at cursor · R/X rotate/mirror ghost',
       'Esc/Backspace  cancel ghost (back to menu)   Esc exits insert',
       'arrows      also move cursor',
@@ -1951,29 +1990,18 @@ function renderStatus() {
 
 // ----- insert-mode menu ----------------------------------------------------
 // A read-only, non-interactive dropdown next to the cursor (shown in insert
-// mode) listing the placable components with their hotkey. Selection is via
+// mode) listing every placable component with its hotkey. Selection is via
 // the hotkeys themselves; the menu just mirrors the options and follows the
 // cursor. `pointer-events: none` keeps it from intercepting clicks/drags.
 let insertMenu = null;
-const INSERT_MENU_ENTRIES = [
-  ['r', 'resistor'],
-  ['c', 'capacitor'],
-  ['L', 'inductor'],
-  ['d', 'diode'],
-  ['n', 'nmos'],
-  ['p', 'pmos'],
-  ['N', 'npn'],
-  ['P', 'pnp'],
-  ['g', 'ground'],
-  ['s', 'supply'],
-  ['x', 'switch_open'],
-  ['X', 'switch_closed'],
-  ['i', 'input'],
-  ['o', 'output'],
-  ['O', 'inputoutput'],
-  ['a', 'solder'],
-  ['t', 'label'],
-];
+// Every registered symbol type appears in the menu; the hotkey column shows the
+// assigned key (blank when none) so new components surface automatically.
+function insertMenuEntries() {
+  return [
+    ...symbolTypeNames.map((type) => [PLACEMENT_BY_TYPE.get(type) || '', type]),
+    ['t', 'label'],
+  ];
+}
 
 function updateInsertMenu() {
   // The picker only needs to be visible when insert mode has no ghost selected;
@@ -1987,12 +2015,13 @@ function updateInsertMenu() {
     insertMenu = document.createElement('div');
     insertMenu.id = 'insert-menu';
     insertMenu.className = 'insert-menu';
-    for (const [key, type] of INSERT_MENU_ENTRIES) {
+    insertMenu._entries = insertMenuEntries();
+    for (const [key, type] of insertMenu._entries) {
       const item = document.createElement('div');
       item.className = 'insert-menu-item';
       const kbd = document.createElement('span');
       kbd.className = 'insert-menu-key';
-      kbd.textContent = key;
+      kbd.textContent = key || '·';
       const name = document.createElement('span');
       name.textContent = type;
       item.appendChild(kbd);
@@ -2002,8 +2031,9 @@ function updateInsertMenu() {
     document.body.appendChild(insertMenu);
   }
   // Highlight the currently selected ghost, if any.
-  for (let i = 0; i < INSERT_MENU_ENTRIES.length; i++) {
-    const [key, type] = INSERT_MENU_ENTRIES[i];
+  const entries = insertMenu._entries;
+  for (let i = 0; i < entries.length; i++) {
+    const [key, type] = entries[i];
     const item = insertMenu.children[i];
     const active = pendingPlace ? (pendingPlace.kind === 'label' ? type === 'label' : pendingPlace.type === type) : false;
     item.classList.toggle('active', active);

@@ -442,14 +442,40 @@ function astar(from, to, env) {
 
 /**
  * Pick the best orthogonal route from -> to given the routing environment.
- * The A* fallback only kicks in when every simple (straight/L/Z) candidate
- * would drill through a component footprint.
+ * When an endpoint is a component pin, candidates that first extend one grid
+ * cell OUTWARD in the pin's direction (a clean outside bend, never drilling the
+ * body) are generated alongside the plain straight/L/Z ones; the conform score
+ * prefers them unless a direct route is already clean (e.g. two facing pins).
+ * The A* fallback only kicks in when every candidate would drill through a
+ * component footprint.
  */
 export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   const f = snapP(from);
   const t = snapP(to);
   if (f.x === t.x && f.y === t.y) return [f];
+  const pins = env.pins || new Map();
+  const src = pins.get(`${f.x},${f.y}`);
+  const dst = pins.get(`${t.x},${t.y}`);
+  const f2 = src ? { x: f.x + src.x * STEP, y: f.y + src.y * STEP } : null;
+  const t2 = dst ? { x: t.x + dst.x * STEP, y: t.y + dst.y * STEP } : null;
   const cands = routeCandidates(f, t);
+  // Escaped candidates: leave each pin one cell along its outward direction
+  // before routing, so the bend happens clear of the component body.
+  const wrap = (mid) => {
+    const out = [{ ...f }];
+    if (f2) out.push({ ...f2 });
+    for (const p of mid) {
+      const last = out[out.length - 1];
+      if (p.x !== last.x || p.y !== last.y) out.push({ ...p });
+    }
+    if (t2) out.push({ ...t2 });
+    const last = out[out.length - 1];
+    if (last.x !== t.x || last.y !== t.y) out.push({ ...t });
+    return compressElbow(out);
+  };
+  if (f2 && t2) for (const c of routeCandidates(f2, t2)) cands.push(wrap(c));
+  if (f2 && !t2) for (const c of routeCandidates(f2, t)) cands.push(wrap(c));
+  if (!f2 && t2) for (const c of routeCandidates(f, t2)) cands.push(wrap(c));
   let best = cands[0];
   let bestScore = scoreCandidate(best, env);
   for (let i = 1; i < cands.length; i++) {

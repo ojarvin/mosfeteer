@@ -135,8 +135,8 @@ test('countTerminals counts all symbol terminals', () => {
 
 test('connect creates a net and adds terminals', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor');
-  const r2 = c.addComponent('resistor');
+  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
   const net = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   assert.ok(net.id.startsWith('N'));
   assert.equal(net.terminalCount(), 2);
@@ -145,9 +145,9 @@ test('connect creates a net and adds terminals', () => {
 
 test('connect merges existing nets into one', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor');
-  const r2 = c.addComponent('resistor');
-  const r3 = c.addComponent('resistor');
+  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
+  const r3 = c.addComponent('resistor', { x: 800, y: 0 });
   const n1 = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   const n2 = c.connect(`${r2.refdes}.b`, `${r3.refdes}.b`);
   assert.equal(c.nets.size, 2);
@@ -184,8 +184,8 @@ test('disconnect removes just that terminal and drops empty nets', () => {
 
 test('disconnect of the last terminal succeeds and drops the empty net', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor');
-  const r2 = c.addComponent('resistor');
+  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
   const net = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   const r = net; // remove R1 first so R2 is last
   c.disconnect(`${r1.refdes}.a`);
@@ -196,9 +196,9 @@ test('disconnect of the last terminal succeeds and drops the empty net', () => {
 
 test('removeComponent sweeps terminals and drops empty nets', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor');
-  const r2 = c.addComponent('resistor');
-  const r3 = c.addComponent('resistor');
+  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
+  const r3 = c.addComponent('resistor', { x: 800, y: 0 });
   // netA = [R1.a, R2.a]; netB = [R2.b, R3.b]
   c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   const netB = c.connect(`${r2.refdes}.b`, `${r3.refdes}.b`);
@@ -213,6 +213,19 @@ test('removeComponent sweeps terminals and drops empty nets', () => {
   const remaining = [...c.nets.values()][0];
   assert.equal(remaining.terminalCount(), 1);
   assert.equal(remaining.terminals[0].comp, r1.refdes);
+});
+
+test('touching pins auto-connect and stay connected when dragged apart', () => {
+  const c = new Circuit();
+  const m = c.addComponent('nmos', { x: 0, y: 0 }); // s at (120,80)
+  const g = c.addComponent('ground', { x: 120, y: 80 }); // gnd lands on M1.s
+  const net = c.netOfTerminal(`${g.refdes}.gnd`);
+  assert.ok(net, 'dropping a ground on a source connects them');
+  assert.equal(net.terminalCount(), 2);
+  // dragging the ground apart keeps the net; a wire is routed between the pins
+  c.moveComponent(g.refdes, 120, 160);
+  assert.equal(c.netOfTerminal(`${g.refdes}.gnd`), net, 'net survives the move');
+  assert.ok(net.points().length >= 2, 'wire is drawn between the separated pins');
 });
 
 test('net.points routes between terminals', () => {
