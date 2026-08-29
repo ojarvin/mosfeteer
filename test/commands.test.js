@@ -183,6 +183,82 @@ test('connect with too few refs throws', () => {
   assert.throws(() => runCommand(fresh(), 'connect R1.a'), /usage: connect/);
 });
 
+function crossCircuit() {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: -160 });
+  c.addComponent('resistor', { refdes: 'R2', x: 240, y: 160 });
+  c.addComponent('resistor', { refdes: 'R3', x: 240, y: -160 });
+  c.addComponent('resistor', { refdes: 'R4', x: 0, y: 160 });
+  return c;
+}
+
+test('cross creates two fixed matched routes with one unsoldered central crossing', () => {
+  const c = crossCircuit();
+  const res = runCommand(c, 'cross R1.a R2.a R3.a R4.a');
+  assert.equal(res.mutated, true);
+  assert.equal(res.json.nets.length, 2);
+  assert.equal(c.nets.size, 2);
+  const nets = [...c.nets.values()];
+  assert.ok(nets.every((net) => net.routingMode === 'fixed'));
+  assert.deepEqual(nets[0].fixedPaths[0].start, { comp: 'R1', term: 'a' });
+  assert.deepEqual(nets[0].fixedPaths[0].end, { comp: 'R2', term: 'a' });
+  assert.deepEqual(nets[1].fixedPaths[0].start, { comp: 'R3', term: 'a' });
+  assert.deepEqual(nets[1].fixedPaths[0].end, { comp: 'R4', term: 'a' });
+  assert.equal(nets[0].fixedPaths[0].points.length, 2);
+  assert.equal(nets[1].fixedPaths[0].points.length, 2);
+  assert.notEqual(nets[0].fixedPaths[0].points[0].y, nets[0].fixedPaths[0].points[1].y);
+  assert.notEqual(nets[1].fixedPaths[0].points[0].y, nets[1].fixedPaths[0].points[1].y);
+  assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
+  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.equal(reloaded.nets.size, 2);
+  assert.ok([...reloaded.nets.values()].every((net) => net.routingMode === 'fixed'));
+  assert.deepEqual([...reloaded.nets.values()].map((net) => net.paths()), nets.map((net) => net.paths()));
+});
+
+test('cross is idempotent for the same fixed pair and refuses connected endpoints', () => {
+  const c = crossCircuit();
+  const first = runCommand(c, 'cross R1.a R2.a R3.a R4.a');
+  const second = runCommand(c, 'cross R1.a R2.a R3.a R4.a');
+  assert.equal(second.mutated, false);
+  assert.match(second.text, /already exists/);
+  assert.deepEqual(second.json.nets.map((net) => net.id), first.json.nets.map((net) => net.id));
+
+  const other = crossCircuit();
+  other.connect('R1.a', 'R2.a');
+  assert.throws(() => runCommand(other, 'cross R1.a R2.a R3.a R4.a'), /already belong to a net/);
+});
+
+test('cross rejects non-rectangular or non-diagonal endpoint pairings', () => {
+  const c = crossCircuit();
+  assert.throws(() => runCommand(c, 'cross R1.a R3.a R2.a R4.a'), /invalid cross-coupling endpoints/);
+  assert.equal(c.nets.size, 0);
+});
+
+test('fixed geometry commands edit paths without converting them to managed wires', () => {
+  const c = crossCircuit();
+  runCommand(c, 'cross R1.a R2.a R3.a R4.a');
+  const net = [...c.nets.values()][0];
+  const start = net.fixedPaths[0].start;
+  const end = net.fixedPaths[0].end;
+  runCommand(c, `net ${net.id} path 0 0 -160 80 0 240 160`);
+  runCommand(c, `net ${net.id} vertex 0 1 120 0`);
+  assert.equal(net.routingMode, 'fixed');
+  assert.deepEqual(net.fixedPaths[0].start, start);
+  assert.deepEqual(net.fixedPaths[0].end, end);
+  assert.deepEqual(net.fixedPaths[0].points, [
+    { x: 0, y: -160 }, { x: 120, y: 0 }, { x: 240, y: 160 },
+  ]);
+});
+
+test('fixed diagonal paths cumulatively re-anchor and restore through moves', () => {
+  const c = crossCircuit();
+  runCommand(c, 'cross R1.a R2.a R3.a R4.a');
+  const before = [...c.nets.values()].map((n) => n.paths());
+  runCommand(c, 'move R1 0 -120');
+  runCommand(c, 'move R1 0 -160');
+  assert.deepEqual([...c.nets.values()].map((n) => n.paths()), before);
+});
+
 test('list renders component rows', () => {
   const c = fresh();
   runCommand(c, 'add resistor --at 400 0');
@@ -269,4 +345,25 @@ test('evaluate flags a wire drilling through its own source body', () => {
   c.nets.get(net.id).route = [{ x: 240, y: 0 }, { x: 240, y: -40 }, { x: 800, y: -40 }, { x: 800, y: 0 }];
   const rep2 = evaluate(c);
   assert.deepEqual(rep2.wireThroughBBoxes, [], 'boundary-hugging route is clean');
+});
+
+test('evaluate allows fixed diagonals but reports diagonal body drills', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 640, y: 400 });
+  c.wireDirectTo('R1.a', 'R2.a');
+  const rep = evaluate(c);
+  assert.deepEqual(rep.diagonalWireSegments, []);
+  assert.ok(rep.wireThroughBBoxes.some((x) => x.includes('through R1(resistor) bbox')));
+});
+
+test('renaming and dropping terminals update fixed path anchors', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a');
+  runCommand(c, 'rename R1 R9');
+  assert.deepEqual(n.fixedPaths[0].start, { comp: 'R9', term: 'b' });
+  runCommand(c, `net ${n.id} drop R9.b`);
+  assert.equal(n.fixedPaths[0].start, null);
 });

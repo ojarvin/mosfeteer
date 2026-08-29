@@ -222,6 +222,24 @@ above (or below) a differential core — e.g. the PMOS load of a 5T OTA.
   apply exactly as in §4.5: equal halves, gates inward, output terminals
   aligned.
 
+### 4.5c Cross-coupled, fully differential structures
+
+- Maintain consistent mirrored placement through the entire design, not only
+  in the input pair or active load. Use one explicit centerline and preserve
+  equal device rows, columns, and routing clearances on both sides.
+- Choose the gate-facing convention from the topology: same-side gates may
+  face each other as a paired bus, while cross-coupled gates must face the
+  opposite-side outputs. Do not mix conventions between matched stages.
+- Keep equal vertical gaps in stacked devices and align corresponding stack
+  boundaries on the same rows.
+- Place output ports at the outer routing corners, with enough open space for
+  their labels; never let a port label cross a feedback route or device body.
+- Draw cross-coupling routes as a matched pair. Their horizontal legs must be
+  at equal `+/-` grid offsets from the vertical midpoint, with corresponding
+  bends and clearances mirrored.
+- Final manual cleanup may compress spacing and remove redundant bends, but
+  it must preserve symmetry and must not introduce label crossings.
+
 ---
 
 ## 5. Geometry and routing

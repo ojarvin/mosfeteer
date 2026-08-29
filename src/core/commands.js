@@ -2,7 +2,7 @@ import { Circuit } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
-import { segThroughInterior, smartRoute, balancedRoute } from './router.js';
+import { balancedCrossCoupling, segThroughInterior, smartRoute, balancedRoute } from './router.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
 
@@ -164,7 +164,9 @@ export function evaluate(circuit) {
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1];
         const b = pts[i];
-        if (a.x !== b.x && a.y !== b.y) diagonalViolations.push(`net ${net.id} diagonal (${a.x},${a.y})-(${b.x},${b.y})`);
+        if (a.x !== b.x && a.y !== b.y && net.routingMode !== 'fixed') {
+          diagonalViolations.push(`net ${net.id} diagonal (${a.x},${a.y})-(${b.x},${b.y})`);
+        }
         for (const comp of comps) {
           if (annotated(comp)) continue;
           if (segThroughInterior(a, b, comp.bboxWorld())) {
@@ -203,9 +205,10 @@ export function commandHelp() {
     '  rename <refdes> <new>          - rename a component',
     '  rm <refdes>                    - remove a component',
     '  connect REF.TERM REF.TERM ... [--name N]  (alias wire)',
+    '  cross A1 A2 B1 B2             - protected matched diagonal cross-coupling',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  nets                           - list nets with terminals and length',
-    '  net <id> add|drop|name|rm ...  - manage a net (segment-rm BRANCH SEG deletes wire geometry)',
+    '  net <id> add|drop|name|rm ...  - manage a net (fixed: path, vertex, junction edits)',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
     '  list                           - list components',
@@ -360,6 +363,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
     circuit.components.set(newName, c);
     for (const net of circuit.nets.values()) {
       for (const t of net.terminals) if (t.comp === pos[0]) t.comp = newName;
+      if (net.routingMode === 'fixed') {
+        for (const path of net.fixedPaths) {
+          if (path.start?.comp === pos[0]) path.start.comp = newName;
+          if (path.end?.comp === pos[0]) path.end.comp = newName;
+        }
+      }
     }
     // the instance label follows its owner (its text mirrors the refdes)
     const lab = circuit.labelOf(c.refdes);
@@ -388,6 +397,46 @@ function dispatch(circuit, cmd, pos, flags, io) {
     // "connected by reference" with no wire to it after reload.
     const terms = net.terminals.map((t) => termInfo(circuit, t.comp, t.term));
     return result(`net ${net.id}${net.name ? ` "${net.name}"` : ''}: ${terms.join('  ')}; len=${net.length()}`, { netId: net.id, name: net.name, terminals: net.terminals.map((t) => ({ ...t })), length: net.length() }, true);
+  }
+  if (cmd === 'cross') {
+    if (pos.length !== 4) throw new Error('usage: cross A1 A2 B1 B2');
+    const refs = pos.map((ref) => circuit.resolveTerm(ref));
+    const points = refs.map((ref) => circuit.getComponent(ref.comp).terminalWorld(ref.term));
+    let paths;
+    try {
+      paths = balancedCrossCoupling([points[0], points[1]], [points[2], points[3]]);
+    } catch (err) {
+      throw new Error(`invalid cross-coupling endpoints: ${err.message}`);
+    }
+    const pairNets = [
+      [circuit.netOfTerminal(refs[0]), circuit.netOfTerminal(refs[1])],
+      [circuit.netOfTerminal(refs[2]), circuit.netOfTerminal(refs[3])],
+    ];
+    const existing = pairNets.flat();
+    if (existing.some(Boolean)) {
+      const samePath = (net, path, start, end) => {
+        if (!net || net.routingMode !== 'fixed' || net.fixedPaths.length !== 1) return false;
+        const entry = net.fixedPaths[0];
+        if (!entry.start || !entry.end || entry.start.comp !== start.comp || entry.start.term !== start.term ||
+            entry.end.comp !== end.comp || entry.end.term !== end.term || entry.points.length !== path.length) return false;
+        return entry.points.every((p, i) => p.x === path[i].x && p.y === path[i].y);
+      };
+      const idempotent = pairNets[0][0] && pairNets[0][0] === pairNets[0][1] &&
+        pairNets[1][0] && pairNets[1][0] === pairNets[1][1] && pairNets[0][0] !== pairNets[1][0] &&
+        samePath(pairNets[0][0], paths[0], refs[0], refs[1]) &&
+        samePath(pairNets[1][0], paths[1], refs[2], refs[3]);
+      if (!idempotent) throw new Error('cross-coupling endpoints already belong to a net');
+      return result(`cross ${pos.join(' ')} already exists (${pairNets[0][0].id}, ${pairNets[1][0].id})`, {
+        nets: [pairNets[0][0].toJSON(), pairNets[1][0].toJSON()],
+      }, false);
+    }
+    const nets = [
+      circuit.wireDirectTo(refs[0], refs[1], paths[0].slice(1, -1)),
+      circuit.wireDirectTo(refs[2], refs[3], paths[1].slice(1, -1)),
+    ];
+    return result(`cross ${pos.join(' ')}: fixed nets ${nets[0].id}, ${nets[1].id}`, {
+      nets: nets.map((net) => net.toJSON()),
+    }, true);
   }
   if (cmd === 'disconnect') {
     const net = circuit.disconnect(pos[0]);
@@ -460,6 +509,7 @@ function netCommand(circuit, pos, result) {
     for (let i = 0; i < net.terminals.length; i++) {
       const t = net.terminals[i];
       if (`${t.comp}.${t.term}` === pos[2]) {
+        circuit._dropFixedAnchor(net, t);
         net.terminals.splice(i, 1);
         if (net.terminals.length === 0) circuit.nets.delete(net.id);
         else routeNet(circuit, net);
@@ -480,10 +530,42 @@ function netCommand(circuit, pos, result) {
     circuit.deleteWireSegment(net.id, branch, segment);
     return result(`deleted segment ${branch}:${segment} from net ${net.id}`, net.toJSON(), true);
   }
+  if (op === 'vertex' || op === 'vertex-set') {
+    const path = Number(pos[2]);
+    const vertex = Number(pos[3]);
+    const x = Number(pos[4]);
+    const y = Number(pos[5]);
+    if (![path, vertex, x, y].every(Number.isFinite) || !Number.isInteger(path) || !Number.isInteger(vertex)) {
+      throw new Error('usage: net <id> vertex PATH VERTEX X Y');
+    }
+    circuit.setFixedPathVertex(net.id, path, vertex, { x, y });
+    return result(`moved fixed vertex ${path}:${vertex} on net ${net.id}`, net.toJSON(), true);
+  }
+  if (op === 'path' || op === 'path-set') {
+    const path = Number(pos[2]);
+    const coords = pos.slice(3).map(Number);
+    if (!Number.isInteger(path) || path < 0 || coords.length < 4 || coords.length % 2 !== 0 || !coords.every(Number.isFinite)) {
+      throw new Error('usage: net <id> path PATH X1 Y1 X2 Y2 [...]');
+    }
+    const points = [];
+    for (let i = 0; i < coords.length; i += 2) points.push({ x: coords[i], y: coords[i + 1] });
+    circuit.setFixedPath(net.id, path, points);
+    return result(`replaced fixed path ${path} on net ${net.id}`, net.toJSON(), true);
+  }
+  if (op === 'junction' || op === 'junction-set') {
+    const junction = Number(pos[2]);
+    const x = Number(pos[3]);
+    const y = Number(pos[4]);
+    if (!Number.isInteger(junction) || !Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('usage: net <id> junction INDEX X Y');
+    }
+    circuit.setFixedJunction(net.id, junction, { x, y });
+    return result(`moved fixed junction ${junction} on net ${net.id}`, net.toJSON(), true);
+  }
   if (op === 'rm') {
     circuit.nets.delete(net.id);
     circuit.syncJunctionSolders();
     return result(`removed net ${net.id}`, null, true);
   }
-  throw new Error('usage: net <id> add|drop|name|rm');
+  throw new Error('usage: net <id> add|drop|name|rm|path|vertex|junction');
 }

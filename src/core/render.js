@@ -143,11 +143,16 @@ export function svgString(circuit, opts = {}) {
   // Wires draw ON TOP of component bodies so an overlapping wire stays visible
   // and selectable (component linework no longer hides it).
   for (const net of circuit.nets.values()) {
-    const paths = net.branches
-      ? net.branches
-      : !net.route && net.terminals.length >= 3
-        ? balancedPaths(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
-        : [net.points()];
+    // Fixed paths are already the complete authored geometry. Keep the legacy
+    // managed fallback below so multi-terminal managed nets retain their old
+    // rendering behavior.
+    const paths = net.routingMode === 'fixed'
+      ? net.paths()
+      : net.branches
+        ? net.branches
+        : !net.route && net.terminals.length >= 3
+          ? balancedPaths(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
+          : [net.points()];
     for (const pts of paths) {
       if (!pts || pts.length < 2) continue;
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
@@ -221,6 +226,7 @@ export function svgString(circuit, opts = {}) {
  * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
  * opts.wireMode: show all component terminals, colored by net membership.
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
+ * opts.directWirePreview: literal, protected direct-wire draft.
  */
 export function editorOverlay(circuit, opts = {}) {
   const parts = [];
@@ -282,6 +288,11 @@ export function editorOverlay(circuit, opts = {}) {
     }
   }
 
+  if (opts.fixedDrag) {
+    const { x, y, junction } = opts.fixedDrag;
+    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${junction ? 14 : 10}" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-dasharray="4 3"/>`);
+  }
+
   if (opts.wireMode) {
     const src = opts.wireSource;
     for (const comp of circuit.components.values()) {
@@ -319,12 +330,21 @@ export function editorOverlay(circuit, opts = {}) {
     parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="#4f9cf9"/>`);
   }
 
+  if (opts.directWirePreview) {
+    const { from, pts } = opts.directWirePreview;
+    if (from && pts && pts.length >= 2) {
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path class="direct-wire-preview" d="${d}" fill="none" stroke="#7c3aed" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>`);
+      for (const p of pts.slice(1, -1)) parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="5" fill="#fff" stroke="#7c3aed" stroke-width="2"/>`);
+    }
+  }
+
   if (opts.cursor) {
     const { x, y } = opts.cursor;
-    const color = opts.wireMode ? '#d97706' : '#7a7d85';
+    const color = opts.directWirePreview ? '#7c3aed' : opts.wireMode ? '#d97706' : '#7a7d85';
     const radius = opts.wireMode ? 8 : 4;
     parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${radius}" fill="none" stroke="${color}" stroke-width="${opts.wireMode ? 2 : 1.5}"/>`);
-    if (opts.wireMode && !opts.wirePreview) {
+    if (opts.wireMode && !opts.wirePreview && !opts.directWirePreview) {
       parts.push(`<path d="M ${fmt(x - 14)} ${fmt(y)} L ${fmt(x + 14)} ${fmt(y)} M ${fmt(x)} ${fmt(y - 14)} L ${fmt(x)} ${fmt(y + 14)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="3 2"/>`);
     }
   }

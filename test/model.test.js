@@ -395,6 +395,299 @@ test('loading a malformed diagonal route normalizes it before it can be rendered
   }
 });
 
+test('version-1 states remain managed and preserve the historic route shape', () => {
+  const c = Circuit.fromJSON({
+    version: 1,
+    grid: 40,
+    components: [
+      { refdes: 'R1', type: 'resistor', value: '', transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'R2', type: 'resistor', value: '', transform: { x: 400, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+    ],
+    nets: [{ id: 'N1', name: '', terminals: [{ comp: 'R1', term: 'b' }, { comp: 'R2', term: 'a' }], route: [{ x: 160, y: 0 }, { x: 400, y: 0 }], branches: null }],
+    labels: [],
+  });
+  const n = c.nets.get('N1');
+  assert.equal(n.routingMode, 'managed');
+  assert.deepEqual(n.paths(), [[{ x: 160, y: 0 }, { x: 400, y: 0 }]]);
+  assert.equal(n.fixedPaths.length, 0);
+});
+
+test('direct diagonal paths round-trip in fixed policy without orthogonalization', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 240, y: 80 }]);
+  assert.equal(n.routingMode, 'fixed');
+  assert.deepEqual(n.paths(), [[
+    { x: 160, y: 0 }, { x: 240, y: 80 }, { x: 400, y: 400 },
+  ]]);
+  assert.deepEqual(n.fixedPaths[0].start, { comp: 'R1', term: 'b' });
+  assert.deepEqual(n.fixedPaths[0].end, { comp: 'R2', term: 'a' });
+  assert.equal(c.toJSON().version, 2);
+  const c2 = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.equal(c2.nets.get(n.id).routingMode, 'fixed');
+  assert.deepEqual(c2.nets.get(n.id).fixedPaths, n.fixedPaths);
+  assert.equal(c2.nets.get(n.id).length(), n.length());
+});
+
+test('fixed geometry is protected from refresh and branch reduction', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
+  const before = n.paths();
+  c.rerouteNet(n, 'refresh');
+  c._reduceNet(n);
+  assert.deepEqual(n.paths(), before);
+  assert.throws(() => c.deleteWireSegment(n.id, 0, 1), /fixed net geometry is protected/);
+});
+
+test('fixed path, vertex, and junction edits preserve anchors without reduction', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a');
+  n.junctions = [{ x: 240, y: 160 }];
+  c.setFixedPath(n, 0, [
+    { x: 160, y: 0 }, { x: 240, y: 160 }, { x: 400, y: 400 },
+  ]);
+  assert.deepEqual(n.fixedPaths[0].start, { comp: 'R1', term: 'b' });
+  assert.deepEqual(n.fixedPaths[0].end, { comp: 'R2', term: 'a' });
+  c.setFixedPathVertex(n, 0, 1, { x: 280, y: 120 });
+  assert.deepEqual(n.fixedPaths[0].points, [
+    { x: 160, y: 0 }, { x: 280, y: 120 }, { x: 400, y: 400 },
+  ]);
+  assert.deepEqual(n.junctions, [{ x: 280, y: 120 }]);
+  c.setFixedJunction(n, 0, { x: 320, y: 80 });
+  assert.deepEqual(n.fixedPaths[0].points, [
+    { x: 160, y: 0 }, { x: 320, y: 80 }, { x: 400, y: 400 },
+  ]);
+  assert.deepEqual(n.junctions, [{ x: 320, y: 80 }]);
+  assert.equal(n.routingMode, 'fixed');
+});
+
+test('managed operations cannot add phantom terminals to fixed nets', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R3', x: 800, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a');
+  assert.throws(() => c.connect('R1.b', 'R3.a'), /cannot grow a fixed net/);
+  assert.throws(() => c.connectTo(n.id, 'R3.a'), /cannot grow a fixed net/);
+  assert.equal(c.netOfTerminal('R3.a'), null);
+});
+
+test('distinct coincident direct anchors retain a degenerate path until separation', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 160, y: 0 });
+  const n = c.wireDirectTo('R1.b', 'R2.a');
+  assert.deepEqual(n.fixedPaths[0].points, [{ x: 160, y: 0 }, { x: 160, y: 0 }]);
+  c.moveComponent('R2', 400, 0);
+  c.rerouteNet(n, new Map([['R2', { dx: 240, dy: 0 }]]));
+  assert.deepEqual(n.paths()[0], [{ x: 160, y: 0 }, { x: 400, y: 0 }]);
+});
+
+test('fixed authored vertices and anchors survive endpoint coincidence and reload', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
+  c.moveComponent('R2', 240, 80);
+  c.rerouteNet(n, new Map([['R2', { dx: -160, dy: -320 }]]));
+  assert.deepEqual(n.fixedPaths[0].points, [
+    { x: 160, y: 0 }, { x: 240, y: 80 }, { x: 240, y: 80 },
+  ], 'the authored waypoint remains when the endpoint temporarily lands on it');
+  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.deepEqual(reloaded.nets.get(n.id).fixedPaths[0].points, n.fixedPaths[0].points);
+  c.moveComponent('R2', 400, 400);
+  c.rerouteNet(n, new Map([['R2', { dx: 160, dy: 320 }]]));
+  assert.deepEqual(n.fixedPaths[0].points, [
+    { x: 160, y: 0 }, { x: 240, y: 80 }, { x: 400, y: 400 },
+  ]);
+});
+
+test('v2 loading sanitizes fixed anchors that are not net member terminals', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a');
+  const state = c.toJSON();
+  state.nets[0].fixedPaths[0].start = { comp: 'R99', term: 'a' };
+  state.nets[0].fixedPaths[0].end = { comp: 'R2', term: 'not-a-term' };
+  const loaded = Circuit.fromJSON(state);
+  assert.equal(loaded.nets.get(n.id).fixedPaths[0].start, null);
+  assert.equal(loaded.nets.get(n.id).fixedPaths[0].end, null);
+});
+
+test('disconnect and removal clear fixed terminal anchors', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a');
+  c.disconnect('R1.b');
+  assert.equal(n.fixedPaths[0].start, null);
+  c.removeComponent('R2');
+  assert.equal(n.fixedPaths[0].end, null);
+});
+
+test('promoting a managed net preserves explicit junctions and their solder marker', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 800, y: 400 });
+  const n = c.connect('R1.b', 'R2.a');
+  n.route = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
+  n.junctions = [{ x: 280, y: 0 }];
+  c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }]);
+  assert.deepEqual(n.junctions, [{ x: 280, y: 0 }]);
+  assert.equal([...c.components.values()].filter((x) => x.type === 'solder' && x.transform.x === 280 && x.transform.y === 0).length, 1);
+  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.deepEqual(reloaded.nets.get(n.id).junctions, [{ x: 280, y: 0 }]);
+  assert.equal([...reloaded.components.values()].filter((x) => x.type === 'solder' && x.transform.x === 280 && x.transform.y === 0).length, 1);
+});
+
+test('reconnecting existing fixed members preserves paths, junctions, and solder', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  const n = c.wireDirectTo('R1.b', 'R2.a');
+  n.junctions = [{ x: 280, y: 0 }];
+  c.syncJunctionSolders();
+  const paths = n.paths();
+  const junctions = n.junctions.map((p) => ({ ...p }));
+  const solder = [...c.components.values()].find((x) => x.type === 'solder' && x.transform.x === 280 && x.transform.y === 0);
+  assert.ok(solder);
+  const again = c.connect('R1.b', 'R2.a');
+  assert.strictEqual(again, n);
+  assert.deepEqual(n.paths(), paths);
+  assert.deepEqual(n.junctions, junctions);
+  assert.ok([...c.components.values()].some((x) => x.refdes === solder.refdes && x.type === 'solder' && x.transform.x === 280 && x.transform.y === 0));
+});
+
+test('direct wiring promotes joined managed nets while retaining their visible paths', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 800, y: 400 });
+  const n = c.connect('R1.b', 'R2.a');
+  n.route = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
+  const joined = c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }]);
+  assert.equal(joined, n);
+  assert.equal(joined.routingMode, 'fixed');
+  assert.equal(joined.fixedPaths.length, 2);
+  assert.deepEqual(joined.fixedPaths[0].points, [{ x: 160, y: 0 }, { x: 400, y: 0 }]);
+  assert.deepEqual(joined.fixedPaths[1].points, [{ x: 160, y: 0 }, { x: 640, y: 80 }, { x: 800, y: 400 }]);
+});
+
+test('fixed endpoints repair in place and rigid moves translate all geometry', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
+  c.moveComponent('R2', 400, 560);
+  c.rerouteNet(n, new Map([['R2', { dx: 0, dy: 160 }]]));
+  assert.deepEqual(n.paths()[0], [
+    { x: 160, y: 0 }, { x: 240, y: 80 }, { x: 400, y: 560 },
+  ]);
+  c.moveComponent('R1', 80, 160);
+  c.moveComponent('R2', 480, 720);
+  c.rerouteNet(n, new Map([
+    ['R1', { dx: 80, dy: 160 }],
+    ['R2', { dx: 80, dy: 160 }],
+  ]));
+  assert.deepEqual(n.paths()[0], [
+    { x: 240, y: 160 }, { x: 320, y: 240 }, { x: 480, y: 720 },
+  ]);
+});
+
+test('crossing fixed paths remain separate and do not create a solder junction', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 400 });
+  c.addComponent('resistor', { refdes: 'R4', x: 400, y: 0 });
+  const a = c.wireDirectTo('R1.b', 'R2.a');
+  const b = c.wireDirectTo('R3.b', 'R4.a');
+  assert.notEqual(a.id, b.id);
+  assert.equal(c.nets.size, 2);
+  assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
+});
+
+function mirroredMosPair(c, first = 'M1', second = 'M2', x = 0) {
+  c.addComponent('nmos', { refdes: first, x, y: 0, mirrorX: false, mirrorY: false });
+  c.addComponent('nmos', { refdes: second, x: x + 400, y: 0, mirrorX: true, mirrorY: false });
+}
+
+test('managed reciprocal diagonal nets infer a fixed cross-coupled pair', () => {
+  const c = new Circuit();
+  mirroredMosPair(c);
+  const a = c.wireTo('M1.d', c.getComponent('M2').terminalWorld('s'));
+  const b = c.wireTo('M1.s', c.getComponent('M2').terminalWorld('d'));
+  assert.equal(a.routingMode, 'fixed');
+  assert.equal(b.routingMode, 'fixed');
+  assert.equal(a.fixedPaths.length, 1);
+  assert.equal(b.fixedPaths.length, 1);
+  assert.deepEqual(a.fixedPaths[0].start, { comp: 'M1', term: 'd' });
+  assert.deepEqual(a.fixedPaths[0].end, { comp: 'M2', term: 's' });
+  assert.deepEqual(b.fixedPaths[0].start, { comp: 'M1', term: 's' });
+  assert.deepEqual(b.fixedPaths[0].end, { comp: 'M2', term: 'd' });
+  assert.deepEqual(a.fixedPaths[0].points, [
+    { x: 120, y: -80 }, { x: 280, y: 80 },
+  ]);
+  assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
+});
+
+test('cross-coupling inference rejects unmirrored component transforms', () => {
+  const c = new Circuit();
+  c.addComponent('nmos', { refdes: 'M1', x: 0, y: 0, mirrorX: false, mirrorY: false });
+  c.addComponent('nmos', { refdes: 'M2', x: 400, y: 0, mirrorX: false, mirrorY: false });
+  c.connect('M1.d', 'M2.s');
+  c.connect('M1.s', 'M2.d');
+  assert.ok([...c.nets.values()].every((n) => n.routingMode === 'managed'));
+});
+
+test('cross-coupling inference never rewrites a fixed/manual net', () => {
+  const c = new Circuit();
+  mirroredMosPair(c);
+  const fixed = c.wireDirectTo('M1.d', 'M2.s', [{ x: 200, y: -120 }]);
+  const managed = c.connect('M1.s', 'M2.d');
+  assert.equal(fixed.routingMode, 'fixed');
+  assert.equal(managed.routingMode, 'managed');
+  assert.deepEqual(fixed.fixedPaths[0].points, [
+    { x: 120, y: -80 }, { x: 200, y: -120 }, { x: 280, y: 80 },
+  ]);
+});
+
+test('cross-coupling inference rejects already routed multi-terminal structures', () => {
+  const c = new Circuit();
+  mirroredMosPair(c);
+  c.connect('M1.d', 'M2.s', 'M1.g');
+  const other = c.connect('M1.s', 'M2.d');
+  assert.equal(other.routingMode, 'managed');
+  assert.ok([...c.nets.values()].every((n) => n.routingMode === 'managed'));
+});
+
+test('cross-coupling inference requires exactly one candidate', () => {
+  const c = new Circuit();
+  mirroredMosPair(c, 'M1', 'M2', 0);
+  mirroredMosPair(c, 'M3', 'M4', 800);
+  // Load two plausible candidates together, then invoke the same inference
+  // trigger used after managed wiring. Loading itself must not mutate routes.
+  const term = (comp, term) => ({ comp, term });
+  const point = (comp, name) => c.getComponent(comp).terminalWorld(name);
+  const state = c.toJSON();
+  state.nets = [
+    { id: 'N1', name: '', terminals: [term('M1', 'd'), term('M2', 's')], route: [point('M1', 'd'), point('M2', 's')], branches: null, junctions: [], routingMode: 'managed', fixedPaths: null },
+    { id: 'N2', name: '', terminals: [term('M1', 's'), term('M2', 'd')], route: [point('M1', 's'), point('M2', 'd')], branches: null, junctions: [], routingMode: 'managed', fixedPaths: null },
+    { id: 'N3', name: '', terminals: [term('M3', 'd'), term('M4', 's')], route: [point('M3', 'd'), point('M4', 's')], branches: null, junctions: [], routingMode: 'managed', fixedPaths: null },
+    { id: 'N4', name: '', terminals: [term('M3', 's'), term('M4', 'd')], route: [point('M3', 's'), point('M4', 'd')], branches: null, junctions: [], routingMode: 'managed', fixedPaths: null },
+  ];
+  const loaded = Circuit.fromJSON(state);
+  loaded._inferCrossCoupling();
+  assert.ok([...loaded.nets.values()].every((n) => n.routingMode === 'managed'), 'ambiguous sibling candidates stay managed');
+});
+
 test('removeComponent sweeps terminals and drops empty nets', () => {
   const c = new Circuit();
   const r1 = c.addComponent('resistor', { x: 0, y: 0 });

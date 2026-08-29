@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { autoRoute, segmentsCross, smartRoute, segThroughInterior, steinerBranches, steinerRoute } from '../src/core/router.js';
+import { autoRoute, balancedCrossCoupling, segmentsCross, smartRoute, segThroughInterior, steinerBranches, steinerRoute } from '../src/core/router.js';
 import { onGrid } from '../src/core/grid.js';
 import { junctionPoints } from '../src/core/wiring.js';
 
@@ -84,6 +84,56 @@ test('autoRoute balances a centered three-way branch', () => {
 });
 
 const EMPTY_ENV = { rects: [], pins: new Map(), wires: [], labelRects: [] };
+
+test('balancedCrossCoupling preserves matched diagonal endpoint pairs', () => {
+  const [a, b] = balancedCrossCoupling(
+    [{ x: 0, y: -160 }, { x: 240, y: 160 }],
+    [{ x: 240, y: -160 }, { x: 0, y: 160 }],
+  );
+  assert.deepEqual(a, [{ x: 0, y: -160 }, { x: 240, y: 160 }]);
+  assert.deepEqual(b, [{ x: 240, y: -160 }, { x: 0, y: 160 }]);
+});
+
+test('balancedCrossCoupling has one central diagonal crossing and matched metrics', () => {
+  const paths = balancedCrossCoupling(
+    [{ x: 0, y: -160 }, { x: 240, y: 160 }],
+    [{ x: 240, y: -160 }, { x: 0, y: 160 }],
+  );
+  assert.equal(paths[0].length, 2);
+  assert.equal(paths[1].length, 2);
+  const cross = (a, b, c, d) => {
+    const orient = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    return orient(a, b, c) * orient(a, b, d) < 0 && orient(c, d, a) * orient(c, d, b) < 0;
+  };
+  assert.equal(cross(paths[0][0], paths[0][1], paths[1][0], paths[1][1]), true);
+  const length = (path) => Math.hypot(path[1].x - path[0].x, path[1].y - path[0].y);
+  assert.equal(length(paths[0]), length(paths[1]));
+});
+
+test('balancedCrossCoupling returns independent protected diagonal paths', () => {
+  const [a, b] = balancedCrossCoupling(
+    [{ x: 0, y: -160 }, { x: 240, y: 160 }],
+    [{ x: 240, y: -160 }, { x: 0, y: 160 }],
+  );
+  assert.notStrictEqual(a, b);
+  assert.notStrictEqual(a[0], b[0]);
+  assert.notStrictEqual(a[1], b[1]);
+});
+
+test('balancedCrossCoupling rejects non-mirrored and degenerate endpoint sets', () => {
+  assert.throws(() => balancedCrossCoupling(
+    [{ x: 0, y: -160 }, { x: 240, y: 160 }],
+    [{ x: 0, y: 160 }, { x: 240, y: 160 }],
+  ), /opposite diagonals|diagonals|rectangle/);
+  assert.throws(() => balancedCrossCoupling(
+    [{ x: 0, y: 0 }, { x: 80, y: 80 }],
+    [{ x: 80, y: 0 }, { x: 0, y: 80 }],
+  ), /too small|no grid center/);
+  assert.throws(() => balancedCrossCoupling(
+    [{ x: 0, y: 0 }, { x: 120, y: 80 }],
+    [{ x: 120, y: 0 }, { x: 0, y: 80 }],
+  ), /grid center|too small/);
+});
 
 function junctionOf(paths, terminals) {
   return junctionPoints(paths, terminals.map((p) => ({ x: p.x, y: p.y })));
@@ -276,6 +326,13 @@ test('segThroughInterior catches wires drilling through a body from its own pin'
   assert.equal(segThroughInterior({ x: 240, y: -40 }, { x: 760, y: -40 }, r), false);
   // straight through an unrelated body
   assert.equal(segThroughInterior({ x: 0, y: 0 }, { x: 800, y: 0 }, R(240, -40)), true);
+});
+
+test('segThroughInterior catches a fixed diagonal drilling through a body', () => {
+  const body = { x: 40, y: 40, w: 160, h: 160 };
+  assert.equal(segThroughInterior({ x: 0, y: 0 }, { x: 240, y: 240 }, body), true);
+  assert.equal(segThroughInterior({ x: 0, y: 0 }, { x: 40, y: 40 }, body), false, 'corner touch is not interior');
+  assert.equal(segThroughInterior({ x: 0, y: 40 }, { x: 240, y: 40 }, body), false, 'edge hug is not interior');
 });
 
 test('smartRoute: collinear pair stays straight and on grid', () => {

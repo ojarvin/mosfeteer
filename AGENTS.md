@@ -152,6 +152,20 @@ and editor UX — skim it whenever you need an exact number.
   clears both. Selection overlay highlights all `selLabels`
   (`editorOverlay` `opts.selLabels`).
 
+## Direct/manual wire mode
+
+- Uppercase `W` enters protected direct-wire mode, distinct from managed `w`
+  wire mode. Click a terminal to start, click one or more intermediate points
+  as literal waypoints, then click or press Enter on the target terminal. The
+  endpoints are terminals; points are grid-snapped and retained in the exact
+  clicked sequence, so diagonal segments are allowed.
+- Crossings do not splice or join other wires. The resulting net is fixed:
+  autorouting, orthogonalization, branch reduction, and ordinary wire segment
+  drag/delete operations do not rewrite it. To add another path to a fixed net,
+  use `W` again; normal managed wiring reports that fixed geometry is protected.
+- Moving a component re-anchors its fixed path endpoint without autorouting;
+  moving a complete selected set translates its fixed paths with the set.
+
 ## Routing & connectivity
 
 - **Touching pins connect:** `Circuit#connectCoincident()` joins any
@@ -364,14 +378,17 @@ and editor UX — skim it whenever you need an exact number.
   stays visible and clickable; labels and the overlay (selection halos,
   net highlights) draw last.
 - **`D` toggles dark mode** (plus `#btn-theme`).
-- **Copy / paste on selected sets:** `yy` / `Ctrl+C` (`copySelection`)
+- **Yank / paste on selected sets:** `y` / `Ctrl/Cmd+C` (`copySelection`)
   captures the selected components + free labels + every net whose
   terminals all sit on selected components (route / branches / junctions
-  kept); `p` / `Ctrl+V` (`pasteClipboard`) re-instantiates everything at
+  kept); `p` / `Ctrl/Cmd+V` (`pasteClipboard`) re-instantiates everything at
   the cursor with fresh refdes / label ids / net ids, preserving
   relative positions and connectivity.
 - Side-panel lists are condensed (smaller row padding / fonts) so the
   components / nets / terminals lists stay short.
+- The design dropdown refuses to switch while the current design is dirty;
+  save first with `Ctrl/Cmd+S` or the Save button. The selection is restored to
+  the current design and an unsaved-changes warning is logged.
 
 ## Fast loop: CLI → server → browser
 
@@ -392,19 +409,25 @@ and editor UX — skim it whenever you need an exact number.
 - The browser poll is 500 ms (existing `syncActiveCircuit`). The same
   poll still syncs content updates for the loaded circuit. So one
   tick = "is the active different? switch if so" + "is the file
-  different? merge if so".
+  different? merge if so". A switch whose load fails (the agent marked a
+  brand-new circuit active before its first file write) does NOT advance
+  the "seen active" state: the poll retries on every tick (logged once)
+  until the circuit file appears — no manual refresh needed.
 - Old behavior (CLI writes `data/state.json`, GUI Save writes
   `circuits/<name>/circuit.json`, two unrelated paths) is gone.
 
 ## Editor behavior — hotkeys
 
-- `i` insert mode (fuzzy search). `w` wire mode. `t` (insert mode)
+- `i` insert mode (fuzzy search). `w` managed wire mode; `W` protected direct
+  wire mode. `t` (insert mode)
   label ghost.
 - `v` visual mode. `Esc` cancels ghost / box / drag.
 - `r`/`R` rotate +90 / -90 (normal). `x`/`X` mirror along axis.
 - `dd` delete selection (chord). `Delete` / `Backspace` same.
 - `u` / `Ctrl+Z` undo; `U` / `Ctrl+Y` / `Ctrl+R` redo.
-- `yy` / `Ctrl+C` copy; `p` / `Ctrl+V` paste at cursor.
+- `y` yank; `p` / `Ctrl/Cmd+V` paste at cursor. (`yy` is not required.)
+- `Ctrl/Cmd+S` saves the current design.
+- Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy.
 - `hjkl` move cursor; in visual mode, grow box; in insert mode, part of
   the query.
 - `F` fit view; `D` toggle dark mode; `#` toggle grid; `?` keymap.
@@ -458,8 +481,10 @@ and editor UX — skim it whenever you need an exact number.
 
 ## Test-env facts
 
-- pkill patterns must be bracket-escaped (`remote-debugging-port=922[6]`,
-  `src/web/serve\.js`).
+- **CDP sessions:** use isolated random HTTP and Chromium debug ports for each
+  developer session. Track the server/browser processes you own and shut down
+  those exact processes only; never use broad `pkill` against the live editor
+  or a shared browser.
 - `serve.js` sends `Cache-Control: no-store`; `index.html` `main.js?v=7`.
 - `circuits/`, `data/`, `node_modules/` are gitignored. `data/active.json`
   is the live record of which circuit the agent is editing.

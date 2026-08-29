@@ -10,6 +10,12 @@ implementation details will slow you down and tempt you to script around
 the tool. If the editor lacks an operation you think you need, change your
 approach — do not invent one.
 
+**Draw only what the user asked for.** Create only the circuit(s) the user
+explicitly requested — never additional test circuits, scratch circuits,
+or "practice" versions under other names. Every new circuit name is a
+delivery the user has to look at; keep the workspace to exactly the
+requested design(s).
+
 Companion docs:
 
 - [style-guide.md](./style-guide.md) — the visual / electrical standard your
@@ -52,8 +58,10 @@ after a moment — but the named-circuit form above is the one you want.
 
 ## Start so the user sees you live
 
-1. **Start the server.** `./start.sh` (or `PORT=<p> node src/web/serve.js`
-   for an isolated session, with its own chromium on a unique debug port).
+1. **Start the server.** `./start.sh` (or `PORT=<random-port> node
+   src/web/serve.js` for an isolated session, with Chromium on its own random
+   debug port). Track the processes you started so you can shut down only those
+   owned processes when the session ends.
 2. **Tell the user to open the app** at `http://127.0.0.1:<port>/` once
    and leave it open. They don't type a circuit name or click anything —
    the browser auto-loads whatever you start editing.
@@ -77,9 +85,9 @@ and does **not** refresh — the live session takes care of it.
 - **One persistent CDP connection for the whole session.** Reconnecting per
   command drops the page's debugger and can trigger the "Leave site?"
   prompt (the app has a `beforeunload` handler for unsaved changes).
-- **Never `pkill -f` a pattern that appears in your own command line** — it
-  matches and kills your own shell. Use a `quit` command in your daemon
-  instead.
+- **CDP process safety:** use isolated random HTTP and Chromium debug ports for
+  each session and shut down only the server/browser processes you own. Never
+  use broad `pkill` against the live editor or a shared browser.
 - **Headless never fires native `dblclick`.** Use real
   `Input.dispatchMouseEvent` with `clickCount: 2`. Inline editors are
   `input[style*="position: absolute"]`. Ctrl+A =
@@ -123,13 +131,14 @@ value <refdes> <V>             set value text
 rename <refdes> <new>          rename a component (updates its instance label)
 rm <refdes>                    remove a component
 connect REF.TERM REF.TERM ... [--name N]     (alias wire) join terminals into one net
+cross A1 A2 B1 B2                      add two matched protected cross-coupled routes
 disconnect REF.TERM            detach one terminal from its net
 nets                           list nets with terminals and lengths
 net <id> add|drop|name|rm ...  manage a net, e.g. net N1 add R1.a ; net N1 name OUT
 list                           list components with world terminals
 state                          full JSON state
 bounds                         drawing extents
-eval                           quality report (unconnected/overlaps/off-grid/diagonals)
+eval                           quality report (unconnected/overlaps/off-grid/managed-wire diagonals)
 ascii                          coarse ASCII layout preview
 help                           full command list
 ```
@@ -145,6 +154,11 @@ help                           full command list
   on the grid.
 - The CLI / HTTP endpoint **saves on every mutated command** automatically.
   You do not need a separate `save` step.
+- `cross A1 A2 B1 B2` accepts four terminals at the corners of one grid-aligned
+  rectangle. It creates exactly two fixed, orthogonal nets for the opposite
+  diagonal pairings, with one central crossing and no solder/join at the
+  crossing. Non-rectangular or already-connected endpoints are rejected unless
+  the exact same fixed cross already exists.
 
 ### Terminal names (current grid = 40)
 
@@ -160,6 +174,27 @@ sources:   a b
 
 Full per-symbol geometry is in `AGENTS.md`; the rules for how to lay them
 out are in `style-guide.md`.
+
+### Browser editing hotkeys and direct wires
+
+- `y` yanks the selected set; `p` pastes it with fresh ids. `yy` is not
+  required. `Ctrl/Cmd+C` and `Ctrl/Cmd+V` are equivalent copy/paste shortcuts.
+- `Ctrl/Cmd+S` saves the current design. The design dropdown refuses to switch
+  while the current design has unsaved changes; save first, or the selection is
+  restored and an unsaved-changes warning is logged.
+- Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy.
+- Uppercase `W` enters protected direct/manual wire mode, separate from managed
+  `w` mode. Click a terminal, click any intermediate points as literal
+  waypoints, then click or press Enter on the target terminal. The endpoints
+  are terminals; waypoints are grid-snapped but retained in the exact clicked
+  sequence, so diagonal segments are valid.
+- Direct-wire crossings do not splice or join other wires. The committed net's
+  geometry is fixed: autorouting, orthogonalization, branch reduction, and
+  ordinary wire-segment dragging/deletion do not rewrite it. To add another
+  path to a fixed net, use `W` again; managed wiring reports that fixed geometry
+  is protected.
+- Moving a component re-anchors its fixed path endpoint without autorouting;
+  moving a complete selected set translates its fixed paths with the set.
 
 ## Drafting order
 
@@ -267,7 +302,8 @@ Confirm that:
 - every required electrical terminal is connected or intentionally exposed;
 - there are no component overlaps;
 - there are no off-grid coordinates;
-- there are no diagonal wire segments;
+- there are no unintended diagonal managed-wire segments; any diagonal fixed
+  direct-wire path is intentional;
 - wires do not run through component interiors;
 - labels identify external pins, supplies, ground, and output;
 - the browser view and saved SVG agree with the JSON topology.

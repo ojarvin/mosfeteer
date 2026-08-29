@@ -553,6 +553,59 @@ export function balancedRoute(points, env) {
   return steinerRoute(points, env);
 }
 
+/**
+ * Validate and preserve two matched diagonal paths for a mirrored feedback
+ * pair. Each input is a two-point endpoint pair; the four endpoints must be
+ * the four corners of one non-degenerate, grid-aligned rectangle and the pairs
+ * must be its opposite diagonals. The returned value is `[pathA, pathB]`,
+ * preserving each input pair's endpoint order. These are protected direct
+ * paths: introducing elbows here would change the authored diagonal geometry
+ * and would make a crossing look electrically ambiguous.
+ */
+export function balancedCrossCoupling(pairA, pairB) {
+  const asPair = (pair) => {
+    if (Array.isArray(pair) && pair.length === 2) return pair;
+    if (pair && pair.start && pair.end) return [pair.start, pair.end];
+    throw new Error('cross-coupling endpoints must be two-point pairs');
+  };
+  const a = asPair(pairA);
+  const b = asPair(pairB);
+  const all = [...a, ...b];
+  if (all.some((p) => !p || !Number.isFinite(p.x) || !Number.isFinite(p.y) ||
+      p.x % GRID !== 0 || p.y % GRID !== 0)) {
+    throw new Error('cross-coupling endpoints must be grid-aligned');
+  }
+  const xs = [...new Set(all.map((p) => p.x))].sort((x, y) => x - y);
+  const ys = [...new Set(all.map((p) => p.y))].sort((x, y) => x - y);
+  if (xs.length !== 2 || ys.length !== 2 || xs[1] <= xs[0] || ys[1] <= ys[0]) {
+    throw new Error('cross-coupling endpoints must form a rectangle');
+  }
+  const [x0, x1] = xs;
+  const [y0, y1] = ys;
+  const width = x1 - x0;
+  const height = y1 - y0;
+  if (width % (2 * GRID) !== 0 || height % (2 * GRID) !== 0 ||
+      width <= 2 * GRID || height <= 2 * GRID) {
+    throw new Error('cross-coupling rectangle is too small or has no grid center');
+  }
+  const corners = new Set([
+    `${x0},${y0}`, `${x1},${y0}`, `${x1},${y1}`, `${x0},${y1}`,
+  ]);
+  if (new Set(all.map((p) => `${p.x},${p.y}`)).size !== 4 ||
+      all.some((p) => !corners.has(`${p.x},${p.y}`))) {
+    throw new Error('cross-coupling endpoints must be distinct rectangle corners');
+  }
+  const diagonal = (pair) => pair[0].x !== pair[1].x && pair[0].y !== pair[1].y;
+  if (!diagonal(a) || !diagonal(b)) throw new Error('cross-coupling pairs must be diagonals');
+  // The rectangle and diagonal checks above establish that these are exactly
+  // the two opposite X legs. Return the original order; callers use it to
+  // retain each path's terminal anchors.
+  return [a, b].map((path) => path.map((p) => ({ ...p })));
+}
+
+/** Short alias for callers that describe the result as route templates. */
+export const crossCoupledRoutes = balancedCrossCoupling;
+
 /** True if segments (a->b) and (c->d) cross at an interior point (both x- and y-spans). */
 export function segmentsCross(a, b, c, d) {
   const minOf = Math.min, maxOf = Math.max;
@@ -566,20 +619,29 @@ export function segmentsCross(a, b, c, d) {
 }
 
 /**
- * True if an axis-aligned segment a->b ENTERS the strict interior of rect r at
- * any point other than its endpoints. Unlike segmentCrossesRect this also
- * flags a segment that departs from a pin on the rect boundary straight
- * through the body (e.g. a resistor's "a" pin wired across its own body),
- * while still allowing wires that hug the boundary at exactly r.y / r.x.
+ * True if a segment a->b ENTERS the strict interior of rect r. Managed routes
+ * are axis-aligned, while protected direct paths may be diagonal, so this uses
+ * open-rectangle clipping rather than an axis-only span test. A segment that
+ * merely touches an edge or corner remains legal; any positive-length portion
+ * in the interior is a body drill.
  */
 export function segThroughInterior(a, b, r) {
-  if (a.y === b.y) {
-    return a.y > r.y && a.y < r.y + r.h && Math.max(a.x, b.x) > r.x && Math.min(a.x, b.x) < r.x + r.w;
-  }
-  if (a.x === b.x) {
-    return a.x > r.x && a.x < r.x + r.w && Math.max(a.y, b.y) > r.y && Math.min(a.y, b.y) < r.y + r.h;
-  }
-  return false;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let lo = 0;
+  let hi = 1;
+  const clipOpen = (start, delta, min, max) => {
+    if (delta === 0) return start > min && start < max;
+    let t0 = (min - start) / delta;
+    let t1 = (max - start) / delta;
+    if (t0 > t1) [t0, t1] = [t1, t0];
+    lo = Math.max(lo, t0);
+    hi = Math.min(hi, t1);
+    return lo < hi;
+  };
+  if (!clipOpen(a.x, dx, r.x, r.x + r.w)) return false;
+  if (!clipOpen(a.y, dy, r.y, r.y + r.h)) return false;
+  return lo < hi;
 }
 
 // ---------------------------------------------------------------------------

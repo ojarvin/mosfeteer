@@ -18,6 +18,30 @@ export function clonePath(path = []) {
   return normalizePath(orthogonalizePath(path));
 }
 
+/** Clone a protected direct-wire path without changing its shape. Direct wires
+ * are still grid-snapped, but unlike managed paths their diagonal segments and
+ * intentional intermediate collinear points are part of the saved geometry. */
+export function cloneFixedPath(path = []) {
+  const out = [];
+  for (const raw of path || []) {
+    const p = { x: snap(raw.x), y: snap(raw.y) };
+    const last = out[out.length - 1];
+    if (!last || last.x !== p.x || last.y !== p.y) out.push(p);
+  }
+  return out;
+}
+
+/** Return path segments without imposing managed-wire orthogonality. */
+export function pathSegments(path = []) {
+  const out = [];
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    if (a.x !== b.x || a.y !== b.y) out.push({ index: i, a, b });
+  }
+  return out;
+}
+
 export function normalizePath(path = []) {
   const out = [];
   for (const raw of path) {
@@ -68,8 +92,8 @@ export function pointOnPath(p, path = []) {
   for (let i = 1; i < path.length; i++) {
     const a = path[i - 1];
     const b = path[i];
-    if (a.x === b.x && P.x === a.x && between(P.y, a.y, b.y)) return true;
-    if (a.y === b.y && P.y === a.y && between(P.x, a.x, b.x)) return true;
+    const cross = (P.x - a.x) * (b.y - a.y) - (P.y - a.y) * (b.x - a.x);
+    if (cross === 0 && between(P.x, a.x, b.x) && between(P.y, a.y, b.y)) return true;
   }
   return false;
 }
@@ -196,8 +220,8 @@ export function crossNetOverlaps(nets) {
     const paths = net.paths || [];
     for (let bi = 0; bi < paths.length; bi++) {
       const path = paths[bi];
-      for (let si = 1; si < path.length; si++) {
-        segs.push({ key: `${net.id}:${bi}:${si}`, netId: net.id, a: path[si - 1], b: path[si] });
+      for (const s of pathSegments(path)) {
+        segs.push({ key: `${net.id}:${bi}:${s.index}`, netId: net.id, a: s.a, b: s.b });
       }
     }
   }
@@ -464,7 +488,7 @@ export function splitByComponent(paths, terminals) {
 }
 
 export function pathLength(path = []) {
-  return wireSegments(path).reduce((n, s) => n + Math.abs(s.a.x - s.b.x) + Math.abs(s.a.y - s.b.y), 0);
+  return pathSegments(path).reduce((n, s) => n + Math.hypot(s.a.x - s.b.x, s.a.y - s.b.y), 0);
 }
 
 export function validateWiring(net) {
@@ -473,7 +497,9 @@ export function validateWiring(net) {
     for (const p of path) {
       if (p.x % GRID || p.y % GRID) errors.push(`branch ${bi} has off-grid point (${p.x},${p.y})`);
     }
-    try { wireSegments(path); } catch (err) { errors.push(`branch ${bi}: ${err.message}`); }
+    if (net.routingMode !== 'fixed') {
+      try { wireSegments(path); } catch (err) { errors.push(`branch ${bi}: ${err.message}`); }
+    }
   }
   return errors;
 }

@@ -344,6 +344,17 @@ button:active {
   font-weight: 600;
 }
 
+.status.direct-wire {
+  color: #6d28d9;
+  font-weight: 700;
+  background: color-mix(in srgb, #7c3aed 8%, var(--bg-panel));
+  border-bottom-color: color-mix(in srgb, #7c3aed 35%, var(--border));
+}
+
+.canvas.direct-wire-mode svg {
+  cursor: crosshair;
+}
+
 .canvas.wire-mode svg {
   cursor: crosshair;
 }

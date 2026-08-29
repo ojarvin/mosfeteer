@@ -207,3 +207,16 @@ test('wires render ON TOP of component bodies (z-order)', () => {
   const terminalDot = svg.indexOf('r="3" fill="#111"');
   assert.ok(terminalDot > wire, 'terminal dots draw above wires');
 });
+
+test('renderer draws every fixed path after managed promotion', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 800, y: 400 });
+  const n = c.connect('R1.b', 'R2.a');
+  n.route = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
+  c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }]);
+  const svg = svgString(c);
+  assert.ok(svg.includes('M 160 0 L 400 0'), 'promoted managed path is rendered');
+  assert.ok(svg.includes('M 160 0 L 640 80 L 800 400'), 'new fixed path is rendered');
+});
