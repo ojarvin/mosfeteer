@@ -354,6 +354,24 @@ function clearanceScore(pts, env) {
   return n;
 }
 
+/** Soft preference: segments passing within a grid cell of a label box. Unlike
+ *  component bodies (hard clearance, see hardSafe), labels only steer the route
+ *  toward a cleaner channel when one exists — they never block a connection. */
+function labelScore(pts, env) {
+  let n = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    for (const r of env.labelRects || []) {
+      if (segRectDist(a, b, r) < STEP) {
+        n++;
+        break;
+      }
+    }
+  }
+  return n;
+}
+
 // Clearance is a hard invariant for committed routes. A segment may touch a
 // component body only at a terminal pin on that body; otherwise it must stay at
 // least one grid cell clear.
@@ -427,8 +445,11 @@ function cmpScore(a, b) {
 function scoreCandidate(pts, env) {
   const { cross, overlap } = wireConflicts(pts, env);
   // Crossing is a legal visual operation; collinear overlap is not. Prefer
-  // separate wire channels before minimizing crossings.
-  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), conformScore(pts, env), Math.max(0, pts.length - 2), routeLength(pts)];
+  // separate wire channels before minimizing crossings. Labels are soft:
+  // component clearance is hard, label clearance steers. After spacing and
+  // pin-direction conformity, minimize the route length (prefers symmetric
+  // minimal nets); turn count is the weakest term.
+  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), routeLength(pts), Math.max(0, pts.length - 2)];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */
@@ -567,9 +588,11 @@ function astar(from, to, env) {
  * When an endpoint is a component pin, candidates that first extend one grid
  * cell OUTWARD in the pin's direction (a clean outside bend, never drilling the
  * body) are generated alongside the plain straight/L/Z ones; the conform score
- * prefers them unless a direct route is already clean (e.g. two facing pins).
- * The A* fallback only kicks in when every candidate would drill through a
- * component footprint.
+ * prefers them, so a wire always leaves a pin in its direction before bending —
+ * even when the pins are aligned (e.g. two gates sharing a column: the direct
+ * run would hug the component boundary; the gate-facing U keeps one cell of
+ * clearance). The A* fallback only kicks in when every candidate would drill
+ * through a component footprint.
  */
 export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   const f = snapP(from);
@@ -578,13 +601,6 @@ export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: 
   const pins = env.pins || new Map();
   const src = pins.get(`${f.x},${f.y}`);
   const dst = pins.get(`${t.x},${t.y}`);
-  // Two pins already aligned on the same axis with a clean straight run: take
-  // it. The pin-escape candidates exist to avoid drilling bodies, but when the
-  // direct route is hardSafe it clears every body already, and the escape cells
-  // would only add a pointless detour (e.g. two gates sharing a column routed
-  // as a U via their escape cells instead of one straight wire). Unaligned pins
-  // and single-pin approaches keep the escape convention unchanged.
-  if ((f.x === t.x || f.y === t.y) && src && dst && hardSafe([f, t], env)) return [f, t];
   const f2 = src ? { x: f.x + src.x * STEP, y: f.y + src.y * STEP } : null;
   const t2 = dst ? { x: t.x + dst.x * STEP, y: t.y + dst.y * STEP } : null;
   const cands = routeCandidates(f, t);

@@ -3,7 +3,7 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
 import { autoRoute, balancedPaths, balancedRoute, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
-import { clonePath, deleteWireSegment, junctionPoints, normalizeBranches, pathLength, pointOnPath, splitBranchAt, splitByComponent, validateWiring } from './wiring.js';
+import { clonePath, deleteWireSegment, junctionPoints, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring } from './wiring.js';
 
 /** Nominal world units of text width per character (font-size 12 sans-serif).
  *  Raised for the bold+italic label font (INSTANCE_FONT / LABEL_FONT are both
@@ -588,7 +588,8 @@ export class Circuit {
     return { x: 0, y: Math.sign(ndy) };
   }
 
-  /** Routing environment for a net's default route: component bboxes + pins. */
+  /** Routing environment for a net's default route: component bboxes + pins
+   *  (labels are soft obstacles: they steer the route but never block it). */
   _netEnv() {
     const rects = [];
     const pins = new Map();
@@ -600,7 +601,9 @@ export class Circuit {
         pins.set(`${w.x},${w.y}`, this._pinDir(c, t, w.x, w.y));
       }
     }
-    return { rects, pins, wires: [] };
+    const labelRects = [];
+    for (const l of this.labels.values()) labelRects.push(l.bbox());
+    return { rects, pins, wires: [], labelRects };
   }
 
   /** Routing environment that also treats every existing wire as an obstacle
@@ -797,6 +800,7 @@ export class Circuit {
     if (addedNew && net.terminals.length >= 2) {
       this.rerouteNet(net, 'refresh');
     }
+    this._reduceNet(net);
     this.syncJunctionSolders();
     return net;
   }
@@ -807,6 +811,25 @@ export class Circuit {
     if (net.branches && net.branches.length) return net.branches.map(clonePath);
     if (net.route && net.route.length >= 2) return [clonePath(net.route)];
     return [];
+  }
+
+  /** Remove every redundant wire path from a net — parallel branches and
+   *  loops — by reducing the drawn geometry to the minimum spanning tree of
+   *  its connectivity graph (see reduceBranches). Deterministic, idempotent,
+   *  and a no-op for already-minimal nets; terminals are never moved or
+   *  dropped. Run after every wiring/merge/load so a net can never accumulate
+   *  duplicate wires no matter how often two points are re-wired. */
+  _reduceNet(net) {
+    const paths = this._explicitBranches(net);
+    if (!paths.length) return;
+    const terminals = net.terminals
+      .map((t) => this.getComponent(t.comp)?.terminalWorld(t.term))
+      .filter(Boolean);
+    const reduced = reduceBranches(paths, terminals);
+    if (!reduced.length || samePolylineSet(paths, reduced)) return;
+    net.branches = reduced.map(clonePath);
+    net.route = clonePath(reduced[0]);
+    net.junctions = this._netJunctions(net, net.branches);
   }
 
   /** Junction points of a net's branches, counting each terminal as an arm. */
@@ -887,6 +910,7 @@ export class Circuit {
     net.branches = branches;
     net.route = branches.length ? clonePath(branches[0]) : null;
     net.junctions = this._netJunctions(net, branches);
+    this._reduceNet(net);
     this.syncJunctionSolders();
     return net;
   }
@@ -948,6 +972,7 @@ export class Circuit {
     net.branches = branches;
     net.route = branches.length ? clonePath(branches[0]) : null;
     net.junctions = this._netJunctions(net, branches);
+    this._reduceNet(net);
     this.syncJunctionSolders();
     return net;
   }
@@ -1162,21 +1187,9 @@ export class Circuit {
       });
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
     }
-    // Touching pins connect (e.g. a ground dropped on a source) and the routing
-    // algorithm back-fills real solder components at any remaining junctions.
-    circuit._loading = false;
-    circuit.connectCoincident();
-    // Repair any stale/overlapping geometry: split branches at shared points so
-    // every junction is a real vertex, and drop duplicate branches.
-    for (const net of circuit.nets.values()) {
-      const paths = circuit._explicitBranches(net);
-      if (paths.length) {
-        const terminals = net.terminals.map((t) => circuit.getComponent(t.comp)?.terminalWorld(t.term)).filter(Boolean);
-        net.branches = normalizeBranches(paths, terminals);
-        net.route = net.branches.length ? clonePath(net.branches[0]) : null;
-        net.junctions = circuit._netJunctions(net, net.branches);
-      }
-    }
+    // every junction is a real vertex, drop duplicate branches, and reduce each
+    // net to a minimal connected structure (no parallel wires, no loops).
+    for (const net of circuit.nets.values()) circuit._reduceNet(net);
     circuit.syncJunctionSolders();
     return circuit;
   }

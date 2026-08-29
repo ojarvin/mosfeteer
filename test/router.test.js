@@ -367,16 +367,78 @@ test('smartRoute returns a straight line to a pin one cell below a free point', 
   assert.deepEqual(pts, [{ x: 520, y: -120 }, { x: 520, y: -80 }]);
 });
 
-test('smartRoute avoids running parallel on top of an existing wire', () => {
-  // an existing wire already occupies the y=40 channel; a straight route along
-  // y=40 would overlap it, so the router must prefer a non-overlapping line.
-  const wire = [{ x: 0, y: 40 }, { x: 400, y: 40 }];
-  const env = { rects: [], pins: new Map(), wires: [wire] };
-  const pts = smartRoute({ x: 0, y: 40 }, { x: 400, y: 40 }, env);
-  assert.deepEqual(pts[0], { x: 0, y: 40 });
-  assert.deepEqual(pts[pts.length - 1], { x: 400, y: 40 });
-  // not an overlapping straight run along y=40
-  const overlap = pts.length > 2 || pts[0].y !== 40 || pts[1].y !== 40;
-  assert.ok(pts.length > 2 && pts.some((p) => p.y !== 40), `detoured off the shared line: ${JSON.stringify(pts)}`);
+test('smartRoute prefers a channel one cell clear of a label box (soft obstacle)', () => {
+  // The straight run along y=0 passes within a grid cell of the label box above
+  // it; the y=-80 channel stays clear. Labels are soft: the router picks the
+  // clean channel when one exists but never hard-blocks a connection.
+  const labelRects = [{ x: 40, y: -40, w: 320, h: 80 }]; // y -40..40, so y=0 grazes it
+  const env = { rects: [], pins: new Map(), wires: [], labelRects };
+  const pts = smartRoute({ x: 0, y: 0 }, { x: 400, y: 0 }, env);
+  assert.deepEqual(pts[0], { x: 0, y: 0 });
+  assert.deepEqual(pts[pts.length - 1], { x: 400, y: 0 });
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+    const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    const dx = x0 > labelRects[0].x + labelRects[0].w ? x0 - (labelRects[0].x + labelRects[0].w) : x1 < labelRects[0].x ? labelRects[0].x - x1 : 0;
+    const dy = y0 > labelRects[0].y + labelRects[0].h ? y0 - (labelRects[0].y + labelRects[0].h) : y1 < labelRects[0].y ? labelRects[0].y - y1 : 0;
+    assert.ok(Math.hypot(dx, dy) >= 40, `segment ${i} keeps >=1 cell from the label: ${JSON.stringify(pts)}`);
+  }
   allOnGrid(pts);
+});
+
+test('smartRoute still connects when every channel grazes the label (labels are soft)', () => {
+  // A label box covering the whole corridor: no clean channel exists, but
+  // labels are NOT hard obstacles, so the connection is still made.
+  const labelRects = [{ x: 0, y: -120, w: 400, h: 240 }];
+  const env = { rects: [], pins: new Map(), wires: [], labelRects };
+  const pts = smartRoute({ x: 0, y: 0 }, { x: 400, y: 0 }, env);
+  assert.ok(pts.length >= 2, 'a route exists');
+  assert.deepEqual(pts[0], { x: 0, y: 0 });
+  assert.deepEqual(pts[pts.length - 1], { x: 400, y: 0 });
+});
+
+test('smartRoute leaves aligned gate pins in their direction (no boundary run)', () => {
+  // NMOS gate (200,120) and PMOS gate (200,-120), both facing WEST. The direct
+  // vertical run hugs the body edges; the router must leave each gate one cell
+  // west and route in the x=160 channel instead.
+  const rects = [{ x: 200, y: 40, w: 120, h: 160 }, { x: 200, y: -200, w: 120, h: 160 }];
+  const pins = new Map([
+    ['200,120', { x: -1, y: 0 }],
+    ['200,-120', { x: -1, y: 0 }],
+  ]);
+  const pts = smartRoute({ x: 200, y: 120 }, { x: 200, y: -120 }, { rects, pins, wires: [] });
+  assert.deepEqual(pts, [
+    { x: 200, y: 120 },
+    { x: 160, y: 120 },
+    { x: 160, y: -120 },
+    { x: 200, y: -120 },
+  ]);
+  // every body segment keeps at least one grid cell of clearance
+  for (const rect of rects) {
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+      const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+      const dx = x0 > rect.x + rect.w ? x0 - (rect.x + rect.w) : x1 < rect.x ? rect.x - x1 : 0;
+      const dy = y0 > rect.y + rect.h ? y0 - (rect.y + rect.h) : y1 < rect.y ? rect.y - y1 : 0;
+      if (i === 1 || i === pts.length - 1) continue; // pin legs exempt
+      assert.ok(Math.hypot(dx, dy) >= 40, `segment ${i} keeps >=1 cell clearance (${Math.hypot(dx, dy)})`);
+    }
+  }
+  allOnGrid(pts);
+});
+
+test('smartRoute still prefers the straight run for facing pins in open space', () => {
+  // Two resistors facing each other on the same row: the escapes are collinear
+  // with the target, so the route stays a single straight wire.
+  const rects = [{ x: 0, y: -40, w: 160, h: 80 }, { x: 400, y: -40, w: 160, h: 80 }];
+  const pins = new Map([
+    ['160,0', { x: 1, y: 0 }],
+    ['400,0', { x: -1, y: 0 }],
+  ]);
+  const pts = smartRoute({ x: 160, y: 0 }, { x: 400, y: 0 }, { rects, pins, wires: [] });
+  assert.deepEqual(pts, [{ x: 160, y: 0 }, { x: 400, y: 0 }]);
 });

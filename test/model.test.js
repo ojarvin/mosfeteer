@@ -664,3 +664,86 @@ test('fromJSON drops orphaned owned labels (owner missing)', () => {
   const c2 = Circuit.fromJSON(data);
   assert.equal(c2.labels.size, 0);
 });
+
+test('wiring the same two terminals repeatedly keeps exactly one wire', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // b at (160,0)
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 }); // a at (400,0)
+  c.wireTo('R1.b', { x: 400, y: 0 });
+  for (let i = 0; i < 5; i++) c.wireTo('R1.b', { x: 400, y: 0 });
+  const n = [...c.nets.values()][0];
+  assert.equal(n.terminals.length, 2, 'both terminals stay in the net');
+  assert.equal(n.branches.length, 1, 'no parallel wires accumulate');
+  assert.deepEqual(n.branches[0], [{ x: 160, y: 0 }, { x: 400, y: 0 }], 'cheapest path survives');
+  assert.deepEqual(n.junctions, [], 'terminal points are not mislabelled as junctions');
+  const dots = [...c.components.values()].filter((x) => x.type === 'solder');
+  assert.equal(dots.length, 0, 'no spurious solder dots');
+});
+
+test('re-wiring an existing T-junction does not create a loop', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 280, y: -200 });
+  c.wireTo('R1.b', { x: 400, y: 0 });
+  c.wireTo('R3.b', { x: 280, y: 0 }); // T-join mid-wire
+  c.wireTo('R3.b', { x: 280, y: 0 }); // duplicate join
+  const n = [...c.nets.values()][0];
+  assert.equal(n.terminals.length, 3);
+  assert.equal(n.branches.length, 3, 'the T stays a tree: two bus halves + the stem');
+  assert.deepEqual(n.junctions, [{ x: 280, y: 0 }]);
+  const dots = [...c.components.values()].filter((x) => x.type === 'solder');
+  assert.equal(dots.length, 1, 'one junction, one dot');
+});
+
+test('a looped detour is replaced by the cheaper straight path', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.wireTo('R1.b', { x: 400, y: 0 });
+  // Re-wire with a longer detour below the existing straight wire.
+  c.wireTo('R1.b', { x: 400, y: 0 }, [{ x: 160, y: 160 }, { x: 400, y: 160 }]);
+  const n = [...c.nets.values()][0];
+  assert.equal(n.branches.length, 1, 'the redundant detour is dropped');
+  assert.deepEqual(n.branches[0], [{ x: 160, y: 0 }, { x: 400, y: 0 }], 'the shorter straight path wins');
+});
+
+test('a wire run dragged onto a same-net wire merges on commit (no hidden overlap)', async () => {
+  // Editor flow: T-join net, then drag the stem's horizontal run down onto the
+  // bus line (the exact gesture that used to produce overlapped hidden wires),
+  // then commit exactly like canvasMouseUp: rerouteNet + _reduceNet.
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 280, y: -200 });
+  c.wireTo('R1.b', { x: 400, y: 0 });       // bus (160,0)-(400,0)
+  c.wireTo('R3.b', { x: 280, y: 0 });       // T stem via (280,-120)
+  const n = [...c.nets.values()][0];
+  const stem = n.branches.find((b) => b.some((p) => p.x === 280 && p.y === -120) && b[0].y !== 0);
+  const bi = n.branches.indexOf(stem);
+  // Drag the stem's horizontal run (x 280..440 at y=-120) down onto the bus row y=0.
+  const { moveWireRun } = await import('../src/core/wireedit.js');
+  const run = stem.map((p) => ({ ...p }));
+  moveWireRun(run, 'h', -120, 0);
+  n.branches[bi] = run;
+  c.rerouteNet(n);
+  c._reduceNet(n);
+  // The bus is drawn once; every terminal stays connected; nothing overlaps.
+  const terminals = n.terminals.map((t) => c.netOfTerminal(`${t.comp}.${t.term}`));
+  assert.ok(terminals.every((net) => net === n), 'all terminals stay on the net');
+  const segs = [];
+  for (const b of n.branches) for (let i = 1; i < b.length; i++) segs.push([b[i - 1], b[i]]);
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const [a, b] = segs[i];
+      const [c2, d] = segs[j];
+      const overlap = (a.x === b.x && c2.x === d.x && a.x === c2.x)
+        ? Math.max(Math.min(a.y, b.y), Math.min(c2.y, d.y)) < Math.min(Math.max(a.y, b.y), Math.max(c2.y, d.y))
+        : (a.y === b.y && c2.y === d.y && a.y === c2.y)
+          ? Math.max(Math.min(a.x, b.x), Math.min(c2.x, d.x)) < Math.min(Math.max(a.x, b.x), Math.max(c2.x, d.x))
+          : false;
+      assert.ok(!overlap, `no collinear overlap after commit (${i} vs ${j})`);
+    }
+  }
+  assert.ok(n.branches.length >= 2, 'bus + stem stub survive the merge');
+});

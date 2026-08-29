@@ -127,15 +127,29 @@ export function svgString(circuit, opts = {}) {
     }
   }
 
-  // Nets first so components draw on top of wire ends.
+  // Components.
+  const comps = [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
+  for (const c of comps) {
+    const t = c.transform;
+    parts.push(`<g transform="${transformToSvg(t)}"><g class="sym" data-ref="${c.refdes}">`);
+    for (const g of c.def.graphics) parts.push(graphicsToSvg(g));
+    parts.push('</g></g>');
+    if (o.includeBBox) {
+      const r = c.bboxWorld();
+      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
+    }
+  }
+
+  // Wires draw ON TOP of component bodies so an overlapping wire stays visible
+  // and selectable (component linework no longer hides it).
   for (const net of circuit.nets.values()) {
     const paths = net.branches
       ? net.branches
       : !net.route && net.terminals.length >= 3
-        ? balancedPaths(net.terminalWorlds())
+        ? balancedPaths(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
         : [net.points()];
     for (const pts of paths) {
-      if (pts.length < 2) continue;
+      if (!pts || pts.length < 2) continue;
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
       parts.push(`<path d="${d}" fill="none" ${strokeAttrs()}/>`);
       if (o.netNames && net.name) {
@@ -148,7 +162,7 @@ export function svgString(circuit, opts = {}) {
   // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
   // circle at net junctions.
 
-  // Junction dots at multi-terminal net connection points.
+  // Junction dots at multi-terminal net connection points (above the wires).
   if (o.junctions) {
     for (const net of circuit.nets.values()) {
       if (net.terminals.length < 3) continue;
@@ -158,19 +172,6 @@ export function svgString(circuit, opts = {}) {
         const p = c.terminalWorld(term);
         parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#292929"/>`);
       }
-    }
-  }
-
-  // Components.
-  const comps = [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
-  for (const c of comps) {
-    const t = c.transform;
-    parts.push(`<g transform="${transformToSvg(t)}"><g class="sym" data-ref="${c.refdes}">`);
-    for (const g of c.def.graphics) parts.push(graphicsToSvg(g));
-    parts.push('</g></g>');
-    if (o.includeBBox) {
-      const r = c.bboxWorld();
-      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
     }
   }
 

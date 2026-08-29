@@ -179,12 +179,18 @@ test('loading stale overlapping branches splits them so dragging never loops or 
     return n.branches.some((b) => b.some((q) => q.x === p.x && q.y === p.y));
   });
   const dots = () => [...c.components.values()].filter((x) => x.type === 'solder').length;
+  // The branches below were authored for the pre-160-wide capacitor geometry:
+  // with the current 160-wide body every terminal (C4.b -80,600, C3.b 640,80,
+  // C1.b -80,-400, C2.b -80,80) lands mid-wire, so each terminal-on-wire is a
+  // real 3-arm junction dot (4) plus the T at (160,600) -> 5 dots total. The
+  // invariant this test guards is that DRAGGING never adds (or removes) dots.
+  const loadDots = dots();
   for (const [x, y] of [[-240, 480], [-240, 360], [-240, 240]]) {
     const dx = x - sx, dy = y - sy;
     c.moveComponent('C4', x, y);
     n.branches = snap.map((b) => b.map((p) => ({ ...p })));
     c.rerouteNet(n, new Map([['C4', { dx, dy }]]));
     assert.ok(attached(), `terminals attached after C4@${x},${y}`);
+    assert.equal(dots(), loadDots, `dot count stable after C4@${x},${y}`);
   }
-  assert.equal(dots(), 2, 'no additional dots after dragging');
 });

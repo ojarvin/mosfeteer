@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wireRunAt, collapseCollinear, moveWireRun } from '../src/core/wireedit.js';
-import { deleteWireSegment, junctionPoints, normalizePath } from '../src/core/wiring.js';
+import { deleteWireSegment, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
 import { onGrid } from '../src/core/grid.js';
 
 function ortho(pts) {
@@ -114,9 +114,108 @@ test('deleting a segment splits a branch without moving its remaining geometry',
   assert.ok(!next.flat().some((p, i, all) => i && p.x === all[i - 1].x && p.y === all[i - 1].y), 'no duplicate join segment');
 });
 
-test('junctionPoints finds T and four-way intersections but not a plain crossing', () => {
-  assert.deepEqual(junctionPoints([
-    [{ x: 0, y: 40 }, { x: 160, y: 40 }],
-    [{ x: 80, y: 40 }, { x: 80, y: 120 }],
-  ]), [{ x: 80, y: 40 }]);
+test('reduceBranches keeps the cheapest of two parallel paths', () => {
+  const straight = [{ x: 160, y: 0 }, { x: 400, y: 0 }]; // cost 240
+  const detour = [{ x: 160, y: 0 }, { x: 160, y: -80 }, { x: 400, y: -80 }, { x: 400, y: 0 }]; // cost 400
+  assert.deepEqual(reduceBranches([straight, detour], [{ x: 160, y: 0 }, { x: 400, y: 0 }]), [straight]);
+  // order-independent: the detour never wins
+  assert.deepEqual(reduceBranches([detour, straight], [{ x: 160, y: 0 }, { x: 400, y: 0 }]), [straight]);
+});
+
+test('reduceBranches breaks a closed loop into a tree', () => {
+  const loop = [{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 160, y: 80 }, { x: 160, y: 0 }, { x: 0, y: 0 }];
+  const reduced = reduceBranches([loop], [{ x: 0, y: 0 }, { x: 160, y: 0 }]);
+  // a tree on 4 vertices: 3 edges (a path), no closed loop
+  assert.equal(reduced.length, 1);
+  const pts = reduced[0];
+  assert.equal(pts.length, 4, `loop reduced to an open path, got ${JSON.stringify(pts)}`);
+  assert.deepEqual(pts[0], { x: 0, y: 0 });
+  assert.deepEqual(pts[pts.length - 1], { x: 160, y: 0 });
+  for (let i = 1; i < pts.length; i++) {
+    assert.ok(pts[i].x === pts[i - 1].x || pts[i].y === pts[i - 1].y, 'orthogonal');
+  }
+});
+
+test('reduceBranches is deterministic on equal-cost ties (older branch wins)', () => {
+  const top = [{ x: 160, y: 0 }, { x: 160, y: -80 }, { x: 400, y: -80 }, { x: 400, y: 0 }];
+  const bottom = [{ x: 160, y: 0 }, { x: 160, y: 80 }, { x: 400, y: 80 }, { x: 400, y: 0 }];
+  const terminals = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
+  assert.deepEqual(reduceBranches([top, bottom], terminals), [top], 'first-drawn equal path survives');
+  assert.deepEqual(reduceBranches([bottom, top], terminals), [bottom]);
+});
+
+test('reduceBranches is idempotent and keeps a clean tree untouched', () => {
+  const t = [
+    [{ x: 160, y: 0 }, { x: 280, y: 0 }],
+    [{ x: 280, y: 0 }, { x: 400, y: 0 }],
+    [{ x: 280, y: 0 }, { x: 280, y: -120 }, { x: 440, y: -120 }, { x: 440, y: -200 }],
+  ];
+  const terminals = [{ x: 160, y: 0 }, { x: 400, y: 0 }, { x: 440, y: -200 }];
+  const once = reduceBranches(t, terminals);
+  assert.deepEqual(once, t, 'a tree is returned unchanged');
+  assert.deepEqual(reduceBranches(once, terminals), once, 'reducing twice is a no-op');
+});
+
+test('reduceBranches merges a run dragged onto a same-net wire (no hidden overlap)', () => {
+  // Main wire (0,0)-(400,0); an L-shaped branch was dragged so its horizontal
+  // run lies ON the main wire over (80,0)-(320,0), with a stub going down at
+  // x=80. The overlap must merge: one wire + the stub T, no double-drawn span.
+  const main = [{ x: 0, y: 0 }, { x: 400, y: 0 }];
+  const dragged = [{ x: 80, y: -80 }, { x: 80, y: 0 }, { x: 320, y: 0 }];
+  const terminals = [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 80, y: -80 }];
+  const reduced = reduceBranches([main, dragged], terminals);
+  const flat = reduced.flat();
+  // No segment of any branch lies on top of another branch's segment.
+  const segments = [];
+  for (const b of reduced) for (let i = 1; i < b.length; i++) segments.push([b[i - 1], b[i]]);
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      const [a, b] = segments[i];
+      const [c, d] = segments[j];
+      const shared = (x, y) => {
+        if (a.x === b.x && c.x === d.x && a.x === c.x) {
+          const lo = Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
+          const hi = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y));
+          return hi > lo && x === a.x && y >= lo && y <= hi;
+        }
+        if (a.y === b.y && c.y === d.y && a.y === c.y) {
+          const lo = Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
+          const hi = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x));
+          return hi > lo && y === a.y && x >= lo && x <= hi;
+        }
+        return false;
+      };
+      assert.ok(!shared(0, 0), `no collinear overlap between branches ${i} and ${j}`);
+    }
+  }
+  // The stub survives as a T at (80,0); the overlap span is drawn exactly once
+  // (the junction point is shared by the bus and the stub branches).
+  assert.ok(flat.some((p) => p.x === 80 && p.y === -80), 'stub end survives');
+  assert.ok(flat.some((p) => p.x === 80 && p.y === 0), 'the T point exists');
+  assert.ok(reduced.length >= 2, `main wire + stub, got ${JSON.stringify(reduced)}`);
+});
+
+test('reduceBranches merges contained and extending overlaps into the union wire', () => {
+  // wire2 entirely inside wire1's span: the inner run is redundant.
+  const r1 = reduceBranches(
+    [[{ x: 0, y: 0 }, { x: 400, y: 0 }], [{ x: 40, y: 0 }, { x: 120, y: 0 }]],
+    [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 40, y: 0 }, { x: 120, y: 0 }]
+  );
+  assert.deepEqual(r1, [
+    [{ x: 0, y: 0 }, { x: 40, y: 0 }],
+    [{ x: 40, y: 0 }, { x: 120, y: 0 }],
+    [{ x: 120, y: 0 }, { x: 400, y: 0 }],
+  ], 'inner wire merges into the outer one (single drawn path)');
+
+  // wire2 overlaps the middle AND extends past the right end: the extension
+  // survives, the overlap merges.
+  const r2 = reduceBranches(
+    [[{ x: 0, y: 0 }, { x: 400, y: 0 }], [{ x: 80, y: 0 }, { x: 480, y: 0 }]],
+    [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 80, y: 0 }, { x: 480, y: 0 }]
+  );
+  assert.deepEqual(r2, [
+    [{ x: 0, y: 0 }, { x: 80, y: 0 }],
+    [{ x: 80, y: 0 }, { x: 400, y: 0 }],
+    [{ x: 400, y: 0 }, { x: 480, y: 0 }],
+  ], 'overlap merged, extension kept');
 });

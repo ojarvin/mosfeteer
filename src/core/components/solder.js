@@ -18,7 +18,10 @@ export const solder = defineSymbol({
   description: 'Solder dot (junction annotation)',
   refPrefix: 'J',
   terminals: [],
-  bbox: { x: -40, y: -40, w: 80, h: 80 },
+  // The bbox is exactly the drawn dot: solder is placed directly on a grid
+  // point (the junction) and selected there, so it must not shadow a whole
+  // grid cell or count as a routing obstacle.
+  bbox: { x: -SOLDER_DOT_RADIUS, y: -SOLDER_DOT_RADIUS, w: 2 * SOLDER_DOT_RADIUS, h: 2 * SOLDER_DOT_RADIUS },
   graphics: [{ kind: 'dot', cx: 0, cy: 0, r: SOLDER_DOT_RADIUS }],
   textPos: null,
   refPos: null,

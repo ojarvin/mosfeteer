@@ -319,6 +319,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
       }
       for (const id of touched) routeNet(circuit, circuit.nets.get(id));
     }
+    // A moved component can land a wire leg on top of a same-net wire; reduce
+    // the touched nets so overlapped runs merge instead of hiding beneath.
+    for (const id of [...circuit.nets.keys()]) {
+      const net = circuit.nets.get(id);
+      if (net && net.terminals.some((t) => t.comp === c.refdes)) circuit._reduceNet(net);
+    }
     return result(`moved ${c.refdes} to ${pp(c.transform.x, c.transform.y)}`, { refdes: c.refdes, x: c.transform.x, y: c.transform.y }, true);
   }
   if (cmd === 'rotate') {

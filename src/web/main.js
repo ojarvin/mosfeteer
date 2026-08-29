@@ -1510,6 +1510,7 @@ function canvasMouseUp(ev) {
       drag.net.route = drag.pts.map((p) => ({ ...p }));
     }
     rerouteNet(drag.net); // re-anchor the persisted drag against the terminals
+    circuit._reduceNet(drag.net); // merge any run dragged onto a same-net wire
     circuit.syncJunctionSolders();
     history.push(drag.startSnapshot);
     if (history.length > 200) history.shift();
@@ -1534,6 +1535,12 @@ function canvasMouseUp(ev) {
       }
       // Re-sync junction solder dots to the moved topology.
       circuit.syncJunctionSolders();
+      // A moved component can land a wire leg on top of a same-net wire; reduce
+      // the touched nets so overlapped runs merge instead of hiding beneath.
+      for (const id of netsTouching(refs)) {
+        const net = circuit.nets.get(id);
+        if (net) circuit._reduceNet(net);
+      }
     }
   }
 

@@ -79,6 +79,11 @@ and editor UX — skim it whenever you need an exact number.
   shift with the body. Buffer/inverter triangle bodies are closed with `Z`
   so the apex is a sharp miter (the inverter's apex hides behind its
   bubble).
+- **solder**: pure annotation dot (`SOLDER_DOT_RADIUS=12`); its bbox is
+  exactly the drawn dot (`{-12,-12,24,24}`) — not a grid cell — because
+  solder is placed on and selected at the junction grid point directly.
+  `validateSymbol` exempts terminal-less annotations from the bbox-on-grid
+  rule. Excluded from the routing env and from `evaluate()` overlap checks.
 - **port / port_filled** (Razavi circle markers): `p`(0,0), circle left of
   the lead. **input/output/inputoutput** are Razavi-style boxed ports
   (refPrefix `I`/`O`/`IO` + owned id label to the LEFT at labelOffset
@@ -153,6 +158,27 @@ and editor UX — skim it whenever you need an exact number.
   dragging either component apart keeps the net and routes a wire between
   them. `fromJSON` runs it after loading explicit nets (guarded by
   `_loading`).
+- **Nets are reduced to a minimum spanning tree (no parallel wires /
+  loops).** Wiring two points that are already connected in the same net
+  must never pile up duplicate or looped wires: every `wireTo`,
+  `wirePointTo`, `connect`, `fromJSON`, and every drag commit
+  (wireseg + component drags in `canvasMouseUp`, CLI `move`) runs
+  `Circuit#_reduceNet`, which calls `reduceBranches` (wiring.js). That is
+  a deterministic Kruskal MST over the net's connectivity graph — the
+  conventional ratsnest-style reduction (KiCad `RN_NET::kruskalMST`,
+  EAGLE RATSNEST): terminals + junctions (T/cross points) are the
+  vertices, each polyline run between two vertices is an edge weighted by
+  its Manhattan length, and parallel edges (2-cycles) and cycle edges are
+  dropped, keeping the cheapest connected structure. Collinearly
+  OVERLAPPING runs (a wire dragged on top of a same-net wire) are split
+  at the overlap boundaries first, so the shared span becomes a parallel
+  edge and merges into one drawn wire — no hidden overlapping geometry.
+  Ties break by insertion order (older branches win), so the result is
+  idempotent and deterministic; bridges are never removed and terminals
+  always stay branch endpoints (wire legs keep re-anchoring on move).
+  Closed single-branch loops are opened first so they reduce like any
+  path. Covered by `reduceBranches` unit tests (wireedit.test.js) and the
+  `wireTo`/`fromJSON`/drag-commit model tests.
 - **Balanced routes keep terminal legs.** `normalizePath` (wiring.js)
   merges a collinear middle point ONLY when the run is monotonic; a point
   where the polyline reverses direction (e.g. the balanced route's
@@ -164,8 +190,22 @@ and editor UX — skim it whenever you need an exact number.
   extend one grid cell OUTWARD from each pin (in its terminal `dir`, via
   `applyDir`) before bending, so a gate→drain wire leaves the gate west
   and approaches the drain from the north — a clean outside bend that
-  never drills the body. Both `main.js` and `commands.js` `pinDir` honor
-  `t.dir` first (bbox heuristic is the fallback).
+  never drills the body. The conform score prefers the escaped candidates
+  for EVERY pin pair — including aligned ones (two gates sharing a column
+  route as a gate-facing U in the channel one cell off the bodies, never
+  as a straight run hugging the body edge). Facing pins (escapes collinear
+  with the target) still collapse to a straight wire. Both `main.js` and
+  `commands.js` `pinDir` honor `t.dir` first (bbox heuristic is the
+  fallback). `scoreCandidate` ranks: bbox crossings, overlap, wire cross,
+  component clearance, label clearance, pin conformity, LENGTH, then turn
+  count — so among clearance- and direction-equal routes the shortest (and
+  for symmetric placements, the symmetric) one wins.
+- **Clearance:** `hardSafe` (router.js) keeps every committed segment at
+  least one grid cell from every component bbox (pin-connected legs
+  exempt); the routing env also carries `labelRects` — label boxes are
+  SOFT obstacles (`labelScore` in `scoreCandidate`): the router prefers a
+  channel one cell clear of a label when one exists, but never hard-blocks
+  a connection through a label. Solder dots are excluded from both.
 - **Wire-mode click priority:** terminal clicks (within `max(GRID/2,
   12px/unit)` via `nearestTerminal`) always start / end a wire in wire
   mode, even when a wire passes through the pin.
@@ -247,6 +287,10 @@ and editor UX — skim it whenever you need an exact number.
   defaults to system `prefers-color-scheme`.
 - **`#` toggles the grid** (`setGrid()`); `#btn-grid` mirrors it.
   Toolbar buttons carry `title` tooltips.
+- **Z-order:** wires render ON TOP of component bodies (svgString draws
+  components, then nets, then pin/junction dots) so an overlapping wire
+  stays visible and clickable; labels and the overlay (selection halos,
+  net highlights) draw last.
 - **`D` toggles dark mode** (plus `#btn-theme`).
 - **Copy / paste on selected sets:** `yy` / `Ctrl+C` (`copySelection`)
   captures the selected components + free labels + every net whose
@@ -297,14 +341,11 @@ and editor UX — skim it whenever you need an exact number.
 
 ## Working-context notes
 
-- `npm test` = **161/162** green (model / commands / router / render /
-  wireedit). One pre-existing failure in
-  `test/multinet.test.js:141` ("loading stale overlapping branches
-  splits them so dragging never loops or adds dots": 6 dots vs expected
-  2). The new HTTP endpoint reuses `runCommand()` and is covered by the
-  existing tests; the CLI is a thin client over it and is exercised by
-  `npm test` only for argument parsing (the server itself is verified by
-  the smoke test below).
+- `npm test` = **182/182** green (model / commands / router / render /
+  wireedit / multinet / symbols). The HTTP endpoint reuses `runCommand()` and is
+  covered by the existing tests; the CLI is a thin client over it and is
+  exercised by `npm test` only for argument parsing (the server itself is
+  verified by the smoke test below).
 - CDP browser suites (headless chromium) live in `/tmp/opencode/`:
   - `mos_label_test.mjs` — NMOS / PMOS hotkeys, PMOS defaultMirrorY,
     MOS id label on bulk side / gate height, double-click inline edit,

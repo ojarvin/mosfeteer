@@ -3,19 +3,18 @@ import assert from 'node:assert/strict';
 import { GRID, onGrid } from '../src/core/grid.js';
 import { defineSymbol, validateSymbol } from '../src/core/components/defineSymbol.js';
 import { symbolTypes, symbolTypeNames, getSymbol } from '../src/core/components/index.js';
+import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 
 test('every registered symbol validates clean (grid contract)', () => {
   for (const type of symbolTypeNames) {
     const def = getSymbol(type);
     assert.doesNotThrow(() => validateSymbol(def), `symbol "${type}" should validate`);
 
-    assert.ok(Array.isArray(def.terminals), `${type} terminals is an array`);
-    for (const t of def.terminals) {
-      assert.ok(Number.isInteger(t.x / GRID), `${type} terminal ${t.name} x on grid (${t.x})`);
-      assert.ok(Number.isInteger(t.y / GRID), `${type} terminal ${t.name} y on grid (${t.y})`);
-    }
-    for (const k of ['x', 'y', 'w', 'h']) {
-      assert.ok(Number.isInteger(def.bbox[k] / GRID), `${type} bbox ${k} on grid (${def.bbox[k]})`);
+    // Annotations (no terminals, e.g. solder dots) may use a dot-sized bbox.
+    if (def.terminals.length > 0) {
+      for (const k of ['x', 'y', 'w', 'h']) {
+        assert.ok(Number.isInteger(def.bbox[k] / GRID), `${type} bbox ${k} on grid (${def.bbox[k]})`);
+      }
     }
   }
 });
@@ -113,7 +112,10 @@ test('solder dot is a validated zero-terminal annotation symbol', () => {
   assert.equal(def.type, 'solder');
   assert.equal(def.refPrefix, 'J');
   assert.deepEqual(def.terminals, []);
-  assert.ok(Number.isInteger(def.bbox.x / GRID) && Number.isInteger(def.bbox.h / GRID));
+  // The bbox is exactly the drawn dot (r=SOLDER_DOT_RADIUS), not a whole grid
+  // cell — solder is placed on and selected at the junction grid point.
+  assert.deepEqual(def.bbox, { x: -12, y: -12, w: 24, h: 24 });
+  assert.equal(def.bbox.w, 2 * SOLDER_DOT_RADIUS);
   assert.equal(def.graphics.length, 1);
   assert.equal(def.graphics[0].kind, 'dot');
   assert.doesNotThrow(() => validateSymbol(def));

@@ -191,3 +191,19 @@ test('fully differential opamp shares the opamp footprint with two outputs', () 
   // Owned instance label (same as every component) still renders its id.
   assert.ok(svg.includes('>U<tspan'), 'U2 instance label rendered');
 });
+
+test('wires render ON TOP of component bodies (z-order)', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.wireTo('R1.b', { x: 400, y: 0 });
+  const svg = svgString(c);
+  // The net wire (160,0)->(400,0) must be emitted after the LAST component
+  // group so component linework can never hide it.
+  const wire = svg.indexOf('M 160 0 L 400 0');
+  const lastCompGroup = svg.lastIndexOf('<g class="sym"');
+  assert.ok(wire > lastCompGroup, `net wire must come after the last component group (wire @${wire}, last comp @${lastCompGroup})`);
+  // and before the terminal dots (pin markers stay readable on top of wires)
+  const terminalDot = svg.indexOf('r="3" fill="#111"');
+  assert.ok(terminalDot > wire, 'terminal dots draw above wires');
+});

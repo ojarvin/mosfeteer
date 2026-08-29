@@ -3,7 +3,8 @@ import { GRID, onGrid } from '../grid.js';
 /**
  * Symbol definition factory. Enforces the contract:
  *  - every terminal position is on the GRID (multiple of 40)
- *  - the bounding box corners/extents are on the GRID
+ *  - the bounding box corners/extents are on the GRID (unless the symbol has
+ *    no terminals — pure annotations like solder may use a dot-sized bbox)
  *  - terminal names are unique
  * The terminal list may be empty for pure annotations (e.g. solder dots).
  * Symbol body graphics may use arbitrary coordinates.
@@ -30,10 +31,15 @@ export function validateSymbol(def) {
       );
     }
   }
-  const r = def.bbox;
-  for (const [k, v] of Object.entries(r)) {
-    if (!Number.isInteger(v / GRID)) {
-      throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
+  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
+  // grid point and never routed through, so their bbox may be the drawn size
+  // rather than an aligned grid cell.
+  if (terms.length > 0) {
+    const r = def.bbox;
+    for (const [k, v] of Object.entries(r)) {
+      if (!Number.isInteger(v / GRID)) {
+        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
+      }
     }
   }
 }
