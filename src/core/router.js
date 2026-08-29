@@ -578,6 +578,13 @@ export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: 
   const pins = env.pins || new Map();
   const src = pins.get(`${f.x},${f.y}`);
   const dst = pins.get(`${t.x},${t.y}`);
+  // Two pins already aligned on the same axis with a clean straight run: take
+  // it. The pin-escape candidates exist to avoid drilling bodies, but when the
+  // direct route is hardSafe it clears every body already, and the escape cells
+  // would only add a pointless detour (e.g. two gates sharing a column routed
+  // as a U via their escape cells instead of one straight wire). Unaligned pins
+  // and single-pin approaches keep the escape convention unchanged.
+  if ((f.x === t.x || f.y === t.y) && src && dst && hardSafe([f, t], env)) return [f, t];
   const f2 = src ? { x: f.x + src.x * STEP, y: f.y + src.y * STEP } : null;
   const t2 = dst ? { x: t.x + dst.x * STEP, y: t.y + dst.y * STEP } : null;
   const cands = routeCandidates(f, t);
