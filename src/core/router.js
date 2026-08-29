@@ -128,15 +128,12 @@ function appendBalancedRoute(out, target, env) {
 export function balancedRoute(points, env = { rects: [], pins: new Map(), wires: [] }) {
   const terminals = points.map(snapP);
   if (terminals.length < 3 || !hasCenteredBranch(terminals)) return pruneRoute(simpleAutoRoute(terminals), terminals);
-  const pair = terminals.find((p, i) => terminals.some((q, j) => j !== i && p.y === q.y && terminals.some((r, k) => k !== i && k !== j && r.x > Math.min(p.x, q.x) && r.x < Math.max(p.x, q.x))))
-    || terminals.find((p, i) => terminals.some((q, j) => j !== i && p.x === q.x && terminals.some((r, k) => k !== i && k !== j && r.y > Math.min(p.y, q.y) && r.y < Math.max(p.y, q.y))));
+  const pair = findPair(terminals);
   if (!pair) return pruneRoute(simpleAutoRoute(terminals), terminals);
   const pairIndex = terminals.indexOf(pair);
   const other = terminals.find((p, i) => i !== pairIndex && (p.y === pair.y || p.x === pair.x));
   const branch = terminals.find((p, i) => i !== pairIndex && p !== other);
-  const junction = pair.y === other.y
-    ? { x: median(terminals.map((p) => p.x)), y: snap((pair.y + branch.y) / 2) }
-    : { x: snap((pair.x + branch.x) / 2), y: median(terminals.map((p) => p.y)) };
+  const junction = centeredJunction(pair, other, branch);
   const start = branch || terminals[0];
   const out = [{ ...start }];
   appendBalancedRoute(out, junction, env);
@@ -149,21 +146,77 @@ export function balancedRoute(points, env = { rects: [], pins: new Map(), wires:
 export function balancedPaths(points, env = { rects: [], pins: new Map(), wires: [] }) {
   const terminals = points.map(snapP);
   if (terminals.length < 3 || !hasCenteredBranch(terminals)) return [simpleAutoRoute(terminals)];
-  const pair = terminals.find((p, i) => terminals.some((q, j) => j !== i && p.y === q.y && terminals.some((r, k) => k !== i && k !== j && r.x > Math.min(p.x, q.x) && r.x < Math.max(p.x, q.x))))
-    || terminals.find((p, i) => terminals.some((q, j) => j !== i && p.x === q.x && terminals.some((r, k) => k !== i && k !== j && r.y > Math.min(p.y, q.y) && r.y < Math.max(p.y, q.y))));
+  const pair = findPair(terminals);
   if (!pair) return [simpleAutoRoute(terminals)];
   const pairIndex = terminals.indexOf(pair);
   const other = terminals.find((p, i) => i !== pairIndex && (p.y === pair.y || p.x === pair.x));
   const branch = terminals.find((p, i) => i !== pairIndex && p !== other);
-  const junction = pair.y === other.y
-    ? { x: median(terminals.map((p) => p.x)), y: snap((pair.y + branch.y) / 2) }
-    : { x: snap((pair.x + branch.x) / 2), y: median(terminals.map((p) => p.y)) };
-  const makePath = (a, b) => {
-    const path = [{ ...a }];
-    appendBalancedRoute(path, b, env);
-    return pruneRoute(path, terminals);
-  };
-  return [makePath(branch, junction), makePath(junction, pair), makePath(junction, other)];
+  const junction = centeredJunction(pair, other, branch);
+
+  // External → junction. Single segment typically; let smartRoute pick the
+  // best body-clear + pin-escape path.
+  const externalPath = [{ ...branch }];
+  appendBalancedRoute(externalPath, junction, env);
+
+  // Pair/other → junction. Force the corner to be on the JUNCTION's axis (not
+  // the pair's column) so the three arms visibly diverge at the junction with
+  // three distinct wire directions — that's what junctionPoints needs to flag
+  // the point as a T-junction solder dot. Routing each leg through smartRoute
+  // individually keeps body clearance + pin-escape honored.
+  const cornerFor = (t) => (pair.x === other.x
+    ? { x: junction.x, y: t.y }
+    : { x: t.x, y: junction.y });
+  const pairPath = buildBendPath(junction, cornerFor(pair), pair, env);
+  const otherPath = buildBendPath(junction, cornerFor(other), other, env);
+
+  return [
+    pruneRoute(externalPath, terminals),
+    pruneRoute(pairPath, terminals),
+    pruneRoute(otherPath, terminals),
+  ];
+}
+
+/** Build an orthogonal path with a forced corner between start and end.
+ *  The corner sits on the junction's axis — one cell clear of the pair's
+ *  column — so the segments are short straights in open space. We construct
+ *  them directly instead of going through smartRoute, which on a pin-escape
+ *  cell sometimes picks a detour (e.g. (360,-40) → (320,-40) returns a U-shape
+ *  up-around-down rather than the direct 40-unit horizontal). When start and
+ *  end already share an axis, the corner collapses and the result is one
+ *  straight segment. */
+function buildBendPath(start, corner, end, env) {
+  if (start.x === end.x || start.y === end.y) {
+    return [{ ...start }, { x: snap(end.x), y: snap(end.y) }];
+  }
+  return [
+    { ...start },
+    { x: corner.x, y: corner.y },
+    { x: snap(end.x), y: snap(end.y) },
+  ];
+}
+
+/** Pick one terminal of the first pair sharing an axis (x or y). */
+function findPair(terminals) {
+  return terminals.find((p, i) => terminals.some((q, j) => j !== i && p.y === q.y && terminals.some((r, k) => k !== i && k !== j && r.x > Math.min(p.x, q.x) && r.x < Math.max(p.x, q.x))))
+    || terminals.find((p, i) => terminals.some((q, j) => j !== i && p.x === q.x && terminals.some((r, k) => k !== i && k !== j && r.y > Math.min(p.y, q.y) && r.y < Math.max(p.y, q.y))));
+}
+
+/** Compute the T-junction point for a "1 external + 2 paired (same x or y)"
+ *  net. Place the junction ON the pair's shared column (or row), at the
+ *  midpoint of the pair's other axis. This is the textbook Razavi layout:
+ *  the external lead lands at the pair's column, the pair splits vertically
+ *  (or horizontally) to each pair member, no detour past the pair. The
+ *  earlier formula averaged pair↔external on the differing axis (junction
+ *  at the geometric midpoint), then was changed to offset one cell toward
+ *  the external — both produced a winding asymmetric route that the user
+ *  flagged as "roundabout". Junction AT the pair's column is shorter
+ *  (straight lead), simpler (3 straight segments instead of 4 with an extra
+ *  bend), and matches the canonical CMOS inverter / differential-pair look. */
+function centeredJunction(pair, other, branch) {
+  if (pair.x === other.x) {
+    return { x: pair.x, y: snap((pair.y + other.y) / 2) };
+  }
+  return { x: snap((pair.x + other.x) / 2), y: pair.y };
 }
 
 /** True if segments (a->b) and (c->d) cross at an interior point (both x- and y-spans). */

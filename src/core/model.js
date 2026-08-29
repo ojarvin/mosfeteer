@@ -629,6 +629,7 @@ export class Circuit {
     if (moved === 'refresh') {
       net.branches = null;
       net.route = null;
+      net.junctions = []; // stale junction points would steer _layoutFresh into the single-polyline branch and skip balancedPaths
       this._layoutFresh(net, anchors, env);
       return;
     }
@@ -663,8 +664,15 @@ export class Circuit {
       net.route = smartRoute(anchors[0], anchors[1], env);
       net.branches = null;
     } else {
-      net.route = balancedRoute(anchors, env);
-      net.branches = null;
+      // 3+ terminal net with no explicit junction: store the balanced T-junction
+      // as multiple branches (external → junction → each pair terminal) so the
+      // renderer draws a clean centered T and the junction solder lands at the
+      // shared point. Previously a single polyline was used, which collapsed
+      // the three arms into one winding path and looked asymmetric.
+      const paths = balancedPaths(anchors, env);
+      net.branches = paths.map(clonePath);
+      net.route = paths[0] ? clonePath(paths[0]) : null;
+      net.junctions = this._netJunctions(net, paths);
     }
   }
 
@@ -775,6 +783,19 @@ export class Circuit {
     for (const r of okRefs) {
       const key = `${r.comp}.${r.term}`;
       if (!involved.has(key)) net.terminals.push(r);
+    }
+    // Re-layout fresh whenever at least one terminal was added to an existing
+    // net. Without this, the new terminal is appended to `net.terminals` but
+    // the carried-over `net.branches`/`net.route` still cover only the
+    // original terminals — `paths()` (and after a save/reload, the persisted
+    // file) returns the smaller wire and the new terminal ends up connected
+    // "by reference" only, with no drawn branch reaching it. The all-new-refs
+    // case below also benefits (cheaper than two separate routing calls).
+    // The all-existing-refs edge case (rare; nothing was added) keeps any
+    // hand-drawn geometry.
+    const addedNew = okRefs.some((r) => !involved.has(`${r.comp}.${r.term}`));
+    if (addedNew && net.terminals.length >= 2) {
+      this.rerouteNet(net, 'refresh');
     }
     this.syncJunctionSolders();
     return net;

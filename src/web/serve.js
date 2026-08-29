@@ -5,10 +5,11 @@
  */
 
 import { createServer } from 'node:http';
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Circuit } from '../core/model.js';
+import { runCommand } from '../core/commands.js';
 import { svgString } from '../core/render.js';
 
 const HOST = process.env.HOST || '127.0.0.1';
@@ -17,6 +18,8 @@ const PORT = Number(process.env.PORT) || 8080;
 // Repo root = two levels up from this file (src/web/serve.js).
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)), '..');
 const CIRCUITS_ROOT = resolve(ROOT, 'circuits');
+const DATA_ROOT = resolve(ROOT, 'data');
+const ACTIVE_FILE = join(DATA_ROOT, 'active.json');
 
 const MIME = {
   '.js': 'text/javascript',
@@ -66,6 +69,44 @@ async function handleCircuitApi(req, res, url) {
     return true;
   }
 
+  const cmdMatch = url.pathname.match(/^\/api\/circuits\/([^/]+)\/cmd$/);
+  if (cmdMatch) {
+    const name = circuitName(decodeURIComponent(cmdMatch[1]));
+    if (!name) { json(res, 400, { error: 'invalid circuit name' }); return true; }
+    if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return true; }
+    try {
+      const body = await requestBody(req);
+      const rawCmd = body.cmd;
+      if (rawCmd === undefined || rawCmd === null) {
+        json(res, 400, { error: 'missing "cmd" field (string or newline-separated string)' });
+        return true;
+      }
+      // Accept a single string OR a string of newline-separated lines OR a string[].
+      const lines = Array.isArray(rawCmd)
+        ? rawCmd.map((s) => String(s)).filter((s) => s.trim() !== '')
+        : String(rawCmd).split('\n').map((s) => s.trim()).filter((s) => s !== '');
+      const circuit = await loadOrCreateCircuit(name);
+      const results = [];
+      let mutated = false;
+      for (const line of lines) {
+        try {
+          const r = runCommand(circuit, line);
+          results.push({ ok: true, text: r.text, json: r.json, mutated: !!r.mutated });
+          if (r.mutated) mutated = true;
+        } catch (err) {
+          results.push({ ok: false, error: err.message, line });
+          break; // stop on first error so state is consistent
+        }
+      }
+      if (mutated) await saveCircuit(circuit, name);
+      await setActive(name); // any command (even a read-only one) selects the circuit
+      json(res, 200, { name, mutated, results, state: circuit.toJSON() });
+    } catch (err) {
+      json(res, 400, { error: `could not run command: ${err.message}` });
+    }
+    return true;
+  }
+
   const match = url.pathname.match(/^\/api\/circuits\/([^/]+)$/);
   if (!match) return false;
   const name = circuitName(decodeURIComponent(match[1]));
@@ -109,10 +150,89 @@ async function handleCircuitApi(req, res, url) {
   return true;
 }
 
+/** Active-circuit state — the circuit the agent is currently driving.
+ *  Persisted to data/active.json so a server restart preserves the selection.
+ *  Browser clients poll /api/active to auto-load whatever the agent edits. */
+let activeName = '';
+
+async function loadActive() {
+  try {
+    const data = JSON.parse(await readFile(ACTIVE_FILE, 'utf8'));
+    if (typeof data.active === 'string' && circuitName(data.active)) activeName = data.active;
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.error(`warning: could not read ${ACTIVE_FILE}: ${err.message}`);
+  }
+}
+
+async function setActive(name) {
+  if (name === activeName) return;
+  activeName = name;
+  try {
+    await mkdir(DATA_ROOT, { recursive: true });
+    const tmp = ACTIVE_FILE + '.tmp';
+    await writeFile(tmp, JSON.stringify({ active: name, ts: Date.now() }));
+    await rename(tmp, ACTIVE_FILE);
+  } catch (err) {
+    console.error(`warning: could not persist active circuit: ${err.message}`);
+  }
+}
+
+async function handleActiveApi(req, res, url) {
+  if (url.pathname !== '/api/active') return false;
+  if (req.method === 'GET') {
+    json(res, 200, { active: activeName });
+    return true;
+  }
+  if (req.method === 'PUT' || req.method === 'POST') {
+    try {
+      const body = await requestBody(req);
+      const name = circuitName(body && body.active);
+      if (!name) { json(res, 400, { error: 'invalid circuit name' }); return true; }
+      await setActive(name);
+      json(res, 200, { active: activeName });
+    } catch (err) {
+      json(res, 400, { error: `could not set active: ${err.message}` });
+    }
+    return true;
+  }
+  if (req.method === 'DELETE') {
+    activeName = '';
+    try { await writeFile(ACTIVE_FILE, JSON.stringify({ active: '', ts: Date.now() })); } catch {}
+    json(res, 200, { active: '' });
+    return true;
+  }
+  res.writeHead(405, { Allow: 'GET, PUT, POST, DELETE' });
+  res.end();
+  return true;
+}
+
+async function loadOrCreateCircuit(name) {
+  const statePath = join(CIRCUITS_ROOT, name, 'circuit.json');
+  try {
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    return Circuit.fromJSON(state);
+  } catch (err) {
+    if (err.code === 'ENOENT') return new Circuit();
+    throw err;
+  }
+}
+
+async function saveCircuit(circuit, name) {
+  const dir = resolve(CIRCUITS_ROOT, name);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'circuit.json'), JSON.stringify(circuit.toJSON(), null, 2));
+  await writeFile(join(dir, 'circuit.svg'), svgString(circuit, {
+    grid: true, terminals: false, junctions: false, background: true, netNames: true,
+  }));
+}
+
 const server = createServer(async (req, res) => {
   const noCache = { 'Cache-Control': 'no-store, max-age=0' };
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    if (url.pathname === '/api/active') {
+      if (await handleActiveApi(req, res, url)) return;
+    }
     if (url.pathname.startsWith('/api/circuits')) {
       if (await handleCircuitApi(req, res, url)) return;
     }
@@ -151,9 +271,10 @@ const server = createServer(async (req, res) => {
   }
 });
 
-mkdir(CIRCUITS_ROOT, { recursive: true }).then(() => {
+mkdir(CIRCUITS_ROOT, { recursive: true }).then(() => loadActive()).then(() => {
   server.listen(PORT, HOST, () => {
     console.log(`Schematic Spawner running at http://${HOST}:${PORT}/src/web/index.html`);
+    if (activeName) console.log(`Active circuit: ${activeName}`);
   });
 }).catch((err) => {
   console.error(`Could not initialize circuits directory: ${err.message}`);

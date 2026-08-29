@@ -1,99 +1,148 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+/**
+ * Thin HTTP client for schematic-spawner.
+ *
+ *   node src/cli/index.js <circuit> "add nmos M1 --at 120 120"
+ *   node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL\neval"
+ *   node src/cli/index.js <circuit>      # interactive REPL bound to <circuit>
+ *
+ * The CLI sends every command to POST /api/circuits/<name>/cmd on the running
+ * server, which runs `runCommand()` against the live model and (when mutated)
+ * writes `circuits/<name>/circuit.json` + `circuit.svg`. The browser polls
+ * the active circuit and re-renders automatically — no separate save step.
+ *
+ * Server is selected with SP_SERVER (default http://127.0.0.1:8080). The
+ * command language is the same one the in-browser command prompt uses; see
+ * guidelines/CIRCUIT-AUTHOR.md for the reference.
+ */
+
 import { createInterface } from 'node:readline';
-import { Circuit } from '../core/model.js';
-import { runCommand } from '../core/commands.js';
-import { svgToPng } from '../tools/rasterize.js';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(HERE, '../..');
+const SERVER = process.env.SP_SERVER || 'http://127.0.0.1:8080';
 
-function defaultStateFile() {
-  const env = process.env.SP;
-  if (env) return resolve(env);
-  return resolve(ROOT, 'data/state.json');
+function usage() {
+  return [
+    'schematic-spawner CLI — thin HTTP client over the running server.',
+    '',
+    'Usage:',
+    `  node src/cli/index.js <circuit> "<command>" [<command> ...]`,
+    `  node src/cli/index.js <circuit>               # REPL bound to <circuit>`,
+    '',
+    'Environment:',
+    `  SP_SERVER   base URL of the server (default ${SERVER})`,
+    '',
+    'Examples:',
+    `  node src/cli/index.js 5t-ota "add nmos M1 --at 120 120"`,
+    `  node src/cli/index.js 5t-ota "connect M1.s M2.s --name TAIL" "eval"`,
+    `  node src/cli/index.js 5t-ota "add pmos M2 --at 120 -120\\nconnect M1.d M2.d --name OUT\\neval"`,
+    '',
+    'Every command hits POST /api/circuits/<circuit>/cmd and the server',
+    'persists + broadcasts the result. The browser auto-loads the circuit.',
+  ].join('\n');
 }
 
-const io = {
-  writeTextFile(p, content) {
-    mkdirSync(dirname(resolve(p)), { recursive: true });
-    writeFileSync(resolve(p), content);
-  },
-  readTextFile(p) {
-    return readFileSync(resolve(p), 'utf8');
-  },
-  rasterize(svg, png) {
-    return svgToPng(svg, png);
-  },
-};
+function isValidName(name) {
+  return typeof name === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name);
+}
 
-function load(p) {
-  if (!existsSync(p)) return new Circuit();
+async function postCommand(circuit, cmd) {
+  const url = `${SERVER}/api/circuits/${encodeURIComponent(circuit)}/cmd`;
+  let response;
   try {
-    return Circuit.fromJSON(JSON.parse(readFileSync(p, 'utf8')));
-  } catch (err) {
-    console.error(`warning: could not load ${p}: ${err.message}`);
-    return new Circuit();
-  }
-}
-
-function persist(p, circuit) {
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(circuit.toJSON(), null, 2));
-}
-
-// Run one command on a circuit; returns {circuit, result}.
-function execute(circuit, line) {
-  let result;
-  try {
-    result = runCommand(circuit, line, io);
-  } catch (err) {
-    return { mutated: false, error: err.message };
-  }
-  return result;
-}
-
-function main() {
-  const argv = process.argv.slice(2);
-  const stateFile = defaultStateFile();
-  const circuit = load(stateFile);
-
-  if (argv.length === 0) {
-    // Interactive REPL
-    console.log('schematic-spawner CLI. Type a command (help, quit).');
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.setPrompt('sch> ');
-    rl.prompt();
-    let firstError = false;
-    rl.on('line', (line) => {
-      const s = line.trim();
-      if (!s) return rl.prompt();
-      if (s === 'quit' || s === 'exit' || s === 'q') {
-        rl.close();
-        return;
-      }
-      const r = execute(circuit, s);
-      if (r.error) console.log(`error: ${r.error}`);
-      else {
-        console.log(r.text);
-        if (r.mutated) persist(stateFile, circuit);
-      }
-      rl.prompt();
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd }),
     });
-    rl.on('close', () => process.exit(firstError ? 1 : 0));
-    return;
+  } catch (err) {
+    throw new Error(`could not reach server at ${SERVER}: ${err.message}`);
   }
+  let data;
+  try {
+    data = await response.json();
+  } catch (err) {
+    throw new Error(`server returned non-JSON (status ${response.status}): ${await response.text().catch(() => '')}`);
+  }
+  if (!response.ok) {
+    const msg = data && data.error ? data.error : `server returned ${response.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
 
-  const r = execute(circuit, argv.join(' '));
-  if (r.error) {
-    console.error(`error: ${r.error}`);
+/** Pretty-print one server response. Mutated is summarized in the header. */
+function printResponse(data) {
+  const header = data.mutated ? `[${data.name}] mutated` : `[${data.name}]`;
+  process.stdout.write(`${header}\n`);
+  for (const r of data.results || []) {
+    if (r.ok) {
+      if (r.text) process.stdout.write(`${r.text}\n`);
+      if (r.json !== undefined && r.json !== null) process.stdout.write(`__JSON__\n${JSON.stringify(r.json)}\n`);
+    } else {
+      process.stdout.write(`error: ${r.error}\n`);
+    }
+  }
+}
+
+function printHelpAndExit(code = 0) {
+  process.stdout.write(`${usage()}\n`);
+  process.exit(code);
+}
+
+async function runOnce(circuit, line) {
+  const data = await postCommand(circuit, line);
+  printResponse(data);
+  return data.mutated;
+}
+
+async function runOnceBatch(circuit, lines) {
+  let mutated = false;
+  for (const line of lines) {
+    const data = await postCommand(circuit, line);
+    printResponse(data);
+    if (data.mutated) mutated = true;
+  }
+  return mutated;
+}
+
+async function repl(circuit) {
+  process.stdout.write(`sch> (${circuit}) server=${SERVER}  type 'help' for commands, 'quit' to exit\n`);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  rl.setPrompt('sch> ');
+  rl.prompt();
+  rl.on('line', async (line) => {
+    const s = line.trim();
+    if (!s) return rl.prompt();
+    if (s === 'quit' || s === 'exit' || s === 'q') return rl.close();
+    if (s === 'help' || s === '?') { process.stdout.write(`${usage()}\n`); return rl.prompt(); }
+    try {
+      await runOnce(circuit, s);
+    } catch (err) {
+      process.stdout.write(`error: ${err.message}\n`);
+    }
+    rl.prompt();
+  });
+  await new Promise((resolve) => rl.on('close', resolve));
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help' || argv[0] === 'help') {
+    printHelpAndExit(0);
+  }
+  const circuit = argv[0];
+  if (!isValidName(circuit)) {
+    process.stderr.write(`error: invalid circuit name "${circuit}" (must match [A-Za-z0-9][A-Za-z0-9_-]*)\n`);
+    process.exit(2);
+  }
+  const rest = argv.slice(1);
+  if (rest.length === 0) return repl(circuit);
+  try {
+    const mutated = await runOnceBatch(circuit, rest);
+    process.exitCode = mutated ? 0 : 0;
+  } catch (err) {
+    process.stderr.write(`error: ${err.message}\n`);
     process.exitCode = 1;
-  } else {
-    console.log(r.text);
-    if (r.json) console.log('__JSON__\n' + JSON.stringify(r.json));
-    if (r.mutated) persist(stateFile, circuit);
   }
 }
 

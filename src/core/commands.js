@@ -19,28 +19,12 @@ function routeEnv(circuit) {
 }
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
- *  nets route via smartRoute; larger nets get the balanced T-junction; nets
- *  with mid-wire junctions are walked through every anchor in order. */
+  *  nets route via smartRoute; larger nets get the balanced T-junction; nets
+ *  with mid-wire junctions are walked through every anchor in order.
+ *  Delegates to the model's fresh-layout path so 3+ terminal nets get the
+ *  multi-branch T-junction geometry (balancedPaths), not a single polyline. */
 function routeNet(circuit, net) {
-  const anchors = net.anchorWorlds();
-  if (anchors.length < 2) {
-    net.route = null;
-    return;
-  }
-  const env = routeEnv(circuit);
-  if (net.junctions.length) {
-    const path = [{ ...anchors[0] }];
-    for (let i = 1; i < anchors.length; i++) {
-      const seg = smartRoute(path[path.length - 1], anchors[i], env);
-      if (seg && seg.length >= 2) for (let k = 1; k < seg.length; k++) path.push({ ...seg[k] });
-    }
-    net.route = path;
-    net.branches = [path.map((p) => ({ ...p }))];
-  } else if (anchors.length === 2) {
-    net.route = smartRoute(anchors[0], anchors[1], env);
-  } else {
-    net.route = balancedRoute(anchors, env);
-  }
+  circuit.rerouteNet(net, 'refresh');
 }
 
 /** Re-route every net that touches any of the given component refdes.
@@ -390,9 +374,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (pos.length < 2) throw new Error('usage: connect REF.TERM REF.TERM [...]');
     const net = circuit.connect(...pos);
     if (flags.name && flags.name[0]) net.name = flags.name[0];
-    // Materialize the pin-escaped route so the committed wire matches the
-    // editor preview (a clean outside bend, never drilling a body).
-    routeNet(circuit, net);
+    // circuit.connect now re-routes fresh internally when it adds any new
+    // terminal to an existing net (so the new terminal always gets a real
+    // drawn branch). The previous separate `routeNet(circuit, net)` here
+    // was a partial duplicate that only set `net.route` and left stale
+    // `net.branches` from the prior save — making the new terminal
+    // "connected by reference" with no wire to it after reload.
     const terms = net.terminals.map((t) => termInfo(circuit, t.comp, t.term));
     return result(`net ${net.id}${net.name ? ` "${net.name}"` : ''}: ${terms.join('  ')}; len=${net.length()}`, { netId: net.id, name: net.name, terminals: net.terminals.map((t) => ({ ...t })), length: net.length() }, true);
   }

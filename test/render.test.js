@@ -91,12 +91,16 @@ test('routing places an actual solder component at a balanced net junction', () 
   const right = c.addComponent('nmos', { x: 480, y: -80, mirrorX: true });
   const tail = c.addComponent('nmos', { x: 120, y: 160 });
   c.connect(`${left.refdes}.s`, `${right.refdes}.s`, `${tail.refdes}.d`);
+  // Pair shares y=0 at x=120 and x=360; tail drain at (240, 80). The
+  // junction lands AT the pair's row (y=0), centered between the pair's
+  // x — i.e. (240, 0). Textbook Razavi-style: external lead drops
+  // straight down to the pair's row, then splits horizontally.
   const dot = [...c.components.values()].find((comp) => comp.type === 'solder');
   assert.ok(dot, 'routing auto-places a real solder component at the junction');
   assert.equal(dot.value, 'junction');
-  assert.deepEqual({ x: dot.transform.x, y: dot.transform.y }, { x: 240, y: 40 });
+  assert.deepEqual({ x: dot.transform.x, y: dot.transform.y }, { x: 240, y: 0 });
   const svg = svgString(c, { terminals: false, junctions: false });
-  assert.ok(svg.includes('translate(240 40)'), 'solder component grouped at the junction');
+  assert.ok(svg.includes('translate(240 0)'), 'solder component grouped at the junction');
   assert.ok(svg.includes(`r="${SOLDER_DOT_RADIUS}"`), 'solder component renders at the full solder radius');
 });
 

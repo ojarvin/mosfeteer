@@ -252,7 +252,32 @@ async function loadCircuit(name = circuitSelectEl.value) {
   }
 }
 
+let lastSeenActive = null;
 async function syncActiveCircuit() {
+  // First, follow the server's "active circuit" — the agent drives it, the browser
+  // mirrors it. This lets the user open the page once and watch the agent's work
+  // appear automatically, without typing the circuit name or clicking Load.
+  // Only auto-load on a CHANGE of the server's active (lastSeenActive), not on
+  // every poll where active merely differs from currentCircuitName — otherwise
+  // a manual load gets clobbered by the next tick (the user picks "foo", the
+  // poll sees active="cmos-inverter" still, reloads cmos-inverter).
+  let active = null;
+  try {
+    const ar = await fetch('/api/active', { cache: 'no-store' });
+    if (ar.ok) {
+      const data = await ar.json();
+      if (typeof data.active === 'string') active = data.active;
+    }
+  } catch (err) {
+    // network blip — keep going with the content sync below
+  }
+  if (active !== lastSeenActive) {
+    lastSeenActive = active;
+    if (active && active !== currentCircuitName) {
+      await loadCircuit(active);
+      return; // loadCircuit already re-rendered + fit
+    }
+  }
   if (!currentCircuitName) return;
   try {
     const response = await fetch(`/api/circuits/${encodeURIComponent(currentCircuitName)}`, { cache: 'no-store' });
@@ -1472,7 +1497,19 @@ function canvasMouseUp(ev) {
       render();
       return;
     }
-    // The drag re-routed the run live; record it as one undo step.
+    // The drag re-routed the run live. Persist `drag.pts` back to the model —
+    // for branch nets the live-edit only updated drag.pts (the local copy),
+    // so without this write the model stays stale and the renderer draws the
+    // old branch plus a phantom from the live preview. Then reroute so the
+    // dragged run reconnects cleanly to its terminal(s) instead of leaving
+    // a dangling endpoint behind a shifted middle segment.
+    if (drag.branch !== undefined && drag.net.branches && drag.net.branches[drag.branch]) {
+      drag.net.branches[drag.branch] = drag.pts.map((p) => ({ ...p }));
+      if (drag.branch === 0) drag.net.route = drag.net.branches[0].map((p) => ({ ...p }));
+    } else {
+      drag.net.route = drag.pts.map((p) => ({ ...p }));
+    }
+    rerouteNet(drag.net); // re-anchor the persisted drag against the terminals
     circuit.syncJunctionSolders();
     history.push(drag.startSnapshot);
     if (history.length > 200) history.shift();
@@ -2680,6 +2717,7 @@ try {
   draftReady = true;
   render();
   refreshCircuitList();
+  syncActiveCircuit(); // pick up the agent's active circuit immediately
   window.setInterval(syncActiveCircuit, 500);
   logLine('Schematic Spawner ready. Press ? for the keymap. Normal: i to insert, w to wire, u undo.');
 } catch (err) {

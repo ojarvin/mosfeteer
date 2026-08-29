@@ -7,8 +7,7 @@
     "cli": "node src/cli/index.js",
     "serve": "node src/web/serve.js",
     "start": "bash start.sh",
-    "test": "node --test \"test/**/*.test.js\"",
-    "snapshot": "node src/cli/index.js png data/preview.png"
+    "test": "node --test \"test/**/*.test.js\""
   },
   "engines": {
     "node": ">=18"
