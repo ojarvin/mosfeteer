@@ -187,6 +187,42 @@ export function junctionPoints(paths = [], terminalPoints = []) {
   });
 }
 
+/** Collinear overlapping segments between DIFFERENT nets.
+ *  nets: [{ id, paths: [[{x,y},...]] }]. Returns [{ key, otherKey, x0, y0, x1, y1 }]
+ *  where key = `${netId}:${branch}:${seg}` and (x0,y0)-(x1,y1) is the shared span. */
+export function crossNetOverlaps(nets) {
+  const segs = [];
+  for (const net of nets || []) {
+    const paths = net.paths || [];
+    for (let bi = 0; bi < paths.length; bi++) {
+      const path = paths[bi];
+      for (let si = 1; si < path.length; si++) {
+        segs.push({ key: `${net.id}:${bi}:${si}`, netId: net.id, a: path[si - 1], b: path[si] });
+      }
+    }
+  }
+  const out = [];
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const sa = segs[i];
+      const sb = segs[j];
+      if (sa.netId === sb.netId) continue;
+      if (sa.a.x === sa.b.x && sb.a.x === sb.b.x && sa.a.x === sb.a.x) {
+        // both vertical on the same x
+        const lo = Math.max(Math.min(sa.a.y, sa.b.y), Math.min(sb.a.y, sb.b.y));
+        const hi = Math.min(Math.max(sa.a.y, sa.b.y), Math.max(sb.a.y, sb.b.y));
+        if (hi > lo) out.push({ key: sa.key, otherKey: sb.key, x0: sa.a.x, y0: lo, x1: sa.a.x, y1: hi });
+      } else if (sa.a.y === sa.b.y && sb.a.y === sb.b.y && sa.a.y === sb.a.y) {
+        // both horizontal on the same y
+        const lo = Math.max(Math.min(sa.a.x, sa.b.x), Math.min(sb.a.x, sb.b.x));
+        const hi = Math.min(Math.max(sa.a.x, sa.b.x), Math.max(sb.a.x, sb.b.x));
+        if (hi > lo) out.push({ key: sa.key, otherKey: sb.key, x0: lo, y0: sa.a.y, x1: hi, y1: sa.a.y });
+      }
+    }
+  }
+  return out;
+}
+
 /** True when two branch lists are point-identical (same order, same points). */
 export function samePolylineSet(a = [], b = []) {
   if (a.length !== b.length) return false;

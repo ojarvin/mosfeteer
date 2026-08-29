@@ -46,16 +46,26 @@ Candidate paths are ordered by:
 Crossings are legal and remain visually unambiguous because solder dots are
 created only at electrical junctions, not at a crossing of unrelated nets.
 
-For multi-terminal nets, the router builds a rectilinear tree from a stable
-median junction, routing each branch independently. Existing hand-drawn
-branches are treated as fixed obstacles when another net is routed.
+For multi-terminal nets, the router computes the exact rectilinear Steiner
+minimum tree over a coarse-grid graph (Dreyfus–Wagner subset DP; see
+`steinerBranches` in router.js). Total length is the primary objective, body
+clearance is a hard constraint, and terminal/label preferences are soft
+tie-breaks; a three-way Y becomes one centered T-junction. Nets too large for
+the exponential DP fall back to the MST-of-shortest-paths approximation.
+Existing hand-drawn branches are treated as fixed obstacles when another net is
+routed.
 
 ## Editing and selection
 
 Hit testing returns `{netId, branch, segment}`. A plain click selects that wire
-segment. A double click selects the complete net, including all branches and
-its solder dots. Deleting a segment splits the affected path; a connectivity
-rebuild walks the remaining wire graph and splits terminal groups into nets.
+segment; **shift+click toggles more segments into the multi-selection** (a set
+of `"netId:branch:segment"` keys). Dragging any selected segment moves every
+selected run of the same orientation together; `dd`/Delete removes all selected
+segments at once (cuts are applied against one branch snapshot so indices never
+shift under one another). A double click selects the complete net, including
+all branches and its solder dots. Deleting a segment splits the affected path;
+a connectivity rebuild walks the remaining wire graph and splits terminal
+groups into nets.
 
 Dragging a segment edits only its owning branch. Endpoints attached to terminals
 remain fixed; an endpoint move inserts a short orthogonal connector. Component

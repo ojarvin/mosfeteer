@@ -141,7 +141,10 @@ and editor UX — skim it whenever you need an exact number.
   rotate / mirror.
 - Editor UX (main.js): labels are inserted through **insert mode** (`t`
   picks a label ghost, Enter/click commits at cursor; no normal-mode `t`).
-  Shift+ArrowLeft/Right cycle align; nudge h/j/k/l; dd/Delete removes;
+  Shift+ArrowLeft/Right cycle align; nudge h/j/k/l (and arrow keys) —
+  **nudging moves the wires with the components** (a `moved` map is passed
+  to `rerouteNet`, so nets whose terminals all ride nudged components
+  translate rigidly, exactly like a drag); dd/Delete removes;
   double-click inline `<input>` (Enter/blur commit, Esc cancel); palette
   "label" button. **Multi-label selection** supported: `selLabels:Set`
   (plus `selLabel` = primary id), extends/deselects component `multi`.
@@ -206,29 +209,77 @@ and editor UX — skim it whenever you need an exact number.
   SOFT obstacles (`labelScore` in `scoreCandidate`): the router prefers a
   channel one cell clear of a label when one exists, but never hard-blocks
   a connection through a label. Solder dots are excluded from both.
+  **Fresh layouts avoid other nets' wires:** `_netEnv(excludeNetId)`
+  collects every OTHER net's explicit branches into `wires`, and
+  `rerouteNet` / `_layoutFresh` / `Net.points()` pass the net's own id, so
+  a re-laid-out net never collinearly overlaps a different net's drawn wire
+  (crossing is still legal). Collinear overlap with another net is the one
+  pattern that is never auto-created.
+- **Multi-terminal nets route as an exact rectilinear Steiner minimum tree**
+  (`steinerBranches` / `steinerRoute` in router.js, used by `autoRoute`,
+  `balancedPaths`, `balancedRoute`). Dreyfus–Wagner subset DP over a coarse-grid
+  graph (every cell of the terminals' padded bbox); edge cost is one cell plus
+  penalties for pin-direction conformity (`CONFORM_SIDE=30` for a
+  perpendicular escape, `CONFORM_OPP=8` for an opposite-direction one — the
+  first cell from a pin must continue in the pin's direction, e.g. a diff-pair
+  virtual-ground net's source pins escape DOWN and the T lands one cell below
+  the pair row, never a pin-row trunk) and label clearance (LABEL_EPS) — total
+  length is the primary objective, one-cell body clearance is a hard
+  constraint, labels steer softly, and the bend/junction count falls
+  out of the length optimum (a three-way Y becomes a single centered T at the
+  coordinate median). Nets too large for the exponential DP fall back to the
+  MST-of-shortest-paths Steiner 2-approximation, so any net is routable.
 - **Wire-mode click priority:** terminal clicks (within `max(GRID/2,
-  12px/unit)` via `nearestTerminal`) always start / end a wire in wire
-  mode, even when a wire passes through the pin.
-- **Wire click = select, click-and-drag = re-route.** A plain click on a
-  wire selects its net (`selectedNets`) and highlights it (blue glow in
-  `editorOverlay` — halo stroke-width 12 @45% + 2.4 center line); it
-  never mutates the net. Click-and-hold then drag re-routes the run
-  (`wireseg` drag); the working route array is attached to `net.route`
-  only on the first real move, so a plain click leaves the net untouched.
-  A straight pin-to-pin run can't be dragged (`moveWireRun` keeps both
-  pins fixed). **Escape cancels an in-progress drag** (`cancelDrag()`
-  restores the pre-drag polyline) — the history entry is pushed once on
-  mouseup, so undo/redo round-trip a committed drag. **`dragMoved()` =
-  pointer moved BOTH >6px (client) AND >`GRID/2` (world)**, so jittery
-  clicks never drag at any zoom, and a "drag" that never actually moves
-  the run is still treated as a click (route restored, no history).
-- **Highlighted net highlights its parts too.** `editorOverlay`
-  `opts.netComps` (refdes of every component carrying a terminal on a
-  highlighted net) gets the same blue halo, so ports / grounds / supplies
-  / devices on the net stand out.
-- **Nets are renamable from the left toolbar:** double-click a net name
+  12px/unit)` via `nearestTerminal`) always start / end a wire in wire mode,
+  even when a wire passes through the pin.
+- **Wire click = select, click-and-drag = re-route.** A plain click on a wire
+  selects its segment(s) and highlights them (orange in `editorOverlay`);
+  **shift+click toggles more segments into the selection** (`selectedWires`
+  set of `"netId:branch:segment"` keys, `selectedWire` = primary), and
+  **drag-drag moves every selected run together** (same-orientation runs move
+  as a group; runs of the other orientation stay put but stay selected). `dd` /
+  Delete removes all selected segments at once via `Circuit#deleteWireSegments`
+  (cuts are applied against one branch snapshot, so indices never shift under
+  one another; the net splits into the connected components that remain). A
+  click that never moves the pointer (or moves < threshold) just selects —
+  it never mutates the net. A straight pin-to-pin run can't be dragged
+  (`moveWireRun` keeps both pins fixed). **Escape cancels an in-progress drag**
+  (`cancelDrag()` restores every pre-drag polyline) — the history entry is
+  pushed once on mouseup, so undo/redo round-trip a committed drag.
+  **`dragMoved()` = pointer moved BOTH >6px (client) AND >`GRID/2` (world)**,
+  so jittery clicks never drag at any zoom, and a "drag" that never actually
+  moves the run is still treated as a click (route restored, no history).
+  **A plain click clears the drag state** — the wireseg click path in
+  `canvasMouseUp` sets `drag = null` before returning, so a bare mousemove
+  after clicking a wire never re-routes it (the old "sticky drag").
+  **Wires win over component bodies in hit-testing:** normal-mode picking
+  is label → exact terminal → wire (`pickWire`) → component bbox → empty
+  space, so a wire running along/inside a component bbox is selectable and
+  draggable (wires render on top; the body is only picked when no wire is
+  under the cursor).
+- **Highlighted net highlights its wires and junction solder dots only.**
+  `editorOverlay` draws a blue halo over the net's paths and an r13 ring +
+  dot over each junction solder; devices are NOT highlighted. `opts.nets`
+  carries the highlighted nets and `opts.netSolder` the solder points.
+- **Cross-net collinear overlap warning.** `crossNetOverlaps` (wiring.js)
+  returns collinear overlapping spans between DIFFERENT nets; the editor
+  recomputes it whenever wire geometry changes and renders the offending
+  spans in red (`opts.warnOverlaps`) plus a `⚠ wire overlap with another
+  net (highlighted)` status marker. Dragging net1's run onto a parallel
+  run of net2 shows the warning live during the drag and it persists until
+  the overlap is resolved.
+- **Nets are renamable from the right toolbar:** double-click a net name
   in the nets list opens an inline `<input>` (Enter/blur commits
-  `net.name`, Esc cancels).
+  `net.name`, Esc cancels). A plain click re-renders the list and replaces
+  the row, so the browser's native `dblclick` never fires — the rename
+  double-click is detected manually in the click handler (timing + position
+  fallback, like labels and wires). **Shift-click in the right-toolbar lists
+  multi-selects:** components toggle in/out of the component selection,
+  nets toggle in/out of the highlighted-net set (plain click replaces).
+  **`Ctrl+A` selects every component, every label, and every non-empty net.**
+  **Double-clicking a wire in the editor selects its net** (blue halo), via
+  `ev.detail>=2` + a manual timing fallback (the headless CDP driver never
+  fires a native `dblclick`).
 - **Segment wire building:** in wire mode click a terminal (source), then
   click points to build the wire in segments; clicking or pressing
   **Enter** on a target terminal connects them (the hand-drawn path
@@ -238,6 +289,16 @@ and editor UX — skim it whenever you need an exact number.
   halves of the target wire from the junction, and a **solder** marks
   it. `rerouteNet` / `routeNet` walk nets that carry junctions through
   all anchors (terminals + junctions).
+  **Terminal-to-terminal auto-routes that grow a net re-optimize it:**
+  when a no-waypoint `wireTo` adds a NEW terminal to a net that now has
+  3+ terminals (meet lands on a component terminal, not a wire interior),
+  the net is re-laid-out fresh (`rerouteNet 'refresh'` → balanced Steiner
+  `balancedPaths`), exactly like `connect()`. Chaining pairwise routes
+  would otherwise leave an unbalanced bent net with the junction solder
+  dot sitting on the port terminal (e.g. the CMOS inverter input net:
+  VIN.p→M2.g then VIN.p→M1.g must become the centered T at (160,0), 600u).
+  Wire-interior splices and waypoint-shaped routes still keep their drawn
+  geometry.
 - **Wiring starts from any point:** empty-space click in wire mode starts
   a free-point draft (`wire.source={x,y}`); clicking an existing wire
   starts a branch (`{x,y,netId}` — junction+solder materialize on
@@ -249,6 +310,15 @@ and editor UX — skim it whenever you need an exact number.
   (`rerouteNet`), never hand-carrying wire bodies — a drag cannot leave
   wires dangling or collapse them. Touching pins connect only at the
   COMMITTED position (mouseup / `move` command), never mid-drag.
+  **Set moves carry their wires:** when EVERY terminal of a net rides a
+  moved component by the same delta (a Ctrl+A multi-select drag), the whole
+  net geometry — branches, route, junctions — is translated rigidly with
+  the set. Polylines whose two ends ride DIFFERENT moved components do the
+  same (or re-route fresh between the two new pins when the deltas differ).
+  A defensive `_pruneDanglingBranches` then drops any branch whose endpoints
+  are neither terminals, junction anchors, nor points shared by >=2 branches
+  — floating stubs that lead nowhere never survive a component move
+  (1-terminal deliberate wire stubs are left alone).
 - **Clearance & consistency:** `smartRoute` keeps at least one grid cell
   of clearance from every component body (excluding the pin-escape legs),
   even if it means a longer way around. `Net.points()` uses the same
@@ -269,7 +339,9 @@ and editor UX — skim it whenever you need an exact number.
   as `hjkl` / arrows move it; Enter commits the box selection
   (`applyBoxSelection` — components by bbox, labels by bbox, nets by
   route; shared with the mouse marquee) and exits; Esc cancels. Status
-  bar shows VISUAL.
+  bar shows VISUAL. **Marquee selection only captures objects COMPLETELY
+  inside the box** (`rectContained`; a net only when every route point is
+  inside) — merely intersecting a box selects nothing.
 
 ## Web UI
 

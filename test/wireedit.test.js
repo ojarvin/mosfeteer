@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { wireRunAt, collapseCollinear, moveWireRun } from '../src/core/wireedit.js';
 import { deleteWireSegment, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
 import { onGrid } from '../src/core/grid.js';
+import { Circuit } from '../src/core/model.js';
 
 function ortho(pts) {
   for (let i = 1; i < pts.length; i++) {
@@ -218,4 +219,47 @@ test('reduceBranches merges contained and extending overlaps into the union wire
     [{ x: 80, y: 0 }, { x: 400, y: 0 }],
     [{ x: 400, y: 0 }, { x: 480, y: 0 }],
   ], 'overlap merged, extension kept');
+});
+
+test('shift-selecting runs in two nets and dragging them together moves both (editor path)', () => {
+  // Mirrors the multi-segment wire drag: two L-shaped wires (one per net),
+  // select a horizontal run in each, drag both down by the same delta with
+  // moveWireRun, then persist exactly like canvasMouseUp (rerouteNet +
+  // _reduceNet). Both nets must stay connected and both runs must move.
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 240, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 160 });
+  c.addComponent('resistor', { refdes: 'R4', x: 240, y: 160 });
+  const n1 = c.connect('R1.b', 'R2.a'); // (160,0)..(240,0) straight
+  const n2 = c.connect('R3.b', 'R4.a'); // (160,160)..(240,160) straight
+  // Force each net to an explicit L-shaped route so it has a draggable run.
+  n1.branches = [[{ x: 160, y: 0 }, { x: 160, y: 80 }, { x: 240, y: 80 }]];
+  n1.route = n1.branches[0].map((p) => ({ ...p }));
+  n2.branches = [[{ x: 160, y: 160 }, { x: 160, y: 240 }, { x: 240, y: 240 }]];
+  n2.route = n2.branches[0].map((p) => ({ ...p }));
+
+  // The two horizontal runs live at y=80 and y=240; drag them both to y=120/280.
+  const run1 = n1.branches[0].map((p) => ({ ...p }));
+  const run2 = n2.branches[0].map((p) => ({ ...p }));
+  assert.equal(moveWireRun(run1, 'h', 80, 120), 120);
+  assert.equal(moveWireRun(run2, 'h', 240, 280), 280);
+  n1.branches[0] = run1;
+  n1.route = run1.map((p) => ({ ...p }));
+  n2.branches[0] = run2;
+  n2.route = run2.map((p) => ({ ...p }));
+  for (const n of [n1, n2]) {
+    c.rerouteNet(n);
+    c._reduceNet(n);
+  }
+  // Both runs moved; both nets still connect their terminals.
+  assert.ok(n1.branches[0].some((p) => p.x === 160 && p.y === 120), 'run1 moved to y=120');
+  assert.ok(n2.branches[0].some((p) => p.x === 160 && p.y === 280), 'run2 moved to y=280');
+  assert.ok(c.netOfTerminal('R1.b') === n1 && c.netOfTerminal('R2.a') === n1, 'n1 stays connected');
+  assert.ok(c.netOfTerminal('R3.b') === n2 && c.netOfTerminal('R4.a') === n2, 'n2 stays connected');
+  for (const n of [n1, n2]) {
+    for (const b of n.branches) for (let i = 1; i < b.length; i++) {
+      assert.ok(b[i].x === b[i - 1].x || b[i].y === b[i - 1].y, 'orthogonal');
+    }
+  }
 });

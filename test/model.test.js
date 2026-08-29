@@ -747,3 +747,222 @@ test('a wire run dragged onto a same-net wire merges on commit (no hidden overla
   }
   assert.ok(n.branches.length >= 2, 'bus + stem stub survive the merge');
 });
+
+test('connecting three terminals routes one centered Steiner junction with one solder dot', () => {
+  const c = new Circuit();
+  // R1.a(0,0) R2.a(400,0) R3.a(200,200): the RSMT junction lands at the
+  // coordinate median, pushed clear of the resistor bodies by one cell.
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 200, y: 200 });
+  const net = c.connect('R1.a', 'R2.a', 'R3.a');
+  assert.ok(net.branches && net.branches.length >= 3, 'three-way net becomes a multi-branch tree');
+  assert.equal(net.junctions.length, 1, 'exactly one junction for a Y');
+  // Every terminal is a branch endpoint; the whole tree is orthogonal.
+  const endpoints = net.branches.flatMap((b) => [b[0], b[b.length - 1]]);
+  for (const t of net.terminals) {
+    const p = c.getComponent(t.comp).terminalWorld(t.term);
+    assert.ok(endpoints.some((q) => q.x === p.x && q.y === p.y), `${t.comp}.${t.term} is a branch endpoint`);
+  }
+  for (const b of net.branches) for (let i = 1; i < b.length; i++) {
+    assert.ok(b[i].x === b[i - 1].x || b[i].y === b[i - 1].y, `orthogonal branch: ${JSON.stringify(b)}`);
+  }
+  const dots = [...c.components.values()].filter((x) => x.type === 'solder');
+  assert.equal(dots.length, 1, 'one junction, one dot');
+  assert.deepEqual(dots[0].transform, { x: net.junctions[0].x, y: net.junctions[0].y, rotation: 0, mirrorX: false, mirrorY: false }, 'dot sits on the junction');
+});
+
+test('editor wire-mode chaining (terminal-to-terminal) grows a net into the balanced Steiner T', () => {
+  // CMOS inverter input net, routed exactly like the editor's wire clicks:
+  // wireTo(VIN.p, M2.g) then wireTo(VIN.p, M1.g). The net must end up as the
+  // optimal balanced T — not as two chained pairwise routes with the junction
+  // (and solder dot) sitting on the port terminal.
+  const c = new Circuit();
+  c.addComponent('input', { refdes: 'VIN', x: -120, y: 0 }); // p at (-120,0)
+  c.addComponent('pmos', { refdes: 'M2', x: 200, y: -120, mirrorY: true }); // g at (200,-120)
+  c.addComponent('nmos', { refdes: 'M1', x: 200, y: 120 }); // g at (200,120)
+  const g2 = c.getComponent('M2').terminalWorld('g');
+  const g1 = c.getComponent('M1').terminalWorld('g');
+  c.wireTo('VIN.p', g2);
+  const net = c.wireTo('VIN.p', g1);
+  assert.equal(net.terminals.length, 3);
+  assert.equal(net.length(), 600, `optimal balanced T length (got ${net.length()})`);
+  assert.equal(net.branches.length, 3, 'three arms: port trunk + two gate legs');
+  assert.deepEqual(net.junctions, [{ x: 160, y: 0 }], 'T-junction centered one cell clear of the gates');
+  // Both gate legs leave their pins WEST (pin-conforming) and meet at the trunk.
+  const flat = net.branches.map((b) => JSON.stringify(b)).join('\n');
+  assert.ok(flat.includes('[{"x":200,"y":-120},{"x":160,"y":-120},{"x":160,"y":0}]'), `pmos leg straight out west:\n${flat}`);
+  assert.ok(flat.includes('[{"x":200,"y":120},{"x":160,"y":120},{"x":160,"y":0}]'), `nmos leg straight out west:\n${flat}`);
+  // The solder dot lands on the junction, never on the port terminal.
+  const dots = [...c.components.values()].filter((x) => x.type === 'solder');
+  assert.equal(dots.length, 1, 'one junction, one dot');
+  assert.deepEqual(dots[0].transform, { x: 160, y: 0, rotation: 0, mirrorX: false, mirrorY: false }, 'dot on the centered junction');
+  assert.ok(!dots.some((d) => d.transform.x === -120 && d.transform.y === 0), 'no dot on the VIN port terminal');
+});
+
+test('connect four terminals finds the length-optimal tree (shorter than any chain)', () => {
+  const c = new Circuit();
+  // 400x200 rectangle corners as resistor terminals. Open-space RSMT is 800;
+  // honoring one-cell body clearance the optimum is 960. A naive sequential
+  // chain is 2280, so the DP must find the near-optimal tree.
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // a=(0,0)
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 }); // a=(400,0)
+  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 200 }); // a=(0,200)
+  c.addComponent('resistor', { refdes: 'R4', x: 400, y: 200 }); // a=(400,200)
+  const net = c.connect('R1.a', 'R2.a', 'R3.a', 'R4.a');
+  assert.ok(net.length() <= 960, `net length minimized (got ${net.length()})`);
+  assert.ok(net.length() < 1200, `not a perimeter chain (got ${net.length()})`);
+  assert.ok(net.junctions.length <= 2, `sparse junctions (got ${net.junctions.length})`);
+  const endpoints = net.branches.flatMap((b) => [b[0], b[b.length - 1]]);
+  for (const t of net.terminals) {
+    const p = c.getComponent(t.comp).terminalWorld(t.term);
+    assert.ok(endpoints.some((q) => q.x === p.x && q.y === p.y), `${t.comp}.${t.term} reachable`);
+  }
+});
+
+test('deleteWireSegments cuts several segments of one branch at once', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // b=(160,0)
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 }); // a=(400,0)
+  const net = c.connect('R1.b', 'R2.a');
+  // Replace the single straight wire with a winding single branch.
+  net.branches = [[{ x: 160, y: 0 }, { x: 160, y: -80 }, { x: 280, y: -80 }, { x: 280, y: 0 }, { x: 400, y: 0 }]];
+  net.route = net.branches[0].map((p) => ({ ...p }));
+  // Cut the vertical legs (segments 1 and 3): R1.b loses its wire and detaches;
+  // R2.a keeps the right stub as its only branch.
+  c.deleteWireSegments(net.id, [{ branch: 0, segment: 1 }, { branch: 0, segment: 3 }]);
+  assert.ok(c.netOfTerminal('R1.b') !== c.netOfTerminal('R2.a'), 'terminals split apart');
+  const r2net = c.netOfTerminal('R2.a');
+  assert.deepEqual(r2net.branches, [
+    [{ x: 280, y: 0 }, { x: 400, y: 0 }],
+  ]);
+});
+
+test('deleteWireSegments removes selected segments across different nets in one call', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // b=(160,0)
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 }); // a=(400,0)
+  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 160 }); // b=(160,160)
+  c.addComponent('resistor', { refdes: 'R4', x: 400, y: 160 }); // a=(400,160)
+  const n1 = c.connect('R1.b', 'R2.a');
+  const n2 = c.connect('R3.b', 'R4.a');
+  // Both nets are single straight branches; delete segment 1 of each.
+  c.deleteWireSegments(n1.id, [{ branch: 0, segment: 1 }]);
+  c.deleteWireSegments(n2.id, [{ branch: 0, segment: 1 }]);
+  assert.equal(c.netOfTerminal('R1.b'), c.netOfTerminal('R2.a'), 'top net still one component');
+  assert.equal(c.netOfTerminal('R3.b'), c.netOfTerminal('R4.a'), 'bottom net still one component');
+});
+
+test('diff-pair virtual-ground net routes sources down with the T one cell clear (520u)', () => {
+  // The balanced Steiner route for a diff-pair tail net must continue in the
+  // source pins' terminal direction (DOWN) and keep the trunk one grid cell
+  // clear of the bodies — not a shorter pin-row trunk at y=0.
+  const c = new Circuit();
+  c.addComponent('nmos', { refdes: 'M1', x: -80, y: -80 }); // s at (40,0)
+  c.addComponent('nmos', { refdes: 'M2', x: 560, y: -80, mirrorX: true }); // s at (440,0)
+  c.addComponent('nmos', { refdes: 'M3', x: 120, y: 160 }); // d at (240,80)
+  const net = c.connect('M1.s', 'M2.s', 'M3.d');
+  assert.equal(net.length(), 520, `conforming tail net length (got ${net.length()})`);
+  assert.deepEqual(net.junctions, [{ x: 240, y: 40 }], 'T junction one cell below the source row');
+  const flat = JSON.stringify(net.branches);
+  assert.ok(flat.includes('[{"x":40,"y":0},{"x":40,"y":40}'), 'M1 source escapes DOWN');
+  assert.ok(flat.includes('[{"x":440,"y":0},{"x":440,"y":40}'), 'M2 source escapes DOWN');
+  // Every non-pin segment keeps one full cell of clearance from every body.
+  const env = c._netEnv(net.id);
+  const pins = new Set(net.terminalWorlds().map((p) => `${p.x},${p.y}`));
+  for (const b of net.branches) {
+    for (let i = 1; i < b.length; i++) {
+      const a = b[i - 1], q = b[i];
+      for (const r of env.rects) {
+        const segDist = (() => {
+          const x0 = Math.min(a.x, q.x), x1 = Math.max(a.x, q.x);
+          const y0 = Math.min(a.y, q.y), y1 = Math.max(a.y, q.y);
+          const dx = x0 > r.x + r.w ? x0 - (r.x + r.w) : x1 < r.x ? r.x - x1 : 0;
+          const dy = y0 > r.y + r.h ? y0 - (r.y + r.h) : y1 < r.y ? r.y - y1 : 0;
+          return Math.hypot(dx, dy);
+        })();
+        const aPin = pins.has(`${a.x},${a.y}`) && ((a.x === r.x || a.x === r.x + r.w) && a.y >= r.y && a.y <= r.y + r.h || (a.y === r.y || a.y === r.y + r.h) && a.x >= r.x && a.x <= r.x + r.w);
+        const bPin = pins.has(`${q.x},${q.y}`) && ((q.x === r.x || q.x === r.x + r.w) && q.y >= r.y && q.y <= r.y + r.h || (q.y === r.y || q.y === r.y + r.h) && q.x >= r.x && q.x <= r.x + r.w);
+        if (segDist < 40 && !aPin && !bPin) {
+          assert.fail(`segment ${JSON.stringify(a)}-${JSON.stringify(q)} within 1 cell of bbox ${JSON.stringify(r)}`);
+        }
+      }
+    }
+  }
+});
+
+test('a set move carries its wires (no stale endpoints, no floating stubs)', () => {
+  // Two components wired together, both moved by the same delta (a Ctrl+A
+  // style multi-select drag): the wire must translate with the set.
+  const c = new Circuit();
+  const m1 = c.addComponent('nmos', { refdes: 'M1', x: 200, y: 120 });
+  const m2 = c.addComponent('nmos', { refdes: 'M2', x: 440, y: 120 });
+  const net = c.connect('M1.g', 'M2.g');
+  const moved = new Map([
+    ['M1', { dx: 160, dy: 0 }],
+    ['M2', { dx: 160, dy: 0 }],
+  ]);
+  c.moveComponent('M1', 360, 120);
+  c.moveComponent('M2', 600, 120);
+  c.rerouteNet(net, moved);
+  const pts = net.points();
+  const terms = new Set(net.terminals.map((t) => {
+    const p = c.getComponent(t.comp).terminalWorld(t.term);
+    return `${p.x},${p.y}`;
+  }));
+  assert.deepEqual(pts[0], { x: 360, y: 120 }, 'start follows M1');
+  assert.deepEqual(pts[pts.length - 1], { x: 600, y: 120 }, 'end follows M2');
+  for (const p of [pts[0], pts[pts.length - 1]]) {
+    assert.ok(terms.has(`${p.x},${p.y}`), 'no stale endpoint left behind');
+  }
+  assert.equal(net.wiringErrors().length, 0);
+});
+
+test('a fresh layout avoids collinearly overlapping another net wire', () => {
+  const c = new Circuit();
+  // Net 1: straight wire (160,0)-(400,0).
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  const n1 = c.connect('R1.b', 'R2.a');
+  // Net 2 shares the same row: R3.a(160,0) and R4.a(400,0) would want a
+  // straight run on the same line — the fresh layout must route around it
+  // instead of piling on top of net 1's wire.
+  c.addComponent('resistor', { refdes: 'R3', x: 160, y: -160 });
+  c.addComponent('resistor', { refdes: 'R4', x: 400, y: -160 });
+  const n2 = c.connect('R3.a', 'R4.a');
+  c.rerouteNet(n2, 'refresh');
+  // No collinear overlap between the two nets' drawn segments.
+  const segs = (paths) => paths.flatMap((b, bi) => b.slice(1).map((q, i) => ({ a: b[i], b: q, bi })));
+  const s1 = segs(n1.paths());
+  const s2 = segs(n2.paths());
+  const overlap = (a, b, c2, d) => {
+    if (a.x === b.x && c2.x === d.x && a.x === c2.x) {
+      return Math.max(Math.min(a.y, b.y), Math.min(c2.y, d.y)) < Math.min(Math.max(a.y, b.y), Math.max(c2.y, d.y));
+    }
+    if (a.y === b.y && c2.y === d.y && a.y === c2.y) {
+      return Math.max(Math.min(a.x, b.x), Math.min(c2.x, d.x)) < Math.min(Math.max(a.x, b.x), Math.max(c2.x, d.x));
+    }
+    return false;
+  };
+  for (const x of s1) for (const y of s2) {
+    assert.ok(!overlap(x.a, x.b, y.a, y.b), 'nets never share a collinear span');
+  }
+});
+
+test('dangling branches with free endpoints are pruned after a reroute', () => {
+  const c = new Circuit();
+  c.addComponent('nmos', { refdes: 'M1', x: 200, y: 120 });
+  c.addComponent('nmos', { refdes: 'M2', x: 200, y: -120, mirrorY: true });
+  const net = c.connect('M1.g', 'M2.g');
+  // Materialize the auto route as branches, then inject a floating stub whose
+  // endpoints lead nowhere (no terminal, no junction, no shared vertex).
+  net.branches = [...(net.branches || [net.route])].map((b) => b.map((p) => ({ ...p })));
+  net.branches.push([{ x: 200, y: 0 }, { x: 200, y: 200 }]);
+  net.route = net.branches[0].map((p) => ({ ...p }));
+  // A real component move triggers the dangling-branch prune.
+  c.moveComponent('M1', 240, 120);
+  c.rerouteNet(net, new Map([['M1', { dx: 40, dy: 0 }]]));
+  const flat = JSON.stringify(net.paths());
+  assert.ok(!flat.includes('{"x":200,"y":200}'), 'floating stub pruned');
+  assert.equal(net.wiringErrors().length, 0);
+});

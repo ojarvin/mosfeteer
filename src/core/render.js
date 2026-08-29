@@ -232,12 +232,11 @@ export function editorOverlay(circuit, opts = {}) {
     if (c) parts.push(halo(c.bboxWorld()));
   }
 
-  // Components carrying a terminal on a highlighted net (ports, grounds,
-  // supplies, devices) get the same halo so the net's parts stand out.
-  if (opts.netComps && opts.netComps.length) {
-    for (const ref of opts.netComps) {
-      const c = circuit.components.get(ref);
-      if (c && !(opts.selection || []).includes(ref)) parts.push(halo(c.bboxWorld()));
+  // Solder dots on a highlighted net get a halo so wire junctions stand out.
+  if (opts.netSolder && opts.netSolder.length) {
+    for (const p of opts.netSolder) {
+      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="13" fill="none" stroke="#2563eb" stroke-width="2" opacity="0.7"/>`);
+      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#2563eb"/>`);
     }
   }
 
@@ -270,9 +269,17 @@ export function editorOverlay(circuit, opts = {}) {
     }
   }
 
-  if (opts.wireSegment) {
-    const { a, b } = opts.wireSegment;
-    parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="#f59e0b" stroke-width="8" opacity="0.7" stroke-linecap="round"/>`);
+  // Cross-net collinear overlaps (a wire dragged on top of another net's wire).
+  if (opts.warnOverlaps && opts.warnOverlaps.length) {
+    for (const o of opts.warnOverlaps) {
+      parts.push(`<line x1="${fmt(o.x0)}" y1="${fmt(o.y0)}" x2="${fmt(o.x1)}" y2="${fmt(o.y1)}" stroke="#dc2626" stroke-width="9" opacity="0.55" stroke-linecap="round"/>`);
+    }
+  }
+
+  if (opts.wireSegments && opts.wireSegments.length) {
+    for (const { a, b } of opts.wireSegments) {
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="#f59e0b" stroke-width="8" opacity="0.7" stroke-linecap="round"/>`);
+    }
   }
 
   if (opts.wireMode) {

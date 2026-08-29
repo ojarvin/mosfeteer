@@ -1,5 +1,5 @@
-import { snap } from './grid.js';
-import { segmentCrossesRect } from './geometry.js';
+import { GRID, snap } from './grid.js';
+import { junctionPoints, normalizeBranches, pointKey, reduceBranches } from './wiring.js';
 
 /**
  * Auto-routing helpers. All returned points are snapped to the 40-unit grid.
@@ -33,12 +33,14 @@ export function compressElbow(pts) {
 }
 
 /** Simple auto-router: connects ordered points with orthogonal Manhattan
- *  segments; corners land on a grid-snapped midpoint. Used whenever a net has
- *  no explicit route. */
+ *  segments; corners land on a grid-snapped midpoint. Used for the two-point
+ *  previews and the degenerate fallbacks below. */
 export function autoRoute(points) {
   if (points.length === 0) return [];
-  if (points.length >= 3 && hasCenteredBranch(points)) return balancedRoute(points);
-  return pruneRoute(simpleAutoRoute(points), points);
+  if (points.length === 1) return [{ x: snap(points[0].x), y: snap(points[0].y) }];
+  if (points.length === 2) return pruneRoute(simpleAutoRoute(points), points);
+  // 3+ terminals: exact rectilinear Steiner minimum tree (see steiner.js section).
+  return steinerRoute(points);
 }
 
 function simpleAutoRoute(points) {
@@ -68,22 +70,6 @@ function simpleAutoRoute(points) {
   return out;
 }
 
-function hasCenteredBranch(points) {
-  const terminals = points.map(snapP);
-  for (let i = 0; i < terminals.length; i++) {
-    for (let j = i + 1; j < terminals.length; j++) {
-      const a = terminals[i];
-      const b = terminals[j];
-      if (a.y === b.y) {
-        if (terminals.some((p, k) => k !== i && k !== j && p.x > Math.min(a.x, b.x) && p.x < Math.max(a.x, b.x) && p.y !== a.y)) return true;
-      } else if (a.x === b.x) {
-        if (terminals.some((p, k) => k !== i && k !== j && p.y > Math.min(a.y, b.y) && p.y < Math.max(a.y, b.y) && p.x !== a.x)) return true;
-      }
-    }
-  }
-  return false;
-}
-
 function samePoint(a, b) {
   return a.x === b.x && a.y === b.y;
 }
@@ -107,116 +93,464 @@ export function pruneRoute(points, protectedPoints = []) {
   return out;
 }
 
-function median(values) {
-  const sorted = values.slice().sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
+// ---------------------------------------------------------------------------
+// Multi-terminal net routing: rectilinear Steiner minimum tree (RSMT) over the
+// coarse 40-grid with obstacle avoidance. This is the exact version of the
+// "rat nest" router: Dreyfus–Wagner subset DP on a grid graph whose vertices
+// are every cell of the terminals' padded bounding box and whose edges are the
+// grid steps that stay clear of component bodies (hard) and steer off label
+// boxes (soft). Edge cost is one cell plus tiny tie-break penalties that prefer
+// pin-conformity and label clearance — total length is the primary objective,
+// spacing is a hard constraint, and the number of bends/junctions falls out of
+// the length optimum (a single centered T for a three-way Y). Nets too large
+// for the exponential DP fall back to the classic MST-of-shortest-paths Steiner
+// approximation, so any net is routable.
+// ---------------------------------------------------------------------------
+
+// Pin-conformity penalties for the first/last segment of a net. Leaving a pin
+// sideways (perpendicular to its direction) is the worst offence — it sends the
+// wire along the component's pin row (the "pin-row trunk" anti-pattern) — so it
+// costs CONFORM_SIDE cells. Heading straight opposite the outward direction
+// (into/through the body side) is less bad but still penalized. The exact DP
+// minimizes total length, so a conforming route that is a few cells longer wins
+// whenever the sideways shortcut is not worth the penalty.
+const CONFORM_SIDE = 30; // first/last segment perpendicular to the pin direction
+const CONFORM_OPP = 8; // first/last segment heading opposite the pin direction
+const LABEL_EPS = 0.1; // soft: prefer channels one cell clear of label boxes
+
+/** Minimal binary heap for Dijkstra's relaxation loop. */
+class MinHeap {
+  constructor() {
+    this.a = [];
+  }
+  get size() {
+    return this.a.length;
+  }
+  push(prio, val) {
+    const a = this.a;
+    a.push([prio, val]);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (a[p][0] <= a[i][0]) break;
+      [a[p], a[i]] = [a[i], a[p]];
+      i = p;
+    }
+  }
+  pop() {
+    const a = this.a;
+    const top = a[0];
+    const last = a.pop();
+    if (a.length) {
+      a[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < a.length && a[l][0] < a[m][0]) m = l;
+        if (r < a.length && a[r][0] < a[m][0]) m = r;
+        if (m === i) break;
+        [a[m], a[i]] = [a[i], a[m]];
+        i = m;
+      }
+    }
+    return top;
+  }
 }
 
-function appendBalancedRoute(out, target, env) {
-  const a = out[out.length - 1];
-  const b = { x: snap(target.x), y: snap(target.y) };
-  if (a.x === b.x && a.y === b.y) return;
-  const segment = smartRoute(a, b, env);
-  for (let i = 1; i < segment.length; i++) out.push(segment[i]);
+/** Multi-source Dijkstra over the grid graph. `initDist[v]` seeds each source
+ *  (single source = terminal escape; many sources = one per split vertex of the
+ *  Steiner DP). Returns final distances and a predecessor pointer per vertex. */
+function gridDijkstra(initDist, adj, V) {
+  const dist = new Float64Array(V);
+  const par = new Int32Array(V).fill(-1);
+  const heap = new MinHeap();
+  for (let v = 0; v < V; v++) {
+    dist[v] = initDist[v];
+    if (initDist[v] !== Infinity) heap.push(initDist[v], v);
+  }
+  while (heap.size) {
+    const [d, v] = heap.pop();
+    if (d > dist[v]) continue;
+    for (const e of adj[v]) {
+      const nd = d + e.w;
+      if (nd < dist[e.to]) {
+        dist[e.to] = nd;
+        par[e.to] = v;
+        heap.push(nd, e.to);
+      }
+    }
+  }
+  return { dist, par };
+}
+
+/** Weight of a one-cell grid step, or null when the step is illegal: it would
+ *  run through a body interior, pass within a grid cell of a body (unless it is
+ *  the pin-connected leg), or lie on top of an existing wire. Legal steps cost
+ *  one cell, plus tiny penalties that break length-ties toward pin-conformity
+ *  and label clearance. */
+function edgeWeight(a, b, env) {
+  const pins = env.pins || new Map();
+  const aPin = pins.get(`${a.x},${a.y}`);
+  const bPin = pins.get(`${b.x},${b.y}`);
+  for (const r of env.rects || []) {
+    if (segThroughInterior(a, b, r)) return null;
+  }
+  for (const r of env.rects || []) {
+    if (segRectDist(a, b, r) < STEP) {
+      const aOk = aPin && onBodyBoundary(a, r);
+      const bOk = bPin && onBodyBoundary(b, r);
+      if (!aOk && !bOk) return null;
+    }
+  }
+  for (const wire of env.wires || []) {
+    for (let i = 1; i < wire.length; i++) {
+      if (overlapSpan(a, b, wire[i - 1], wire[i])) return null;
+    }
+  }
+  let w = 1;
+  const dx = Math.sign(b.x - a.x);
+  const dy = Math.sign(b.y - a.y);
+  // Edge leaving a pin: aligned with the outward direction is free; going
+  // straight back into the body is mildly penalized; leaving sideways is
+  // strongly penalized.
+  if (aPin) {
+    if (dx === -aPin.x && dy === -aPin.y) w += CONFORM_OPP;
+    else if (dx !== aPin.x || dy !== aPin.y) w += CONFORM_SIDE;
+  }
+  // Edge entering a pin: approaching along the outward direction (coming from
+  // the component's own side) is free; arriving from the outward side is mildly
+  // penalized; entering sideways is strongly penalized.
+  if (bPin) {
+    if (dx === bPin.x && dy === bPin.y) w += CONFORM_OPP;
+    else if (dx !== -bPin.x || dy !== -bPin.y) w += CONFORM_SIDE;
+  }
+  for (const lr of env.labelRects || []) {
+    if (segRectDist(a, b, lr) < STEP) {
+      w += LABEL_EPS;
+      break;
+    }
+  }
+  return w;
+}
+
+/** Build the coarse-grid graph over cell rows y0..y1 × cols x0..x1 (inclusive).
+ *  Terminals are grid points; the graph's vertices are every grid cell in the
+ *  rectangle, edges are the legal one-cell steps. */
+function buildGridGraph(x0, y0, x1, y1, terminals, env) {
+  const W = x1 - x0 + 1;
+  const H = y1 - y0 + 1;
+  const V = W * H;
+  const id = (x, y) => (y - y0) * W + (x - x0);
+  const px = (v) => ({ x: (v % W + x0) * GRID, y: (Math.floor(v / W) + y0) * GRID });
+  const adj = new Array(V);
+  for (let i = 0; i < V; i++) adj[i] = [];
+  const tryEdge = (ax, ay, bx, by) => {
+    const w = edgeWeight({ x: ax * GRID, y: ay * GRID }, { x: bx * GRID, y: by * GRID }, env);
+    if (w === null) return;
+    const ia = id(ax, ay);
+    const ib = id(bx, by);
+    adj[ia].push({ to: ib, w });
+    adj[ib].push({ to: ia, w });
+  };
+  for (let cy = y0; cy <= y1; cy++) {
+    for (let cx = x0; cx <= x1; cx++) {
+      if (cx < x1) tryEdge(cx, cy, cx + 1, cy);
+      if (cy < y1) tryEdge(cx, cy, cx, cy + 1);
+    }
+  }
+  return {
+    V,
+    adj,
+    id,
+    px,
+    terminalIds: terminals.map((p) => id(Math.round(p.x / GRID), Math.round(p.y / GRID))),
+  };
+}
+
+function graphConnected(adj, V, terminalIds) {
+  const seen = new Array(V).fill(false);
+  const stack = [terminalIds[0]];
+  seen[terminalIds[0]] = true;
+  while (stack.length) {
+    const v = stack.pop();
+    for (const e of adj[v]) {
+      if (!seen[e.to]) {
+        seen[e.to] = true;
+        stack.push(e.to);
+      }
+    }
+  }
+  return terminalIds.every((t) => seen[t]);
+}
+
+function bitIndex(mask) {
+  return 31 - Math.clz32(mask);
+}
+
+function segKey(a, b) {
+  return `${Math.min(a, b)}|${Math.max(a, b)}`;
+}
+
+/** Dreyfus–Wagner subset DP: g[mask][v] is the cost of the cheapest tree that
+ *  connects the terminals of `mask` and passes through vertex v. Single-terminal
+ *  masks seed with a plain Dijkstra; larger masks split into two subsets at a
+ *  shared vertex, then relax with a multi-source Dijkstra. Parent/split records
+ *  are kept so the optimal tree can be reconstructed edge by edge. */
+function steinerDP(graph, terminals) {
+  const { V, adj, terminalIds } = graph;
+  const m = terminals.length;
+  const FULL = (1 << m) - 1;
+  const g = new Array(1 << m);
+  const par = new Array(1 << m);
+  for (let i = 0; i < m; i++) {
+    const init = new Float64Array(V).fill(Infinity);
+    init[terminalIds[i]] = 0;
+    const r = gridDijkstra(init, adj, V);
+    g[1 << i] = r.dist;
+    par[1 << i] = r.par;
+  }
+  const splitA = new Array(1 << m);
+  for (let mask = 1; mask < (1 << m); mask++) {
+    if ((mask & (mask - 1)) === 0) continue; // single-bit masks are seeded above
+    const h = new Float64Array(V).fill(Infinity);
+    const sa = new Int32Array(V).fill(-1);
+    const low = mask & -mask;
+    // Every unordered pair of proper subsets {A, mask\A} is visited once by only
+    // iterating the submasks that contain the lowest set bit.
+    for (let sub = (mask - 1) & mask; sub; sub = (sub - 1) & mask) {
+      if (!(sub & low)) continue;
+      const gA = g[sub];
+      const gB = g[mask ^ sub];
+      for (let v = 0; v < V; v++) {
+        const s = gA[v] + gB[v];
+        if (s < h[v]) {
+          h[v] = s;
+          sa[v] = sub;
+        }
+      }
+    }
+    const r = gridDijkstra(h, adj, V);
+    g[mask] = r.dist;
+    par[mask] = r.par;
+    splitA[mask] = sa;
+  }
+  let bestRoot = 0;
+  let bestCost = Infinity;
+  const gFull = g[FULL];
+  for (let v = 0; v < V; v++) {
+    if (gFull[v] < bestCost) {
+      bestCost = gFull[v];
+      bestRoot = v;
+    }
+  }
+  const segs = new Set();
+  const rec = (mask, v) => {
+    if ((mask & (mask - 1)) === 0) {
+      const target = terminalIds[bitIndex(mask)];
+      const pm = par[mask];
+      let cur = v;
+      let guard = 0;
+      while (cur !== target && guard++ < V) {
+        const p = pm[cur];
+        if (p === -1) break;
+        segs.add(segKey(cur, p));
+        cur = p;
+      }
+      return;
+    }
+    const pm = par[mask];
+    if (pm[v] === -1) {
+      const A = splitA[mask][v];
+      if (A === -1) return;
+      rec(A, v);
+      rec(mask ^ A, v);
+    } else {
+      segs.add(segKey(v, pm[v]));
+      rec(mask, pm[v]);
+    }
+  };
+  rec(FULL, bestRoot);
+  return segs;
+}
+
+/** Turn a Steiner tree's segment set into renderable branches. Branch points are
+ *  the terminals plus every vertex whose degree differs from 2; each maximal
+ *  chain between two branch points becomes one polyline (collinear cells
+ *  compressed away). */
+function branchesFromSegments(segs, graph, allTerminalPts) {
+  const { V, id, px } = graph;
+  if (segs.size === 0) return [];
+  const adj = new Map();
+  const add = (a, b) => {
+    if (!adj.has(a)) adj.set(a, []);
+    if (!adj.has(b)) adj.set(b, []);
+    adj.get(a).push(b);
+    adj.get(b).push(a);
+  };
+  for (const key of segs) {
+    const [a, b] = key.split('|').map(Number);
+    add(a, b);
+  }
+  const branchPts = new Set();
+  for (const p of allTerminalPts) branchPts.add(id(Math.round(p.x / GRID), Math.round(p.y / GRID)));
+  for (const [v, nbrs] of adj) if (nbrs.length !== 2) branchPts.add(v);
+  const visited = new Set();
+  const branches = [];
+  for (const v of branchPts) {
+    for (const u of adj.get(v) || []) {
+      const ek = segKey(v, u);
+      if (visited.has(ek)) continue;
+      visited.add(ek);
+      const poly = [v, u];
+      let prev = v;
+      let cur = u;
+      while (!branchPts.has(cur)) {
+        const next = (adj.get(cur) || []).find((n) => n !== prev);
+        if (next === undefined) break;
+        visited.add(segKey(cur, next));
+        poly.push(next);
+        prev = cur;
+        cur = next;
+      }
+      branches.push(compressElbow(poly.map(px)));
+    }
+  }
+  return branches;
 }
 
 /**
- * Route a multi-terminal net through a median grid junction. The polyline
- * walks each branch from the junction and back because the state format stores
- * one ordered path, while the resulting geometry is a balanced Manhattan tree.
+ * Route a multi-terminal net as a rectilinear Steiner minimum tree (see above),
+ * honoring the routing environment (component bodies are hard one-cell-clear
+ * obstacles, labels steer softly, wires must not be collinearly overlapped).
+ * Returns the renderable branch polylines. Nets too large for the exact DP fall
+ * back to the MST-of-shortest-paths approximation, so any net is routable.
  */
-export function balancedRoute(points, env = { rects: [], pins: new Map(), wires: [] }) {
-  const terminals = points.map(snapP);
-  if (terminals.length < 3 || !hasCenteredBranch(terminals)) return pruneRoute(simpleAutoRoute(terminals), terminals);
-  const pair = findPair(terminals);
-  if (!pair) return pruneRoute(simpleAutoRoute(terminals), terminals);
-  const pairIndex = terminals.indexOf(pair);
-  const other = terminals.find((p, i) => i !== pairIndex && (p.y === pair.y || p.x === pair.x));
-  const branch = terminals.find((p, i) => i !== pairIndex && p !== other);
-  const junction = centeredJunction(pair, other, branch);
-  const start = branch || terminals[0];
-  const out = [{ ...start }];
-  appendBalancedRoute(out, junction, env);
-  appendBalancedRoute(out, pair, env);
-  appendBalancedRoute(out, other || terminals[terminals.length - 1], env);
-  return pruneRoute(out, terminals);
-}
-
-/** Renderable branch paths for a centered T-junction. */
-export function balancedPaths(points, env = { rects: [], pins: new Map(), wires: [] }) {
-  const terminals = points.map(snapP);
-  if (terminals.length < 3 || !hasCenteredBranch(terminals)) return [simpleAutoRoute(terminals)];
-  const pair = findPair(terminals);
-  if (!pair) return [simpleAutoRoute(terminals)];
-  const pairIndex = terminals.indexOf(pair);
-  const other = terminals.find((p, i) => i !== pairIndex && (p.y === pair.y || p.x === pair.x));
-  const branch = terminals.find((p, i) => i !== pairIndex && p !== other);
-  const junction = centeredJunction(pair, other, branch);
-
-  // External → junction. Single segment typically; let smartRoute pick the
-  // best body-clear + pin-escape path.
-  const externalPath = [{ ...branch }];
-  appendBalancedRoute(externalPath, junction, env);
-
-  // Pair/other → junction. Force the corner to be on the JUNCTION's axis (not
-  // the pair's column) so the three arms visibly diverge at the junction with
-  // three distinct wire directions — that's what junctionPoints needs to flag
-  // the point as a T-junction solder dot. Routing each leg through smartRoute
-  // individually keeps body clearance + pin-escape honored.
-  const cornerFor = (t) => (pair.x === other.x
-    ? { x: junction.x, y: t.y }
-    : { x: t.x, y: junction.y });
-  const pairPath = buildBendPath(junction, cornerFor(pair), pair, env);
-  const otherPath = buildBendPath(junction, cornerFor(other), other, env);
-
-  return [
-    pruneRoute(externalPath, terminals),
-    pruneRoute(pairPath, terminals),
-    pruneRoute(otherPath, terminals),
-  ];
-}
-
-/** Build an orthogonal path with a forced corner between start and end.
- *  The corner sits on the junction's axis — one cell clear of the pair's
- *  column — so the segments are short straights in open space. We construct
- *  them directly instead of going through smartRoute, which on a pin-escape
- *  cell sometimes picks a detour (e.g. (360,-40) → (320,-40) returns a U-shape
- *  up-around-down rather than the direct 40-unit horizontal). When start and
- *  end already share an axis, the corner collapses and the result is one
- *  straight segment. */
-function buildBendPath(start, corner, end, env) {
-  if (start.x === end.x || start.y === end.y) {
-    return [{ ...start }, { x: snap(end.x), y: snap(end.y) }];
+export function steinerBranches(terminals, env = { rects: [], pins: new Map(), wires: [], labelRects: [] }) {
+  const pts = terminals.map(snapP);
+  const unique = [];
+  const toUnique = [];
+  for (const p of pts) {
+    let idx = unique.findIndex((q) => q.x === p.x && q.y === p.y);
+    if (idx === -1) {
+      idx = unique.length;
+      unique.push({ x: p.x, y: p.y });
+    }
+    toUnique.push(idx);
   }
-  return [
-    { ...start },
-    { x: corner.x, y: corner.y },
-    { x: snap(end.x), y: snap(end.y) },
-  ];
-}
-
-/** Pick one terminal of the first pair sharing an axis (x or y). */
-function findPair(terminals) {
-  return terminals.find((p, i) => terminals.some((q, j) => j !== i && p.y === q.y && terminals.some((r, k) => k !== i && k !== j && r.x > Math.min(p.x, q.x) && r.x < Math.max(p.x, q.x))))
-    || terminals.find((p, i) => terminals.some((q, j) => j !== i && p.x === q.x && terminals.some((r, k) => k !== i && k !== j && r.y > Math.min(p.y, q.y) && r.y < Math.max(p.y, q.y))));
-}
-
-/** Compute the T-junction point for a "1 external + 2 paired (same x or y)"
- *  net. Place the junction ON the pair's shared column (or row), at the
- *  midpoint of the pair's other axis. This is the textbook Razavi layout:
- *  the external lead lands at the pair's column, the pair splits vertically
- *  (or horizontally) to each pair member, no detour past the pair. The
- *  earlier formula averaged pair↔external on the differing axis (junction
- *  at the geometric midpoint), then was changed to offset one cell toward
- *  the external — both produced a winding asymmetric route that the user
- *  flagged as "roundabout". Junction AT the pair's column is shorter
- *  (straight lead), simpler (3 straight segments instead of 4 with an extra
- *  bend), and matches the canonical CMOS inverter / differential-pair look. */
-function centeredJunction(pair, other, branch) {
-  if (pair.x === other.x) {
-    return { x: pair.x, y: snap((pair.y + other.y) / 2) };
+  const k = unique.length;
+  if (k <= 1) return [];
+  if (k === 2) {
+    const path = smartRoute(unique[0], unique[1], env);
+    return path && path.length >= 2 ? [path] : [];
   }
-  return { x: snap((pair.x + other.x) / 2), y: pair.y };
+  const tree = steinerTree(unique, env);
+  if (!tree) {
+    // Exact DP out of budget or the region never connected: 2-approximation
+    // via the MST of all pairwise shortest paths (reduceBranches does Kruskal).
+    const paths = [];
+    for (let i = 0; i < k; i++) {
+      for (let j = i + 1; j < k; j++) {
+        const path = smartRoute(unique[i], unique[j], env);
+        if (path && path.length >= 2) paths.push(path);
+      }
+    }
+    return reduceBranches(paths, unique);
+  }
+  return branchesFromSegments(tree.segs, tree.graph, pts);
+}
+
+/** Compute the Steiner tree's segment set, growing the routing region until all
+ *  terminals are connected (a big body next to the net may need several cells of
+ *  padding to route around). Returns {segs, graph} or null for the fallback. */
+function steinerTree(terminals, env) {
+  const k = terminals.length;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of terminals) {
+    minX = Math.min(minX, Math.round(p.x / GRID));
+    maxX = Math.max(maxX, Math.round(p.x / GRID));
+    minY = Math.min(minY, Math.round(p.y / GRID));
+    maxY = Math.max(maxY, Math.round(p.y / GRID));
+  }
+  let margin = 10;
+  for (let iter = 0; iter < 6; iter++) {
+    const x0 = minX - margin;
+    const y0 = minY - margin;
+    const x1 = maxX + margin;
+    const y1 = maxY + margin;
+    const graph = buildGridGraph(x0, y0, x1, y1, terminals, env);
+    if (graphConnected(graph.adj, graph.V, graph.terminalIds)) {
+      const V = graph.V;
+      const splitCost = ((Math.pow(3, k) - Math.pow(2, k)) / 2) * V;
+      const relaxCost = Math.pow(2, k) * V;
+      if (k <= 10 && splitCost + relaxCost <= 120e6) {
+        const segs = steinerDP(graph, terminals);
+        return { segs, graph };
+      }
+      return null;
+    }
+    margin = Math.min(margin * 2, 40);
+  }
+  return null;
+}
+
+/** Single-polyline form of the Steiner tree: a depth-first walk of the branch
+ *  tree from the first terminal, visiting every terminal (route reversals at
+ *  junctions/terminals are preserved by pruneRoute). */
+export function steinerRoute(terminals, env) {
+  const branches = steinerBranches(terminals, env);
+  if (branches.length <= 1) return branches[0] ? branches[0].slice() : [];
+  const pts = terminals.map(snapP);
+  const split = normalizeBranches(branches, pts);
+  if (split.length === 0) return [];
+  const adj = new Map();
+  for (const path of split) {
+    for (let i = 1; i < path.length; i++) {
+      const ka = pointKey(path[i - 1]);
+      const kb = pointKey(path[i]);
+      if (!adj.has(ka)) adj.set(ka, []);
+      if (!adj.has(kb)) adj.set(kb, []);
+      adj.get(ka).push(kb);
+      adj.get(kb).push(ka);
+    }
+  }
+  const out = [];
+  const visited = new Set();
+  const byKey = new Map();
+  for (const path of split) for (const p of path) byKey.set(pointKey(p), p);
+  const walk = (p, parent) => {
+    const k = pointKey(p);
+    if (visited.has(k)) return;
+    visited.add(k);
+    out.push({ x: p.x, y: p.y });
+    const kids = (adj.get(k) || []).filter((n) => n !== parent);
+    for (let i = 0; i < kids.length; i++) {
+      walk(byKey.get(kids[i]), k);
+      if (i < kids.length - 1) out.push({ x: p.x, y: p.y });
+    }
+  };
+  walk(pts[0], null);
+  // The walk revisits junction points between terminal legs; a junction's
+  // reversal is a real vertex (like a terminal's), so protect it from pruning.
+  const protectedPoints = [...pts, ...junctionPoints(split, pts)];
+  return pruneRoute(out, protectedPoints);
+}
+
+/**
+ * Renderable branch paths for a multi-terminal net — the exact Steiner minimum
+ * tree honoring the routing environment. Retained under the historic name.
+ */
+export function balancedPaths(points, env) {
+  return steinerBranches(points, env);
+}
+
+/** Single-polyline form of the Steiner minimum tree (see steinerRoute). */
+export function balancedRoute(points, env) {
+  return steinerRoute(points, env);
 }
 
 /** True if segments (a->b) and (c->d) cross at an interior point (both x- and y-spans). */

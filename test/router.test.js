@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { autoRoute, segmentsCross, smartRoute, segThroughInterior } from '../src/core/router.js';
+import { autoRoute, segmentsCross, smartRoute, segThroughInterior, steinerBranches, steinerRoute } from '../src/core/router.js';
 import { onGrid } from '../src/core/grid.js';
+import { junctionPoints } from '../src/core/wiring.js';
 
 function allOnGrid(pts) {
   for (const p of pts) assert.ok(onGrid(p.x) && onGrid(p.y), `point (${p.x},${p.y}) on grid`);
@@ -63,116 +64,186 @@ test('autoRoute multi-point chain preserves all intermediate grid lines', () => 
 });
 
 test('autoRoute balances a centered three-way branch', () => {
-  // pair shares y=0 at x=120 and x=360; external at (240, 80). Junction
-  // lands AT the pair's row (y=0), centered between the pair's x — i.e.
-  // (240, 0). The external lead drops straight down to the pair's row,
-  // then the pair splits to each member on the same row — no detour.
+  // Three terminals in a Y formation: the exact rectilinear Steiner tree is a
+  // single centered T-junction at the coordinate median (240, 0). The route
+  // must visit that junction and every terminal, staying orthogonal + on grid.
   const route = autoRoute([
     { x: 120, y: 0 },
     { x: 360, y: 0 },
     { x: 240, y: 80 },
   ]);
-  assert.deepEqual(route, [
-    { x: 240, y: 80 },
-    { x: 240, y: 0 },
-    { x: 120, y: 0 },
-    { x: 360, y: 0 },
-  ]);
+  const flat = new Set(route.map((p) => `${p.x},${p.y}`));
+  assert.ok(flat.has('240,0'), `junction at the median (240, 0), got ${JSON.stringify(route)}`);
+  for (const t of ['120,0', '360,0', '240,80']) assert.ok(flat.has(t), `route visits ${t}`);
+  assert.deepEqual(route[0], { x: 120, y: 0 });
+  assert.deepEqual(route[route.length - 1], { x: 240, y: 80 });
+  for (let i = 1; i < route.length; i++) {
+    assert.ok(route[i].x === route[i - 1].x || route[i].y === route[i - 1].y, 'orthogonal segment');
+  }
+  allOnGrid(route);
 });
 
-import { balancedPaths, balancedRoute } from '../src/core/router.js';
+const EMPTY_ENV = { rects: [], pins: new Map(), wires: [], labelRects: [] };
 
-test('balancedPaths places junction AT the pair column (no detour past the pair)', () => {
+function junctionOf(paths, terminals) {
+  return junctionPoints(paths, terminals.map((p) => ({ x: p.x, y: p.y })));
+}
+
+test('steinerBranches places the junction AT the pair column (no detour past the pair)', () => {
   // CMOS-inverter VIN-style: gates share x=200, external port at x=-120.
-  // The junction lands AT (200, 0) — on the gate column, at the midpoint
-  // of the two gates' y values. The external lead goes straight RIGHT
-  // from the port to the junction, then splits vertically to each gate
-  // — textbook Razavi layout, no detour.
-  const paths = balancedPaths([
+  // The Steiner tree's junction lands AT (200, 0) — the x-median (both gates)
+  // and the y-median of the three terminals — with three straight arms.
+  const paths = steinerBranches([
     { x: 200, y: -120 },
     { x: 200, y: 120 },
     { x: -120, y: 0 },
-  ], { rects: [], pins: new Map(), wires: [] });
-  assert.equal(paths.length, 3, 'must emit three branches for a T-junction');
+  ], EMPTY_ENV);
+  assert.equal(paths.length, 3, 'three branches for a T-junction');
   const flat = paths.flat();
-  // Each branch must reach (200, 0) — that's where the solder dot lands.
-  assert.ok(flat.some((p) => p.x === 200 && p.y === 0), 'junction at (200, 0) must appear in some branch');
-  // External branch: VIN.p (-120, 0) → junction (200, 0).
-  assert.deepEqual(paths[0], [{ x: -120, y: 0 }, { x: 200, y: 0 }]);
-  // Pair branch: junction (200, 0) → M2.g (200, -120) — straight vertical.
-  assert.deepEqual(paths[1], [{ x: 200, y: 0 }, { x: 200, y: -120 }]);
-  // Other branch: junction (200, 0) → M1.g (200, 120) — straight vertical.
-  assert.deepEqual(paths[2], [{ x: 200, y: 0 }, { x: 200, y: 120 }]);
-});
-
-test('balancedPaths junction mirrors when external is to the right of the pair', () => {
-  // CMOS-inverter VOUT-style: drains share x=320, external at x=560.
-  // Junction lands at (320, 0) — ON the drain column.
-  const paths = balancedPaths([
-    { x: 320, y: -40 },
-    { x: 320, y: 40 },
-    { x: 560, y: 0 },
-  ], { rects: [], pins: new Map(), wires: [] });
-  assert.equal(paths.length, 3);
-  const flat = paths.flat();
-  assert.ok(flat.some((p) => p.x === 320 && p.y === 0), 'junction at (320, 0)');
-  assert.deepEqual(paths[0], [{ x: 560, y: 0 }, { x: 320, y: 0 }]);
-  // Pair branch: junction → M2.d straight vertical up.
-  assert.deepEqual(paths[1], [{ x: 320, y: 0 }, { x: 320, y: -40 }]);
-  // Other branch: junction → M1.d straight vertical down.
-  assert.deepEqual(paths[2], [{ x: 320, y: 0 }, { x: 320, y: 40 }]);
-});
-
-test('balancedPaths corner lands at the pair row for y-paired (top/bottom) pairs', () => {
-  // Pair shares y=80, external at (80, 200). Junction lands AT y=80 (the
-  // pair's row), centered between the pair's x — i.e. (80, 80).
-  const paths = balancedPaths([
-    { x: 0, y: 80 },
-    { x: 160, y: 80 },
-    { x: 80, y: 200 },
-  ], { rects: [], pins: new Map(), wires: [] });
-  // pair.y = 80, so junction.y = 80; junction.x = midpoint(0, 160) = 80
-  const flat = paths.flat();
-  assert.ok(flat.some((p) => p.x === 80 && p.y === 80), 'junction at (80, 80)');
-  // External branch: (80, 200) → junction (80, 80)
-  assert.deepEqual(paths[0], [{ x: 80, y: 200 }, { x: 80, y: 80 }]);
-  // Pair branch: junction → (0, 80) — straight horizontal.
-  assert.deepEqual(paths[1], [{ x: 80, y: 80 }, { x: 0, y: 80 }]);
-  // Other branch: junction → (160, 80) — straight horizontal.
-  assert.deepEqual(paths[2], [{ x: 80, y: 80 }, { x: 160, y: 80 }]);
-});
-
-test('balancedPaths falls back to simpleAutoRoute for collinear (no centered-branch pattern)', () => {
-  // All three on y=0 with no third between in x → hasCenteredBranch false.
-  const paths = balancedPaths([
-    { x: 0, y: 0 },
-    { x: 100, y: 0 },
-    { x: 300, y: 0 },
-  ], { rects: [], pins: new Map(), wires: [] });
-  // Should be a single straight-line polyline wrapped in an array.
-  assert.equal(paths.length, 1);
-  // Path points are all on y=0 and on the grid.
-  for (const p of paths[0]) {
-    assert.equal(p.y, 0);
-    assert.equal(p.x % 40, 0);
+  assert.ok(flat.some((p) => p.x === 200 && p.y === 0), 'junction at (200, 0) must appear');
+  const js = junctionOf(paths, [
+    { x: 200, y: -120 },
+    { x: 200, y: 120 },
+    { x: -120, y: 0 },
+  ]);
+  assert.deepEqual(js, [{ x: 200, y: 0 }], 'exactly one junction, at the pair column');
+  // Every terminal is a branch endpoint and every branch is a straight line.
+  const endpoints = paths.flatMap((p) => [p[0], p[p.length - 1]]);
+  for (const t of [{ x: -120, y: 0 }, { x: 200, y: -120 }, { x: 200, y: 120 }]) {
+    assert.ok(endpoints.some((p) => p.x === t.x && p.y === t.y), `terminal (${t.x},${t.y}) is a branch endpoint`);
+  }
+  for (const p of paths) {
+    assert.ok(p.length === 2, `branch is a straight arm, got ${JSON.stringify(p)}`);
+    for (let i = 1; i < p.length; i++) {
+      assert.ok(p[i].x === p[i - 1].x || p[i].y === p[i - 1].y, 'orthogonal');
+    }
   }
 });
 
-test('balancedRoute single polyline uses the same junction-at-pair-column', () => {
-  // The single-polyline variant (used when net has user-defined junctions)
-  // also gets the junction AT the pair's column — no geometric midpoint
-  // artifact at x=40, and no offset toward the external.
-  const r = balancedRoute([
+test('steinerBranches junction mirrors when external is to the right of the pair', () => {
+  // CMOS-inverter VOUT-style: drains share x=320, external at x=560.
+  const paths = steinerBranches([
+    { x: 320, y: -40 },
+    { x: 320, y: 40 },
+    { x: 560, y: 0 },
+  ], EMPTY_ENV);
+  const js = junctionOf(paths, [
+    { x: 320, y: -40 },
+    { x: 320, y: 40 },
+    { x: 560, y: 0 },
+  ]);
+  assert.deepEqual(js, [{ x: 320, y: 0 }], 'junction at (320, 0)');
+  const endpoints = paths.flatMap((p) => [p[0], p[p.length - 1]]);
+  for (const t of [{ x: 560, y: 0 }, { x: 320, y: -40 }, { x: 320, y: 40 }]) {
+    assert.ok(endpoints.some((p) => p.x === t.x && p.y === t.y), `terminal (${t.x},${t.y}) is a branch endpoint`);
+  }
+});
+
+test('steinerBranches corner lands at the pair row for y-paired (top/bottom) pairs', () => {
+  // Pair shares y=80, external at (80, 200): junction lands at (80, 80).
+  const paths = steinerBranches([
+    { x: 0, y: 80 },
+    { x: 160, y: 80 },
+    { x: 80, y: 200 },
+  ], EMPTY_ENV);
+  const js = junctionOf(paths, [
+    { x: 0, y: 80 },
+    { x: 160, y: 80 },
+    { x: 80, y: 200 },
+  ]);
+  assert.deepEqual(js, [{ x: 80, y: 80 }], 'junction at (80, 80)');
+  const endpoints = paths.flatMap((p) => [p[0], p[p.length - 1]]);
+  for (const t of [{ x: 80, y: 200 }, { x: 0, y: 80 }, { x: 160, y: 80 }]) {
+    assert.ok(endpoints.some((p) => p.x === t.x && p.y === t.y), `terminal (${t.x},${t.y}) is a branch endpoint`);
+  }
+});
+
+test('steinerBranches splits a collinear triple at the middle terminal', () => {
+  // All three on y=0: the middle terminal is a pass-through tap, so the tree is
+  // two branches meeting at it (that point is a real electrical junction).
+  const paths = steinerBranches([
+    { x: 0, y: 0 },
+    { x: 120, y: 0 },
+    { x: 400, y: 0 },
+  ], EMPTY_ENV);
+  assert.equal(paths.length, 2, 'middle terminal splits the run into two branches');
+  const flat = paths.flat();
+  for (const p of flat) {
+    assert.equal(p.y, 0);
+    assert.equal(p.x % 40, 0);
+  }
+  assert.ok(flat.some((p) => p.x === 120 && p.y === 0), 'middle terminal is a branch endpoint');
+});
+
+test('steinerRoute returns one orthogonal polyline visiting every terminal', () => {
+  const terminals = [
     { x: 200, y: -120 },
     { x: 200, y: 120 },
     { x: -120, y: 0 },
-  ], { rects: [], pins: new Map(), wires: [] });
-  // Junction (200, 0) must be a vertex.
-  assert.ok(r.some((p) => p.x === 200 && p.y === 0), 'balancedRoute polyline must visit (200, 0)');
-  // No geometric-midpoint artifact at x=40.
-  assert.ok(!r.some((p) => p.x === 40 && p.y === 0), 'no junction at the old midpoint (40, 0)');
-  // No offset-toward-external artifact at x=160.
-  assert.ok(!r.some((p) => p.x === 160 && p.y === 0), 'no junction at the old offset (160, 0)');
+  ];
+  const r = steinerRoute(terminals, EMPTY_ENV);
+  assert.ok(r.some((p) => p.x === 200 && p.y === 0), 'steinerRoute polyline must visit (200, 0)');
+  for (const t of terminals) {
+    assert.ok(r.some((p) => p.x === t.x && p.y === t.y), `visits (${t.x},${t.y})`);
+  }
+  for (let i = 1; i < r.length; i++) {
+    assert.ok(r[i].x === r[i - 1].x || r[i].y === r[i - 1].y, 'orthogonal');
+  }
+  allOnGrid(r);
+});
+
+test('steinerBranches finds the optimal tree for a 4-terminal rectangle', () => {
+  // Corners of a 400x200 rectangle. Optimal rectilinear Steiner length is 800
+  // (a Pi/H tree); a naive sequential path would be ~1000+. The DP must find
+  // an 800-unit tree with a sparse junction structure.
+  const terminals = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 0, y: 200 },
+    { x: 400, y: 200 },
+  ];
+  const paths = steinerBranches(terminals, EMPTY_ENV);
+  const total = paths.reduce((s, p) => s + p.slice(1).reduce((a, b, i) => a + Math.abs(b.x - p[i].x) + Math.abs(b.y - p[i].y), 0), 0);
+  assert.equal(total, 800, `optimal total length is 800, got ${total} (${JSON.stringify(paths)})`);
+  const js = junctionOf(paths, terminals);
+  assert.ok(js.length <= 2, `sparse junctions, got ${js.length} (${JSON.stringify(js)})`);
+  // every terminal reachable as a branch endpoint
+  const endpoints = paths.flatMap((p) => [p[0], p[p.length - 1]]);
+  for (const t of terminals) {
+    assert.ok(endpoints.some((p) => p.x === t.x && p.y === t.y), `terminal (${t.x},${t.y}) is a branch endpoint`);
+  }
+  for (const p of paths) for (let i = 1; i < p.length; i++) {
+    assert.ok(p[i].x === p[i - 1].x || p[i].y === p[i - 1].y, 'orthogonal');
+  }
+});
+
+test('steinerBranches routes around a blocking body with one-cell clearance', () => {
+  // Three terminals on the row of a wide body that covers the middle: every
+  // segment must stay a full grid cell clear of the body and never drill it.
+  const body = { x: 40, y: -80, w: 400, h: 240 };
+  const env = { rects: [body], pins: new Map(), wires: [], labelRects: [] };
+  const terminals = [
+    { x: 0, y: 0 },
+    { x: 480, y: 0 },
+    { x: 240, y: -160 },
+  ];
+  const paths = steinerBranches(terminals, env);
+  assert.ok(paths.length >= 2, `a connected tree exists, got ${JSON.stringify(paths)}`);
+  const dist = (a, b) => {
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+    const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    const dx = x0 > body.x + body.w ? x0 - (body.x + body.w) : x1 < body.x ? body.x - x1 : 0;
+    const dy = y0 > body.y + body.h ? y0 - (body.y + body.h) : y1 < body.y ? body.y - y1 : 0;
+    return Math.hypot(dx, dy);
+  };
+  for (const p of paths) {
+    for (let i = 1; i < p.length; i++) {
+      const a = p[i - 1], b = p[i];
+      assert.ok(!segThroughInterior(a, b, body), 'no segment through the body');
+      assert.ok(dist(a, b) >= 40, `segment keeps >=1 cell clearance (${dist(a, b)}): ${JSON.stringify(p)}`);
+    }
+  }
+  allOnGrid(paths.flat());
 });
 
 test('segmentsCross detects interior orthogonal crossings', () => {

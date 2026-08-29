@@ -19,6 +19,7 @@ import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
 import { wireRunAt, moveWireRun } from '../core/wireedit.js';
+import { crossNetOverlaps } from '../core/wiring.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -55,7 +56,8 @@ let multi = new Set(); // all selected component refdes (always includes selecte
 let selLabel = null; // primary id of the selected label object (exclusive with component selection)
 let selLabels = new Set(); // all selected label ids (always includes selLabel if any)
 let selectedNets = new Set(); // ids of highlighted nets
-let selectedWire = null; // {netId, branch, segment} for a single editable segment
+let selectedWire = null; // primary {netId, branch, segment} of the selected wire segment(s)
+let selectedWires = new Set(); // every selected wire segment, as "netId:branch:segment" keys (always includes selectedWire)
 let cursor = { x: 0, y: 0 };
 let visual = null; // visual mode: anchor grid point {x,y} the selection box starts from
 let insertQuery = ''; // insert-mode fuzzy-search string
@@ -72,6 +74,9 @@ let lastSavedSnapshot = '';
 let draftReady = false;
 const DRAFT_KEY = 'schematic-spawner:draft';
 let remoteConflictLogged = false;
+// Cross-net collinear wire overlaps (B4): highlighted spans + status warning.
+let netWarnings = []; // [{ key, otherKey, x0, y0, x1, y1 }]
+let wiresDirty = true; // set when wire geometry may have changed; recomputes netWarnings
 
 function paneSize() {
   const pane = document.querySelector('.canvas-pane');
@@ -304,6 +309,7 @@ async function syncActiveCircuit() {
 
 function applyJson(blob) {
   circuit = Circuit.fromJSON(JSON.parse(blob));
+  wiresDirty = true; // wire geometry may have changed under any wholesale load
   if (selected && !circuit.components.has(selected)) selected = null;
   multi = new Set([...multi].filter((r) => circuit.components.has(r)));
   if (selLabel && !circuit.labels.has(selLabel)) selLabel = null;
@@ -382,6 +388,7 @@ function selectedComp() {
 /** Replace the selection. `primary` defaults to the first element. */
 function setSelection(refs, primary = refs[0]) {
   selectedWire = null;
+  selectedWires.clear();
   multi = new Set(refs);
   selected = refs.length ? (refs.includes(primary) ? primary : refs[0]) : null;
   if (selected && !circuit.components.has(selected)) selected = null;
@@ -392,8 +399,21 @@ function setSelection(refs, primary = refs[0]) {
 /** Replace the label selection. `primary` defaults to the first element. */
 function setLabelSelection(ids, primary = ids[0]) {
   selectedWire = null;
+  selectedWires.clear();
   selLabels = new Set(ids);
   selLabel = ids.length ? (ids.includes(primary) ? primary : ids[0]) : null;
+}
+
+/** Deserialize a "netId:branch:segment" key into {netId, branch, segment}. */
+function keyToWire(key) {
+  const [netId, branch, segment] = String(key).split(':');
+  return { netId, branch: Number(branch), segment: Number(segment) };
+}
+
+/** Keep the primary segment pointer consistent with the selection set. */
+function syncSelectedWire() {
+  const first = selectedWires.values().next().value;
+  selectedWire = first ? keyToWire(first) : null;
 }
 
 function selectedLabels() {
@@ -470,10 +490,25 @@ function rerouteTouchedNets(refs, moved, fresh = false) {
 /** Delete all selected components and labels together in one undo step.
  *  Owned labels ride along with their component; only free labels are removed explicitly. */
 function deleteSelection() {
-  if (selectedWire) {
-    const target = selectedWire;
+  if (selectedWire || selectedWires.size) {
+    if (selectedWire && !selectedWires.size) selectedWires.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
+    const keys = [...selectedWires];
     selectedWire = null;
-    commit(() => circuit.deleteWireSegment(target.netId, target.branch, target.segment));
+    selectedWires.clear();
+    // Group the deletions by net so every segment is cut against the same
+    // (original) branch geometry — indices never shift under one another.
+    const byNet = new Map();
+    for (const key of keys) {
+      const w = keyToWire(key);
+      if (!byNet.has(w.netId)) byNet.set(w.netId, []);
+      byNet.get(w.netId).push({ branch: w.branch, segment: w.segment });
+    }
+    commit(() => {
+      for (const [netId, segs] of byNet) {
+        if (circuit.nets.get(netId)) circuit.deleteWireSegments(netId, segs);
+      }
+    });
+    wiresDirty = true; // wire segments were removed
     selectedNets.clear();
     return true;
   }
@@ -531,7 +566,6 @@ function fitView() {
     add(r.x, r.y);
     add(r.x + r.w, r.y + r.h);
   }
-  add(cursor.x, cursor.y);
   if (!Number.isFinite(x0)) {
     x0 = -120;
     y0 = -120;
@@ -621,7 +655,18 @@ function placePending() {
 
 // ----- render -----------------------------------------------------------
 
+/** Recompute collinear overlaps between different nets' wires (B4). Runs only
+ *  when `wiresDirty` says the wire geometry changed since the last frame. */
+function updateNetWarnings() {
+  const nets = [...circuit.nets.values()].map((n) => ({ id: n.id, paths: n.paths() }));
+  netWarnings = crossNetOverlaps(nets);
+}
+
 function render() {
+  if (wiresDirty) {
+    updateNetWarnings();
+    wiresDirty = false;
+  }
   persistDraft();
   renderCanvas();
   renderComponents();
@@ -659,11 +704,18 @@ function renderCanvas() {
     viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
   });
   const nets = selectedWire ? [] : [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
-  // Every component that carries a terminal on a highlighted net gets a halo too,
-  // so ports, grounds and supplies belonging to the net stand out.
-  const netComps = new Set();
+  // Solder dots sitting on a highlighted net's junction points get a halo so
+  // wire junctions on the net stand out (device bodies are deliberately NOT
+  // highlighted — only wires + solder dots belong to a net's visual).
+  const netSolder = [];
+  const solders = new Map();
+  for (const c of circuit.components.values()) {
+    if (c.type === 'solder') solders.set(`${c.transform.x},${c.transform.y}`, c);
+  }
   for (const net of nets) {
-    for (const t of net.terminals) netComps.add(t.comp);
+    for (const j of net.junctions) {
+      if (solders.has(`${j.x},${j.y}`)) netSolder.push({ x: j.x, y: j.y });
+    }
   }
   const ghost =
     mode === 'insert' && pendingPlace
@@ -688,15 +740,23 @@ function renderCanvas() {
   const overlay = editorOverlay(circuit, {
     cursor,
     selection: [...multi],
-    wireSegment: selectedWire && (() => {
-      const n = circuit.nets.get(selectedWire.netId);
-      const p = n?.paths()?.[selectedWire.branch];
-      return p?.[selectedWire.segment] ? { a: p[selectedWire.segment - 1], b: p[selectedWire.segment] } : null;
+    wireSegments: (() => {
+      if (!selectedWires.size && !selectedWire) return [];
+      const keys = selectedWires.size ? [...selectedWires] : [`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`];
+      const out = [];
+      for (const key of keys) {
+        const w = keyToWire(key);
+        const n = circuit.nets.get(w.netId);
+        const p = n?.paths()?.[w.branch];
+        if (p?.[w.segment]) out.push({ a: p[w.segment - 1], b: p[w.segment] });
+      }
+      return out;
     })(),
     selLabel,
     selLabels: [...selLabels],
     nets,
-    netComps: [...netComps],
+    netSolder: [...netSolder],
+    warnOverlaps: netWarnings,
     rubber: visual
       ? { x0: Math.min(visual.x, cursor.x), y0: Math.min(visual.y, cursor.y), x1: Math.max(visual.x, cursor.x), y1: Math.max(visual.y, cursor.y), color: '#2e7d32' }
       : drag && drag.rubber
@@ -718,6 +778,8 @@ const DRAG_THRESH = 6; // px before a press becomes a drag
 let drag = null;
 let inlineInput = null; // the active inline-edit <input>, if any
 let lastLabelClick = null; // { id, x, y, at } of the previous label click (for double-click fallback)
+let lastWireClick = null; // { key, x, y, at } of the previous wire click (for double-click fallback)
+let lastNetClick = null; // { netId, x, y, at } of the previous nets-list click (for double-click fallback)
 
 /** A press becomes a drag once the pointer has moved BOTH more than the pixel
  *  threshold (a few px of click jitter is never a drag) AND more than half a
@@ -733,13 +795,15 @@ function dragMoved(startWorld, startClient, w, ev) {
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
   if (drag && drag.mode === 'wireseg') {
-    if (drag.branch !== undefined && drag.net.branches && drag.net.branches[drag.branch]) {
-      drag.net.branches[drag.branch] = drag.orig.map((p) => ({ ...p }));
-      if (drag.branch === 0) drag.net.route = drag.net.branches[0].map((p) => ({ ...p }));
-    } else if (drag.hadRoute) {
-      drag.net.route = drag.orig.map((p) => ({ ...p }));
-    } else {
-      drag.net.route = null;
+    for (const r of drag.runs || []) {
+      if (r.branch !== undefined && r.net.branches && r.net.branches[r.branch]) {
+        r.net.branches[r.branch] = r.orig.map((p) => ({ ...p }));
+        if (r.branch === 0) r.net.route = r.net.branches[0].map((p) => ({ ...p }));
+      } else if (r.hadRoute) {
+        r.net.route = r.orig.map((p) => ({ ...p }));
+      } else {
+        r.net.route = null;
+      }
     }
   }
   drag = null;
@@ -772,22 +836,25 @@ function worldRect(a, b) {
   return { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
 }
 
-function rectOverlap(r, box) {
-  return r.x < box.x1 && box.x0 < r.x + r.w && r.y < box.y1 && box.y0 < r.y + r.h;
+/** True when rect `r` lies COMPLETELY inside `box` (touching an edge counts
+ *  as inside). Marquee selection uses containment, not mere intersection, so
+ *  a box only captures whole objects. */
+function rectContained(r, box) {
+  return r.x >= box.x0 && r.x + r.w <= box.x1 && r.y >= box.y0 && r.y + r.h <= box.y1;
 }
 
-/** Select everything inside a world box (components by bbox, labels by bbox,
- *  nets by route). With `shift` the box adds to the current selection. Shared
- *  by the mouse marquee and visual-mode Enter. */
+/** Select everything COMPLETELY inside a world box (components by bbox, labels
+ *  by bbox, nets by route). With `shift` the box adds to the current selection.
+ *  Shared by the mouse marquee and visual-mode Enter. */
 function applyBoxSelection(x0, y0, x1, y1, shift) {
   const box = worldRect({ x: x0, y: y0 }, { x: x1, y: y1 });
   const found = [];
   for (const c of circuit.components.values()) {
-    if (rectOverlap(c.bboxWorld(), box)) found.push(c.refdes);
+    if (rectContained(c.bboxWorld(), box)) found.push(c.refdes);
   }
   const foundLabels = [];
   for (const label of circuit.labels.values()) {
-    if (rectOverlap(label.bbox(), box)) foundLabels.push(label.id);
+    if (rectContained(label.bbox(), box)) foundLabels.push(label.id);
   }
   const nets = [];
   for (const net of circuit.nets.values()) {
@@ -860,16 +927,16 @@ function pickWire(w) {
   return best;
 }
 
-/** Does any part of the net's route lie inside the box? */
+/** Does the net's ENTIRE route lie inside the box? (Marquee selection only
+ *  captures nets whose every drawn branch point is inside.) */
 function netInBox(net, box) {
   const inside = (x, y) => x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1;
-  for (const pts of net.paths()) {
-    for (const p of pts) if (inside(p.x, p.y)) return true;
-    for (let i = 1; i < pts.length; i++) {
-      if (inside((pts[i - 1].x + pts[i].x) / 2, (pts[i - 1].y + pts[i].y) / 2)) return true;
-    }
+  const paths = net.paths();
+  if (paths.length === 0) return false;
+  for (const pts of paths) {
+    for (const p of pts) if (!inside(p.x, p.y)) return false;
   }
-  return false;
+  return true;
 }
 
 function zoomOutAt(w) {
@@ -967,6 +1034,7 @@ function connectTwo(src, dst, points) {
   const before = snapshot();
   const meet = circuit.components.get(dst.refdes).terminalWorld(dst.term);
   const net = circuit.wireTo(`${src.refdes}.${src.term}`, meet, points);
+  wiresDirty = true; // wireTo grew / spliced a net
   history.push(before);
   future.length = 0;
   // Stay in wiring mode so the next click can start another connection.
@@ -1104,6 +1172,7 @@ function connectWireToTerminal(dst) {
   const before = snapshot();
   const end = circuit.components.get(dst.refdes).terminalWorld(dst.term);
   const net = circuit.wirePointTo({ x: src.x, y: src.y }, end, wire.points, src.netId);
+  wiresDirty = true; // a draft spliced into the target net
   history.push(before);
   future.length = 0;
   wire = { source: null, points: [] };
@@ -1131,6 +1200,7 @@ function joinWireToNet(wireHit) {
   const net = src.refdes
     ? circuit.wireTo(`${src.refdes}.${src.term}`, P, wire.points)
     : circuit.wirePointTo({ x: src.x, y: src.y }, P, wire.points, src.netId);
+  wiresDirty = true; // a draft joined into an existing net
   history.push(before);
   future.length = 0;
   wire = { source: null, points: [] };
@@ -1247,46 +1317,15 @@ function canvasMouseDown(ev) {
   }
   // Clicking anywhere that isn't a label resets any pending double-click state.
   lastLabelClick = null;
+  lastWireClick = null;
 
+  // Wires render on top of component bodies, so a wire running along/inside a
+  // body must be pickable first. Hit order: exact TERMINAL, then WIRE, then
+  // component bbox, then empty space.
   const hit = pickAt(startWorld);
-  if (hit && circuit.components.has(hit.refdes)) {
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-    if (ev.shiftKey) {
-      if (multi.has(hit.refdes)) {
-        multi.delete(hit.refdes);
-        if (selected === hit.refdes) selected = multi.size ? [...multi][0] : null;
-      } else {
-        multi.add(hit.refdes);
-        if (!selected) selected = hit.refdes;
-      }
-      render();
-      return;
-    }
-    if (!multi.has(hit.refdes)) setSelection([hit.refdes]);
-    const origins = new Map();
-    for (const r of multi) {
-      const c = circuit.components.get(r);
-      if (c) origins.set(r, { x: c.transform.x, y: c.transform.y });
-    }
-    const refs = [...origins.keys()];
-    // If labels are part of the same selection, move them along with the components.
-    const labelOrigins = new Map();
-    for (const id of selLabels) {
-      const l = circuit.labels.get(id);
-      if (l) labelOrigins.set(id, { x: l.anchorWorld().x, y: l.anchorWorld().y });
-    }
-    drag = {
-      mode: 'move',
-      startClient,
-      startWorld,
-      startCursor: { ...cursor },
-      origins,
-      netRoutes: null,
-      labelOrigins,
-      moved: false,
-      rubber: null,
-    };
-    render();
+  const termHit = hit && hit.term ? hit : null;
+  if (termHit) {
+    beginComponentDrag(hit, startWorld, startClient, ev);
     return;
   }
 
@@ -1297,31 +1336,94 @@ function canvasMouseDown(ev) {
     // The run is found from the drawn polyline (a specific branch for joined
     // nets), materialized into a local array so a plain click never mutates the
     // net — only an actual drag attaches a route (and Escape restores `orig`).
-    const pts = net.branches && net.branches[wireHit.branch] && net.branches[wireHit.branch].length >= 2
-      ? net.branches[wireHit.branch]
-      : net.route && net.route.length >= 2 ? net.route : net.points().slice();
-    const run = wireRunAt(pts, wireHit.seg);
+    const key = `${net.id}:${wireHit.branch}:${wireHit.seg}`;
+    // Double-click a wire selects its NET (the segment selection is replaced).
+    // Headless CDP never fires a native `dblclick`, so detect the second press
+    // here on the mousedown (ev.detail) with the same manual timing/position
+    // fallback the labels use; the browser `dblclick` handler stays as backup.
+    const now = Date.now();
+    const prevWireClick = lastWireClick;
+    lastWireClick = { key, x: startWorld.x, y: startWorld.y, at: now };
+    if (
+      ev.detail >= 2 ||
+      (prevWireClick &&
+        prevWireClick.key === key &&
+        now - prevWireClick.at < 500 &&
+        Math.abs(startWorld.x - prevWireClick.x) <= GRID &&
+        Math.abs(startWorld.y - prevWireClick.y) <= GRID)
+    ) {
+      selectedWire = null;
+      selectedWires.clear();
+      selectedNets = new Set([net.id]);
+      cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+      render();
+      return;
+    }
+    // Shift+click (or clicking a segment already in the selection) drags every
+    // selected segment's run together; a plain click on an unselected segment
+    // drags only that run (the selection resets on mouseup).
+    const moveKeys = ev.shiftKey || selectedWires.has(key)
+      ? new Set([...selectedWires, key])
+      : new Set([key]);
+    const runs = [];
+    const seenRun = new Set();
+    for (const k of moveKeys) {
+      const w = keyToWire(k);
+      const n = circuit.nets.get(w.netId);
+      if (!n) continue;
+      const pts = n.branches && n.branches[w.branch] && n.branches[w.branch].length >= 2
+        ? n.branches[w.branch]
+        : n.route && n.route.length >= 2 ? n.route : n.points().slice();
+      const run = wireRunAt(pts, w.segment);
+      const runKey = `${k}:${run.orient}:${run.val}`;
+      if (seenRun.has(runKey)) continue; // same maximal run, don't move twice
+      seenRun.add(runKey);
+      runs.push({
+        net: n,
+        branch: w.branch,
+        seg: w.segment,
+        pts,
+        orig: pts.map((p) => ({ ...p })),
+        orient: run.orient,
+        line: run.val,
+        startLine: run.val,
+        hadRoute: !!(n.route && n.route.length >= 2),
+      });
+    }
+    const primary = runs.find((r) => r.net === net && r.branch === wireHit.branch && r.seg === wireHit.seg) || runs[0];
+    // Only runs perpendicular to the drag direction can move together (a drag
+    // shifts a run sideways). Same-orientation runs move as a group; selected
+    // runs of the other orientation stay put (still selected, still deletable).
+    const dragRuns = runs.filter((r) => r.orient === primary.orient);
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
     drag = {
       mode: 'wireseg',
       net,
-      branch: wireHit.branch !== undefined ? wireHit.branch : undefined,
-      seg: wireHit.seg,
-      pts,
-      orig: pts.map((p) => ({ ...p })),
-      hadRoute: !!(net.route && net.route.length >= 2),
-      startSnapshot: snapshot(),
-      orient: run.orient,
-      line: run.val,
-      startAxis: run.orient === 'h' ? startWorld.y : startWorld.x,
-      startLine: run.val,
+      branch: primary.branch,
+      seg: primary.seg,
+      pts: primary.pts,
+      orig: primary.orig,
+      runs: dragRuns,
+      orient: primary.orient,
+      line: primary.line,
+      startAxis: primary.orient === 'h' ? startWorld.y : startWorld.x,
+      startLine: primary.startLine,
       startClient,
       startWorld,
+      shift: ev.shiftKey,
+      key,
       moved: false,
       committed: false,
       rubber: null,
+      startSnapshot: snapshot(),
     };
     render();
+    return;
+  }
+
+  // A component bbox hit (no exact terminal, no wire over it): select/drag it.
+  if (hit && circuit.components.has(hit.refdes)) {
+    beginComponentDrag(hit, startWorld, startClient, ev);
     return;
   }
 
@@ -1332,6 +1434,48 @@ function canvasMouseDown(ev) {
     selectedNets.clear();
   }
   drag = { mode: 'marquee', startClient, startWorld, startSelection: new Set(multi), startLabelSelection: new Set(selLabels), moved: false, rubber: null };
+  render();
+}
+
+/** Select the component (or shift-toggle the multi-selection) and arm a move
+ *  drag. Shared by exact-terminal hits and bbox fallback picks. */
+function beginComponentDrag(hit, startWorld, startClient, ev) {
+  cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  if (ev.shiftKey) {
+    if (multi.has(hit.refdes)) {
+      multi.delete(hit.refdes);
+      if (selected === hit.refdes) selected = multi.size ? [...multi][0] : null;
+    } else {
+      multi.add(hit.refdes);
+      if (!selected) selected = hit.refdes;
+    }
+    render();
+    return;
+  }
+  if (!multi.has(hit.refdes)) setSelection([hit.refdes]);
+  const origins = new Map();
+  for (const r of multi) {
+    const c = circuit.components.get(r);
+    if (c) origins.set(r, { x: c.transform.x, y: c.transform.y });
+  }
+  const refs = [...origins.keys()];
+  // If labels are part of the same selection, move them along with the components.
+  const labelOrigins = new Map();
+  for (const id of selLabels) {
+    const l = circuit.labels.get(id);
+    if (l) labelOrigins.set(id, { x: l.anchorWorld().x, y: l.anchorWorld().y });
+  }
+  drag = {
+    mode: 'move',
+    startClient,
+    startWorld,
+    startCursor: { ...cursor },
+    origins,
+    netRoutes: null,
+    labelOrigins,
+    moved: false,
+    rubber: null,
+  };
   render();
 }
 
@@ -1377,13 +1521,20 @@ function canvasMouseMove(ev) {
       cursor = { x: snap(w.x), y: snap(w.y) };
       if (!drag.committed) {
         drag.committed = true;
-        // A drag owns the polyline: for a plain route we attach it so live
-        // edits render; a branch array is already live inside net.branches.
-        if (drag.branch === undefined) drag.net.route = drag.pts;
+        // The drag owns each run's polyline: attach copies to their nets so the
+        // live edit renders; branch/route arrays are already live in the model.
+        for (const r of drag.runs) {
+          if (r.net.branches && r.net.branches[r.branch]) r.net.branches[r.branch] = r.pts;
+          else r.net.route = r.pts;
+        }
       }
       const axis = drag.orient === 'h' ? w.y : w.x;
-      const target = drag.startLine + (axis - drag.startAxis);
-      drag.line = moveWireRun(drag.pts, drag.orient, drag.line, target);
+      const delta = axis - drag.startAxis;
+      for (const r of drag.runs) {
+        const target = r.startLine + delta;
+        r.line = moveWireRun(r.pts, r.orient, r.line, target);
+      }
+      wiresDirty = true; // live re-route changes wire geometry every frame
       render();
     }
     return;
@@ -1482,36 +1633,53 @@ function canvasMouseUp(ev) {
       zoomToWorldRect(worldRect(drag.startWorld, w));
     }
   } else if (drag.mode === 'wireseg') {
-    if (!drag.moved || JSON.stringify(drag.pts) === JSON.stringify(drag.orig)) {
-      // A plain click (or a jittery gesture that never actually moved the run):
-      // select the net and leave the polyline exactly as it was.
-      if (drag.branch !== undefined && drag.net.branches && drag.net.branches[drag.branch]) {
-        drag.net.branches[drag.branch] = drag.orig.map((p) => ({ ...p }));
-        if (drag.branch === 0) drag.net.route = drag.net.branches[0].map((p) => ({ ...p }));
-      } else if (!drag.hadRoute) {
-        drag.net.route = null; // don't materialize a route on a click
+    const anyMoved = drag.runs.some((r) => JSON.stringify(r.pts) !== JSON.stringify(r.orig));
+    if (!drag.moved || !anyMoved) {
+      // A plain click (or a jittery gesture that never actually moved a run):
+      // select the segment(s) and leave every polyline exactly as it was.
+      for (const r of drag.runs) {
+        if (r.branch !== undefined && r.net.branches && r.net.branches[r.branch]) {
+          r.net.branches[r.branch] = r.orig.map((p) => ({ ...p }));
+          if (r.branch === 0) r.net.route = r.net.branches[0].map((p) => ({ ...p }));
+        } else if (!r.hadRoute) {
+          r.net.route = null; // don't materialize a route on a click
+        }
       }
-      // A plain click selects only that wire segment (deletable), not the net.
       selectedNets.clear();
-      selectedWire = { netId: drag.net.id, branch: drag.branch ?? 0, segment: drag.seg };
+      if (drag.shift) {
+        if (selectedWires.has(drag.key)) selectedWires.delete(drag.key);
+        else selectedWires.add(drag.key);
+        syncSelectedWire();
+      } else {
+        selectedWires = new Set([drag.key]);
+        selectedWire = keyToWire(drag.key);
+      }
+      drag = null; // a click never leaves a drag armed (a bare mousemove would re-drag the run)
       render();
       return;
     }
-    // The drag re-routed the run live. Persist `drag.pts` back to the model —
-    // for branch nets the live-edit only updated drag.pts (the local copy),
-    // so without this write the model stays stale and the renderer draws the
-    // old branch plus a phantom from the live preview. Then reroute so the
-    // dragged run reconnects cleanly to its terminal(s) instead of leaving
-    // a dangling endpoint behind a shifted middle segment.
-    if (drag.branch !== undefined && drag.net.branches && drag.net.branches[drag.branch]) {
-      drag.net.branches[drag.branch] = drag.pts.map((p) => ({ ...p }));
-      if (drag.branch === 0) drag.net.route = drag.net.branches[0].map((p) => ({ ...p }));
-    } else {
-      drag.net.route = drag.pts.map((p) => ({ ...p }));
+    // The drag re-routed the runs live. Persist each run back to its net — for
+    // branch nets the live-edit only updated the local pts array, so without
+    // this write the model stays stale. Then reroute + reduce so each dragged
+    // run reconnects cleanly to its terminal(s) and any run dragged onto a
+    // same-net wire merges instead of hiding beneath it.
+    for (const r of drag.runs) {
+      if (r.branch !== undefined && r.net.branches && r.net.branches[r.branch]) {
+        r.net.branches[r.branch] = r.pts.map((p) => ({ ...p }));
+        if (r.branch === 0) r.net.route = r.net.branches[0].map((p) => ({ ...p }));
+      } else {
+        r.net.route = r.pts.map((p) => ({ ...p }));
+      }
     }
-    rerouteNet(drag.net); // re-anchor the persisted drag against the terminals
-    circuit._reduceNet(drag.net); // merge any run dragged onto a same-net wire
+    const touchedNets = new Set(drag.runs.map((r) => r.net.id));
+    for (const id of touchedNets) {
+      const net = circuit.nets.get(id);
+      if (!net) continue;
+      rerouteNet(net); // re-anchor the persisted drag against the terminals
+      circuit._reduceNet(net); // merge any run dragged onto a same-net wire
+    }
     circuit.syncJunctionSolders();
+    wiresDirty = true; // committed wire drag changed net geometry
     history.push(drag.startSnapshot);
     if (history.length > 200) history.shift();
     future.length = 0;
@@ -1541,6 +1709,7 @@ function canvasMouseUp(ev) {
         const net = circuit.nets.get(id);
         if (net) circuit._reduceNet(net);
       }
+      wiresDirty = true; // moved components re-route their nets
     }
   }
 
@@ -1563,6 +1732,7 @@ canvasEl.addEventListener('dblclick', (ev) => {
     const hit = pickWire(w);
     if (hit) {
       selectedWire = null;
+      selectedWires.clear();
       selectedNets = new Set([hit.net.id]);
       render();
     }
@@ -1689,9 +1859,20 @@ function renderComponents() {
     row.appendChild(meta);
     row.appendChild(remove);
 
-    row.addEventListener('click', () => {
+    row.addEventListener('click', (ev) => {
       cursor = { x: comp.transform.x, y: comp.transform.y };
-      setSelection([comp.refdes]);
+      if (ev.shiftKey) {
+        // Shift-click toggles this instance in/out of the multi-selection.
+        if (multi.has(comp.refdes)) {
+          multi.delete(comp.refdes);
+          if (selected === comp.refdes) selected = multi.size ? [...multi][0] : null;
+        } else {
+          multi.add(comp.refdes);
+          if (!selected) selected = comp.refdes;
+        }
+      } else {
+        setSelection([comp.refdes]);
+      }
       render();
     });
 
@@ -1722,47 +1903,79 @@ function renderNets() {
     row.appendChild(ref);
     row.appendChild(meta);
 
-    row.addEventListener('click', () => {
-      selectedNets = new Set([net.id]);
+    row.addEventListener('click', (ev) => {
+      const now = Date.now();
+      const prev = lastNetClick;
+      // A plain click re-renders the list, replacing this row node before the
+      // browser can fire a native `dblclick` on it, so a fast second click at
+      // the same position is detected here manually (like labels and wires).
+      const doubleClick =
+        !ev.shiftKey &&
+        prev &&
+        prev.netId === net.id &&
+        now - prev.at < 500 &&
+        Math.abs(ev.clientX - prev.x) <= 6 &&
+        Math.abs(ev.clientY - prev.y) <= 6;
+      lastNetClick = { netId: net.id, x: ev.clientX, y: ev.clientY, at: now };
+      if (doubleClick) {
+        startNetRename(net, ref);
+        return;
+      }
+      if (ev.shiftKey) {
+        // Shift-click toggles this net in/out of the highlighted set.
+        if (selectedNets.has(net.id)) selectedNets.delete(net.id);
+        else selectedNets.add(net.id);
+      } else {
+        selectedNets = new Set([net.id]);
+      }
       const pt = net.points()[Math.floor(net.points().length / 2)];
       if (pt) cursor = { x: pt.x, y: pt.y };
       render();
     });
 
     row.addEventListener('dblclick', () => {
-      selectedNets = new Set([net.id]);
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'rename-input';
-      input.value = net.name || '';
-      input.placeholder = net.id;
-      input.spellcheck = false;
-      ref.replaceWith(input);
-      input.focus();
-      input.select();
-      let closed = false;
-      const done = (applyText) => {
-        if (closed) return;
-        closed = true;
-        const v = input.value.trim();
-        input.replaceWith(ref);
-        if (applyText && v && v !== net.name) {
-          commit(() => {
-            net.name = v;
-          });
-        }
-        render();
-      };
-      input.addEventListener('keydown', (ev) => {
-        ev.stopPropagation();
-        if (ev.key === 'Enter') done(true);
-        else if (ev.key === 'Escape') done(false);
-      });
-      input.addEventListener('blur', () => done(true));
+      // Native dblclick backup for browsers that deliver it (the manual
+      // detection above covers the row-replacing re-render case).
+      startNetRename(net, ref);
     });
 
     netsListEl.appendChild(row);
   }
+}
+
+/** Open the inline rename <input> for a net's row (Enter/blur commits, Esc
+ *  cancels). The net name is replaced in place so the row is not re-rendered
+ *  mid-edit. */
+function startNetRename(net, ref) {
+  selectedNets = new Set([net.id]);
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'rename-input';
+  input.value = net.name || '';
+  input.placeholder = net.id;
+  input.spellcheck = false;
+  ref.replaceWith(input);
+  input.focus();
+  input.select();
+  let closed = false;
+  const done = (applyText) => {
+    if (closed) return;
+    closed = true;
+    const v = input.value.trim();
+    input.replaceWith(ref);
+    if (applyText && v && v !== net.name) {
+      commit(() => {
+        net.name = v;
+      });
+    }
+    render();
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') done(true);
+    else if (ev.key === 'Escape') done(false);
+  });
+  input.addEventListener('blur', () => done(true));
 }
 
 function renderDetail() {
@@ -1855,6 +2068,9 @@ const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 function onWireKey(key) {
   if (key === 'Escape') {
     wire = null;
+    selectedWire = null;
+    selectedWires.clear();
+    selectedNets.clear();
     logLine('wiring cancelled');
   } else if (key === 'Enter') {
     commitWireAtCursor();
@@ -2059,11 +2275,17 @@ function onNormalKey(key) {
       const dy = nudgeKey[1] * count * 40;
       commit(() => {
         const refs = comps.map((c) => c.refdes);
-        for (const c of comps) circuit.moveComponent(c.refdes, c.transform.x + dx, c.transform.y + dy);
+        const moved = new Map();
+        for (const c of comps) {
+          circuit.moveComponent(c.refdes, c.transform.x + dx, c.transform.y + dy);
+          moved.set(c.refdes, { dx, dy });
+        }
         // Only free labels are moved explicitly — owned labels follow their
         // component's transform automatically (avoid double-moving them).
         for (const lab of labs) if (!lab.owner) lab.translate(dx, dy);
-        rerouteTouchedNets(refs);
+        // Nudging moves the wires too, exactly like a drag: a net whose
+        // terminals all ride nudged components translates rigidly with them.
+        rerouteTouchedNets(refs, moved);
       });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
@@ -2411,6 +2633,7 @@ function runLine(line) {
     history.push(before);
     if (history.length > 200) history.shift();
     future.length = 0;
+    wiresDirty = true; // commands can re-route / splice nets
     multi = new Set([...multi].filter((r) => circuit.components.has(r)));
     if (!circuit.components.has(selected)) selected = multi.size ? [...multi][0] : null;
   }
@@ -2444,6 +2667,7 @@ function renderStatus() {
     );
   }
   if (selectedNets.size) parts.push(`nets ${selectedNets.size}`);
+  if (netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
   statusEl.textContent = parts.join('  ·  ');
   statusEl.className = wire ? 'status wire' : mode === 'insert' ? 'status insert' : 'status normal';
 }
@@ -2649,7 +2873,10 @@ window.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       setSelection([...circuit.components.keys()]);
       setLabelSelection([...circuit.labels.keys()]);
-      selectedNets.clear();
+      // Select every non-empty net too, so Ctrl+A grabs the whole drawing.
+      selectedNets = new Set(
+        [...circuit.nets.values()].filter((n) => n.terminals.length).map((n) => n.id)
+      );
       render();
     } else if (k === 'c') {
       ev.preventDefault();
