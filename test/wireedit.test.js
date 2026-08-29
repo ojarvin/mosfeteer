@@ -227,10 +227,10 @@ test('shift-selecting runs in two nets and dragging them together moves both (ed
   // moveWireRun, then persist exactly like canvasMouseUp (rerouteNet +
   // _reduceNet). Both nets must stay connected and both runs must move.
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 240, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 160 });
-  c.addComponent('resistor', { refdes: 'R4', x: 240, y: 160 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 320, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 80, y: 160 });
+  c.addComponent('resistor', { refdes: 'R4', x: 320, y: 160 });
   const n1 = c.connect('R1.b', 'R2.a'); // (160,0)..(240,0) straight
   const n2 = c.connect('R3.b', 'R4.a'); // (160,160)..(240,160) straight
   // Force each net to an explicit L-shaped route so it has a draggable run.

@@ -42,10 +42,11 @@ function assertNetClean(circuit, net, expectedDots) {
 
 function scenario() {
   const c = new Circuit();
+  // The centered-origin symbols preserve these historical world terminals.
   // R1.a(0,0) R1.b(160,0)   R2.a(400,0) R2.b(560,0)   R3.a(280,-200) R3.b(440,-200)
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 280, y: -200 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 360, y: -200 });
   return c;
 }
 
@@ -71,10 +72,10 @@ test('third terminal joined onto an existing terminal: one junction, one dot', (
 
 test('four terminals joined in stages keep exactly the real junction count', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 280, y: -200 });
-  c.addComponent('resistor', { refdes: 'R4', x: 280, y: 200 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 360, y: -200 });
+  c.addComponent('resistor', { refdes: 'R4', x: 360, y: 200 });
   const n = c.wireTo('R1.b', { x: 400, y: 0 }); // R1.b -> R2.a
   c.wireTo('R3.b', { x: 280, y: 0 }); // join mid-wire
   c.wireTo('R4.a', { x: 280, y: 0 }); // join at the same junction
@@ -91,11 +92,11 @@ test('dragging the joined devices around never detaches or adds dots', () => {
 
   // Move R1 (source end) and R3 (joined branch) in several steps like a real drag.
   const moves = [
-    ['R1', 0, 120],
-    ['R3', 280, -360],
-    ['R1', 120, 120],
-    ['R2', 400, 160],
-    ['R3', 400, -360],
+    ['R1', 80, 120],
+    ['R3', 360, -360],
+    ['R1', 200, 120],
+    ['R2', 480, 160],
+    ['R3', 480, -360],
   ];
   for (const [refdes, x, y] of moves) {
     const comp = c.getComponent(refdes);
@@ -145,10 +146,10 @@ test('loading stale overlapping branches splits them so dragging never loops or 
   const c = Circuit.fromJSON({
     version: 1, grid: 40,
     components: [
-      { refdes: 'C1', type: 'capacitor', value: '', transform: { x: -240, y: -400, rotation: 0, mirrorX: false, mirrorY: false } },
-      { refdes: 'C2', type: 'capacitor', value: '', transform: { x: -240, y: 80, rotation: 0, mirrorX: false, mirrorY: false } },
-      { refdes: 'C3', type: 'capacitor', value: '', transform: { x: 480, y: 80, rotation: 0, mirrorX: false, mirrorY: false } },
-      { refdes: 'C4', type: 'capacitor', value: '', transform: { x: -240, y: 600, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'C1', type: 'capacitor', value: '', transform: { x: -160, y: -400, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'C2', type: 'capacitor', value: '', transform: { x: -160, y: 80, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'C3', type: 'capacitor', value: '', transform: { x: 560, y: 80, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'C4', type: 'capacitor', value: '', transform: { x: -160, y: 600, rotation: 0, mirrorX: false, mirrorY: false } },
     ],
     nets: [{
       id: 'N1', name: '',
@@ -185,7 +186,7 @@ test('loading stale overlapping branches splits them so dragging never loops or 
   // real 3-arm junction dot (4) plus the T at (160,600) -> 5 dots total. The
   // invariant this test guards is that DRAGGING never adds (or removes) dots.
   const loadDots = dots();
-  for (const [x, y] of [[-240, 480], [-240, 360], [-240, 240]]) {
+  for (const [x, y] of [[-160, 480], [-160, 360], [-160, 240]]) {
     const dx = x - sx, dy = y - sy;
     c.moveComponent('C4', x, y);
     n.branches = snap.map((b) => b.map((p) => ({ ...p })));

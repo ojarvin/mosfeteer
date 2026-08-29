@@ -10,8 +10,8 @@ function fresh() {
 /** A tiny wired circuit for report-shape / svg tests. */
 function smallCircuit() {
   const c = fresh();
-  c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 640, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 320, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 720, y: 0 });
   c.connect('R1.b', 'R2.a');
   return c;
 }
@@ -99,11 +99,11 @@ test('rotate defaults to +90 and wraps', () => {
 
 test('rotating a routed-in component re-routes the net to the new terminal', () => {
   const c = fresh();
-  runCommand(c, 'add resistor --at 0 0'); // R1 (a at 0,0)
-  runCommand(c, 'add resistor --at 400 0'); // R2 (a at 400,0)
-  runCommand(c, 'connect R1.b R2.a'); // R1.b at (160,0) -> R2.a at (400,0)
+  runCommand(c, 'add resistor --at 0 0'); // R1 (b at 80,0)
+  runCommand(c, 'add resistor --at 400 0'); // R2 (a at 320,0)
+  runCommand(c, 'connect R1.b R2.a');
   const net = [...c.nets.values()][0];
-  assert.equal(net.route[net.route.length - 1].x, 400);
+  assert.equal(net.route[net.route.length - 1].x, 320);
   runCommand(c, 'rotate R2');
   assert.deepEqual(net.route[net.route.length - 1], c.getComponent('R2').terminalWorld('a'));
 });
@@ -185,10 +185,10 @@ test('connect with too few refs throws', () => {
 
 function crossCircuit() {
   const c = fresh();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: -160 });
-  c.addComponent('resistor', { refdes: 'R2', x: 240, y: 160 });
-  c.addComponent('resistor', { refdes: 'R3', x: 240, y: -160 });
-  c.addComponent('resistor', { refdes: 'R4', x: 0, y: 160 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: -160 });
+  c.addComponent('resistor', { refdes: 'R2', x: 320, y: 160 });
+  c.addComponent('resistor', { refdes: 'R3', x: 320, y: -160 });
+  c.addComponent('resistor', { refdes: 'R4', x: 80, y: 160 });
   return c;
 }
 
@@ -254,8 +254,8 @@ test('fixed diagonal paths cumulatively re-anchor and restore through moves', ()
   const c = crossCircuit();
   runCommand(c, 'cross R1.a R2.a R3.a R4.a');
   const before = [...c.nets.values()].map((n) => n.paths());
-  runCommand(c, 'move R1 0 -120');
-  runCommand(c, 'move R1 0 -160');
+  runCommand(c, 'move R1 80 -120');
+  runCommand(c, 'move R1 80 -160');
   assert.deepEqual([...c.nets.values()].map((n) => n.paths()), before);
 });
 
@@ -333,8 +333,8 @@ test('svg command returns SVG via json when no file I/O', () => {
 
 test('evaluate flags a wire drilling through its own source body', () => {
   const c = fresh();
-  c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 640, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 320, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 720, y: 0 });
   const net = c.connect('R1.a', 'R2.b');
   // straight line leaving pin "a" right through R1's body
   net.route = [{ x: 240, y: 0 }, { x: 800, y: 0 }];
@@ -349,8 +349,8 @@ test('evaluate flags a wire drilling through its own source body', () => {
 
 test('evaluate allows fixed diagonals but reports diagonal body drills', () => {
   const c = fresh();
-  c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 640, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 320, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 720, y: 400 });
   c.wireDirectTo('R1.a', 'R2.a');
   const rep = evaluate(c);
   assert.deepEqual(rep.diagonalWireSegments, []);
@@ -359,8 +359,8 @@ test('evaluate allows fixed diagonals but reports diagonal body drills', () => {
 
 test('renaming and dropping terminals update fixed path anchors', () => {
   const c = fresh();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a');
   runCommand(c, 'rename R1 R9');
   assert.deepEqual(n.fixedPaths[0].start, { comp: 'R9', term: 'b' });

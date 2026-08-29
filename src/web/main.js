@@ -539,7 +539,7 @@ function deleteSelection() {
     for (const key of keys) {
       const w = keyToWire(key);
       if (circuit.nets.get(w.netId)?.routingMode === 'fixed') {
-        logLine('direct wire is protected — press W to draw a new path');
+        logLine('DIRECT WIRE segments cannot be deleted; drag them to edit');
         return true;
       }
       if (!byNet.has(w.netId)) byNet.set(w.netId, []);
@@ -786,6 +786,20 @@ function renderCanvas() {
             }
           })()
       : undefined;
+  let previewSelection;
+  const previewBox = visual
+    ? worldRect(visual, cursor)
+    : drag?.mode === 'marquee' && drag.rubber
+      ? drag.rubber
+      : null;
+  if (previewBox) {
+    const found = boxSelectionContents(previewBox.x0, previewBox.y0, previewBox.x1, previewBox.y1);
+    previewSelection = {
+      refs: drag?.mode === 'marquee' && drag.shift ? [...new Set([...multi, ...found.refs])] : found.refs,
+      labels: drag?.mode === 'marquee' && drag.shift ? [...new Set([...selLabels, ...found.labels])] : found.labels,
+      nets: drag?.mode === 'marquee' && drag.shift ? [...new Set([...selectedNets, ...found.nets])] : found.nets,
+    };
+  }
   const overlay = editorOverlay(circuit, {
     cursor,
     selection: [...multi],
@@ -807,6 +821,7 @@ function renderCanvas() {
     selLabel,
     selLabels: [...selLabels],
     nets,
+    previewSelection,
     netSolder: [...netSolder],
     warnOverlaps: netWarnings,
     rubber: visual
@@ -913,31 +928,37 @@ function rectContained(r, box) {
  *  by bbox, nets by route). With `shift` the box adds to the current selection.
  *  Shared by the mouse marquee and visual-mode Enter. */
 function applyBoxSelection(x0, y0, x1, y1, shift) {
-  const box = worldRect({ x: x0, y: y0 }, { x: x1, y: y1 });
-  const found = [];
-  for (const c of circuit.components.values()) {
-    if (rectContained(c.bboxWorld(), box)) found.push(c.refdes);
+  const found = boxSelectionContents(x0, y0, x1, y1);
+  if (shift) {
+    const set = new Set(multi);
+    for (const r of found.refs) set.add(r);
+    setSelection([...set]);
+    const labSet = new Set(selLabels);
+    for (const id of found.labels) labSet.add(id);
+    setLabelSelection([...labSet]);
+  } else {
+    setSelection(found.refs);
+    setLabelSelection(found.labels);
   }
-  const foundLabels = [];
+  selectedNets = shift ? new Set([...selectedNets, ...found.nets]) : new Set(found.nets);
+}
+
+/** Purely compute the objects a contained marquee/visual box would select. */
+function boxSelectionContents(x0, y0, x1, y1) {
+  const box = worldRect({ x: x0, y: y0 }, { x: x1, y: y1 });
+  const refs = [];
+  for (const c of circuit.components.values()) {
+    if (rectContained(c.bboxWorld(), box)) refs.push(c.refdes);
+  }
+  const labels = [];
   for (const label of circuit.labels.values()) {
-    if (rectContained(label.bbox(), box)) foundLabels.push(label.id);
+    if (rectContained(label.bbox(), box)) labels.push(label.id);
   }
   const nets = [];
   for (const net of circuit.nets.values()) {
     if (netInBox(net, box)) nets.push(net.id);
   }
-  if (shift) {
-    const set = new Set(multi);
-    for (const r of found) set.add(r);
-    setSelection([...set]);
-    const labSet = new Set(selLabels);
-    for (const id of foundLabels) labSet.add(id);
-    setLabelSelection([...labSet]);
-  } else {
-    setSelection(found);
-    setLabelSelection(foundLabels);
-  }
-  selectedNets = new Set(nets);
+  return { refs, labels, nets };
 }
 
 function pickAt(w) {
@@ -1028,7 +1049,7 @@ function fixedWireDragAt(hit, w, startClient, ev) {
     fixedSnapshots, startSnapshot: snapshot(), rubber: null,
   };
   cursor = { x: snap(w.x), y: snap(w.y) };
-  logLine(junction >= 0 ? 'fixed junction selected — drag to move its dot' : vertex >= 0 ? 'fixed vertex selected — drag to move it' : 'fixed path selected — drag to move its segment');
+  logLine(junction >= 0 ? 'DIRECT WIRE junction — drag to move its dot' : vertex >= 0 ? 'DIRECT WIRE vertex — drag to move it' : 'DIRECT WIRE path — drag to move its segment');
   render();
   return true;
 }
@@ -1619,7 +1640,7 @@ function canvasMouseDown(ev) {
     setSelection([]);
     selectedNets.clear();
   }
-  drag = { mode: 'marquee', startClient, startWorld, startSelection: new Set(multi), startLabelSelection: new Set(selLabels), moved: false, rubber: null };
+  drag = { mode: 'marquee', startClient, startWorld, startSelection: new Set(multi), startLabelSelection: new Set(selLabels), shift: ev.shiftKey, moved: false, rubber: null };
   render();
 }
 
@@ -2312,7 +2333,7 @@ function renderDetail() {
 
   const meta = document.createElement('div');
   meta.className = 'detail-meta';
-  meta.textContent = `${comp.refdes} (${comp.type})  value: ${comp.value || '-'}  —  wire: press w, then a terminal letter below`;
+  meta.textContent = `${comp.refdes} (${comp.type})  value: ${comp.value || '-'}  —  w: managed wire · W: fixed/direct wire`;
   detailEl.appendChild(meta);
 
   const table = document.createElement('table');
@@ -2754,11 +2775,10 @@ function logKeymap() {
       'y           copy selected set     C-c       copy selected set',
       'p / C-v     paste the copied set at the cursor (new ids, nets kept)',
       'D           toggle dark mode',
-      'w           enter persistent wire mode (Esc exits)',
-      'W           protected direct wire mode (literal points, diagonal paths)',
-      '            click points to build a wire in segments; click/Enter the',
-      '            target terminal to connect, or Enter on another wire to join',
-      '            that net (a solder dot marks the junction)',
+      'w           managed wire mode: routed/orthogonal, editable segments',
+      '            click points, then click/Enter a terminal; wire interiors can join',
+      'W           fixed/direct wire mode: literal points, diagonal paths',
+      '            drag fixed vertices, segments, or explicit junction dots',
       'Tab         cycle selection',
       'Ctrl-A      select all components',
       'Enter       select component under cursor',

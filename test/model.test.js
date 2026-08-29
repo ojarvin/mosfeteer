@@ -121,26 +121,26 @@ test('default value from symbol', () => {
 test('terminalWorld applies transform and stays on grid', () => {
   const c = new Circuit();
   const r = c.addComponent('resistor', { x: 400, y: 0 });
-  assert.deepEqual(r.terminalWorld('a'), { x: 400, y: 0 });
-  assert.deepEqual(r.terminalWorld('b'), { x: 560, y: 0 });
+  assert.deepEqual(r.terminalWorld('a'), { x: 320, y: 0 });
+  assert.deepEqual(r.terminalWorld('b'), { x: 480, y: 0 });
 });
 
 test('terminalWorld with rotation 90', () => {
   const c = new Circuit();
   const r = c.addComponent('resistor', { x: 400, y: 0, rotation: 90 });
-  // local a=(0,0)->(0,0); b=(160,0) rotate 90: (-y,x) -> (0,160) -> translate (400,160)
-  assert.deepEqual(r.terminalWorld('a'), { x: 400, y: 0 });
-  assert.deepEqual(r.terminalWorld('b'), { x: 400, y: 160 });
+  // local a=(-80,0)->(0,-80); b=(80,0) rotate 90 -> (0,80).
+  assert.deepEqual(r.terminalWorld('a'), { x: 400, y: -80 });
+  assert.deepEqual(r.terminalWorld('b'), { x: 400, y: 80 });
 });
 
 test('worldTerminals and bboxWorld', () => {
   const c = new Circuit();
   const r = c.addComponent('resistor', { x: 400, y: 0 });
   assert.deepEqual(r.worldTerminals(), [
-    { name: 'a', x: 400, y: 0 },
-    { name: 'b', x: 560, y: 0 },
+    { name: 'a', x: 320, y: 0 },
+    { name: 'b', x: 480, y: 0 },
   ]);
-  assert.deepEqual(r.bboxWorld(), { x: 400, y: -40, w: 160, h: 80 });
+  assert.deepEqual(r.bboxWorld(), { x: 320, y: -40, w: 160, h: 80 });
 });
 
 test('countTerminals counts all symbol terminals', () => {
@@ -153,8 +153,8 @@ test('countTerminals counts all symbol terminals', () => {
 
 test('connect creates a net and adds terminals', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
+  const r1 = c.addComponent('resistor', { x: 80, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 480, y: 0 });
   const net = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   assert.ok(net.id.startsWith('N'));
   assert.equal(net.terminalCount(), 2);
@@ -163,9 +163,9 @@ test('connect creates a net and adds terminals', () => {
 
 test('connect merges existing nets into one', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
-  const r3 = c.addComponent('resistor', { x: 800, y: 0 });
+  const r1 = c.addComponent('resistor', { x: 80, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 480, y: 0 });
+  const r3 = c.addComponent('resistor', { x: 880, y: 0 });
   const n1 = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   const n2 = c.connect(`${r2.refdes}.b`, `${r3.refdes}.b`);
   assert.equal(c.nets.size, 2);
@@ -178,9 +178,9 @@ test('connect merges existing nets into one', () => {
 
 test('merging nets preserves both established wire paths', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
-  const r3 = c.addComponent('resistor', { x: 800, y: 0 });
+  const r1 = c.addComponent('resistor', { x: 80, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 480, y: 0 });
+  const r3 = c.addComponent('resistor', { x: 880, y: 0 });
   const a = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   const b = c.connect(`${r2.refdes}.b`, `${r3.refdes}.b`);
   a.branches = [[{ x: 0, y: 0 }, { x: 0, y: 160 }, { x: 400, y: 160 }]];
@@ -219,8 +219,8 @@ test('disconnect removes just that terminal and drops empty nets', () => {
 
 test('disconnect of the last terminal succeeds and drops the empty net', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
+  const r1 = c.addComponent('resistor', { x: 80, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 480, y: 0 });
   const net = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   const r = net; // remove R1 first so R2 is last
   c.disconnect(`${r1.refdes}.a`);
@@ -231,8 +231,8 @@ test('disconnect of the last terminal succeeds and drops the empty net', () => {
 
 test('wire paths are canonical and deleting a segment splits terminal connectivity', () => {
   const c = new Circuit();
-  const a = c.addComponent('resistor', { x: 0, y: 0 });
-  const b = c.addComponent('resistor', { x: 400, y: 0 });
+  const a = c.addComponent('resistor', { x: 80, y: 0 });
+  const b = c.addComponent('resistor', { x: 480, y: 0 });
   const n = c.connect(`${a.refdes}.a`, `${b.refdes}.a`);
   n.branches = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 400, y: 80 }, { x: 400, y: 0 }]];
   n.route = n.branches[0];
@@ -244,8 +244,8 @@ test('wire paths are canonical and deleting a segment splits terminal connectivi
 
 test('solder dots are absent from ordinary elbows and floating space', () => {
   const c = new Circuit();
-  const a = c.addComponent('resistor', { x: 0, y: 0 });
-  const b = c.addComponent('resistor', { x: 400, y: 0 });
+  const a = c.addComponent('resistor', { x: 80, y: 0 });
+  const b = c.addComponent('resistor', { x: 480, y: 0 });
   const n = c.connect(`${a.refdes}.a`, `${b.refdes}.a`);
   n.branches = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 400, y: 80 }, { x: 400, y: 0 }]];
   n.route = n.branches[0];
@@ -258,10 +258,10 @@ test('solder dots are absent from ordinary elbows and floating space', () => {
 
 test('solder dots belong to one net junction, not another net crossing', () => {
   const c = new Circuit();
-  const a = c.addComponent('resistor', { x: 0, y: 0 });
-  const b = c.addComponent('resistor', { x: 400, y: 0 });
-  const d = c.addComponent('resistor', { x: 0, y: 400 });
-  const e = c.addComponent('resistor', { x: 400, y: 400 });
+  const a = c.addComponent('resistor', { x: 80, y: 0 });
+  const b = c.addComponent('resistor', { x: 480, y: 0 });
+  const d = c.addComponent('resistor', { x: 80, y: 400 });
+  const e = c.addComponent('resistor', { x: 480, y: 400 });
   const n1 = c.connect(`${a.refdes}.a`, `${b.refdes}.a`);
   const n2 = c.connect(`${d.refdes}.a`, `${e.refdes}.a`);
   n1.branches = [[{ x: 0, y: 0 }, { x: 400, y: 0 }]];
@@ -276,9 +276,9 @@ test('solder dots belong to one net junction, not another net crossing', () => {
 
 test('an auto solder dot can be removed without being regenerated', () => {
   const c = new Circuit();
-  const a = c.addComponent('resistor', { x: 0, y: 0 });
-  const b = c.addComponent('resistor', { x: 400, y: 0 });
-  const d = c.addComponent('resistor', { x: 200, y: 400 });
+  const a = c.addComponent('resistor', { x: 80, y: 0 });
+  const b = c.addComponent('resistor', { x: 480, y: 0 });
+  const d = c.addComponent('resistor', { x: 280, y: 400 });
   const n = c.connect(`${a.refdes}.a`, `${b.refdes}.a`, `${d.refdes}.a`);
   n.branches = [[{ x: 0, y: 0 }, { x: 200, y: 0 }], [{ x: 200, y: 0 }, { x: 400, y: 0 }], [{ x: 200, y: 0 }, { x: 200, y: 400 }]];
   n.route = n.branches[0];
@@ -292,14 +292,14 @@ test('an auto solder dot can be removed without being regenerated', () => {
 
 test('repeated component moves keep route endpoints attached and outside the body', () => {
   const c = new Circuit();
-  const a = c.addComponent('resistor', { x: 0, y: 0 });
-  const b = c.addComponent('resistor', { x: 400, y: 0 });
+  const a = c.addComponent('resistor', { x: 80, y: 0 });
+  const b = c.addComponent('resistor', { x: 480, y: 0 });
   const n = c.connect(`${a.refdes}.b`, `${b.refdes}.a`);
   n.branches = [[{ x: 160, y: 0 }, { x: 160, y: 160 }, { x: 400, y: 160 }, { x: 400, y: 0 }]];
   n.route = n.branches[0];
-  c.moveComponent(a.refdes, 0, 80);
+  c.moveComponent(a.refdes, 80, 80);
   c.rerouteNet(n, new Map([[a.refdes, { dx: 0, dy: 80 }]]));
-  c.moveComponent(a.refdes, 0, 160);
+  c.moveComponent(a.refdes, 80, 160);
   c.rerouteNet(n, new Map([[a.refdes, { dx: 0, dy: 80 }]]));
   const path = n.branches[0];
   assert.deepEqual(path[0], a.terminalWorld('b'));
@@ -310,11 +310,11 @@ test('repeated component moves keep route endpoints attached and outside the bod
 
 test('moving a component with one wired terminal preserves its wire stub', () => {
   const c = new Circuit();
-  const r = c.addComponent('resistor', { x: 0, y: 0 });
+  const r = c.addComponent('resistor', { x: 80, y: 0 });
   const n = c.connect(`${r.refdes}.a`);
   n.branches = [[{ x: 0, y: 0 }, { x: 0, y: 160 }, { x: 200, y: 160 }]];
   n.route = n.branches[0];
-  c.moveComponent(r.refdes, 80, 0);
+  c.moveComponent(r.refdes, 160, 0);
   c.rerouteNet(n, new Map([[r.refdes, { dx: 80, dy: 0 }]]));
   assert.equal(c.netOfTerminal(`${r.refdes}.a`), n);
   assert.deepEqual(n.branches[0][0], r.terminalWorld('a'));
@@ -323,11 +323,11 @@ test('moving a component with one wired terminal preserves its wire stub', () =>
 
 test('moving the target component keeps the target endpoint attached to its net', () => {
   const c = new Circuit();
-  const source = c.addComponent('resistor', { x: 0, y: 0 });
-  const target = c.addComponent('resistor', { x: 400, y: 0 });
+  const source = c.addComponent('resistor', { x: 80, y: 0 });
+  const target = c.addComponent('resistor', { x: 480, y: 0 });
   const n = c.connect(`${source.refdes}.b`, `${target.refdes}.a`);
   n.route = [{ x: 160, y: 0 }, { x: 160, y: 160 }, { x: 400, y: 160 }, { x: 400, y: 0 }];
-  c.moveComponent(target.refdes, 400, 160);
+  c.moveComponent(target.refdes, 480, 160);
   c.rerouteNet(n, new Map([[target.refdes, { dx: 0, dy: 160 }]]));
   const path = n.route;
   assert.deepEqual(new Set([path[0], path.at(-1)].map((p) => `${p.x},${p.y}`)), new Set([
@@ -339,12 +339,12 @@ test('moving the target component keeps the target endpoint attached to its net'
 
 test('placing a component on an existing terminal connects it and later movement keeps the net', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 160, y: 0 });
+  const r1 = c.addComponent('resistor', { x: 80, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 240, y: 0 });
   const n = c.netOfTerminal(`${r2.refdes}.a`);
   assert.ok(n);
   assert.equal(n, c.netOfTerminal(`${r1.refdes}.b`));
-  c.moveComponent(r2.refdes, 160, 160);
+  c.moveComponent(r2.refdes, 240, 160);
   c.rerouteNet(n, new Map([[r2.refdes, { dx: 0, dy: 160 }]]));
   assert.equal(c.netOfTerminal(`${r2.refdes}.a`), n);
   const path = n.branches?.[0] || n.route || n.points();
@@ -356,19 +356,19 @@ test('placing a component on an existing terminal connects it and later movement
 
 test('automatic routing never shorts two terminals through a component body', () => {
   const c = new Circuit();
-  const r = c.addComponent('resistor', { x: 0, y: 0 });
+  const r = c.addComponent('resistor', { x: 80, y: 0 });
   const n = c.connect(`${r.refdes}.a`, `${r.refdes}.b`);
   for (let i = 1; i < n.points().length; i++) assert.equal(segThroughInterior(n.points()[i - 1], n.points()[i], r.bboxWorld()), false);
 });
 
 test('moving a diode-connected MOSFET before joining a third terminal never creates diagonal branches', () => {
   const c = new Circuit();
-  const m1 = c.addComponent('nmos', { x: 0, y: 0 });
-  const m2 = c.addComponent('nmos', { x: 400, y: 0 });
-  const m3 = c.addComponent('nmos', { x: 800, y: 0 });
+  const m1 = c.addComponent('nmos', { x: 120, y: 0 });
+  const m2 = c.addComponent('nmos', { x: 520, y: 0 });
+  const m3 = c.addComponent('nmos', { x: 920, y: 0 });
   const n = c.connect(`${m1.refdes}.g`, `${m1.refdes}.d`);
   c.rerouteNet(n);
-  c.moveComponent(m1.refdes, 200, 0);
+  c.moveComponent(m1.refdes, 320, 0);
   c.rerouteNet(n, new Map([[m1.refdes, { dx: 200, dy: 0 }]]));
   c.connect(`${m1.refdes}.g`, `${m2.refdes}.d`);
   c.rerouteNet(n);
@@ -384,8 +384,8 @@ test('loading a malformed diagonal route normalizes it before it can be rendered
     version: 1,
     grid: 40,
     components: [
-      { refdes: 'R1', type: 'resistor', value: '', transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
-      { refdes: 'R2', type: 'resistor', value: '', transform: { x: 400, y: 400, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'R1', type: 'resistor', value: '', transform: { x: 80, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'R2', type: 'resistor', value: '', transform: { x: 480, y: 400, rotation: 0, mirrorX: false, mirrorY: false } },
     ],
     nets: [{ id: 'N1', name: '', terminals: [{ comp: 'R1', term: 'a' }, { comp: 'R2', term: 'a' }], route: [{ x: 0, y: 0 }, { x: 400, y: 400 }], branches: null }],
     labels: [],
@@ -400,8 +400,8 @@ test('version-1 states remain managed and preserve the historic route shape', ()
     version: 1,
     grid: 40,
     components: [
-      { refdes: 'R1', type: 'resistor', value: '', transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
-      { refdes: 'R2', type: 'resistor', value: '', transform: { x: 400, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'R1', type: 'resistor', value: '', transform: { x: 80, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'R2', type: 'resistor', value: '', transform: { x: 480, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
     ],
     nets: [{ id: 'N1', name: '', terminals: [{ comp: 'R1', term: 'b' }, { comp: 'R2', term: 'a' }], route: [{ x: 160, y: 0 }, { x: 400, y: 0 }], branches: null }],
     labels: [],
@@ -414,8 +414,8 @@ test('version-1 states remain managed and preserve the historic route shape', ()
 
 test('direct diagonal paths round-trip in fixed policy without orthogonalization', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 240, y: 80 }]);
   assert.equal(n.routingMode, 'fixed');
   assert.deepEqual(n.paths(), [[
@@ -432,8 +432,8 @@ test('direct diagonal paths round-trip in fixed policy without orthogonalization
 
 test('fixed geometry is protected from refresh and branch reduction', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
   const before = n.paths();
   c.rerouteNet(n, 'refresh');
@@ -444,8 +444,8 @@ test('fixed geometry is protected from refresh and branch reduction', () => {
 
 test('fixed path, vertex, and junction edits preserve anchors without reduction', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a');
   n.junctions = [{ x: 240, y: 160 }];
   c.setFixedPath(n, 0, [
@@ -468,9 +468,9 @@ test('fixed path, vertex, and junction edits preserve anchors without reduction'
 
 test('managed operations cannot add phantom terminals to fixed nets', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
-  c.addComponent('resistor', { refdes: 'R3', x: 800, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
+  c.addComponent('resistor', { refdes: 'R3', x: 880, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a');
   assert.throws(() => c.connect('R1.b', 'R3.a'), /cannot grow a fixed net/);
   assert.throws(() => c.connectTo(n.id, 'R3.a'), /cannot grow a fixed net/);
@@ -479,28 +479,28 @@ test('managed operations cannot add phantom terminals to fixed nets', () => {
 
 test('distinct coincident direct anchors retain a degenerate path until separation', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 160, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 240, y: 0 });
   const n = c.wireDirectTo('R1.b', 'R2.a');
   assert.deepEqual(n.fixedPaths[0].points, [{ x: 160, y: 0 }, { x: 160, y: 0 }]);
-  c.moveComponent('R2', 400, 0);
+  c.moveComponent('R2', 480, 0);
   c.rerouteNet(n, new Map([['R2', { dx: 240, dy: 0 }]]));
   assert.deepEqual(n.paths()[0], [{ x: 160, y: 0 }, { x: 400, y: 0 }]);
 });
 
 test('fixed authored vertices and anchors survive endpoint coincidence and reload', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
-  c.moveComponent('R2', 240, 80);
+  c.moveComponent('R2', 320, 80);
   c.rerouteNet(n, new Map([['R2', { dx: -160, dy: -320 }]]));
   assert.deepEqual(n.fixedPaths[0].points, [
     { x: 160, y: 0 }, { x: 240, y: 80 }, { x: 240, y: 80 },
   ], 'the authored waypoint remains when the endpoint temporarily lands on it');
   const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
   assert.deepEqual(reloaded.nets.get(n.id).fixedPaths[0].points, n.fixedPaths[0].points);
-  c.moveComponent('R2', 400, 400);
+  c.moveComponent('R2', 480, 400);
   c.rerouteNet(n, new Map([['R2', { dx: 160, dy: 320 }]]));
   assert.deepEqual(n.fixedPaths[0].points, [
     { x: 160, y: 0 }, { x: 240, y: 80 }, { x: 400, y: 400 },
@@ -509,8 +509,8 @@ test('fixed authored vertices and anchors survive endpoint coincidence and reloa
 
 test('v2 loading sanitizes fixed anchors that are not net member terminals', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a');
   const state = c.toJSON();
   state.nets[0].fixedPaths[0].start = { comp: 'R99', term: 'a' };
@@ -522,8 +522,8 @@ test('v2 loading sanitizes fixed anchors that are not net member terminals', () 
 
 test('disconnect and removal clear fixed terminal anchors', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a');
   c.disconnect('R1.b');
   assert.equal(n.fixedPaths[0].start, null);
@@ -533,9 +533,9 @@ test('disconnect and removal clear fixed terminal anchors', () => {
 
 test('promoting a managed net preserves explicit junctions and their solder marker', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 800, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 880, y: 400 });
   const n = c.connect('R1.b', 'R2.a');
   n.route = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
   n.junctions = [{ x: 280, y: 0 }];
@@ -549,8 +549,8 @@ test('promoting a managed net preserves explicit junctions and their solder mark
 
 test('reconnecting existing fixed members preserves paths, junctions, and solder', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
   const n = c.wireDirectTo('R1.b', 'R2.a');
   n.junctions = [{ x: 280, y: 0 }];
   c.syncJunctionSolders();
@@ -567,9 +567,9 @@ test('reconnecting existing fixed members preserves paths, junctions, and solder
 
 test('direct wiring promotes joined managed nets while retaining their visible paths', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 800, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 880, y: 400 });
   const n = c.connect('R1.b', 'R2.a');
   n.route = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
   const joined = c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }]);
@@ -582,16 +582,16 @@ test('direct wiring promotes joined managed nets while retaining their visible p
 
 test('fixed endpoints repair in place and rigid moves translate all geometry', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
-  c.moveComponent('R2', 400, 560);
+  c.moveComponent('R2', 480, 560);
   c.rerouteNet(n, new Map([['R2', { dx: 0, dy: 160 }]]));
   assert.deepEqual(n.paths()[0], [
     { x: 160, y: 0 }, { x: 240, y: 80 }, { x: 400, y: 560 },
   ]);
-  c.moveComponent('R1', 80, 160);
-  c.moveComponent('R2', 480, 720);
+  c.moveComponent('R1', 160, 160);
+  c.moveComponent('R2', 560, 720);
   c.rerouteNet(n, new Map([
     ['R1', { dx: 80, dy: 160 }],
     ['R2', { dx: 80, dy: 160 }],
@@ -603,10 +603,10 @@ test('fixed endpoints repair in place and rigid moves translate all geometry', (
 
 test('crossing fixed paths remain separate and do not create a solder junction', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
-  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 400 });
-  c.addComponent('resistor', { refdes: 'R4', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
+  c.addComponent('resistor', { refdes: 'R3', x: 80, y: 400 });
+  c.addComponent('resistor', { refdes: 'R4', x: 480, y: 0 });
   const a = c.wireDirectTo('R1.b', 'R2.a');
   const b = c.wireDirectTo('R3.b', 'R4.a');
   assert.notEqual(a.id, b.id);
@@ -615,8 +615,8 @@ test('crossing fixed paths remain separate and do not create a solder junction',
 });
 
 function mirroredMosPair(c, first = 'M1', second = 'M2', x = 0) {
-  c.addComponent('nmos', { refdes: first, x, y: 0, mirrorX: false, mirrorY: false });
-  c.addComponent('nmos', { refdes: second, x: x + 400, y: 0, mirrorX: true, mirrorY: false });
+  c.addComponent('nmos', { refdes: first, x: x + 120, y: 0, mirrorX: false, mirrorY: false });
+  c.addComponent('nmos', { refdes: second, x: x + 280, y: 0, mirrorX: true, mirrorY: false });
 }
 
 test('managed reciprocal diagonal nets infer a fixed cross-coupled pair', () => {
@@ -640,8 +640,8 @@ test('managed reciprocal diagonal nets infer a fixed cross-coupled pair', () => 
 
 test('cross-coupling inference rejects unmirrored component transforms', () => {
   const c = new Circuit();
-  c.addComponent('nmos', { refdes: 'M1', x: 0, y: 0, mirrorX: false, mirrorY: false });
-  c.addComponent('nmos', { refdes: 'M2', x: 400, y: 0, mirrorX: false, mirrorY: false });
+  c.addComponent('nmos', { refdes: 'M1', x: 120, y: 0, mirrorX: false, mirrorY: false });
+  c.addComponent('nmos', { refdes: 'M2', x: 520, y: 0, mirrorX: false, mirrorY: false });
   c.connect('M1.d', 'M2.s');
   c.connect('M1.s', 'M2.d');
   assert.ok([...c.nets.values()].every((n) => n.routingMode === 'managed'));
@@ -690,9 +690,9 @@ test('cross-coupling inference requires exactly one candidate', () => {
 
 test('removeComponent sweeps terminals and drops empty nets', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 400, y: 0 });
-  const r3 = c.addComponent('resistor', { x: 800, y: 0 });
+  const r1 = c.addComponent('resistor', { x: 80, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 480, y: 0 });
+  const r3 = c.addComponent('resistor', { x: 880, y: 0 });
   // netA = [R1.a, R2.a]; netB = [R2.b, R3.b]
   c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   const netB = c.connect(`${r2.refdes}.b`, `${r3.refdes}.b`);
@@ -711,7 +711,7 @@ test('removeComponent sweeps terminals and drops empty nets', () => {
 
 test('touching pins auto-connect and stay connected when dragged apart', () => {
   const c = new Circuit();
-  const m = c.addComponent('nmos', { x: 0, y: 0 }); // s at (120,80)
+  const m = c.addComponent('nmos', { x: 120, y: 0 }); // s at (120,80)
   const g = c.addComponent('ground', { x: 120, y: 80 }); // gnd lands on M1.s
   const net = c.netOfTerminal(`${g.refdes}.gnd`);
   assert.ok(net, 'dropping a ground on a source connects them');
@@ -724,8 +724,8 @@ test('touching pins auto-connect and stay connected when dragged apart', () => {
 
 test('net.points routes between terminals', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 400, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 400, y: 120 });
+  const r1 = c.addComponent('resistor', { x: 480, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 480, y: 120 });
   const net = c.connect(`${r1.refdes}.b`, `${r2.refdes}.a`);
   const pts = net.points();
   assert.ok(pts.length >= 2, 'has points');
@@ -738,8 +738,8 @@ test('net.points routes between terminals', () => {
 
 test('net.length is the manhattan length of its routed polyline', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 0, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 0, y: 120 });
+  const r1 = c.addComponent('resistor', { x: 80, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 80, y: 120 });
   const net = c.connect(`${r1.refdes}.b`, `${r2.refdes}.a`);
   const pts = net.points();
   assert.deepEqual(pts[0], { x: 160, y: 0 });
@@ -757,7 +757,7 @@ test('empty circuit bounds is zero', () => {
 
 test('bounds covers components and nets with margin', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { x: 400, y: 0 });
+  c.addComponent('resistor', { x: 480, y: 0 });
   const b = c.bounds(40);
   assert.equal(b.x, 400 - 40);
   assert.ok(b.w > 0);
@@ -767,7 +767,7 @@ test('bounds covers components and nets with margin', () => {
 test('toJSON / fromJSON round-trips refs, positions, transforms, net membership, length', () => {
   const c = new Circuit();
   const vcc = c.addComponent('supply', { x: 400, y: 0, value: '5V' });
-  const r1 = c.addComponent('resistor', { x: 400, y: 80, rotation: 90, mirrorX: false, value: '1k' });
+  const r1 = c.addComponent('resistor', { x: 480, y: 80, rotation: 90, mirrorX: false, value: '1k' });
   const gnd = c.addComponent('ground', { x: 400, y: 200 });
   const n = c.connect(`${vcc.refdes}.p`, `${r1.refdes}.a`);
   n.name = 'rail';
@@ -878,20 +878,20 @@ test('applyMarkup wraps, unwraps, and reverts mixed selections', () => {
 
 test('owned label anchorWorld follows the component transform', () => {
   const c = new Circuit();
-  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  const m1 = c.addComponent('nmos', { x: 520, y: 0 });
   const lab = c.labelOf(m1.refdes);
   assert.ok(lab, 'nmos gets a dedicated instance label');
   assert.equal(lab.text, 'M1');
   assert.equal(lab.owner, m1.refdes);
-  // default offset (160,0) transforms to (560,0) at the origin (bulk side, gate height)
+  // default offset (40,0) transforms to (560,0) at the origin (bulk side, gate height)
   assert.deepEqual(lab.anchorWorld(), { x: 560, y: 0 });
   c.moveComponent(m1.refdes, 560, 80);
-  assert.deepEqual(lab.anchorWorld(), { x: 720, y: 80 });
+  assert.deepEqual(lab.anchorWorld(), { x: 600, y: 80 });
 });
 
 test('owned label moveTo translates its local offset, keeping it on grid', () => {
   const c = new Circuit();
-  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  const m1 = c.addComponent('nmos', { x: 520, y: 0 });
   const lab = c.labelOf(m1.refdes);
   lab.moveTo(440, 160);
   assert.deepEqual(lab.anchorWorld(), { x: 440, y: 160 });
@@ -901,7 +901,7 @@ test('owned label moveTo translates its local offset, keeping it on grid', () =>
 
 test('all component types auto-create an owned instance label for their id', () => {
   const c = new Circuit();
-  const r = c.addComponent('resistor', { x: 400, y: 0 });
+  const r = c.addComponent('resistor', { x: 480, y: 0 });
   assert.equal(c.labels.size, 1);
   const lab = c.labelOf(r.refdes);
   assert.ok(lab, 'resistor gets an owned instance label like every other symbol');
@@ -921,9 +921,9 @@ test('nextRefdes reuses the smallest available index', () => {
 
 test('removeComponent removes its owned instance label', () => {
   const c = new Circuit();
-  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  const m1 = c.addComponent('nmos', { x: 520, y: 0 });
   assert.equal(c.labels.size, 1);
-  const m2 = c.addComponent('pmos', { x: 600, y: 0 });
+  const m2 = c.addComponent('pmos', { x: 720, y: 0 });
   assert.equal(c.labels.size, 2);
   c.removeComponent(m1.refdes);
   assert.equal(c.labels.size, 1);
@@ -932,7 +932,7 @@ test('removeComponent removes its owned instance label', () => {
 
 test('labels round-trip through toJSON/fromJSON (standalone and owned)', () => {
   const c = new Circuit();
-  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  const m1 = c.addComponent('nmos', { x: 520, y: 0 });
   c.addLabel({ text: 'test point', x: 280, y: 240, align: 'left' });
   const lab = c.labelOf(m1.refdes);
   lab.moveTo(440, 160); // custom offset
@@ -951,7 +951,7 @@ test('labels round-trip through toJSON/fromJSON (standalone and owned)', () => {
 
 test('fromJSON drops orphaned owned labels (owner missing)', () => {
   const c = new Circuit();
-  const m1 = c.addComponent('nmos', { x: 400, y: 0 });
+  const m1 = c.addComponent('nmos', { x: 520, y: 0 });
   const data = c.toJSON();
   data.labels[0].owner = 'M99';
   const c2 = Circuit.fromJSON(data);
@@ -960,8 +960,8 @@ test('fromJSON drops orphaned owned labels (owner missing)', () => {
 
 test('wiring the same two terminals repeatedly keeps exactly one wire', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // b at (160,0)
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 }); // a at (400,0)
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 }); // b at (160,0)
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 }); // a at (400,0)
   c.wireTo('R1.b', { x: 400, y: 0 });
   for (let i = 0; i < 5; i++) c.wireTo('R1.b', { x: 400, y: 0 });
   const n = [...c.nets.values()][0];
@@ -975,9 +975,9 @@ test('wiring the same two terminals repeatedly keeps exactly one wire', () => {
 
 test('re-wiring an existing T-junction does not create a loop', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 280, y: -200 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 360, y: -200 });
   c.wireTo('R1.b', { x: 400, y: 0 });
   c.wireTo('R3.b', { x: 280, y: 0 }); // T-join mid-wire
   c.wireTo('R3.b', { x: 280, y: 0 }); // duplicate join
@@ -991,8 +991,8 @@ test('re-wiring an existing T-junction does not create a loop', () => {
 
 test('a looped detour is replaced by the cheaper straight path', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
   c.wireTo('R1.b', { x: 400, y: 0 });
   // Re-wire with a longer detour below the existing straight wire.
   c.wireTo('R1.b', { x: 400, y: 0 }, [{ x: 160, y: 160 }, { x: 400, y: 160 }]);
@@ -1006,9 +1006,9 @@ test('a wire run dragged onto a same-net wire merges on commit (no hidden overla
   // bus line (the exact gesture that used to produce overlapped hidden wires),
   // then commit exactly like canvasMouseUp: rerouteNet + _reduceNet.
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 280, y: -200 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 360, y: -200 });
   c.wireTo('R1.b', { x: 400, y: 0 });       // bus (160,0)-(400,0)
   c.wireTo('R3.b', { x: 280, y: 0 });       // T stem via (280,-120)
   const n = [...c.nets.values()][0];
@@ -1045,9 +1045,9 @@ test('connecting three terminals routes one centered Steiner junction with one s
   const c = new Circuit();
   // R1.a(0,0) R2.a(400,0) R3.a(200,200): the RSMT junction lands at the
   // coordinate median, pushed clear of the resistor bodies by one cell.
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 200, y: 200 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 280, y: 200 });
   const net = c.connect('R1.a', 'R2.a', 'R3.a');
   assert.ok(net.branches && net.branches.length >= 3, 'three-way net becomes a multi-branch tree');
   assert.equal(net.junctions.length, 1, 'exactly one junction for a Y');
@@ -1072,8 +1072,8 @@ test('editor wire-mode chaining (terminal-to-terminal) grows a net into the bala
   // (and solder dot) sitting on the port terminal.
   const c = new Circuit();
   c.addComponent('input', { refdes: 'VIN', x: -120, y: 0 }); // p at (-120,0)
-  c.addComponent('pmos', { refdes: 'M2', x: 200, y: -120, mirrorY: true }); // g at (200,-120)
-  c.addComponent('nmos', { refdes: 'M1', x: 200, y: 120 }); // g at (200,120)
+  c.addComponent('pmos', { refdes: 'M2', x: 320, y: -120, mirrorY: true }); // g at (200,-120)
+  c.addComponent('nmos', { refdes: 'M1', x: 320, y: 120 }); // g at (200,120)
   const g2 = c.getComponent('M2').terminalWorld('g');
   const g1 = c.getComponent('M1').terminalWorld('g');
   c.wireTo('VIN.p', g2);
@@ -1098,10 +1098,10 @@ test('connect four terminals finds the length-optimal tree (shorter than any cha
   // 400x200 rectangle corners as resistor terminals. Open-space RSMT is 800;
   // honoring one-cell body clearance the optimum is 960. A naive sequential
   // chain is 2280, so the DP must find the near-optimal tree.
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // a=(0,0)
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 }); // a=(400,0)
-  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 200 }); // a=(0,200)
-  c.addComponent('resistor', { refdes: 'R4', x: 400, y: 200 }); // a=(400,200)
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 }); // a=(0,0)
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 }); // a=(400,0)
+  c.addComponent('resistor', { refdes: 'R3', x: 80, y: 200 }); // a=(0,200)
+  c.addComponent('resistor', { refdes: 'R4', x: 480, y: 200 }); // a=(400,200)
   const net = c.connect('R1.a', 'R2.a', 'R3.a', 'R4.a');
   assert.ok(net.length() <= 960, `net length minimized (got ${net.length()})`);
   assert.ok(net.length() < 1200, `not a perimeter chain (got ${net.length()})`);
@@ -1115,8 +1115,8 @@ test('connect four terminals finds the length-optimal tree (shorter than any cha
 
 test('deleteWireSegments cuts several segments of one branch at once', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // b=(160,0)
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 }); // a=(400,0)
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 }); // b=(160,0)
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 }); // a=(400,0)
   const net = c.connect('R1.b', 'R2.a');
   // Replace the single straight wire with a winding single branch.
   net.branches = [[{ x: 160, y: 0 }, { x: 160, y: -80 }, { x: 280, y: -80 }, { x: 280, y: 0 }, { x: 400, y: 0 }]];
@@ -1133,10 +1133,10 @@ test('deleteWireSegments cuts several segments of one branch at once', () => {
 
 test('deleteWireSegments removes selected segments across different nets in one call', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // b=(160,0)
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 }); // a=(400,0)
-  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 160 }); // b=(160,160)
-  c.addComponent('resistor', { refdes: 'R4', x: 400, y: 160 }); // a=(400,160)
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 }); // b=(160,0)
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 }); // a=(400,0)
+  c.addComponent('resistor', { refdes: 'R3', x: 80, y: 160 }); // b=(160,160)
+  c.addComponent('resistor', { refdes: 'R4', x: 480, y: 160 }); // a=(400,160)
   const n1 = c.connect('R1.b', 'R2.a');
   const n2 = c.connect('R3.b', 'R4.a');
   // Both nets are single straight branches; delete segment 1 of each.
@@ -1151,9 +1151,9 @@ test('diff-pair virtual-ground net routes sources down with the T one cell clear
   // source pins' terminal direction (DOWN) and keep the trunk one grid cell
   // clear of the bodies — not a shorter pin-row trunk at y=0.
   const c = new Circuit();
-  c.addComponent('nmos', { refdes: 'M1', x: -80, y: -80 }); // s at (40,0)
-  c.addComponent('nmos', { refdes: 'M2', x: 560, y: -80, mirrorX: true }); // s at (440,0)
-  c.addComponent('nmos', { refdes: 'M3', x: 120, y: 160 }); // d at (240,80)
+  c.addComponent('nmos', { refdes: 'M1', x: 40, y: -80 }); // s at (40,0)
+  c.addComponent('nmos', { refdes: 'M2', x: 440, y: -80, mirrorX: true }); // s at (440,0)
+  c.addComponent('nmos', { refdes: 'M3', x: 240, y: 160 }); // d at (240,80)
   const net = c.connect('M1.s', 'M2.s', 'M3.d');
   assert.equal(net.length(), 520, `conforming tail net length (got ${net.length()})`);
   assert.deepEqual(net.junctions, [{ x: 240, y: 40 }], 'T junction one cell below the source row');
@@ -1188,15 +1188,15 @@ test('a set move carries its wires (no stale endpoints, no floating stubs)', () 
   // Two components wired together, both moved by the same delta (a Ctrl+A
   // style multi-select drag): the wire must translate with the set.
   const c = new Circuit();
-  const m1 = c.addComponent('nmos', { refdes: 'M1', x: 200, y: 120 });
-  const m2 = c.addComponent('nmos', { refdes: 'M2', x: 440, y: 120 });
+  const m1 = c.addComponent('nmos', { refdes: 'M1', x: 320, y: 120 });
+  const m2 = c.addComponent('nmos', { refdes: 'M2', x: 560, y: 120 });
   const net = c.connect('M1.g', 'M2.g');
   const moved = new Map([
     ['M1', { dx: 160, dy: 0 }],
     ['M2', { dx: 160, dy: 0 }],
   ]);
-  c.moveComponent('M1', 360, 120);
-  c.moveComponent('M2', 600, 120);
+  c.moveComponent('M1', 480, 120);
+  c.moveComponent('M2', 720, 120);
   c.rerouteNet(net, moved);
   const pts = net.points();
   const terms = new Set(net.terminals.map((t) => {
@@ -1214,14 +1214,14 @@ test('a set move carries its wires (no stale endpoints, no floating stubs)', () 
 test('a fresh layout avoids collinearly overlapping another net wire', () => {
   const c = new Circuit();
   // Net 1: straight wire (160,0)-(400,0).
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
   const n1 = c.connect('R1.b', 'R2.a');
   // Net 2 shares the same row: R3.a(160,0) and R4.a(400,0) would want a
   // straight run on the same line — the fresh layout must route around it
   // instead of piling on top of net 1's wire.
-  c.addComponent('resistor', { refdes: 'R3', x: 160, y: -160 });
-  c.addComponent('resistor', { refdes: 'R4', x: 400, y: -160 });
+  c.addComponent('resistor', { refdes: 'R3', x: 240, y: -160 });
+  c.addComponent('resistor', { refdes: 'R4', x: 480, y: -160 });
   const n2 = c.connect('R3.a', 'R4.a');
   c.rerouteNet(n2, 'refresh');
   // No collinear overlap between the two nets' drawn segments.
@@ -1244,8 +1244,8 @@ test('a fresh layout avoids collinearly overlapping another net wire', () => {
 
 test('dangling branches with free endpoints are pruned after a reroute', () => {
   const c = new Circuit();
-  c.addComponent('nmos', { refdes: 'M1', x: 200, y: 120 });
-  c.addComponent('nmos', { refdes: 'M2', x: 200, y: -120, mirrorY: true });
+  c.addComponent('nmos', { refdes: 'M1', x: 320, y: 120 });
+  c.addComponent('nmos', { refdes: 'M2', x: 320, y: -120, mirrorY: true });
   const net = c.connect('M1.g', 'M2.g');
   // Materialize the auto route as branches, then inject a floating stub whose
   // endpoints lead nowhere (no terminal, no junction, no shared vertex).

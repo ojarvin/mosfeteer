@@ -26,6 +26,46 @@ test('getSymbol returns known defs and throws on unknown', () => {
   assert.throws(() => getSymbol('nonsense'), /unknown component type/);
 });
 
+test('passive symbols use a centered local origin', () => {
+  for (const type of [
+    'resistor', 'capacitor', 'inductor', 'diode',
+    'switch_open', 'switch_closed',
+    'variable_resistor', 'variable_capacitor', 'variable_inductor',
+  ]) {
+    const def = getSymbol(type);
+    assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [
+      { name: 'a', x: -80, y: 0 },
+      { name: 'b', x: 80, y: 0 },
+    ], `${type} terminals`);
+    assert.deepEqual(def.bbox, { x: -80, y: -40, w: 160, h: 80 }, `${type} bbox`);
+  }
+  assert.deepEqual(getSymbol('diode').labelOffset, { x: 0, y: 80 });
+  assert.deepEqual(getSymbol('switch_open').labelOffset, { x: 0, y: 40 });
+});
+
+test('MOS and BJT symbols use their channel as the local origin', () => {
+  for (const type of ['nmos', 'pmos']) {
+    const def = getSymbol(type);
+    assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [
+      { name: 'g', x: -120, y: 0 },
+      { name: 'd', x: 0, y: -80 },
+      { name: 's', x: 0, y: 80 },
+    ], `${type} terminals`);
+    assert.deepEqual(def.bbox, { x: -120, y: -80, w: 120, h: 160 }, `${type} bbox`);
+    assert.deepEqual(def.labelOffset, { x: 40, y: 0 }, `${type} label offset`);
+  }
+  for (const type of ['npn', 'pnp']) {
+    const def = getSymbol(type);
+    assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [
+      { name: 'b', x: -160, y: 0 },
+      { name: 'c', x: 0, y: type === 'npn' ? -120 : 120 },
+      { name: 'e', x: 0, y: type === 'npn' ? 120 : -120 },
+    ], `${type} terminals`);
+    assert.deepEqual(def.bbox, { x: -160, y: -120, w: 160, h: 240 }, `${type} bbox`);
+    assert.deepEqual(def.labelOffset, { x: 40, y: 0 }, `${type} label offset`);
+  }
+});
+
 test('symbolTypeNames lists all keys of symbolTypes', () => {
   assert.deepEqual(symbolTypeNames.sort(), Object.keys(symbolTypes).sort());
   for (const name of symbolTypeNames) assert.ok(symbolTypes[name], `entry ${name}`);

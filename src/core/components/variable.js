@@ -6,12 +6,12 @@ import { inductor } from './inductor.js';
 /**
  * Variable (adjustable) passive components: the base body (loaded from the
  * plain resistor/capacitor/inductor definitions) with a diagonal adjustment
- * arrow (shaft + filled head) crossing it. The arrow is shifted right (+80)
- * so it sits over the 160-wide body instead of off to its left.
+ * arrow (shaft + filled head) crossing it. The body origin is centered, so the
+ * adjustment arrow is expressed in the same centered local coordinates.
  */
 const ADJUST = [
-  { kind: 'path', d: 'M 32 48 L 116 -36', style: 'symbol' },
-  { kind: 'polygon', points: [{ x: 128, y: -48 }, { x: 104, y: -40 }, { x: 120, y: -24 }], fill: 'foreground' },
+  { kind: 'path', d: 'M -48 48 L 36 -36', style: 'symbol' },
+  { kind: 'polygon', points: [{ x: 48, y: -48 }, { x: 24, y: -40 }, { x: 40, y: -24 }], fill: 'foreground' },
 ];
 
 /** Build a variable symbol from a base passive definition plus the arrow. */

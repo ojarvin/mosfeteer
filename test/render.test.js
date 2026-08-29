@@ -14,7 +14,7 @@ test('svgString of an empty circuit renders without throwing', () => {
 
 test('svgString starts with <svg and contains xmlns', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { x: 400, y: 0 });
+  c.addComponent('resistor', { x: 480, y: 0 });
   const svg = svgString(c);
   assert.ok(svg.startsWith('<svg'));
   assert.ok(svg.match(/<svg\s[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/));
@@ -22,9 +22,9 @@ test('svgString starts with <svg and contains xmlns', () => {
 
 test('svgString includes each refdes as a label with subscript numeral', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { x: 400, y: 0 });
-  c.addComponent('capacitor', { x: 400, y: 120 });
-  c.addComponent('diode', { x: 400, y: 240 });
+  c.addComponent('resistor', { x: 480, y: 0 });
+  c.addComponent('capacitor', { x: 480, y: 120 });
+  c.addComponent('diode', { x: 480, y: 240 });
   const svg = svgString(c);
   // owned instance labels render the letter + a subscript-numeral tspan (R1 -> R + sub 1)
   assert.ok(svg.includes('>R<tspan'), 'resistor id label present');
@@ -35,7 +35,7 @@ test('svgString includes each refdes as a label with subscript numeral', () => {
 
 test('svgString includes refdes only for components with refPrefix/refPos', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { x: 400, y: 0 });
+  c.addComponent('resistor', { x: 480, y: 0 });
   c.addComponent('ground', { x: 400, y: 120 });
   const svg = svgString(c);
   assert.ok(svg.includes('>R<tspan'));
@@ -45,21 +45,21 @@ test('svgString includes refdes only for components with refPrefix/refPos', () =
 
 test('svgString draws value text when present', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { x: 400, y: 0, value: '1k' });
+  c.addComponent('resistor', { x: 480, y: 0, value: '1k' });
   const svg = svgString(c);
   assert.ok(svg.includes('>1k<'));
 });
 
 test('svgString renders component terminal dots by default', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { x: 400, y: 0 });
+  c.addComponent('resistor', { x: 480, y: 0 });
   const svg = svgString(c);
   assert.ok(svg.includes('<circle'));
 });
 
 test('svgString accepts terminal/junction/grid/background options without throwing', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { x: 400, y: 0 });
+  c.addComponent('resistor', { x: 480, y: 0 });
   for (const opts of [
     { grid: true },
     { terminals: false },
@@ -76,8 +76,8 @@ test('svgString accepts terminal/junction/grid/background options without throwi
 
 test('svgString renders net wires for connected terminals', () => {
   const c = new Circuit();
-  const r1 = c.addComponent('resistor', { x: 400, y: 0 });
-  const r2 = c.addComponent('resistor', { x: 400, y: -120 });
+  const r1 = c.addComponent('resistor', { x: 480, y: 0 });
+  const r2 = c.addComponent('resistor', { x: 480, y: -120 });
   c.connect(`${r1.refdes}.a`, `${r2.refdes}.b`);
   const svg = svgString(c);
   assert.ok(svg.includes('<path d="'), 'renders net paths');
@@ -87,9 +87,9 @@ test('svgString renders net wires for connected terminals', () => {
 
 test('routing places an actual solder component at a balanced net junction', () => {
   const c = new Circuit();
-  const left = c.addComponent('nmos', { x: 0, y: -80 });
-  const right = c.addComponent('nmos', { x: 480, y: -80, mirrorX: true });
-  const tail = c.addComponent('nmos', { x: 120, y: 160 });
+  const left = c.addComponent('nmos', { x: 120, y: -80 });
+  const right = c.addComponent('nmos', { x: 600, y: -80, mirrorX: true });
+  const tail = c.addComponent('nmos', { x: 240, y: 160 });
   c.connect(`${left.refdes}.s`, `${right.refdes}.s`, `${tail.refdes}.d`);
   // Pair sources share y=0 at x=120 and x=360; tail drain at (240,80). The
   // diff-pair source pins must escape DOWN (continue in terminal direction),
@@ -114,7 +114,7 @@ test('svgString renders standalone label text with its alignment anchor', () => 
 
 test('transistor instance label renders as a dedicated label object (no duplicate refPos)', () => {
   const c = new Circuit();
-  c.addComponent('nmos', { x: 400, y: 0 });
+  c.addComponent('nmos', { x: 520, y: 0 });
   const svg = svgString(c);
   // exactly one owned label (M + subscript 1), not the built-in refPos one
   assert.equal((svg.match(/>M<tspan/g) || []).length, 1);
@@ -124,7 +124,7 @@ test('transistor instance label renders as a dedicated label object (no duplicat
 
 test('label subscripts: explicit _{...} markup and owned trailing digits', () => {
   const c = new Circuit();
-  const owned = c.addComponent('resistor', { x: 400, y: 0 });
+  const owned = c.addComponent('resistor', { x: 480, y: 0 });
   c.addLabel({ text: 'C_{GS}', x: 400, y: 200, align: 'left' });
   const svg = svgString(c);
   // owned R1 -> R + subscript 1
@@ -139,7 +139,7 @@ test('label subscripts: explicit _{...} markup and owned trailing digits', () =>
 
 test('svgString renders filled polygon bodies (Razavi gate bars)', () => {
   const c = new Circuit();
-  c.addComponent('nmos', { x: 400, y: 0 });
+  c.addComponent('nmos', { x: 520, y: 0 });
   const svg = svgString(c);
   assert.ok(svg.includes('<polygon'), 'filled polygon primitive rendered');
   assert.ok(svg.includes('fill="#111" stroke="none"'), 'foreground fill present');
@@ -194,8 +194,8 @@ test('fully differential opamp shares the opamp footprint with two outputs', () 
 
 test('wires render ON TOP of component bodies (z-order)', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
   c.wireTo('R1.b', { x: 400, y: 0 });
   const svg = svgString(c);
   // The net wire (160,0)->(400,0) must be emitted after the LAST component
@@ -210,9 +210,9 @@ test('wires render ON TOP of component bodies (z-order)', () => {
 
 test('renderer draws every fixed path after managed promotion', () => {
   const c = new Circuit();
-  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
-  c.addComponent('resistor', { refdes: 'R3', x: 800, y: 400 });
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 880, y: 400 });
   const n = c.connect('R1.b', 'R2.a');
   n.route = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
   c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }]);

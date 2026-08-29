@@ -156,7 +156,11 @@ export function svgString(circuit, opts = {}) {
     for (const pts of paths) {
       if (!pts || pts.length < 2) continue;
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" ${strokeAttrs()}/>`);
+      const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
+      const wireHelp = net.routingMode === 'fixed'
+        ? 'Fixed/direct wire — drag vertices, segments, or junctions'
+        : 'Managed wire — drag orthogonal segments';
+      parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none" ${strokeAttrs()}><title>${wireHelp}</title></path>`);
       if (o.netNames && net.name) {
         const mid = pts[Math.floor(pts.length / 2)];
         parts.push(textEl(mid.x + 6, mid.y - 6, net.name, 'start', 11, '#666'));
@@ -236,6 +240,33 @@ export function editorOverlay(circuit, opts = {}) {
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
     if (c) parts.push(halo(c.bboxWorld()));
+  }
+
+  // A marquee/visual selection is only a preview until its gesture commits.
+  // Keep it visually distinct and never touch the editor's real selection.
+  if (opts.previewSelection) {
+    for (const ref of opts.previewSelection.refs || []) {
+      const c = circuit.components.get(ref);
+      if (c) {
+        const r = c.bboxWorld();
+        parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#2e7d32" stroke-width="2" stroke-dasharray="5 3" rx="3" opacity="0.9"/>`);
+      }
+    }
+    for (const id of opts.previewSelection.labels || []) {
+      const label = circuit.labels.get(id);
+      if (!label) continue;
+      const r = label.bbox();
+      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#2e7d32" stroke-width="2" stroke-dasharray="5 3" rx="2" opacity="0.9"/>`);
+    }
+    for (const id of opts.previewSelection.nets || []) {
+      const net = circuit.nets.get(id);
+      if (!net) continue;
+      for (const pts of net.paths()) {
+        if (!pts || pts.length < 2) continue;
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        parts.push(`<path d="${d}" fill="none" stroke="#2e7d32" stroke-width="7" opacity="0.32" stroke-dasharray="8 5" stroke-linecap="round"/>`);
+      }
+    }
   }
 
   // Solder dots on a highlighted net get a halo so wire junctions stand out.

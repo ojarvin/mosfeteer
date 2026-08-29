@@ -37,21 +37,23 @@ and editor UX — skim it whenever you need an exact number.
 ## Current symbol geometry (affects tests / wire tests)
 
 - **resistor / capacitor / inductor / switch\* / variable\_\***: terminals
-  `a` (left) / `b` (right) on the 40-grid; resistor / capacitor / inductor /
-  switch all **160 wide**, bbox `{0,-40,160,80}` (cap plates at x
-  67.06/92.94, inductor coil spans x 21.51..138.49 — both centered on the
-  midpoint 80). Diode stays 120, bbox `{0,-40,120,80}`.
-- **nmos / pmos**: terminals `g`(0,0), `d`(120,-80), `s`(120,80), bbox
-  `{0,-80,120,160}`; gate = two filled bars (x 32.8..44.4, 53.7..65.4);
+  `a`(-80,0) (left) / `b`(80,0) (right) on the 40-grid; resistor / capacitor / inductor /
+  switch all **160 wide**, bbox `{-80,-40,160,80}` (cap plates at x
+  -12.94/12.94, inductor coil spans x -58.49..58.49 — centered on the
+  origin). Diode uses the same centered 160-wide footprint, terminals
+  `a`(-80,0) / `b`(80,0), bbox `{-80,-40,160,80}`.
+- **nmos / pmos**: terminals `g`(-120,0), `d`(0,-80), `s`(0,80), bbox
+  `{-120,-80,120,160}`; gate = two filled bars (x -87.2..-75.6, -66.3..-54.6);
   NMOS source arrow (filled) points OUT, PMOS points INTO the channel.
   `defaultMirrorY:true` on pmos → placed source-up. `ComponentInstance`
   applies `defaultMirrorX/Y` only when `opts.mirror*` is `undefined`; the
   CLI `add` command omits the mirror flags unless `--mirrorX/--mirrorY` is
   given, so **symbol defaults apply everywhere** (output ports come out
   mirrorX, pmos source-up).
-- **npn / pnp**: `b`(0,0), `c`(160,-120), `e`(160,120) [pnp: c bottom, e
-  top]; filled emitter arrow; base bar `emph`. bbox `{0,-120,160,240}`.
-  **Label on the right at `{200,0}`** (one square past the body).
+- **npn / pnp**: terminals `b`(-160,0), `c`(0,-120), `e`(0,120) [pnp: c
+  bottom, e top]; filled emitter arrow; base bar `emph`. bbox
+  `{-160,-120,160,240}`. **Label on the right at `{40,0}`** (one square
+  past the body).
 - **ground**: `gnd`(0,0), stub to y40, three `ground`-width bars (y
   40/63.26/84.19), bbox `{0,0,80,120}`. **supply**: `p`(0,0), filled slab
   above, bbox `{-40,-80,80,80}`.
@@ -93,11 +95,11 @@ and editor UX — skim it whenever you need an exact number.
 - **variable_\*** (adjustable): composed at load time from the plain
   resistor / capacitor / inductor definitions (`[...base.graphics,
   ...ADJUST]` in `variable.js`) so they track the base body geometry.
-  The adjustment arrow is a 45° shaft + filled head shifted right so it
-  sits OVER the 160-wide body (shaft `M 32 48 L 116 -36`, head tip at
-  (128,-48)).
-- **labelOffsets**: nmos/pmos `{160,0}`, npn/pnp `{200,0}` (right side);
-  resistor / switch / variable / cap / inductor / diode `{80,80}`; sources
+  The adjustment arrow is a 45° shaft + filled head over the centered body
+  (shaft `M -48 48 L 36 -36`, head tip at (48,-48)).
+- **labelOffsets**: nmos/pmos `{40,0}`, npn/pnp `{40,0}` (right side);
+  resistor / variable / cap / inductor / diode `{0,80}`, switch `{0,40}`;
+  sources
   `{80,0}`; ports `{-120,0}`; logic / opamp below body.
 
 ## Label model

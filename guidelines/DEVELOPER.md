@@ -124,15 +124,15 @@ When you fix a bug, write the failing test first, watch it fail, then fix.
        def: {
          refPrefix: 'X',                  // optional; auto-refdes base
          terminals: [
-           { name: 'a', x: 0,   y: 0,  dir: { x: -1, y: 0 } },
-           { name: 'b', x: 160, y: 0,  dir: { x:  1, y: 0 } },
+           { name: 'a', x: -80, y: 0,  dir: { x: -1, y: 0 } },
+           { name: 'b', x: 80,  y: 0,  dir: { x:  1, y: 0 } },
          ],
-         bbox: { x: 0, y: -40, w: 160, h: 80 },
+         bbox: { x: -80, y: -40, w: 160, h: 80 },
          graphics: [
            // { kind:'line'|'polyline'|'polygon'|'circle'|'text'|'arc', ... }
            // style: 'symbol' | 'emph' | 'ground' | 'supply' | 'LINE' | 'THICK'
          ],
-         labelOffset: { x: 80, y: 80 },  // one-square label gap, grid-snapped
+         labelOffset: { x: 0, y: 80 },   // one-square label gap, grid-snapped
          refPos: null,                   // owned label auto-created
        },
      };

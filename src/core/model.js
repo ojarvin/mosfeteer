@@ -1,7 +1,7 @@
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
-import { autoRoute, balancedCrossCoupling, balancedPaths, balancedRoute, smartRoute } from './router.js';
+import { autoRoute, balancedCrossCoupling, balancedPaths, balancedRoute, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 
@@ -1211,26 +1211,51 @@ export class Circuit {
     const nets = [...this.nets.values()];
     const candidates = [];
     const samePoint = (a, b) => a && b && a.x === b.x && a.y === b.y;
-    const reflectedTransform = (left, right) => {
+    const reflectedTransforms = (left, right) => {
       if (left.type !== right.type) return null;
       const la = left.bboxWorld();
       const rb = right.bboxWorld();
       if (la.w !== rb.w || la.h !== rb.h) return null;
-      const centerX = (la.x + la.w / 2 + rb.x + rb.w / 2) / 2;
-      if (la.y !== rb.y) return null;
-      if (rb.x !== 2 * centerX - la.x - la.w) return null;
-      const reflect = (p) => ({ x: 2 * centerX - p.x, y: p.y });
-      // Three basis points make this an affine-transform comparison. It also
-      // rejects unmirrored transforms whose terminal coordinates happen to fit.
-      for (const p of [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }]) {
-        if (!samePoint(applyTransform(right.transform, p.x, p.y), reflect(applyTransform(left.transform, p.x, p.y)))) {
-          return null;
+      const axes = [];
+      const transforms = [
+        {
+          axis: 'x',
+          center: (la.x + la.w / 2 + rb.x + rb.w / 2) / 2,
+          matchesBox: la.y === rb.y,
+          reflect: (p, center) => ({ x: 2 * center - p.x, y: p.y }),
+        },
+        {
+          axis: 'y',
+          center: (la.y + la.h / 2 + rb.y + rb.h / 2) / 2,
+          matchesBox: la.x === rb.x,
+          reflect: (p, center) => ({ x: p.x, y: 2 * center - p.y }),
+        },
+      ];
+      for (const candidate of transforms) {
+        const { axis, center, reflect } = candidate;
+        const boxMatches = axis === 'x'
+          ? rb.x === 2 * center - la.x - la.w
+          : rb.y === 2 * center - la.y - la.h;
+        if (!candidate.matchesBox || !boxMatches) continue;
+        // Three basis points make this an affine-transform comparison. It also
+        // rejects point-symmetric or merely co-located, unmirrored transforms.
+        let matches = true;
+        for (const p of [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }]) {
+          if (!samePoint(applyTransform(right.transform, p.x, p.y), reflect(applyTransform(left.transform, p.x, p.y), center))) {
+            matches = false;
+            break;
+          }
         }
+        if (!matches) continue;
+        for (const t of left.def.terminals) {
+          if (!samePoint(right.terminalWorld(t.name), reflect(left.terminalWorld(t.name), center))) {
+            matches = false;
+            break;
+          }
+        }
+        if (matches) axes.push({ axis, center });
       }
-      for (const t of left.def.terminals) {
-        if (!samePoint(right.terminalWorld(t.name), reflect(left.terminalWorld(t.name)))) return null;
-      }
-      return centerX;
+      return axes;
     };
     const candidateFor = (a, b) => {
       if (a.routingMode !== 'managed' || b.routingMode !== 'managed') return null;
@@ -1242,7 +1267,9 @@ export class Circuit {
           refsA.some((ref) => !refsB.includes(ref))) return null;
       const left = this.components.get(refsA[0]);
       const right = this.components.get(refsA[1]);
-      if (!left || !right || reflectedTransform(left, right) === null) return null;
+      if (!left || !right) return null;
+      const axes = reflectedTransforms(left, right);
+      if (!axes || axes.length !== 1) return null;
       // The endpoint order is significant: balancedCrossCoupling preserves it
       // so each generated path remains anchored to its original net ends.
       const pairA = a.terminals.map((t) => this.components.get(t.comp).terminalWorld(t.term));
@@ -1252,6 +1279,16 @@ export class Circuit {
         paths = balancedCrossCoupling(pairA, pairB);
       } catch {
         return null;
+      }
+      // A protected diagonal may not drill any component body. The pin map is
+      // deliberately supplied as well: it keeps this safety check aligned with
+      // the same outward-pin environment used by managed routing, while still
+      // allowing a diagonal to leave a corner pin through its clear side.
+      const env = this._netEnv();
+      for (const path of paths) {
+        for (let k = 1; k < path.length; k++) {
+          if (env.rects.some((rect) => segThroughInterior(path[k - 1], path[k], rect))) return null;
+        }
       }
       return { a, b, paths };
     };
@@ -1310,6 +1347,20 @@ export class Circuit {
     const net = sourceNet || targetNet || this._createNet();
     const entries = involved.flatMap((n) => this._fixedPathEntries(n));
     const junctions = involved.flatMap((n) => n.junctions || []);
+
+    // A free endpoint landing on existing geometry is an intentional splice,
+    // not merely a crossing. Keep the old fixed path untouched and record the
+    // landing point as an explicit junction anchor. Terminal endpoints remain
+    // terminal anchors and do not need a solder marker.
+    const pathAt = (p, candidate) => candidate && this._explicitBranches(candidate)
+      .some((path) => pointOnPath(p, path));
+    for (const endpointInfo of [start, end]) {
+      if (!endpointInfo.term && involved.some((candidate) => pathAt(endpointInfo.point, candidate))) {
+        if (!junctions.some((p) => p.x === endpointInfo.point.x && p.y === endpointInfo.point.y)) {
+          junctions.push({ ...endpointInfo.point });
+        }
+      }
+    }
 
     for (const other of involved) {
       if (other === net) continue;

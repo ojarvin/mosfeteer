@@ -87,10 +87,10 @@ mirror flag to override that default.
 
 | type | terminals | bbox (local units) |
 |------|-----------|--------------------|
-| resistor / capacitor / inductor / switch_open / switch_closed | `a` (left) `b` (right) | x:0..160, y:-40..40 |
-| diode | `a` (left) `b` (right) | x:0..120, y:-40..40 |
-| nmos / pmos | `g` (left) `d` (top-right) `s` (bottom-right) | x:0..120, y:-80..80 |
-| npn / pnp | `b` (left) `c` (top-right) `e` (bottom-right) | x:0..160, y:-120..120 |
+| resistor / capacitor / inductor / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
+| diode | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
+| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | x:-120..0, y:-80..80 |
+| npn / pnp | `b` (left) `c` (top) `e` (bottom) | x:-160..0, y:-120..120 |
 | current_source / current_sink / voltage_source | `a` (top) `b` (bottom) | x:-80..80, y:-80..80 |
 | ground | `gnd` (top edge) | x:0..80, y:0..120 |
 | supply | `p` (bottom edge) | x:-40..40, y:-80..0 |
@@ -100,10 +100,11 @@ mirror flag to override that default.
 Notes:
 
 - **Two-terminal parts** at `rot=0` point `b` right — the default for a
-  horizontal run; `rot 90` makes them vertical.
+  horizontal run; their origin is the electrical midpoint and `rot 90` makes
+  them vertical.
 - **MOS / BJT transistors** at `rot=0` have gate / base on the left and
-  drain / collector top-right, source / emitter bottom-right. A **PMOS
-  places source-up by default** (source top-right, drain bottom-right);
+  drain / collector at the channel origin, source / emitter below it. A
+  **PMOS places source-up by default** (source top, drain bottom);
   verify `s` / `d` from the `add` output before wiring.
 - **Mirroring builds matched pairs**: `--mirrorX` flips the body across the
   gate line so the two halves of a differential pair open like a mirror —
