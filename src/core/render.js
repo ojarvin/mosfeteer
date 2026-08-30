@@ -2,7 +2,7 @@ import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
 import { fontAttrs, strokeAttrs } from './style.js';
-import { parseLabelRuns } from './model.js';
+import { LabelInstance, parseLabelRuns } from './model.js';
 
 function fmt(n) {
   return Number.isInteger(n) ? String(n) : n.toFixed(2);
@@ -215,6 +215,7 @@ export function svgString(circuit, opts = {}) {
   // larger than free-standing annotation labels). Text is aligned inside the
   // label's rendered box (left/center/right) and vertically centered.
   for (const label of circuit.labels.values()) {
+    if (label.id === o.editingLabel) continue;
     const t = label.textPos();
     parts.push(labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label'));
   }
@@ -236,6 +237,14 @@ export function editorOverlay(circuit, opts = {}) {
   const parts = [];
   const halo = (r) =>
     `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#4f9cf9" stroke-width="2" rx="3"/>`;
+
+  // Keep the placement/move target legible beneath the rest of the editor
+  // overlay. The small cursor marker below remains the precise grid cue.
+  if (opts.cursor && opts.cursorCrosshair) {
+    const { x, y } = opts.cursor;
+    const { x: vx, y: vy, w: vw, h: vh } = opts.cursorCrosshair;
+    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
+  }
 
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
@@ -266,6 +275,9 @@ export function editorOverlay(circuit, opts = {}) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
         parts.push(`<path d="${d}" fill="none" stroke="#2e7d32" stroke-width="7" opacity="0.32" stroke-dasharray="8 5" stroke-linecap="round"/>`);
       }
+    }
+    for (const { a, b } of opts.previewWireSegments || []) {
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="#2e7d32" stroke-width="8" opacity="0.55" stroke-dasharray="8 5" stroke-linecap="round"/>`);
     }
   }
 
@@ -385,10 +397,17 @@ export function editorOverlay(circuit, opts = {}) {
   if (opts.ghost) {
     const g = opts.ghost;
     if (g.label) {
-      const x = fmt(g.x);
-      const y = fmt(g.y);
-      parts.push(`<rect x="${fmt(g.x - 40)}" y="${fmt(g.y - 20)}" width="80" height="40" fill="rgba(128,132,142,0.10)" stroke="#9aa0ab" stroke-width="1.5" stroke-dasharray="4 3"/>`);
-      parts.push(`<text x="${x}" y="${fmt(g.y + 5)}" text-anchor="middle" fill="#9aa0ab" font-family="sans-serif" font-size="14">label</text>`);
+      // Use the same label model and renderer as the committed annotation so
+      // markup, alignment, and the grid-sized footprint are previewed honestly.
+      const preview = new LabelInstance(circuit, {
+        text: g.text || 'label', x: g.x, y: g.y, align: g.align || 'center',
+      });
+      const b = preview.bbox();
+      const t = preview.textPos();
+      parts.push(`<g class="label-placement-ghost" opacity="0.58">`);
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#9aa0ab" stroke-width="1.5" stroke-dasharray="4 3"/>`);
+      parts.push(labelTextEl(t.x, t.y, preview.runs(), t.anchor, 'label'));
+      parts.push('</g>');
     } else if (g.def) {
       const t = transformToSvg({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY });
       const body = g.def.graphics.map((gg) => graphicsToSvg(gg)).join('');

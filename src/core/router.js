@@ -187,13 +187,25 @@ function gridDijkstra(initDist, adj, V) {
 
 /** Weight of a one-cell grid step, or null when the step is illegal: it would
  *  run through a body interior, pass within a grid cell of a body (unless it is
- *  the pin-connected leg), or lie on top of an existing wire. Legal steps cost
+ *  the valid one-cell pin leg), or lie on top of an existing wire. Legal steps cost
  *  one cell, plus tiny penalties that break length-ties toward pin-conformity
  *  and label clearance. */
+function terminalEdgeValid(a, b, env) {
+  const pins = env.pins || new Map();
+  const aPin = pins.get(`${a.x},${a.y}`);
+  const bPin = pins.get(`${b.x},${b.y}`);
+  const dx = Math.sign(b.x - a.x);
+  const dy = Math.sign(b.y - a.y);
+  if (aPin && (dx !== aPin.x || dy !== aPin.y)) return false;
+  if (bPin && (dx !== -bPin.x || dy !== -bPin.y)) return false;
+  return true;
+}
+
 function edgeWeight(a, b, env) {
   const pins = env.pins || new Map();
   const aPin = pins.get(`${a.x},${a.y}`);
   const bPin = pins.get(`${b.x},${b.y}`);
+  if (!terminalEdgeValid(a, b, env)) return null;
   for (const r of env.rects || []) {
     if (segThroughInterior(a, b, r)) return null;
   }
@@ -212,16 +224,14 @@ function edgeWeight(a, b, env) {
   let w = 1;
   const dx = Math.sign(b.x - a.x);
   const dy = Math.sign(b.y - a.y);
-  // Edge leaving a pin: aligned with the outward direction is free; going
-  // straight back into the body is mildly penalized; leaving sideways is
-  // strongly penalized.
+  // Valid edges leave a pin in its outward direction. Keep the conformance
+  // scoring for the remaining non-terminal choices.
   if (aPin) {
     if (dx === -aPin.x && dy === -aPin.y) w += CONFORM_OPP;
     else if (dx !== aPin.x || dy !== aPin.y) w += CONFORM_SIDE;
   }
-  // Edge entering a pin: approaching along the outward direction (coming from
-  // the component's own side) is free; arriving from the outward side is mildly
-  // penalized; entering sideways is strongly penalized.
+  // Valid edges enter a pin from its outward side. Keep the conformance scoring
+  // for the remaining non-terminal choices.
   if (bPin) {
     if (dx === bPin.x && dy === bPin.y) w += CONFORM_OPP;
     else if (dx !== -bPin.x || dy !== -bPin.y) w += CONFORM_SIDE;
@@ -656,7 +666,9 @@ export function segThroughInterior(a, b, r) {
 // Preference order (lexicographic): fewest bbox interiors crossed, fewest
 // other-wire crossings, fewest collinear overlaps, most clearance (>= 1 grid
 // cell from every body, barring the pin legs), best straight-on pin access,
-// fewest bends, then shortest.
+// fewest bends, then shortest. If no enumerated candidate is hard-safe, A* is
+// used as a bounded fallback; failure to find a hard-safe route is reported as
+// null rather than returning an unsafe candidate.
 // ---------------------------------------------------------------------------
 
 const STEP = 40;
@@ -776,18 +788,53 @@ function onBodyBoundary(p, r) {
     ((p.y === r.y || p.y === r.y + r.h) && p.x >= r.x && p.x <= r.x + r.w);
 }
 
+function pointAt(a, b, distance) {
+  const dx = Math.sign(b.x - a.x);
+  const dy = Math.sign(b.y - a.y);
+  return { x: a.x + dx * distance, y: a.y + dy * distance };
+}
+
+/**
+ * Check body clearance while allowing only the first/last one-cell leg at a
+ * valid terminal. A turned, interior obstacle-edge segment is also retained
+ * for tightly packed multi-terminal layouts; a direct source-to-drain run is
+ * still a terminal leg and cannot use this exception.
+ */
+function bodyClearanceSafe(a, b, index, points, rect, env) {
+  // A route may follow an obstacle edge only after it has turned away from a
+  // terminal leg. Keep this exception limited to edge-touching geometry;
+  // clearance violations in open space are still rejected.
+  if (segRectDist(a, b, rect) === 0 &&
+      index > 1 && index < points.length - 1) return true;
+  const length = Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+  let clearFrom = 0;
+  let clearTo = length;
+  const pins = env.pins || new Map();
+  const src = pins.get(`${points[0].x},${points[0].y}`);
+  const dst = pins.get(`${points[points.length - 1].x},${points[points.length - 1].y}`);
+  if (index === 1 && src && terminalEdgeValid(a, b, env)) {
+    clearFrom = Math.min(STEP, length);
+  }
+  if (index === points.length - 1 && dst && terminalEdgeValid(a, b, env)) {
+    clearTo = Math.max(0, length - STEP);
+  }
+  if (clearFrom >= clearTo) return true;
+  return segRectDist(pointAt(a, b, clearFrom), pointAt(a, b, clearTo), rect) >= STEP;
+}
+
 function hardSafe(pts, env) {
   const pins = env.pins || new Map();
+  if (pts.length >= 2) {
+    if (pins.has(`${pts[0].x},${pts[0].y}`) && !terminalEdgeValid(pts[0], pts[1], env)) return false;
+    const last = pts.length - 1;
+    if (pins.has(`${pts[last].x},${pts[last].y}`) && !terminalEdgeValid(pts[last - 1], pts[last], env)) return false;
+  }
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1];
     const b = pts[i];
     for (const r of env.rects || []) {
       if (segThroughInterior(a, b, r)) return false;
-      if (segRectDist(a, b, r) < STEP) {
-        const aPin = pins.has(`${a.x},${a.y}`) && onBodyBoundary(a, r);
-        const bPin = pins.has(`${b.x},${b.y}`) && onBodyBoundary(b, r);
-        if (!aPin && !bPin) return false;
-      }
+      if (segRectDist(a, b, r) < STEP && !bodyClearanceSafe(a, b, i, pts, r, env)) return false;
     }
     for (const wire of env.wires || []) for (let j = 1; j < wire.length; j++) {
       if (overlapSpan(a, b, wire[j - 1], wire[j])) return false;
@@ -905,6 +952,7 @@ function astar(from, to, env) {
       const nx = sx + D[d][0];
       const ny = sy + D[d][1];
       if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
+      if (!terminalEdgeValid({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
       if (occupied({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
       g.set(`${nx},${ny},${d}`, 1);
       back.set(`${nx},${ny},${d}`, `${sx},${sy},-1`);
@@ -928,6 +976,7 @@ function astar(from, to, env) {
         const nx = cx0 + D[nd][0];
         const ny = cy0 + D[nd][1];
         if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
+        if (!terminalEdgeValid({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
         if (occupied({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
         const nc = cost + 1 + (nd === d ? 0 : TURN);
         const nk = `${nx},${ny},${nd}`;
@@ -987,8 +1036,9 @@ function astar(from, to, env) {
  * prefers them, so a wire always leaves a pin in its direction before bending —
  * even when the pins are aligned (e.g. two gates sharing a column: the direct
  * run would hug the component boundary; the gate-facing U keeps one cell of
- * clearance). The A* fallback only kicks in when every candidate would drill
- * through a component footprint.
+ * clearance). The A* fallback only kicks in when every enumerated candidate is
+ * rejected by the hard-safety checks. It is accepted only after the same
+ * checks pass.
  */
 export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   const f = snapP(from);
@@ -1018,7 +1068,11 @@ export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: 
   if (f2 && !t2) for (const c of routeCandidates(f2, t)) cands.push(wrap(c));
   if (!f2 && t2) for (const c of routeCandidates(f, t2)) cands.push(wrap(c));
   const viable = cands.filter((candidate) => hardSafe(candidate, env));
-  const pool = viable.length ? viable : cands;
+  if (!viable.length) {
+    const ast = astar(f, t, env);
+    return ast && hardSafe(ast, env) ? ast : null;
+  }
+  const pool = viable;
   let best = pool[0];
   let bestScore = scoreCandidate(best, env);
   for (let i = 1; i < pool.length; i++) {
@@ -1026,16 +1080,6 @@ export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: 
     if (cmpScore(s, bestScore) < 0) {
       best = pool[i];
       bestScore = s;
-    }
-  }
-  if (bestScore[0] > 0 || !hardSafe(best, env)) {
-    const ast = astar(f, t, env);
-    if (ast) {
-      const s = scoreCandidate(ast, env);
-      if (cmpScore(s, bestScore) < 0) {
-        best = ast;
-        bestScore = s;
-      }
     }
   }
   return best;

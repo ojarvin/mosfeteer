@@ -18,6 +18,7 @@
   --svg-mid: #292929;
   --svg-faint: #666666;
   --grid: #e9e9e9;
+  --label-edit-bg: rgba(255, 255, 255, 0.9);
 }
 
 * {
@@ -167,6 +168,16 @@ button:active {
   box-shadow: 0 1px 3px rgba(20, 24, 34, 0.08);
   cursor: crosshair;
   touch-action: none;
+}
+
+/* Placement/move target: intentionally lighter than selection and wire
+   overlays, while still using the editor's established blue accent. */
+.editor-cursor-crosshair {
+  stroke: #2563eb;
+  stroke-width: 2;
+  opacity: 0.22;
+  stroke-linecap: round;
+  pointer-events: none;
 }
 
 /* ----- side panel ---------------------------------------------- */
@@ -425,6 +436,22 @@ button:active {
   white-space: nowrap;
 }
 
+.insert-menu-category {
+  padding: 7px 8px 3px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.insert-menu-category:not(:first-child) {
+  border-top: 1px solid var(--border);
+  margin-top: 3px;
+  padding-top: 7px;
+}
+
 .insert-menu-query {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-weight: 700;
@@ -458,6 +485,38 @@ button:active {
   text-align: center;
 }
 
+.label-inline-editor {
+  box-sizing: border-box;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: 2px solid rgba(26, 86, 219, 0.18);
+  color: var(--text);
+  background: var(--label-edit-bg);
+  font-family: sans-serif;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1;
+  caret-color: var(--accent);
+}
+
+.label-inline-editor-measure {
+  position: fixed;
+  visibility: hidden;
+  white-space: pre;
+  padding: 0 4px;
+  font-family: sans-serif;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.label-inline-editor:focus {
+  outline: 2px solid rgba(26, 86, 219, 0.38);
+  background: var(--bg-panel);
+}
+
 /* ----- dark mode --------------------------------------------------- */
 
 html.dark {
@@ -474,6 +533,7 @@ html.dark {
   --ok: #4ade80;
   --paper: #15171c;
   --grid: #22262e;
+  --label-edit-bg: rgba(25, 28, 36, 0.94);
 }
 
 html.dark .boot-banner {

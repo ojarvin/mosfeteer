@@ -422,7 +422,7 @@ test('smartRoute never returns a diagonal (always axis-aligned)', () => {
   assert.deepEqual(pts[pts.length - 1], { x: 200, y: -160 });
 });
 
-test('smartRoute falls back to A* when the direct path is sealed off (maze-like)', () => {
+test('smartRoute falls back to a safe A* route or reports a maze as unroutable', () => {
   // wall from (200,20) up beyond the target row, so the top channel is blocked
   const rects = [
     R(240, -40),
@@ -432,12 +432,75 @@ test('smartRoute falls back to A* when the direct path is sealed off (maze-like)
   ];
   const pins = [pin(240, 0, -1, 0), pin(760, 0, 1, 0)];
   const pts = runRobots({ x: 240, y: 0 }, { x: 760, y: 0 }, rects, pins);
+  // A bounded A* search may find only a route that violates the hard
+  // clearance invariant near the adjacent wall. That is explicitly
+  // unroutable rather than a reason to return an unsafe candidate.
+  if (!pts) return;
   assert.deepEqual(pts[0], { x: 240, y: 0 });
   assert.deepEqual(pts[pts.length - 1], { x: 760, y: 0 });
   for (const rect of rects) {
     for (let i = 1; i < pts.length; i++) assert.equal(segThroughInterior(pts[i - 1], pts[i], rect), false);
   }
   allOnGrid(pts);
+});
+
+test('smartRoute never returns a body-interior candidate when outer channels are occupied', () => {
+  // The body leaves no candidate channel in the enumerated window. Occupy all
+  // outer horizontal channels in the bounded A* windows as well; an unsafe
+  // direct candidate must not be returned when A* cannot provide a hard-safe
+  // alternative.
+  const body = { x: 0, y: -400, w: 160, h: 800 };
+  const pins = new Map([
+    ['0,0', { x: -1, y: 0 }],
+    ['160,0', { x: 1, y: 0 }],
+  ]);
+  const wires = [];
+  for (let y = -1600; y <= 1600; y += 40) {
+    if (y !== 0) wires.push([{ x: -1600, y }, { x: 1760, y }]);
+  }
+  const route = smartRoute({ x: 0, y: 0 }, { x: 160, y: 0 }, { rects: [body], pins, wires });
+  assert.ok(!route || route.every((p, i) => i === 0 || !segThroughInterior(route[i - 1], p, body)),
+    `unroutable or body-safe route expected, got ${JSON.stringify(route)}`);
+});
+
+test('smartRoute preserves legal perpendicular crossings of existing wires', () => {
+  const existing = [{ x: 20, y: -10000 }, { x: 20, y: 10000 }];
+  const route = smartRoute({ x: 0, y: 0 }, { x: 40, y: 0 }, { rects: [], pins: new Map(), wires: [existing] });
+  assert.ok(route && route.length >= 2, 'perpendicular crossing remains routable');
+  assert.ok(route.some((p, i) => i > 0 && segmentsCross(route[i - 1], p, existing[0], existing[1])),
+    `expected a legal perpendicular crossing, got ${JSON.stringify(route)}`);
+});
+
+test('smartRoute chooses a legal crossing over a wrong-side drain approach', () => {
+  const body = { x: 0, y: -80, w: 120, h: 160 };
+  const pins = new Map([
+    ['0,80', { x: -1, y: 0 }],   // source route must leave west
+    ['120,80', { x: 0, y: 1 }],  // another terminal on the body boundary
+    ['120,-80', { x: 0, y: -1 }], // drain route must approach from above
+  ]);
+  const crossing = [{ x: 80, y: -160 }, { x: 80, y: -100 }];
+  const wires = [crossing];
+  // Occupy the other outer channels so the choice is between the crossing
+  // route at y=-120 and the shorter boundary route through (120,80).
+  for (let y = -440; y <= 40; y += 40) {
+    if (y !== -120) wires.push([{ x: -40, y }, { x: 120, y }]);
+  }
+  const route = smartRoute({ x: 0, y: 80 }, { x: 120, y: -80 }, { rects: [body], pins, wires });
+  assert.ok(route && route.length >= 2, 'a safe route exists');
+  assert.deepEqual(
+    { x: Math.sign(route[1].x - route[0].x), y: Math.sign(route[1].y - route[0].y) },
+    { x: -1, y: 0 },
+    `source escape must be west, got ${JSON.stringify(route)}`,
+  );
+  const last = route.length - 1;
+  assert.deepEqual(
+    { x: Math.sign(route[last].x - route[last - 1].x), y: Math.sign(route[last].y - route[last - 1].y) },
+    { x: 0, y: 1 },
+    `drain must be approached from its outward side, got ${JSON.stringify(route)}`,
+  );
+  assert.ok(route.some((p, i) => i > 0 && segmentsCross(route[i - 1], p, crossing[0], crossing[1])),
+    `the legal route must cross the existing wire, got ${JSON.stringify(route)}`);
+  for (let i = 1; i < route.length; i++) assert.equal(segThroughInterior(route[i - 1], route[i], body), false);
 });
 
 test('smartRoute prefers the terminal outward direction (a down-pointing NMOS source goes down first)', () => {

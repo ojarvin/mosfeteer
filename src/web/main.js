@@ -10,15 +10,15 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit } from '../core/model.js';
+import { Circuit, LABEL_FONT_SIZE, containedWireSegments, extractWireFragments, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { snap, GRID } from '../core/grid.js';
 import { applyMarkup } from '../core/model.js';
-import { smartRoute } from '../core/router.js';
+import { segThroughInterior, smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
-import { wireRunAt, moveWireRun } from '../core/wireedit.js';
+import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps } from '../core/wiring.js';
 
 // ----- boot failure surface --------------------------------------
@@ -333,10 +333,14 @@ function applyJson(blob) {
   directWire = null;
   circuit = Circuit.fromJSON(JSON.parse(blob));
   wiresDirty = true; // wire geometry may have changed under any wholesale load
-  if (selected && !circuit.components.has(selected)) selected = null;
-  multi = new Set([...multi].filter((r) => circuit.components.has(r)));
-  if (selLabel && !circuit.labels.has(selLabel)) selLabel = null;
-  selLabels = new Set([...selLabels].filter((id) => circuit.labels.has(id)));
+  // A wholesale replacement has no compatible editor selection.  Do not carry
+  // stale branch indices, labels, or net highlights across load/undo/redo.
+  selected = null;
+  multi.clear();
+  selLabel = null;
+  selLabels.clear();
+  selectedWire = null;
+  selectedWires.clear();
   selectedNets.clear();
 }
 
@@ -414,6 +418,61 @@ function nearestTerminal(w) {
   return bestD <= tol ? best : null;
 }
 
+function openFixedEndpointAt(w) {
+  const p = paneSize();
+  const tol = 12 / (p ? view.w / p.w : 1);
+  return circuit.fixedOpenEndpointAt(w, tol);
+}
+
+/** Resolve a wire drop to one exact path/segment identity.  A snapped point
+ * lying on two different paths is intentionally ambiguous: do not choose a
+ * net merely because it happened to render first. */
+function exactWireTargetAt(w, excludeNetId = null, sourceEndpoint = null) {
+  const point = { x: snap(w.x), y: snap(w.y) };
+  const p = paneSize();
+  const tol = 12 / (p ? view.w / p.w : 1);
+  const candidates = [];
+  const onSegment = (a, b) => {
+    const cross = (point.x - a.x) * (b.y - a.y) - (point.y - a.y) * (b.x - a.x);
+    return cross === 0 && point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) &&
+      point.y >= Math.min(a.y, b.y) && point.y <= Math.max(a.y, b.y);
+  };
+  for (const net of circuit.nets.values()) {
+    if (net.id === excludeNetId) continue;
+    for (let pathIndex = 0; pathIndex < net.paths().length; pathIndex++) {
+      const path = net.paths()[pathIndex];
+      const segments = [];
+      for (let segmentIndex = 1; segmentIndex < path.length; segmentIndex++) {
+        // A dragged endpoint stays incident to one segment of its own path.
+        // That segment is not a drop target: otherwise an empty drop sees the
+        // source wire as a target, and a real target becomes falsely ambiguous.
+        if (sourceEndpoint && net.id === sourceEndpoint.netId && pathIndex === sourceEndpoint.pathIndex &&
+            segmentIndex === (sourceEndpoint.endpointIndex === 0 ? 1 : path.length - 1)) continue;
+        const a = path[segmentIndex - 1];
+        const b = path[segmentIndex];
+        if ((a.x === b.x && a.y === b.y) || !onSegment(a, b) || distToSegment(w.x, w.y, a, b) > tol) continue;
+        segments.push(segmentIndex);
+      }
+      if (segments.length) candidates.push({ netId: net.id, pathIndex, segmentIndex: segments[0], point });
+    }
+  }
+  const identities = new Set(candidates.map((candidate) => `${candidate.netId}:${candidate.pathIndex}`));
+  if (identities.size !== 1) return candidates.length ? { ambiguous: true } : null;
+  return candidates[0];
+}
+
+function fixedEndpointTarget(endpoint) {
+  const net = circuit.nets.get(endpoint.netId);
+  const path = net?.paths()?.[endpoint.pathIndex];
+  if (!path || path.length < 2) return null;
+  return {
+    netId: endpoint.netId,
+    pathIndex: endpoint.pathIndex,
+    segmentIndex: endpoint.endpointIndex === 0 ? 1 : path.length - 1,
+    point: { ...endpoint.point },
+  };
+}
+
 function compUnderCursor() {
   const hit = matchAt(cursor.x, cursor.y);
   return hit && circuit.components.has(hit.refdes) ? circuit.components.get(hit.refdes) : null;
@@ -424,20 +483,28 @@ function selectedComp() {
 }
 
 /** Replace the selection. `primary` defaults to the first element. */
-function setSelection(refs, primary = refs[0]) {
-  selectedWire = null;
-  selectedWires.clear();
+function setSelection(refs, primary = refs[0], preserveMixed = false) {
+  if (!preserveMixed) {
+    selLabel = null;
+    selLabels.clear();
+    selectedWire = null;
+    selectedWires.clear();
+    selectedNets.clear();
+  }
   multi = new Set(refs);
   selected = refs.length ? (refs.includes(primary) ? primary : refs[0]) : null;
   if (selected && !circuit.components.has(selected)) selected = null;
-  selLabel = null;
-  selLabels.clear();
 }
 
 /** Replace the label selection. `primary` defaults to the first element. */
-function setLabelSelection(ids, primary = ids[0]) {
-  selectedWire = null;
-  selectedWires.clear();
+function setLabelSelection(ids, primary = ids[0], preserveMixed = false) {
+  if (!preserveMixed) {
+    selected = null;
+    multi.clear();
+    selectedWire = null;
+    selectedWires.clear();
+    selectedNets.clear();
+  }
   selLabels = new Set(ids);
   selLabel = ids.length ? (ids.includes(primary) ? primary : ids[0]) : null;
 }
@@ -452,6 +519,23 @@ function keyToWire(key) {
 function syncSelectedWire() {
   const first = selectedWires.values().next().value;
   selectedWire = first ? keyToWire(first) : null;
+}
+
+/** Drop segment keys whose net/branch/segment no longer exists.  Topology
+ * edits, undo/load, and MST reduction can all invalidate branch indices. */
+function validateSelectedWires() {
+  const valid = new Set();
+  for (const key of selectedWires) {
+    const w = keyToWire(key);
+    const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
+    if (path && w.segment > 0 && w.segment < path.length) valid.add(key);
+  }
+  selectedWires = valid;
+  if (selectedWire) {
+    const key = `${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`;
+    if (!valid.has(key)) selectedWire = null;
+  }
+  if (!selectedWire) syncSelectedWire();
 }
 
 function selectedLabels() {
@@ -483,13 +567,15 @@ function selectedComps() {
 }
 
 /**
- * Rotate every selected component by ±90° increments about its OWN origin.
- * A pure rotation: the origin never moves, so repeated rotations/mirrors never
- * translate the component and always stay on the 40-grid (this matches the CLI
- * `rotate` command). Mirrored/rotated terminals stay on grid because a 90°
- * rotation about an on-grid origin maps grid points to grid points.
+ * Rotate a singleton component about its own origin. Multi-component and mixed
+ * selections are transformed as one world-space set by transformMixedSelection.
  */
 function rotateSelectionAbout(deg) {
+  if (selectedComps().length > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+    const turns = ((deg % 360) + 360) % 360;
+    transformMixedSelection(turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate');
+    return;
+  }
   const refs = selectedComps().map((c) => c.refdes);
   commit(() => {
     for (const c of selectedComps()) {
@@ -500,11 +586,15 @@ function rotateSelectionAbout(deg) {
 }
 
 /**
- * Mirror every selected component about its own vertical (x) or horizontal (y)
- * axis through the origin — a pure reflection that never moves the component's
- * position (matches the CLI `mirror` command). Repeated mirrors are stable.
+ * Mirror a singleton component about its own vertical (x) or horizontal (y)
+ * axis through the origin. Multi-component and mixed selections are transformed
+ * as one world-space set by transformMixedSelection.
  */
 function mirrorSelectionAbout(axis) {
+  if (selectedComps().length > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+    transformMixedSelection(axis === 'x' ? 'mirrorX' : 'mirrorY');
+    return;
+  }
   const refs = selectedComps().map((c) => c.refdes);
   commit(() => {
     for (const c of selectedComps()) {
@@ -513,6 +603,126 @@ function mirrorSelectionAbout(axis) {
     }
     rerouteTouchedNets(refs, null, true);
   });
+}
+
+/** World-space transform for a mixed component/label/wire selection.  Attached
+ * nets must be wholly selected (and all their terminals selected); otherwise a
+ * transform would need unsafe detach/rubber-band semantics and is rejected. */
+function transformMixedSelection(operation) {
+  validateSelectedWires();
+  const keys = new Set(selectedWires);
+  if (selectedWire) keys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
+  const byNet = new Map();
+  for (const key of keys) {
+    const w = keyToWire(key);
+    if (!byNet.has(w.netId)) byNet.set(w.netId, []);
+    byNet.get(w.netId).push(w);
+  }
+  for (const [id, selectedParts] of byNet) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    const all = net.paths().flatMap((p, branch) => p.slice(1).map((point, index) => ({
+      point, key: `${id}:${branch}:${index + 1}`, previous: p[index],
+    })).filter(({ point, previous }) => point.x !== previous.x || point.y !== previous.y).map(({ key }) => key));
+    const complete = all.length === selectedParts.length && all.every((k) => keys.has(k));
+    if (!complete || (net.terminals.length && !net.terminals.every((t) => multi.has(t.comp)))) {
+      logLine(`cannot transform partial ${net.terminals.length ? 'attached' : 'floating'} net ${id}; copy it as a fragment first`);
+      return;
+    }
+  }
+  const refs = selectedComps().map((c) => c.refdes);
+  const selectedRefSet = new Set(refs);
+  const geometryNetIds = new Set(byNet.keys());
+  const canTransformNet = (net) => !net.terminals.length || net.terminals.every((t) => selectedRefSet.has(t.comp));
+  for (const id of selectedNets) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    if (!canTransformNet(net)) {
+      logLine(`cannot transform partial attached net ${id}; select all of its components first`);
+      return;
+    }
+    if (net.paths().length) geometryNetIds.add(id);
+  }
+  // A complete net internal to a component set is part of that set even when
+  // the user selected the components rather than clicking the wire itself.
+  for (const id of netsTouching(refs)) {
+    const net = circuit.nets.get(id);
+    if (net && canTransformNet(net) && net.paths().length) geometryNetIds.add(id);
+  }
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  const add = (r) => { x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); };
+  for (const c of selectedComps()) add(c.bboxWorld());
+  for (const l of selectedLabels()) add(l.bbox());
+  for (const id of geometryNetIds) {
+    for (const p of circuit.nets.get(id)?.paths() || []) for (const point of p) add({ x: point.x, y: point.y, w: 0, h: 0 });
+  }
+  if (!Number.isFinite(x0)) return;
+  const center = { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
+  const before = snapshot();
+  const savedSelection = {
+    selected,
+    multi: [...multi],
+    selLabel,
+    selLabels: [...selLabels],
+    selectedNets: [...selectedNets],
+    selectedWire: selectedWire ? { ...selectedWire } : null,
+    selectedWires: [...selectedWires],
+  };
+  const restoreSelection = () => {
+    const refs = savedSelection.multi.filter((ref) => circuit.components.has(ref));
+    setSelection(refs, savedSelection.selected, true);
+    const labels = savedSelection.selLabels.filter((id) => circuit.labels.has(id));
+    setLabelSelection(labels, savedSelection.selLabel, true);
+    selectedNets = new Set(savedSelection.selectedNets.filter((id) => circuit.nets.has(id)));
+    selectedWires = new Set(savedSelection.selectedWires.filter((key) => {
+      const w = keyToWire(key);
+      const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
+      return !!path && w.segment > 0 && w.segment < path.length;
+    }));
+    selectedWire = savedSelection.selectedWire;
+    validateSelectedWires();
+    if (savedSelection.selectedWire && !selectedWire) syncSelectedWire();
+  };
+  try {
+    for (const c of selectedComps()) c.transform = transformComponentWorld(c.transform, center, operation);
+    for (const l of selectedLabels()) if (!l.owner) l.moveTo(transformWorldPoints([l.anchorWorld()], center, operation)[0].x, transformWorldPoints([l.anchorWorld()], center, operation)[0].y);
+    for (const id of geometryNetIds) {
+      const net = circuit.nets.get(id); if (!net) continue;
+      if (net.routingMode === 'fixed') {
+        net.fixedPaths = net.fixedPaths.map((e) => ({ ...e, points: transformWorldPoints(e.points, center, operation) }));
+      } else {
+        const paths = net.paths().map((p) => transformWorldPoints(p, center, operation));
+        net.branches = paths; net.route = paths[0] || null;
+      }
+      net.junctions = net.junctions.map((p) => transformWorldPoints([p], center, operation)[0]);
+    }
+    // Complete net geometry inside the selection is part of the rigid set and
+    // is never re-routed or reduced. Other touched nets are refreshed from
+    // their terminals; a failed refresh aborts the entire transform.
+    const transformed = geometryNetIds;
+    for (const id of netsTouching(refs)) {
+      const net = circuit.nets.get(id);
+      if (net && !transformed.has(id)) {
+        if (rerouteNet(net, 'refresh') === false) throw new Error(`unable to reroute net ${id} safely`);
+      }
+    }
+    circuit.syncJunctionSolders();
+    history.push(before);
+    if (history.length > 200) history.shift();
+    future.length = 0;
+    wiresDirty = true;
+    return true;
+  } catch (err) {
+    applyJson(before);
+    restoreSelection();
+    // No half-completed drag or draft may retain references to the discarded
+    // circuit instance. The normal key handler will render this restored state.
+    drag = null;
+    directWire = null;
+    wiresDirty = true;
+    logLine(`transform cancelled: ${err.message}`, 'error');
+    return false;
+  }
 }
 
 /** Re-route every net touching the given components (holistic, from terminals).
@@ -525,59 +735,53 @@ function rerouteTouchedNets(refs, moved, fresh = false) {
   }
 }
 
-/** Delete all selected components and labels together in one undo step.
- *  Owned labels ride along with their component; only free labels are removed explicitly. */
+/** Delete all selected objects together in one undo step.  Selected whole nets
+ *  are removed before segment cuts, so selecting both cannot leave fragments;
+ *  touched-but-unselected nets are rerouted afterward. */
 function deleteSelection() {
-  if (selectedWire || selectedWires.size) {
-    if (selectedWire && !selectedWires.size) selectedWires.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
-    const keys = [...selectedWires];
-    selectedWire = null;
-    selectedWires.clear();
-    // Group the deletions by net so every segment is cut against the same
-    // (original) branch geometry — indices never shift under one another.
+  const comps = selectedComps();
+  const labels = selectedLabels();
+  const keys = new Set(selectedWires);
+  if (selectedWire) keys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
+  const netIds = [...selectedNets];
+  if (!comps.length && !labels.length && !keys.size && !netIds.length) return false;
+  const touched = netsTouching(comps.map((c) => c.refdes));
+  commit(() => {
+    // Remove whole nets first. This is important when Ctrl+A (or a mixed
+    // selection) includes both a net and one of its wire segments: cutting
+    // first would create split fragment nets that survive the whole-net delete.
+    for (const id of netIds) if (circuit.nets.has(id)) circuit.removeNet(id);
+    // Group cuts by net so every segment is applied against the same original
+    // branch snapshot — indices never shift under one another.
     const byNet = new Map();
     for (const key of keys) {
       const w = keyToWire(key);
-      if (circuit.nets.get(w.netId)?.routingMode === 'fixed') {
-        logLine('DIRECT WIRE segments cannot be deleted; drag them to edit');
-        return true;
-      }
       if (!byNet.has(w.netId)) byNet.set(w.netId, []);
       byNet.get(w.netId).push({ branch: w.branch, segment: w.segment });
     }
-    commit(() => {
-      for (const [netId, segs] of byNet) {
-        if (circuit.nets.get(netId)) circuit.deleteWireSegments(netId, segs);
-      }
-    });
-    wiresDirty = true; // wire segments were removed
-    selectedNets.clear();
-    return true;
-  }
-  const comps = selectedComps();
-  const labels = selectedLabels();
-  if (!comps.length && !labels.length && selectedNets.size) {
-    const ids = [...selectedNets];
-    commit(() => {
-      for (const id of ids) circuit.removeNet(id);
-      circuit.syncJunctionSolders();
-    });
-    selectedNets.clear();
-    return true;
-  }
-  if (!comps.length && !labels.length) return false;
-  const touched = netsTouching(comps.map((c) => c.refdes));
-  commit(() => {
-    for (const lab of labels) if (!lab.owner) circuit.removeLabel(lab.id);
-    for (const c of comps) circuit.removeComponent(c.refdes);
+    for (const [netId, segs] of byNet) {
+      if (circuit.nets.get(netId)) circuit.deleteWireSegments(netId, segs);
+    }
+    for (const lab of labels) circuit.removeLabel(lab.id);
+    // Removing a whole net above can synchronize away an auto-generated
+    // junction solder that was also captured in `comps`. Deletion is allowed
+    // to be idempotent: do not pass that stale component to removeComponent.
+    for (const c of comps) {
+      if (circuit.components.has(c.refdes)) circuit.removeComponent(c.refdes);
+    }
     for (const id of touched) {
+      if (netIds.includes(id)) continue;
       const net = circuit.nets.get(id);
       if (net) rerouteNet(net);
     }
+    circuit.syncJunctionSolders();
   });
+  selectedWire = null;
+  selectedWires.clear();
   setSelection([]);
   setLabelSelection([]);
   selectedNets.clear();
+  wiresDirty = true;
   return true;
 }
 
@@ -645,6 +849,18 @@ function cycleSelection(dir) {
   render();
 }
 
+function cycleLabelSelection(dir, fromId = selectedLabel()?.id) {
+  const labels = [...circuit.labels.values()].sort((a, b) => a.id.localeCompare(b.id));
+  if (!labels.length) return;
+  const idx = labels.findIndex((label) => label.id === fromId);
+  const next = labels[((idx < 0 ? (dir > 0 ? -1 : 0) : idx) + dir + labels.length) % labels.length];
+  setSelection([]);
+  setLabelSelection([next.id]);
+  const a = next.anchorWorld();
+  cursor = { x: a.x, y: a.y };
+  render();
+}
+
 function placeAtCursor(type) {
   try {
     const comp = circuit.addComponent(type, { x: cursor.x, y: cursor.y });
@@ -705,6 +921,7 @@ function updateNetWarnings() {
 }
 
 function render() {
+  validateSelectedWires();
   if (wiresDirty) {
     updateNetWarnings();
     wiresDirty = false;
@@ -751,8 +968,9 @@ function renderCanvas() {
     junctions: false,
     background: true,
     viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
+    editingLabel: inlineInput?.dataset.labelId,
   });
-  const nets = selectedWire ? [] : [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
+  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
   // Solder dots sitting on a highlighted net's junction points get a halo so
   // wire junctions on the net stand out (device bodies are deliberately NOT
   // highlighted — only wires + solder dots belong to a net's visual).
@@ -798,10 +1016,14 @@ function renderCanvas() {
       refs: drag?.mode === 'marquee' && drag.shift ? [...new Set([...multi, ...found.refs])] : found.refs,
       labels: drag?.mode === 'marquee' && drag.shift ? [...new Set([...selLabels, ...found.labels])] : found.labels,
       nets: drag?.mode === 'marquee' && drag.shift ? [...new Set([...selectedNets, ...found.nets])] : found.nets,
+      wires: drag?.mode === 'marquee' && drag.shift ? [...new Set([...selectedWires, ...found.wires])] : found.wires,
     };
   }
   const overlay = editorOverlay(circuit, {
     cursor,
+    // A larger, quiet target marker helps place or move an object without
+    // competing with the stronger selection and wire affordances.
+    cursorCrosshair: view,
     selection: [...multi],
     wireSegments: (() => {
       if (!selectedWires.size && !selectedWire) return [];
@@ -811,6 +1033,16 @@ function renderCanvas() {
         const w = keyToWire(key);
         const n = circuit.nets.get(w.netId);
         const p = n?.paths()?.[w.branch];
+        if (p?.[w.segment]) out.push({ a: p[w.segment - 1], b: p[w.segment] });
+      }
+      return out;
+    })(),
+    previewWireSegments: (() => {
+      const keys = previewSelection?.wires || [];
+      const out = [];
+      for (const key of keys) {
+        const w = keyToWire(key);
+        const p = circuit.nets.get(w.netId)?.paths()?.[w.branch];
         if (p?.[w.segment]) out.push({ a: p[w.segment - 1], b: p[w.segment] });
       }
       return out;
@@ -864,16 +1096,21 @@ function dragMoved(startWorld, startClient, w, ev) {
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
   if (drag && drag.mode === 'wireseg') {
-    for (const r of drag.runs || []) {
-      if (r.branch !== undefined && r.net.branches && r.net.branches[r.branch]) {
-        r.net.branches[r.branch] = r.orig.map((p) => ({ ...p }));
-        if (r.branch === 0) r.net.route = r.net.branches[0].map((p) => ({ ...p }));
-      } else if (r.hadRoute) {
-        r.net.route = r.orig.map((p) => ({ ...p }));
-      } else {
-        r.net.route = null;
-      }
+    restoreManagedNetSnapshots(drag.netSnapshots);
+    circuit.syncJunctionSolders();
+    wiresDirty = true;
+  }
+  if (drag && drag.mode === 'floatingwire') {
+    for (const f of drag.fragments || []) {
+      if (f.fixed) {
+        if (f.net.fixedPaths[f.branch]) f.net.fixedPaths[f.branch].points = f.orig.map((p) => ({ ...p }));
+      } else if (f.net.branches?.[f.branch]) {
+        f.net.branches[f.branch] = f.orig.map((p) => ({ ...p }));
+        if (f.branch === 0) f.net.route = f.net.branches[0].map((p) => ({ ...p }));
+      } else if (f.branch === 0) f.net.route = f.orig.map((p) => ({ ...p }));
     }
+    circuit.syncJunctionSolders();
+    wiresDirty = true;
   }
   if (drag && drag.mode === 'fixedwire') {
     for (const [net, saved] of drag.fixedSnapshots) {
@@ -885,6 +1122,10 @@ function cancelDrag() {
       net.junctions = saved.junctions.map((p) => ({ ...p }));
     }
     circuit.syncJunctionSolders();
+    wiresDirty = true;
+  }
+  if (drag && drag.mode === 'fixedendpoint') {
+    circuit.restoreFixedGeometry(drag.net, drag.saved.fixedPaths, drag.saved.junctions);
     wiresDirty = true;
   }
   drag = null;
@@ -932,14 +1173,17 @@ function applyBoxSelection(x0, y0, x1, y1, shift) {
   if (shift) {
     const set = new Set(multi);
     for (const r of found.refs) set.add(r);
-    setSelection([...set]);
+    setSelection([...set], undefined, true);
     const labSet = new Set(selLabels);
     for (const id of found.labels) labSet.add(id);
-    setLabelSelection([...labSet]);
+    setLabelSelection([...labSet], undefined, true);
+    selectedWires = new Set([...selectedWires, ...found.wires]);
   } else {
-    setSelection(found.refs);
-    setLabelSelection(found.labels);
+    setSelection(found.refs, undefined, true);
+    setLabelSelection(found.labels, undefined, true);
+    selectedWires = new Set(found.wires);
   }
+  syncSelectedWire();
   selectedNets = shift ? new Set([...selectedNets, ...found.nets]) : new Set(found.nets);
 }
 
@@ -955,10 +1199,12 @@ function boxSelectionContents(x0, y0, x1, y1) {
     if (rectContained(label.bbox(), box)) labels.push(label.id);
   }
   const nets = [];
+  const wires = [];
   for (const net of circuit.nets.values()) {
     if (netInBox(net, box)) nets.push(net.id);
+    for (const s of containedWireSegments(net.paths(), box)) wires.push(`${net.id}:${s.branch}:${s.segment}`);
   }
-  return { refs, labels, nets };
+  return { refs, labels, nets, wires };
 }
 
 function pickAt(w) {
@@ -1000,6 +1246,7 @@ function pickWire(w) {
     for (let bi = 0; bi < paths.length; bi++) {
       const pts = paths[bi];
       for (let i = 1; i < pts.length; i++) {
+        if (pts[i].x === pts[i - 1].x && pts[i].y === pts[i - 1].y) continue;
         const d = Math.min(
           distToSegment(w.x, w.y, pts[i - 1], pts[i]),
           distToSegment(snapped.x, snapped.y, pts[i - 1], pts[i]),
@@ -1050,6 +1297,108 @@ function fixedWireDragAt(hit, w, startClient, ev) {
   };
   cursor = { x: snap(w.x), y: snap(w.y) };
   logLine(junction >= 0 ? 'DIRECT WIRE junction — drag to move its dot' : vertex >= 0 ? 'DIRECT WIRE vertex — drag to move it' : 'DIRECT WIRE path — drag to move its segment');
+  render();
+  return true;
+}
+
+function fixedEndpointDragAt(endpoint, startWorld, startClient) {
+  const net = circuit.nets.get(endpoint.netId);
+  if (!net) return false;
+  const saved = {
+    fixedPaths: net.fixedPaths.map((entry) => ({
+      points: entry.points.map((p) => ({ ...p })),
+      start: entry.start ? { ...entry.start } : null,
+      end: entry.end ? { ...entry.end } : null,
+    })),
+    junctions: net.junctions.map((p) => ({ ...p })),
+  };
+  drag = {
+    mode: 'fixedendpoint', endpoint, net, startWorld, startClient,
+    moved: false, committed: false, startSnapshot: snapshot(), saved,
+  };
+  cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  logLine('DIRECT WIRE open endpoint — drag to move, or use w/W to extend');
+  render();
+  return true;
+}
+
+function commitFixedEndpointDraft(source, target, points, mode) {
+  if (!source || !target) return false;
+  const before = snapshot();
+  const net = circuit.nets.get(source.netId);
+  if (!net) return false;
+  const saved = {
+    fixedPaths: net.fixedPaths.map((entry) => ({
+      points: entry.points.map((p) => ({ ...p })),
+      start: entry.start ? { ...entry.start } : null,
+      end: entry.end ? { ...entry.end } : null,
+    })),
+    junctions: net.junctions.map((p) => ({ ...p })),
+  };
+  try {
+    const targetPoint = typeof target === 'string'
+      ? (() => { const ref = circuit.resolveTerm(target); return circuit.components.get(ref.comp).terminalWorld(ref.term); })()
+      : target.point;
+    const entry = net.fixedPaths[source.pathIndex];
+    const oldLength = entry?.points.length || 0;
+    circuit.extendFixedEndpoint(source, [...points, targetPoint], { mode, active: true });
+    const extended = net.fixedPaths[source.pathIndex];
+    const endpointIndex = source.endpointIndex === 0 ? 0 : extended.points.length - 1;
+    // Prepending changes the original path's segment indexes. Keep an explicit
+    // same-path target pointing to its original geometry after the new suffix.
+    let resolvedTarget = target;
+    if (target && typeof target !== 'string') {
+      const preTargetPath = circuit.nets.get(target.netId)?.paths()?.[target.pathIndex];
+      const wasInterior = preTargetPath && !(
+        (target.point.x === preTargetPath[0].x && target.point.y === preTargetPath[0].y) ||
+        (target.point.x === preTargetPath.at(-1).x && target.point.y === preTargetPath.at(-1).y)
+      );
+      resolvedTarget = { ...target, interior: !!wasInterior };
+      if (target.netId === source.netId && target.pathIndex === source.pathIndex && source.endpointIndex === 0) {
+        resolvedTarget.segmentIndex += extended.points.length - oldLength;
+      }
+    }
+    const result = circuit.attachWireEndpoint(source.netId, source.pathIndex, endpointIndex, resolvedTarget);
+    history.push(before);
+    if (history.length > 200) history.shift();
+    future.length = 0;
+    wiresDirty = true;
+    logLine(`fixed endpoint attached to ${typeof target === 'string' ? target : `net ${target.netId}`}`);
+    return result;
+  } catch (err) {
+    circuit.restoreFixedGeometry(net, saved.fixedPaths, saved.junctions);
+    logLine(String(err.message || err));
+    return null;
+  }
+}
+
+/** Arm a rigid drag for complete branches of floating (zero-terminal) nets.
+ * Attached/partial branches intentionally continue through the established
+ * segment-reroute path below; detaching them would silently change topology. */
+function floatingWireDragAt(hit, startWorld, startClient, ev, moveKeys) {
+  const fragments = [];
+  for (const key of moveKeys) {
+    const w = keyToWire(key);
+    const net = circuit.nets.get(w.netId);
+    if (!net || net.terminals.length || net.routingMode === 'managed' && !net.branches?.[w.branch] && !net.route) continue;
+    const live = net.routingMode === 'fixed' ? net.fixedPaths[w.branch]?.points : net.branches?.[w.branch] || (w.branch === 0 ? net.route : null);
+    if (!live || live.length < 2) continue;
+    const selected = [...moveKeys].filter((k) => {
+      const q = keyToWire(k); return q.netId === net.id && q.branch === w.branch;
+    });
+    const count = new Set(selected.map((k) => keyToWire(k).segment)).size;
+    if (count !== live.length - 1) return false; // partial: use safe old behavior
+    if (!fragments.some((f) => f.net === net && f.branch === w.branch)) {
+      fragments.push({ net, branch: w.branch, orig: live.map((p) => ({ ...p })), fixed: net.routingMode === 'fixed' });
+    }
+  }
+  if (!fragments.length) return false;
+  drag = {
+    mode: 'floatingwire', fragments, startWorld, startClient, moved: false,
+    committed: false, startSnapshot: snapshot(), shift: ev.shiftKey,
+    key: `${hit.net.id}:${hit.branch}:${hit.seg}`,
+  };
+  cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
   render();
   return true;
 }
@@ -1136,7 +1485,7 @@ function netEnv(excludeNetId = null) {
 
 /** Recompute the explicit route of a net (pairwise through its terminals in order). */
 function rerouteNet(net, moved) {
-  circuit.rerouteNet(net, moved);
+  return circuit.rerouteNet(net, moved);
 }
 
 /** Ids of every net that touches any of the given components. */
@@ -1153,6 +1502,119 @@ function netsTouching(refs) {
   return touched;
 }
 
+/** Identify the kind of endpoint at a managed path boundary.  Terminal
+ * membership wins when a terminal and a junction intentionally share a grid
+ * point: that endpoint must remain attached to the component pin. */
+function managedEndpointMeta(net, point) {
+  const terminal = net.terminals.find((t) => {
+    const c = circuit.components.get(t.comp);
+    const p = c?.terminalWorld(t.term);
+    return p && p.x === point.x && p.y === point.y;
+  });
+  if (terminal) {
+    const c = circuit.components.get(terminal.comp);
+    const def = c?.def.terminals.find((t) => t.name === terminal.term);
+    return {
+      type: 'terminal', comp: terminal.comp, term: terminal.term, point: { ...point },
+      dir: c && def ? pinDir(c, def, point.x, point.y) : null,
+    };
+  }
+  if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) return { type: 'junction', point: { ...point } };
+  return { type: 'free', point: { ...point } };
+}
+
+/** Propagate a moved managed junction endpoint to every branch that shares it.
+ * The edited branch has already moved its endpoint, so only points still at
+ * the old coordinate need updating. */
+function moveManagedJunction(net, oldPoint, newPoint) {
+  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return;
+  const paths = net.branches?.length ? net.branches : net.route ? [net.route] : [];
+  net.junctions = moveJunctionEndpoint(
+    paths,
+    net.junctions,
+    oldPoint,
+    newPoint,
+    (path, index) => managedEndpointMeta(net, path[index]),
+  );
+}
+
+/** Apply a wire-run edit while keeping junction endpoints and their incident
+ * branches topologically joined. */
+function moveManagedWireRun(run, target) {
+  const before = [run.pts[0] && { ...run.pts[0] }, run.pts.at(-1) && { ...run.pts.at(-1) }];
+  run.line = moveWireRun(run.pts, run.orient, run.line, target, run.endpointMeta);
+  const after = [run.pts[0] && { ...run.pts[0] }, run.pts.at(-1) && { ...run.pts.at(-1) }];
+  for (const i of [0, 1]) {
+    if (run.endpointMeta?.[i === 0 ? 'start' : 'end']?.type !== 'junction') continue;
+    if (before[i] && after[i]) moveManagedJunction(run.net, before[i], after[i]);
+  }
+  return run.line;
+}
+
+/** Restore every managed net touched by a wire drag, including branches and
+ * junction metadata. Run-level restoration is insufficient when a moved
+ * junction is shared by branches that were not directly selected. */
+function restoreManagedNetSnapshots(snapshots) {
+  for (const saved of snapshots?.values?.() || []) {
+    const net = circuit.nets.get(saved.id) || saved.net;
+    if (!net) continue;
+    net.route = saved.route ? saved.route.map((p) => ({ ...p })) : null;
+    net.branches = saved.branches ? saved.branches.map((b) => b.map((p) => ({ ...p }))) : null;
+    net.junctions = saved.junctions.map((p) => ({ ...p }));
+  }
+}
+
+/** Keep the legacy single-route view in lockstep with explicit managed
+ * branches. A bridge may leave reduction as a no-op, so relying on
+ * _reduceNet() to rewrite `route` leaves debug/ASCII consumers stale. */
+function syncManagedRoute(net) {
+  if (net.routingMode !== 'managed' || !net.branches) return;
+  net.route = net.branches[0] ? net.branches[0].map((p) => ({ ...p })) : null;
+}
+
+/** Validate managed paths after a literal bridge edit. This intentionally
+ * checks all branches of the affected net, not just the dragged bridge: moving
+ * a junction can make an unselected incident leg diagonal or drill a body. */
+function managedGeometryErrors(net) {
+  const errors = [...net.wiringErrors()];
+  const env = netEnv(net.id);
+  const terminalAt = (point) => net.terminals.find((t) => {
+    const c = circuit.components.get(t.comp);
+    const p = c?.terminalWorld(t.term);
+    return p && p.x === point.x && p.y === point.y;
+  });
+  const pinStep = (terminal, point) => {
+    const c = circuit.components.get(terminal.comp);
+    const def = c?.def.terminals.find((t) => t.name === terminal.term);
+    return c && def ? pinDir(c, def, point.x, point.y) : null;
+  };
+  const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
+  for (const [bi, path] of net.paths().entries()) {
+    if (path.length < 2) continue;
+    const first = terminalAt(path[0]);
+    const last = terminalAt(path[path.length - 1]);
+    if (first) {
+      const dir = pinStep(first, path[0]);
+      const actual = step(path[0], path[1]);
+      if (dir && (actual.x !== dir.x || actual.y !== dir.y)) errors.push(`branch ${bi} leaves ${first.comp}.${first.term} against its pin direction`);
+    }
+    if (last) {
+      const dir = pinStep(last, path[path.length - 1]);
+      const actual = step(path[path.length - 1], path[path.length - 2]);
+      if (dir && (actual.x !== dir.x || actual.y !== dir.y)) errors.push(`branch ${bi} enters ${last.comp}.${last.term} against its pin direction`);
+    }
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      for (const rect of env.rects) if (segThroughInterior(a, b, rect)) {
+        errors.push(`branch ${bi} crosses component body`);
+        break;
+      }
+    }
+  }
+  return errors;
+}
+
 /** Connect two terminals, re-route the resulting net, commit history once.
  *  All branch splicing and solder-dot derivation happens in Circuit#wireTo so
  *  the geometry is always orthogonal, split correctly, and carries exactly one
@@ -1166,18 +1628,35 @@ function connectTwo(src, dst, points) {
   future.length = 0;
   // Stay in wiring mode so the next click can start another connection.
   wire = { source: null, points: [] };
-  selectedNets = new Set([net.id]);
   setSelection([dst.refdes]);
+  selectedNets = new Set([net.id]);
   logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}; len=${net.length()}`);
 }
 
-function doDirectWireClick(x, y) {
+function doDirectWireClick(x, y, fixedEndpoint = null) {
+  if (fixedEndpoint && !directWire.source) {
+    directWire.source = { fixed: fixedEndpoint };
+    directWire.points = [];
+    cursor = { x: fixedEndpoint.point.x, y: fixedEndpoint.point.y };
+    logLine(`DIRECT WIRE from fixed open endpoint @ (${fixedEndpoint.point.x},${fixedEndpoint.point.y}) — click waypoints, then target`);
+    render();
+    return;
+  }
+  if (fixedEndpoint && directWire.source?.fixed) {
+    const result = commitFixedEndpointDraft(directWire.source.fixed, fixedEndpointTarget(fixedEndpoint), directWire.points, 'literal');
+    if (result) directWire = { source: null, points: [] };
+    render();
+    return;
+  }
   const hit = nearestTerminal({ x, y });
   if (hit) {
     if (!directWire.source) {
       directWire.source = { refdes: hit.refdes, term: hit.term };
       cursor = { x: hit.x, y: hit.y };
       logLine(`DIRECT WIRE from ${hit.refdes}.${hit.term} — click points, then a target terminal`);
+    } else if (directWire.source.fixed) {
+      const result = commitFixedEndpointDraft(directWire.source.fixed, `${hit.refdes}.${hit.term}`, directWire.points, 'literal');
+      if (result) directWire = { source: null, points: [] };
     } else if (hit.refdes === directWire.source.refdes && hit.term === directWire.source.term) {
       logLine('same terminal — click the other terminal');
     } else {
@@ -1190,7 +1669,7 @@ function doDirectWireClick(x, y) {
     cursor = { x, y };
     logLine(`direct point @ (${x},${y})`);
   } else {
-    logLine('DIRECT WIRE: click a terminal to start');
+    logLine('DIRECT WIRE: click a terminal or open fixed endpoint to start');
   }
   render();
 }
@@ -1208,8 +1687,8 @@ function commitDirectWire(dst) {
     future.length = 0;
     wiresDirty = true;
     directWire = { source: null, points: [] };
-    selectedNets = new Set([net.id]);
     setSelection([dst.refdes]);
+    selectedNets = new Set([net.id]);
     logLine(`fixed direct wire committed on net ${net.id}`);
   } catch (err) {
     logLine(String(err.message || err));
@@ -1218,11 +1697,22 @@ function commitDirectWire(dst) {
 
 function commitDirectAtCursor() {
   if (!directWire?.source) {
-    logLine('DIRECT WIRE: click a terminal to start');
+    logLine('DIRECT WIRE: click a terminal or open fixed endpoint to start');
     return;
   }
   const hit = nearestTerminal(cursor);
-  if (hit) commitDirectWire(hit);
+  if (hit && directWire.source.fixed) {
+    const result = commitFixedEndpointDraft(directWire.source.fixed, `${hit.refdes}.${hit.term}`, directWire.points, 'literal');
+    if (result) directWire = { source: null, points: [] };
+  } else if (hit) commitDirectWire(hit);
+  else if (directWire.source.fixed) {
+    const target = exactWireTargetAt(cursor);
+    if (target?.ambiguous) logLine('DIRECT WIRE: wire target is ambiguous — select one exact path');
+    else if (target) {
+      const result = commitFixedEndpointDraft(directWire.source.fixed, target, directWire.points, 'literal');
+      if (result) directWire = { source: null, points: [] };
+    } else logLine('DIRECT WIRE: point at a terminal or exact wire target to commit');
+  }
   else logLine('DIRECT WIRE: point at a terminal to commit (Esc cancels)');
   render();
 }
@@ -1230,6 +1720,7 @@ function commitDirectAtCursor() {
 /** World point of a wire source: a component terminal or a free point. */
 function wireOrigin(src) {
   if (!src) return null;
+  if (src.fixed) return { ...src.fixed.point };
   if (src.refdes) {
     const comp = circuit.components.get(src.refdes);
     return comp ? comp.terminalWorld(src.term) : null;
@@ -1263,8 +1754,26 @@ function projectOnNet(net, w, branch = 0) {
   return { P, k, route };
 }
 
-function doWireClick(x, y, terminalHit) {
+function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null) {
   const hit = terminalHit || matchAt(x, y);
+  if (fixedEndpoint && !wire.source) {
+    wire.source = { fixed: fixedEndpoint };
+    wire.points = [];
+    cursor = { x: fixedEndpoint.point.x, y: fixedEndpoint.point.y };
+    logLine(`wire from fixed open endpoint @ (${fixedEndpoint.point.x},${fixedEndpoint.point.y}) — click points, then target`);
+    return;
+  }
+  if (fixedEndpoint && wire.source?.fixed) {
+    const target = fixedEndpointTarget(fixedEndpoint);
+    const result = commitFixedEndpointDraft(wire.source.fixed, target, wire.points, 'smart');
+    if (result) wire = { source: null, points: [] };
+    return;
+  }
+  if (fixedTarget && wire.source?.fixed) {
+    if (fixedTarget.ambiguous) logLine('wire target is ambiguous — select one exact path');
+    else if (commitFixedEndpointDraft(wire.source.fixed, fixedTarget, wire.points, 'smart')) wire = { source: null, points: [] };
+    return;
+  }
   if (hit && hit.term) {
     if (!wire.source) {
       wire.source = { refdes: hit.refdes, term: hit.term };
@@ -1336,6 +1845,14 @@ function commitWireAtCursor() {
   }
   const wireHit = pickWire(cursor);
   if (wireHit) {
+    if (wire.source.fixed) {
+      const target = exactWireTargetAt(cursor);
+      if (target?.ambiguous) logLine('wire target is ambiguous — select one exact path');
+      else if (target && commitFixedEndpointDraft(wire.source.fixed, target, wire.points, 'smart')) wire = { source: null, points: [] };
+      else if (!target) logLine('point the cursor at one exact wire target to commit');
+      render();
+      return;
+    }
     joinWireToNet(wireHit);
     render();
     return;
@@ -1348,6 +1865,10 @@ function commitWireAtCursor() {
  *  target net without disturbing its existing wire. */
 function connectWireToTerminal(dst) {
   const src = wire.source;
+  if (src.fixed) {
+    if (commitFixedEndpointDraft(src.fixed, `${dst.refdes}.${dst.term}`, wire.points, 'smart')) wire = { source: null, points: [] };
+    return;
+  }
   if (src.refdes) {
     connectTwo(src, dst, wire.points);
     return;
@@ -1409,18 +1930,28 @@ function canvasMouseDown(ev) {
   }
   if (b !== 0) return;
 
+  const openEndpoint = openFixedEndpointAt(startWorld);
+
   if (directWire) {
-    drag = { mode: 'directpick', startClient, startWorld };
+    drag = { mode: 'directpick', startClient, startWorld, fixedEndpoint: openEndpoint };
     return;
   }
 
   if (wire) {
+    if (openEndpoint) {
+      drag = { mode: 'wirepick', startClient, startWorld, rubber: null, fixedEndpoint: openEndpoint };
+      return;
+    }
     // In persistent wiring mode, terminal/empty-space clicks pick wire ends;
     // an interior wire click must remain available for segment dragging.
     // Terminal proximity (not just an exact grid hit) always wins, so a slightly
     // off click on a pin starts/ends the wire instead of selecting the body.
     const terminalHit = nearestTerminal(startWorld);
     const wireHit = pickWire(startWorld);
+    if (wire.source?.fixed && !terminalHit && wireHit) {
+      drag = { mode: 'wirepick', startClient, startWorld, rubber: null, fixedTarget: exactWireTargetAt(startWorld) };
+      return;
+    }
     if (terminalHit || !wireHit) {
       drag = { mode: 'wirepick', startClient, startWorld, rubber: null, terminalHit: terminalHit || null };
       return;
@@ -1507,6 +2038,13 @@ function canvasMouseDown(ev) {
     render();
     return;
   }
+
+  // In normal mode an editable endpoint takes priority over ordinary wire and
+  // component picking, but never over placement or labels drawn above it.
+  if (openEndpoint) {
+    fixedEndpointDragAt(openEndpoint, startWorld, startClient);
+    return;
+  }
   // Clicking anywhere that isn't a label resets any pending double-click state.
   lastLabelClick = null;
   lastWireClick = null;
@@ -1525,13 +2063,20 @@ function canvasMouseDown(ev) {
   const wireHit = pickWire(startWorld);
   if (wireHit) {
     const net = wireHit.net;
+    if (net.terminals.length === 0 && net.routingMode !== 'fixed') {
+      const floatingKey = `${net.id}:${wireHit.branch}:${wireHit.seg}`;
+      const floatingKeys = ev.shiftKey || selectedWires.has(floatingKey)
+        ? new Set([...selectedWires, floatingKey]) : new Set([floatingKey]);
+      if (floatingWireDragAt(wireHit, startWorld, startClient, ev, floatingKeys)) return;
+    }
     if (net.routingMode === 'fixed') {
       const key = `${net.id}:${wireHit.branch}:${wireHit.seg}`;
       if (ev.detail >= 2) {
+        setSelection([]);
         selectedWire = null;
         selectedWires.clear();
         selectedNets = new Set([net.id]);
-        logLine(`selected fixed net ${net.id} — geometry is protected`);
+        logLine(`selected fixed net ${net.id} — geometry is literal; open endpoints can be reconnected`);
         render();
         return;
       }
@@ -1559,6 +2104,7 @@ function canvasMouseDown(ev) {
         Math.abs(startWorld.x - prevWireClick.x) <= GRID &&
         Math.abs(startWorld.y - prevWireClick.y) <= GRID)
     ) {
+      setSelection([]);
       selectedWire = null;
       selectedWires.clear();
       selectedNets = new Set([net.id]);
@@ -1582,9 +2128,13 @@ function canvasMouseDown(ev) {
         ? n.branches[w.branch]
         : n.route && n.route.length >= 2 ? n.route : n.points().slice();
       const run = wireRunAt(pts, w.segment);
-      const runKey = `${k}:${run.orient}:${run.val}`;
+      const runKey = `${n.id}:${w.branch}:${run.orient}:${run.val}`;
       if (seenRun.has(runKey)) continue; // same maximal run, don't move twice
       seenRun.add(runKey);
+      const endpointMeta = {
+        start: managedEndpointMeta(n, pts[0]),
+        end: managedEndpointMeta(n, pts[pts.length - 1]),
+      };
       runs.push({
         net: n,
         branch: w.branch,
@@ -1595,6 +2145,8 @@ function canvasMouseDown(ev) {
         line: run.val,
         startLine: run.val,
         hadRoute: !!(n.route && n.route.length >= 2),
+        endpointMeta,
+        junctionBridge: pts.length === 2 && endpointMeta.start.type === 'junction' && endpointMeta.end.type === 'junction',
       });
     }
     const primary = runs.find((r) => r.net === net && r.branch === wireHit.branch && r.seg === wireHit.seg) || runs[0];
@@ -1602,6 +2154,17 @@ function canvasMouseDown(ev) {
     // shifts a run sideways). Same-orientation runs move as a group; selected
     // runs of the other orientation stay put (still selected, still deletable).
     const dragRuns = runs.filter((r) => r.orient === primary.orient);
+    const netSnapshots = new Map();
+    for (const r of dragRuns) {
+      if (netSnapshots.has(r.net.id)) continue;
+      netSnapshots.set(r.net.id, {
+        id: r.net.id,
+        net: r.net,
+        route: r.net.route ? r.net.route.map((p) => ({ ...p })) : null,
+        branches: r.net.branches ? r.net.branches.map((b) => b.map((p) => ({ ...p }))) : null,
+        junctions: r.net.junctions.map((p) => ({ ...p })),
+      });
+    }
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
     drag = {
       mode: 'wireseg',
@@ -1623,6 +2186,7 @@ function canvasMouseDown(ev) {
       committed: false,
       rubber: null,
       startSnapshot: snapshot(),
+      netSnapshots,
     };
     render();
     return;
@@ -1660,7 +2224,11 @@ function beginComponentDrag(hit, startWorld, startClient, ev) {
     return;
   }
   const duplicate = (ev.ctrlKey || ev.metaKey) && multi.has(hit.refdes);
-  if (!multi.has(hit.refdes)) setSelection([hit.refdes]);
+  // A plain click replaces incompatible label/wire/net selections, while a
+  // click on an already selected component keeps the selected component set
+  // available for group dragging.
+  if (multi.has(hit.refdes)) setSelection([...multi], hit.refdes);
+  else setSelection([hit.refdes]);
   const origins = new Map();
   for (const r of multi) {
     const c = circuit.components.get(r);
@@ -1741,11 +2309,31 @@ function canvasMouseMove(ev) {
       const delta = axis - drag.startAxis;
       for (const r of drag.runs) {
         const target = r.startLine + delta;
-        r.line = moveWireRun(r.pts, r.orient, r.line, target);
+        moveManagedWireRun(r, target);
       }
       wiresDirty = true; // live re-route changes wire geometry every frame
       render();
     }
+    return;
+  }
+
+  if (drag.mode === 'floatingwire') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      const dx = snap(w.x) - snap(drag.startWorld.x);
+      const dy = snap(w.y) - snap(drag.startWorld.y);
+      for (const f of drag.fragments) {
+        const points = f.orig.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+        if (f.fixed) f.net.fixedPaths[f.branch].points = points;
+        else {
+          if (f.net.branches?.[f.branch]) f.net.branches[f.branch] = points;
+          if (f.branch === 0) f.net.route = points;
+        }
+      }
+      cursor = { x: snap(w.x), y: snap(w.y) };
+      wiresDirty = true;
+    }
+    render();
     return;
   }
 
@@ -1784,6 +2372,17 @@ function canvasMouseMove(ev) {
       cursor = { x: snap(w.x), y: snap(w.y) };
       render();
     }
+    return;
+  }
+
+  if (drag.mode === 'fixedendpoint') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      circuit.moveFixedEndpoint(drag.endpoint, { x: snap(w.x), y: snap(w.y) }, { active: true });
+      cursor = { x: snap(w.x), y: snap(w.y) };
+      wiresDirty = true;
+    }
+    render();
     return;
   }
 
@@ -1926,20 +2525,16 @@ function canvasMouseUp(ev) {
     if (!drag.moved || !anyMoved) {
       // A plain click (or a jittery gesture that never actually moved a run):
       // select the segment(s) and leave every polyline exactly as it was.
-      for (const r of drag.runs) {
-        if (r.branch !== undefined && r.net.branches && r.net.branches[r.branch]) {
-          r.net.branches[r.branch] = r.orig.map((p) => ({ ...p }));
-          if (r.branch === 0) r.net.route = r.net.branches[0].map((p) => ({ ...p }));
-        } else if (!r.hadRoute) {
-          r.net.route = null; // don't materialize a route on a click
-        }
-      }
+      restoreManagedNetSnapshots(drag.netSnapshots);
+      circuit.syncJunctionSolders();
+      if (!drag.shift) setSelection([]);
       selectedNets.clear();
       if (drag.shift) {
         if (selectedWires.has(drag.key)) selectedWires.delete(drag.key);
         else selectedWires.add(drag.key);
         syncSelectedWire();
       } else {
+        setSelection([]);
         selectedWires = new Set([drag.key]);
         selectedWire = keyToWire(drag.key);
       }
@@ -1947,31 +2542,111 @@ function canvasMouseUp(ev) {
       render();
       return;
     }
-    // The drag re-routed the runs live. Persist each run back to its net — for
-    // branch nets the live-edit only updated the local pts array, so without
-    // this write the model stays stale. Then reroute + reduce so each dragged
-    // run reconnects cleanly to its terminal(s) and any run dragged onto a
-    // same-net wire merges instead of hiding beneath it.
-    for (const r of drag.runs) {
-      if (r.branch !== undefined && r.net.branches && r.net.branches[r.branch]) {
-        r.net.branches[r.branch] = r.pts.map((p) => ({ ...p }));
-        if (r.branch === 0) r.net.route = r.net.branches[0].map((p) => ({ ...p }));
+    try {
+      // The drag edited local run arrays live. Persist every run back to its
+      // net before validating/reducing; incident branches were already kept in
+      // sync by moveManagedJunction.
+      for (const r of drag.runs) {
+        if (r.branch !== undefined && r.net.branches && r.net.branches[r.branch]) {
+          r.net.branches[r.branch] = r.pts.map((p) => ({ ...p }));
+          if (r.branch === 0) r.net.route = r.net.branches[0].map((p) => ({ ...p }));
+        } else {
+          r.net.route = r.pts.map((p) => ({ ...p }));
+        }
+      }
+      const touchedNets = new Set(drag.runs.map((r) => r.net.id));
+      const literalNets = new Set(drag.runs.filter((r) => r.junctionBridge).map((r) => r.net.id));
+      const expectedJunctions = new Map();
+      for (const r of drag.runs) {
+        if (!r.junctionBridge) continue;
+        if (!expectedJunctions.has(r.net.id)) expectedJunctions.set(r.net.id, []);
+        expectedJunctions.get(r.net.id).push(
+          { from: { ...r.endpointMeta.start.point }, point: { ...r.pts[0] } },
+          { from: { ...r.endpointMeta.end.point }, point: { ...r.pts[r.pts.length - 1] } },
+        );
+      }
+      for (const id of touchedNets) {
+        const net = circuit.nets.get(id);
+        if (!net) continue;
+        if (literalNets.has(id)) {
+          const beforeReduce = managedGeometryErrors(net);
+          if (beforeReduce.length) throw new Error(`unsafe managed geometry ${id}: ${beforeReduce.join('; ')}`);
+        } else {
+          rerouteNet(net); // re-anchor ordinary terminal legs
+        }
+        circuit._reduceNet(net); // merge any run dragged onto a same-net wire
+        if (literalNets.has(id)) syncManagedRoute(net);
+        const errors = managedGeometryErrors(net);
+        if (errors.length) throw new Error(`unsafe managed geometry ${id}: ${errors.join('; ')}`);
+        for (const expected of expectedJunctions.get(id) || []) {
+          const point = expected.point;
+          const moved = point.x !== expected.from.x || point.y !== expected.from.y;
+          if (moved && [...circuit.components.values()].some((c) => c.worldTerminals().some((t) => t.x === point.x && t.y === point.y))) {
+            throw new Error(`managed bridge junction landed on a component pin on ${id}`);
+          }
+          if (!net.junctions.some((p) => p.x === point.x && p.y === point.y)) {
+            throw new Error(`managed bridge junction moved unexpectedly on ${id}`);
+          }
+        }
+      }
+      circuit.syncJunctionSolders();
+      wiresDirty = true; // committed wire drag changed net geometry
+      history.push(drag.startSnapshot);
+      if (history.length > 200) history.shift();
+      future.length = 0;
+    } catch (err) {
+      restoreManagedNetSnapshots(drag.netSnapshots);
+      circuit.syncJunctionSolders();
+      wiresDirty = true;
+      logLine(`wire drag cancelled: ${err.message}`, 'error');
+      drag = null;
+      render();
+      return;
+    }
+  } else if (drag.mode === 'floatingwire') {
+    if (!drag.moved) {
+      if (!drag.shift) setSelection([]);
+      selectedNets.clear();
+      if (drag.shift) {
+        if (selectedWires.has(drag.key)) selectedWires.delete(drag.key);
+        else selectedWires.add(drag.key);
       } else {
-        r.net.route = r.pts.map((p) => ({ ...p }));
+        selectedWires = new Set([drag.key]);
+      }
+      syncSelectedWire();
+    } else {
+      // Endpoint attachment is intentional only at the exact final endpoint;
+      // merely crossing another wire never enters this path.
+      for (const f of drag.fragments) {
+        const path = f.net.routingMode === 'fixed' ? f.net.fixedPaths[f.branch]?.points : f.net.branches?.[f.branch] || (f.branch === 0 ? f.net.route : null);
+        if (!path) continue;
+        for (const endpoint of [0, path.length - 1]) {
+          const p = path[endpoint];
+          const term = [...circuit.components.values()].flatMap((c) => c.worldTerminals().map((t) => ({ ...t, refdes: c.refdes })))
+            .find((t) => t.x === p.x && t.y === p.y);
+          if (term) {
+            try { circuit.attachWireEndpoint(f.net, f.branch, endpoint, `${term.refdes}.${term.name}`); } catch (err) { logLine(err.message); }
+            break; // one deliberate endpoint attachment per drop
+          }
+          const other = exactWireTargetAt(p, f.net.id);
+          if (other && !other.ambiguous) {
+            try { circuit.attachWireEndpoint(f.net, f.branch, endpoint, other); } catch (err) { logLine(err.message); }
+            break;
+          }
+          if (other?.ambiguous) {
+            logLine('wire endpoint target is ambiguous — no implicit crossing join');
+            break;
+          }
+        }
+      }
+      circuit.syncJunctionSolders();
+      wiresDirty = true;
+      if (snapshot() !== drag.startSnapshot) {
+        history.push(drag.startSnapshot);
+        if (history.length > 200) history.shift();
+        future.length = 0;
       }
     }
-    const touchedNets = new Set(drag.runs.map((r) => r.net.id));
-    for (const id of touchedNets) {
-      const net = circuit.nets.get(id);
-      if (!net) continue;
-      rerouteNet(net); // re-anchor the persisted drag against the terminals
-      circuit._reduceNet(net); // merge any run dragged onto a same-net wire
-    }
-    circuit.syncJunctionSolders();
-    wiresDirty = true; // committed wire drag changed net geometry
-    history.push(drag.startSnapshot);
-    if (history.length > 200) history.shift();
-    future.length = 0;
   } else if (drag.mode === 'fixedwire') {
     if (!drag.moved) {
       if (drag.fixedShift) {
@@ -1979,6 +2654,7 @@ function canvasMouseUp(ev) {
         else selectedWires.add(drag.fixedKey);
         syncSelectedWire();
       } else {
+        setSelection([]);
         selectedWires = new Set([drag.fixedKey]);
         selectedWire = keyToWire(drag.fixedKey);
       }
@@ -1995,15 +2671,55 @@ function canvasMouseUp(ev) {
         logLine('fixed endpoint has no movable geometry');
       }
     }
+  } else if (drag.mode === 'fixedendpoint') {
+    if (!drag.moved) {
+      const path = drag.net.paths()[drag.endpoint.pathIndex];
+      const segment = drag.endpoint.endpointIndex === 0 ? 1 : path.length - 1;
+      setSelection([]);
+      selectedWires = new Set([`${drag.net.id}:${drag.endpoint.pathIndex}:${segment}`]);
+      syncSelectedWire();
+      selectedNets.clear();
+    } else {
+      const point = { x: snap(w.x), y: snap(w.y) };
+      const terminalHits = sortedComps().flatMap((c) => c.worldTerminals()
+        .filter((t) => t.x === point.x && t.y === point.y)
+        .map((t) => ({ refdes: c.refdes, term: t.name })));
+      let target = null;
+      if (terminalHits.length === 1) target = `${terminalHits[0].refdes}.${terminalHits[0].term}`;
+      else if (terminalHits.length > 1) logLine('fixed endpoint target is ambiguous — choose one terminal');
+      else {
+        const wireTarget = exactWireTargetAt(w, null, drag.endpoint);
+        if (wireTarget?.ambiguous) logLine('fixed endpoint target is ambiguous — choose one exact wire');
+        else if (wireTarget) target = wireTarget;
+      }
+      if (target) {
+        try {
+          circuit.attachWireEndpoint(drag.endpoint.netId, drag.endpoint.pathIndex, drag.endpoint.endpointIndex, target);
+        } catch (err) {
+          circuit.restoreFixedGeometry(drag.net, drag.saved.fixedPaths, drag.saved.junctions);
+          logLine(String(err.message || err));
+        }
+      }
+      if (snapshot() !== drag.startSnapshot) {
+        history.push(drag.startSnapshot);
+        if (history.length > 200) history.shift();
+        future.length = 0;
+        wiresDirty = true;
+        logLine(target ? 'attached fixed endpoint' : 'moved fixed endpoint');
+      }
+      selectedNets.clear();
+      selectedWire = null;
+      selectedWires.clear();
+    }
   } else if (drag.mode === 'marquee') {
     if (drag.moved) {
       const box = worldRect(drag.startWorld, w);
       applyBoxSelection(box.x0, box.y0, box.x1, box.y1, ev.shiftKey);
     }
   } else if (drag.mode === 'wirepick') {
-    if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit);
+    if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit, drag.fixedEndpoint, drag.fixedTarget);
   } else if (drag.mode === 'directpick') {
-    if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y));
+    if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y), drag.fixedEndpoint);
   } else if (drag.mode === 'move') {
     if (drag.moved) {
       const refs = [...drag.origins.keys()];
@@ -2057,18 +2773,48 @@ canvasEl.addEventListener('dblclick', (ev) => {
 function inlineEditLabel(label) {
   if (!label || inlineInput) return;
   lastLabelClick = null; // starting an edit clears any pending double-click state
-  const a = label.anchorWorld();
+  const b = label.bbox();
   const pane = document.querySelector('.canvas-pane');
   const r = pane.getBoundingClientRect();
-  const sx = r.left + ((a.x - view.x) / view.w) * r.width;
-  const sy = r.top + ((a.y - view.y) / view.h) * r.height;
+  const sy = r.top + ((b.y - view.y) / view.h) * r.height;
+  const sw = (b.w / view.w) * r.width;
+  const sh = (b.h / view.h) * r.height;
+  // The persistent label box is centered on its anchor regardless of text
+  // alignment. Keep the editor centered on that same box as it grows.
+  const boxCenterX = r.left + (((b.x + b.w / 2) - view.x) / view.w) * r.width;
   const input = document.createElement('input');
   input.type = 'text';
   input.value = label.text;
   input.spellcheck = false;
-  input.style.cssText = `position:absolute;left:${sx}px;top:${sy}px;transform:translate(-50%,-50%);z-index:30;font:12px sans-serif;padding:2px 4px;min-width:60px;`;
+  input.className = 'label-inline-editor';
+  input.dataset.labelId = label.id;
+  input.style.position = 'absolute';
+  input.style.zIndex = '30';
+  input.style.left = `${boxCenterX - sw / 2}px`;
+  input.style.top = `${sy}px`;
+  input.style.width = `${sw}px`;
+  input.style.height = `${sh}px`;
+  input.style.fontSize = `${Math.max(12, LABEL_FONT_SIZE * r.width / view.w)}px`;
+  input.style.textAlign = label.align;
+
+  // Measure the live editor text in the same face as the rendered label. The
+  // The box grows from the actual text anchor while keeping alignment stable.
+  const measure = document.createElement('span');
+  measure.className = 'label-inline-editor-measure';
+  document.body.appendChild(measure);
+  const resize = () => {
+    measure.textContent = input.value || ' ';
+    measure.style.fontSize = input.style.fontSize;
+    const minWidth = Math.max(60, sw);
+    const width = Math.max(minWidth, measure.getBoundingClientRect().width + 12);
+    input.style.width = `${width}px`;
+    input.style.left = `${boxCenterX - width / 2}px`;
+  };
+  resize();
+  input.addEventListener('input', resize);
   document.body.appendChild(input);
   inlineInput = input;
+  render();
   input.focus();
   input.select();
   let closed = false;
@@ -2076,6 +2822,7 @@ function inlineEditLabel(label) {
     if (closed) return;
     closed = true;
     inlineInput = null;
+    measure.remove();
     const v = input.value.trim();
     input.remove();
     if (applyText && v && v !== label.text) {
@@ -2100,6 +2847,11 @@ function inlineEditLabel(label) {
     ev.stopPropagation();
     if (ev.key === 'Enter') done(true);
     else if (ev.key === 'Escape') done(false);
+    else if (ev.key === 'Tab') {
+      ev.preventDefault();
+      done(true);
+      cycleLabelSelection(ev.shiftKey ? -1 : 1, label.id);
+    }
     else if ((ev.ctrlKey || ev.metaKey) && ev.key === ',') {
       ev.preventDefault();
       toggleMarkup('_');
@@ -2201,7 +2953,7 @@ function renderNets() {
     return;
   }
   for (const net of circuit.nets.values()) {
-    if (!net.terminals.length) continue; // never show empty/ghost nets
+    if (!net.terminals.length && !net.paths().some((path) => path.length >= 2)) continue;
     const row = document.createElement('div');
     row.className = 'row' + (selectedNets.has(net.id) ? ' selected' : '');
 
@@ -2298,7 +3050,7 @@ function renderDetail() {
   if (label) {
     const meta = document.createElement('div');
     meta.className = 'detail-meta';
-    meta.textContent = `label "${label.text}"  align: ${label.align}${label.owner ? `  owned by ${label.owner}` : ''}  — double-click to edit text, Shift+Left/Right to align`;
+    meta.textContent = `label "${label.text}"  align: ${label.align}${label.owner ? `  owned by ${label.owner}` : ''}  — t / double-click edit, Tab cycle, Shift+Left/Right align`;
     detailEl.appendChild(meta);
 
     const table = document.createElement('table');
@@ -2397,7 +3149,7 @@ function onWireKey(key) {
   } else if (key === 'l') {
     moveCursor(1, 0);
   } else if (key === 'Tab') {
-    cycleSelection(1);
+    // Wires and wire highlights are never part of Tab cycling.
     return;
   } else if (TERM_LETTERS.has(key)) {
     const comp = compUnderCursor() || selectedComp();
@@ -2449,6 +3201,42 @@ const PLACEMENT = {
 
 const PLACEMENT_BY_TYPE = new Map(Object.entries(PLACEMENT).map(([key, type]) => [type, key]));
 
+// Human-facing names keep the picker useful at a glance. Aliases stay out of
+// the menu while the underlying type remains the stable placement value.
+const PLACEMENT_LABELS = {
+  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode',
+  nmos: 'NMOS transistor', pmos: 'PMOS transistor', npn: 'NPN transistor', pnp: 'PNP transistor',
+  ground: 'Ground', supply: 'Supply (VDD/VCC)',
+  input: 'Input port', output: 'Output port', inputoutput: 'Input/output port',
+  port: 'Port', port_filled: 'Filled port',
+  current_source: 'Current source', current_sink: 'Current sink', voltage_source: 'Voltage source',
+  opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', inverter: 'Inverter', buffer: 'Buffer',
+  and_gate: 'AND gate', nand_gate: 'NAND gate', or_gate: 'OR gate', nor_gate: 'NOR gate',
+  xor_gate: 'XOR gate', xnor_gate: 'XNOR gate',
+  variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
+  solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Label',
+};
+
+const PLACEMENT_ALIASES = {
+  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'],
+  nmos: ['mos', 'n-channel'], pmos: ['mos', 'p-channel'], npn: ['bjt'], pnp: ['bjt'],
+  supply: ['vdd', 'vcc', 'power'], input: ['in'], output: ['out'], inputoutput: ['io'],
+  current_source: ['idc', 'current'], current_sink: ['current'], voltage_source: ['vdc', 'voltage'],
+  opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
+  variable_resistor: ['potentiometer', 'pot'], variable_capacitor: ['var cap'], variable_inductor: ['var coil'],
+  switch_open: ['switch', 'open'], switch_closed: ['switch', 'closed'], solder: ['junction', 'dot'],
+  label: ['annotation', 'text'],
+};
+
+const INSERT_CATEGORIES = [
+  ['Passives', ['resistor', 'capacitor', 'inductor', 'diode', 'variable_resistor', 'variable_capacitor', 'variable_inductor', 'switch_open', 'switch_closed']],
+  ['Semiconductors / actives', ['nmos', 'pmos', 'npn', 'pnp']],
+  ['Sources & power', ['current_source', 'current_sink', 'voltage_source', 'supply', 'ground']],
+  ['Logic', ['opamp', 'opamp_diff', 'inverter', 'buffer', 'and_gate', 'nand_gate', 'or_gate', 'nor_gate', 'xor_gate', 'xnor_gate']],
+  ['Interfaces / ports', ['input', 'output', 'inputoutput', 'port', 'port_filled']],
+  ['Annotations', ['label', 'solder']],
+];
+
 /** Rank a component/label name against a fuzzy query (subsequence match).
  *  Returns a score >= 0 for a match (higher = better) or -1 for no match.
  *  Prefix hits beat substring hits, which beat pure subsequences; shorter
@@ -2467,14 +3255,30 @@ function fuzzyScore(q, name) {
   return -1;
 }
 
+function placementSearchScore(query, type) {
+  return Math.max(
+    fuzzyScore(query, type),
+    fuzzyScore(query, PLACEMENT_LABELS[type] || type),
+    ...(PLACEMENT_ALIASES[type] || []).map((alias) => fuzzyScore(query, alias)),
+  );
+}
+
 function onInsertKey(key) {
-  // Arrow keys move the cursor; all other printable keys go into the fuzzy
-  // search query (hjkl are NOT cursor keys here — you type them).
+  // Arrow keys move the cursor. Once a ghost is active, vim movement keys do
+  // too; before that point they remain ordinary search input.
   const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
   if (arrow) {
     moveCursor(arrow[0], arrow[1]);
     render();
     return;
+  }
+  if (pendingPlace) {
+    const vimMove = { h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0] }[key];
+    if (vimMove) {
+      moveCursor(vimMove[0], vimMove[1]);
+      render();
+      return;
+    }
   }
 
   // With a ghost selected, R/X rotate/mirror the about-to-be-placed component.
@@ -2563,13 +3367,21 @@ function onVisualKey(key) {
   }
 }
 
-function onNormalKey(key) {
+function onNormalKey(key, shiftKey = false) {
   if (/^[0-9]$/.test(key)) {
     counts = counts * 10 + Number(key);
     return;
   }
   const count = counts || 1;
   counts = 0;
+
+  // Normal-mode t edits only the primary selected label. Insert-mode t keeps
+  // its separate label-placement behavior in onInsertKey.
+  if (key === 't') {
+    const lab = selectedLabel() || selectedLabels()[0];
+    if (lab) inlineEditLabel(lab);
+    return;
+  }
 
   const nudgeKey = {
     h: [-1, 0],
@@ -2613,20 +3425,20 @@ function onNormalKey(key) {
   }
 
   if (key === 'r' || key === 'R') {
-    if (!selectedComps().length) {
+    if (!selectedComps().length && !selectedLabels().length && !selectedWires.size && !selectedWire && !selectedNets.size) {
       logLine('nothing selected to rotate');
     } else {
       const total = (((key === 'r' ? 90 : -90) * count) % 360 + 360) % 360;
       if (total) rotateSelectionAbout(total);
       const primary = selectedComp() || selectedComps()[0];
-      cursor = { x: primary.transform.x, y: primary.transform.y };
+      if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       render();
     }
     return;
   }
 
   if (key === 'x' || key === 'X') {
-    if (!selectedComps().length) {
+    if (!selectedComps().length && !selectedLabels().length && !selectedWires.size && !selectedWire && !selectedNets.size) {
       logLine('nothing selected to mirror');
     } else {
       mirrorSelectionAbout(key === 'x' ? 'x' : 'y');
@@ -2679,7 +3491,7 @@ function onNormalKey(key) {
   if (key === 'W') {
     directWire = { source: null, points: [] };
     wire = null;
-    logLine('DIRECT WIRE: click a terminal, add straight points, then click another terminal (Esc exits)');
+    logLine('DIRECT WIRE: click a terminal or open fixed endpoint, add points, then target (Esc exits)');
     render();
     return;
   }
@@ -2740,7 +3552,14 @@ function onNormalKey(key) {
   }
 
   if (key === 'Tab') {
-    cycleSelection(1);
+    const comps = selectedComps();
+    const labels = selectedLabels();
+    const hasWireSelection = !!selectedWire || selectedWires.size > 0;
+    if (!hasWireSelection && selectedNets.size === 0 && multi.size === 1 && selLabels.size === 0 && comps.length === 1) {
+      cycleSelection(shiftKey ? -1 : 1);
+    } else if (!hasWireSelection && selectedNets.size === 0 && multi.size === 0 && selLabels.size === 1 && labels.length === 1) {
+      cycleLabelSelection(shiftKey ? -1 : 1);
+    }
     return;
   }
 
@@ -2769,6 +3588,7 @@ function logKeymap() {
   logLine(
     [
       '-- normal --',
+      't           edit the primary selected label (no-op otherwise)',
       'h j k l     move selected comp(s) / cursor (counts: 5l)',
       'r / R       rotate selected 90 cw / ccw',
       'x / X       mirror selected on x / y',
@@ -2776,11 +3596,13 @@ function logKeymap() {
       'p / C-v     paste the copied set at the cursor (new ids, nets kept)',
       'D           toggle dark mode',
       'w           managed wire mode: routed/orthogonal, editable segments',
-      '            click points, then click/Enter a terminal; wire interiors can join',
+      '            click points, then click/Enter a terminal or exact wire target',
       'W           fixed/direct wire mode: literal points, diagonal paths',
-      '            drag fixed vertices, segments, or explicit junction dots',
-      'Tab         cycle selection',
-      'Ctrl-A      select all components',
+      '            drag fixed vertices, segments, or open endpoints',
+      '            open endpoints can be extended/reconnected to terminals or exact wire targets',
+      '            dd / Del deletes selected fixed segments literally',
+      'Tab / S-Tab  cycle singleton component/label forward / backward; otherwise no-op',
+      'Ctrl-A      select all components, labels, and non-empty nets',
       'Enter       select component under cursor',
       'u / C-z     undo    U / C-y / C-r  redo',
       'F / f       fit view to contents',
@@ -2791,25 +3613,30 @@ function logKeymap() {
       ':           ex-mode command line (e.g. :connect R1.a R2.a)',
       '?           this help',
       '-- insert --',
-      'type        fuzzy-search component names (e.g. nmos, curr, sw, output)',
+      'type        fuzzy-search names and aliases (e.g. nmos, idc, vdc, sw)',
       'Enter       pick the best match as a placement ghost',
-      'Enter/click place ghost at cursor · R/X rotate/mirror ghost',
-      'arrows      move cursor between placements',
+      'Enter/click place ghost at cursor · h j k l / arrows move ghost',
+      'R/X         rotate/mirror component ghost',
       'Backspace   edit the search string',
       'Esc/Backspace  cancel ghost (back to search)   Esc exits insert',
-      'arrows      also move cursor',
+      'h j k l / arrows  move cursor while a placement ghost is active',
       '-- labels --',
-      't (insert)  place a label (double-click to edit text)',
+      't (normal)  edit the primary selected label',
+      't (insert)  place a label (double-click or t to edit text)',
       'Shift+Left / Shift+Right  align left / right (centre default)',
       'h j k l     move a selected label (set its offset if it belongs to a part)',
       'dd / Del    delete the selected label',
       'double-click  edit the label text inline',
+      'Tab / S-Tab  commit label edit, then select next / previous label',
       'C-, / C-.    in the label editor: subscript / superscript the selection',
       '             (press again to revert; mixed selection reverts to normal)',
       '-- mouse --',
       'left        click select · drag marquee-select · drag comp to move',
-      'wire        w, then click START terminal, click TARGET terminal',
-      'wire drag   click a wire to select it · drag a segment to re-route it',
+      'wire        w, then click a terminal or any point; click points, then target terminal',
+      'wire join   click an existing wire to branch; Enter on a wire joins it',
+      'wire select click selects a run · Shift-click adds/removes runs · drag re-routes',
+      'wire delete dd / Del removes selected runs (fixed/direct geometry stays literal)',
+      'y / C-c     copy selected components, free labels, complete nets, and wire fragments',
       'shift-click toggle in selection     shift-drag marquee adds',
       'middle      drag to pan (view never pans on its own)',
       'right       drag = zoom box · right-click = zoom out',
@@ -2821,30 +3648,49 @@ function logKeymap() {
 
 // ----- command console ---------------------------------------------------
 
-/** Copied selection: components, their free labels, and the nets that run
- *  entirely inside the selection. Pasted copies keep their relative positions
- *  and connectivity and are given fresh ids (refdes / label ids / net ids). */
-let clipboard = null; // { comps, labels, nets, anchor }
+/** Copied selection.  `nets` are complete electrical nets; `fragments` are
+ * terminal-less geometric islands extracted from selected segments. */
+let clipboard = null;
 
-/** Copy the current selection (components + free labels + internal nets). */
+/** Copy components/labels plus complete internal nets and selected wire islands. */
 function copySelection() {
   const comps = selectedComps();
   const freeLabels = selectedLabels().filter((l) => !l.owner);
-  if (!comps.length && !freeLabels.length) {
+  if (!comps.length && !freeLabels.length && !selectedWires.size && !selectedWire) {
     logLine('nothing selected to copy');
     return;
   }
+  const wireKeys = new Set(selectedWires);
+  if (selectedWire) wireKeys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
   const compRefs = new Set(comps.map((c) => c.refdes));
   const nets = [];
+  const fragments = [];
   for (const net of circuit.nets.values()) {
-    if (net.terminals.length && net.terminals.every((t) => compRefs.has(t.comp))) {
+    const ownKeys = [...wireKeys].filter((key) => keyToWire(key).netId === net.id);
+    const paths = net.paths();
+    const allKeys = paths.flatMap((p, branch) => p.slice(1).map((point, segment) => ({ point, previous: p[segment], segment }))
+      .filter(({ point, previous }) => point.x !== previous.x || point.y !== previous.y)
+      .map(({ segment }) => `${net.id}:${branch}:${segment + 1}`));
+    const internal = net.terminals.length && net.terminals.every((t) => compRefs.has(t.comp));
+    // A selected complete internal net is copied once as an ordinary net. A
+    // partial selection is extracted below and must not duplicate the net.
+    if (internal && (!ownKeys.length || ownKeys.length === allKeys.length)) {
       nets.push({
         name: net.name,
+        routingMode: net.routingMode,
         terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
         route: net.route ? net.route.map((p) => ({ ...p })) : null,
         junctions: net.junctions.map((p) => ({ ...p })),
         branches: net.branches ? net.branches.map((b) => b.map((p) => ({ ...p }))) : null,
+        fixedPaths: net.routingMode === 'fixed' ? net.fixedPaths.map((e) => ({
+          points: e.points.map((p) => ({ ...p })), start: e.start && { ...e.start }, end: e.end && { ...e.end },
+        })) : null,
       });
+    } else if (ownKeys.length) {
+      const selected = ownKeys.map((key) => { const w = keyToWire(key); return { branch: w.branch, segment: w.segment }; });
+      for (const island of extractWireFragments(paths, selected, net.junctions)) {
+        fragments.push({ name: net.name, routingMode: net.routingMode, paths: island.paths, junctions: island.junctions });
+      }
     }
   }
   // Grid-snapped anchor = bbox centre of the selection, so paste re-centres it
@@ -2861,6 +3707,11 @@ function copySelection() {
   };
   for (const c of comps) addRect(c.bboxWorld());
   for (const l of freeLabels) addRect(l.bbox());
+  for (const net of [...nets, ...fragments]) {
+    const paths = net.paths || (net.path ? [net.path] : (net.branches || net.fixedPaths?.map((e) => e.points) || (net.route ? [net.route] : [])));
+    for (const path of paths) for (const p of path) addRect({ x: p.x, y: p.y, w: 0, h: 0 });
+  }
+  if (!Number.isFinite(x0)) x0 = y0 = x1 = y1 = 0;
   const anchor = { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
   clipboard = {
     comps: comps.map((c) => ({
@@ -2874,9 +3725,10 @@ function copySelection() {
     })),
     labels: freeLabels.map((l) => ({ text: l.text, align: l.align, x: l.anchorWorld().x, y: l.anchorWorld().y })),
     nets,
+    fragments,
     anchor,
   };
-  logLine(`copied ${comps.length} component(s), ${freeLabels.length} label(s), ${nets.length} net(s)`);
+  logLine(`copied ${comps.length} component(s), ${freeLabels.length} label(s), ${nets.length} net(s), ${fragments.length} wire island(s)`);
 }
 
 /** Paste the clipboard at the cursor (re-centred on the selection anchor). */
@@ -2891,34 +3743,69 @@ function pasteClipboard() {
   const addedLabels = [];
   commit(() => {
     const refMap = new Map();
-    for (const c of clipboard.comps) {
-      const comp = circuit.addComponent(c.type, {
-        x: c.x + dx,
-        y: c.y + dy,
-        rotation: c.rotation,
-        mirrorX: c.mirrorX,
-        mirrorY: c.mirrorY,
-      });
-      refMap.set(c.origRef, comp.refdes);
-      addedComps.push(comp.refdes);
-    }
-    for (const l of clipboard.labels) {
-      const nl = circuit.addLabel({ text: l.text, align: l.align, x: l.x + dx, y: l.y + dy });
-      addedLabels.push(nl.id);
-    }
-    for (const n of clipboard.nets) {
-      const net = circuit._createNet(n.name);
+    const wasLoading = circuit._loading;
+    // Do not let addComponent's coincidence hook create memberships before
+    // the copied net records exist.  Otherwise a paste at an existing pin can
+    // leave that terminal in both the old and the copied net.
+    circuit._loading = true;
+    try {
+      for (const c of clipboard.comps) {
+        const comp = circuit.addComponent(c.type, {
+          x: c.x + dx,
+          y: c.y + dy,
+          rotation: c.rotation,
+          mirrorX: c.mirrorX,
+          mirrorY: c.mirrorY,
+        });
+        refMap.set(c.origRef, comp.refdes);
+        addedComps.push(comp.refdes);
+      }
+      for (const l of clipboard.labels) {
+        const nl = circuit.addLabel({ text: l.text, align: l.align, x: l.x + dx, y: l.y + dy });
+        addedLabels.push(nl.id);
+      }
+      for (const n of clipboard.nets) {
+      const fixedPaths = n.routingMode === 'fixed' ? n.fixedPaths.map((e) => ({
+        points: e.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+        start: e.start && refMap.has(e.start.comp) ? { comp: refMap.get(e.start.comp), term: e.start.term } : null,
+        end: e.end && refMap.has(e.end.comp) ? { comp: refMap.get(e.end.comp), term: e.end.term } : null,
+      })) : null;
+      const net = circuit.createWireNet({ name: n.name, routingMode: n.routingMode, fixedPaths });
       for (const t of n.terminals) {
         const newRef = refMap.get(t.comp);
         if (newRef) net.terminals.push({ comp: newRef, term: t.term });
       }
-      net.route = n.route ? n.route.map((p) => ({ x: p.x + dx, y: p.y + dy })) : null;
-      net.junctions = n.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-      net.branches = n.branches ? n.branches.map((b) => b.map((p) => ({ x: p.x + dx, y: p.y + dy }))) : null;
+        if (n.routingMode !== 'fixed') {
+          net.route = n.route ? n.route.map((p) => ({ x: p.x + dx, y: p.y + dy })) : null;
+          net.junctions = n.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+          net.branches = n.branches ? n.branches.map((b) => b.map((p) => ({ x: p.x + dx, y: p.y + dy }))) : null;
+        }
+      }
+      const pastedWireKeys = [];
+      for (const fragment of clipboard.fragments || []) {
+      const paths = fragment.paths.map((path) => path.map((p) => ({ x: p.x + dx, y: p.y + dy })));
+      const net = circuit.createWireNet(fragment.routingMode === 'fixed'
+        ? { name: fragment.name, routingMode: 'fixed', fixedPaths: paths.map((path) => ({ points: path, start: null, end: null })), junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
+        : { name: fragment.name, routingMode: 'managed', branches: paths, route: paths[0], junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
+        for (let branch = 0; branch < paths.length; branch++) {
+          for (let segment = 1; segment < paths[branch].length; segment++) {
+            if (paths[branch][segment - 1].x === paths[branch][segment].x && paths[branch][segment - 1].y === paths[branch][segment].y) continue;
+            pastedWireKeys.push(`${net.id}:${branch}:${segment}`);
+          }
+        }
+      }
+      circuit._loading = wasLoading;
+      // Coincidence is resolved once, against the complete copied topology.
+      circuit.connectCoincident(addedComps);
+      circuit.ensureUniqueTerminals(addedComps);
+      circuit.syncJunctionSolders();
+      setSelection(addedComps, undefined, true);
+      setLabelSelection(addedLabels, undefined, true);
+      selectedWires = new Set(pastedWireKeys);
+      syncSelectedWire();
+    } finally {
+      circuit._loading = wasLoading;
     }
-    circuit.syncJunctionSolders();
-    setSelection(addedComps);
-    setLabelSelection(addedLabels);
   });
   render();
 }
@@ -2972,22 +3859,25 @@ function renderStatus() {
     parts.push('box from cursor · hjkl grow · Enter select · Esc cancel');
   }
   if (mode === 'insert') {
-    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · R/X · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type to filter · Esc exit');
+    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · h j k l / arrows move · R/X · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
   }
   if (wire) {
     parts.push(
       wire.source
-        ? wire.source.refdes
-          ? `WIRE ${wire.source.refdes}.${wire.source.term} ->`
-          : `WIRE (${wire.source.x},${wire.source.y}) ->`
-        : 'WIRE: click a terminal or any point',
+        ? wire.source.fixed
+          ? `WIRE fixed endpoint @ (${wire.source.fixed.point.x},${wire.source.fixed.point.y}) → click points / target`
+          : wire.source.refdes
+            ? `WIRE ${wire.source.refdes}.${wire.source.term} → click points / target`
+            : `WIRE (${wire.source.x},${wire.source.y}) → click points / target`
+        : 'WIRE: click a terminal, wire, or any point to start',
     );
   }
   if (directWire) {
     parts.push(directWire.source
-      ? `straight path${directWire.points.length ? ` · ${directWire.points.length} point${directWire.points.length === 1 ? '' : 's'}` : ''} · click terminal / Enter · Esc cancel`
-      : 'click a terminal to start · Esc cancel');
+      ? `${directWire.source.fixed ? 'fixed endpoint suffix' : 'straight path'}${directWire.points.length ? ` · ${directWire.points.length} point${directWire.points.length === 1 ? '' : 's'}` : ''} · click waypoints / terminal / wire · Enter · Esc cancel`
+      : 'click a terminal or open fixed endpoint to start · Esc cancel');
   }
+  if (!directWire && !wire && mode === 'normal') parts.push('Tab/S-Tab: singleton cycle · t: edit selected label');
   if (selectedNets.size) parts.push(`nets ${selectedNets.size}`);
   if (netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
   statusEl.textContent = parts.join('  ·  ');
@@ -3004,13 +3894,26 @@ let insertMenu = null;
 // assigned key (blank when none) so new components surface automatically. The
 // list is fuzzy-filtered by the live `insertQuery` while typing.
 function insertMenuEntries() {
-  const all = [...symbolTypeNames.map((type) => [PLACEMENT_BY_TYPE.get(type) || '', type]), ['', 'label']];
-  if (!insertQuery) return all;
-  return all
-    .map(([key, type]) => [key, type, fuzzyScore(insertQuery, type)])
+  return insertMenuGroups().flatMap((group) => group.entries);
+}
+
+function insertMenuGroups() {
+  const available = new Set([...symbolTypeNames, 'label']);
+  const groups = INSERT_CATEGORIES.map(([title, types]) => ({
+    title,
+    entries: types
+      .filter((type) => available.has(type))
+      .map((type) => [PLACEMENT_BY_TYPE.get(type) || '', type]),
+  }));
+  if (!insertQuery) return groups;
+  for (const group of groups) {
+    group.entries = group.entries
+    .map(([key, type]) => [key, type, placementSearchScore(insertQuery, type)])
     .filter(([, , score]) => score >= 0)
     .sort((a, b) => b[2] - a[2] || a[1].localeCompare(b[1]))
     .map(([key, type]) => [key, type]);
+  }
+  return groups.filter((group) => group.entries.length);
 }
 
 function updateInsertMenu() {
@@ -3033,25 +3936,31 @@ function updateInsertMenu() {
   query.className = 'insert-menu-query';
   query.textContent = insertQuery ? `~ ${insertQuery}` : 'type to filter…';
   insertMenu.appendChild(query);
-  const entries = insertMenuEntries();
-  insertMenu._entries = entries;
-  if (!entries.length) {
+  const groups = insertMenuGroups();
+  insertMenu._entries = groups.flatMap((group) => group.entries);
+  if (!insertMenu._entries.length) {
     const none = document.createElement('div');
     none.className = 'insert-menu-none';
     none.textContent = 'no match';
     insertMenu.appendChild(none);
   }
-  for (const [key, type] of entries) {
-    const item = document.createElement('div');
-    item.className = 'insert-menu-item';
-    const kbd = document.createElement('span');
-    kbd.className = 'insert-menu-key';
-    kbd.textContent = key || '·';
-    const name = document.createElement('span');
-    name.textContent = type;
-    item.appendChild(kbd);
-    item.appendChild(name);
-    insertMenu.appendChild(item);
+  for (const group of groups) {
+    const heading = document.createElement('div');
+    heading.className = 'insert-menu-category';
+    heading.textContent = group.title;
+    insertMenu.appendChild(heading);
+    for (const [key, type] of group.entries) {
+      const item = document.createElement('div');
+      item.className = 'insert-menu-item';
+      const kbd = document.createElement('span');
+      kbd.className = 'insert-menu-key';
+      kbd.textContent = key || '·';
+      const name = document.createElement('span');
+      name.textContent = PLACEMENT_LABELS[type] || type;
+      item.appendChild(kbd);
+      item.appendChild(name);
+      insertMenu.appendChild(item);
+    }
   }
   const p = worldToClient(cursor.x, cursor.y);
   insertMenu.style.display = 'block';
@@ -3189,6 +4098,15 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
 
+  // `dd` is a consecutive-key chord. Any intervening key or handled command
+  // cancels the first d, except for an unmodified second d within the normal
+  // mode timeout window. This also covers global commands such as Ctrl+A,
+  // which are handled before onNormalKey below.
+  const isDeleteContinuation = ev.key === 'd' && !ev.ctrlKey && !ev.metaKey && !ev.altKey
+    && mode === 'normal' && !visual && !wire && !directWire
+    && pendingKey?.key === 'd' && Date.now() - pendingKey.at < 800;
+  if (pendingKey && !isDeleteContinuation) pendingKey = null;
+
   if (ev.metaKey || ev.ctrlKey) {
     const k = ev.key.toLowerCase();
     if (k === 'z') {
@@ -3202,11 +4120,19 @@ window.addEventListener('keydown', (ev) => {
       redo();
     } else if (k === 'a') {
       ev.preventDefault();
-      setSelection([...circuit.components.keys()]);
-      setLabelSelection([...circuit.labels.keys()]);
+      // Preserve the component selection while adding labels: the selection
+      // setters are exclusive by default, so Ctrl+A must explicitly request a
+      // mixed selection. Wire segments are not separately selected here;
+      // non-empty nets cover the complete drawing for delete/copy operations.
+      setSelection([...circuit.components.keys()], undefined, true);
+      setLabelSelection([...circuit.labels.keys()], undefined, true);
+      selectedWire = null;
+      selectedWires.clear();
       // Select every non-empty net too, so Ctrl+A grabs the whole drawing.
       selectedNets = new Set(
-        [...circuit.nets.values()].filter((n) => n.terminals.length).map((n) => n.id)
+        [...circuit.nets.values()]
+          .filter((n) => n.paths().some((path) => path.length >= 2))
+          .map((n) => n.id)
       );
       render();
     } else if (k === 'c') {
@@ -3268,7 +4194,7 @@ window.addEventListener('keydown', (ev) => {
   } else if (visual) {
     onVisualKey(key);
   } else {
-    onNormalKey(key);
+    onNormalKey(key, ev.shiftKey);
   }
   ev.preventDefault();
 });

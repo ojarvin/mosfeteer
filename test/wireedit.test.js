@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { wireRunAt, collapseCollinear, moveWireRun } from '../src/core/wireedit.js';
+import { wireRunAt, collapseCollinear, moveJunctionEndpoint, moveWireRun } from '../src/core/wireedit.js';
 import { deleteWireSegment, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
 import { onGrid } from '../src/core/grid.js';
 import { Circuit } from '../src/core/model.js';
@@ -58,6 +58,50 @@ test('dragging a run touching a terminal endpoint keeps the pin fixed and EXTEND
   assert.deepEqual(pts[1], { x: 40, y: 0 }, 'added connector segment retains the pin');
   assert.deepEqual(pts[2], { x: 40, y: 80 }, 'the moved run continues');
   ortho(pts);
+});
+
+test('dragging a two-point junction bridge moves both junction endpoints', () => {
+  const pts = [{ x: 80, y: 80 }, { x: 320, y: 80 }];
+  const endpointMeta = {
+    start: { type: 'junction' },
+    end: { type: 'junction' },
+  };
+  assert.equal(moveWireRun(pts, 'h', 80, 160, endpointMeta), 160);
+  assert.deepEqual(pts, [{ x: 80, y: 160 }, { x: 320, y: 160 }]);
+  ortho(pts);
+});
+
+test('a straight pin-to-pin run remains immovable with terminal metadata', () => {
+  const pts = [{ x: 80, y: 80 }, { x: 320, y: 80 }];
+  const endpointMeta = {
+    start: { type: 'terminal' },
+    end: { type: 'terminal' },
+  };
+  assert.equal(moveWireRun(pts, 'h', 80, 160, endpointMeta), 80);
+  assert.deepEqual(pts, [{ x: 80, y: 80 }, { x: 320, y: 80 }]);
+});
+
+test('moving the standard bridge upward rebuilds incident elbows at the target junctions', () => {
+  const bridge = [{ x: 400, y: 280 }, { x: 640, y: 280 }];
+  const paths = [
+    bridge,
+    [{ x: 320, y: 280 }, { x: 400, y: 280 }],
+    [{ x: 400, y: 280 }, { x: 400, y: 360 }],
+    [{ x: 640, y: 280 }, { x: 720, y: 280 }],
+    [{ x: 640, y: 280 }, { x: 640, y: 360 }],
+  ];
+  let junctions = [{ x: 400, y: 280 }, { x: 640, y: 280 }];
+  const endpointMeta = { start: { type: 'junction' }, end: { type: 'junction' } };
+  moveWireRun(bridge, 'h', 280, 240, endpointMeta);
+  junctions = moveJunctionEndpoint(paths, junctions, { x: 400, y: 280 }, { x: 400, y: 240 });
+  junctions = moveJunctionEndpoint(paths, junctions, { x: 640, y: 280 }, { x: 640, y: 240 });
+  assert.deepEqual(bridge, [{ x: 400, y: 240 }, { x: 640, y: 240 }]);
+  assert.deepEqual(junctions, [{ x: 400, y: 240 }, { x: 640, y: 240 }]);
+  for (const path of paths) for (let i = 1; i < path.length; i++) {
+    assert.ok(path[i].x === path[i - 1].x || path[i].y === path[i - 1].y, `orthogonal path ${JSON.stringify(path)}`);
+  }
+  assert.ok(!paths.flat().some((p) => p.x === 400 && p.y === 280), 'old left junction removed');
+  assert.ok(!paths.flat().some((p) => p.x === 640 && p.y === 280), 'old right junction removed');
 });
 
 test('a run cannot slide past a neighbour (no inverted fold)', () => {

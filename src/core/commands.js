@@ -24,7 +24,7 @@ function routeEnv(circuit) {
  *  Delegates to the model's fresh-layout path so 3+ terminal nets get the
  *  multi-branch T-junction geometry (balancedPaths), not a single polyline. */
 function routeNet(circuit, net) {
-  circuit.rerouteNet(net, 'refresh');
+  if (circuit.rerouteNet(net, 'refresh') === false) throw new Error('unable to route wire safely');
 }
 
 /** Re-route every net that touches any of the given component refdes.
@@ -42,7 +42,9 @@ function rerouteNetsFor(circuit, refs, moved, fresh = false) {
   }
   for (const id of touched) {
     const net = circuit.nets.get(id);
-    if (net) circuit.rerouteNet(net, fresh ? 'refresh' : moved);
+    if (net && circuit.rerouteNet(net, fresh ? 'refresh' : moved) === false) {
+      throw new Error('unable to route wire safely');
+    }
   }
 }
 

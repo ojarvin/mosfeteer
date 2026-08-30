@@ -118,6 +118,27 @@ test('mirroring a routed-in component re-routes the net to the new terminal', ()
   assert.deepEqual(net.route[net.route.length - 1], c.getComponent('R2').terminalWorld('a'));
 });
 
+test('move, rotate, and mirror report forced reroute failure instead of success', () => {
+  for (const command of ['move R2 400 400', 'rotate R2', 'mirror R2 x']) {
+    const c = fresh();
+    runCommand(c, 'add resistor --at 0 0');
+    runCommand(c, 'add resistor --at 400 0');
+    runCommand(c, 'connect R1.b R2.a');
+    const net = [...c.nets.values()][0];
+    const beforeRoute = net.route.map((p) => ({ ...p }));
+    const beforeTransform = { ...c.getComponent('R2').transform };
+    const baseEnv = c._netEnv();
+    c._netEnv = () => ({
+      ...baseEnv,
+      rects: [...baseEnv.rects, { x: 120, y: -2000, w: 320, h: 4000 }],
+    });
+
+    assert.throws(() => runCommand(c, command), /unable to route wire safely/);
+    assert.deepEqual(c.getComponent('R2').transform, beforeTransform, `${command} rolls back the component`);
+    assert.deepEqual(net.route, beforeRoute, `${command} preserves the prior route`);
+  }
+});
+
 test('connect joins terminals into a net and names it', () => {
   const c = fresh();
   runCommand(c, 'add resistor --at 400 0'); // R1

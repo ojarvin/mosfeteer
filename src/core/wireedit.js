@@ -1,18 +1,22 @@
-import { snap } from './grid.js';
+import { GRID, snap } from './grid.js';
 
 /**
  * Interactive re-routing of an explicit wire polyline by dragging a segment.
  *
- * A route is an ordered list of grid points (endpoints are fixed component
- * terminals). A "run" is a maximal run of consecutive collinear (horizontal or
- * vertical) segments. Dragging a segment moves its whole run perpendicularly.
+ * A route is an ordered list of grid points. A "run" is a maximal run of
+ * consecutive collinear (horizontal or vertical) segments. Dragging a segment
+ * moves its whole run perpendicularly. `endpointMeta` identifies path endpoints
+ * as `{ type: 'terminal'|'junction' }`; omitted metadata retains the historical
+ * terminal-endpoint behavior.
  *
  * Key behaviors:
  *  - The run may slide as far as an adjacent run; reaching it collapses the
  *    shared corner, and the now-invisible collinear vertex is removed.
- *  - The run never slides past a neighbor (no inverted folds).
+ *  - The run never slides past a neighbour (no inverted folds).
  *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
  *    wire with an added connector segment so the pin stays connected.
+ *  - A standalone two-point bridge between two junctions moves both junction
+ *    endpoints together; a standalone pin-to-pin run remains immovable.
  */
 
 /** Maximal collinear run of the polyline containing segment `seg` (pts[seg-1]->pts[seg]). */
@@ -60,6 +64,65 @@ export function findRunLine(pts, orient, line) {
   return -1;
 }
 
+/** Move one junction in a managed branch set and rebuild each incident branch
+ * endpoint with a local orthogonal elbow when the old and new locations are not
+ * collinear with its neighbour. The caller owns the net object; this pure
+ * helper mutates `paths` and returns the replacement junction list. */
+export function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpointInfo = null) {
+  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return junctions;
+  for (const path of paths || []) {
+    for (let i = 0; i < path.length; i++) {
+      const p = path[i];
+      if (p.x !== oldPoint.x || p.y !== oldPoint.y) continue;
+      const neighbor = i === 0 ? path[1] : path[i - 1];
+      const oldHorizontal = neighbor && neighbor.y === oldPoint.y;
+      const oldVertical = neighbor && neighbor.x === oldPoint.x;
+      const otherIndex = i === 0 ? 1 : i === path.length - 1 ? path.length - 2 : -1;
+      const otherMeta = otherIndex >= 0 && endpointInfo ? endpointInfo(path, otherIndex) : null;
+      p.x = newPoint.x;
+      p.y = newPoint.y;
+      if (neighbor && p.x !== neighbor.x && p.y !== neighbor.y) {
+        const candidates = oldHorizontal
+          ? [{ x: neighbor.x, y: newPoint.y }, { x: newPoint.x, y: neighbor.y }]
+          : oldVertical
+            ? [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }]
+            : [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }];
+        const same = (a, b) => a.x === b.x && a.y === b.y;
+        const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
+        const incoming = (q) => i === 0 ? step(q, neighbor) : step(neighbor, q);
+        const desired = otherMeta?.type === 'terminal' && otherMeta.dir
+          ? { x: -otherMeta.dir.x, y: -otherMeta.dir.y } : null;
+        const valid = candidates.filter((q) =>
+          !same(q, oldPoint) && !same(q, newPoint) && !same(q, neighbor)
+        );
+        const elbow = valid.find((q) =>
+          (!desired || (incoming(q).x === desired.x && incoming(q).y === desired.y))
+        );
+        if (elbow) {
+          path.splice(i === 0 ? 1 : i, 0, elbow);
+        } else if (desired) {
+          // The one-elbow solution is the old junction itself. Detour one
+          // extra grid cell outward from the terminal so pin conformity stays
+          // intact without retaining the old junction coordinate.
+          const sign = otherMeta.dir;
+          const distance = same({ x: neighbor.x + sign.x * GRID, y: neighbor.y + sign.y * GRID }, oldPoint) ? 2 : 1;
+          const pinLead = { x: neighbor.x + sign.x * GRID * distance, y: neighbor.y + sign.y * GRID * distance };
+          const detours = newPoint.x === pinLead.x || newPoint.y === pinLead.y ? [] : [
+            { x: newPoint.x, y: pinLead.y },
+            { x: pinLead.x, y: newPoint.y },
+          ];
+          const detour = detours.find((q) => !same(q, oldPoint) && !same(q, newPoint) && !same(q, pinLead));
+          const inserts = i === 0 ? [ ...(detour ? [detour] : []), pinLead ] : [ pinLead, ...(detour ? [detour] : []) ];
+          path.splice(i === 0 ? 1 : i, 0, ...inserts);
+        }
+      }
+    }
+  }
+  return (junctions || []).map((p) => (
+    p.x === oldPoint.x && p.y === oldPoint.y ? { ...newPoint } : p
+  ));
+}
+
 /**
  * Move the maximal collinear run of orientation `orient` presently at
  * perpendicular line `line` to `target` (grid-snapped along the perpendicular
@@ -67,10 +130,12 @@ export function findRunLine(pts, orient, line) {
  * shared corner, removing the now-invisible collinear vertex) but never past it
  * (no inverted folds). Runs touching a terminal endpoint keep that pin fixed and
  * EXTEND the wire with an added connector segment so the pin stays connected.
+ * `endpointMeta` is optional for compatibility with callers whose paths are
+ * known to be terminal-ended: `{ start: { type }, end: { type } }`.
  * Returns the perpendicular line value the run actually ended on (== `line`
  * when nothing could move).
  */
-export function moveWireRun(pts, orient, line, target) {
+export function moveWireRun(pts, orient, line, target, endpointMeta = null) {
   const si = findRunLine(pts, orient, line);
   if (si < 0) return line;
   const run = wireRunAt(pts, si);
@@ -78,6 +143,10 @@ export function moveWireRun(pts, orient, line, target) {
   const n = pts.length;
   const loEnd = lo === 0;
   const hiEnd = hi === n - 1;
+  const startType = endpointMeta?.start?.type || 'terminal';
+  const endType = endpointMeta?.end?.type || 'terminal';
+  const startTerminal = startType === 'terminal';
+  const endTerminal = endType === 'terminal';
   const val = line;
   const nv = (idx) => (orient === 'h' ? pts[idx].y : pts[idx].x);
   let lower = -Infinity;
@@ -107,28 +176,45 @@ export function moveWireRun(pts, orient, line, target) {
     return t;
   }
 
-  // A run touching a terminal endpoint: keep the pin fixed and push the run away
-  // from it, adding a connector segment so the wire still reaches the pin.
-  if (loEnd && hiEnd) return val; // whole wire is a straight pin-to-pin run
+  // A standalone bridge is bounded by two real junctions rather than pins.
+  // Move both endpoints on the perpendicular axis; the editor propagates the
+  // endpoint deltas to every branch incident to those junctions.
+  if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
+    for (const p of pts) {
+      if (orient === 'h') p.y = t;
+      else p.x = t;
+    }
+    return t;
+  }
+
+  // A run touching terminal endpoints keeps those pins fixed and pushes the
+  // run away from them, adding a connector segment so the wire stays attached.
+  // This is intentionally limited to the case where BOTH endpoint kinds are
+  // actual terminals; junction-ended two-point bridges are editable above.
+  if (loEnd && hiEnd && startTerminal && endTerminal) return val;
   if (orient === 'h') {
-    if (loEnd) {
+    if (loEnd && (!hiEnd || startTerminal)) {
       const px = pts[0].x;
       for (let i = 1; i <= hi; i++) pts[i].y = t;
-      pts.splice(1, 0, { x: px, y: t });
-    } else {
+      if (startTerminal) pts.splice(1, 0, { x: px, y: t });
+      else pts[0].y = t;
+    } else if (hiEnd) {
       const px = pts[n - 1].x;
       for (let i = lo; i <= n - 2; i++) pts[i].y = t;
-      pts.splice(n - 1, 0, { x: px, y: t });
+      if (endTerminal) pts.splice(n - 1, 0, { x: px, y: t });
+      else pts[n - 1].y = t;
     }
   } else {
-    if (loEnd) {
+    if (loEnd && (!hiEnd || startTerminal)) {
       const py = pts[0].y;
       for (let i = 1; i <= hi; i++) pts[i].x = t;
-      pts.splice(1, 0, { x: t, y: py });
-    } else {
+      if (startTerminal) pts.splice(1, 0, { x: t, y: py });
+      else pts[0].x = t;
+    } else if (hiEnd) {
       const py = pts[n - 1].y;
       for (let i = lo; i <= n - 2; i++) pts[i].x = t;
-      pts.splice(n - 1, 0, { x: t, y: py });
+      if (endTerminal) pts.splice(n - 1, 0, { x: t, y: py });
+      else pts[n - 1].x = t;
     }
   }
   collapseCollinear(pts);

@@ -358,8 +358,12 @@ refdes (refPrefix `I` / `O` / `IO`, so `add input VINP` labels the pin
 
 Label text supports subscripts with `_{...}` markup (e.g. `C_{GS}`,
 `M_{1}`); owned instance labels render trailing digits as a subscript
-(M1 → M with subscript 1) for the textbook look. Alignment (center / left
-/ right), anchors, and the grid-snapped box model are unchanged.
+(M1 → M with subscript 1) for the textbook look. Label bounds are stable,
+grid-snapped, and centered on the anchor for every alignment. Alignment (center
+/ left / right) changes only the text position within that box (left edge,
+center, or right edge); changing text length may resize the box symmetrically
+around the same center. The dimensions and markup metrics are shared with the
+inline preview.
 
 **Port labels sit one grid square from the port symbol, aligned toward
 it.** Left-of-port labels are `align: right`; right-of-port labels are
