@@ -223,7 +223,7 @@ export function evaluate(circuit) {
   for (const label of labels) {
     const labelBox = label.bbox();
     for (const comp of comps) {
-      if (annotated(comp) || label.owner === comp.refdes) continue;
+      if (annotated(comp)) continue;
       const compBox = comp.bboxWorld();
       if (!rectsOverlap(labelBox, compBox)) continue;
       const message = `label ${label.id} overlaps ${comp.refdes}(${comp.type}) bbox`;

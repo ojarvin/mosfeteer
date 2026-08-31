@@ -584,24 +584,23 @@ test('eval does not pass a managed diagonal wire', () => {
   assert.doesNotMatch(res.text, /no dangling terminals, no bbox overlaps, all on grid/);
 });
 
-test('evaluate reports free and foreign-owned label/component overlaps', () => {
+test('evaluate reports free and owned label/component overlaps', () => {
   const c = fresh();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   c.addLabel({ id: 'Lfree', text: 'VIN', x: 0, y: 0 });
   c.addComponent('nmos', { refdes: 'M1', x: 400, y: 0 });
   const owned = c.labelOf('M1');
-  owned.offset = { x: 0, y: 0 }; // would overlap M1, but is its own label
+  owned.offset = { x: 0, y: 0 }; // deliberately overlap the parent component
 
   const res = runCommand(c, 'eval');
   const rep = res.json;
-  const issue = rep.issues.find((entry) => entry.kind === 'label-component-overlap');
+  const issues = rep.issues.filter((entry) => entry.kind === 'label-component-overlap');
   assert.equal(rep.ok, false);
-  assert.deepEqual(rep.labelComponentOverlaps.length, 1);
-  assert.deepEqual(issue.refs, ['Lfree', 'R1']);
-  assert.equal(issue.severity, 'error');
-  assert.equal(issue.points.length, 2);
+  assert.deepEqual(rep.labelComponentOverlaps.length, 2);
+  assert.deepEqual(issues.map((entry) => entry.refs), [['Lfree', 'R1'], [owned.id, 'M1']]);
+  assert.ok(issues.every((entry) => entry.severity === 'error'));
+  assert.ok(issues.every((entry) => entry.points.length === 2));
   assert.match(res.text, /label-component overlaps/);
-  assert.ok(!rep.issues.some((entry) => entry.refs?.[0] === owned.id && entry.refs?.[1] === 'M1'));
 });
 
 test('evaluate reports overlapping distinct label bboxes', () => {
