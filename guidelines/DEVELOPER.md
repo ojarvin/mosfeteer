@@ -60,6 +60,27 @@ guidelines/             Role docs + style guide.
 AGENTS.md               Current behavior spec (live doc — you maintain it).
 ```
 
+### Labels and physical nets
+
+`LabelInstance` has exactly three roles: an owned instance label with an
+`owner` refdes and local `offset`; a persistent electrical label with a
+`netId`; or a free annotation with neither `owner` nor `netId`. A `netId` is a
+physical net identity. Equal canonical names group nets logically for naming
+and reporting, but do not connect their geometry or terminals.
+
+Use `addNetLabel`, `renameNet`, and `renameNetLabel` for electrical-label and
+net-name changes; do not write `net.name` from editor code. Net-label text is
+derived from its physical net name, and removing one occurrence leaves the net
+and its name intact. Net labels are placed on drawable wire paths; the editor's
+`L` tool requires an unambiguous physical wire, using one selected/highlighted
+net to resolve a crossing. `Shift+N` places persistent free annotations.
+
+Selection, movement, deletion, routing, and Check must preserve the role: owned
+labels follow components, net labels remain on their paths, and annotations are
+independent. Complete copied physical nets carry their net labels through paste
+with fresh IDs and translated anchors; a net label must never become an
+annotation.
+
 ### Three entry points, one command language
 
 `runCommand(circuit, line, io)` in `src/core/commands.js` is the only path for

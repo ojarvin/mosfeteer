@@ -1,8 +1,9 @@
-import { Circuit } from './model.js';
+import { Circuit, canonicalNetName } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
 import { balancedCrossCoupling, segThroughInterior, smartRoute, balancedRoute } from './router.js';
+import { crossNetOverlaps } from './wiring.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
 
@@ -130,28 +131,137 @@ export function evaluate(circuit) {
   const annotated = (c) => c.type === 'solder'; // pure annotation: no electrical body
   const terminals = [];
   const dangling = [];
+  const issues = [];
+  const terminalRefsByPoint = new Map();
+  const addIssue = (kind, message, details = {}) => {
+    issues.push({ kind, severity: 'error', message, ...details });
+  };
+  const pointCopy = (p) => ({ x: p.x, y: p.y });
+  const refsAt = (p) => terminalRefsByPoint.get(`${p.x},${p.y}`) || [];
+
   let violations = [];
   for (const c of comps) {
     for (const t of c.def.terminals) {
       const w = c.terminalWorld(t.name);
       const net = circuit.netOfTerminal({ comp: c.refdes, term: t.name });
-      if (!onGrid(w.x) || !onGrid(w.y)) violations.push(`${c.refdes}.${t.name}@(${w.x},${w.y}) off-grid`);
+      const ref = `${c.refdes}.${t.name}`;
+      const point = pointCopy(w);
+      const pointKey = `${w.x},${w.y}`;
+      if (!terminalRefsByPoint.has(pointKey)) terminalRefsByPoint.set(pointKey, []);
+      terminalRefsByPoint.get(pointKey).push(ref);
+      if (!onGrid(w.x) || !onGrid(w.y)) {
+        const message = `${ref}@(${w.x},${w.y}) off-grid`;
+        violations.push(message);
+        addIssue('grid-violation', message, { refs: [ref], points: [point], location: 'terminal' });
+      }
       terminals.push({ ref: `${c.refdes}.${t.name}`, x: w.x, y: w.y, net: net ? net.id : null });
-      if (!net) dangling.push(`${c.refdes}.${t.name}@(${w.x},${w.y})`);
+      if (!net) {
+        const message = `${ref}@(${w.x},${w.y})`;
+        dangling.push(message);
+        addIssue('unconnected-terminal', `unconnected terminal ${message}`, {
+          refs: [ref],
+          points: [point],
+        });
+      }
     }
   }
   for (const c of comps) {
-    if (!onGrid(c.transform.x) || !onGrid(c.transform.y)) violations.push(`${c.refdes} origin off-grid`);
+    if (!onGrid(c.transform.x) || !onGrid(c.transform.y)) {
+      const point = { x: c.transform.x, y: c.transform.y };
+      const message = `${c.refdes} origin off-grid`;
+      violations.push(message);
+      addIssue('grid-violation', message, { refs: [c.refdes], points: [point], location: 'origin' });
+    }
   }
   const overlaps = [];
   for (let i = 0; i < comps.length; i++) {
     for (let j = i + 1; j < comps.length; j++) {
       if (annotated(comps[i]) || annotated(comps[j])) continue;
-      if (rectsOverlap(comps[i].bboxWorld(), comps[j].bboxWorld())) {
-        overlaps.push(`${comps[i].refdes}/${comps[j].refdes}`);
+      const a = comps[i].bboxWorld();
+      const b = comps[j].bboxWorld();
+      if (rectsOverlap(a, b)) {
+        const refs = [comps[i].refdes, comps[j].refdes];
+        const message = refs.join('/');
+        overlaps.push(message);
+        addIssue('component-overlap', `overlapping bboxes ${message}`, {
+          refs,
+          points: [
+            { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) },
+            { x: Math.min(a.x + a.w, b.x + b.w), y: Math.min(a.y + a.h, b.y + b.h) },
+          ],
+        });
       }
     }
   }
+  const labels = [...circuit.labels.values()];
+  const labelComponentOverlaps = [];
+  const labelOverlaps = [];
+  const netLabelIssues = [];
+  for (const label of labels) {
+    if (!label.netId) continue;
+    const net = circuit.nets.get(label.netId);
+    const malformed = (message) => {
+      const issue = { labelId: label.id, netId: label.netId, message };
+      netLabelIssues.push(issue);
+      addIssue('malformed-net-label', message, {
+        refs: [label.id],
+        labelId: label.id,
+        netId: label.netId,
+      });
+    };
+    if (!net) { malformed(`net label ${label.id} targets missing net ${label.netId}`); continue; }
+    if (label.owner) malformed(`net label ${label.id} also has owner ${label.owner}`);
+    if (!canonicalNetName(net.name)) malformed(`net label ${label.id} targets unnamed net ${net.id}`);
+    else if (!circuit._netLabelAnchorOnPath(net, label.anchorWorld())) {
+      malformed(`net label ${label.id} anchor is not on drawable net ${net.id}`);
+    }
+  }
+  const overlapPoints = (a, b) => [
+    { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) },
+    { x: Math.min(a.x + a.w, b.x + b.w), y: Math.min(a.y + a.h, b.y + b.h) },
+  ];
+  for (const label of labels) {
+    const labelBox = label.bbox();
+    for (const comp of comps) {
+      if (annotated(comp) || label.owner === comp.refdes) continue;
+      const compBox = comp.bboxWorld();
+      if (!rectsOverlap(labelBox, compBox)) continue;
+      const message = `label ${label.id} overlaps ${comp.refdes}(${comp.type}) bbox`;
+      labelComponentOverlaps.push(message);
+      addIssue('label-component-overlap', message, {
+        refs: [label.id, comp.refdes],
+        points: overlapPoints(labelBox, compBox),
+        labelId: label.id,
+        componentRef: comp.refdes,
+      });
+    }
+  }
+  for (let i = 0; i < labels.length; i++) {
+    const a = labels[i];
+    const aBox = a.bbox();
+    for (let j = i + 1; j < labels.length; j++) {
+      const b = labels[j];
+      const bBox = b.bbox();
+      if (!rectsOverlap(aBox, bBox)) continue;
+      const refs = [a.id, b.id];
+      const message = `labels ${refs.join('/')} overlap`;
+      labelOverlaps.push(message);
+      addIssue('label-overlap', message, {
+        refs,
+        points: overlapPoints(aBox, bBox),
+        labelIds: refs,
+      });
+    }
+  }
+  // `Net.paths()` normalizes managed geometry for rendering.  Evaluation must
+  // also inspect explicitly stored paths as-is, otherwise malformed persisted
+  // managed geometry (notably a diagonal route) would be silently repaired and
+  // reported as clean.
+  const evaluationPaths = (net) => {
+    if (net.routingMode === 'managed' && net.branches?.length) return net.branches;
+    if (net.routingMode === 'managed' && net.route?.length >= 2) return [net.route];
+    return net.paths();
+  };
   const nets = [];
   for (const net of circuit.nets.values()) {
     nets.push({ id: net.id, name: net.name, n: net.terminals.length, length: net.length() });
@@ -162,24 +272,49 @@ export function evaluate(circuit) {
   const boxViolations = [];
   const diagonalViolations = [];
   for (const net of circuit.nets.values()) {
-    for (const pts of net.paths()) {
+    for (const pts of evaluationPaths(net)) {
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1];
         const b = pts[i];
-        if (a.x !== b.x && a.y !== b.y && net.routingMode !== 'fixed') {
-          diagonalViolations.push(`net ${net.id} diagonal (${a.x},${a.y})-(${b.x},${b.y})`);
+        if (a.x !== b.x && a.y !== b.y && net.routingMode === 'managed' && !net.allowDiagonal) {
+          const message = `net ${net.id} diagonal (${a.x},${a.y})-(${b.x},${b.y})`;
+          const refs = [...new Set([...refsAt(a), ...refsAt(b)])];
+          diagonalViolations.push(message);
+          addIssue('managed-diagonal', message, {
+            refs,
+            points: [pointCopy(a), pointCopy(b)],
+            netId: net.id,
+          });
         }
         for (const comp of comps) {
           if (annotated(comp)) continue;
           if (segThroughInterior(a, b, comp.bboxWorld())) {
-            boxViolations.push(
-              `net ${net.id} seg (${a.x},${a.y})-(${b.x},${b.y}) through ${comp.refdes}(${comp.type}) bbox`
-            );
+            const message = `net ${net.id} seg (${a.x},${a.y})-(${b.x},${b.y}) through ${comp.refdes}(${comp.type}) bbox`;
+            boxViolations.push(message);
+            addIssue('wire-through-body', message, {
+              refs: [...new Set([comp.refdes, ...refsAt(a), ...refsAt(b)])],
+              points: [pointCopy(a), pointCopy(b)],
+              netId: net.id,
+            });
           }
         }
       }
     }
   }
+  const crossOverlaps = crossNetOverlaps([...circuit.nets.values()].map((net) => ({
+    id: net.id,
+    paths: evaluationPaths(net),
+  })));
+  for (const overlap of crossOverlaps) {
+    const message = `nets ${overlap.key} and ${overlap.otherKey} overlap (${overlap.x0},${overlap.y0})-(${overlap.x1},${overlap.y1})`;
+    addIssue('cross-net-overlap', message, {
+      refs: [],
+      points: [{ x: overlap.x0, y: overlap.y0 }, { x: overlap.x1, y: overlap.y1 }],
+      netIds: [overlap.key.split(':')[0], overlap.otherKey.split(':')[0]],
+      segments: [overlap.key, overlap.otherKey],
+    });
+  }
+  const ok = issues.length === 0;
   return {
     components: comps.map((c) => c.refdes),
     terminalCount: terminals.length,
@@ -189,6 +324,18 @@ export function evaluate(circuit) {
     wireThroughBBoxes: boxViolations,
     diagonalWireSegments: diagonalViolations,
     gridViolations: violations,
+    labelComponentOverlaps,
+    labelOverlaps,
+    netLabelIssues,
+    logicalNetGroups: circuit.logicalNetGroups().map((group) => ({
+      name: group.name,
+      netIds: group.netIds.slice(),
+      terminalCount: group.terminals.length,
+      labelIds: group.labels.map((label) => label.id),
+    })),
+    crossNetOverlaps: crossOverlaps,
+    issues,
+    ok,
     bounds: circuit.bounds(),
   };
 }
@@ -210,9 +357,16 @@ export function commandHelp() {
     '  cross A1 A2 B1 B2             - protected matched diagonal cross-coupling',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  nets                           - list nets with terminals and length',
-    '  net <id> add|drop|name|rm ...  - manage a net (fixed: path, vertex, junction edits)',
+    '  net <id> add|drop|name|label|rm ... - manage a net (fixed: path, vertex, junction edits)',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
+    '  netlabel add NET [ID] NAME X Y  - place a label owned by a net',
+    '  netlabel rename|retarget|rm ... - edit/remove a net label',
+    '  netlabel convert LABEL NET    - convert an annotation to a net label',
+    '  netlabel detach LABEL [TEXT]  - convert a net label to an annotation',
+    '  netlabel list [NET]             - list net labels',
+    '  annotation (label/annotate) add [ID] TEXT X Y - place a free annotation',
+    '  annotation rename|move|rm ... - edit/remove an annotation label',
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
@@ -268,8 +422,13 @@ function dispatch(circuit, cmd, pos, flags, io) {
     lines.push(`nets: ${rep.nets.length}`);
     for (const n of rep.nets) lines.push(`  ${n.id} ${n.name ? `"${n.name}" ` : ''}n=${n.n} len=${n.length}`);
     if (rep.overlappingBBoxes.length) lines.push(`overlapping bboxes: ${rep.overlappingBBoxes.join(', ')}`);
+    if (rep.wireThroughBBoxes.length) lines.push(`wires through bboxes: ${rep.wireThroughBBoxes.join(', ')}`);
+    if (rep.diagonalWireSegments.length) lines.push(`managed diagonal wires: ${rep.diagonalWireSegments.join(', ')}`);
     if (rep.gridViolations.length) lines.push(`GRID VIOLATIONS: ${rep.gridViolations.join(', ')}`);
-    if (!rep.unconnectedTerminals.length && !rep.overlappingBBoxes.length && !rep.gridViolations.length) {
+    if (rep.labelComponentOverlaps.length) lines.push(`label-component overlaps: ${rep.labelComponentOverlaps.join(', ')}`);
+    if (rep.labelOverlaps.length) lines.push(`label overlaps: ${rep.labelOverlaps.join(', ')}`);
+    if (rep.crossNetOverlaps.length) lines.push(`cross-net overlaps: ${rep.crossNetOverlaps.map((x) => `${x.key}/${x.otherKey}`).join(', ')}`);
+    if (rep.ok) {
       lines.push('no dangling terminals, no bbox overlaps, all on grid');
     }
     return result(lines.join('\n'), rep, false);
@@ -390,7 +549,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'connect' || cmd === 'wire') {
     if (pos.length < 2) throw new Error('usage: connect REF.TERM REF.TERM [...]');
     const net = circuit.connect(...pos);
-    if (flags.name && flags.name[0]) net.name = flags.name[0];
+    if (flags.name && flags.name[0]) circuit.renameNet(net, flags.name[0]);
     // circuit.connect now re-routes fresh internally when it adds any new
     // terminal to an existing net (so the new terminal always gets a real
     // drawn branch). The previous separate `routeNet(circuit, net)` here
@@ -444,6 +603,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const net = circuit.disconnect(pos[0]);
     return result(`disconnected ${pos[0]} (net ${net.id})`, { terminal: pos[0], netId: net.id }, true);
   }
+  if (cmd === 'netlabel' || cmd === 'net-label' || cmd === 'net_label' || cmd === 'nlabel' || cmd === 'wirelabel' || cmd === 'wire-label') {
+    return netLabelCommand(circuit, pos, result);
+  }
+  if (cmd === 'annotation' || cmd === 'annotate' || cmd === 'label') {
+    return annotationCommand(circuit, pos, result);
+  }
   if (cmd === 'net') return netCommand(circuit, pos, result);
 
   // ---------- files / render ----------
@@ -490,9 +655,113 @@ function netList(circuit, result) {
   const rows = [];
   for (const net of circuit.nets.values()) {
     const terms = net.terminals.map((t) => termInfo(circuit, t.comp, t.term)).join(' ');
-    rows.push(`${net.id}${net.name ? ` "${net.name}"` : ''} n=${net.terminals.length} len=${net.length()}  [${terms}]`);
+    const labels = circuit.netLabels(net).map((label) => label.id).join(',');
+    rows.push(`${net.id}${net.name ? ` "${net.name}"` : ''} n=${net.terminals.length} len=${net.length()}${labels ? ` labels=${labels}` : ''}  [${terms}]`);
   }
   return result(rows.join('\n') || '(no nets)', null);
+}
+
+function netLabelCommand(circuit, pos, result) {
+  const op = pos[0];
+  if (op === 'list') {
+    const labels = pos[1] ? circuit.netLabels(pos[1]) : [...circuit.labels.values()].filter((label) => label.isNetLabel());
+    const rows = labels.map((label) => `${label.id} net=${label.netId} name="${label.text}" at ${pp(label.anchorWorld().x, label.anchorWorld().y)}`);
+    return result(rows.join('\n') || '(no net labels)', labels.map((label) => label.toJSON()));
+  }
+  if (op === 'add') {
+    const netId = pos[1];
+    if (!netId) throw new Error('usage: netlabel add NET [ID] NAME X Y');
+    const tail = pos.slice(2);
+    let x = 0;
+    let y = 0;
+    if (tail.length < 3 || !Number.isFinite(Number(tail.at(-2))) || !Number.isFinite(Number(tail.at(-1)))) {
+      throw new Error('usage: netlabel add NET [ID] NAME X Y');
+    }
+    if (tail.length >= 2 && Number.isFinite(Number(tail.at(-2))) && Number.isFinite(Number(tail.at(-1)))) {
+      x = Number(tail.at(-2));
+      y = Number(tail.at(-1));
+      tail.splice(-2);
+    }
+    if (tail.length === 0) throw new Error('usage: netlabel add NET [ID] NAME X Y');
+    const id = tail.length > 1 ? tail.shift() : undefined;
+    const name = tail.join(' ');
+    const label = circuit.addNetLabel(netId, { id, text: name, x, y });
+    return result(`added net label ${label.id} to ${label.netId} (${label.text})`, label.toJSON(), true);
+  }
+  if (op === 'rename') {
+    const label = circuit._resolveNetLabel(pos[1]);
+    const name = pos.slice(2).join(' ');
+    if (!name) throw new Error('usage: netlabel rename LABEL NAME');
+    circuit.renameNetLabel(label, name);
+    return result(`renamed net ${label.netId} to "${label.text}"`, label.toJSON(), true);
+  }
+  if (op === 'retarget') {
+    if (!pos[1] || !pos[2]) throw new Error('usage: netlabel retarget LABEL NET');
+    const label = circuit.retargetNetLabel(pos[1], pos[2]);
+    return result(`retargeted net label ${label.id} to ${label.netId}`, label.toJSON(), true);
+  }
+  if (op === 'convert') {
+    if (!pos[1] || !pos[2]) throw new Error('usage: netlabel convert LABEL NET');
+    const label = circuit.convertLabelToNet(pos[1], pos[2]);
+    return result(`converted ${label.id} to net label ${label.netId}`, label.toJSON(), true);
+  }
+  if (op === 'detach') {
+    if (!pos[1]) throw new Error('usage: netlabel detach LABEL [TEXT]');
+    const label = circuit.convertNetLabelToAnnotation(pos[1], pos.slice(2).join(' ') || null);
+    return result(`converted ${label.id} to an annotation`, label.toJSON(), true);
+  }
+  if (op === 'rm' || op === 'remove') {
+    const label = circuit._resolveNetLabel(pos[1]);
+    circuit.removeLabel(label);
+    return result(`removed net label ${label.id}`, null, true);
+  }
+  throw new Error('usage: netlabel add|rename|retarget|convert|detach|rm|list ...');
+}
+
+function annotationCommand(circuit, pos, result) {
+  const op = pos[0];
+  if (op === 'list') {
+    const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.isNetLabel());
+    const rows = labels.map((label) => `${label.id} text="${label.text}" at ${pp(label.anchorWorld().x, label.anchorWorld().y)}`);
+    return result(rows.join('\n') || '(no annotations)', labels.map((label) => label.toJSON()));
+  }
+  if (op === 'add') {
+    const tail = pos.slice(1);
+    if (tail.length < 3 || !Number.isFinite(Number(tail.at(-2))) || !Number.isFinite(Number(tail.at(-1)))) {
+      throw new Error('usage: annotation add [ID] TEXT X Y');
+    }
+    const x = Number(tail.at(-2));
+    const y = Number(tail.at(-1));
+    tail.splice(-2);
+    const id = tail.length > 1 ? tail.shift() : undefined;
+    const label = circuit.addLabel({ id, text: tail.join(' '), x, y });
+    return result(`added annotation ${label.id}`, label.toJSON(), true);
+  }
+  if (op === 'rename') {
+    const label = circuit.labels.get(pos[1]);
+    if (!label || label.owner || label.isNetLabel()) throw new Error(`unknown annotation "${pos[1]}"`);
+    const text = pos.slice(2).join(' ');
+    if (!text) throw new Error('usage: annotation rename LABEL TEXT');
+    label.setText(text);
+    return result(`renamed annotation ${label.id}`, label.toJSON(), true);
+  }
+  if (op === 'move') {
+    const label = circuit.labels.get(pos[1]);
+    const x = Number(pos[2]);
+    const y = Number(pos[3]);
+    if (!label || label.owner || label.isNetLabel() || !Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('usage: annotation move LABEL X Y');
+    }
+    label.moveTo(x, y);
+    return result(`moved annotation ${label.id}`, label.toJSON(), true);
+  }
+  if (op === 'rm' || op === 'remove') {
+    const label = circuit.labels.get(pos[1]);
+    if (!label || label.owner || label.isNetLabel()) throw new Error(`unknown annotation "${pos[1]}"`);
+    circuit.removeLabel(label);
+    return result(`removed annotation ${label.id}`, null, true);
+  }
+  throw new Error('usage: annotation add|rename|move|rm|list ...');
 }
 
 function netCommand(circuit, pos, result) {
@@ -513,8 +782,8 @@ function netCommand(circuit, pos, result) {
       if (`${t.comp}.${t.term}` === pos[2]) {
         circuit._dropFixedAnchor(net, t);
         net.terminals.splice(i, 1);
-        if (net.terminals.length === 0) circuit.nets.delete(net.id);
-        else routeNet(circuit, net);
+        if (net.terminals.length === 0) circuit.removeNet(net);
+        else if (net.terminals.length > 1) routeNet(circuit, net);
         circuit.syncJunctionSolders();
         return result(`dropped ${pos[2]} from net ${net.id}`, null, true);
       }
@@ -522,9 +791,10 @@ function netCommand(circuit, pos, result) {
     throw new Error(`terminal ${pos[2]} not in net ${net.id}`);
   }
   if (op === 'name') {
-    net.name = pos[2] || '';
+    circuit.renameNet(net, pos.slice(2).join(' '));
     return result(`net ${net.id} name = "${net.name}"`, net.toJSON(), true);
   }
+  if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result);
   if (op === 'segment-rm') {
     const branch = Number(pos[2]);
     const segment = Number(pos[3]);
@@ -565,8 +835,7 @@ function netCommand(circuit, pos, result) {
     return result(`moved fixed junction ${junction} on net ${net.id}`, net.toJSON(), true);
   }
   if (op === 'rm') {
-    circuit.nets.delete(net.id);
-    circuit.syncJunctionSolders();
+    circuit.removeNet(net);
     return result(`removed net ${net.id}`, null, true);
   }
   throw new Error('usage: net <id> add|drop|name|rm|path|vertex|junction');

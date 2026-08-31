@@ -57,6 +57,10 @@ and editor UX — skim it whenever you need an exact number.
 - **ground**: `gnd`(0,0), stub to y40, three `ground`-width bars (y
   40/63.26/84.19), bbox `{0,0,80,120}`. **supply**: `p`(0,0), filled slab
   above, bbox `{-40,-80,80,80}`.
+- **vcm**: `vcm`(0,0), upward-escaping terminal with a downward stub to y24
+  and an open, outline-only downward triangle from y24 to y56 (56 wide, 32
+  deep), bbox
+  `{-40,0,80,80}`; no instance label and normal `symbol` stroke.
 - **current_source / current_sink / voltage_source**: `a`(0,-80)/`b`(0,80),
   circle r43, filled arrow (or ± marks); bbox `{-80,-80,160,160}`.
   refPrefix `I` / `V`.
@@ -106,7 +110,20 @@ and editor UX — skim it whenever you need an exact number.
 
 - Labels are NOT a component / symbol type: separate
   `circuit.labels: Map<id, LabelInstance>` (like solder — no terminals,
-  don't block routing in `netEnv`).
+  don't provide connectivity by themselves). `LabelInstance` has three roles:
+  an owned instance label (`owner` = component refdes, with a local `offset`),
+  a persistent electrical net label (`netId` = one physical net), or a free
+  annotation (`owner:null`, `netId:null`, independent text/anchor).
+- **Physical versus logical nets:** a `netId` identifies one physical net and
+  its drawable geometry. Nets with the same canonical name form a logical
+  group for naming/reporting only; a shared name does not electrically connect
+  separate physical nets.
+- Net-label text is derived from its physical net name. Use the canonical model
+  APIs (`addNetLabel`, `renameNet`, `renameNetLabel`) rather than writing
+  `net.name` in editor code. Removing a net label removes only that occurrence;
+  the physical net and its name remain. A provisional label on an unnamed net
+  is committed atomically only after a non-empty name is entered, otherwise it
+  is discarded.
 - `LabelInstance`: `id, text, align (center|left|right), owner
   (refdes|null), offset (local grid-snapped when owned), anchor (world
   grid-snapped)`.
@@ -135,14 +152,21 @@ and editor UX — skim it whenever you need an exact number.
   owned labels.
 - `nextRefdes(prefix)` returns smallest unused positive index (reuse after
   deletion).
-- **Rotate / mirror is origin-anchored (pure, stable).** The editor's
-  `r`/`R`/`x`/`X` (and the CLI `rotate` / `mirror`) rotate or mirror each
-  selected component about its OWN origin — the origin never moves, so
-  repeated rotations / mirrors never translate the component and always
-  stay on the 40-grid (matching the CLI). Free labels are not orbited by
-  rotate / mirror.
+- **Rotate / mirror is origin-anchored (pure, stable).** In Virtuoso mode,
+  `r` rotates clockwise, `Shift+r` mirrors horizontally, and
+  `Ctrl+Shift+r` mirrors vertically. The CLI `rotate` / `mirror` commands use
+  the same origin-anchored transform: the origin never moves, so repeated
+  transforms never translate the component and always stay on the 40-grid.
+  Free labels are not orbited by rotate / mirror.
 - Editor UX (main.js): labels are inserted through **insert mode** (`t`
   picks a label ghost, Enter/click commits at cursor; no normal-mode `t`).
+  `L` starts persistent electrical net-label placement: a click must land on
+  one unambiguous physical wire; at a crossing, one selected/highlighted net
+  must identify the target or placement is rejected. Named nets add another
+  occurrence; unnamed nets open a provisional inline edit. `Shift+N` starts
+  persistent free-annotation placement. Both modes remain active until
+  Escape. Net-label edits rename the physical net; annotation and owned-label
+  edits change only their own text.
   Shift+ArrowLeft/Right cycle align; nudge h/j/k/l (and arrow keys) —
   **nudging moves the wires with the components** (a `moved` map is passed
   to `rerouteNet`, so nets whose terminals all ride nudged components
@@ -153,20 +177,45 @@ and editor UX — skim it whenever you need an exact number.
   `setLabelSelection(ids, primary)` sets both; `setSelection`/Escape
   clears both. Selection overlay highlights all `selLabels`
   (`editorOverlay` `opts.selLabels`).
+- Selection, move, and delete are role-aware: owned labels follow their
+  components, net labels stay on their drawable net path, and free annotations
+  move independently. Deleting a net-label occurrence does not delete or
+  rename its physical net.
 
-## Direct/manual wire mode
+## Virtuoso mode
 
-- Uppercase `W` enters protected direct-wire mode, distinct from managed `w`
-  wire mode. Click a terminal to start, click one or more intermediate points
-  as literal waypoints, then click or press Enter on the target terminal. The
-  endpoints are terminals; points are grid-snapped and retained in the exact
-  clicked sequence, so diagonal segments are allowed.
-- Crossings do not splice or join other wires. The resulting net is fixed:
-  autorouting, orthogonalization, branch reduction, and ordinary wire segment
-  drag/delete operations do not rewrite it. To add another path to a fixed net,
-  use `W` again; normal managed wiring reports that fixed geometry is protected.
-- Moving a component re-anchors its fixed path endpoint without autorouting;
-  moving a complete selected set translates its fixed paths with the set.
+- The editor uses the Virtuoso command vocabulary in normal mode: `i` starts
+  fuzzy placement; type to filter components and labels, press Enter to pick
+  the best match, then click or press Enter to place the ghost.
+- `w` is the single Wire command. It starts the wire workflow from a terminal,
+  an existing wire, or a free grid point; click intermediate points and finish
+  on a terminal or wire. `F3` toggles the route choice for new wires between
+  orthogonal and diagonal. There is no separate uppercase-`W` protected-wire
+  command.
+- `m` arms connected move: moving a selected component carries or re-routes
+  its electrical connectivity. `Shift+m` arms detached move: the moved
+  terminal is removed from its net while the existing wire geometry is left in
+  place as dangling wire geometry.
+- `c` copies the selected set and arms placement of the copy. `r` rotates
+  clockwise, `Shift+r` mirrors horizontally, and `Ctrl+Shift+r` mirrors
+  vertically. Transforms are origin-anchored.
+- `x` runs Check. `Shift+x` runs Check & Save.
+
+### Persistent Design check
+
+The right-side **Design check** panel retains the latest Check report until
+another check is run. Its categories cover dangling/unconnected terminals,
+component and label overlaps (including component–label and label–label
+overlaps), wire body drills (segments through component bodies), managed
+diagonal segments, grid errors, and cross-net collinear wire overlaps. Each
+reported issue can focus the relevant component or net in the editor; Check &
+Save saves after running the same report.
+
+### Legacy fixed-net compatibility
+
+Persisted nets with `routingMode: "fixed"` and literal paths remain loadable and
+renderable, including legacy diagonal paths. This data compatibility does not
+add a protected uppercase-`W` editor mode.
 
 ## Routing & connectivity
 
@@ -177,8 +226,9 @@ and editor UX — skim it whenever you need an exact number.
   dragging either component apart keeps the net and routes a wire between
   them. `fromJSON` runs it after loading explicit nets (guarded by
   `_loading`).
-- **Nets are reduced to a minimum spanning tree (no parallel wires /
-  loops).** Wiring two points that are already connected in the same net
+- **Managed nets are reduced to a minimum spanning tree (no parallel wires /
+  loops).** Wiring two points that are already connected in the same managed
+  net
   must never pile up duplicate or looped wires: every `wireTo`,
   `wirePointTo`, `connect`, `fromJSON`, and every drag commit
   (wireseg + component drags in `canvasMouseUp`, CLI `move`) runs
@@ -205,7 +255,8 @@ and editor UX — skim it whenever you need an exact number.
   preserved. Without this, `clonePath` / `fromJSON` / render silently
   dropped a 3-way junction's terminal leg (the terminal stayed in the net
   but its wire vanished). Covered by `test/wireedit.test.js`.
-- **Router pin escapes:** `smartRoute` generates "escaped" candidates that
+- **Router pin escapes for orthogonal managed routes:** `smartRoute` generates
+  "escaped" candidates that
   extend one grid cell OUTWARD from each pin (in its terminal `dir`, via
   `applyDir`) before bending, so a gate→drain wire leaves the gate west
   and approaches the drain from the north — a clean outside bend that
@@ -224,14 +275,17 @@ and editor UX — skim it whenever you need an exact number.
   exempt); the routing env also carries `labelRects` — label boxes are
   SOFT obstacles (`labelScore` in `scoreCandidate`): the router prefers a
   channel one cell clear of a label when one exists, but never hard-blocks
-  a connection through a label. Solder dots are excluded from both.
+  a connection through a label. Solder dots are excluded from both. Net labels
+  remain attached to their physical net and must stay on drawable paths when
+  moved or repaired; Check reports label/component and label/label overlaps.
   **Fresh layouts avoid other nets' wires:** `_netEnv(excludeNetId)`
   collects every OTHER net's explicit branches into `wires`, and
   `rerouteNet` / `_layoutFresh` / `Net.points()` pass the net's own id, so
   a re-laid-out net never collinearly overlaps a different net's drawn wire
   (crossing is still legal). Collinear overlap with another net is the one
   pattern that is never auto-created.
-- **Multi-terminal nets route as an exact rectilinear Steiner minimum tree**
+- **Multi-terminal managed nets route as an exact rectilinear Steiner minimum
+  tree**
   (`steinerBranches` / `steinerRoute` in router.js, used by `autoRoute`,
   `balancedPaths`, `balancedRoute`). Dreyfus–Wagner subset DP over a coarse-grid
   graph (every cell of the terminals' padded bbox); edge cost is one cell plus
@@ -285,8 +339,8 @@ and editor UX — skim it whenever you need an exact number.
   run of net2 shows the warning live during the drag and it persists until
   the overlap is resolved.
 - **Nets are renamable from the right toolbar:** double-click a net name
-  in the nets list opens an inline `<input>` (Enter/blur commits
-  `net.name`, Esc cancels). A plain click re-renders the list and replaces
+  in the nets list opens an inline `<input>` (Enter/blur commits through
+  `Circuit#renameNet`, Esc cancels). A plain click re-renders the list and replaces
   the row, so the browser's native `dblclick` never fires — the rename
   double-click is detected manually in the click handler (timing + position
   fallback, like labels and wires). **Shift-click in the right-toolbar lists
@@ -298,8 +352,9 @@ and editor UX — skim it whenever you need an exact number.
   fires a native `dblclick`).
 - **Segment wire building:** in wire mode click a terminal (source), then
   click points to build the wire in segments; clicking or pressing
-  **Enter** on a target terminal connects them (the hand-drawn path
-  becomes the route, made orthogonal / collinear-collapsed). Pressing
+  **Enter** on a target terminal connects them (the hand-drawn path becomes
+  the selected orthogonal or diagonal route, with collinear points collapsed
+  where applicable). Pressing
   **Enter** on another wire's interior merges the two nets: the junction
   becomes a mid-wire anchor (`net.junctions`), the route walks both
   halves of the target wire from the junction, and a **solder** marks
@@ -321,10 +376,11 @@ and editor UX — skim it whenever you need an exact number.
   commit). Committing a free/on-wire draft onto a terminal or wire
   **splices it into the target net preserving that net's existing wire**
   (never overwrites the route).
-- **Drags re-route holistically:** moving / rotating / mirroring a
+- **Connected drags re-route holistically:** moving / rotating / mirroring a
   component re-routes every touched net from its terminals + environment
-  (`rerouteNet`), never hand-carrying wire bodies — a drag cannot leave
-  wires dangling or collapse them. Touching pins connect only at the
+  (`rerouteNet`), never hand-carrying wire bodies. Detached moves instead
+  remove the moved terminal from its net while leaving the existing wire
+  geometry as dangling wire geometry. Touching pins connect only at the
   COMMITTED position (mouseup / `move` command), never mid-drag.
   **Set moves carry their wires:** when EVERY terminal of a net rides a
   moved component by the same delta (a Ctrl+A multi-select drag), the whole
@@ -380,12 +436,14 @@ and editor UX — skim it whenever you need an exact number.
   stays visible and clickable; labels and the overlay (selection halos,
   net highlights) draw last.
 - **`D` toggles dark mode** (plus `#btn-theme`).
-- **Yank / paste on selected sets:** `y` / `Ctrl/Cmd+C` (`copySelection`)
-  captures the selected components + free labels + every net whose
-  terminals all sit on selected components (route / branches / junctions
-  kept); `p` / `Ctrl/Cmd+V` (`pasteClipboard`) re-instantiates everything at
-  the cursor with fresh refdes / label ids / net ids, preserving
-  relative positions and connectivity.
+- **Copy / paste on selected sets:** `c` (with `y` / `Ctrl/Cmd+C` as aliases)
+  captures the selected components + free annotations + every complete
+  physical net whose terminals all sit on selected components (and explicitly
+  selected complete terminal-less nets), keeping route / branches / junctions.
+  Net labels travel only with their complete physical net; paste gives them
+  fresh label/net ids and translated on-path anchors. They never degrade into
+  annotations. `p` / `Ctrl/Cmd+V` (`pasteClipboard`) re-instantiates everything
+  at the cursor, preserving relative positions and connectivity.
 - Side-panel lists are condensed (smaller row padding / fonts) so the
   components / nets / terminals lists stay short.
 - The design dropdown refuses to switch while the current design is dirty;
@@ -420,14 +478,17 @@ and editor UX — skim it whenever you need an exact number.
 
 ## Editor behavior — hotkeys
 
-- `i` insert mode (fuzzy search). `w` managed wire mode; `W` protected direct
-  wire mode. `t` (insert mode)
-  label ghost.
-- `v` visual mode. `Esc` cancels ghost / box / drag.
-- `r`/`R` rotate +90 / -90 (normal). `x`/`X` mirror along axis.
+- Virtuoso normal mode: `i` fuzzy placement; `w` the single Wire command;
+  `F3` toggles orthogonal vs diagonal routing; `m` connected move;
+  `Shift+m` detached move; `c` copy; `r` rotate clockwise;
+  `Shift+r` horizontal mirror; `Ctrl+Shift+r` vertical mirror; `x` Check;
+  `Shift+x` Check & Save. Uppercase `W` is not a separate wire mode.
+- `t` in insert mode places a label ghost; `v` enters visual mode.
+  `Esc` cancels a ghost, box, or drag.
 - `dd` delete selection (chord). `Delete` / `Backspace` same.
 - `u` / `Ctrl+Z` undo; `U` / `Ctrl+Y` / `Ctrl+R` redo.
-- `y` yank; `p` / `Ctrl/Cmd+V` paste at cursor. (`yy` is not required.)
+- `p` / `Ctrl/Cmd+V` paste at cursor. (`y` and `Ctrl/Cmd+C` remain copy
+  aliases; `yy` is not required.)
 - `Ctrl/Cmd+S` saves the current design.
 - Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy.
 - `hjkl` move cursor; in visual mode, grow box; in insert mode, part of

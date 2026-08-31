@@ -7,6 +7,7 @@ import { pmos } from './pmos.js';
 import { npn } from './npn.js';
 import { pnp } from './pnp.js';
 import { ground } from './ground.js';
+import { vcm } from './vcm.js';
 import { supply } from './supply.js';
 import { portInput, portOutput, portInputOutput, port, port_filled } from './port.js';
 import { current_source, current_sink, voltage_source } from './current.js';
@@ -26,6 +27,7 @@ export const symbolTypes = {
   npn,
   pnp,
   ground,
+  vcm,
   supply,
   input: portInput,
   output: portOutput,

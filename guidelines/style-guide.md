@@ -93,6 +93,7 @@ mirror flag to override that default.
 | npn / pnp | `b` (left) `c` (top) `e` (bottom) | x:-160..0, y:-120..120 |
 | current_source / current_sink / voltage_source | `a` (top) `b` (bottom) | x:-80..80, y:-80..80 |
 | ground | `gnd` (top edge) | x:0..80, y:0..120 |
+| vcm | `vcm` (top edge) | x:-40..40, y:0..80 |
 | supply | `p` (bottom edge) | x:-40..40, y:-80..0 |
 | input / output / inputoutput | `p` (circuit side) | boxed port, id label on circuit-outer side |
 | opamp / gates / inverter / buffer | `ip` / `im` / `a` / `b` in, `o` / `y` out | logic- or triangle-shaped bodies |
@@ -332,6 +333,10 @@ the label text carries the markup (`V_{INP}`). Name nets for their purpose
 (`TAIL`, `GND`, `VDD`, `VOUT`, `DIODE`, `BIAS`) — a net's name appears in
 the editor's net list, so it should tell the reader what the node does.
 
+`netId` identifies one physical net and its drawable geometry. Separate
+physical nets may share a canonical name for logical grouping and reporting,
+but a shared name never connects them electrically.
+
 ---
 
 ## 8. Labels
@@ -347,9 +352,27 @@ minimum, label:
 say it; adding "VDD" / "GND" text is redundant clutter. Rail *names*
 still matter for the net name (a net named `VDD` is fine).
 
-Labels are separate `LabelInstance` objects, not component types. Owned
-instance labels identify components; free labels identify circuit signals.
-Keep free labels off component bodies and route paths.
+Labels are separate `LabelInstance` objects, not component types. There are
+three roles: owned instance labels (`owner` = component refdes, with a local
+offset), persistent electrical net labels (`netId` = one physical net), and
+free annotations (`owner:null`, `netId:null`, independent text/anchor). Owned
+labels identify components; net labels name a physical wire; free annotations
+are independent text. Keep free annotations off component bodies and route
+paths; net labels belong on drawable wire paths.
+
+Use the canonical `addNetLabel`, `renameNet`, and `renameNetLabel` APIs for
+electrical labels and net names. Net-label text follows the physical net name;
+removing one label occurrence does not remove or rename its net. In the editor,
+`L` persistently places a net label only on an unambiguous physical wire; at a
+crossing, select/highlight the intended net first. `Shift+N` persistently places
+a free annotation. The generic insert-menu entry is also an annotation.
+
+Selection and editing preserve these roles: owned labels follow their
+components, net labels remain on their drawable paths, and annotations move
+independently. Deleting a net-label occurrence leaves the physical net and its
+name intact. Clipboard operations carry net labels only with a complete copied
+physical net, using fresh net/label IDs and translated on-path anchors; they
+never turn them into annotations.
 
 **No font-12 value / refdes text.** Component identifiers are dedicated
 owned label objects. Ports auto-create their identifier label from the
@@ -467,9 +490,10 @@ node src/cli/index.js <circuit> eval
 
 `eval --json` gives the machine-readable report.
 
-`eval` **ignores labels** — it reports a terminal "connected" if it is in
-a net even when no wire reaches it, and it never checks that a label box
-is clear. In addition to `eval`, verify:
+`eval` reports electrical connectivity and wire geometry separately from label
+placement. Check also reports label/component and label/label overlaps; label
+boxes remain soft routing obstacles, so they steer routes but do not block a
+connection. In addition to `eval`, verify:
 
 - every terminal's world position appears in some net `branch` (a 3+
   terminal net stores one polyline per arm; `route` is only the first);

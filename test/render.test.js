@@ -43,6 +43,15 @@ test('svgString includes refdes only for components with refPrefix/refPos', () =
   assert.ok(!svg.includes('>GROUND1<'));
 });
 
+test('svgString renders VCM outline without a VCM instance label', () => {
+  const c = new Circuit();
+  c.addComponent('vcm', { x: 400, y: 120 });
+  const svg = svgString(c);
+  assert.ok(svg.includes('M -28 24 L 28 24 L 0 56 Z'), 'VCM triangle outline present');
+  assert.doesNotMatch(svg, /<polygon\b/, 'VCM has no filled polygon primitive');
+  assert.doesNotMatch(svg, /<text\b/, 'VCM has no instance label');
+});
+
 test('svgString draws value text when present', () => {
   const c = new Circuit();
   c.addComponent('resistor', { x: 480, y: 0, value: '1k' });
@@ -110,6 +119,15 @@ test('svgString renders standalone label text with its alignment anchor', () => 
   const svg = svgString(c);
   assert.ok(svg.includes('>TP1<'), 'standalone label text present');
   assert.ok(svg.includes('text-anchor="start"'), 'left-aligned label anchors start');
+});
+
+test('svgString renders explicit net labels with rich-text net names', () => {
+  const c = new Circuit();
+  const net = c.createWireNet({ name: 'V_{IN}', route: [{ x: 0, y: 0 }, { x: 80, y: 0 }] });
+  c.addNetLabel(net, { id: 'VIN_LABEL', x: 80, y: 0 });
+  const svg = svgString(c);
+  assert.ok(svg.includes('class="label"') || svg.includes('font-style'));
+  assert.ok(svg.includes('<tspan') && svg.includes('IN'));
 });
 
 test('transistor instance label renders as a dedicated label object (no duplicate refPos)', () => {

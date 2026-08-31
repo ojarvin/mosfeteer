@@ -22,8 +22,28 @@ test('every registered symbol validates clean (grid contract)', () => {
 test('getSymbol returns known defs and throws on unknown', () => {
   assert.equal(getSymbol('resistor').type, 'resistor');
   assert.equal(getSymbol('ground').type, 'ground');
+  assert.equal(getSymbol('vcm').type, 'vcm');
   assert.equal(getSymbol('output').type, 'output');
   assert.throws(() => getSymbol('nonsense'), /unknown component type/);
+});
+
+test('VCM is a validated upward-escaping common-potential marker', () => {
+  const def = getSymbol('vcm');
+  assert.doesNotThrow(() => validateSymbol(def));
+  assert.deepEqual(def.terminals, [
+    { name: 'vcm', x: 0, y: 0, direction: 'up', dir: { x: 0, y: -1 } },
+  ]);
+  assert.deepEqual(def.bbox, { x: -40, y: 0, w: 80, h: 80 });
+});
+
+test('VCM uses a 56-wide, 32-deep open outline with no filled primitive', () => {
+  const def = getSymbol('vcm');
+  const triangle = def.graphics.find((g) => g.d === 'M -28 24 L 28 24 L 0 56 Z');
+  assert.ok(triangle, 'triangle outline geometry is present');
+  assert.equal(triangle.kind, 'path');
+  assert.equal(triangle.fill, 'none');
+  assert.equal(triangle.d, 'M -28 24 L 28 24 L 0 56 Z');
+  assert.ok(def.graphics.every((g) => g.kind !== 'polygon' && g.fill !== 'foreground'));
 });
 
 test('passive symbols use a centered local origin', () => {

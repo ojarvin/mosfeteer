@@ -150,6 +150,15 @@ test('normalizePath keeps a terminal out-and-back (route reversal is a real vert
   ]);
 });
 
+test('junction arm directions distinguish same-quadrant diagonal slopes', () => {
+  const paths = [
+    [{ x: 0, y: 0 }, { x: 80, y: 40 }],
+    [{ x: 0, y: 0 }, { x: 120, y: 80 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 120 }],
+  ];
+  assert.ok(junctionPoints(paths, [], true).some((p) => p.x === 0 && p.y === 0));
+});
+
 test('deleting a segment splits a branch without moving its remaining geometry', () => {
   const paths = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 160, y: 80 }]];
   const next = deleteWireSegment(paths, 0, 1);

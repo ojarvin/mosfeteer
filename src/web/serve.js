@@ -5,7 +5,7 @@
  */
 
 import { createServer } from 'node:http';
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Circuit } from '../core/model.js';
@@ -17,9 +17,9 @@ const PORT = Number(process.env.PORT) || 8080;
 
 // Repo root = two levels up from this file (src/web/serve.js).
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)), '..');
-const CIRCUITS_ROOT = resolve(ROOT, 'circuits');
-const DATA_ROOT = resolve(ROOT, 'data');
-const ACTIVE_FILE = join(DATA_ROOT, 'active.json');
+const CIRCUITS_ROOT = resolve(process.env.CIRCUITS_ROOT || join(ROOT, 'circuits'));
+const DATA_ROOT = resolve(process.env.DATA_ROOT || join(ROOT, 'data'));
+const ACTIVE_FILE = resolve(process.env.ACTIVE_FILE || join(DATA_ROOT, 'active.json'));
 
 const MIME = {
   '.js': 'text/javascript',
@@ -47,6 +47,14 @@ function circuitName(value) {
   return name;
 }
 
+function decodedCircuitName(value) {
+  try {
+    return circuitName(decodeURIComponent(value));
+  } catch {
+    return null;
+  }
+}
+
 async function requestBody(req) {
   let body = '';
   for await (const chunk of req) {
@@ -71,7 +79,7 @@ async function handleCircuitApi(req, res, url) {
 
   const cmdMatch = url.pathname.match(/^\/api\/circuits\/([^/]+)\/cmd$/);
   if (cmdMatch) {
-    const name = circuitName(decodeURIComponent(cmdMatch[1]));
+    const name = decodedCircuitName(cmdMatch[1]);
     if (!name) { json(res, 400, { error: 'invalid circuit name' }); return true; }
     if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return true; }
     try {
@@ -109,13 +117,36 @@ async function handleCircuitApi(req, res, url) {
 
   const match = url.pathname.match(/^\/api\/circuits\/([^/]+)$/);
   if (!match) return false;
-  const name = circuitName(decodeURIComponent(match[1]));
+  const name = decodedCircuitName(match[1]);
   if (!name) {
     json(res, 400, { error: 'invalid circuit name' });
     return true;
   }
   const dir = resolve(CIRCUITS_ROOT, name);
   const statePath = join(dir, 'circuit.json');
+
+  if (req.method === 'DELETE') {
+    try {
+      const entry = await lstat(dir);
+      // Refuse to remove anything other than an actual persisted circuit
+      // directory. In particular, do not follow a symlink outside CIRCUITS_ROOT.
+      if (!entry.isDirectory() || entry.isSymbolicLink()) {
+        json(res, 404, { error: 'circuit not found' });
+        return true;
+      }
+      await rm(dir, { recursive: true, force: false });
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        json(res, 404, { error: 'circuit not found' });
+      } else {
+        json(res, 500, { error: `could not delete circuit: ${err.message}` });
+      }
+      return true;
+    }
+    if (activeName === name) await setActive('');
+    json(res, 200, { name, deleted: true });
+    return true;
+  }
 
   if (req.method === 'GET') {
     try {
@@ -145,7 +176,7 @@ async function handleCircuitApi(req, res, url) {
     return true;
   }
 
-  res.writeHead(405, { Allow: 'GET, PUT' });
+  res.writeHead(405, { Allow: 'GET, PUT, DELETE' });
   res.end();
   return true;
 }

@@ -30,7 +30,7 @@ export function renderAscii(circuit) {
   const initials = {
     resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D',
     nmos: 'M', pmos: 'M', npn: 'Q', pnp: 'Q',
-    ground: 'G', supply: 'S', input: 'P', output: 'P', inputoutput: 'P',
+    ground: 'G', vcm: 'V', supply: 'S', input: 'P', output: 'P', inputoutput: 'P',
   };
 
   const header = [];

@@ -14,8 +14,8 @@ export function orthogonalizePath(path = []) {
   return out;
 }
 
-export function clonePath(path = []) {
-  return normalizePath(orthogonalizePath(path));
+export function clonePath(path = [], allowDiagonal = false) {
+  return allowDiagonal ? normalizePath(path, true) : normalizePath(orthogonalizePath(path));
 }
 
 /** Clone a protected direct-wire path without changing its shape. Direct wires
@@ -42,7 +42,7 @@ export function pathSegments(path = []) {
   return out;
 }
 
-export function normalizePath(path = []) {
+export function normalizePath(path = [], allowDiagonal = false) {
   const out = [];
   for (const raw of path) {
     const p = { x: snap(raw.x), y: snap(raw.y) };
@@ -55,9 +55,12 @@ export function normalizePath(path = []) {
       // balanced route's visit to a terminal: (120,120)->(120,80)->(120,120))
       // is a real vertex and must be preserved, otherwise the terminal's wire
       // leg silently disappears.
+      const cross = (last.x - prev.x) * (p.y - last.y) - (last.y - prev.y) * (p.x - last.x);
       const horiz = prev.y === last.y && last.y === p.y;
       const vert = prev.x === last.x && last.x === p.x;
-      if (horiz && (p.x - last.x) * (last.x - prev.x) >= 0) {
+      const collinear = allowDiagonal && cross === 0;
+      if ((horiz || collinear) && (p.x - last.x) * (last.x - prev.x) +
+          (p.y - last.y) * (last.y - prev.y) >= 0) {
         out[out.length - 1] = p;
         continue;
       }
@@ -71,12 +74,12 @@ export function normalizePath(path = []) {
   return out;
 }
 
-export function wireSegments(path = []) {
+export function wireSegments(path = [], allowDiagonal = false) {
   const out = [];
   for (let i = 1; i < path.length; i++) {
     const a = path[i - 1];
     const b = path[i];
-    if (a.x !== b.x && a.y !== b.y) throw new Error('wire path must be orthogonal');
+    if (!allowDiagonal && a.x !== b.x && a.y !== b.y) throw new Error('wire path must be orthogonal');
     if (a.x !== b.x || a.y !== b.y) out.push({ index: i, a, b });
   }
   return out;
@@ -102,18 +105,18 @@ export function pointOnPath(p, path = []) {
  *  the STRICT INTERIOR of one of its segments. Returns [left, right], where left
  *  ends at `p` and right starts at `p`. Returns null when `p` is a vertex (or
  *  off the path), in which case no split is needed. */
-export function splitBranchAt(path = [], p) {
+export function splitBranchAt(path = [], p, allowDiagonal = false) {
   const P = { x: snap(p.x), y: snap(p.y) };
   for (let i = 1; i < path.length; i++) {
     const a = path[i - 1];
     const b = path[i];
-    const interior =
-      (a.x === b.x && P.x === a.x && P.y > Math.min(a.y, b.y) && P.y < Math.max(a.y, b.y)) ||
-      (a.y === b.y && P.y === a.y && P.x > Math.min(a.x, b.x) && P.x < Math.max(a.x, b.x));
+    const cross = (P.x - a.x) * (b.y - a.y) - (P.y - a.y) * (b.x - a.x);
+    const interior = cross === 0 && between(P.x, a.x, b.x) && between(P.y, a.y, b.y) &&
+      !(P.x === a.x && P.y === a.y) && !(P.x === b.x && P.y === b.y);
     if (interior) {
       return [
-        normalizePath([...path.slice(0, i), P]),
-        normalizePath([P, ...path.slice(i)]),
+        normalizePath([...path.slice(0, i), P], allowDiagonal),
+        normalizePath([P, ...path.slice(i)], allowDiagonal),
       ];
     }
   }
@@ -123,7 +126,7 @@ export function splitBranchAt(path = [], p) {
 /** Normalize a set of branches so no branch passes through a point shared with
  *  another branch or a terminal: every such point is split into a vertex, and
  *  duplicate branches are removed. Used to repair stale/overlapping geometry. */
-export function normalizeBranches(paths = [], terminalPoints = []) {
+export function normalizeBranches(paths = [], terminalPoints = [], allowDiagonal = false) {
   const cut = new Map();
   for (const path of paths) for (const p of path) cut.set(pointKey(p), { x: snap(p.x), y: snap(p.y) });
   for (const p of terminalPoints) cut.set(pointKey(p), { x: snap(p.x), y: snap(p.y) });
@@ -133,11 +136,11 @@ export function normalizeBranches(paths = [], terminalPoints = []) {
       const a = path[i - 1];
       const b = path[i];
       for (const p of cut.values()) {
-        const interior =
-          (a.x === b.x && p.x === a.x && p.y > Math.min(a.y, b.y) && p.y < Math.max(a.y, b.y)) ||
-          (a.y === b.y && p.y === a.y && p.x > Math.min(a.x, b.x) && p.x < Math.max(a.x, b.x));
+        const cross = (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);
+        const interior = cross === 0 && between(p.x, a.x, b.x) && between(p.y, a.y, b.y) &&
+          !(p.x === a.x && p.y === a.y) && !(p.x === b.x && p.y === b.y);
         if (interior) {
-          return [normalizePath([...path.slice(0, i), p]), normalizePath([p, ...path.slice(i)])]
+          return [normalizePath([...path.slice(0, i), p], allowDiagonal), normalizePath([p, ...path.slice(i)], allowDiagonal)]
             .filter((h) => h.length >= 2);
         }
       }
@@ -145,7 +148,7 @@ export function normalizeBranches(paths = [], terminalPoints = []) {
     return null;
   };
 
-  let work = paths.map((p) => normalizePath(p)).filter((p) => p.length >= 2);
+  let work = paths.map((p) => normalizePath(p, allowDiagonal)).filter((p) => p.length >= 2);
   let changed = true;
   while (changed) {
     changed = false;
@@ -170,7 +173,7 @@ export function normalizeBranches(paths = [], terminalPoints = []) {
 /** Return all same-net junction points, including T and cross intersections.
  *  A junction is a grid point where three or more electrical arms meet, where
  *  each arm is a distinct wire direction leaving the point or a terminal. */
-export function junctionPoints(paths = [], terminalPoints = []) {
+export function junctionPoints(paths = [], terminalPoints = [], allowDiagonal = false) {
   const junctions = new Set();
   const strict = (n, a, b) => n > Math.min(a, b) && n < Math.max(a, b);
 
@@ -178,7 +181,9 @@ export function junctionPoints(paths = [], terminalPoints = []) {
   //    the endpoint of another branch, or two interiors crossing).
   for (let i = 0; i < paths.length; i++) {
     for (let j = i + 1; j < paths.length; j++) {
-      for (const sa of wireSegments(paths[i])) for (const sb of wireSegments(paths[j])) {
+      const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
+      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
+      for (const sa of segmentsA) for (const sb of segmentsB) {
         if (sa.a.x === sa.b.x && sb.a.y === sb.b.y &&
             between(sa.a.x, sb.a.x, sb.b.x) && between(sb.a.y, sa.a.y, sa.b.y) &&
             (strict(sa.a.x, sb.a.x, sb.b.x) || strict(sb.a.y, sa.a.y, sa.b.y))) junctions.add(`${sa.a.x},${sb.a.y}`);
@@ -196,9 +201,16 @@ export function junctionPoints(paths = [], terminalPoints = []) {
     if (!arms.has(k)) arms.set(k, new Set());
     arms.get(k).add(dir);
   };
-  for (const path of paths) for (const s of wireSegments(path)) {
-    const dx = Math.sign(s.b.x - s.a.x);
-    const dy = Math.sign(s.b.y - s.a.y);
+  const gcd = (a, b) => {
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
+  };
+  for (const path of paths) for (const s of (allowDiagonal ? pathSegments(path) : wireSegments(path))) {
+    const rawDx = s.b.x - s.a.x;
+    const rawDy = s.b.y - s.a.y;
+    const divisor = gcd(Math.abs(rawDx), Math.abs(rawDy));
+    const dx = rawDx / divisor;
+    const dy = rawDy / divisor;
     add(s.a, `${dx},${dy}`);
     add(s.b, `${-dx},${-dy}`);
   }
@@ -209,6 +221,26 @@ export function junctionPoints(paths = [], terminalPoints = []) {
     const [x, y] = key.split(',').map(Number);
     return { x, y };
   });
+}
+
+/** Return the positive-length collinear overlap of two arbitrary segments. */
+function collinearOverlap(a, b, c, d) {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const wx = d.x - c.x;
+  const wy = d.y - c.y;
+  if ((c.x - a.x) * vy - (c.y - a.y) * vx !== 0 || vx * wy - vy * wx !== 0) return null;
+  const useX = Math.abs(vx) >= Math.abs(vy);
+  const value = (p) => useX ? p.x : p.y;
+  const lo = Math.max(Math.min(value(a), value(b)), Math.min(value(c), value(d)));
+  const hi = Math.min(Math.max(value(a), value(b)), Math.max(value(c), value(d)));
+  if (hi <= lo) return null;
+  const at = (s) => useX
+    ? { x: s, y: a.y + (s - a.x) * vy / vx }
+    : { x: a.x + (s - a.y) * vx / vy, y: s };
+  const p0 = at(lo);
+  const p1 = at(hi);
+  return { x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
 }
 
 /** Collinear overlapping segments between DIFFERENT nets.
@@ -231,12 +263,14 @@ export function crossNetOverlaps(nets) {
       const sa = segs[i];
       const sb = segs[j];
       if (sa.netId === sb.netId) continue;
-      if (sa.a.x === sa.b.x && sb.a.x === sb.b.x && sa.a.x === sb.a.x) {
+      const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
+      if (overlap) out.push({ key: sa.key, otherKey: sb.key, ...overlap });
+      if (false) {
         // both vertical on the same x
         const lo = Math.max(Math.min(sa.a.y, sa.b.y), Math.min(sb.a.y, sb.b.y));
         const hi = Math.min(Math.max(sa.a.y, sa.b.y), Math.max(sb.a.y, sb.b.y));
         if (hi > lo) out.push({ key: sa.key, otherKey: sb.key, x0: sa.a.x, y0: lo, x1: sa.a.x, y1: hi });
-      } else if (sa.a.y === sa.b.y && sb.a.y === sb.b.y && sa.a.y === sb.a.y) {
+      } else if (false && sa.a.y === sa.b.y && sb.a.y === sb.b.y && sa.a.y === sb.a.y) {
         // both horizontal on the same y
         const lo = Math.max(Math.min(sa.a.x, sa.b.x), Math.min(sb.a.x, sb.b.x));
         const hi = Math.min(Math.max(sa.a.x, sa.b.x), Math.max(sb.a.x, sb.b.x));
@@ -265,17 +299,21 @@ export function samePolylineSet(a = [], b = []) {
  *  of DIFFERENT branches. Splitting both branches at these points turns an
  *  overlapped span into a parallel edge the MST can drop, so a wire dragged on
  *  top of a same-net wire merges into it instead of hiding beneath it. */
-function overlapEndpoints(paths = []) {
+function overlapEndpoints(paths = [], allowDiagonal = false) {
   const out = [];
   for (let i = 0; i < paths.length; i++) {
     for (let j = i + 1; j < paths.length; j++) {
-      for (const sa of wireSegments(paths[i])) for (const sb of wireSegments(paths[j])) {
-        if (sa.a.x === sa.b.x && sb.a.x === sb.b.x && sa.a.x === sb.a.x) {
+      const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
+      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
+      for (const sa of segmentsA) for (const sb of segmentsB) {
+        const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
+        if (overlap) out.push({ x: overlap.x0, y: overlap.y0 }, { x: overlap.x1, y: overlap.y1 });
+        if (false && sa.a.x === sa.b.x && sb.a.x === sb.b.x && sa.a.x === sb.a.x) {
           // both vertical on the same x
           const lo = Math.max(Math.min(sa.a.y, sb.a.y), Math.min(sb.a.y, sb.b.y));
           const hi = Math.min(Math.max(sa.a.y, sb.a.y), Math.max(sb.a.y, sb.b.y));
           if (hi > lo) { out.push({ x: sa.a.x, y: lo }, { x: sa.a.x, y: hi }); }
-        } else if (sa.a.y === sa.b.y && sb.a.y === sb.b.y && sa.a.y === sb.a.y) {
+        } else if (false && sa.a.y === sa.b.y && sb.a.y === sb.b.y && sa.a.y === sb.a.y) {
           // both horizontal on the same y
           const lo = Math.max(Math.min(sa.a.x, sb.a.x), Math.min(sb.a.x, sb.b.x));
           const hi = Math.min(Math.max(sa.a.x, sb.a.x), Math.max(sb.a.x, sb.b.x));
@@ -301,14 +339,15 @@ function overlapEndpoints(paths = []) {
  * two points) are never removed; terminals are never moved or dropped, and
  * always stay branch endpoints (never collapsed into a run).
  */
-export function reduceBranches(paths = [], terminalPoints = []) {
+export function reduceBranches(paths = [], terminalPoints = [], allowDiagonal = false) {
   const terminals = terminalPoints.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
   // Split every branch at every shared vertex, terminal, junction, and
   // collinear-overlap boundary so all intersections become real vertices
   // before the graph is built.
   const split = normalizeBranches(
     paths,
-    [...terminals, ...junctionPoints(paths, terminalPoints), ...overlapEndpoints(paths)]
+    [...terminals, ...junctionPoints(paths, terminalPoints, allowDiagonal), ...overlapEndpoints(paths, allowDiagonal)],
+    allowDiagonal,
   ).filter((p) => p.length >= 2);
   if (split.length === 0) return [];
 
@@ -323,7 +362,7 @@ export function reduceBranches(paths = [], terminalPoints = []) {
   if (open.length === 0) return [];
 
   // Branch points: terminals plus junctions of the split geometry (3+ arms).
-  const branchPoints = new Set([...terminalKeys, ...junctionPoints(open, terminalPoints).map(key)]);
+  const branchPoints = new Set([...terminalKeys, ...junctionPoints(open, terminalPoints, allowDiagonal).map(key)]);
 
   // Runs: maximal spans of each branch between branch points (or the branch's
   // own dangling ends). Each run is one graph edge carrying its polyline.
@@ -335,7 +374,9 @@ export function reduceBranches(paths = [], terminalPoints = []) {
     for (let i = 1; i < path.length; i++) {
       const prev = path[i - 1];
       const p = path[i];
-      runCost += Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y);
+      runCost += allowDiagonal
+        ? Math.hypot(p.x - prev.x, p.y - prev.y)
+        : Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y);
       if (branchPoints.has(key(p)) || i === path.length - 1) {
         if (i > runStart) {
           edges.push({
@@ -412,7 +453,7 @@ export function reduceBranches(paths = [], terminalPoints = []) {
         cur = next.to;
         poly.push(...orient(next.e, shared).slice(1)); // next.pts starts at `shared`
       }
-      out.push({ poly: normalizePath(poly), bi: first.e.bi, si: first.e.si });
+      out.push({ poly: normalizePath(poly, allowDiagonal), bi: first.e.bi, si: first.e.si });
     }
   }
   out.sort((a, b) => a.bi - b.bi || a.si - b.si);
@@ -498,7 +539,7 @@ export function validateWiring(net) {
       if (p.x % GRID || p.y % GRID) errors.push(`branch ${bi} has off-grid point (${p.x},${p.y})`);
     }
     if (net.routingMode !== 'fixed') {
-      try { wireSegments(path); } catch (err) { errors.push(`branch ${bi}: ${err.message}`); }
+      try { wireSegments(path, net.allowDiagonal === true); } catch (err) { errors.push(`branch ${bi}: ${err.message}`); }
     }
   }
   return errors;
