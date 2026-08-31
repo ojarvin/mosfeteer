@@ -94,7 +94,7 @@
     </form>
   </dialog>
 
-  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+Shift+r Mirror Y · x Check · Shift+x Check &amp; save · F3 Wire shape</div>
+  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Check &amp; save · F3 Wire shape</div>
 
   <main class="layout">
       <section class="canvas-pane">
@@ -118,7 +118,7 @@
       </section>
 
       <section class="panel-group check-summary" id="check-summary" data-panel="check-summary" aria-labelledby="check-summary-heading">
-        <h2 class="panel-heading" id="check-summary-heading">Design check</h2>
+        <h2 class="panel-heading" id="check-summary-heading">Design check <button id="btn-clear-check" type="button" class="check-clear" title="Clear the Design check report">Clear</button></h2>
         <div class="check-summary-body" id="check-summary-body" data-role="check-summary" aria-live="polite">
           <div class="check-summary-empty" data-check-state="empty">Run Check to review this circuit.</div>
         </div>

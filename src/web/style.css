@@ -396,6 +396,13 @@ button:disabled {
   color: var(--text-dim);
   margin: 0 0 4px;
 }
+.check-clear {
+  float: right;
+  padding: 1px 5px;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
 
 .list {
   display: flex;
@@ -845,6 +852,12 @@ html.dark .canvas svg [fill="#666"] { fill: #9aa3b2; }
 html.dark .canvas svg [fill="#fff"] { fill: var(--paper); }
 html.dark .canvas svg text { fill: #dde1e8; }
 html.dark .canvas svg .net-name { fill: #9aa3b2; }
+/* The blue cursor is intentionally subtle on paper; amber keeps it legible
+   against the dark canvas without changing selection or wire overlay colors. */
+html.dark .editor-cursor-crosshair {
+  stroke: #f59e0b;
+  opacity: 0.9;
+}
 
 html.dark #routing-mode {
   color: var(--text);

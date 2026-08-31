@@ -73,6 +73,9 @@ function labelTextEl(x, y, runs, anchor, kind) {
  */
 export function svgString(circuit, opts = {}) {
   const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, ...opts };
+  const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
+  const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
+  const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
   const b = circuit.bounds(o.grid || o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
@@ -126,12 +129,20 @@ export function svgString(circuit, opts = {}) {
       }
     }
   }
+  // The crosshair is a navigation aid, not an object highlight. Render it
+  // before components, wires, and labels so those objects remain readable.
+  if (o.cursor && o.cursorCrosshair) {
+    const { x, y } = o.cursor;
+    const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
+    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
+  }
 
   // Components.
   const comps = [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
   for (const c of comps) {
     const t = c.transform;
-    parts.push(`<g transform="${transformToSvg(t)}"><g class="sym" data-ref="${c.refdes}">`);
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${c.refdes}">`);
     for (const g of c.def.graphics) parts.push(graphicsToSvg(g));
     parts.push('</g></g>');
     if (o.includeBBox) {
@@ -141,7 +152,6 @@ export function svgString(circuit, opts = {}) {
   }
 
   // Wires draw ON TOP of component bodies so an overlapping wire stays visible
-  // and selectable (component linework no longer hides it).
   for (const net of circuit.nets.values()) {
     // Fixed paths are already the complete authored geometry. Keep the legacy
     // managed fallback below so multi-terminal managed nets retain their old
@@ -153,6 +163,7 @@ export function svgString(circuit, opts = {}) {
         : !net.route && net.terminals.length >= 3
           ? balancedPaths(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
           : [net.points()];
+    const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
     for (const pts of paths) {
       if (!pts || pts.length < 2) continue;
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
@@ -160,7 +171,7 @@ export function svgString(circuit, opts = {}) {
       const wireHelp = net.routingMode === 'fixed'
         ? 'Fixed/direct wire — drag vertices, segments, or junctions'
         : 'Managed wire — drag orthogonal segments';
-      parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none" ${strokeAttrs()}><title>${wireHelp}</title></path>`);
+      parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${strokeAttrs()}><title>${wireHelp}</title></path>`);
       if (o.netNames && net.name) {
         const mid = pts[Math.floor(pts.length / 2)];
         parts.push(textEl(mid.x + 6, mid.y - 6, net.name, 'start', 11, '#666'));
@@ -194,20 +205,20 @@ export function svgString(circuit, opts = {}) {
   }
 
   // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
-  // label (def.labelOffset) skip the built-in refPos text.
   for (const c of comps) {
     const def = c.def;
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
     if (def.refPrefix && def.refPos && !def.labelOffset) {
       const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
       // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
       // matching the dedicated instance labels used by transistors (e.g. nmos).
       parts.push(
-        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none">${c.refdes}</text>`,
+        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${c.refdes}</text>`,
       );
     }
     if (def.textPos && c.value !== undefined && c.value !== '') {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
-      parts.push(textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333'));
+      parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333')}</g>`);
     }
   }
 
@@ -217,7 +228,8 @@ export function svgString(circuit, opts = {}) {
   for (const label of circuit.labels.values()) {
     if (label.id === o.editingLabel) continue;
     const t = label.textPos();
-    parts.push(labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label'));
+    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
+    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label')}</g>`);
   }
 
   parts.push('</svg>');
@@ -231,20 +243,11 @@ export function svgString(circuit, opts = {}) {
  * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
  * opts.wireMode: show all component terminals, colored by net membership.
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
- * opts.directWirePreview: literal, protected direct-wire draft.
  */
 export function editorOverlay(circuit, opts = {}) {
   const parts = [];
   const halo = (r) =>
     `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#4f9cf9" stroke-width="2" rx="3"/>`;
-
-  // Keep the placement/move target legible beneath the rest of the editor
-  // overlay. The small cursor marker below remains the precise grid cue.
-  if (opts.cursor && opts.cursorCrosshair) {
-    const { x, y } = opts.cursor;
-    const { x: vx, y: vy, w: vw, h: vh } = opts.cursorCrosshair;
-    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
-  }
 
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);

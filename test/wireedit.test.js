@@ -20,6 +20,13 @@ test('wireRunAt returns the maximal collinear run of a segment', () => {
   assert.deepEqual(v, { lo: 0, hi: 1, orient: 'v', val: 0 });
 });
 
+test('wireRunAt stops aligned runs at a topology break', () => {
+  const pts = [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 400, y: 0 }];
+  const breaks = new Set(['200,0']);
+  assert.deepEqual(wireRunAt(pts, 1, breaks), { lo: 0, hi: 1, orient: 'h', val: 0 });
+  assert.deepEqual(wireRunAt(pts, 2, breaks), { lo: 1, hi: 2, orient: 'h', val: 0 });
+});
+
 test('dragging an interior run into line with a neighbouring run collapses the corner', () => {
   const pts = [
     { x: 0, y: 0 }, { x: 0, y: 40 }, { x: 200, y: 40 },
@@ -70,6 +77,21 @@ test('dragging a two-point junction bridge moves both junction endpoints', () =>
   assert.deepEqual(pts, [{ x: 80, y: 160 }, { x: 320, y: 160 }]);
   ortho(pts);
 });
+test('topology-bounded junction bridge moves without moving its anchors', () => {
+  const pts = [{ x: 80, y: 80 }, { x: 320, y: 80 }];
+  const endpointMeta = {
+    start: { type: 'junction' },
+    end: { type: 'junction' },
+    runBounds: { lo: 0, hi: 1 },
+  };
+  assert.equal(moveWireRun(pts, 'h', 80, 160, endpointMeta), 160);
+  assert.deepEqual(pts, [
+    { x: 80, y: 80 }, { x: 80, y: 160 },
+    { x: 320, y: 160 }, { x: 320, y: 80 },
+  ]);
+  ortho(pts);
+});
+
 
 test('a straight pin-to-pin run remains immovable with terminal metadata', () => {
   const pts = [{ x: 80, y: 80 }, { x: 320, y: 80 }];
@@ -79,6 +101,24 @@ test('a straight pin-to-pin run remains immovable with terminal metadata', () =>
   };
   assert.equal(moveWireRun(pts, 'h', 80, 160, endpointMeta), 80);
   assert.deepEqual(pts, [{ x: 80, y: 80 }, { x: 320, y: 80 }]);
+});
+
+test('a collapsed terminal-aligned interior run remains movable with an editor hint', () => {
+  const pts = [
+    { x: -120, y: 160 }, { x: -120, y: 160 },
+    { x: -120, y: -160 }, { x: -120, y: -160 },
+  ];
+  const endpointMeta = {
+    start: { type: 'terminal' },
+    end: { type: 'terminal' },
+    interiorRun: true,
+  };
+  assert.equal(moveWireRun(pts, 'v', -120, -200, endpointMeta), -200);
+  assert.deepEqual(pts, [
+    { x: -120, y: 160 }, { x: -200, y: 160 },
+    { x: -200, y: -160 }, { x: -120, y: -160 },
+  ]);
+  ortho(pts);
 });
 
 test('moving the standard bridge upward rebuilds incident elbows at the target junctions', () => {

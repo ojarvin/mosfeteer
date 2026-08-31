@@ -226,6 +226,19 @@ test('wires render ON TOP of component bodies (z-order)', () => {
   assert.ok(terminalDot > wire, 'terminal dots draw above wires');
 });
 
+test('crosshair renders behind component objects', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  const svg = svgString(c, {
+    viewport: { x: -200, y: -120, w: 400, h: 240 },
+    cursor: { x: 0, y: 0 },
+    cursorCrosshair: { x: -200, y: -120, w: 400, h: 240 },
+  });
+  const crosshair = svg.indexOf('class="editor-cursor-crosshair"');
+  const component = svg.indexOf('<g class="sym"');
+  assert.ok(crosshair >= 0 && component >= 0 && crosshair < component);
+});
+
 test('renderer draws every fixed path after managed promotion', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });

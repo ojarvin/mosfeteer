@@ -126,19 +126,19 @@ and editor UX — skim it whenever you need an exact number.
   is discarded.
 - `LabelInstance`: `id, text, align (center|left|right), owner
   (refdes|null), offset (local grid-snapped when owned), anchor (world
-  grid-snapped)`.
+  grid-snapped), and `netSide` (`above|below|left|right` for net labels).
 - **Bbox model**: tight text bbox computed from per-glyph widths
   (`LABEL_FONT_SIZE=38` matches the rendered `INSTANCE_FONT` /
   `LABEL_FONT` size; `LABEL_CHAR_W=8` at font 12 for the bold + italic
   label face; narrow / default / wide buckets) and `LABEL_CAP_H =
   round(38*0.7) = 27` height. The rendered box expands the tight box to
   **even multiples of a grid cell in BOTH dimensions** (`colWidth()` /
-  `rowHeight()`, min 2 cells) and is **centered on the anchor**, so the
-  box center is always on a grid point. The box always updates on
-  `setText`. `bbox()` = centered box; `textPos()` returns the `<text>`
+  `rowHeight()`, min 2 cells). Free and owned labels are centered on their
+  anchor; net labels keep their electrical anchor on the wire and put one box
+  edge on it (`above` for horizontal paths, `left` for vertical paths). The
+  box always updates on `setText`. `textPos()` returns the `<text>`
   `{x, y, anchor}` so the text is horizontally aligned inside the box
-  (left/right/center) and **vertically centered** (baseline `y = anchor.y
-  + LABEL_CAP_H/2`).
+  (left/right/center) and vertically centered.
 - **Sub / superscript editing**: labels support `_{...}` / `^{...}`
   markup (rendered as tspans). The inline label editor wraps a text
   selection with **Ctrl+, / Ctrl+.** (subscript / superscript); pressing
@@ -153,10 +153,11 @@ and editor UX — skim it whenever you need an exact number.
 - `nextRefdes(prefix)` returns smallest unused positive index (reuse after
   deletion).
 - **Rotate / mirror is origin-anchored (pure, stable).** In Virtuoso mode,
-  `r` rotates clockwise, `Shift+r` mirrors horizontally, and
-  `Ctrl+Shift+r` mirrors vertically. The CLI `rotate` / `mirror` commands use
-  the same origin-anchored transform: the origin never moves, so repeated
-  transforms never translate the component and always stay on the 40-grid.
+  `r` rotates clockwise, `Shift+r` mirrors horizontally, and `Ctrl+r` mirrors
+  vertically. `Ctrl+Shift+r` is intentionally unbound. The CLI `rotate` /
+  `mirror` commands use the same origin-anchored transform: the origin never
+  moves, so repeated transforms never translate the component and always stay
+  on the 40-grid.
   Free labels are not orbited by rotate / mirror.
 - Editor UX (main.js): labels are inserted through **insert mode** (`t`
   picks a label ghost, Enter/click commits at cursor; no normal-mode `t`).
@@ -167,7 +168,7 @@ and editor UX — skim it whenever you need an exact number.
   persistent free-annotation placement. Both modes remain active until
   Escape. Net-label edits rename the physical net; annotation and owned-label
   edits change only their own text.
-  Shift+ArrowLeft/Right cycle align; nudge h/j/k/l (and arrow keys) —
+-  Shift+ArrowLeft/Right cycle align; nudge h/j/k/l (and arrow keys) —
   **nudging moves the wires with the components** (a `moved` map is passed
   to `rerouteNet`, so nets whose terminals all ride nudged components
   translate rigidly, exactly like a drag); dd/Delete removes;
@@ -177,10 +178,12 @@ and editor UX — skim it whenever you need an exact number.
   `setLabelSelection(ids, primary)` sets both; `setSelection`/Escape
   clears both. Selection overlay highlights all `selLabels`
   (`editorOverlay` `opts.selLabels`).
-- Selection, move, and delete are role-aware: owned labels follow their
-  components, net labels stay on their drawable net path, and free annotations
-  move independently. Deleting a net-label occurrence does not delete or
-  rename its physical net.
+- Selection, move, and delete are role-aware across components, owned labels,
+  free annotations, electrical net labels, and wire segments. Owned labels
+  follow their components; net labels remain attached to a drawable net path,
+  switch above/below or left/right according to the drag side, and constrain
+  their bbox edge to touch the wire; free annotations and wire geometry move
+  independently.
 
 ## Virtuoso mode
 
@@ -191,25 +194,34 @@ and editor UX — skim it whenever you need an exact number.
   an existing wire, or a free grid point; click intermediate points and finish
   on a terminal or wire. `F3` toggles the route choice for new wires between
   orthogonal and diagonal. There is no separate uppercase-`W` protected-wire
-  command.
-- `m` arms connected move: moving a selected component carries or re-routes
-  its electrical connectivity. `Shift+m` arms detached move: the moved
-  terminal is removed from its net while the existing wire geometry is left in
-  place as dangling wire geometry.
-- `c` copies the selected set and arms placement of the copy. `r` rotates
-  clockwise, `Shift+r` mirrors horizontally, and `Ctrl+Shift+r` mirrors
-  vertically. Transforms are origin-anchored.
-- `x` runs Check. `Shift+x` runs Check & Save.
+- `m` arms connected move: moving any selected component, label, annotation,
+  or wire segment carries or re-routes its electrical connectivity. The moving
+  set and its connected wires are rendered as faint ghosts until the
+  destination click commits. `Shift+m` arms detached move: a moved terminal is
+  removed from its net while existing wire geometry is left in place as
+  dangling wire geometry.
+- `c` enters a repeated copy ghost: click an object or selected set, move the
+  ghost with the cursor, then click/Enter to commit; the clicked source point
+  is the copy anchor, so it remains under the cursor while the set's relative
+  geometry is preserved. Each following click commits another copy at that
+  cursor using the same anchor. Escape cancels the ghost and returns to the
+  copy tool.
+- `r` rotates clockwise, `Shift+r` mirrors horizontally, and `Ctrl+r` mirrors
+  vertically. `Ctrl+Shift+r` is unbound. Transforms are origin-anchored.
+- `x` runs Check. `Shift+x` runs Check & Save. The Design check panel has a
+  Clear control; deleting an object also clears the stale report and focus.
 
 ### Persistent Design check
 
 The right-side **Design check** panel retains the latest Check report until
-another check is run. Its categories cover dangling/unconnected terminals,
-component and label overlaps (including component–label and label–label
-overlaps), wire body drills (segments through component bodies), managed
-diagonal segments, grid errors, and cross-net collinear wire overlaps. Each
-reported issue can focus the relevant component or net in the editor; Check &
-Save saves after running the same report.
+another check is run, an object is deleted, or the global Clear control is
+used. Its categories cover dangling/unconnected terminals, component and
+label overlaps (including component–label and label–label overlaps), wire body
+drills (segments through component bodies), managed diagonal segments, grid
+errors, and cross-net collinear wire overlaps. Each reported issue can focus
+the relevant component or net in the editor; normal selection clears diagnostic
+focus without discarding the report. Check & Save saves after running the same
+report.
 
 ### Legacy fixed-net compatibility
 
@@ -275,9 +287,10 @@ add a protected uppercase-`W` editor mode.
   exempt); the routing env also carries `labelRects` — label boxes are
   SOFT obstacles (`labelScore` in `scoreCandidate`): the router prefers a
   channel one cell clear of a label when one exists, but never hard-blocks
-  a connection through a label. Solder dots are excluded from both. Net labels
-  remain attached to their physical net and must stay on drawable paths when
-  moved or repaired; Check reports label/component and label/label overlaps.
+  connection through a label. Solder dots are excluded from both. Net labels
+  keep their electrical anchor on the physical net and place their bounding-box
+  edge on that path; mouse dragging projects the attachment to the nearest
+  drawable point. Check reports label/component and label/label overlaps.
   **Fresh layouts avoid other nets' wires:** `_netEnv(excludeNetId)`
   collects every OTHER net's explicit branches into `wires`, and
   `rerouteNet` / `_layoutFresh` / `Net.points()` pass the net's own id, so
@@ -307,15 +320,19 @@ add a protected uppercase-`W` editor mode.
   **shift+click toggles more segments into the selection** (`selectedWires`
   set of `"netId:branch:segment"` keys, `selectedWire` = primary), and
   **drag-drag moves every selected run together** (same-orientation runs move
-  as a group; runs of the other orientation stay put but stay selected). `dd` /
-  Delete removes all selected segments at once via `Circuit#deleteWireSegments`
-  (cuts are applied against one branch snapshot, so indices never shift under
-  one another; the net splits into the connected components that remain). A
-  click that never moves the pointer (or moves < threshold) just selects —
-  it never mutates the net. A straight pin-to-pin run can't be dragged
-  (`moveWireRun` keeps both pins fixed). **Escape cancels an in-progress drag**
-  (`cancelDrag()` restores every pre-drag polyline) — the history entry is
-  pushed once on mouseup, so undo/redo round-trip a committed drag.
+  as a group; runs of the other orientation stay put but stay selected). A
+  single aligned segment between electrical topology points is bounded at
+  those points and can move independently; adjacent aligned segments move
+  together only when both are selected. `dd` / Delete removes all selected
+  segments at once via `Circuit#deleteWireSegments` (cuts are applied against
+  one branch snapshot, so indices never shift under one another; the net splits
+  into the connected components that remain). A click that never moves the
+  pointer (or moves < threshold) just selects — it never mutates the net. A
+  straight pin-to-pin run can't be dragged unless it is an explicitly bounded
+  topology segment (`moveWireRun` keeps ordinary direct pins fixed).
+  **Escape cancels an in-progress drag** (`cancelDrag()` restores every
+  pre-drag polyline) — the history entry is pushed once on mouseup, so
+  undo/redo round-trip a committed drag.
   **`dragMoved()` = pointer moved BOTH >6px (client) AND >`GRID/2` (world)**,
   so jittery clicks never drag at any zoom, and a "drag" that never actually
   moves the run is still treated as a click (route restored, no history).
@@ -407,13 +424,15 @@ add a protected uppercase-`W` editor mode.
   `h j k l`) go into the query. The `#insert-menu` dropdown shows the
   live query + filtered entries. (`PLACEMENT` map still labels the menu's
   hotkey column.)
-- **Visual mode:** `v` (normal) anchors the cursor and draws a green box
-  as `hjkl` / arrows move it; Enter commits the box selection
-  (`applyBoxSelection` — components by bbox, labels by bbox, nets by
-  route; shared with the mouse marquee) and exits; Esc cancels. Status
-  bar shows VISUAL. **Marquee selection only captures objects COMPLETELY
-  inside the box** (`rectContained`; a net only when every route point is
-  inside) — merely intersecting a box selects nothing.
+- **Visual mode:** `v` (normal, including persistent Delete mode) anchors the
+  cursor and draws a green box as `hjkl` / arrows move it; Enter commits the
+  box selection (`applyBoxSelection` — components by bbox, labels by bbox, nets
+  by route; shared with the mouse marquee) and exits. In Delete mode, Enter
+  immediately deletes the fully-contained selection and keeps Delete armed;
+  mouse drag boxes use the same complete-containment rule and delete on mouseup.
+  Esc cancels. Status bar shows VISUAL. **Marquee selection only captures
+  objects COMPLETELY inside the box** (`rectContained`; a net only when every
+  route point is inside) — merely intersecting a box selects nothing.
 
 ## Web UI
 
@@ -425,25 +444,32 @@ add a protected uppercase-`W` editor mode.
   ink is recolored via attribute-value CSS overrides
   (`html.dark .canvas svg [stroke="#111"] { stroke: #dde1e8 }`,
   `[fill="#fff"] → var(--paper)`, etc.) — presentation attributes are
-  overridden by CSS, so no core renderer changes were needed and
-  colored overlays (halos, wire source) are untouched. `#btn-theme`
+  overridden by CSS, so no core renderer changes were needed. The placement
+  crosshair switches to high-contrast amber in dark mode; colored overlays
+  (halos, wire source) remain untouched. `#btn-theme`
   toggles, persisted in localStorage (`schematic-spawner:theme`),
   defaults to system `prefers-color-scheme`.
 - **`#` toggles the grid** (`setGrid()`); `#btn-grid` mirrors it.
   Toolbar buttons carry `title` tooltips.
-- **Z-order:** wires render ON TOP of component bodies (svgString draws
-  components, then nets, then pin/junction dots) so an overlapping wire
-  stays visible and clickable; labels and the overlay (selection halos,
-  net highlights) draw last.
-- **`D` toggles dark mode** (plus `#btn-theme`).
+  **Z-order:** the navigation crosshair renders before components, wires, and
+  labels; wires still render ON TOP of component bodies (svgString draws
+  components, then nets, then pin/junction dots) so an overlapping wire stays
+  visible and clickable; selection halos and net highlights draw last.
 - **Copy / paste on selected sets:** `c` (with `y` / `Ctrl/Cmd+C` as aliases)
-  captures the selected components + free annotations + every complete
-  physical net whose terminals all sit on selected components (and explicitly
-  selected complete terminal-less nets), keeping route / branches / junctions.
-  Net labels travel only with their complete physical net; paste gives them
-  fresh label/net ids and translated on-path anchors. They never degrade into
-  annotations. `p` / `Ctrl/Cmd+V` (`pasteClipboard`) re-instantiates everything
-  at the cursor, preserving relative positions and connectivity.
+  enters copy mode. A source click copies the clicked component, label, or wire
+  when nothing is selected; any existing component/label/wire/net selection is
+  copied as the complete set regardless of where that source click lands. That
+  source click is the placement anchor: the copied point stays under the
+  cursor, not the set's bounding-box center.
+  The pasted set appears as a cursor-following ghost; click or Enter commits it,
+  and each subsequent click commits another copy using the same anchor while
+  staying in copy mode. Escape cancels the ghost and returns to source selection.
+- Every complete physical net whose terminals all sit on selected components
+  (and explicitly selected complete terminal-less nets) keeps route / branches
+  / junctions. Net labels travel only with their complete physical net; paste
+  gives them fresh label/net ids and translated on-path anchors. They never
+  degrade into annotations. `p` / `Ctrl/Cmd+V` (`pasteClipboard`) remains a
+  one-shot paste at the cursor, preserving relative positions and connectivity.
 - Side-panel lists are condensed (smaller row padding / fonts) so the
   components / nets / terminals lists stay short.
 - The design dropdown refuses to switch while the current design is dirty;
@@ -480,13 +506,17 @@ add a protected uppercase-`W` editor mode.
 
 - Virtuoso normal mode: `i` fuzzy placement; `w` the single Wire command;
   `F3` toggles orthogonal vs diagonal routing; `m` connected move;
-  `Shift+m` detached move; `c` copy; `r` rotate clockwise;
-  `Shift+r` horizontal mirror; `Ctrl+Shift+r` vertical mirror; `x` Check;
-  `Shift+x` Check & Save. Uppercase `W` is not a separate wire mode.
+  `Shift+m` detached move; `c` repeated copy ghost; `r` rotate clockwise;
+  `Shift+r` horizontal mirror; `Ctrl+r` vertical mirror; `Ctrl+Shift+r` is
+  unbound. Uppercase `W` is not a separate wire mode.
 - `t` in insert mode places a label ghost; `v` enters visual mode.
   `Esc` cancels a ghost, box, or drag.
-- `dd` delete selection (chord). `Delete` / `Backspace` same.
-- `u` / `Ctrl+Z` undo; `U` / `Ctrl+Y` / `Ctrl+R` redo.
+- `dd` deletes the selected component/label/net/wire set. `Delete` /
+  `Backspace` do the same when a selection exists; with no selection they arm
+  persistent Delete mode, where clicks delete objects until `Esc`.
+  `Backspace` removes the latest uncommitted wire vertex in wiring mode.
+  `u` / `Ctrl+Z` undo; `U` / `Ctrl+Y` redo. Undoing an action while Copy or
+  Move is armed removes only the last action and re-arms the same tool.
 - `p` / `Ctrl/Cmd+V` paste at cursor. (`y` and `Ctrl/Cmd+C` remain copy
   aliases; `yy` is not required.)
 - `Ctrl/Cmd+S` saves the current design.
@@ -499,7 +529,7 @@ add a protected uppercase-`W` editor mode.
 
 ## Working-context notes
 
-- `npm test` = **182/182** green (model / commands / router / render /
+- `npm test` = **296/296** green (model / commands / router / render /
   wireedit / multinet / symbols). The HTTP endpoint reuses `runCommand()` and is
   covered by the existing tests; the CLI is a thin client over it and is
   exercised by `npm test` only for argument parsing (the server itself is

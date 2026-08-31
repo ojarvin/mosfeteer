@@ -1488,6 +1488,27 @@ test('fromJSON drops orphaned owned labels (owner missing)', () => {
   assert.equal(c2.labels.size, 0);
 });
 
+test('net-label boxes attach by an edge and preserve orientation on reload', () => {
+  const c = new Circuit();
+  const horizontal = c.createWireNet({ name: 'H', route: [{ x: 0, y: 0 }, { x: 160, y: 0 }] });
+  const vertical = c.createWireNet({ name: 'V', route: [{ x: 400, y: 0 }, { x: 400, y: 160 }] });
+  const h = c.addNetLabel(horizontal, { id: 'H_LABEL', anchor: { x: 80, y: 0 } });
+  const v = c.addNetLabel(vertical, { id: 'V_LABEL', anchor: { x: 400, y: 80 } });
+  assert.equal(c._nearestNetPathAttachment(horizontal, { x: 80, y: -40 }).side, 'above');
+  assert.equal(c._nearestNetPathAttachment(horizontal, { x: 80, y: 40 }).side, 'below');
+  assert.equal(c._nearestNetPathAttachment(vertical, { x: 360, y: 80 }).side, 'left');
+  assert.equal(c._nearestNetPathAttachment(vertical, { x: 440, y: 80 }).side, 'right');
+  assert.equal(h.netSide, 'above');
+  assert.equal(h.bbox().y + h.bbox().h, h.anchorWorld().y);
+  assert.equal(v.netSide, 'left');
+  assert.equal(v.bbox().x + v.bbox().w, v.anchorWorld().x);
+  assert.ok(h.textPos().y < h.anchorWorld().y, 'horizontal label text stays off the wire');
+  assert.ok(v.textPos().x < v.anchorWorld().x, 'vertical label text stays off the wire');
+  const restored = Circuit.fromJSON(c.toJSON());
+  assert.equal(restored.labels.get('H_LABEL').netSide, 'above');
+  assert.equal(restored.labels.get('V_LABEL').netSide, 'left');
+});
+
 test('net labels derive their text from the physical net and form logical groups', () => {
   const c = new Circuit();
   const a = c.createWireNet({ name: 'V_{IN}', route: [{ x: 0, y: 0 }, { x: 80, y: 0 }] });

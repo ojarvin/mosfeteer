@@ -19,7 +19,7 @@ import { applyMarkup } from '../core/model.js';
 import { segThroughInterior, smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
-import { crossNetOverlaps } from '../core/wiring.js';
+import { crossNetOverlaps, clonePath } from '../core/wiring.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -53,6 +53,7 @@ const deleteDialog = document.getElementById('delete-dialog');
 const deleteDialogMessage = document.getElementById('delete-dialog-message');
 const hintEl = document.getElementById('hint');
 const checkSummaryBodyEl = document.getElementById('check-summary-body');
+const clearCheckButtonEl = document.getElementById('btn-clear-check');
 
 // ----- editor state ----------------------------------------------
 
@@ -71,6 +72,16 @@ let diagnosticSelection = { components: new Set(), nets: new Set(), labels: new 
 
 function resetCheckState() {
   lastCheckReport = null;
+  diagnosticSelection = { components: new Set(), nets: new Set(), labels: new Set() };
+}
+
+function clearCheckReport() {
+  lastCheckReport = null;
+  clearDiagnosticFocus();
+  renderCheckSummary();
+}
+
+function clearDiagnosticFocus() {
   diagnosticSelection = { components: new Set(), nets: new Set(), labels: new Set() };
 }
 let pendingPlace = null; // insert-mode ghost: { kind:'component', type, rotation, mirrorX, mirrorY } | { kind:'label' }
@@ -129,11 +140,11 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL', hint: 'NET LABEL · click an unambiguous wire to place · stays active · Esc cancel' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION', hint: 'ANNOTATION · click to place free text · stays active · Esc cancel' };
   if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'PLACE', hint: 'PLACE · type to search, Enter picks, click/Enter places · Esc cancel' };
-  if (copyMode) return { key: 'copy', canvasClass: 'mode-copy', toolbar: 'copy', label: 'COPY', hint: copyPending ? 'COPY · move with cursor, then click/Enter to commit · Esc cancel' : 'COPY · click a source component or label · Esc cancel' };
-  if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE', hint: 'DELETE · click components, labels, or wire segments · Esc cancel' };
-  if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE', hint: movePending ? 'DETACHED MOVE · move with cursor, then click/Enter to commit · Esc cancel' : 'DETACHED MOVE · click a component, move with cursor, then click/Enter · Esc cancel' };
-  if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE', hint: movePending ? 'MOVE · move with cursor, then click/Enter to commit · Esc cancel' : 'MOVE · click a component, move with cursor, then click/Enter · Esc cancel' };
-  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · r rotate · Shift+r mirror · x check · Shift+x check-and-save` };
+  if (copyMode) return { key: 'copy', canvasClass: 'mode-copy', toolbar: 'copy', label: 'COPY', hint: copyPending ? 'COPY · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'COPY · click an object, or use the existing selection · Esc cancel' };
+  if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE', hint: 'DELETE · selected Delete acts like dd; otherwise click objects to delete · Esc cancel' };
+  if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE', hint: movePending ? 'DETACHED MOVE · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'DETACHED MOVE · click a component, label, or wire, then move and click/Enter · Esc cancel' };
+  if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE', hint: movePending ? 'MOVE · faint objects and connected wires follow the cursor, then click/Enter to commit · Esc cancel' : 'MOVE · click a component, label, or wire, then move and click/Enter · Esc cancel' };
+  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · r rotate · Shift+r mirror · Ctrl+R mirror vertical · Ctrl+Shift+R unbound · x check · Shift+x check-and-save` };
 }
 
 function paneSize() {
@@ -521,6 +532,18 @@ function cancelDirectDraft() {
   if (drag?.mode === 'directpick') drag = null;
   return true;
 }
+function restoreToolState(state) {
+  if (!state?.copyMode && !state?.moveMode && !state?.deleteMode) return;
+  mode = 'normal';
+  labelMode = null;
+  visual = null;
+  drag = null;
+  copyMode = !!state.copyMode;
+  moveMode = state.moveMode || null;
+  deleteMode = !!state.deleteMode;
+  movePending = false;
+  copyPending = false;
+}
 
 function undo() {
   const cancelled = cancelDirectDraft();
@@ -528,8 +551,10 @@ function undo() {
     if (cancelled) render();
     return;
   }
+  const toolState = { copyMode, moveMode, deleteMode };
   future.push(snapshot());
   applyJson(history.pop());
+  restoreToolState(toolState);
   render();
 }
 
@@ -539,8 +564,10 @@ function redo() {
     if (cancelled) render();
     return;
   }
+  const toolState = { copyMode, moveMode, deleteMode };
   history.push(snapshot());
   applyJson(future.pop());
+  restoreToolState(toolState);
   render();
 }
 
@@ -649,12 +676,14 @@ function compUnderCursor() {
   return hit && circuit.components.has(hit.refdes) ? circuit.components.get(hit.refdes) : null;
 }
 
+
 function selectedComp() {
   return selected && circuit.components.has(selected) ? circuit.components.get(selected) : null;
 }
 
 /** Replace the selection. `primary` defaults to the first element. */
 function setSelection(refs, primary = refs[0], preserveMixed = false) {
+  clearDiagnosticFocus();
   if (!preserveMixed) {
     selLabel = null;
     selLabels.clear();
@@ -669,6 +698,7 @@ function setSelection(refs, primary = refs[0], preserveMixed = false) {
 
 /** Replace the label selection. `primary` defaults to the first element. */
 function setLabelSelection(ids, primary = ids[0], preserveMixed = false) {
+  clearDiagnosticFocus();
   if (!preserveMixed) {
     selected = null;
     multi.clear();
@@ -947,6 +977,7 @@ function deleteSelection() {
     }
     circuit.syncJunctionSolders();
   });
+  clearCheckReport();
   selectedWire = null;
   selectedWires.clear();
   setSelection([]);
@@ -1110,6 +1141,14 @@ function restoreProvisionalLabel(label, initialName = '') {
 
 function moveLabelSafely(label, x, y) {
   try {
+    if (label?.isNetLabel?.()) {
+      const net = circuit.nets.get(label.netId);
+      const attachment = net ? circuit._nearestNetPathAttachment(net, { x, y }) : null;
+      if (!attachment) throw new Error('net label has no drawable path');
+      x = attachment.point.x;
+      y = attachment.point.y;
+      label.netSide = attachment.side;
+    }
     label.moveTo(x, y);
     label._moveErrorShown = false;
     return true;
@@ -1229,24 +1268,30 @@ function render() {
   }
 }
 
+function draftWirePreview(draft) {
+  if (!draft?.source) return undefined;
+  const from = wireOrigin(draft.source);
+  if (!from) return undefined;
+  const allowDiagonal = draft.routeStyle === 'diagonal';
+  const clicked = draft.points || [];
+  // Once a waypoint is clicked, the commit path is literal user geometry
+  // normalized by clonePath. Preview that exact same full path; routing only
+  // chooses the first leg before the user has authored any waypoint.
+  if (clicked.length) {
+    return {
+      from,
+      to: cursor,
+      pts: clonePath([from, ...clicked, cursor], allowDiagonal),
+    };
+  }
+  const tail = allowDiagonal
+    ? clonePath([from, cursor], true)
+    : smartRoute(from, cursor, { ...netEnv(), allowDiagonal: false });
+  return { from, to: cursor, pts: tail || [from] };
+}
+
 function renderCanvas() {
-  const wirePreview =
-    wire && wire.source
-      ? (() => {
-          const from = wireOrigin(wire.source);
-          if (!from) return undefined;
-          // The draft wire being built: the accumulated click-through segments
-          // plus the live segment to the cursor. The final leg to the cursor is
-          // suggested by the orthogonal router; diagonal mode intentionally
-          // shows the literal direct segment instead.
-          const base = [from, ...(wire.points || [])];
-          const tail = wire.routeStyle === 'diagonal'
-            ? [base[base.length - 1], cursor]
-            : smartRoute(base[base.length - 1], cursor, netEnv());
-          const pts = [...base, ...tail.slice(1)];
-          return { from, to: cursor, pts };
-        })()
-      : undefined;
+  const wirePreview = draftWirePreview(wire);
   // Legacy fixed-net editing deliberately does no routing or orthogonalization.
   const directFrom = directWire?.source ? wireOrigin(directWire.source) : null;
   if (directWire?.source && !directFrom) directWire = null;
@@ -1254,6 +1299,22 @@ function renderCanvas() {
     ? { from: directFrom, pts: [directFrom, ...(directWire.points || []), cursor] }
     : undefined;
 
+  const ghostRefs = new Set();
+  const ghostLabels = new Set();
+  const ghostNets = new Set();
+  if (drag?.mode === 'copyghost' && drag.ghost) {
+    for (const ref of drag.ghost.refs) ghostRefs.add(ref);
+    for (const id of drag.ghost.labels) ghostLabels.add(id);
+    for (const id of drag.ghost.netIds) ghostNets.add(id);
+  } else if (drag?.mode === 'move') {
+    for (const ref of drag.origins?.keys?.() || []) ghostRefs.add(ref);
+    for (const id of drag.labelOrigins?.keys?.() || []) ghostLabels.add(id);
+    if (!drag.detached) {
+      for (const id of netsTouching([...ghostRefs])) ghostNets.add(id);
+    }
+  } else if (drag?.mode === 'labelmove') {
+    for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
+  }
   let svg = svgString(circuit, {
     grid: showGrid,
     terminals: false,
@@ -1261,6 +1322,11 @@ function renderCanvas() {
     background: true,
     viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
     editingLabel: inlineInput?.dataset.labelId,
+    ghostRefs,
+    ghostLabels,
+    ghostNets,
+    cursor,
+    cursorCrosshair: view,
   });
   const highlightedNetIds = new Set([...selectedNets, ...diagnosticSelection.nets]);
   const nets = [...highlightedNetIds].map((id) => circuit.nets.get(id)).filter(Boolean);
@@ -1298,25 +1364,23 @@ function renderCanvas() {
           })()
       : undefined;
   let previewSelection;
+  const marqueeDrag = drag?.mode === 'marquee' || drag?.mode === 'deletemarquee';
   const previewBox = visual
     ? worldRect(visual, cursor)
-    : drag?.mode === 'marquee' && drag.rubber
+    : marqueeDrag && drag.rubber
       ? drag.rubber
       : null;
   if (previewBox) {
     const found = boxSelectionContents(previewBox.x0, previewBox.y0, previewBox.x1, previewBox.y1);
     previewSelection = {
-      refs: drag?.mode === 'marquee' && drag.shift ? [...new Set([...multi, ...found.refs])] : found.refs,
-      labels: drag?.mode === 'marquee' && drag.shift ? [...new Set([...selLabels, ...found.labels])] : found.labels,
-      nets: drag?.mode === 'marquee' && drag.shift ? [...new Set([...selectedNets, ...found.nets])] : found.nets,
-      wires: drag?.mode === 'marquee' && drag.shift ? [...new Set([...selectedWires, ...found.wires])] : found.wires,
+      refs: marqueeDrag && drag.shift ? [...new Set([...multi, ...found.refs])] : found.refs,
+      labels: marqueeDrag && drag.shift ? [...new Set([...selLabels, ...found.labels])] : found.labels,
+      nets: marqueeDrag && drag.shift ? [...new Set([...selectedNets, ...found.nets])] : found.nets,
+      wires: marqueeDrag && drag.shift ? [...new Set([...selectedWires, ...found.wires])] : found.wires,
     };
   }
   const overlay = editorOverlay(circuit, {
     cursor,
-    // A larger, quiet target marker helps place or move an object without
-    // competing with the stronger selection and wire affordances.
-    cursorCrosshair: view,
     selection: [...new Set([...multi, ...diagnosticSelection.components])],
     wireSegments: (() => {
       if (!selectedWires.size && !selectedWire) return [];
@@ -1388,6 +1452,22 @@ function dragMoved(startWorld, startClient, w, ev) {
 /** Abort an in-progress mouse drag. A cancelled wire run is restored to its
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
+  if (drag?.mode === 'copyghost') {
+    circuit = Circuit.fromJSON(JSON.parse(drag.ghost.beforeSnapshot));
+    wiresDirty = true;
+    drag = null;
+    copyPending = false;
+    copyMode = true;
+    selected = null;
+    multi.clear();
+    selLabel = null;
+    selLabels.clear();
+    selectedWire = null;
+    selectedWires.clear();
+    selectedNets.clear();
+    render();
+    return;
+  }
   if (drag?.modal) {
     if (drag.startSnapshot) applyJson(drag.startSnapshot);
     drag = null;
@@ -1823,6 +1903,29 @@ function managedEndpointMeta(net, point) {
   if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) return { type: 'junction', point: { ...point } };
   return { type: 'free', point: { ...point } };
 }
+/** Restore a collapsed interior run so an earlier zero-clearance edit remains
+ * reversible. The hint is transient editor state; ordinary authored straight
+ * pin-to-pin wires retain their historical immovability. */
+function editableManagedPath(net, branch, path) {
+  const hint = net?._wireRunHint;
+  if (!hint || hint.branch !== branch || !path || path.length !== 2 ||
+      !hint.endpoints?.every((p, i) => p.x === path[i].x && p.y === path[i].y)) {
+    return { path, interiorRun: false };
+  }
+  const axis = hint.orient;
+  const line = axis === 'h' ? path[0].y : path[0].x;
+  const last = hint.orig.length - 1;
+  const restored = hint.orig.map((p, i) => {
+    if (i === 0 || i === last) return { ...path[i === 0 ? 0 : 1] };
+    return axis === 'h' ? { x: p.x, y: line } : { x: line, y: p.y };
+  });
+  if (net.branches?.[branch]) net.branches[branch] = restored;
+  else if (branch === 0) net.route = restored;
+  return { path: restored, interiorRun: true };
+}
+function managedWireBreaks(net) {
+  return new Set((net?.anchorWorlds?.() || []).map((p) => `${p.x},${p.y}`));
+}
 
 /** Propagate a moved managed junction endpoint to every branch that shares it.
  * The edited branch has already moved its endpoint, so only points still at
@@ -1842,12 +1945,23 @@ function moveManagedJunction(net, oldPoint, newPoint) {
 /** Apply a wire-run edit while keeping junction endpoints and their incident
  * branches topologically joined. */
 function moveManagedWireRun(run, target) {
-  const before = [run.pts[0] && { ...run.pts[0] }, run.pts.at(-1) && { ...run.pts.at(-1) }];
+  const endpoints = [
+    run.endpointMeta?.start?.point && { ...run.endpointMeta.start.point },
+    run.endpointMeta?.end?.point && { ...run.endpointMeta.end.point },
+  ];
   run.line = moveWireRun(run.pts, run.orient, run.line, target, run.endpointMeta);
-  const after = [run.pts[0] && { ...run.pts[0] }, run.pts.at(-1) && { ...run.pts.at(-1) }];
   for (const i of [0, 1]) {
-    if (run.endpointMeta?.[i === 0 ? 'start' : 'end']?.type !== 'junction') continue;
-    if (before[i] && after[i]) moveManagedJunction(run.net, before[i], after[i]);
+    const meta = run.endpointMeta?.[i === 0 ? 'start' : 'end'];
+    const oldPoint = endpoints[i];
+    if (meta?.type !== 'junction' || !oldPoint) continue;
+    const actualPoint = i === 0 ? run.pts[0] : run.pts[run.pts.length - 1];
+    // Topology-bounded runs keep junction endpoints fixed and add connector
+    // legs. Only legacy unbounded bridge moves propagate the junction.
+    if (actualPoint?.x === oldPoint.x && actualPoint?.y === oldPoint.y) continue;
+    const newPoint = run.orient === 'h'
+      ? { x: oldPoint.x, y: run.line }
+      : { x: run.line, y: oldPoint.y };
+    moveManagedJunction(run.net, oldPoint, newPoint);
   }
   return run.line;
 }
@@ -2279,6 +2393,100 @@ function joinWireToNet(wireHit) {
   logLine(`joined into net ${net.id} at (${P.x},${P.y})`);
 }
 
+function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) {
+  const net = wireHit.net;
+  const key = `${net.id}:${wireHit.branch}:${wireHit.seg}`;
+  const moveKeys = ev.shiftKey || selectedWires.has(key)
+    ? new Set([...selectedWires, key])
+    : new Set([key]);
+  const runs = [];
+  const seenRun = new Set();
+  for (const k of moveKeys) {
+    const selected = keyToWire(k);
+    const currentNet = circuit.nets.get(selected.netId);
+    if (!currentNet) continue;
+    let pts = currentNet.branches && currentNet.branches[selected.branch] && currentNet.branches[selected.branch].length >= 2
+      ? currentNet.branches[selected.branch]
+      : currentNet.route && currentNet.route.length >= 2 ? currentNet.route : currentNet.points().slice();
+    const breaks = managedWireBreaks(currentNet);
+    const selectedPath = selected.netId === net.id && selected.branch === wireHit.branch ? wireHit.pts : pts;
+    const selectedRun = wireRunAt(selectedPath, selected.segment, breaks);
+    const editable = editableManagedPath(currentNet, selected.branch, pts);
+    pts = editable.path;
+    const run = editable.interiorRun
+      ? { orient: selectedRun.orient, val: selectedRun.val }
+      : wireRunAt(pts, selected.segment, breaks);
+    const runBounds = editable.interiorRun
+      ? { lo: 1, hi: pts.length - 2 }
+      : { lo: run.lo, hi: run.hi };
+    const runKey = `${currentNet.id}:${selected.branch}:${run.orient}:${run.val}:${runBounds.lo}:${runBounds.hi}`;
+    if (seenRun.has(runKey)) continue;
+    seenRun.add(runKey);
+    const endpointMeta = {
+      start: managedEndpointMeta(currentNet, pts[runBounds.lo]),
+      end: managedEndpointMeta(currentNet, pts[runBounds.hi]),
+      segment: selected.segment,
+      breaks,
+      runBounds,
+      interiorRun: editable.interiorRun,
+    };
+    runs.push({
+      net: currentNet,
+      branch: selected.branch,
+      seg: selected.segment,
+      pts,
+      orig: pts.map((p) => ({ ...p })),
+      orient: run.orient,
+      line: run.val,
+      startLine: run.val,
+      hadRoute: !!(currentNet.route && currentNet.route.length >= 2),
+      endpointMeta,
+      junctionBridge: pts.length === 2 &&
+        endpointMeta.start.type === 'junction' && endpointMeta.end.type === 'junction',
+    });
+  }
+  const primary = runs.find((r) => r.net === net && r.branch === wireHit.branch && r.seg === wireHit.seg) || runs[0];
+  if (!primary) return false;
+  const dragRuns = runs.filter((r) => r.orient === primary.orient);
+  const netSnapshots = new Map();
+  for (const r of dragRuns) {
+    if (netSnapshots.has(r.net.id)) continue;
+    netSnapshots.set(r.net.id, {
+      id: r.net.id,
+      net: r.net,
+      route: r.net.route ? r.net.route.map((p) => ({ ...p })) : null,
+      branches: r.net.branches ? r.net.branches.map((b) => b.map((p) => ({ ...p }))) : null,
+      junctions: r.net.junctions.map((p) => ({ ...p })),
+    });
+  }
+  cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  drag = {
+    mode: 'wireseg',
+    modal,
+    net,
+    branch: primary.branch,
+    seg: primary.seg,
+    pts: primary.pts,
+    orig: primary.orig,
+    runs: dragRuns,
+    orient: primary.orient,
+    line: primary.line,
+    startAxis: primary.orient === 'h' ? startWorld.y : startWorld.x,
+    startLine: primary.startLine,
+    startClient,
+    startWorld,
+    shift: ev.shiftKey,
+    key,
+    moved: false,
+    committed: false,
+    rubber: null,
+    startSnapshot: snapshot(),
+    netSnapshots,
+  };
+  render();
+  return true;
+}
+
 function canvasMouseDown(ev) {
   if (document.activeElement === cmdInput) cmdInput.blur();
   const b = ev.button;
@@ -2296,6 +2504,39 @@ function canvasMouseDown(ev) {
     return;
   }
   if (b !== 0) return;
+  if (deleteMode) {
+    // Defer the click action until mouseup so a real drag can form a box.
+    // A stationary click keeps the existing Delete-mode semantics.
+    drag = {
+      mode: 'deletemarquee',
+      startClient,
+      startWorld,
+      startSelection: new Set(multi),
+      startLabelSelection: new Set(selLabels),
+      moved: false,
+      rubber: null,
+    };
+    return;
+  }
+  if (drag?.mode === 'copyghost') {
+    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    moveCopyGhost(startWorld);
+    commitCopyGhost();
+    return;
+  }
+  // Modal move/copy destination clicks must win over object picking. This
+  // keeps a destination on a label, wire, or terminal from being treated as a
+  // new source.
+  if (drag?.modal && (movePending || copyPending)) {
+    drag.commitPoint = { world: { ...startWorld }, client: { ...startClient } };
+    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    commitModalMove();
+    return;
+  }
+  if (copyMode) {
+    beginCopySource(startWorld, startClient);
+    return;
+  }
 
   const openEndpoint = openFixedEndpointAt(startWorld);
 
@@ -2329,34 +2570,41 @@ function canvasMouseDown(ev) {
     }
   }
 
-  // A modal move/copy commits on the second click; the first click only starts
-  // the object following the cursor.  Mouse-up from that first click is
-  // intentionally ignored by canvasMouseUp below.
-  if (drag?.modal && (movePending || copyPending)) {
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-    commitModalMove();
-    return;
-  }
-  if (copyMode) {
-    beginCopySource(startWorld, startClient);
-    return;
-  }
   if (moveMode) {
+    const labelHit = pickLabel(startWorld);
+    if (labelHit) {
+      armModalLabelMove(labelHit, startWorld, startClient);
+      return;
+    }
+    const moveWireHit = pickWire(startWorld);
+    if (moveWireHit && moveWireHit.net.routingMode === 'fixed') {
+      fixedWireDragAt(moveWireHit, startWorld, startClient, ev);
+      drag.modal = true;
+      movePending = true;
+      return;
+    }
+    if (moveWireHit && moveWireHit.net.terminals.length === 0) {
+      const key = `${moveWireHit.net.id}:${moveWireHit.branch}:${moveWireHit.seg}`;
+      if (floatingWireDragAt(moveWireHit, startWorld, startClient, ev, new Set([key]))) {
+        drag.modal = true;
+        movePending = true;
+        return;
+      }
+    }
+    if (moveWireHit) {
+      managedWireDragAt(moveWireHit, startWorld, startClient, ev, true);
+      movePending = true;
+      return;
+    }
     const moveHit = matchAt(snap(startWorld.x), snap(startWorld.y));
     if (moveHit?.refdes && circuit.components.has(moveHit.refdes)) {
       cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
       armModalMove(moveHit, startWorld, startClient);
     } else {
-      logLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a component`);
+      logLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a component, label, or wire`);
     }
     return;
   }
-  if (deleteMode) {
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-    deleteAtPoint(startWorld);
-    return;
-  }
-
   // Insert mode with a ghost selected: a left-click places the ghost at the
   // snapped cursor and stays on the same component so more can be placed.
   if (mode === 'insert' && pendingPlace) {
@@ -2488,29 +2736,18 @@ function canvasMouseDown(ev) {
     // nets), materialized into a local array so a plain click never mutates the
     // net — only an actual drag attaches a route (and Escape restores `orig`).
     const key = `${net.id}:${wireHit.branch}:${wireHit.seg}`;
-    // Double-click a wire selects its NET (the segment selection is replaced).
-    // Headless CDP never fires a native `dblclick`, so detect the second press
-    // here on the mousedown (ev.detail) with the same manual timing/position
-    // fallback the labels use; the browser `dblclick` handler stays as backup.
+    // Double-click a wire selects its NET. Defer that selection until mouseup
+    // so a second click can still become a real drag when the pointer moves.
+    // Headless CDP never fires a native `dblclick`, hence the timing fallback.
     const now = Date.now();
     const prevWireClick = lastWireClick;
     lastWireClick = { key, x: startWorld.x, y: startWorld.y, at: now };
-    if (
-      ev.detail >= 2 ||
+    const doubleWireClick = ev.detail >= 2 ||
       (prevWireClick &&
         prevWireClick.key === key &&
         now - prevWireClick.at < 500 &&
         Math.abs(startWorld.x - prevWireClick.x) <= GRID &&
-        Math.abs(startWorld.y - prevWireClick.y) <= GRID)
-    ) {
-      setSelection([]);
-      selectedWire = null;
-      selectedWires.clear();
-      selectedNets = new Set([net.id]);
-      cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-      render();
-      return;
-    }
+        Math.abs(startWorld.y - prevWireClick.y) <= GRID);
     // Shift+click (or clicking a segment already in the selection) drags every
     // selected segment's run together; a plain click on an unselected segment
     // drags only that run (the selection resets on mouseup).
@@ -2523,16 +2760,29 @@ function canvasMouseDown(ev) {
       const w = keyToWire(k);
       const n = circuit.nets.get(w.netId);
       if (!n) continue;
-      const pts = n.branches && n.branches[w.branch] && n.branches[w.branch].length >= 2
+      let pts = n.branches && n.branches[w.branch] && n.branches[w.branch].length >= 2
         ? n.branches[w.branch]
         : n.route && n.route.length >= 2 ? n.route : n.points().slice();
-      const run = wireRunAt(pts, w.segment);
-      const runKey = `${n.id}:${w.branch}:${run.orient}:${run.val}`;
-      if (seenRun.has(runKey)) continue; // same maximal run, don't move twice
+      const breaks = managedWireBreaks(n);
+      const selectedRun = wireRunAt(pts, w.segment, breaks);
+      const editable = editableManagedPath(n, w.branch, pts);
+      pts = editable.path;
+      const run = editable.interiorRun
+        ? { orient: selectedRun.orient, val: selectedRun.val }
+        : wireRunAt(pts, w.segment, breaks);
+      const runBounds = editable.interiorRun
+        ? { lo: 1, hi: pts.length - 2 }
+        : { lo: run.lo, hi: run.hi };
+      const runKey = `${n.id}:${w.branch}:${run.orient}:${run.val}:${runBounds.lo}:${runBounds.hi}`;
+      if (seenRun.has(runKey)) continue; // same bounded run, don't move twice
       seenRun.add(runKey);
       const endpointMeta = {
-        start: managedEndpointMeta(n, pts[0]),
-        end: managedEndpointMeta(n, pts[pts.length - 1]),
+        start: managedEndpointMeta(n, pts[runBounds.lo]),
+        end: managedEndpointMeta(n, pts[runBounds.hi]),
+        segment: w.segment,
+        breaks,
+        runBounds,
+        interiorRun: editable.interiorRun,
       };
       runs.push({
         net: n,
@@ -2586,6 +2836,7 @@ function canvasMouseDown(ev) {
       rubber: null,
       startSnapshot: snapshot(),
       netSnapshots,
+      doubleWireClick,
     };
     render();
     return;
@@ -2668,27 +2919,57 @@ function detachMoveComponents(drag) {
       const ref = `${refdes}.${terminal.name}`;
       if (seen.has(ref) || !circuit.netOfTerminal(ref)) continue;
       seen.add(ref);
+
       circuit.disconnect(ref);
     }
   }
 }
+function armModalLabelMove(label, startWorld, startClient) {
+  const ids = selLabels.has(label.id) ? [...selLabels] : [label.id];
+  setSelection([], undefined, true);
+  setLabelSelection(ids, label.id, true);
+  const startAnchors = new Map();
+  for (const id of ids) {
+    const item = circuit.labels.get(id);
+    if (item) startAnchors.set(id, { x: item.anchorWorld().x, y: item.anchorWorld().y });
+  }
+  drag = {
+    mode: 'labelmove',
+    modal: true,
+    labelId: label.id,
+    startClient,
+    startWorld,
+    startAnchors,
+    moved: false,
+    committed: false,
+    rubber: null,
+    duplicate: false,
+    startSnapshot: snapshot(),
+  };
+  movePending = true;
+  render();
+}
 
 function armModalMove(hit, startWorld, startClient) {
   // Preserve a preselected component set when the source click lands on one
-  // of its members.  A click outside the set intentionally starts a singleton
-  // move instead.  This distinction is important for detached group moves:
-  // every selected terminal must be detached together, while the untouched
-  // members' dangling geometry remains in place.
+  // of its members. A mixed component/label selection remains mixed.
   const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
-  setSelection(refs, hit.refdes);
+  const labelIds = [...selLabels];
+  setSelection(refs, hit.refdes, true);
+  setLabelSelection(labelIds, labelIds[0], true);
   const origins = new Map();
   for (const refdes of refs) {
     const comp = circuit.components.get(refdes);
     if (comp) origins.set(refdes, { x: comp.transform.x, y: comp.transform.y });
   }
+  const labelOrigins = new Map();
+  for (const id of labelIds) {
+    const label = circuit.labels.get(id);
+    if (label) labelOrigins.set(id, { x: label.anchorWorld().x, y: label.anchorWorld().y });
+  }
   drag = {
     mode: 'move', modal: true, startClient, startWorld,
-    startCursor: { ...cursor }, origins, labelOrigins: new Map(),
+    startCursor: { ...cursor }, origins, labelOrigins,
     netRoutes: null, moved: false, committed: false, rubber: null,
     duplicate: false, detached: moveMode === 'detached', startSnapshot: snapshot(),
   };
@@ -2719,6 +3000,30 @@ function finishMoveMutation(moveDrag) {
 
 function commitModalMove() {
   if (!drag?.modal) return false;
+  if (drag.mode === 'labelmove') {
+    if (drag.moved && snapshot() !== drag.startSnapshot) {
+      history.push(drag.startSnapshot);
+      if (history.length > 200) history.shift();
+      future.length = 0;
+    }
+    drag = null;
+    movePending = false;
+    render();
+    return true;
+  }
+  if (drag.mode === 'wireseg' || drag.mode === 'fixedwire' || drag.mode === 'floatingwire') {
+    const point = drag.commitPoint;
+    if (!point) return false;
+    drag.modal = false;
+    canvasMouseUp({
+      clientX: point.client.x,
+      clientY: point.client.y,
+      button: 0,
+      shiftKey: drag.shift,
+    });
+    movePending = false;
+    return true;
+  }
   finishMoveMutation(drag);
   drag = null;
   movePending = false;
@@ -2727,45 +3032,68 @@ function commitModalMove() {
   return true;
 }
 
-function beginCopySource(startWorld, startClient) {
-  const label = pickLabel(startWorld);
-  const hit = matchAt(startWorld);
-  if (label && !label.owner) setLabelSelection([label.id]);
-  else if (hit?.refdes) setSelection(multi.has(hit.refdes) ? [...multi] : [hit.refdes], hit.refdes);
-  else if (label?.owner && circuit.components.has(label.owner)) setSelection([label.owner]);
-  else {
-    logLine('COPY: click a component or label source');
-    return false;
+function copySelectionExists() {
+  return multi.size > 0 || selLabels.size > 0 || selectedWires.size > 0 ||
+    !!selectedWire || selectedNets.size > 0;
+}
+function expandCopyNetSelection() {
+  const netIds = new Set(selectedNets);
+  for (const label of selectedLabels()) if (label.netId) netIds.add(label.netId);
+  const refs = new Set(multi);
+  for (const id of netIds) {
+    const net = circuit.nets.get(id);
+    for (const terminal of net?.terminals || []) refs.add(terminal.comp);
   }
-  if (!copySelection()) return false;
-  const beforePaste = snapshot();
-  cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-  pasteClipboard();
-  const origins = new Map(selectedComps().map((c) => [c.refdes, { x: c.transform.x, y: c.transform.y }]));
-  const labelOrigins = new Map(selectedLabels().map((l) => [l.id, { x: l.anchorWorld().x, y: l.anchorWorld().y }]));
-  drag = {
-    mode: 'move', modal: true, copyPlacement: true, startClient, startWorld,
-    startCursor: { ...cursor }, origins, labelOrigins, netRoutes: null,
-    moved: false, committed: false, rubber: null, duplicate: false,
-    detached: false, startSnapshot: beforePaste,
-  };
-  copyPending = true;
-  render();
-  return true;
+  if (refs.size) setSelection([...refs], selected && refs.has(selected) ? selected : [...refs][0], true);
 }
 
+function beginCopySource(startWorld, startClient) {
+  // An existing selection is the source, not the object under the cursor.
+  // This matters for mixed Ctrl+A/marquee selections and makes the source
+  // click a confirmation gesture rather than an accidental selection change.
+  if (!copySelectionExists()) {
+    const label = pickLabel(startWorld);
+    const hit = matchAt(snap(startWorld.x), snap(startWorld.y));
+    const wireHit = pickWire(startWorld);
+    if (label?.netId) {
+      const net = circuit.nets.get(label.netId);
+      const refs = [...new Set((net?.terminals || []).map((t) => t.comp))];
+      if (refs.length) setSelection(refs);
+      else selectedNets = new Set([label.netId]);
+    } else if (label?.owner && circuit.components.has(label.owner)) {
+      setSelection([label.owner]);
+    } else if (label) {
+      setLabelSelection([label.id]);
+    } else if (hit?.refdes) {
+      setSelection([hit.refdes]);
+    } else if (wireHit) {
+      const key = `${wireHit.net.id}:${wireHit.branch}:${wireHit.seg}`;
+      selectedWire = keyToWire(key);
+      selectedWires = new Set([key]);
+      selectedNets.clear();
+    } else {
+      logLine('COPY: click a component, label, or wire source');
+      return false;
+    }
+  }
+  expandCopyNetSelection();
+  if (!copySelection()) return false;
+  return startCopyGhost(startWorld, startClient);
+}
 function deleteAtPoint(world) {
   const label = pickLabel(world);
   const hitWire = pickWire(world);
   const hitComp = matchAt(snap(world.x), snap(world.y));
   if (label) {
     commit(() => circuit.removeLabel(label.id));
+    clearCheckReport();
     if (selLabels.has(label.id)) setLabelSelection([]);
     render();
     return true;
   }
   if (hitWire) {
     commit(() => circuit.deleteWireSegments(hitWire.net.id, [{ branch: hitWire.branch, segment: hitWire.seg }]));
+    clearCheckReport();
     selectedWire = null;
     selectedWires.clear();
     wiresDirty = true;
@@ -2781,6 +3109,7 @@ function deleteAtPoint(world) {
         if (net) rerouteNet(net);
       }
     });
+    clearCheckReport();
     multi.delete(hitComp.refdes);
     if (selected === hitComp.refdes) selected = multi.size ? [...multi][0] : null;
     render();
@@ -2806,6 +3135,12 @@ function canvasMouseMove(ev) {
   }
 
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
+  if (drag.mode === 'copyghost') {
+    drag.moved = movedOut || drag.moved;
+    moveCopyGhost(w);
+    render();
+    return;
+  }
 
   if (drag.mode === 'pan') {
     // Map the pointer back against the mousedown view (startView) so the pan
@@ -2817,7 +3152,7 @@ function canvasMouseMove(ev) {
     return;
   }
 
-  if (drag.mode === 'zoom' || drag.mode === 'marquee') {
+  if (drag.mode === 'zoom' || drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (movedOut) drag.moved = true;
     const r = worldRect(drag.startWorld, w);
     drag.rubber = { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, color: drag.mode === 'zoom' ? '#a06b13' : '#4f9cf9' };
@@ -2838,6 +3173,19 @@ function canvasMouseMove(ev) {
           if (r.net.branches && r.net.branches[r.branch]) r.net.branches[r.branch] = r.pts;
           else r.net.route = r.pts;
         }
+      }
+      // Rebuild from the drag-start topology before every frame. Without this,
+      // moving a run onto an adjacent run collapses the two terminal legs into
+      // one straight segment, making the original run impossible to drag back.
+      restoreManagedNetSnapshots(drag.netSnapshots);
+      for (const r of drag.runs) {
+        const paths = r.net.branches?.length
+          ? r.net.branches
+          : r.net.route && r.net.route.length >= 2
+            ? [r.net.route]
+            : [r.net.points()];
+        r.pts = paths[r.branch] || paths[0];
+        r.line = r.startLine;
       }
       const axis = drag.orient === 'h' ? w.y : w.x;
       const delta = axis - drag.startAxis;
@@ -2894,7 +3242,9 @@ function canvasMouseMove(ev) {
         }
       } else if (drag.vertex >= 0) {
         const entry = net.fixedPaths[drag.branch];
-        if (entry && drag.vertex > 0 && drag.vertex < entry.points.length - 1) entry.points[drag.vertex] = movePoint(drag.fixedSnapshots.get(net).fixedPaths[drag.branch].points[drag.vertex]);
+        if (entry && drag.vertex > 0 && drag.vertex < entry.points.length - 1) {
+          entry.points[drag.vertex] = movePoint(drag.fixedSnapshots.get(net).fixedPaths[drag.branch].points[drag.vertex]);
+        }
       } else {
         const entry = net.fixedPaths[drag.branch];
         const saved = drag.fixedSnapshots.get(net).fixedPaths[drag.branch];
@@ -2909,18 +3259,7 @@ function canvasMouseMove(ev) {
     return;
   }
 
-  if (drag.mode === 'fixedendpoint') {
-    if (movedOut) drag.moved = true;
-    if (drag.moved) {
-      circuit.moveFixedEndpoint(drag.endpoint, { x: snap(w.x), y: snap(w.y) }, { active: true });
-      cursor = { x: snap(w.x), y: snap(w.y) };
-      wiresDirty = true;
-    }
-    render();
-    return;
-  }
-
-if (drag.mode === 'labelmove') {
+  if (drag.mode === 'labelmove') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
       if (!drag.committed) {
@@ -2934,7 +3273,7 @@ if (drag.mode === 'labelmove') {
           drag.startAnchors = new Map(selectedLabels().map((l) => [l.id, { x: l.anchorWorld().x, y: l.anchorWorld().y }]));
           drag.labelId = selLabel;
           logLine('duplicated selection — dragging the copy');
-        } else {
+        } else if (!drag.modal) {
           history.push(snapshot());
           if (history.length > 200) history.shift();
           future.length = 0;
@@ -2956,10 +3295,10 @@ if (drag.mode === 'labelmove') {
     render();
     return;
   }
-
   if (drag.mode === 'move') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
+      const moved = new Map();
       if (!drag.committed) {
         if (drag.duplicate) {
           // Paste at the original selection anchor first. The paste operation
@@ -3006,19 +3345,17 @@ if (drag.mode === 'labelmove') {
       }
       const dwx = w.x - drag.startWorld.x;
       const dwy = w.y - drag.startWorld.y;
-      const moved = new Map();
       for (const [r, o] of drag.origins) {
         const c = circuit.components.get(r);
         if (!c) continue;
         const nx = snap(o.x + dwx);
         const ny = snap(o.y + dwy);
-        if (drag.detached) {
-          // Detached move intentionally leaves the existing wire geometry and
-          // connectivity records untouched.  Assigning the public transform
-          // directly also avoids the model's deferred connected-edit hook.
-          c.transform.x = nx;
-          c.transform.y = ny;
-        } else circuit.moveComponent(r, nx, ny);
+        // Both move variants preview by assigning the transform directly. A
+        // connected move keeps the existing net membership and re-routes from
+        // the moved terminal positions below; only detached mode leaves the
+        // pre-existing wire geometry behind.
+        c.transform.x = nx;
+        c.transform.y = ny;
         moved.set(r, { dx: nx - o.x, dy: ny - o.y });
       }
       // Free labels selected alongside components follow the drag (owned labels
@@ -3057,6 +3394,10 @@ function canvasMouseUp(ev) {
   if (!drag) return;
   const movedOut = dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
   const w = clientToWorld(ev.clientX, ev.clientY);
+  if (drag.mode === 'copyghost') {
+    render();
+    return;
+  }
 
   if (drag.mode === 'zoom') {
     if (!drag.moved) {
@@ -3065,6 +3406,10 @@ function canvasMouseUp(ev) {
       zoomToWorldRect(worldRect(drag.startWorld, w));
     }
   } else if (drag.mode === 'wireseg') {
+    if (drag.modal) {
+      render();
+      return;
+    }
     const anyMoved = drag.runs.some((r) => JSON.stringify(r.pts) !== JSON.stringify(r.orig));
     if (!drag.moved || !anyMoved) {
       // A plain click (or a jittery gesture that never actually moved a run):
@@ -3082,6 +3427,16 @@ function canvasMouseUp(ev) {
         selectedWires = new Set([drag.key]);
         selectedWire = keyToWire(drag.key);
       }
+      if (drag.doubleWireClick) {
+        setSelection([]);
+        selectedWire = null;
+        selectedWires.clear();
+        selectedNets = new Set([drag.net.id]);
+        cursor = { x: snap(drag.startWorld.x), y: snap(drag.startWorld.y) };
+        drag = null;
+        render();
+        return;
+      }
       drag = null; // a click never leaves a drag armed (a bare mousemove would re-drag the run)
       render();
       return;
@@ -3096,6 +3451,22 @@ function canvasMouseUp(ev) {
           if (r.branch === 0) r.net.route = r.net.branches[0].map((p) => ({ ...p }));
         } else {
           r.net.route = r.pts.map((p) => ({ ...p }));
+        }
+      }
+      for (const r of drag.runs) {
+        const collapsedInterior = r.orig.length > r.pts.length &&
+          r.pts.length === 2 &&
+          r.endpointMeta?.start?.type === 'terminal' &&
+          r.endpointMeta?.end?.type === 'terminal';
+        if (collapsedInterior) {
+          r.net._wireRunHint = {
+            branch: r.branch,
+            orient: r.orient,
+            orig: r.orig.map((p) => ({ ...p })),
+            endpoints: r.pts.map((p) => ({ ...p })),
+          };
+        } else if (r.net._wireRunHint?.branch === r.branch) {
+          r.net._wireRunHint = null;
         }
       }
       const touchedNets = new Set(drag.runs.map((r) => r.net.id));
@@ -3143,6 +3514,10 @@ function canvasMouseUp(ev) {
       return;
     }
   } else if (drag.mode === 'floatingwire') {
+    if (drag.modal) {
+      render();
+      return;
+    }
     if (!drag.moved) {
       if (!drag.shift) setSelection([]);
       selectedNets.clear();
@@ -3187,6 +3562,10 @@ function canvasMouseUp(ev) {
       }
     }
   } else if (drag.mode === 'fixedwire') {
+    if (drag.modal) {
+      render();
+      return;
+    }
     if (!drag.moved) {
       if (drag.fixedShift) {
         if (selectedWires.has(drag.fixedKey)) selectedWires.delete(drag.fixedKey);
@@ -3246,14 +3625,15 @@ function canvasMouseUp(ev) {
         wiresDirty = true;
         logLine(target ? 'attached fixed endpoint' : 'moved fixed endpoint');
       }
-      selectedNets.clear();
-      selectedWire = null;
-      selectedWires.clear();
     }
-  } else if (drag.mode === 'marquee') {
+  } else if (drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (drag.moved) {
       const box = worldRect(drag.startWorld, w);
       applyBoxSelection(box.x0, box.y0, box.x1, box.y1, ev.shiftKey);
+      if (drag.mode === 'deletemarquee' && copySelectionExists()) deleteSelection();
+    } else if (drag.mode === 'deletemarquee') {
+      if (copySelectionExists()) deleteSelection();
+      else deleteAtPoint(w);
     }
   } else if (drag.mode === 'wirepick') {
     if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit, drag.fixedEndpoint, drag.fixedTarget);
@@ -3519,6 +3899,7 @@ function renderNets() {
     row.appendChild(meta);
 
     row.addEventListener('click', (ev) => {
+      clearDiagnosticFocus();
       const now = Date.now();
       const prev = lastNetClick;
       // A plain click re-renders the list, replacing this row node before the
@@ -3686,6 +4067,15 @@ function onWireKey(key) {
     selectedWires.clear();
     selectedNets.clear();
     logLine('wiring cancelled');
+  } else if (key === 'Backspace') {
+    if (wire?.points?.length) {
+      wire.points.pop();
+      const last = wire.points[wire.points.length - 1] || wire.source;
+      if (last && Number.isFinite(last.x) && Number.isFinite(last.y)) {
+        cursor = { x: snap(last.x), y: snap(last.y) };
+      }
+      logLine('removed last wire vertex');
+    }
   } else if (key === 'Enter') {
     commitWireAtCursor();
   } else if (key === 'h') {
@@ -3904,6 +4294,7 @@ function onVisualKey(key) {
   if (key === 'Enter') {
     applyBoxSelection(visual.x, visual.y, cursor.x, cursor.y, false);
     visual = null;
+    if (deleteMode && copySelectionExists()) deleteSelection();
     render();
     return;
   }
@@ -3915,11 +4306,11 @@ function onVisualKey(key) {
 }
 
 function onNormalKey(key, shiftKey = false) {
-  if (movePending && key === 'Enter') {
-    commitModalMove();
+  if (key === 'Enter' && drag?.mode === 'copyghost') {
+    commitCopyGhost();
     return;
   }
-  if (copyPending && key === 'Enter') {
+  if (movePending && key === 'Enter') {
     commitModalMove();
     return;
   }
@@ -4126,7 +4517,14 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'Delete' || key === 'Backspace') {
-    activateDelete();
+    if (deleteMode) {
+      if (deleteSelection()) render();
+    } else if (copySelectionExists()) {
+      deleteSelection();
+      render();
+    } else {
+      activateDelete();
+    }
     return;
   }
 
@@ -4161,13 +4559,12 @@ function logKeymap() {
       'h j k l     move selected comp(s) / cursor (counts: 5l)',
       'r           rotate selected 90 cw',
       'Shift+r     mirror selected horizontally',
-      'Ctrl+Shift+r mirror selected vertically',
+      'Ctrl+r      mirror selected vertically',
       'x / Shift+x check / check and save',
-      'm           modal connected move: source click, destination click/Enter; stays armed',
-      'Shift+m     modal detached move: source click, destination click/Enter; stays armed',
-      'c           modal copy: source click, destination click/Enter; stays armed',
+      'm           modal move any component/label/annotation/wire; stays armed',
+      'Shift+m     modal detached component move; stays armed',
+      'c           repeated copy ghost: click/Enter commits, Esc returns to source',
       'Delete/Backspace persistent delete: click objects; stays armed',
-      'y           copy selected set     C-c       copy selected set',
       'p / C-v     paste the copied set at the cursor (new ids, nets kept)',
       'D           toggle dark mode',
       'w           single managed Wire mode: orthogonal, or F3-selected diagonal path',
@@ -4180,11 +4577,10 @@ function logKeymap() {
       'Tab / S-Tab  cycle singleton component/label forward / backward; otherwise no-op',
       'Ctrl-A      select all components, labels, and non-empty nets',
       'Enter       select component under cursor',
-      'u / C-z     undo    U / C-y / C-r  redo',
+      'u / C-z     undo    U / C-y  redo',
       'F / f       fit view to contents',
       '#           toggle the placement grid on / off',
-      'Delete/Backspace persistent delete: click an object; stays armed until Esc',
-      'Esc         exit the active mode / deselect everything',
+      'Delete/Backspace persistent delete: click an object; Backspace removes the latest wire vertex while wiring',
       'v           visual mode: hjkl grows a box · Enter selects · Esc cancels',
       'i           insert mode (fuzzy-search component & label placement)',
       ':           ex-mode command line (e.g. :connect R1.a R2.a)',
@@ -4276,6 +4672,7 @@ function copySelection() {
           netId: net.id,
           text: label.text,
           align: label.align,
+          netSide: label.netSide,
           x: label.anchorWorld().x,
           y: label.anchorWorld().y,
         })),
@@ -4326,8 +4723,118 @@ function copySelection() {
   return true;
 }
 
+function copyGhostSelection() {
+  return {
+    refs: selectedComps().map((c) => c.refdes),
+    labels: selectedLabels().map((l) => l.id),
+    netIds: [...new Set([...circuit.nets.keys()])],
+    wireKeys: [...selectedWires],
+  };
+}
+
+function restoreCopyGhostSelection(ghost) {
+  setSelection(ghost.refs, ghost.refs[0], true);
+  setLabelSelection(ghost.labels, ghost.labels[0], true);
+  selectedNets = new Set(ghost.netIds.filter((id) => circuit.nets.has(id)));
+  selectedWires = new Set(ghost.wireKeys);
+  selectedWire = selectedWires.size ? keyToWire(selectedWires.values().next().value) : null;
+  validateSelectedWires();
+}
+
+function translateCopyGhost(ghost, dx, dy) {
+  for (const ref of ghost.refs) {
+    const comp = circuit.components.get(ref);
+    if (comp) {
+      comp.transform.x += dx;
+      comp.transform.y += dy;
+    }
+  }
+  for (const id of ghost.labels) {
+    const label = circuit.labels.get(id);
+    if (label && !label.owner) {
+      label.anchor.x += dx;
+      label.anchor.y += dy;
+    }
+  }
+  for (const id of ghost.netIds) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    const move = (p) => ({ x: p.x + dx, y: p.y + dy });
+    if (net.routingMode === 'fixed') {
+      for (const entry of net.fixedPaths) entry.points = entry.points.map(move);
+    } else {
+      if (net.route) net.route = net.route.map(move);
+      if (net.branches) net.branches = net.branches.map((path) => path.map(move));
+    }
+  }
+  circuit.syncJunctionSolders();
+}
+
+function startCopyGhost(startWorld, startClient, anchorShift = null) {
+  if (!clipboard) return false;
+  const beforeSnapshot = snapshot();
+  const existingNetIds = new Set(circuit.nets.keys());
+  const start = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  cursor = start;
+  pasteClipboard({ recordHistory: false, connect: false });
+  const ghost = copyGhostSelection();
+  ghost.netIds = ghost.netIds.filter((id) => !existingNetIds.has(id));
+  // The source click is the placement anchor, not the clipboard set center.
+  // Translate the freshly pasted set back by the same offset so the clicked
+  // source point remains under the cursor while all relative geometry stays
+  // unchanged.
+  const shift = anchorShift || {
+    x: clipboard.anchor.x - start.x,
+    y: clipboard.anchor.y - start.y,
+  };
+  translateCopyGhost(ghost, shift.x, shift.y);
+  ghost.anchorShift = { ...shift };
+  ghost.beforeSnapshot = beforeSnapshot;
+  ghost.baseSnapshot = snapshot();
+  ghost.startWorld = start;
+  drag = {
+    mode: 'copyghost',
+    startWorld: start,
+    startClient,
+    ghost,
+    moved: false,
+    rubber: null,
+  };
+  copyPending = true;
+  render();
+  return true;
+}
+
+function moveCopyGhost(w) {
+  if (!drag?.ghost) return;
+  const ghost = drag.ghost;
+  circuit = Circuit.fromJSON(JSON.parse(ghost.baseSnapshot));
+  const dx = snap(w.x) - snap(drag.startWorld.x);
+  const dy = snap(w.y) - snap(drag.startWorld.y);
+  translateCopyGhost(ghost, dx, dy);
+  restoreCopyGhostSelection(ghost);
+  cursor = { x: snap(w.x), y: snap(w.y) };
+  wiresDirty = true;
+}
+
+function commitCopyGhost() {
+  if (!drag?.ghost) return false;
+  const ghost = drag.ghost;
+  circuit.connectCoincident(ghost.refs);
+  circuit.ensureUniqueTerminals(ghost.refs);
+  circuit.syncJunctionSolders();
+  history.push(ghost.beforeSnapshot);
+  if (history.length > 200) history.shift();
+  future.length = 0;
+  const anchorShift = ghost.anchorShift;
+  drag = null;
+  copyPending = false;
+  startCopyGhost({ x: cursor.x, y: cursor.y }, { x: 0, y: 0 }, anchorShift);
+  return true;
+}
+
 /** Paste the clipboard at the cursor (re-centred on the selection anchor). */
-function pasteClipboard() {
+function pasteClipboard({ recordHistory = true, connect = true } = {}) {
   if (!clipboard) {
     logLine('nothing copied');
     return;
@@ -4337,7 +4844,7 @@ function pasteClipboard() {
   const addedComps = [];
   const addedLabels = [];
   const addedNetLabels = [];
-  commit(() => {
+  const apply = () => {
     const refMap = new Map();
     const wasLoading = circuit._loading;
     // Do not let addComponent's coincidence hook create memberships before
@@ -4382,8 +4889,8 @@ function pasteClipboard() {
           const anchor = { x: label.x + dx, y: label.y + dy };
           const targetNet = netMap.get(label.netId) || net;
           const pasted = targetNet.name
-            ? circuit.addNetLabel(targetNet.id, { anchor, align: label.align })
-            : circuit.addLabel({ text: '', netId: targetNet.id, x: anchor.x, y: anchor.y, align: label.align });
+            ? circuit.addNetLabel(targetNet.id, { anchor, align: label.align, netSide: label.netSide })
+            : circuit.addLabel({ text: '', netId: targetNet.id, netSide: label.netSide, x: anchor.x, y: anchor.y, align: label.align });
           addedNetLabels.push(pasted.id);
         }
       }
@@ -4402,7 +4909,7 @@ function pasteClipboard() {
       }
       circuit._loading = wasLoading;
       // Coincidence is resolved once, against the complete copied topology.
-      circuit.connectCoincident(addedComps);
+      if (connect) circuit.connectCoincident(addedComps);
       circuit.ensureUniqueTerminals(addedComps);
       circuit.syncJunctionSolders();
       setSelection(addedComps, undefined, true);
@@ -4412,7 +4919,9 @@ function pasteClipboard() {
     } finally {
       circuit._loading = wasLoading;
     }
-  });
+  };
+  if (recordHistory) commit(apply);
+  else apply();
   render();
 }
 
@@ -4717,13 +5226,13 @@ function activateSelect() {
   copyPending = false;
   render();
 }
-
 function activateVisual() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before box selection'); return; }
   mode = 'normal';
   moveMode = null;
   copyMode = false;
-  deleteMode = false;
+  // Keep Delete mode armed so a visual box can delete the selected set on
+  // Enter, matching the immediate-delete semantics of click selection.
   movePending = false;
   copyPending = false;
   labelMode = null;
@@ -4734,6 +5243,12 @@ function activateVisual() {
 
 function activateDelete() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before deleting'); return; }
+  if (copySelectionExists()) {
+    deleteSelection();
+    deleteMode = false;
+    render();
+    return;
+  }
   mode = 'normal';
   visual = null;
   moveMode = null;
@@ -4787,11 +5302,12 @@ function activateCopy() {
   copyPending = false;
   labelMode = null;
   copyMode = true; // source click and placement are handled by the canvas
-  logLine('COPY: click the source component or label, move the copy, then click/Enter (Esc exits)');
+  logLine('COPY: click an object, or use the existing selection; move the copy, then click/Enter (Esc exits)');
   render();
 }
 
 function selectedTransform(action) {
+  clearDiagnosticFocus();
   if (hasWireDraft()) { logLine('finish or cancel the active wire before transforming'); return; }
   if (!selectedComps().length && !selectedLabels().length && !selectedWires.size && !selectedWire && !selectedNets.size) {
     logLine('nothing selected to transform');
@@ -5108,6 +5624,10 @@ if (clearDialog) {
     if (clearDialog.returnValue === 'confirm') clearCanvas();
   });
 }
+clearCheckButtonEl?.addEventListener('click', () => {
+  clearCheckReport();
+  render();
+});
 
 if (deleteDialog) {
   deleteDialog.addEventListener('close', () => {
@@ -5253,15 +5773,14 @@ window.addEventListener('keydown', (ev) => {
     } else if (k === 'y') {
       ev.preventDefault();
       redo();
-    } else if (k === 'r' && ev.shiftKey) {
+    } else if (k === 'r' && !ev.shiftKey) {
       ev.preventDefault();
       if (mode === 'insert' && pendingPlace?.kind === 'component') {
         pendingPlace.mirrorY = pendingPlace.mirrorY === null ? true : !pendingPlace.mirrorY;
         render();
-      } else selectedTransform('mirror-y');
-    } else if (k === 'r') {
-      ev.preventDefault();
-      redo();
+      } else {
+        selectedTransform('mirror-y');
+      }
     } else if (k === 'a') {
       ev.preventDefault();
       // Preserve the component selection while adding labels: the selection
@@ -5303,7 +5822,16 @@ window.addEventListener('keydown', (ev) => {
   // Escape cancels an in-progress mouse drag (e.g. a stuck wire re-route).
   if (key === 'Escape' && drag) {
     ev.preventDefault();
+    const wasCopyGhost = drag.mode === 'copyghost';
     cancelDrag();
+    if (wasCopyGhost) {
+      copyMode = true;
+      moveMode = null;
+      movePending = false;
+      copyPending = false;
+      render();
+      return;
+    }
     if (movePending || copyPending) {
       moveMode = null;
       copyMode = false;

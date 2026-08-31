@@ -385,11 +385,38 @@ function steinerDP(graph, terminals) {
   return segs;
 }
 
+/** Turn a polyline's grid edges into a bend count. */
+function bendCount(path) {
+  let bends = 0;
+  let previous = null;
+  for (let i = 1; i < path.length; i++) {
+    const current = path[i - 1].x === path[i].x ? 'v' : 'h';
+    if (previous && current !== previous) bends++;
+    previous = current;
+  }
+  return bends;
+}
+
+/** Replace a shortest staircase between two branch points with an equally
+ * short route having fewer bends when the routing environment permits it. */
+function simplifyBranch(path, env) {
+  if (!path || path.length < 3) return path;
+  const candidate = smartRoute(path[0], path[path.length - 1], env);
+  if (!candidate || candidate.length < 2) return path;
+  const oldLength = routeLength(path);
+  const newLength = routeLength(candidate);
+  if (newLength < oldLength ||
+      (newLength === oldLength && bendCount(candidate) < bendCount(path))) {
+    return candidate;
+  }
+  return path;
+}
+
 /** Turn a Steiner tree's segment set into renderable branches. Branch points are
  *  the terminals plus every vertex whose degree differs from 2; each maximal
  *  chain between two branch points becomes one polyline (collinear cells
  *  compressed away). */
-function branchesFromSegments(segs, graph, allTerminalPts) {
+function branchesFromSegments(segs, graph, allTerminalPts, env) {
   const { V, id, px } = graph;
   if (segs.size === 0) return [];
   const adj = new Map();
@@ -424,7 +451,8 @@ function branchesFromSegments(segs, graph, allTerminalPts) {
         prev = cur;
         cur = next;
       }
-      branches.push(compressElbow(poly.map(px)));
+      const points = compressElbow(poly.map(px));
+      branches.push(simplifyBranch(points, env));
     }
   }
   return branches;
@@ -468,7 +496,7 @@ export function steinerBranches(terminals, env = { rects: [], pins: new Map(), w
     }
     return reduceBranches(paths, unique);
   }
-  return branchesFromSegments(tree.segs, tree.graph, pts);
+  return branchesFromSegments(tree.segs, tree.graph, pts, env);
 }
 
 /** Compute the Steiner tree's segment set, growing the routing region until all
@@ -877,7 +905,7 @@ function routeLength(pts) {
   return len;
 }
 
-/** Compare two candidate routes by (bbox, wireCross, overlap, turns, conform, length). */
+/** Compare candidates lexicographically by safety, then length, then bends. */
 function cmpScore(a, b) {
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
     if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
@@ -890,9 +918,8 @@ function scoreCandidate(pts, env) {
   // Crossing is a legal visual operation; collinear overlap is not. Prefer
   // separate wire channels before minimizing crossings. Labels are soft:
   // component clearance is hard, label clearance steers. After spacing and
-  // pin-direction conformity, minimize the route length (prefers symmetric
-  // minimal nets); turn count is the weakest term.
-  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), routeLength(pts), Math.max(0, pts.length - 2)];
+  // pin-direction conformity, minimize route length, then actual bends.
+  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), routeLength(pts), bendCount(pts)];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */
@@ -940,13 +967,13 @@ function astar(from, to, env) {
       return false;
     };
     const occupied = (a, b) => (env.wires || []).some((wire) => wire.some((p, i) => i > 0 && overlapSpan(a, b, wire[i - 1], p)));
-    const TURN = 6;
+    const LENGTH_WEIGHT = 1000000;
     const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     const g = new Map();
     const back = new Map();
     const open = [];
     const addOpen = (cost, cx0, cy0, d) => {
-      open.push([cost + Math.abs(cx0 - tx) + Math.abs(cy0 - ty), cost, cx0, cy0, d]);
+      open.push([cost + (Math.abs(cx0 - tx) + Math.abs(cy0 - ty)) * LENGTH_WEIGHT, cost, cx0, cy0, d]);
     };
     for (let d = 0; d < 4; d++) {
       const nx = sx + D[d][0];
@@ -954,9 +981,9 @@ function astar(from, to, env) {
       if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
       if (!terminalEdgeValid({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
       if (occupied({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
-      g.set(`${nx},${ny},${d}`, 1);
+      g.set(`${nx},${ny},${d}`, LENGTH_WEIGHT);
       back.set(`${nx},${ny},${d}`, `${sx},${sy},-1`);
-      addOpen(1, nx, ny, d);
+      addOpen(LENGTH_WEIGHT, nx, ny, d);
     }
     let best = null;
     while (open.length) {
@@ -978,7 +1005,7 @@ function astar(from, to, env) {
         if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
         if (!terminalEdgeValid({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
         if (occupied({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
-        const nc = cost + 1 + (nd === d ? 0 : TURN);
+        const nc = cost + LENGTH_WEIGHT + (nd === d ? 0 : 1);
         const nk = `${nx},${ny},${nd}`;
         if (nc < (g.get(nk) ?? Infinity)) {
           g.set(nk, nc);

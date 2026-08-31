@@ -350,12 +350,11 @@ export function parseTermRef(s) {
 
 /**
  * A free-floating or component-owned text label. The label's ANCHOR is always
- * a grid point. The label's rendered box is derived from the tight bounding
- * box of its text metric, then expanded so BOTH dimensions are even multiples
- * of a grid square (2, 4, 6 ... cells) and centered on the anchor. Changing
- * alignment only changes the text position inside this stationary box. The box
- * resizes around the same center when the text changes (setText), matching the
- * inline preview geometry.
+ * a grid point. The rendered box is derived from the tight text bounds, then
+ * expanded so BOTH dimensions are even multiples of a grid square (2, 4, 6
+ * ... cells). Free and owned labels are centered on the anchor; net labels use
+ * the anchor as their electrical attachment point and place one box edge on it.
+ * Changing text resizes the box while retaining that attachment relationship.
  * Owned labels ("instance labels", e.g. M1 on a transistor) live in local
  * component space via `offset` and follow the owner's transform.
  */
@@ -372,6 +371,10 @@ export class LabelInstance {
     this.offset = this.owner && opts.offset ? { x: snap(opts.offset.x), y: snap(opts.offset.y) } : null;
     const p = snapPoint(opts.x || 0, opts.y || 0);
     this.anchor = { x: p.x, y: p.y };
+    const net = this.netId ? circuit.nets.get(this.netId) : null;
+    this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
+      ? opts.netSide
+      : net ? circuit._defaultNetLabelSide(net, this.anchor) : this.netId ? 'above' : null;
   }
 
   get text() {
@@ -401,6 +404,10 @@ export class LabelInstance {
     if (this.netId) {
       this.owner = null;
       this.offset = null;
+      const net = this.circuit.nets.get(this.netId);
+      if (!this.netSide && net) this.netSide = this.circuit._defaultNetLabelSide(net, this.anchor);
+    } else {
+      this.netSide = null;
     }
     return this;
   }
@@ -451,25 +458,32 @@ export class LabelInstance {
   }
 
   /**
-   * The rendered box uses even grid dimensions and is always centered on the
-   * grid anchor. Alignment affects only textPos(), not this selection/routing
-   * geometry.
+   * Free and owned labels stay centered on their anchor. Net labels use the
+   * anchor as the electrical attachment point and put one box edge on it, so
+   * the text never sits on top of the wire.
    */
   bbox() {
     const a = this.anchorWorld();
     const w = this.colWidth() * GRID;
     const h = this.rowHeight() * GRID;
+    if (this.netId) {
+      if (this.netSide === 'below') return { x: a.x - w / 2, y: a.y, w, h };
+      if (this.netSide === 'left') return { x: a.x - w, y: a.y - h / 2, w, h };
+      if (this.netSide === 'right') return { x: a.x, y: a.y - h / 2, w, h };
+      return { x: a.x - w / 2, y: a.y - h, w, h };
+    }
     return { x: a.x - w / 2, y: a.y - h / 2, w, h };
   }
 
   /**
    * Where to draw the text and its text-anchor so the text is horizontally
-   * aligned within the box (left/center/right) and vertically centered on the
-   * anchor. Returns {x, y, anchor} for an SVG <text> element.
+   * aligned within the box (left/center/right) and vertically centered in it.
+   * Returns {x, y, anchor} for an SVG <text> element.
    */
   textPos() {
-    const a = this.anchorWorld();
     const b = this.bbox();
+    const centerX = b.x + b.w / 2;
+    const centerY = b.y + b.h / 2;
     let x, anchor;
     if (this.align === 'left') {
       x = b.x;
@@ -478,12 +492,12 @@ export class LabelInstance {
       x = b.x + b.w;
       anchor = 'end';
     } else {
-      x = a.x;
+      x = centerX;
       anchor = 'middle';
     }
     // Baseline sits below the box center so the cap height is vertically
-    // centered on the anchor (grid point).
-    const y = a.y + LABEL_CAP_H / 2;
+    // centered on the label box, including side-attached net labels.
+    const y = centerY + LABEL_CAP_H / 2;
     return { x, y, anchor };
   }
 
@@ -516,13 +530,6 @@ export class LabelInstance {
     }
     this.anchor = { x: wx, y: wy };
   }
-
-  /** Translate the anchor by a grid-aligned delta. */
-  translate(dx, dy) {
-    const a = this.anchorWorld();
-    this.moveTo(a.x + dx, a.y + dy);
-  }
-
   toJSON() {
     return {
       id: this.id,
@@ -530,6 +537,7 @@ export class LabelInstance {
       align: this.align,
       owner: this.owner,
       netId: this.netId,
+      netSide: this.netSide,
       offset: this.offset ? { ...this.offset } : null,
       anchor: this.owner ? null : { ...this.anchor },
     };
@@ -990,6 +998,20 @@ export class Circuit {
     return net;
   }
 
+  _defaultNetLabelSide(net, anchor) {
+    const p = snapPoint(anchor?.x, anchor?.y);
+    for (const path of net.paths()) {
+      for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1];
+        const b = path[i];
+        if (!pointOnPath(p, [a, b])) continue;
+        if (a.y === b.y) return 'above';
+        if (a.x === b.x) return 'left';
+      }
+    }
+    return 'above';
+  }
+
   addNetLabel(netOrId, nameOrOpts = {}, maybeOpts = {}) {
     const net = this._resolveNet(netOrId);
     const opts = typeof nameOrOpts === 'string'
@@ -1004,7 +1026,10 @@ export class Circuit {
     if (opts.text !== undefined || opts.name !== undefined) {
       this.renameNet(net, targetName);
     }
-    return this.addLabel({ ...opts, text: net.name, name: undefined, owner: null, netId: net.id, offset: null, x: anchor.x, y: anchor.y });
+    const netSide = ['above', 'below', 'left', 'right'].includes(opts.netSide)
+      ? opts.netSide
+      : this._defaultNetLabelSide(net, anchor);
+    return this.addLabel({ ...opts, text: net.name, name: undefined, owner: null, netId: net.id, netSide, offset: null, x: anchor.x, y: anchor.y });
   }
 
   _netLabelAnchorOnPath(netOrId, point) {
@@ -3077,7 +3102,7 @@ export class Circuit {
     }
   }
 
-  _nearestNetPathPoint(net, point) {
+  _nearestNetPathAttachment(net, point) {
     let best = null;
     let bestDistance = Infinity;
     for (const path of net.paths()) {
@@ -3093,10 +3118,19 @@ export class Circuit {
         const candidate = pointOnPath(projected, [a, b]) ? projected :
           (Math.abs(point.x - a.x) + Math.abs(point.y - a.y) <= Math.abs(point.x - b.x) + Math.abs(point.y - b.y) ? a : b);
         const distance = Math.abs(point.x - candidate.x) + Math.abs(point.y - candidate.y);
-        if (distance < bestDistance) { bestDistance = distance; best = { ...candidate }; }
+        if (distance >= bestDistance) continue;
+        const side = Math.abs(dx) >= Math.abs(dy)
+          ? (point.y <= candidate.y ? 'above' : 'below')
+          : (point.x <= candidate.x ? 'left' : 'right');
+        bestDistance = distance;
+        best = { point: { ...candidate }, side };
       }
     }
     return best;
+  }
+
+  _nearestNetPathPoint(net, point) {
+    return this._nearestNetPathAttachment(net, point)?.point || null;
   }
 
   _repairNetLabels(net) {
@@ -3356,6 +3390,7 @@ export class Circuit {
           align: l.align,
           owner: l.owner || null,
           netId: l.netId || null,
+          netSide: l.netSide,
           offset: l.offset || null,
           x: l.anchor ? l.anchor.x : 0,
           y: l.anchor ? l.anchor.y : 0,
