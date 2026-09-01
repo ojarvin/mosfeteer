@@ -193,7 +193,7 @@ export function evaluate(circuit) {
       }
     }
   }
-  const labels = [...circuit.labels.values()];
+  const labels = [...circuit.labels.values()].filter((label) => !['arrow', 'box'].includes(label.kind));
   const labelComponentOverlaps = [];
   const labelOverlaps = [];
   const netLabelIssues = [];

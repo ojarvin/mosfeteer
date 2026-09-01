@@ -810,7 +810,8 @@ function updateStyleControls() {
     if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
   }
   const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean)];
-  const supportsLine = [...objects, ...wireTargets].some((o) => o.net || ['arrow', 'box'].includes(o.kind));
+  const hasWireSelection = wireTargets.length > 0 || selectedWire || selectedWires.size > 0 || selectedNets.size > 0;
+  const supportsLine = hasWireSelection || objects.some((o) => ['arrow', 'box'].includes(o.kind));
   line.disabled = (!objects.length && !wireTargets.length) || !supportsLine;
   color.disabled = width.disabled = !objects.length && !wireTargets.length;
   if (!objects.length && !wireTargets.length) {

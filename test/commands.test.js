@@ -627,6 +627,18 @@ test('evaluate reports free and owned label/component overlaps', () => {
   assert.match(res.text, /label-component overlaps/);
 });
 
+test('evaluate ignores visual arrow and box annotations', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addAnnotation('box', { id: 'B1', x: -80, y: -40, end: { x: 80, y: 40 } });
+  c.addAnnotation('arrow', { id: 'A1', x: -120, y: 0, end: { x: 120, y: 0 } });
+
+  const rep = evaluate(c);
+  assert.equal(rep.labelComponentOverlaps.length, 0);
+  assert.equal(rep.labelOverlaps.length, 0);
+  assert.equal(rep.issues.some((issue) => issue.labelId === 'B1' || issue.labelId === 'A1'), false);
+});
+
 test('evaluate reports overlapping distinct label bboxes', () => {
   const c = fresh();
   c.addLabel({ id: 'L1', text: 'A', x: 0, y: 0 });

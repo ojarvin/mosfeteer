@@ -1235,6 +1235,8 @@ export class Circuit {
     }
     const labelRects = [];
     for (const l of this.labels.values()) {
+      // Shape annotations are visual-only and must not influence routing.
+      if (['arrow', 'box'].includes(l.kind)) continue;
       // The net being re-laid-out may pass through its own label. Other net
       // labels remain soft obstacles just like free annotations.
       if (l.isNetLabel() && excluded.has(l.netId)) continue;

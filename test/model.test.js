@@ -1610,6 +1610,17 @@ test('net-label anchors must be drawable, IDs are unique, and foreign labels rem
   assert.equal(env.labelRects.some((r) => r.x === lb.bbox().x && r.y === lb.bbox().y), true);
 });
 
+test('visual annotations are excluded from routing label obstacles', () => {
+  const c = new Circuit();
+  c.addAnnotation('box', { id: 'B1', x: 0, y: 0, end: { x: 400, y: 160 } });
+  c.addAnnotation('arrow', { id: 'A1', x: 0, y: 0, end: { x: 400, y: 0 } });
+  c.addLabel({ id: 'L1', text: 'NOTE', x: 800, y: 0 });
+  const env = c._netEnv();
+  assert.equal(env.labelRects.some((r) => r.x === c.labels.get('B1').bbox().x), false);
+  assert.equal(env.labelRects.some((r) => r.x === c.labels.get('A1').bbox().x), false);
+  assert.equal(env.labelRects.some((r) => r.x === c.labels.get('L1').bbox().x), true);
+});
+
 test('merge rollback restores net-label attachments and named plus unnamed merges inherit the name', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
