@@ -1431,6 +1431,14 @@ test('annotation labels are separate child labels that move and delete independe
   assert.equal([...restored.labels.values()].some((l) => l.parent === shape.id), true);
 });
 
+test('boxes default to dashed style and child labels inherit annotation color', () => {
+  const c = new Circuit();
+  const box = c.addAnnotation('box', { x: 0, y: 0, end: { x: 160, y: 160 }, text: 'note', style: { color: '#d00' } });
+  assert.equal(box.style.lineStyle, 'dashed');
+  const child = [...c.labels.values()].find((label) => label.parent === box.id);
+  assert.equal(child.style.color, '#d00');
+});
+
 test('setText resizes the bbox but keeps the anchor fixed', () => {
   const c = new Circuit();
   const l = c.addLabel({ text: 'R', x: 400, y: 0 });

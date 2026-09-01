@@ -371,6 +371,11 @@ export class LabelInstance {
     if (this.parent && (this.netId || opts.owner)) throw new Error('child labels cannot have owners or nets');
     this._text = opts.text !== undefined ? String(opts.text) : 'label';
     this.align = ['center', 'left', 'right'].includes(opts.align) ? opts.align : 'center';
+    this.style = {
+      color: opts.style?.color || '#111',
+      lineStyle: opts.style?.lineStyle || 'solid',
+      width: opts.style?.width || 'normal',
+    };
     this.owner = this.netId ? null : (opts.owner || null);
     this.offset = this.owner && opts.offset ? { x: snap(opts.offset.x), y: snap(opts.offset.y) } : null;
     const p = snapPoint(opts.x || 0, opts.y || 0);
@@ -1007,8 +1012,23 @@ export class Circuit {
     const b = opts.end ? { x: snap(opts.end.x), y: snap(opts.end.y) } : a;
     if (kind === 'arrow' && Math.hypot(a.x - b.x, a.y - b.y) < GRID * 2) throw new Error('arrow must have non-zero length and minimum length of two grid cells');
     if (kind === 'box' && (a.x === b.x || a.y === b.y)) throw new Error('box must have non-zero width and height');
-    const shape = this.addLabel({ ...opts, kind, text: '', x: a.x, y: a.y, end: b });
-    if (opts.text) this.addLabel({ text: opts.text, align: opts.align, parent: shape.id, x: opts.textAnchor?.x ?? (a.x + b.x) / 2, y: opts.textAnchor?.y ?? (a.y + b.y) / 2 });
+    const shape = this.addLabel({
+      ...opts,
+      kind,
+      text: '',
+      style: { ...(opts.style || {}), lineStyle: opts.style?.lineStyle || (kind === 'box' ? 'dashed' : 'solid') },
+      x: a.x,
+      y: a.y,
+      end: b,
+    });
+    if (opts.text) this.addLabel({
+      text: opts.text,
+      align: opts.align,
+      parent: shape.id,
+      x: opts.textAnchor?.x ?? (a.x + b.x) / 2,
+      y: opts.textAnchor?.y ?? (a.y + b.y) / 2,
+      style: { color: shape.style.color },
+    });
     return shape;
   }
 

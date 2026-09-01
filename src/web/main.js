@@ -793,8 +793,12 @@ function applySelectedStyle(field, value) {
     for (const obj of objects) {
       if (field === 'lineStyle' && !['arrow', 'box'].includes(obj.kind) && !obj.routingMode) continue;
       obj.style = { ...(obj.style || {}), [field]: next };
+      if (field === 'color' && (obj.kind === 'arrow' || obj.kind === 'box')) {
+        for (const child of circuit.labels.values()) {
+          if (child.parent === obj.id) child.style = { ...(child.style || {}), color: next };
+        }
+      }
     }
-    for (const { net, key } of wireTargets) net.wireStyles[key] = { ...(net.wireStyles[key] || net.style || {}), [field]: next };
   });
   render();
 }
