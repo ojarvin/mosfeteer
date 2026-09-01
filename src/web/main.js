@@ -3668,6 +3668,7 @@ function canvasMouseMove(ev) {
       const oldEnd = { ...drag.label.end };
       const p = { x: snap(w.x), y: snap(w.y) };
       if (drag.endpoint.startsWith('corner:')) {
+        const corner = drag.endpoint.slice(7);
         const x0 = Math.min(drag.label.anchor.x, drag.label.end.x);
         const x1 = Math.max(drag.label.anchor.x, drag.label.end.x);
         const y0 = Math.min(drag.label.anchor.y, drag.label.end.y);
