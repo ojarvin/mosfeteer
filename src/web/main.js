@@ -766,6 +766,10 @@ function selectedLabels() {
   return [...selLabels].map((id) => circuit.labels.get(id)).filter(Boolean);
 }
 
+function selectedLabel() {
+  return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
+}
+
 function applySelectedStyle(field, value) {
   const comps = selectedComps();
   const labels = selectedLabels();
