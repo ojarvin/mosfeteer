@@ -1156,8 +1156,10 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     if (savedSelection.selectedWire && !selectedWire) syncSelectedWire();
   };
   try {
+    const selectedAnnotationIds = new Set(selectedLabels().filter((l) => l.kind === 'arrow' || l.kind === 'box').map((l) => l.id));
     for (const c of selectedComps()) c.transform = transformComponentWorld(c.transform, center, operation);
     for (const l of selectedLabels()) {
+      if (l.parent && selectedAnnotationIds.has(l.parent)) continue;
       if (l.owner) continue;
       if (l.kind === 'arrow' || l.kind === 'box') {
         l.anchor = transformWorldPoints([l.anchor], center, operation)[0];
@@ -2907,16 +2909,6 @@ function canvasMouseDown(ev) {
   }
 
   if (moveMode) {
-    const annotationHit = annotationGeometryAt(startWorld);
-    if (annotationHit) {
-      armModalLabelMove(annotationHit, startWorld, startClient);
-      return;
-    }
-    const labelHit = pickLabel(startWorld);
-    if (labelHit) {
-      armModalLabelMove(labelHit, startWorld, startClient);
-      return;
-    }
     const moveWireHit = pickWire(startWorld);
     if (moveWireHit && moveWireHit.net.routingMode === 'fixed') {
       fixedWireDragAt(moveWireHit, startWorld, startClient, ev);
@@ -2941,9 +2933,19 @@ function canvasMouseDown(ev) {
     if (moveHit?.refdes && circuit.components.has(moveHit.refdes)) {
       cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
       armModalMove(moveHit, startWorld, startClient);
-    } else {
-      logLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a component, label, or wire`);
+      return;
     }
+    const labelHit = pickLabel(startWorld);
+    if (labelHit) {
+      armModalLabelMove(labelHit, startWorld, startClient);
+      return;
+    }
+    const annotationHit = annotationGeometryAt(startWorld);
+    if (annotationHit) {
+      armModalLabelMove(annotationHit, startWorld, startClient);
+      return;
+    }
+    logLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a component, label, or wire`);
     return;
   }
   const endpointHit = annotationEndpointAt(startWorld);
@@ -5448,9 +5450,14 @@ function translateCopyGhost(ghost, dx, dy) {
   }
   for (const id of ghost.labels) {
     const label = circuit.labels.get(id);
-    if (label && !label.owner) {
-      label.anchor.x += dx;
-      label.anchor.y += dy;
+    if (!label || label.owner) continue;
+    label.anchor.x += dx;
+    label.anchor.y += dy;
+    if (label.kind === 'arrow' || label.kind === 'box') {
+      label.end.x += dx;
+      label.end.y += dy;
+      label.textAnchor.x += dx;
+      label.textAnchor.y += dy;
     }
   }
   for (const id of ghost.netIds) {
