@@ -2935,12 +2935,12 @@ function canvasMouseDown(ev) {
       armModalMove(moveHit, startWorld, startClient);
       return;
     }
-    const labelHit = pickLabel(startWorld);
+    const labelHit = pickLabel(startWorld) || annotationTextAt(startWorld);
     if (labelHit) {
       armModalLabelMove(labelHit, startWorld, startClient);
       return;
     }
-    const annotationHit = annotationGeometryAt(startWorld);
+    const annotationHit = annotationGeometryAt(startWorld) || annotationEndpointAt(startWorld)?.label;
     if (annotationHit) {
       armModalLabelMove(annotationHit, startWorld, startClient);
       return;
