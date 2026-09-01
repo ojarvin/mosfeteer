@@ -17,8 +17,9 @@ export const pmos = defineSymbol({
   ],
   bbox: { x: -120, y: -80, w: 120, h: 160 },
   graphics: [
-    // Gate lead
-    { kind: 'path', d: 'M -120 0 L -75.58 0', style: 'symbol' },
+    // Keep a small clearance between the lead and the gate-bar edge so the
+    // butt-capped lead cannot peek into the drain/source gap.
+    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
     // Gate bars (filled)
     { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
     { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
@@ -26,7 +27,7 @@ export const pmos = defineSymbol({
     { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
     // Source stub with filled arrow pointing INTO the channel (PMOS)
     { kind: 'path', d: 'M -54.65 27.91 L 0 27.91 L 0 80', style: 'symbol' },
-    { kind: 'polygon', points: [{ x: -54.65, y: 28.49 }, { x: -17.44, y: 12.21 }, { x: -17.44, y: 44.77 }], fill: 'foreground' },
+    { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' },
   ],
   textPos: { x: -26, y: -30, anchor: 'middle' },
   refPos: null,

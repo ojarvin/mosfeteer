@@ -97,14 +97,12 @@ export function pruneRoute(points, protectedPoints = []) {
 // Multi-terminal net routing: rectilinear Steiner minimum tree (RSMT) over the
 // coarse 40-grid with obstacle avoidance. This is the exact version of the
 // "rat nest" router: Dreyfus–Wagner subset DP on a grid graph whose vertices
-// are every cell of the terminals' padded bounding box and whose edges are the
-// grid steps that stay clear of component bodies (hard) and steer off label
-// boxes (soft). Edge cost is one cell plus tiny tie-break penalties that prefer
-// pin-conformity and label clearance — total length is the primary objective,
-// spacing is a hard constraint, and the number of bends/junctions falls out of
-// the length optimum (a single centered T for a three-way Y). Nets too large
-// for the exponential DP fall back to the classic MST-of-shortest-paths Steiner
-// approximation, so any net is routable.
+// are every cell of the terminals' padded bounding box; edge cost is one cell
+// plus tiny tie-break penalties that prefer pin-conformity and label clearance.
+// The DP minimizes total length; visible candidate routes prioritize fewer bends
+// before comparing lengths. Nets too large for the exponential DP fall back to
+// the classic MST-of-shortest-paths Steiner approximation, so any net is
+// routable.
 // ---------------------------------------------------------------------------
 
 // Pin-conformity penalties for the first/last segment of a net. Leaving a pin
@@ -405,13 +403,13 @@ function simplifyBranch(path, env) {
   if (!candidate || candidate.length < 2) return path;
   const oldLength = routeLength(path);
   const newLength = routeLength(candidate);
-  if (newLength < oldLength ||
-      (newLength === oldLength && bendCount(candidate) < bendCount(path))) {
+  const oldBends = bendCount(path);
+  const newBends = bendCount(candidate);
+  if (newBends < oldBends || (newBends === oldBends && newLength < oldLength)) {
     return candidate;
   }
   return path;
 }
-
 /** Turn a Steiner tree's segment set into renderable branches. Branch points are
  *  the terminals plus every vertex whose degree differs from 2; each maximal
  *  chain between two branch points becomes one polyline (collinear cells
@@ -905,7 +903,7 @@ function routeLength(pts) {
   return len;
 }
 
-/** Compare candidates lexicographically by safety, then length, then bends. */
+/** Compare candidates lexicographically by safety, then bends, then length. */
 function cmpScore(a, b) {
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
     if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
@@ -918,8 +916,8 @@ function scoreCandidate(pts, env) {
   // Crossing is a legal visual operation; collinear overlap is not. Prefer
   // separate wire channels before minimizing crossings. Labels are soft:
   // component clearance is hard, label clearance steers. After spacing and
-  // pin-direction conformity, minimize route length, then actual bends.
-  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), routeLength(pts), bendCount(pts)];
+  // pin-direction conformity, minimize visible bends, then route length.
+  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), bendCount(pts), routeLength(pts)];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */
@@ -967,7 +965,8 @@ function astar(from, to, env) {
       return false;
     };
     const occupied = (a, b) => (env.wires || []).some((wire) => wire.some((p, i) => i > 0 && overlapSpan(a, b, wire[i - 1], p)));
-    const LENGTH_WEIGHT = 1000000;
+    const LENGTH_WEIGHT = 1;
+    const BEND_WEIGHT = 20;
     const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     const g = new Map();
     const back = new Map();
@@ -1004,8 +1003,7 @@ function astar(from, to, env) {
         const ny = cy0 + D[nd][1];
         if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
         if (!terminalEdgeValid({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
-        if (occupied({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
-        const nc = cost + LENGTH_WEIGHT + (nd === d ? 0 : 1);
+        const nc = cost + LENGTH_WEIGHT + (nd === d ? 0 : BEND_WEIGHT);
         const nk = `${nx},${ny},${nd}`;
         if (nc < (g.get(nk) ?? Infinity)) {
           g.set(nk, nc);

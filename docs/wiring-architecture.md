@@ -25,8 +25,8 @@ debug API. New code must use `paths()`/`wireSegments()` instead of choosing
 between `route`, `branches`, or `points()`.
 
 An unmaterialized two-terminal net has no branches and receives a route
-suggestion on demand. Once a user or command commits a route, it is materialized
-as branches and is never silently replaced by an automatic route.
+suggestion on demand. Explicit managed routes may be re-laid out when topology
+changes require a fresh optimization; fixed legacy paths remain protected.
 
 ## Automatic routing
 
@@ -37,23 +37,24 @@ last edges must follow terminal directions when directions are available.
 
 Candidate paths are ordered by:
 
-1. body violations (only endpoint escape is permitted),
-2. collinear overlap with existing wires,
-3. unnecessary crossings,
-4. bends,
-5. Manhattan length.
+1. body crossings and hard-clearance violations,
+2. collinear overlap and crossings with existing wires,
+3. component and label clearance,
+4. pin-direction conformity,
+5. Manhattan length,
+6. visible bend count.
 
 Crossings are legal and remain visually unambiguous because solder dots are
 created only at electrical junctions, not at a crossing of unrelated nets.
 
 For multi-terminal nets, the router computes the exact rectilinear Steiner
 minimum tree over a coarse-grid graph (Dreyfus–Wagner subset DP; see
-`steinerBranches` in router.js). Total length is the primary objective, body
-clearance is a hard constraint, and terminal/label preferences are soft
+`steinerBranches` in router.js). Total length is the primary objective under
+hard body clearance, with terminal-direction and label preferences as
 tie-breaks; a three-way Y becomes one centered T-junction. Nets too large for
 the exponential DP fall back to the MST-of-shortest-paths approximation.
-Existing hand-drawn branches are treated as fixed obstacles when another net is
-routed.
+Existing hand-drawn branches are treated as fixed obstacles when another net
+is routed, and a fresh managed layout excludes other nets' wire spans.
 
 ## Editing and selection
 
@@ -75,11 +76,12 @@ all selected paths before one connectivity/routing commit.
 
 ## Solder dots
 
-For each net, branch endpoints and geometric intersections are counted. A dot is
-required at a point where at least three same-net wire arms meet, or where a
+For each net, branch endpoints and geometric intersections are counted. A dot
+is required at a point where at least three same-net wire arms meet, or where a
 terminal joins an existing wire. Crossings between different nets do not create
-dots. Dots are materialized as annotation components only at render/model sync,
-and auto-created dots are tagged so they can be removed when topology changes.
+dots. Solder dots are explicit terminal-less annotations in the model and are
+excluded from routing obstacles and overlap checks; auto-created dots are tagged
+so they can be removed when topology changes.
 
 ## Invariants
 

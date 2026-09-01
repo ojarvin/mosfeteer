@@ -86,6 +86,63 @@ test('MOS and BJT symbols use their channel as the local origin', () => {
   }
 });
 
+test('transistor arrows and gate leads are centered and clear of the gate gap', () => {
+  for (const type of ['nmos', 'pmos']) {
+    const graphics = getSymbol(type).graphics;
+    assert.equal(graphics[0].d, 'M -120 0 L -76.88 0', `${type} gate lead`);
+    const arrow = graphics.at(-1).points;
+    assert.equal(arrow[0].y, 27.91, `${type} arrow tip row`);
+    assert.equal((arrow[1].y + arrow[2].y) / 2, 27.91, `${type} arrow base row`);
+  }
+});
+
+test('logic bodies use origin-symmetric triangle and curved outlines', () => {
+  const inverter = getSymbol('inverter').graphics[1].d;
+  const buffer = getSymbol('buffer').graphics[1].d;
+  assert.equal(inverter, 'M 36.09 0 L -58.91 -60 L -58.91 60 Z');
+  assert.equal(buffer, 'M 36.09 0 L -58.91 60 L -58.91 -60 Z');
+
+  for (const type of ['and_gate', 'nand_gate', 'or_gate', 'nor_gate', 'xor_gate', 'xnor_gate']) {
+    const body = getSymbol(type).graphics.find((graphic) => graphic.style === 'emph' && graphic.kind === 'path');
+    assert.match(body.d, /Z$/, `${type} body is closed`);
+    assert.doesNotMatch(body.d, /-60\.94|59\.69|0\.01|-1\.75/, `${type} body has no old offset`);
+  }
+});
+
+test('inversion bubbles are centered and clear of gate bodies', () => {
+  const nandBubble = getSymbol('nand_gate').graphics.find((graphic) => graphic.kind === 'circle');
+  const norBubble = getSymbol('nor_gate').graphics.find((graphic) => graphic.kind === 'circle');
+  assert.deepEqual({ cx: nandBubble.cx, cy: nandBubble.cy }, { cx: 75, cy: 0 });
+  assert.deepEqual({ cx: norBubble.cx, cy: norBubble.cy }, { cx: 62.47, cy: 0 });
+  assert.equal(getSymbol('nand_gate').graphics.at(-1).d, 'M 88.5 0 L 120 0');
+  assert.equal(getSymbol('nor_gate').graphics.at(-1).d, 'M 75.97 0 L 120 0');
+  assert.equal(getSymbol('xnor_gate').graphics.at(-1).d, 'M 102.87 0 L 160 0');
+  assert.ok(nandBubble.cx - nandBubble.r > 60, 'NAND bubble clears the AND front edge');
+});
+
+test('ADC and DAC symbols expose single-bit-bus terminals and centered labels', () => {
+  const adc = getSymbol('adc');
+  const dac = getSymbol('dac');
+  assert.deepEqual(adc.terminals.map(({ name, x, y }) => ({ name, x, y })), [
+    { name: 'ain', x: -200, y: 0 },
+    { name: 'd', x: 200, y: 0 },
+  ]);
+  assert.deepEqual(dac.terminals.map(({ name, x, y }) => ({ name, x, y })), [
+    { name: 'd', x: -200, y: 0 },
+    { name: 'aout', x: 200, y: 0 },
+  ]);
+  for (const [type, text, body, mark] of [
+    ['adc', 'ADC', 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z', 'M 154 -8 L 166 8'],
+    ['dac', 'DAC', 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z', 'M -166 8 L -154 -8'],
+  ]) {
+    const def = getSymbol(type);
+    assert.deepEqual(def.bbox, { x: -200, y: -120, w: 400, h: 240 });
+    assert.equal(def.graphics.at(-3).d, body);
+    assert.equal(def.graphics.at(-2).d, mark);
+    assert.deepEqual(def.graphics.at(-1), { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true });
+  }
+});
+
 test('symbolTypeNames lists all keys of symbolTypes', () => {
   assert.deepEqual(symbolTypeNames.sort(), Object.keys(symbolTypes).sort());
   for (const name of symbolTypeNames) assert.ok(symbolTypes[name], `entry ${name}`);
@@ -155,18 +212,28 @@ test('empty terminal lists are allowed (annotations like solder)', () => {
   assert.equal(def, undefined);
 });
 
-test('validateSymbol rejects a non-array terminals field', () => {
-  assert.throws(
-    () =>
-      validateSymbol({
-        type: 'x',
-        terminals: 'nope',
-        bbox: { x: 0, y: 0, w: 40, h: 40 },
-      }),
-    /terminals array/
-  );
+test('refdes prefixes by component type', () => {
+  const expected = {
+    resistor: 'R',
+    capacitor: 'C',
+    inductor: 'L',
+    diode: 'D',
+    nmos: 'M',
+    pmos: 'M',
+    npn: 'Q',
+    pnp: 'Q',
+    ground: '',
+    supply: '',
+    input: 'I',
+    output: 'O',
+    inputoutput: 'IO',
+    adc: 'U',
+    dac: 'U',
+  };
+  for (const [type, prefix] of Object.entries(expected)) {
+    assert.equal(getSymbol(type).refPrefix, prefix, `${type} refPrefix`);
+  }
 });
-
 test('solder dot is a validated zero-terminal annotation symbol', () => {
   const def = getSymbol('solder');
   assert.equal(def.type, 'solder');

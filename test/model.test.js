@@ -84,6 +84,24 @@ test('moveComponent snaps to grid', () => {
   assert.equal(r.transform.y, 440);
 });
 
+test('moveComponent defers coincident terminal connection until commit', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+
+  // R1.b reaches R2.a at the preview position, but movement itself must not
+  // mutate connectivity.
+  c.moveComponent('R1', 240, 0);
+  assert.equal(c.nets.size, 0);
+
+  // The caller resolves coincidence at its commit boundary.
+  assert.equal(c.connectCoincident('R1'), 1);
+  assert.deepEqual(c.netOfTerminal('R1.b').terminals, [
+    { comp: 'R1', term: 'b' },
+    { comp: 'R2', term: 'a' },
+  ]);
+});
+
 test('setTransform normalizes rotation into 0/90/180/270', () => {
   const c = new Circuit();
   const r = c.addComponent('resistor');

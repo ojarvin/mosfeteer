@@ -59,6 +59,23 @@ test('svgString draws value text when present', () => {
   assert.ok(svg.includes('>1k<'));
 });
 
+test('svgString renders ADC and DAC body labels in label font', () => {
+  const c = new Circuit();
+  c.addComponent('adc', { x: 480, y: 0 });
+  c.addComponent('dac', { x: 960, y: 0 });
+  const svg = svgString(c);
+  assert.match(svg, /font-weight="bold" font-style="italic"[^>]*>ADC<\/text>/);
+  assert.match(svg, /font-weight="bold" font-style="italic"[^>]*>DAC<\/text>/);
+  assert.ok(svg.includes('M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z'));
+});
+
+test('converter labels stay upright when the symbol is mirrored', () => {
+  const c = new Circuit();
+  c.addComponent('adc', { x: 480, y: 0, mirrorX: true });
+  const svg = svgString(c);
+  assert.match(svg, /<text x="460" y="0" dominant-baseline="middle"[^>]*>ADC<\/text>/);
+});
+
 test('svgString renders component terminal dots by default', () => {
   const c = new Circuit();
   c.addComponent('resistor', { x: 480, y: 0 });

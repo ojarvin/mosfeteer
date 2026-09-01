@@ -31,6 +31,31 @@ deliverable must also report clean in `eval`.
   easy to review**. Passing `eval` alone is not sufficient — it doesn't
   check labels, signal-flow sense, or textbook polish.
 
+### 1.1 Universal composition heuristics
+
+When a topology-specific convention is unavailable, prefer the arrangement
+that makes the electrical story obvious without relying on text:
+
+- establish a primary reading direction and keep related signal paths
+  visually parallel;
+- use alignment, repetition, symmetry, and consistent spacing to expose
+  functional relationships;
+- separate functional blocks with whitespace and reserve corridors for wires,
+  labels, and future edits;
+- keep the shortest, clearest route for the most important signal paths;
+  move a device rather than forcing a long or tangled wire;
+- make boundaries and ownership visible: a component label belongs in open
+  space near its component, a port label faces the circuit, and a junction dot
+  appears only where nets actually join;
+- use names and labels to clarify external intent, not to compensate for an
+  ambiguous or poorly routed topology.
+
+These heuristics never authorize inventing electrical connections. If the
+requested implementation leaves topology, polarity, biasing, feedback,
+rail conventions, or port meaning ambiguous, the author must ask the user
+before choosing among materially different circuits.
+
+
 ---
 
 ## 2. The 40-grid contract
@@ -96,7 +121,7 @@ mirror flag to override that default.
 | vcm | `vcm` (top edge) | x:-40..40, y:0..80 |
 | supply | `p` (bottom edge) | x:-40..40, y:-80..0 |
 | input / output / inputoutput | `p` (circuit side) | boxed port, id label on circuit-outer side |
-| opamp / gates / inverter / buffer | `ip` / `im` / `a` / `b` in, `o` / `y` out | logic- or triangle-shaped bodies |
+| adc / dac | ADC: `ain` in, `d` out; DAC: `d` in, `aout` out | ADC point-to-flat left-to-right; DAC flat-to-point left-to-right; one diagonal slash marks the digital bus; centered `ADC` / `DAC` label |
 
 Notes:
 
@@ -434,10 +459,10 @@ These short command sequences build the core patterns. Verify with
 ### Mirrored differential pair (shared sources on the center column)
 
 ```sh
-node src/cli/index.js demo clear
-node src/cli/index.js demo "add nmos M1 --at 0 0"
-node src/cli/index.js demo "add nmos M2 --at 480 0 --mirrorX"
-node src/cli/index.js demo "connect M1.s M2.s --name TAIL"
+node src/cli/index.js <circuit> clear
+node src/cli/index.js <circuit> "add nmos M1 --at 0 0"
+node src/cli/index.js <circuit> "add nmos M2 --at 480 0 --mirrorX"
+node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL"
 ```
 
 The two sources meet on the symmetry column; `M1.d` and `M2.d` sit on one
@@ -447,9 +472,9 @@ clean label space.
 ### Vertical stack (shared source / drain on one grid line)
 
 ```sh
-node src/cli/index.js demo "add nmos M1 --at 0 0"
-node src/cli/index.js demo "add nmos M2 --at 0 160"
-node src/cli/index.js demo "connect M1.s M2.d --name N"
+node src/cli/index.js <circuit> "add nmos M1 --at 0 0"
+node src/cli/index.js <circuit> "add nmos M2 --at 0 160"
+node src/cli/index.js <circuit> "connect M1.s M2.d --name N"
 ```
 
 `M1.s` and `M2.d` coincide; bboxes touch along the shared boundary. Extend
@@ -459,10 +484,10 @@ below.
 ### Supplies on a rail, grounds on a rail
 
 ```sh
-node src/cli/index.js demo "add supply VDD --at 240 -320"
-node src/cli/index.js demo "add supply VDD2 --at 720 -320"
-node src/cli/index.js demo "add ground GND --at 240 320"
-node src/cli/index.js demo "add ground GND2 --at 600 320"
+node src/cli/index.js <circuit> "add supply VDD --at 240 -320"
+node src/cli/index.js <circuit> "add supply VDD2 --at 720 -320"
+node src/cli/index.js <circuit> "add ground GND --at 240 320"
+node src/cli/index.js <circuit> "add ground GND2 --at 600 320"
 ```
 
 Both supplies sit on the same top rail line and both grounds on the same

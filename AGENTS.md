@@ -85,6 +85,13 @@ and editor UX — skim it whenever you need an exact number.
   shift with the body. Buffer/inverter triangle bodies are closed with `Z`
   so the apex is a sharp miter (the inverter's apex hides behind its
   bubble).
+- **adc / dac**: converter symbols with an `emph`-stroke outline. ADC has a
+  point on the analog-input side and a flat digital-output side; DAC is the
+  opposite. ADC exposes analog input `ain`(-200,0) and one multi-bit digital
+  output `d`(200,0); DAC exposes digital input `d`(-200,0) and analog output
+  `aout`(200,0). A short diagonal slash crosses the digital lead to mark the
+  bus. Each body carries centered upright label-font text (`ADC` or `DAC`);
+  bbox `{-200,-120,400,240}`.
 - **solder**: pure annotation dot (`SOLDER_DOT_RADIUS=12`); its bbox is
   exactly the drawn dot (`{-12,-12,24,24}`) — not a grid cell — because
   solder is placed on and selected at the junction grid point directly.
@@ -157,7 +164,8 @@ and editor UX — skim it whenever you need an exact number.
   vertically. `Ctrl+Shift+r` is intentionally unbound. The CLI `rotate` /
   `mirror` commands use the same origin-anchored transform: the origin never
   moves, so repeated transforms never translate the component and always stay
-  on the 40-grid.
+  on the 40-grid. Mirror operations use world horizontal/vertical axes even
+  after a component is rotated.
   Free labels are not orbited by rotate / mirror.
 - Editor UX (main.js): labels are inserted through **insert mode** (`t`
   picks a label ghost, Enter/click commits at cursor; no normal-mode `t`).
@@ -184,30 +192,39 @@ and editor UX — skim it whenever you need an exact number.
   switch above/below or left/right according to the drag side, and constrain
   their bbox edge to touch the wire; free annotations and wire geometry move
   independently.
-
 ## Virtuoso mode
 
 - The editor uses the Virtuoso command vocabulary in normal mode: `i` starts
-  fuzzy placement; type to filter components and labels, press Enter to pick
-  the best match, then click or press Enter to place the ghost.
+  fuzzy placement; type to filter components and labels, press Enter or Tab to
+  pick the best match, then click or press Enter to place the ghost.
 - `w` is the single Wire command. It starts the wire workflow from a terminal,
   an existing wire, or a free grid point; click intermediate points and finish
   on a terminal or wire. `F3` toggles the route choice for new wires between
   orthogonal and diagonal. There is no separate uppercase-`W` protected-wire
+  editor mode.
 - `m` arms connected move: moving any selected component, label, annotation,
   or wire segment carries or re-routes its electrical connectivity. The moving
   set and its connected wires are rendered as faint ghosts until the
-  destination click commits. `Shift+m` arms detached move: a moved terminal is
-  removed from its net while existing wire geometry is left in place as
-  dangling wire geometry.
+  destination click commits. `Shift+m` arms detached move: selected wire
+  islands split from the rest of their nets, move with the selected component
+  set, and retain any selected terminal connections; unselected islands stay
+  in place as floating geometry. The Wire tool can reconnect split ends.
 - `c` enters a repeated copy ghost: click an object or selected set, move the
   ghost with the cursor, then click/Enter to commit; the clicked source point
   is the copy anchor, so it remains under the cursor while the set's relative
-  geometry is preserved. Each following click commits another copy at that
-  cursor using the same anchor. Escape cancels the ghost and returns to the
-  copy tool.
+  geometry is preserved. Rotate and mirror commands applied before placement
+  persist while the ghost follows the cursor; each transform rotates or
+  mirrors around that current copy point and resets the follow origin so
+  subsequent movement applies only the pointer delta. Each following click
+  commits another copy at that cursor using the same anchor. Escape cancels
+  the ghost and returns to the copy tool.
 - `r` rotates clockwise, `Shift+r` mirrors horizontally, and `Ctrl+r` mirrors
-  vertically. `Ctrl+Shift+r` is unbound. Transforms are origin-anchored.
+  vertically. `Ctrl+Shift+r` is unbound. Normal transforms are origin-anchored
+  and mirror against world axes even after component rotation; copy and move
+  ghosts transform around the current cursor pivot and rebase their follow
+  origin, so subsequent movement applies only the pointer delta. Transforms
+  during a move ghost remain part of the same atomic move history entry. The
+  same world-axis behavior applies to insert placement ghosts.
 - `x` runs Check. `Shift+x` runs Check & Save. The Design check panel has a
   Clear control; deleting an object also clears the stale report and focus.
 
@@ -306,12 +323,12 @@ add a protected uppercase-`W` editor mode.
   perpendicular escape, `CONFORM_OPP=8` for an opposite-direction one — the
   first cell from a pin must continue in the pin's direction, e.g. a diff-pair
   virtual-ground net's source pins escape DOWN and the T lands one cell below
-  the pair row, never a pin-row trunk) and label clearance (LABEL_EPS) — total
-  length is the primary objective, one-cell body clearance is a hard
-  constraint, labels steer softly, and the bend/junction count falls
-  out of the length optimum (a three-way Y becomes a single centered T at the
-  coordinate median). Nets too large for the exponential DP fall back to the
-  MST-of-shortest-paths Steiner 2-approximation, so any net is routable.
+  the pair row, never a pin-row trunk) and label clearance (LABEL_EPS). The
+  multi-terminal DP still optimizes total length under hard one-cell body
+  clearance, while two-point candidates and A* fallback prefer fewer visible
+  bends before comparing route length. Nets too large for the exponential DP
+  fall back to the MST-of-shortest-paths Steiner 2-approximation, so any net is
+  routable.
 - **Wire-mode click priority:** terminal clicks (within `max(GRID/2,
   12px/unit)` via `nearestTerminal`) always start / end a wire in wire mode,
   even when a wire passes through the pin.
@@ -392,13 +409,14 @@ add a protected uppercase-`W` editor mode.
   starts a branch (`{x,y,netId}` — junction+solder materialize on
   commit). Committing a free/on-wire draft onto a terminal or wire
   **splices it into the target net preserving that net's existing wire**
-  (never overwrites the route).
 - **Connected drags re-route holistically:** moving / rotating / mirroring a
   component re-routes every touched net from its terminals + environment
-  (`rerouteNet`), never hand-carrying wire bodies. Detached moves instead
-  remove the moved terminal from its net while leaving the existing wire
-  geometry as dangling wire geometry. Touching pins connect only at the
-  COMMITTED position (mouseup / `move` command), never mid-drag.
+  (`rerouteNet`), never hand-carrying wire bodies. Detached moves split
+  selected wire islands into separate nets, move those islands with the
+  selected component set, and leave unselected islands in place as floating
+  geometry. The Wire tool can attach the broken ends again. Touching pins
+  connect only at the COMMITTED position (mouseup / `move` command), never
+  mid-drag.
   **Set moves carry their wires:** when EVERY terminal of a net rides a
   moved component by the same delta (a Ctrl+A multi-select drag), the whole
   net geometry — branches, route, junctions — is translated rigidly with
@@ -406,24 +424,23 @@ add a protected uppercase-`W` editor mode.
   same (or re-route fresh between the two new pins when the deltas differ).
   A defensive `_pruneDanglingBranches` then drops any branch whose endpoints
   are neither terminals, junction anchors, nor points shared by >=2 branches
-  — floating stubs that lead nowhere never survive a component move
-  (1-terminal deliberate wire stubs are left alone).
+  during connected moves — detached floating wire islands are intentionally
+  retained.
 - **Clearance & consistency:** `smartRoute` keeps at least one grid cell
   of clearance from every component body (excluding the pin-escape legs),
   even if it means a longer way around. `Net.points()` uses the same
   escape-aware routing for route-null two-terminal nets, so committed and
   rendered wires always agree. Joined (multi-way) nets store explicit
   `net.branches` (list of polylines) and `net.junctions` (mid-wire
-  anchor grid points); the renderer draws every branch and the model
-  walks branches for bounds / length / eval.
 - **Insert hotkeys → fuzzy search:** insert mode is type-driven — typing
   filters the component / label list (`fuzzyScore`: prefix > substring >
-  subsequence, shorter wins), Enter picks the best match as a ghost,
+  subsequence, shorter wins), Enter or Tab picks the best match as a ghost,
   click/Enter places, Esc drops the ghost back to search, Esc again
   exits insert. Arrow keys move the cursor; all printable keys (incl.
-  `h j k l`) go into the query. The `#insert-menu` dropdown shows the
-  live query + filtered entries. (`PLACEMENT` map still labels the menu's
-  hotkey column.)
+  `h j k l`) go into the query. `r`, `Shift+r`, and `Ctrl+r` transform the
+  ghost using the same world-space rotation and mirror semantics as normal
+  mode. The `#insert-menu` dropdown shows the live query + filtered entries.
+  (`PLACEMENT` map still labels the menu's hotkey column.)
 - **Visual mode:** `v` (normal, including persistent Delete mode) anchors the
   cursor and draws a green box as `hjkl` / arrows move it; Enter commits the
   box selection (`applyBoxSelection` — components by bbox, labels by bbox, nets
@@ -445,9 +462,10 @@ add a protected uppercase-`W` editor mode.
   (`html.dark .canvas svg [stroke="#111"] { stroke: #dde1e8 }`,
   `[fill="#fff"] → var(--paper)`, etc.) — presentation attributes are
   overridden by CSS, so no core renderer changes were needed. The placement
-  crosshair switches to high-contrast amber in dark mode; colored overlays
-  (halos, wire source) remain untouched. `#btn-theme`
-  toggles, persisted in localStorage (`schematic-spawner:theme`),
+  crosshair switches to high-contrast amber in dark mode; it is hidden while
+  the pointer is outside the drawing area and can be toggled with `C` or
+  `#btn-crosshair`; colored overlays (halos, wire source) remain untouched.
+  `#btn-theme` toggles, persisted in localStorage (`schematic-spawner:theme`),
   defaults to system `prefers-color-scheme`.
 - **`#` toggles the grid** (`setGrid()`); `#btn-grid` mirrors it.
   Toolbar buttons carry `title` tooltips.
@@ -455,6 +473,10 @@ add a protected uppercase-`W` editor mode.
   labels; wires still render ON TOP of component bodies (svgString draws
   components, then nets, then pin/junction dots) so an overlapping wire stays
   visible and clickable; selection halos and net highlights draw last.
+- **Help popup:** `?` and the Help button open a modal keyboard/command
+  reference. The search field is focused immediately, accepts typing while the
+  popup is open, and filters the reference; the reference pane owns the only
+  scrollbar. `Esc` closes the popup.
 - **Copy / paste on selected sets:** `c` (with `y` / `Ctrl/Cmd+C` as aliases)
   enters copy mode. A source click copies the clicked component, label, or wire
   when nothing is selected; any existing component/label/wire/net selection is
@@ -472,9 +494,9 @@ add a protected uppercase-`W` editor mode.
   one-shot paste at the cursor, preserving relative positions and connectivity.
 - Side-panel lists are condensed (smaller row padding / fonts) so the
   components / nets / terminals lists stay short.
-- The design dropdown refuses to switch while the current design is dirty;
-  save first with `Ctrl/Cmd+S` or the Save button. The selection is restored to
-  the current design and an unsaved-changes warning is logged.
+- The design dropdown prompts before switching away from a dirty design. Keep
+  editing cancels the request; Discard and load abandons unsaved changes and
+  loads the selected circuit.
 
 ## Fast loop: CLI → server → browser
 
@@ -509,8 +531,9 @@ add a protected uppercase-`W` editor mode.
   `Shift+m` detached move; `c` repeated copy ghost; `r` rotate clockwise;
   `Shift+r` horizontal mirror; `Ctrl+r` vertical mirror; `Ctrl+Shift+r` is
   unbound. Uppercase `W` is not a separate wire mode.
-- `t` in insert mode places a label ghost; `v` enters visual mode.
-  `Esc` cancels a ghost, box, or drag.
+- `t` in insert mode places a label ghost; `Tab` selects the best insert-menu
+  match as a component/label ghost; `v` enters visual mode. `Esc` cancels a
+  ghost, box, or drag.
 - `dd` deletes the selected component/label/net/wire set. `Delete` /
   `Backspace` do the same when a selection exists; with no selection they arm
   persistent Delete mode, where clicks delete objects until `Esc`.
@@ -523,13 +546,14 @@ add a protected uppercase-`W` editor mode.
 - Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy.
 - `hjkl` move cursor; in visual mode, grow box; in insert mode, part of
   the query.
-- `F` fit view; `D` toggle dark mode; `#` toggle grid; `?` keymap.
+- `F` fit view; `D` toggle dark mode; `#` toggle grid; `C` toggle crosshair;
+  `?` opens the keyboard and command help popup, closed by `Esc`.
 - All printable keys (incl. `h j k l`) in insert mode append to the
   fuzzy query.
 
 ## Working-context notes
 
-- `npm test` = **296/296** green (model / commands / router / render /
+- `npm test` = **308/308** green (model / commands / router / render /
   wireedit / multinet / symbols). The HTTP endpoint reuses `runCommand()` and is
   covered by the existing tests; the CLI is a thin client over it and is
   exercised by `npm test` only for argument parsing (the server itself is

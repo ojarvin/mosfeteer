@@ -1,4 +1,4 @@
-import { Circuit, canonicalNetName } from './model.js';
+import { Circuit, canonicalNetName, transformComponentWorld } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
@@ -502,9 +502,18 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'mirror') {
     const c = circuit.getComponent(pos[0]);
     const axis = (pos[1] || 'x').toLowerCase();
-    if (axis === 'x') circuit.setTransform(c.refdes, { mirrorX: !c.transform.mirrorX });
-    else if (axis === 'y') circuit.setTransform(c.refdes, { mirrorY: !c.transform.mirrorY });
-    else throw new Error('mirror axis must be x or y');
+    if (axis !== 'x' && axis !== 'y') throw new Error('mirror axis must be x or y');
+    const operation = axis === 'x' ? 'mirrorX' : 'mirrorY';
+    const next = transformComponentWorld(
+      c.transform,
+      { x: c.transform.x, y: c.transform.y },
+      operation,
+    );
+    circuit.setTransform(c.refdes, {
+      rotation: next.rotation,
+      mirrorX: next.mirrorX,
+      mirrorY: next.mirrorY,
+    });
     rerouteNetsFor(circuit, [c.refdes], null, true);
     circuit.syncJunctionSolders();
     return result(`mirrored ${c.refdes} along ${axis}`, { refdes: c.refdes, axis }, true);

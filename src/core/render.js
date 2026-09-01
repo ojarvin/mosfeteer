@@ -16,7 +16,7 @@ function polygonPoints(g) {
   return (g.points || []).map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' ');
 }
 
-function graphicsToSvg(g) {
+function graphicsToSvg(g, textTransform = '') {
   switch (g.kind) {
     case 'path':
       return `<path d="${g.d}" fill="none" ${strokeAttrs(g.style)}/>`;
@@ -31,12 +31,19 @@ function graphicsToSvg(g) {
         return `<polygon points="${polygonPoints(g)}" fill="#111" stroke="none"/>`;
       }
       return `<polygon points="${polygonPoints(g)}" fill="${g.fill || 'none'}" ${strokeAttrs(g.style)}/>`;
+    case 'text':
+      return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${g.text}</text>`;
     case 'dot':
       // Solder dot: a plain black dot marking a connection at a wire crossing.
       return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${g.fill || '#111'}" stroke="none"/>`;
     default:
       return '';
   }
+}
+
+function symbolTextSvg(g, t) {
+  const p = applyTransform(t, g.x, g.y);
+  return `<text x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none">${g.text}</text>`;
 }
 
 function textEl(x, y, text, anchor, size, fill) {
@@ -136,15 +143,16 @@ export function svgString(circuit, opts = {}) {
     const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
   }
-
-  // Components.
   const comps = [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
   for (const c of comps) {
     const t = c.transform;
     const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
+    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
     parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${c.refdes}">`);
-    for (const g of c.def.graphics) parts.push(graphicsToSvg(g));
+    for (const g of bodyGraphics) parts.push(graphicsToSvg(g));
     parts.push('</g></g>');
+    for (const g of textGraphics) parts.push(symbolTextSvg(g, t));
     if (o.includeBBox) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
@@ -413,8 +421,9 @@ export function editorOverlay(circuit, opts = {}) {
       parts.push('</g>');
     } else if (g.def) {
       const t = transformToSvg({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY });
-      const body = g.def.graphics.map((gg) => graphicsToSvg(gg)).join('');
-      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>`);
+      const body = g.def.graphics.filter((gg) => gg.kind !== 'text').map((gg) => graphicsToSvg(gg)).join('');
+      const text = g.def.graphics.filter((gg) => gg.kind === 'text').map((gg) => symbolTextSvg(gg, { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY })).join('');
+      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>${text}`);
     }
   }
 

@@ -132,11 +132,12 @@ button:active {
 }
 
 .toolbar-group {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 7px;
   min-height: 42px;
-  padding: 4px 12px;
+  padding: 22px 12px 4px;
   flex-wrap: wrap;
   flex: 0 1 auto;
   max-width: 100%;
@@ -147,7 +148,10 @@ button:active {
 }
 
 .toolbar-group-label {
-  width: 100%;
+  position: absolute;
+  top: 5px;
+  left: 12px;
+  width: auto;
   margin: 0;
   color: var(--text-dim);
   font-size: 10px;
@@ -327,6 +331,58 @@ button:disabled {
 .confirm-action {
   color: var(--accent);
   font-weight: 600;
+}
+
+.help-dialog {
+  width: min(48rem, calc(100vw - 32px));
+  height: min(80vh, 48rem);
+  padding: 20px;
+  overflow: hidden;
+  box-sizing: border-box;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(20, 24, 34, 0.28);
+}
+
+.help-dialog::backdrop {
+  background: rgba(10, 14, 22, 0.42);
+}
+
+.help-dialog form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.help-dialog h2 {
+  flex: 0 0 auto;
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+.help-dialog input {
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0 0 12px;
+  box-sizing: border-box;
+}
+
+.help-dialog pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  color: var(--text-dim);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.help-dialog .dialog-actions {
+  flex: 0 0 auto;
+  margin-top: 12px;
 }
 
 /* ----- main layout --------------------------------------------- */
@@ -758,16 +814,6 @@ button:disabled {
   outline-offset: -1px;
 }
 
-.insert-menu-key {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-weight: 700;
-  color: var(--ok);
-  background: var(--accent-dim);
-  border-radius: 4px;
-  padding: 0 5px;
-  min-width: 22px;
-  text-align: center;
-}
 
 .label-inline-editor {
   box-sizing: border-box;
@@ -887,8 +933,7 @@ button.off {
 
   .toolbar-group {
     min-height: 38px;
-    padding-top: 2px;
-    padding-bottom: 2px;
+    padding: 20px 12px 2px;
   }
 
   .title {
@@ -919,6 +964,10 @@ button.off {
   .toolbar-group {
     padding-left: 0;
     padding-right: 12px;
+  }
+
+  .toolbar-group-label {
+    left: 0;
   }
 
   .circuit-picker {

@@ -12,6 +12,7 @@ import { supply } from './supply.js';
 import { portInput, portOutput, portInputOutput, port, port_filled } from './port.js';
 import { current_source, current_sink, voltage_source } from './current.js';
 import { opamp, opampDiff, inverter, buffer, and_gate, nand_gate, or_gate, nor_gate, xor_gate, xnor_gate } from './logic.js';
+import { adc, dac } from './converter.js';
 import { variable_resistor, variable_capacitor, variable_inductor } from './variable.js';
 import { solder } from './solder.js';
 import { switch_open, switch_closed } from './switch.js';
@@ -47,6 +48,8 @@ export const symbolTypes = {
   nor_gate,
   xor_gate,
   xnor_gate,
+  adc,
+  dac,
   variable_resistor,
   variable_capacitor,
   variable_inductor,

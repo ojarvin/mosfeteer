@@ -50,8 +50,9 @@ sch> eval
 sch> quit
 ```
 
-The browser polls `circuits/<name>/circuit.json` every 500 ms and re-fits the
-view on every change. Every CLI call writes the file; the user sees it live.
+The browser polls `/api/active` and the active circuit endpoint every 500 ms.
+CLI commands set the active circuit and the browser auto-loads it; mutated
+commands persist `circuit.json` and `circuit.svg`.
 
 A bare `node src/cli/index.js` (no `<circuit>`) enters a circuit picker
 after a moment — but the named-circuit form above is the one you want.
@@ -161,7 +162,6 @@ help                           full command list
   the exact same fixed cross already exists.
 
 ### Terminal names (current grid = 40)
-
 ```text
 nmos/pmos: g d s
 npn/pnp:   b c e
@@ -170,12 +170,14 @@ ports:     p
 ground:    gnd
 supply:    p
 sources:   a b
+adc:       ain d
+dac:       d aout
 ```
 
 Full per-symbol geometry is in `AGENTS.md`; the rules for how to lay them
 out are in `style-guide.md`.
 
-### Browser editing hotkeys and direct wires
+### Browser editing hotkeys and legacy fixed paths
 
 - `y` yanks the selected set; `p` pastes it with fresh ids. `yy` is not
   required. `Ctrl/Cmd+C` and `Ctrl/Cmd+V` are equivalent copy/paste shortcuts.
@@ -183,18 +185,15 @@ out are in `style-guide.md`.
   while the current design has unsaved changes; save first, or the selection is
   restored and an unsaved-changes warning is logged.
 - Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy.
-- Uppercase `W` enters protected direct/manual wire mode, separate from managed
-  `w` mode. Click a terminal, click any intermediate points as literal
-  waypoints, then click or press Enter on the target terminal. The endpoints
-  are terminals; waypoints are grid-snapped but retained in the exact clicked
-  sequence, so diagonal segments are valid.
-- Direct-wire crossings do not splice or join other wires. The committed net's
-  geometry is fixed: autorouting, orthogonalization, branch reduction, and
-  ordinary wire-segment dragging/deletion do not rewrite it. To add another
-  path to a fixed net, use `W` again; managed wiring reports that fixed geometry
-  is protected.
-- Moving a component re-anchors its fixed path endpoint without autorouting;
-  moving a complete selected set translates its fixed paths with the set.
+- `w` is the single managed Wire command. It supports orthogonal or diagonal
+  routes; `F3` toggles the route choice for new wires. There is no separate
+  uppercase-`W` editor mode.
+- Persisted nets with `routingMode: "fixed"` remain loadable for compatibility,
+  including legacy diagonal paths. Use the `net` command's fixed-path
+  operations when inspecting or deliberately editing such data; ordinary
+  managed routing does not convert a fixed net into a managed one.
+- Moving a component re-anchors legacy fixed-path endpoints without
+  autorouting; moving a complete selected set translates fixed paths with it.
 
 ## Drafting order
 
@@ -221,6 +220,73 @@ Work in this order for a new diagram:
 
 After each step: `eval`, then fit the view, then iterate.
 
+## General authoring rules
+
+These rules apply when the requested topology is familiar and when it is not.
+Use them as a planning checklist, not as permission to invent unspecified
+electrical behavior.
+
+### Resolve the electrical contract first
+
+Before placing a component, write down the intended electrical contract in
+compact terms:
+
+- functional blocks and the components each block requires;
+- every terminal-to-net relationship, including shared nodes and intentional
+  open terminals;
+- signal direction, input polarity, feedback paths, bias sources, supplies,
+  and grounds;
+- which connections are local wires, which are global rails, and which
+  crossings must remain electrically separate;
+- required reference designators, values, external ports, and signal labels.
+
+If any topology or implementation choice is unspecified and more than one
+reasonable circuit would satisfy the request, **ask the user before drawing
+that part**. Do not guess a net connection, transistor polarity, feedback
+path, bias scheme, logic implementation, port direction, or supply convention
+just because one choice is common. Ask the smallest set of concrete questions
+that resolves the ambiguity, and state the alternatives when useful.
+
+Keep component identity and displayed signal naming separate. Use conventional
+reference designators for port components (`I1`, `O1`, etc.) and edit their
+owned labels to show concise signal names (`A`, `B`, `Y`, etc.) when that is
+what the user should read. Never delete an external port label merely because
+the component reference is already present; verify the label remains visible
+and clear after fitting the view.
+
+
+### Plan the page before routing
+
+- Choose one dominant reading direction, normally inputs left-to-right and
+  supplies top-to-bottom.
+- Establish a centerline, device rows, stack columns, rail rows, and generous
+  margins before adding long wires.
+- Reserve at least one empty grid cell around every body and a clear corridor
+  for every label and wire. Widen the layout instead of accepting a cramped
+  detour.
+- Group components by function. Keep matched, repeated, or feedback-related
+  structures aligned and symmetric where the topology calls for it.
+- Prefer one short orthogonal route per intended connection. Use a named net
+  label or global rail rather than duplicating a long wire.
+- Make every crossing intentional and visually legible; a crossing is not a
+  junction unless the topology says it is.
+
+### Build and inspect in small milestones
+
+1. Place the functional blocks and verify orientation, spacing, and labels.
+2. Connect one logical block or net group at a time.
+3. Add rails, grounds, ports, and external labels after the core is stable.
+4. After each milestone, run `eval`, inspect `state` when a net is ambiguous,
+   fit the browser view, and correct errors before continuing.
+5. Before saving, inspect both the fitted browser view and the saved SVG:
+   component IDs must be readable, wires must not disappear behind bodies,
+   junctions must be real, and whitespace must make the signal flow obvious.
+
+Do not use a clean `eval` report as proof of a finished drawing. It cannot
+replace visual review of hierarchy, symmetry, label clearance, signal flow, or
+whether the chosen implementation communicates the intended circuit.
+
+
 ## Iterate with the user
 
 The loop:
@@ -234,6 +300,12 @@ The loop:
    naming, single-ended vs differential output, active-load style) before
    committing a large amount of work.
 7. Save only after the user accepts the design.
+8. If you feel stuck, stop before committing a speculative topology or a
+   large opaque batch and ask the user for feedback. Describe what is known,
+   the concrete obstacle, and the smallest decision or review that would let
+   you continue. Asking for feedback is preferable to silently choosing a
+   convention the user may not want.
+
 
 Avoid one opaque batch operation when live browser automation is available.
 Keep the circuit editable after every meaningful step. When the user asks
@@ -300,11 +372,13 @@ node src/cli/index.js <circuit> state
 Confirm that:
 
 - every required electrical terminal is connected or intentionally exposed;
-- there are no component overlaps;
+- there are no component, label/component, or label/label overlaps;
 - there are no off-grid coordinates;
 - there are no unintended diagonal managed-wire segments; any diagonal fixed
   direct-wire path is intentional;
-- wires do not run through component interiors;
+- wires do not run through component interiors or overlap another net
+  collinearly;
+- every multi-terminal net's `branches` reach all of its terminals;
 - labels identify external pins, supplies, ground, and output;
 - the browser view and saved SVG agree with the JSON topology.
 

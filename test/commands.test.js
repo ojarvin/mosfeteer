@@ -136,6 +136,30 @@ test('mirroring a routed-in component re-routes the net to the new terminal', ()
   assert.deepEqual(net.route[net.route.length - 1], c.getComponent('R2').terminalWorld('a'));
 });
 
+test('mirror command uses world axes after rotation', () => {
+  const c = fresh();
+  runCommand(c, 'add nmos M1 --at 120 80 --rot 90');
+  const comp = c.getComponent('M1');
+  const before = Object.fromEntries(comp.worldTerminals().map((t) => [
+    t.name,
+    { x: t.x - comp.transform.x, y: t.y - comp.transform.y },
+  ]));
+
+  runCommand(c, 'mirror M1 x');
+  for (const t of comp.worldTerminals()) {
+    const actual = { x: t.x - comp.transform.x, y: t.y - comp.transform.y };
+    const expected = { x: -before[t.name].x, y: before[t.name].y };
+    assert.ok(Math.abs(actual.x - expected.x) < 1e-9, `${t.name} reflects x in world space`);
+    assert.equal(actual.y, expected.y, `${t.name} keeps y in world space`);
+  }
+  runCommand(c, 'mirror M1 x');
+  for (const t of comp.worldTerminals()) {
+    assert.equal(t.x - comp.transform.x, before[t.name].x, `${t.name} returns to its original x`);
+    assert.equal(t.y - comp.transform.y, before[t.name].y, `${t.name} returns to its original y`);
+  }
+});
+
+
 test('move, rotate, and mirror report forced reroute failure instead of success', () => {
   for (const command of ['move R2 400 400', 'rotate R2', 'mirror R2 x']) {
     const c = fresh();

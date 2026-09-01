@@ -66,6 +66,7 @@
       <div class="toolbar-group view-actions" aria-labelledby="view-heading">
         <span class="toolbar-group-label" id="view-heading">View</span>
         <button id="btn-grid" title="Hide the placement grid (#)">Grid</button>
+        <button id="btn-crosshair" title="Hide the crosshair (C)">Crosshair</button>
         <button id="btn-theme" title="Switch to dark theme">Dark</button>
       </div>
     </div>
@@ -93,8 +94,29 @@
       </div>
     </form>
   </dialog>
+  <dialog id="switch-dialog" class="confirm-dialog" aria-labelledby="switch-dialog-title">
+    <form method="dialog">
+      <h2 id="switch-dialog-title">Discard unsaved changes?</h2>
+      <p id="switch-dialog-message"></p>
+      <div class="dialog-actions">
+        <button value="cancel">Keep editing</button>
+        <button id="confirm-switch" value="discard" class="confirm-action">Discard and load</button>
+      </div>
+    </form>
+  </dialog>
 
-  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Check &amp; save · F3 Wire shape</div>
+  <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
+    <form method="dialog">
+      <h2 id="help-dialog-title">Keyboard and command help</h2>
+      <input id="help-search" type="search" placeholder="Search help" aria-label="Search help" autocomplete="off" spellcheck="false" />
+      <pre id="help-dialog-content"></pre>
+      <div class="dialog-actions">
+        <button value="cancel">Close <kbd>Esc</kbd></button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Check &amp; save · C Crosshair · F3 Wire shape · ? Help</div>
 
   <main class="layout">
       <section class="canvas-pane">
@@ -129,7 +151,7 @@
   <footer class="console">
     <div class="status" id="status"></div>
     <div class="console-row">
-      <button id="btn-help" title="Show command help in the log">Help</button>
+      <button id="btn-help" title="Show keyboard and command help">Help</button>
       <input id="cmd-input" type="text" placeholder="Enter a command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)" autocomplete="off" spellcheck="false" />
     </div>
     <pre class="log" id="log"></pre>
