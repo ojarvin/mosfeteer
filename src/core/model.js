@@ -364,9 +364,11 @@ export class LabelInstance {
     this.id = opts.id || uid();
     this.kind = ['label', 'arrow', 'box'].includes(opts.kind) ? opts.kind : 'label';
     this.netId = opts.netId !== undefined && opts.netId !== null && opts.netId !== '' ? String(opts.netId) : null;
+    this.parent = opts.parent || null;
     this.roleError = null;
-    if (this.netId && opts.owner) this.roleError = 'label cannot have both owner and netId';
-    if (this.kind !== 'label' && (this.netId || opts.owner)) throw new Error('annotations cannot have owners or nets');
+    if (this.netId && opts.owner) this.roleError = 'label cannot have both netId and owner';
+    if (this.kind !== 'label' && (this.netId || opts.owner || this.parent)) throw new Error('annotations cannot have owners or nets');
+    if (this.parent && (this.netId || opts.owner)) throw new Error('child labels cannot have owners or nets');
     this._text = opts.text !== undefined ? String(opts.text) : 'label';
     this.align = ['center', 'left', 'right'].includes(opts.align) ? opts.align : 'center';
     this.owner = this.netId ? null : (opts.owner || null);
@@ -417,9 +419,10 @@ export class LabelInstance {
     }
     return this;
   }
-
-  /** World position of the label anchor (underline anchor), grid-snapped. */
   anchorWorld() {
+    if (this.parent && this.circuit.labels.has(this.parent)) {
+      return { x: this.anchor.x, y: this.anchor.y };
+    }
     if (this.owner) {
       const c = this.circuit.components.get(this.owner);
       if (c) return applyTransform(c.transform, this.offset?.x || 0, this.offset?.y || 0);
@@ -535,6 +538,9 @@ export class LabelInstance {
       this.anchor = { x: wx, y: wy };
       this.end = { x: this.end.x + dx, y: this.end.y + dy };
       this.textAnchor = { x: this.textAnchor.x + dx, y: this.textAnchor.y + dy };
+      for (const label of this.circuit.labels.values()) {
+        if (label.parent === this.id) label.anchor = { x: label.anchor.x + dx, y: label.anchor.y + dy };
+      }
       return;
     }
     if (this.netId && !this.circuit._netLabelAnchorOnPath(this.netId, { x: wx, y: wy })) {
@@ -557,6 +563,7 @@ export class LabelInstance {
       text: this.netId ? this.text : this._text,
       align: this.align,
       owner: this.owner,
+      parent: this.parent,
       netId: this.netId,
       netSide: this.netSide,
       offset: this.offset ? { ...this.offset } : null,
@@ -1007,7 +1014,9 @@ export class Circuit {
     const b = opts.end ? { x: snap(opts.end.x), y: snap(opts.end.y) } : a;
     if (kind === 'arrow' && Math.hypot(a.x - b.x, a.y - b.y) < GRID * 2) throw new Error('arrow must have non-zero length and minimum length of two grid cells');
     if (kind === 'box' && (a.x === b.x || a.y === b.y)) throw new Error('box must have non-zero width and height');
-    return this.addLabel({ ...opts, kind, x: a.x, y: a.y, end: b });
+    const shape = this.addLabel({ ...opts, kind, text: '', x: a.x, y: a.y, end: b });
+    if (opts.text) this.addLabel({ text: opts.text, align: opts.align, parent: shape.id, x: opts.textAnchor?.x ?? (a.x + b.x) / 2, y: opts.textAnchor?.y ?? (a.y + b.y) / 2 });
+    return shape;
   }
 
   // ----- labels -------------------------------------------------
@@ -1175,7 +1184,12 @@ export class Circuit {
   }
 
   removeLabel(id) {
-    return this.labels.delete(typeof id === 'string' ? id : id?.id);
+    const key = typeof id === 'string' ? id : id?.id;
+    const removed = this.labels.delete(key);
+    if (removed) {
+      for (const [childId, label] of this.labels) if (label.parent === key) this.labels.delete(childId);
+    }
+    return removed;
   }
 
   /** The instance label owned by a component, if any. */
@@ -3431,6 +3445,7 @@ export class Circuit {
           text: l.text,
           align: l.align,
           owner: l.owner || null,
+          parent: l.parent || null,
           netId: l.netId || null,
           netSide: l.netSide,
           offset: l.offset || null,

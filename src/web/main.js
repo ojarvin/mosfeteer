@@ -1164,6 +1164,9 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
         l.anchor = transformWorldPoints([l.anchor], center, operation)[0];
         l.end = transformWorldPoints([l.end], center, operation)[0];
         l.textAnchor = transformWorldPoints([l.textAnchor], center, operation)[0];
+        for (const child of circuit.labels.values()) {
+          if (child.parent === l.id) child.anchor = transformWorldPoints([child.anchor], center, operation)[0];
+        }
       } else {
         const p = transformWorldPoints([l.anchorWorld()], center, operation)[0];
         l.moveTo(p.x, p.y);
@@ -1475,14 +1478,18 @@ function placeShapeAnnotation(world, endOverride = null) {
   }
   const end = endOverride || point;
   let annotation;
+  let annotationLabel;
   commit(() => {
     annotation = circuit.addAnnotation(labelMode, { x: annotationStart.x, y: annotationStart.y, end });
+    annotationLabel = circuit.addLabel({ text: 'label', align: 'center', parent: annotation.id, x: (annotationStart.x + end.x) / 2, y: (annotationStart.y + end.y) / 2 });
   });
   setSelection([]);
   setLabelSelection([annotation.id]);
   logLine(`placed ${labelMode} from (${annotationStart.x},${annotationStart.y}) to (${end.x},${end.y})`);
   annotationStart = null;
+  labelMode = null;
   render();
+  inlineEditLabel(annotationLabel, { removeOnEmpty: true });
 }
 
 function placeNetLabelAt(world) {
@@ -1727,7 +1734,10 @@ function renderCanvas() {
     selLabels: [...new Set([...selLabels, ...diagnosticSelection.labels])],
     nets,
     previewSelection,
-    annotationPreview: drag?.mode === 'annotationplace' && (annotationStart || drag.previewEnd)
+    // Show the first-to-second-point ghost even before the second click starts
+    // a drag gesture.
+    annotationPreview: (drag?.mode === 'annotationplace' && (annotationStart || drag.previewEnd))
+      || (['arrow', 'box'].includes(labelMode) && annotationStart)
       ? { kind: labelMode, a: annotationStart || drag.startWorld, b: drag.previewEnd || cursor }
       : undefined,
     warnOverlaps: netWarnings,
@@ -4331,6 +4341,7 @@ function inlineEditLabel(label, options = {}) {
         restoreProvisionalLabel(label, initialName);
       }
     } else if (applyText && v && v !== label.text) commit(() => renameLabelThroughModel(label, v));
+    else if (options.removeOnEmpty && !v) commit(() => circuit.removeLabel(label.id));
     render();
   };
   // Ctrl+, (comma) / Ctrl+. (period) wrap the selected text in subscript /
@@ -5284,7 +5295,9 @@ let clipboard = null;
 /** Copy components/labels plus complete internal nets and selected wire islands. */
 function copySelection() {
   const comps = selectedComps();
-  const freeLabels = selectedLabels().filter((l) => !l.owner && !l.isNetLabel?.());
+  const selectedFreeLabels = selectedLabels().filter((l) => !l.owner && !l.isNetLabel?.());
+  const parentIds = new Set(selectedFreeLabels.filter((l) => l.kind === 'arrow' || l.kind === 'box').map((l) => l.id));
+  const freeLabels = [...new Map([...selectedFreeLabels, ...circuit.labels.values()].filter((l) => !l.owner && !l.isNetLabel?.() && (selectedFreeLabels.includes(l) || parentIds.has(l.parent))).map((l) => [l.id, l])).values()];
   const hasWholeTerminallessNet = [...selectedNets].some((id) => {
     const net = circuit.nets.get(id);
     return net && net.terminals.length === 0 && net.paths().some((path) => path.length >= 2);
@@ -5367,7 +5380,17 @@ function copySelection() {
       mirrorX: c.transform.mirrorX,
       mirrorY: c.transform.mirrorY,
     })),
-    labels: freeLabels.map((l) => ({ text: l.text, align: l.align, x: l.anchorWorld().x, y: l.anchorWorld().y })),
+    labels: freeLabels.map((l) => ({
+      id: l.id,
+      kind: l.kind,
+      parent: l.parent,
+      text: l.text,
+      align: l.align,
+      x: l.anchorWorld().x,
+      y: l.anchorWorld().y,
+      end: l.kind === 'label' ? null : { ...l.end },
+      style: { ...(l.style || {}) },
+    })),
     nets,
     fragments,
     anchor,
@@ -5516,8 +5539,14 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         refMap.set(c.origRef, comp.refdes);
         addedComps.push(comp.refdes);
       }
-      for (const l of clipboard.labels) {
-        const nl = circuit.addLabel({ text: l.text, align: l.align, x: l.x + dx, y: l.y + dy });
+      const labelMap = new Map();
+      for (const l of clipboard.labels.filter((label) => label.kind === 'arrow' || label.kind === 'box')) {
+        const shape = circuit.addAnnotation(l.kind, { x: l.x + dx, y: l.y + dy, end: { x: l.end.x + dx, y: l.end.y + dy }, style: l.style });
+        labelMap.set(l.id, shape.id);
+        addedLabels.push(shape.id);
+      }
+      for (const l of clipboard.labels.filter((label) => label.kind === 'label')) {
+        const nl = circuit.addLabel({ text: l.text, align: l.align, parent: l.parent ? labelMap.get(l.parent) : null, x: l.x + dx, y: l.y + dy, style: l.style });
         addedLabels.push(nl.id);
       }
       const netMap = new Map();

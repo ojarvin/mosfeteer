@@ -1413,6 +1413,24 @@ test('arrow and box annotations persist geometry and move as selected labels', (
   assert.throws(() => c.addAnnotation('box', { x: 0, y: 0, end: { x: 0, y: 40 } }), /non-zero width/);
 });
 
+test('annotation labels are separate child labels that move and delete independently', () => {
+  const c = new Circuit();
+  const shape = c.addAnnotation('box', { x: 0, y: 0, end: { x: 160, y: 160 }, text: 'note' });
+  const label = [...c.labels.values()].find((l) => l.parent === shape.id);
+  assert.ok(label);
+  label.moveTo(400, 400);
+  assert.deepEqual(label.anchor, { x: 400, y: 400 });
+  shape.moveTo(40, 40);
+  assert.deepEqual(label.anchor, { x: 440, y: 440 });
+  const state = c.toJSON();
+  c.removeLabel(label.id);
+  assert.equal(c.labels.has(shape.id), true);
+  assert.equal(c.labels.has(label.id), false);
+  const restored = Circuit.fromJSON(state);
+  assert.equal(restored.labels.get(shape.id).kind, 'box');
+  assert.equal([...restored.labels.values()].some((l) => l.parent === shape.id), true);
+});
+
 test('setText resizes the bbox but keeps the anchor fixed', () => {
   const c = new Circuit();
   const l = c.addLabel({ text: 'R', x: 400, y: 0 });
