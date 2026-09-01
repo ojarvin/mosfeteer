@@ -881,12 +881,17 @@ function annotationEndpointAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   for (const label of circuit.labels.values()) {
     if (!['arrow', 'box'].includes(label.kind)) continue;
+    if (label.kind === 'box') {
+      const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
+      const y0 = Math.min(label.anchor.y, label.end.y); const y1 = Math.max(label.anchor.y, label.end.y);
+      const corners = [['top-left', x0, y0], ['top-right', x1, y0], ['bottom-right', x1, y1], ['bottom-left', x0, y1]];
+      const hit = corners.find(([, x, y]) => Math.abs(p.x - x) <= GRID / 2 && Math.abs(p.y - y) <= GRID / 2);
+      if (hit) return { label, endpoint: `corner:${hit[0]}` };
+    }
     for (const endpoint of ['start', 'end']) {
       const q = endpoint === 'start' ? label.anchor : label.end;
       if (Math.abs(p.x - q.x) <= GRID / 2 && Math.abs(p.y - q.y) <= GRID / 2) return { label, endpoint };
     }
-    // Box geometry is defined only by its two corner points.  Its computed
-    // bounding box must not become an independently resizeable object.
   }
   return null;
 }
@@ -2902,6 +2907,11 @@ function canvasMouseDown(ev) {
   }
 
   if (moveMode) {
+    const annotationHit = annotationGeometryAt(startWorld);
+    if (annotationHit) {
+      armModalLabelMove(annotationHit, startWorld, startClient);
+      return;
+    }
     const labelHit = pickLabel(startWorld);
     if (labelHit) {
       armModalLabelMove(labelHit, startWorld, startClient);
@@ -3547,9 +3557,12 @@ function beginCopySource(startWorld, startClient) {
   // click a confirmation gesture rather than an accidental selection change.
   if (!copySelectionExists()) {
     const label = pickLabel(startWorld);
+    const annotation = annotationGeometryAt(startWorld);
     const hit = matchAt(snap(startWorld.x), snap(startWorld.y));
     const wireHit = pickWire(startWorld);
-    if (label?.netId) {
+    if (annotation) {
+      setLabelSelection([annotation.id]);
+    } else if (label?.netId) {
       const net = circuit.nets.get(label.netId);
       const refs = [...new Set((net?.terminals || []).map((t) => t.comp))];
       if (refs.length) setSelection(refs);
@@ -3654,7 +3667,20 @@ function canvasMouseMove(ev) {
       const oldAnchor = { ...drag.label.anchor };
       const oldEnd = { ...drag.label.end };
       const p = { x: snap(w.x), y: snap(w.y) };
-      if (drag.endpoint === 'start') drag.label.anchor = p;
+      if (drag.endpoint.startsWith('corner:')) {
+        const x0 = Math.min(drag.label.anchor.x, drag.label.end.x);
+        const x1 = Math.max(drag.label.anchor.x, drag.label.end.x);
+        const y0 = Math.min(drag.label.anchor.y, drag.label.end.y);
+        const y1 = Math.max(drag.label.anchor.y, drag.label.end.y);
+        const fixed = {
+          'top-left': { x: x1, y: y1 },
+          'top-right': { x: x0, y: y1 },
+          'bottom-right': { x: x0, y: y0 },
+          'bottom-left': { x: x1, y: y0 },
+        }[corner];
+        drag.label.anchor = p;
+        drag.label.end = fixed;
+      } else if (drag.endpoint === 'start') drag.label.anchor = p;
       else if (drag.endpoint === 'end') drag.label.end = p;
       else if (drag.endpoint === 'left' || drag.endpoint === 'right') {
         const left = drag.endpoint === 'left';

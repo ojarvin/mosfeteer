@@ -468,16 +468,9 @@ export class LabelInstance {
 
   bbox() {
     if (this.kind === 'arrow' || this.kind === 'box') {
-      const gx = Math.min(this.anchor.x, this.end.x);
-      const gy = Math.min(this.anchor.y, this.end.y);
-      const gw = Math.max(GRID, Math.abs(this.end.x - this.anchor.x));
-      const gh = Math.max(GRID, Math.abs(this.end.y - this.anchor.y));
-      const tw = this.colWidth() * GRID;
-      const th = this.rowHeight() * GRID;
-      const tx = this.textAnchor.x - tw / 2;
-      const ty = this.textAnchor.y - th / 2;
-      const x = Math.min(gx, tx); const y = Math.min(gy, ty);
-      return { x, y, w: Math.max(gx + gw, tx + tw) - x, h: Math.max(gy + gh, ty + th) - y };
+      const x = Math.min(this.anchor.x, this.end.x);
+      const y = Math.min(this.anchor.y, this.end.y);
+      return { x, y, w: Math.max(GRID, Math.abs(this.end.x - this.anchor.x)), h: Math.max(GRID, Math.abs(this.end.y - this.anchor.y)) };
     }
     const a = this.anchorWorld();
     const w = this.colWidth() * GRID;
