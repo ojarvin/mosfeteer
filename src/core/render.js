@@ -70,6 +70,21 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal')
     .join('');
   return `<text ${attrs}>${body}</text>`;
 }
+
+function shapeAnnotationSvg(label, opacity = '') {
+  const a = label.anchor; const b = label.end;
+  const attrs = styleAttrs(label.style);
+  if (label.kind === 'box') {
+    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+    return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
+  }
+  const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  const tip = 40; const half = 24;
+  const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
+  const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
+  const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
+  return `<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`;
+}
 /**
  * Render a Circuit to an SVG string.
  * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
@@ -144,6 +159,13 @@ export function svgString(circuit, opts = {}) {
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
   }
   const comps = [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
+  for (const label of circuit.labels.values()) {
+    if (!['arrow', 'box'].includes(label.kind) || label.id === o.editingLabel) continue;
+    const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+    parts.push(shapeAnnotationSvg(label, opacity));
+    const mid = { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
+    parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', label.style?.color || '#111', label.style?.width)}</g>`);
+  }
   for (const c of comps) {
     const t = c.transform;
     const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
@@ -242,6 +264,7 @@ export function svgString(circuit, opts = {}) {
   for (const label of circuit.labels.values()) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
+    if (label.kind === 'box' || label.kind === 'arrow') continue;
     if (label.kind === 'box' || label.kind === 'arrow') {
       const a = label.anchor;
       const b = label.end;

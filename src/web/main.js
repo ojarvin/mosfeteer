@@ -3595,10 +3595,10 @@ function canvasMouseMove(ev) {
         if ((drag.label.anchor.y < drag.label.end.y) === top) drag.label.anchor.y = p.y;
         else drag.label.end.y = p.y;
       }
-      const zero = drag.label.kind === 'arrow'
-        ? drag.label.anchor.x === drag.label.end.x && drag.label.anchor.y === drag.label.end.y
+      const invalid = drag.label.kind === 'arrow'
+        ? Math.hypot(drag.label.anchor.x - drag.label.end.x, drag.label.anchor.y - drag.label.end.y) < 80
         : drag.label.anchor.x === drag.label.end.x || drag.label.anchor.y === drag.label.end.y;
-      if (zero) {
+      if (invalid) {
         drag.label.anchor = oldAnchor;
         drag.label.end = oldEnd;
       }
