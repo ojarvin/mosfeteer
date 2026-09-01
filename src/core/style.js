@@ -38,9 +38,10 @@ export function fontAttrs(kind) {
   return parts.join(' ');
 }
 export function styleAttrs(style = {}, base = 'symbol') {
-  const attrs = strokeAttrs(base)
-    .replace('stroke="#111"', `stroke="${style.color || '#111'}"`)
-    .replace(/stroke-width="[^"]+"/, `stroke-width="${style.width === 'thin' ? 3 : style.width === 'thick' ? 9 : base === 'line' ? 6 : 6}"`);
+  let attrs = strokeAttrs(base).replace('stroke="#111"', `stroke="${style.color || '#111'}"`);
+  if (style.width === 'thin' || style.width === 'thick') {
+    attrs = attrs.replace(/stroke-width="[^"]+"/, `stroke-width="${style.width === 'thin' ? 3 : 9}"`);
+  }
   const dash = style.lineStyle && style.lineStyle !== 'solid'
     ? { dashed: '12 8', 'dash-dot': '14 7 3 7', dotted: '2 8' }[style.lineStyle]
     : null;
