@@ -780,7 +780,7 @@ function applySelectedStyle(field, value) {
   ].map((id) => circuit.nets.get(id)).filter(Boolean);
   const objects = [...comps, ...labels, ...nets.filter((net, i, all) => all.indexOf(net) === i)];
   if (!objects.length) return;
-  if (field === 'lineStyle' && objects.some((o) => !['arrow', 'box'].includes(o.kind))) return;
+  if (field === 'lineStyle' && objects.some((o) => !['arrow', 'box'].includes(o.kind) && !o.routingMode)) return;
   const next = value || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal');
   commit(() => {
     for (const obj of objects) obj.style = { ...(obj.style || {}), [field]: next };
@@ -796,10 +796,10 @@ function updateStyleControls() {
   const wireObjects = [...selectedWires].map((key) => keyToWire(key)?.net).filter(Boolean);
   const primaryWire = selectedWire ? circuit.nets.get(selectedWire.netId) : null;
   const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean), ...wireObjects, primaryWire].filter(Boolean);
-  line.disabled = !objects.length || objects.some((o) => !['arrow', 'box'].includes(o.kind));
+  line.disabled = !objects.length || objects.some((o) => !['arrow', 'box'].includes(o.kind) && !o.routingMode);
   color.disabled = width.disabled = !objects.length;
   for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
-    const values = objects.map((o) => o.style?.[field] || (field === 'color' ? '#111' : 'solid'));
+    const values = objects.map((o) => o.style?.[field] || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal'));
     const value = values[0];
     el.value = values.every((v) => v === value) ? value : '';
   }
@@ -812,6 +812,18 @@ function pickLabel(w) {
   for (const label of circuit.labels.values()) {
     const r = label.bbox();
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
+  }
+  return null;
+}
+
+function annotationEndpointAt(world) {
+  const p = { x: snap(world.x), y: snap(world.y) };
+  for (const label of circuit.labels.values()) {
+    if (!['arrow', 'box'].includes(label.kind)) continue;
+    for (const endpoint of ['start', 'end']) {
+      const q = endpoint === 'start' ? label.anchor : label.end;
+      if (Math.abs(p.x - q.x) <= GRID / 2 && Math.abs(p.y - q.y) <= GRID / 2) return { label, endpoint };
+    }
   }
   return null;
 }
@@ -2841,6 +2853,13 @@ function canvasMouseDown(ev) {
     }
     return;
   }
+  const endpointHit = annotationEndpointAt(startWorld);
+  if (endpointHit) {
+    setSelection([]);
+    setLabelSelection([endpointHit.label.id]);
+    drag = { mode: 'annotationendpoint', label: endpointHit.label, endpoint: endpointHit.endpoint, startClient, startWorld, startSnapshot: snapshot(), moved: false };
+    return;
+  }
   // Insert mode with a ghost selected: a left-click places the ghost at the
   // snapped cursor and stays on the same component so more can be placed.
   if (mode === 'insert' && pendingPlace) {
@@ -3516,6 +3535,17 @@ function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'annotationendpoint') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      const p = { x: snap(w.x), y: snap(w.y) };
+      if (drag.endpoint === 'start') drag.label.anchor = p;
+      else drag.label.end = p;
+      cursor = p;
+      render();
+    }
+    return;
+  }
   if (drag.mode === 'copyghost') {
     drag.moved = movedOut || drag.moved;
     moveCopyGhost(w);
@@ -4025,6 +4055,12 @@ function canvasMouseUp(ev) {
     } else if (drag.mode === 'deletemarquee') {
       if (copySelectionExists()) deleteSelection();
       else deleteAtPoint(w);
+    }
+  } else if (drag.mode === 'annotationendpoint') {
+    if (drag.moved && snapshot() !== drag.startSnapshot) {
+      history.push(drag.startSnapshot);
+      if (history.length > 200) history.shift();
+      future.length = 0;
     }
   } else if (drag.mode === 'wirepick') {
     if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit, drag.fixedEndpoint, drag.fixedTarget);

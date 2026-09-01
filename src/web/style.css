@@ -896,7 +896,6 @@ html.dark .canvas svg [fill="#292929"] { fill: #dde1e8; }
 html.dark .canvas svg [fill="#333"] { fill: #dde1e8; }
 html.dark .canvas svg [fill="#666"] { fill: #9aa3b2; }
 html.dark .canvas svg [fill="#fff"] { fill: var(--paper); }
-html.dark .canvas svg text { fill: #dde1e8; }
 html.dark .canvas svg .net-name { fill: #9aa3b2; }
 /* The blue cursor is intentionally subtle on paper; amber keeps it legible
    against the dark canvas without changing selection or wire overlay colors. */
