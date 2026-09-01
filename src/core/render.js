@@ -238,7 +238,7 @@ export function svgString(circuit, opts = {}) {
         parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`);
       } else {
         const angle = Math.atan2(b.y - a.y, b.x - a.x);
-        const size = 14;
+        const size = 26;
         const left = { x: b.x - size * Math.cos(angle - Math.PI / 6), y: b.y - size * Math.sin(angle - Math.PI / 6) };
         const right = { x: b.x - size * Math.cos(angle + Math.PI / 6), y: b.y - size * Math.sin(angle + Math.PI / 6) };
         parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`);
@@ -391,6 +391,19 @@ export function editorOverlay(circuit, opts = {}) {
       parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="2" stroke-dasharray="6 5"/>`);
     }
     parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="#4f9cf9"/>`);
+  }
+  if (opts.annotationPreview) {
+    const { kind, a, b } = opts.annotationPreview;
+    const attrs = 'stroke="#4f9cf9" stroke-width="6" stroke-dasharray="10 7" fill="none"';
+    if (kind === 'box') {
+      const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+      parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
+    } else {
+      const angle = Math.atan2(b.y - a.y, b.x - a.x); const size = 26;
+      const left = { x: b.x - size * Math.cos(angle - Math.PI / 6), y: b.y - size * Math.sin(angle - Math.PI / 6) };
+      const right = { x: b.x - size * Math.cos(angle + Math.PI / 6), y: b.y - size * Math.sin(angle + Math.PI / 6) };
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="#4f9cf9" stroke="none" opacity=".8"/>`);
+    }
   }
 
   if (opts.directWirePreview) {

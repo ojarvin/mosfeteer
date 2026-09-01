@@ -1365,7 +1365,7 @@ function placeAnnotationAt(world) {
   inlineEditLabel(label);
 }
 
-function placeShapeAnnotation(world) {
+function placeShapeAnnotation(world, endOverride = null) {
   const point = { x: snap(world.x), y: snap(world.y) };
   if (!annotationStart) {
     annotationStart = point;
@@ -1373,14 +1373,15 @@ function placeShapeAnnotation(world) {
     render();
     return;
   }
+  const end = endOverride || point;
   let annotation;
   commit(() => {
-    annotation = circuit.addAnnotation(labelMode, { x: annotationStart.x, y: annotationStart.y, end: point });
+    annotation = circuit.addAnnotation(labelMode, { x: annotationStart.x, y: annotationStart.y, end });
   });
-  annotationStart = null;
   setSelection([]);
   setLabelSelection([annotation.id]);
-  logLine(`placed ${labelMode} from (${annotation.anchor.x},${annotation.anchor.y}) to (${point.x},${point.y})`);
+  logLine(`placed ${labelMode} from (${annotationStart.x},${annotationStart.y}) to (${end.x},${end.y})`);
+  annotationStart = null;
   render();
 }
 
@@ -1460,6 +1461,7 @@ function updateNetWarnings() {
   updateStyleControls();
 
 function render() {
+  updateStyleControls();
   validateSelectedWires();
   if (wiresDirty) {
     updateNetWarnings();
@@ -1625,7 +1627,9 @@ function renderCanvas() {
     selLabels: [...new Set([...selLabels, ...diagnosticSelection.labels])],
     nets,
     previewSelection,
-    netSolder: [...netSolder],
+    annotationPreview: drag?.mode === 'annotationplace' && (annotationStart || drag.previewEnd)
+      ? { kind: labelMode, a: annotationStart || drag.startWorld, b: drag.previewEnd || cursor }
+      : undefined,
     warnOverlaps: netWarnings,
     rubber: visual
       ? { x0: Math.min(visual.x, cursor.x), y0: Math.min(visual.y, cursor.y), x1: Math.max(visual.x, cursor.x), y1: Math.max(visual.y, cursor.y), color: '#2e7d32' }
@@ -3495,6 +3499,14 @@ function canvasMouseMove(ev) {
   }
 
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
+  if (drag.mode === 'annotationplace') {
+    if (movedOut) drag.moved = true;
+    if (annotationStart || drag.moved) {
+      drag.previewEnd = { x: snap(w.x), y: snap(w.y) };
+      render();
+    }
+    return;
+  }
   if (drag.mode === 'copyghost') {
     drag.moved = movedOut || drag.moved;
     moveCopyGhost(w);
@@ -4010,7 +4022,12 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'directpick') {
     if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y), drag.fixedEndpoint);
   } else if (drag.mode === 'annotationplace') {
-    if (!movedOut) placeShapeAnnotation(w);
+    if (drag.moved) {
+      if (!annotationStart) annotationStart = { x: snap(drag.startWorld.x), y: snap(drag.startWorld.y) };
+      placeShapeAnnotation(w, { x: snap(w.x), y: snap(w.y) });
+    } else {
+      placeShapeAnnotation(w);
+    }
   } else if (drag.mode === 'labelplace') {
     if (!movedOut) {
       if (labelMode === 'net') placeNetLabelAt(w);
