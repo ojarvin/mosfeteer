@@ -163,7 +163,7 @@ export function svgString(circuit, opts = {}) {
     if (!['arrow', 'box'].includes(label.kind) || label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
     parts.push(shapeAnnotationSvg(label, opacity));
-    const mid = { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
+    const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
     parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', label.style?.color || '#111', label.style?.width)}</g>`);
   }
   for (const c of comps) {
@@ -281,7 +281,7 @@ export function svgString(circuit, opts = {}) {
         const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
         parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`);
       }
-      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const mid = label.textAnchor || { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', label.style?.color || '#111', label.style?.width)}</g>`);
       continue;
     }

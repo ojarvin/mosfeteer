@@ -375,7 +375,8 @@ export class LabelInstance {
     this.anchor = { x: p.x, y: p.y };
     const e = opts.end ? snapPoint(opts.end.x, opts.end.y) : p;
     this.end = { x: e.x, y: e.y };
-    this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
+    const textPoint = opts.textAnchor ? snapPoint(opts.textAnchor.x, opts.textAnchor.y) : { x: snap((p.x + e.x) / 2), y: snap((p.y + e.y) / 2) };
+    this.textAnchor = { x: textPoint.x, y: textPoint.y };
     const net = this.netId ? circuit.nets.get(this.netId) : null;
     this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
@@ -464,9 +465,16 @@ export class LabelInstance {
 
   bbox() {
     if (this.kind === 'arrow' || this.kind === 'box') {
-      const x = Math.min(this.anchor.x, this.end.x);
-      const y = Math.min(this.anchor.y, this.end.y);
-      return { x, y, w: Math.max(GRID, Math.abs(this.end.x - this.anchor.x)), h: Math.max(GRID, Math.abs(this.end.y - this.anchor.y)) };
+      const gx = Math.min(this.anchor.x, this.end.x);
+      const gy = Math.min(this.anchor.y, this.end.y);
+      const gw = Math.max(GRID, Math.abs(this.end.x - this.anchor.x));
+      const gh = Math.max(GRID, Math.abs(this.end.y - this.anchor.y));
+      const tw = this.colWidth() * GRID;
+      const th = this.rowHeight() * GRID;
+      const tx = this.textAnchor.x - tw / 2;
+      const ty = this.textAnchor.y - th / 2;
+      const x = Math.min(gx, tx); const y = Math.min(gy, ty);
+      return { x, y, w: Math.max(gx + gw, tx + tw) - x, h: Math.max(gy + gh, ty + th) - y };
     }
     const a = this.anchorWorld();
     const w = this.colWidth() * GRID;
@@ -526,6 +534,7 @@ export class LabelInstance {
       const dy = wy - this.anchor.y;
       this.anchor = { x: wx, y: wy };
       this.end = { x: this.end.x + dx, y: this.end.y + dy };
+      this.textAnchor = { x: this.textAnchor.x + dx, y: this.textAnchor.y + dy };
       return;
     }
     if (this.netId && !this.circuit._netLabelAnchorOnPath(this.netId, { x: wx, y: wy })) {
@@ -553,6 +562,7 @@ export class LabelInstance {
       offset: this.offset ? { ...this.offset } : null,
       anchor: this.owner ? null : { ...this.anchor },
       end: this.kind === 'label' ? null : { ...this.end },
+      textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       style: { ...this.style },
     };
   }
@@ -3425,6 +3435,7 @@ export class Circuit {
           x: l.anchor ? l.anchor.x : 0,
           y: l.anchor ? l.anchor.y : 0,
           end: l.end || null,
+          textAnchor: l.textAnchor || null,
           style: l.style || null,
         });
       } catch (err) {

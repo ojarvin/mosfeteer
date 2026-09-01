@@ -1128,6 +1128,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
       if (l.kind === 'arrow' || l.kind === 'box') {
         l.anchor = transformWorldPoints([l.anchor], center, operation)[0];
         l.end = transformWorldPoints([l.end], center, operation)[0];
+        l.textAnchor = transformWorldPoints([l.textAnchor], center, operation)[0];
       } else {
         const p = transformWorldPoints([l.anchorWorld()], center, operation)[0];
         l.moveTo(p.x, p.y);
