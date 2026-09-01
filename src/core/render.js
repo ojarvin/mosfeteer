@@ -52,8 +52,10 @@ function textEl(x, y, text, anchor, size, fill) {
 // Runs with `sub`/`super` render as tspans (baseline-shift + smaller size) so
 // instance labels like M1 render as M with a subscript 1, keeping the text's
 // alignment/anchor untouched (alignment is handled by the parent <text>).
-function labelTextEl(x, y, runs, anchor, kind, color = '#111') {
-  const font = fontAttrs(kind).replace(/fill="[^"]+"/, `fill="${color}"`);
+function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal') {
+  const font = fontAttrs(kind)
+    .replace(/fill="[^"]+"/, `fill="${color}"`)
+    .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`);
   const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
   if (runs.length === 1 && !runs[0].sub && !runs[0].super) {
     return `<text ${attrs}>${runs[0].text}</text>`;
@@ -257,11 +259,11 @@ export function svgString(circuit, opts = {}) {
         parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`);
       }
       const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', label.style?.color || '#111')}</g>`);
+      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', label.style?.color || '#111', label.style?.width)}</g>`);
       continue;
     }
     const t = label.textPos();
-    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', label.style?.color || '#111')}</g>`);
+    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', label.style?.color || '#111', label.style?.width)}</g>`);
   }
 
   parts.push('</svg>');

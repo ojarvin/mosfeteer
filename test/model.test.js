@@ -1409,6 +1409,8 @@ test('arrow and box annotations persist geometry and move as selected labels', (
   const restored = Circuit.fromJSON(c.toJSON());
   assert.equal(restored.labels.get(box.id).kind, 'box');
   assert.deepEqual(restored.labels.get(box.id).end, { x: 320, y: 200 });
+  assert.throws(() => c.addAnnotation('arrow', { x: 0, y: 0, end: { x: 0, y: 0 } }), /non-zero length/);
+  assert.throws(() => c.addAnnotation('box', { x: 0, y: 0, end: { x: 0, y: 40 } }), /non-zero width/);
 });
 
 test('setText resizes the bbox but keeps the anchor fixed', () => {

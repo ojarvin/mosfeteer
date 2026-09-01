@@ -993,7 +993,11 @@ export class Circuit {
   }
   addAnnotation(kind, opts = {}) {
     if (!['arrow', 'box'].includes(kind)) throw new Error(`unknown annotation kind "${kind}"`);
-    return this.addLabel({ ...opts, kind });
+    const a = { x: snap(opts.x || 0), y: snap(opts.y || 0) };
+    const b = opts.end ? { x: snap(opts.end.x), y: snap(opts.end.y) } : a;
+    if (kind === 'arrow' && a.x === b.x && a.y === b.y) throw new Error('arrow must have non-zero length');
+    if (kind === 'box' && (a.x === b.x || a.y === b.y)) throw new Error('box must have non-zero width and height');
+    return this.addLabel({ ...opts, kind, x: a.x, y: a.y, end: b });
   }
 
   // ----- labels -------------------------------------------------

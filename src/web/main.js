@@ -813,6 +813,13 @@ function updateStyleControls() {
   const supportsLine = [...objects, ...wireTargets].some((o) => o.net || ['arrow', 'box'].includes(o.kind));
   line.disabled = (!objects.length && !wireTargets.length) || !supportsLine;
   color.disabled = width.disabled = !objects.length && !wireTargets.length;
+  if (!objects.length && !wireTargets.length) {
+    color.value = '#111';
+    line.value = 'solid';
+    width.value = 'normal';
+    color.style.backgroundColor = '#111';
+    return;
+  }
   for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
     const values = [
       ...objects.map((o) => o.style?.[field] || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal')),
@@ -1116,7 +1123,16 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
   };
   try {
     for (const c of selectedComps()) c.transform = transformComponentWorld(c.transform, center, operation);
-    for (const l of selectedLabels()) if (!l.owner) l.moveTo(transformWorldPoints([l.anchorWorld()], center, operation)[0].x, transformWorldPoints([l.anchorWorld()], center, operation)[0].y);
+    for (const l of selectedLabels()) {
+      if (l.owner) continue;
+      if (l.kind === 'arrow' || l.kind === 'box') {
+        l.anchor = transformWorldPoints([l.anchor], center, operation)[0];
+        l.end = transformWorldPoints([l.end], center, operation)[0];
+      } else {
+        const p = transformWorldPoints([l.anchorWorld()], center, operation)[0];
+        l.moveTo(p.x, p.y);
+      }
+    }
     for (const id of geometryNetIds) {
       const net = circuit.nets.get(id); if (!net) continue;
       if (net.routingMode === 'fixed') {
@@ -3565,6 +3581,8 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationendpoint') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
+      const oldAnchor = { ...drag.label.anchor };
+      const oldEnd = { ...drag.label.end };
       const p = { x: snap(w.x), y: snap(w.y) };
       if (drag.endpoint === 'start') drag.label.anchor = p;
       else if (drag.endpoint === 'end') drag.label.end = p;
@@ -3576,6 +3594,13 @@ function canvasMouseMove(ev) {
         const top = drag.endpoint === 'top';
         if ((drag.label.anchor.y < drag.label.end.y) === top) drag.label.anchor.y = p.y;
         else drag.label.end.y = p.y;
+      }
+      const zero = drag.label.kind === 'arrow'
+        ? drag.label.anchor.x === drag.label.end.x && drag.label.anchor.y === drag.label.end.y
+        : drag.label.anchor.x === drag.label.end.x || drag.label.anchor.y === drag.label.end.y;
+      if (zero) {
+        drag.label.anchor = oldAnchor;
+        drag.label.end = oldEnd;
       }
       cursor = p;
       render();
