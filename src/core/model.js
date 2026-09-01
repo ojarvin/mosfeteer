@@ -362,15 +362,20 @@ export class LabelInstance {
   constructor(circuit, opts = {}) {
     this.circuit = circuit;
     this.id = opts.id || uid();
+    this.kind = ['label', 'arrow', 'box'].includes(opts.kind) ? opts.kind : 'label';
     this.netId = opts.netId !== undefined && opts.netId !== null && opts.netId !== '' ? String(opts.netId) : null;
     this.roleError = null;
     if (this.netId && opts.owner) this.roleError = 'label cannot have both owner and netId';
+    if (this.kind !== 'label' && (this.netId || opts.owner)) throw new Error('annotations cannot have owners or nets');
     this._text = opts.text !== undefined ? String(opts.text) : 'label';
     this.align = ['center', 'left', 'right'].includes(opts.align) ? opts.align : 'center';
     this.owner = this.netId ? null : (opts.owner || null);
     this.offset = this.owner && opts.offset ? { x: snap(opts.offset.x), y: snap(opts.offset.y) } : null;
     const p = snapPoint(opts.x || 0, opts.y || 0);
     this.anchor = { x: p.x, y: p.y };
+    const e = opts.end ? snapPoint(opts.end.x, opts.end.y) : p;
+    this.end = { x: e.x, y: e.y };
+    this.style = { color: opts.style?.color || null, lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     const net = this.netId ? circuit.nets.get(this.netId) : null;
     this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
@@ -457,12 +462,12 @@ export class LabelInstance {
     return Math.max(2, n);
   }
 
-  /**
-   * Free and owned labels stay centered on their anchor. Net labels use the
-   * anchor as the electrical attachment point and put one box edge on it, so
-   * the text never sits on top of the wire.
-   */
   bbox() {
+    if (this.kind === 'arrow' || this.kind === 'box') {
+      const x = Math.min(this.anchor.x, this.end.x);
+      const y = Math.min(this.anchor.y, this.end.y);
+      return { x, y, w: Math.max(GRID, Math.abs(this.end.x - this.anchor.x)), h: Math.max(GRID, Math.abs(this.end.y - this.anchor.y)) };
+    }
     const a = this.anchorWorld();
     const w = this.colWidth() * GRID;
     const h = this.rowHeight() * GRID;
@@ -513,10 +518,16 @@ export class LabelInstance {
     if (['center', 'left', 'right'].includes(a)) this.align = a;
   }
 
-  /** Move the anchor to a world point (snapped). Owned labels move via their local offset. */
   moveTo(wx, wy) {
     wx = snap(wx);
     wy = snap(wy);
+    if (this.kind === 'arrow' || this.kind === 'box') {
+      const dx = wx - this.anchor.x;
+      const dy = wy - this.anchor.y;
+      this.anchor = { x: wx, y: wy };
+      this.end = { x: this.end.x + dx, y: this.end.y + dy };
+      return;
+    }
     if (this.netId && !this.circuit._netLabelAnchorOnPath(this.netId, { x: wx, y: wy })) {
       throw new Error('net label anchor must lie on a drawable net path');
     }
@@ -533,6 +544,7 @@ export class LabelInstance {
   toJSON() {
     return {
       id: this.id,
+      kind: this.kind,
       text: this.netId ? this.text : this._text,
       align: this.align,
       owner: this.owner,
@@ -540,6 +552,8 @@ export class LabelInstance {
       netSide: this.netSide,
       offset: this.offset ? { ...this.offset } : null,
       anchor: this.owner ? null : { ...this.anchor },
+      end: this.kind === 'label' ? null : { ...this.end },
+      style: { ...this.style },
     };
   }
 }
@@ -558,6 +572,7 @@ export class ComponentInstance {
       mirrorX: opts.mirrorX !== undefined ? !!opts.mirrorX : !!(this.def && this.def.defaultMirrorX),
       mirrorY: opts.mirrorY !== undefined ? !!opts.mirrorY : !!(this.def && this.def.defaultMirrorY),
     };
+    this.style = { color: opts.style?.color || null, lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
   }
 
   localTerminal(name) {
@@ -579,13 +594,13 @@ export class ComponentInstance {
   bboxWorld() {
     return transformRect(this.transform, this.def.bbox);
   }
-
   toJSON() {
     return {
       refdes: this.refdes,
       type: this.type,
       value: this.value,
       transform: { ...this.transform },
+      style: { ...this.style },
     };
   }
 }
@@ -598,6 +613,7 @@ export class Net {
     // Empty nets made by the public wire-island/direct-wire APIs are retained
     // when their last terminal is detached.  Ordinary connect() nets retain
     // the historical cleanup of an unreferenced auto-route.
+    this.style = { color: opts.style?.color || null, lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     this.preserveEmpty = !!opts.preserveEmpty;
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
@@ -713,11 +729,11 @@ export class Net {
   }
 
   wiringErrors() { return validateWiring(this); }
-
   toJSON() {
     return {
       id: this.id,
       name: this.name,
+      style: { ...this.style },
       preserveEmpty: this.preserveEmpty,
       terminals: this.terminals.map((t) => ({ ...t })),
       routingMode: this.routingMode,
@@ -972,6 +988,10 @@ export class Circuit {
     this.components.delete(refdes);
     this.syncJunctionSolders();
     return true;
+  }
+  addAnnotation(kind, opts = {}) {
+    if (!['arrow', 'box'].includes(kind)) throw new Error(`unknown annotation kind "${kind}"`);
+    return this.addLabel({ ...opts, kind });
   }
 
   // ----- labels -------------------------------------------------
@@ -3335,7 +3355,8 @@ export class Circuit {
         rotation: c.transform.rotation,
         mirrorX: c.transform.mirrorX,
         mirrorY: c.transform.mirrorY,
-        noLabel: true, // instance labels come from data.labels below
+        style: c.style,
+        noLabel: true,
       });
     }
     let maxNetId = 0;
@@ -3343,6 +3364,7 @@ export class Circuit {
       const fixed = data.version >= 2 && n.routingMode === 'fixed';
       const net = new Net(circuit, {
         name: n.name,
+        style: n.style,
         routingMode: fixed ? 'fixed' : 'managed',
         allowDiagonal: !fixed && n.allowDiagonal === true,
         fixedPaths: fixed ? n.fixedPaths : null,
@@ -3386,6 +3408,7 @@ export class Circuit {
       try {
         label = circuit.addLabel({
           id: l.id,
+          kind: l.kind,
           text: l.text,
           align: l.align,
           owner: l.owner || null,
@@ -3394,16 +3417,14 @@ export class Circuit {
           offset: l.offset || null,
           x: l.anchor ? l.anchor.x : 0,
           y: l.anchor ? l.anchor.y : 0,
+          end: l.end || null,
+          style: l.style || null,
         });
       } catch (err) {
         continue;
       }
-      if (label.owner && !circuit.components.has(label.owner)) {
-        circuit.labels.delete(label.id);
-      }
-      if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld())) {
-        circuit.labels.delete(label.id);
-      }
+      if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
+      if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld())) circuit.labels.delete(label.id);
     }
     // every junction is a real vertex, drop duplicate branches, and reduce each
     // net to a minimal connected structure (no parallel wires, no loops).

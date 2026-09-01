@@ -52,6 +52,8 @@
         <button id="btn-mode-delete" class="mode-control" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc">Delete <kbd>Delete</kbd></button>
         <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a net label to name and connect wires">Net label <kbd>L</kbd></button>
         <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires">Annotation <kbd>Shift+N</kbd></button>
+        <button id="btn-mode-arrow" class="mode-control annotation-control" data-action="arrow" aria-pressed="false" title="Draw a two-point arrow">Arrow</button>
+        <button id="btn-mode-box" class="mode-control annotation-control" data-action="box" aria-pressed="false" title="Draw a two-point box">Box</button>
       </div>
 
       <div class="toolbar-group routing-group" aria-labelledby="routing-heading" data-control-group="routing">
@@ -60,6 +62,27 @@
         <select id="routing-mode" data-routing-mode="true" title="Choose the shape used for new wires (F3)">
           <option value="orthogonal">Orthogonal</option>
           <option value="diagonal">Diagonal</option>
+        </select>
+      </div>
+      <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style">
+        <span class="toolbar-group-label" id="style-heading">Style</span>
+        <label for="style-color">Color</label>
+        <select id="style-color" title="Apply color to the selected objects">
+          <option value="">Default</option>
+          <option value="#d96c75">Rose</option><option value="#e59f71">Peach</option>
+          <option value="#e4c16f">Mustard</option><option value="#9acb8a">Sage</option>
+          <option value="#62b5a7">Teal</option><option value="#6fa8dc">Blue</option>
+          <option value="#8f8bd1">Periwinkle</option><option value="#b08ac6">Lilac</option>
+          <option value="#d889b5">Pink</option><option value="#9aa7b8">Slate</option>
+        </select>
+        <label for="style-line">Line</label>
+        <select id="style-line" title="Apply line style to selected arrows and boxes">
+          <option value="solid">Solid</option><option value="dashed">Dashed</option>
+          <option value="dash-dot">Dash-dot</option><option value="dotted">Dotted</option>
+        </select>
+        <label for="style-width">Width</label>
+        <select id="style-width" title="Apply stroke width to selected objects">
+          <option value="normal">Normal</option><option value="thin">Thin</option><option value="thick">Thick</option>
         </select>
       </div>
 

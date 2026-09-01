@@ -1,7 +1,7 @@
 import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
-import { fontAttrs, strokeAttrs } from './style.js';
+import { fontAttrs, strokeAttrs, styleAttrs } from './style.js';
 import { LabelInstance, parseLabelRuns } from './model.js';
 
 function fmt(n) {
@@ -16,26 +16,24 @@ function polygonPoints(g) {
   return (g.points || []).map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' ');
 }
 
-function graphicsToSvg(g, textTransform = '') {
+function graphicsToSvg(g, textTransform = '', objectStyle = null) {
+  const stroke = objectStyle ? styleAttrs(objectStyle, g.style) : strokeAttrs(g.style);
   switch (g.kind) {
     case 'path':
-      return `<path d="${g.d}" fill="none" ${strokeAttrs(g.style)}/>`;
+      return `<path d="${g.d}" fill="none" ${stroke}/>`;
     case 'circle':
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${strokeAttrs(g.style)}/>`;
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${stroke}/>`;
     case 'rect':
-      return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${strokeAttrs(g.style)}/>`;
+      return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${stroke}/>`;
     case 'polygon':
-      // Filled bodies (Razavi gate bars, arrowheads, power slabs) fill with the
-      // foreground color and no stroke; otherwise the polygon is stroked open.
       if (g.fill === 'foreground') {
-        return `<polygon points="${polygonPoints(g)}" fill="#111" stroke="none"/>`;
+        return `<polygon points="${polygonPoints(g)}" fill="${objectStyle?.color || '#111'}" stroke="none"/>`;
       }
-      return `<polygon points="${polygonPoints(g)}" fill="${g.fill || 'none'}" ${strokeAttrs(g.style)}/>`;
+      return `<polygon points="${polygonPoints(g)}" fill="${g.fill || 'none'}" ${stroke}/>`;
     case 'text':
       return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${g.text}</text>`;
     case 'dot':
-      // Solder dot: a plain black dot marking a connection at a wire crossing.
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${g.fill || '#111'}" stroke="none"/>`;
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${objectStyle?.color || g.fill || '#111'}" stroke="none"/>`;
     default:
       return '';
   }
@@ -54,8 +52,8 @@ function textEl(x, y, text, anchor, size, fill) {
 // Runs with `sub`/`super` render as tspans (baseline-shift + smaller size) so
 // instance labels like M1 render as M with a subscript 1, keeping the text's
 // alignment/anchor untouched (alignment is handled by the parent <text>).
-function labelTextEl(x, y, runs, anchor, kind) {
-  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${fontAttrs(kind)} stroke="none"`;
+function labelTextEl(x, y, runs, anchor, kind, color = '#111') {
+  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${fontAttrs(kind)} fill="${color}" stroke="none"`;
   if (runs.length === 1 && !runs[0].sub && !runs[0].super) {
     return `<text ${attrs}>${runs[0].text}</text>`;
   }
@@ -69,7 +67,6 @@ function labelTextEl(x, y, runs, anchor, kind) {
     .join('');
   return `<text ${attrs}>${body}</text>`;
 }
-
 /**
  * Render a Circuit to an SVG string.
  * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
@@ -150,7 +147,7 @@ export function svgString(circuit, opts = {}) {
     const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
     const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
     parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${c.refdes}">`);
-    for (const g of bodyGraphics) parts.push(graphicsToSvg(g));
+    for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
     parts.push('</g></g>');
     for (const g of textGraphics) parts.push(symbolTextSvg(g, t));
     if (o.includeBBox) {
@@ -179,13 +176,9 @@ export function svgString(circuit, opts = {}) {
       const wireHelp = net.routingMode === 'fixed'
         ? 'Fixed/direct wire — drag vertices, segments, or junctions'
         : 'Managed wire — drag orthogonal segments';
-      parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${strokeAttrs()}><title>${wireHelp}</title></path>`);
-      if (o.netNames && net.name) {
-        const mid = pts[Math.floor(pts.length / 2)];
-        parts.push(textEl(mid.x + 6, mid.y - 6, net.name, 'start', 11, '#666'));
+      parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'line')}><title>${wireHelp}</title></path>`);
       }
     }
-  }
   // Junction dots are placed by the routing algorithm as actual `solder`
   // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
   // circle at net junctions.
@@ -235,9 +228,25 @@ export function svgString(circuit, opts = {}) {
   // label's rendered box (left/center/right) and vertically centered.
   for (const label of circuit.labels.values()) {
     if (label.id === o.editingLabel) continue;
-    const t = label.textPos();
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
-    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label')}</g>`);
+    if (label.kind === 'box' || label.kind === 'arrow') {
+      const a = label.anchor;
+      const b = label.end;
+      const attrs = styleAttrs(label.style);
+      if (label.kind === 'box') {
+        const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+        parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`);
+      } else {
+        const angle = Math.atan2(b.y - a.y, b.x - a.x);
+        const size = 14;
+        const left = { x: b.x - size * Math.cos(angle - Math.PI / 6), y: b.y - size * Math.sin(angle - Math.PI / 6) };
+        const right = { x: b.x - size * Math.cos(angle + Math.PI / 6), y: b.y - size * Math.sin(angle + Math.PI / 6) };
+        parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`);
+      }
+      continue;
+    }
+    const t = label.textPos();
+    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', label.style?.color || '#111')}</g>`);
   }
 
   parts.push('</svg>');

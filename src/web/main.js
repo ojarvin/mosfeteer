@@ -64,7 +64,8 @@ const helpSearch = document.getElementById('help-search');
 
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
-let labelMode = null; // null | 'net' | 'annotation' (persistent placement tool)
+let labelMode = null; // null | 'net' | 'annotation' | 'arrow' | 'box'
+let annotationStart = null;
 let moveMode = null; // null | 'connected' | 'detached' (armed one-shot move)
 let copyMode = false; // armed one-shot copy placement
 let deleteMode = false; // persistent one-shot delete tool
@@ -765,6 +766,32 @@ function selectedLabels() {
   return [...selLabels].map((id) => circuit.labels.get(id)).filter(Boolean);
 }
 
+function applySelectedStyle(field, value) {
+  const comps = selectedComps();
+  const labels = selectedLabels();
+  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
+  if (!comps.length && !labels.length && !nets.length) return;
+  const supported = [...labels, ...comps, ...nets].filter(Boolean);
+  if (field === 'lineStyle' && supported.some((o) => !['arrow', 'box'].includes(o.kind))) return;
+  commit(() => {
+    for (const obj of [...comps, ...labels, ...nets]) {
+      obj.style = { ...(obj.style || {}), [field]: value || null };
+    }
+  });
+  render();
+}
+
+function updateStyleControls() {
+  const line = document.getElementById('style-line');
+  if (!line) return;
+  const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean)];
+  line.disabled = !objects.length || objects.some((o) => !['arrow', 'box'].includes(o.kind));
+  for (const id of ['style-color', 'style-width']) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !objects.length;
+  }
+}
+
 function selectedLabel() {
   return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
 }
@@ -1338,6 +1365,25 @@ function placeAnnotationAt(world) {
   inlineEditLabel(label);
 }
 
+function placeShapeAnnotation(world) {
+  const point = { x: snap(world.x), y: snap(world.y) };
+  if (!annotationStart) {
+    annotationStart = point;
+    logLine(`${labelMode.toUpperCase()}: choose the end point`);
+    render();
+    return;
+  }
+  let annotation;
+  commit(() => {
+    annotation = circuit.addAnnotation(labelMode, { x: annotationStart.x, y: annotationStart.y, end: point });
+  });
+  annotationStart = null;
+  setSelection([]);
+  setLabelSelection([annotation.id]);
+  logLine(`placed ${labelMode} from (${annotation.anchor.x},${annotation.anchor.y}) to (${point.x},${point.y})`);
+  render();
+}
+
 function placeNetLabelAt(world) {
   const target = netLabelTargetAt(world);
   if (!target) {
@@ -1411,6 +1457,7 @@ function updateNetWarnings() {
   const nets = [...circuit.nets.values()].map((n) => ({ id: n.id, paths: n.paths() }));
   netWarnings = crossNetOverlaps(nets);
 }
+  updateStyleControls();
 
 function render() {
   validateSelectedWires();
@@ -2712,6 +2759,10 @@ function canvasMouseDown(ev) {
 
   const openEndpoint = openFixedEndpointAt(startWorld);
 
+  if (labelMode === 'arrow' || labelMode === 'box') {
+    drag = { mode: 'annotationplace', startClient, startWorld, moved: false, rubber: null };
+    return;
+  }
   if (labelMode) {
     drag = { mode: 'labelplace', startClient, startWorld, moved: false, rubber: null };
     return;
@@ -3958,6 +4009,8 @@ function canvasMouseUp(ev) {
     if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit, drag.fixedEndpoint, drag.fixedTarget);
   } else if (drag.mode === 'directpick') {
     if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y), drag.fixedEndpoint);
+  } else if (drag.mode === 'annotationplace') {
+    if (!movedOut) placeShapeAnnotation(w);
   } else if (drag.mode === 'labelplace') {
     if (!movedOut) {
       if (labelMode === 'net') placeNetLabelAt(w);
@@ -5574,10 +5627,13 @@ function activateLabelPlacement(kind) {
   deleteMode = false;
   movePending = false;
   copyPending = false;
-  labelMode = kind === 'net' ? 'net' : 'annotation';
-  logLine(labelMode === 'net'
+  labelMode = kind;
+  annotationStart = null;
+  logLine(kind === 'net'
     ? 'NET LABEL: click a physical wire; stays active until Esc'
-    : 'ANNOTATION: click anywhere to place free text; stays active until Esc');
+    : kind === 'annotation'
+      ? 'ANNOTATION: click anywhere to place free text; stays active until Esc'
+      : `${kind.toUpperCase()}: click start and end points; stays active until Esc`);
   render();
 }
 
@@ -5587,6 +5643,10 @@ function activateNetLabel() {
 
 function activateAnnotation() {
   activateLabelPlacement('annotation');
+}
+
+function activateShapeAnnotation(kind) {
+  activateLabelPlacement(kind);
 }
 
 function activatePlace() {
@@ -5942,7 +6002,6 @@ function setRouteMode(next, announce = true) {
   }
   const select = ['routing-mode', 'route-mode', 'route-mode-select', 'route-choice']
     .map((id) => document.getElementById(id)).find((el) => el?.tagName === 'SELECT');
-  if (select) select.value = wanted;
   if (announce) logLine(`route mode: ${wanted}${hasWireDraft() ? ' (active wire draft updated)' : ''}`);
   render();
 }
@@ -5965,6 +6024,8 @@ function bindInteractionControls() {
     delete: activateDelete,
     'net-label': activateNetLabel,
     annotation: activateAnnotation,
+    arrow: () => activateShapeAnnotation('arrow'),
+    box: () => activateShapeAnnotation('box'),
     rotate: () => selectedTransform('rotate'),
     'mirror-x': () => selectedTransform('mirror-x'),
     'mirror-y': () => selectedTransform('mirror-y'),
@@ -6007,6 +6068,9 @@ function bindInteractionControls() {
 }
 
 bindInteractionControls();
+for (const [id, field] of [['style-color', 'color'], ['style-line', 'lineStyle'], ['style-width', 'width']]) {
+  document.getElementById(id)?.addEventListener('change', (ev) => applySelectedStyle(field, ev.target.value));
+}
 
 document.getElementById('btn-clear').addEventListener('click', askClearCanvas);
 deleteCircuitBtn.addEventListener('click', askDeleteCircuit);

@@ -1378,6 +1378,7 @@ test('label align keeps stable centered bounds and positions text inside them', 
   const center = l.bbox();
   assert.equal(center.x + center.w / 2, 400, 'center: box centered on anchor');
   assert.equal(center.y + center.h / 2, 0);
+
   let t = l.textPos();
   assert.equal(t.anchor, 'middle');
   assert.equal(t.x, 400);
@@ -1395,6 +1396,19 @@ test('label align keeps stable centered bounds and positions text inside them', 
   t = l.textPos();
   assert.equal(t.anchor, 'end');
   assert.equal(t.x, right.x + right.w, 'right: text ends at the box right edge');
+});
+test('arrow and box annotations persist geometry and move as selected labels', () => {
+  const c = new Circuit();
+  const arrow = c.addAnnotation('arrow', { x: 0, y: 0, end: { x: 120, y: 80 } });
+  const box = c.addAnnotation('box', { x: 160, y: 40, end: { x: 320, y: 200 } });
+  assert.deepEqual(arrow.toJSON().end, { x: 120, y: 80 });
+  assert.deepEqual(box.bbox(), { x: 160, y: 40, w: 160, h: 160 });
+  arrow.moveTo(40, 40);
+  assert.deepEqual(arrow.anchor, { x: 40, y: 40 });
+  assert.deepEqual(arrow.end, { x: 160, y: 120 });
+  const restored = Circuit.fromJSON(c.toJSON());
+  assert.equal(restored.labels.get(box.id).kind, 'box');
+  assert.deepEqual(restored.labels.get(box.id).end, { x: 320, y: 200 });
 });
 
 test('setText resizes the bbox but keeps the anchor fixed', () => {
