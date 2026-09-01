@@ -170,16 +170,26 @@ export function svgString(circuit, opts = {}) {
           ? balancedPaths(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
           : [net.points()];
     const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
-    for (const pts of paths) {
+    for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
       const wireHelp = net.routingMode === 'fixed'
         ? 'Fixed/direct wire — drag vertices, segments, or junctions'
         : 'Managed wire — drag orthogonal segments';
-      parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'line')}><title>${wireHelp}</title></path>`);
+      const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
+      if (!segmentStyles) {
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'line')}><title>${wireHelp}</title></path>`);
+        continue;
+      }
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1]; const b = pts[i];
+        const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
+        const segmentStyle = net.wireStyles[`${branch}:${i}`] || net.style;
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(segmentStyle, 'line')}><title>${wireHelp}</title></path>`);
       }
     }
+  }
   // Junction dots are placed by the routing algorithm as actual `solder`
   // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
   // circle at net junctions.
@@ -246,6 +256,8 @@ export function svgString(circuit, opts = {}) {
         const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
         parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`);
       }
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', label.style?.color || '#111')}</g>`);
       continue;
     }
     const t = label.textPos();

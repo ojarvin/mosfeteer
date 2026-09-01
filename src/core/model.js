@@ -614,6 +614,7 @@ export class Net {
     // when their last terminal is detached.  Ordinary connect() nets retain
     // the historical cleanup of an unreferenced auto-route.
     this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
+    this.wireStyles = { ...(opts.wireStyles || {}) };
     this.preserveEmpty = !!opts.preserveEmpty;
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
@@ -734,6 +735,7 @@ export class Net {
       id: this.id,
       name: this.name,
       style: { ...this.style },
+      wireStyles: Object.fromEntries(Object.entries(this.wireStyles).map(([key, style]) => [key, { ...style }])),
       preserveEmpty: this.preserveEmpty,
       terminals: this.terminals.map((t) => ({ ...t })),
       routingMode: this.routingMode,
@@ -3365,6 +3367,7 @@ export class Circuit {
       const net = new Net(circuit, {
         name: n.name,
         style: n.style,
+        wireStyles: n.wireStyles,
         routingMode: fixed ? 'fixed' : 'managed',
         allowDiagonal: !fixed && n.allowDiagonal === true,
         fixedPaths: fixed ? n.fixedPaths : null,

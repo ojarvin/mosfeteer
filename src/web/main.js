@@ -770,20 +770,31 @@ function selectedLabel() {
   return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
 }
 
+function selectedWireTargets() {
+  return [...selectedWires].map((key) => {
+    const wire = keyToWire(key);
+    return wire ? { net: circuit.nets.get(wire.netId), key: `${wire.branch}:${wire.segment}` } : null;
+  }).filter((item) => item?.net);
+}
+
 function applySelectedStyle(field, value) {
   const comps = selectedComps();
   const labels = selectedLabels();
-  const nets = [
-    ...selectedNets,
-    ...[...selectedWires].map((key) => keyToWire(key)?.netId),
-    ...(selectedWire ? [selectedWire.netId] : []),
-  ].map((id) => circuit.nets.get(id)).filter(Boolean);
-  const objects = [...comps, ...labels, ...nets.filter((net, i, all) => all.indexOf(net) === i)];
-  if (!objects.length) return;
-  if (field === 'lineStyle' && objects.some((o) => !['arrow', 'box'].includes(o.kind) && !o.routingMode)) return;
+  const wireTargets = selectedWireTargets();
+  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
+  if (selectedWire) {
+    const net = circuit.nets.get(selectedWire.netId);
+    if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
+  }
+  const objects = [...comps, ...labels, ...nets];
+  if (!objects.length && !wireTargets.length) return;
   const next = value || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal');
   commit(() => {
-    for (const obj of objects) obj.style = { ...(obj.style || {}), [field]: next };
+    for (const obj of objects) {
+      if (field === 'lineStyle' && !['arrow', 'box'].includes(obj.kind) && !obj.routingMode) continue;
+      obj.style = { ...(obj.style || {}), [field]: next };
+    }
+    for (const { net, key } of wireTargets) net.wireStyles[key] = { ...(net.wireStyles[key] || net.style || {}), [field]: next };
   });
   render();
 }
@@ -793,16 +804,24 @@ function updateStyleControls() {
   const color = document.getElementById('style-color');
   const width = document.getElementById('style-width');
   if (!line || !color || !width) return;
-  const wireObjects = [...selectedWires].map((key) => keyToWire(key)?.net).filter(Boolean);
-  const primaryWire = selectedWire ? circuit.nets.get(selectedWire.netId) : null;
-  const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean), ...wireObjects, primaryWire].filter(Boolean);
-  line.disabled = !objects.length || objects.some((o) => !['arrow', 'box'].includes(o.kind) && !o.routingMode);
-  color.disabled = width.disabled = !objects.length;
-  for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
-    const values = objects.map((o) => o.style?.[field] || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal'));
-    const value = values[0];
-    el.value = values.every((v) => v === value) ? value : '';
+  const wireTargets = selectedWireTargets();
+  if (selectedWire) {
+    const net = circuit.nets.get(selectedWire.netId);
+    if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
   }
+  const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean)];
+  const supportsLine = [...objects, ...wireTargets].some((o) => o.net || ['arrow', 'box'].includes(o.kind));
+  line.disabled = (!objects.length && !wireTargets.length) || !supportsLine;
+  color.disabled = width.disabled = !objects.length && !wireTargets.length;
+  for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
+    const values = [
+      ...objects.map((o) => o.style?.[field] || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal')),
+      ...wireTargets.map(({ net, key }) => net.wireStyles?.[key]?.[field] || net.style?.[field] || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal')),
+    ];
+    const value = values[0];
+    el.value = values.length && values.every((v) => v === value) ? value : '';
+  }
+  color.style.backgroundColor = color.value || '';
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
@@ -823,6 +842,14 @@ function annotationEndpointAt(world) {
     for (const endpoint of ['start', 'end']) {
       const q = endpoint === 'start' ? label.anchor : label.end;
       if (Math.abs(p.x - q.x) <= GRID / 2 && Math.abs(p.y - q.y) <= GRID / 2) return { label, endpoint };
+    }
+    if (label.kind === 'box') {
+      const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
+      const y0 = Math.min(label.anchor.y, label.end.y); const y1 = Math.max(label.anchor.y, label.end.y);
+      if (Math.abs(p.x - x0) <= GRID / 2 && p.y > y0 + GRID / 2 && p.y < y1 - GRID / 2) return { label, endpoint: 'left' };
+      if (Math.abs(p.x - x1) <= GRID / 2 && p.y > y0 + GRID / 2 && p.y < y1 - GRID / 2) return { label, endpoint: 'right' };
+      if (Math.abs(p.y - y0) <= GRID / 2 && p.x > x0 + GRID / 2 && p.x < x1 - GRID / 2) return { label, endpoint: 'top' };
+      if (Math.abs(p.y - y1) <= GRID / 2 && p.x > x0 + GRID / 2 && p.x < x1 - GRID / 2) return { label, endpoint: 'bottom' };
     }
   }
   return null;
@@ -3540,7 +3567,16 @@ function canvasMouseMove(ev) {
     if (drag.moved) {
       const p = { x: snap(w.x), y: snap(w.y) };
       if (drag.endpoint === 'start') drag.label.anchor = p;
-      else drag.label.end = p;
+      else if (drag.endpoint === 'end') drag.label.end = p;
+      else if (drag.endpoint === 'left' || drag.endpoint === 'right') {
+        const left = drag.endpoint === 'left';
+        if ((drag.label.anchor.x < drag.label.end.x) === left) drag.label.anchor.x = p.x;
+        else drag.label.end.x = p.x;
+      } else {
+        const top = drag.endpoint === 'top';
+        if ((drag.label.anchor.y < drag.label.end.y) === top) drag.label.anchor.y = p.y;
+        else drag.label.end.y = p.y;
+      }
       cursor = p;
       render();
     }
