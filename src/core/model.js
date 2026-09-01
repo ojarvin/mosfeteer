@@ -375,7 +375,7 @@ export class LabelInstance {
     this.anchor = { x: p.x, y: p.y };
     const e = opts.end ? snapPoint(opts.end.x, opts.end.y) : p;
     this.end = { x: e.x, y: e.y };
-    this.style = { color: opts.style?.color || null, lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
+    this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     const net = this.netId ? circuit.nets.get(this.netId) : null;
     this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
@@ -572,7 +572,7 @@ export class ComponentInstance {
       mirrorX: opts.mirrorX !== undefined ? !!opts.mirrorX : !!(this.def && this.def.defaultMirrorX),
       mirrorY: opts.mirrorY !== undefined ? !!opts.mirrorY : !!(this.def && this.def.defaultMirrorY),
     };
-    this.style = { color: opts.style?.color || null, lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
+    this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
   }
 
   localTerminal(name) {
@@ -613,7 +613,7 @@ export class Net {
     // Empty nets made by the public wire-island/direct-wire APIs are retained
     // when their last terminal is detached.  Ordinary connect() nets retain
     // the historical cleanup of an unreferenced auto-route.
-    this.style = { color: opts.style?.color || null, lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
+    this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     this.preserveEmpty = !!opts.preserveEmpty;
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];

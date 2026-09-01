@@ -53,7 +53,8 @@ function textEl(x, y, text, anchor, size, fill) {
 // instance labels like M1 render as M with a subscript 1, keeping the text's
 // alignment/anchor untouched (alignment is handled by the parent <text>).
 function labelTextEl(x, y, runs, anchor, kind, color = '#111') {
-  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${fontAttrs(kind)} fill="${color}" stroke="none"`;
+  const font = fontAttrs(kind).replace(/fill="[^"]+"/, `fill="${color}"`);
+  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
   if (runs.length === 1 && !runs[0].sub && !runs[0].super) {
     return `<text ${attrs}>${runs[0].text}</text>`;
   }
@@ -238,10 +239,12 @@ export function svgString(circuit, opts = {}) {
         parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`);
       } else {
         const angle = Math.atan2(b.y - a.y, b.x - a.x);
-        const size = 26;
-        const left = { x: b.x - size * Math.cos(angle - Math.PI / 6), y: b.y - size * Math.sin(angle - Math.PI / 6) };
-        const right = { x: b.x - size * Math.cos(angle + Math.PI / 6), y: b.y - size * Math.sin(angle + Math.PI / 6) };
-        parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`);
+        const tip = 40;
+        const half = 24;
+        const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
+        const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
+        const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
+        parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`);
       }
       continue;
     }
@@ -399,10 +402,12 @@ export function editorOverlay(circuit, opts = {}) {
       const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
       parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
     } else {
-      const angle = Math.atan2(b.y - a.y, b.x - a.x); const size = 26;
-      const left = { x: b.x - size * Math.cos(angle - Math.PI / 6), y: b.y - size * Math.sin(angle - Math.PI / 6) };
-      const right = { x: b.x - size * Math.cos(angle + Math.PI / 6), y: b.y - size * Math.sin(angle + Math.PI / 6) };
-      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="#4f9cf9" stroke="none" opacity=".8"/>`);
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+      const tip = 40; const half = 24;
+      const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
+      const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
+      const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="#4f9cf9" stroke="none" opacity=".8"/>`);
     }
   }
 

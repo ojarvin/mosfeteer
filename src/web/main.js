@@ -769,31 +769,36 @@ function selectedLabels() {
 function applySelectedStyle(field, value) {
   const comps = selectedComps();
   const labels = selectedLabels();
-  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
-  if (!comps.length && !labels.length && !nets.length) return;
-  const supported = [...labels, ...comps, ...nets].filter(Boolean);
-  if (field === 'lineStyle' && supported.some((o) => !['arrow', 'box'].includes(o.kind))) return;
+  const nets = [
+    ...selectedNets,
+    ...[...selectedWires].map((key) => keyToWire(key)?.netId),
+    ...(selectedWire ? [selectedWire.netId] : []),
+  ].map((id) => circuit.nets.get(id)).filter(Boolean);
+  const objects = [...comps, ...labels, ...nets.filter((net, i, all) => all.indexOf(net) === i)];
+  if (!objects.length) return;
+  if (field === 'lineStyle' && objects.some((o) => !['arrow', 'box'].includes(o.kind))) return;
+  const next = value || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal');
   commit(() => {
-    for (const obj of [...comps, ...labels, ...nets]) {
-      obj.style = { ...(obj.style || {}), [field]: value || null };
-    }
+    for (const obj of objects) obj.style = { ...(obj.style || {}), [field]: next };
   });
   render();
 }
 
 function updateStyleControls() {
   const line = document.getElementById('style-line');
-  if (!line) return;
-  const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean)];
+  const color = document.getElementById('style-color');
+  const width = document.getElementById('style-width');
+  if (!line || !color || !width) return;
+  const wireObjects = [...selectedWires].map((key) => keyToWire(key)?.net).filter(Boolean);
+  const primaryWire = selectedWire ? circuit.nets.get(selectedWire.netId) : null;
+  const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean), ...wireObjects, primaryWire].filter(Boolean);
   line.disabled = !objects.length || objects.some((o) => !['arrow', 'box'].includes(o.kind));
-  for (const id of ['style-color', 'style-width']) {
-    const el = document.getElementById(id);
-    if (el) el.disabled = !objects.length;
+  color.disabled = width.disabled = !objects.length;
+  for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
+    const values = objects.map((o) => o.style?.[field] || (field === 'color' ? '#111' : 'solid'));
+    const value = values[0];
+    el.value = values.every((v) => v === value) ? value : '';
   }
-}
-
-function selectedLabel() {
-  return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
@@ -4745,6 +4750,14 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'm' || key === 'M') {
     activateMove(shiftKey ? 'detached' : 'connected');
+    return;
+  }
+  if (key === 'a') {
+    activateShapeAnnotation('arrow');
+    return;
+  }
+  if (key === 'b') {
+    activateShapeAnnotation('box');
     return;
   }
   if (key === 'C' || (key === 'c' && shiftKey)) {
