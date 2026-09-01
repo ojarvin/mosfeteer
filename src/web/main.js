@@ -836,8 +836,42 @@ function pickLabel(w) {
   const x = snap(w.x);
   const y = snap(w.y);
   for (const label of circuit.labels.values()) {
+    if (label.kind === 'arrow' || label.kind === 'box') continue;
     const r = label.bbox();
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
+  }
+  return null;
+}
+
+function annotationTextAt(world) {
+  const p = { x: snap(world.x), y: snap(world.y) };
+  for (const label of circuit.labels.values()) {
+    if (!['arrow', 'box'].includes(label.kind)) continue;
+    const w = Math.max(GRID, label.colWidth() * GRID) / 2;
+    const h = Math.max(GRID, label.rowHeight() * GRID) / 2;
+    if (Math.abs(p.x - label.textAnchor.x) <= w && Math.abs(p.y - label.textAnchor.y) <= h) return label;
+  }
+  return null;
+}
+
+function annotationGeometryAt(world) {
+  const p = { x: snap(world.x), y: snap(world.y) };
+  const near = (a, b) => {
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+    const q = { x: a.x + dx * t, y: a.y + dy * t };
+    return Math.hypot(p.x - q.x, p.y - q.y) <= GRID / 2;
+  };
+  for (const label of circuit.labels.values()) {
+    if (label.kind === 'arrow' && near(label.anchor, label.end)) return label;
+    if (label.kind === 'box') {
+      const a = label.anchor; const b = label.end;
+      const x0 = Math.min(a.x, b.x); const x1 = Math.max(a.x, b.x);
+      const y0 = Math.min(a.y, b.y); const y1 = Math.max(a.y, b.y);
+      if (near({ x: x0, y: y0 }, { x: x1, y: y0 }) || near({ x: x1, y: y0 }, { x: x1, y: y1 }) ||
+          near({ x: x1, y: y1 }, { x: x0, y: y1 }) || near({ x: x0, y: y1 }, { x: x0, y: y0 })) return label;
+    }
   }
   return null;
 }
@@ -2904,6 +2938,25 @@ function canvasMouseDown(ev) {
     drag = { mode: 'annotationendpoint', label: endpointHit.label, endpoint: endpointHit.endpoint, startClient, startWorld, startSnapshot: snapshot(), moved: false };
     return;
   }
+  const annotationText = annotationTextAt(startWorld);
+  if (annotationText) {
+    setSelection([]);
+    setLabelSelection([annotationText.id]);
+    if (ev.detail >= 2) {
+      setTimeout(() => inlineEditLabel(annotationText), 0);
+      return;
+    }
+    drag = { mode: 'annotationtextmove', label: annotationText, startClient, startWorld, startText: { ...annotationText.textAnchor }, startSnapshot: snapshot(), moved: false };
+    return;
+  }
+  const annotationGeometry = annotationGeometryAt(startWorld);
+  if (annotationGeometry) {
+    setSelection([]);
+    setLabelSelection([annotationGeometry.id]);
+    drag = { mode: 'labelmove', labelId: annotationGeometry.id, startClient, startWorld, startAnchors: new Map([[annotationGeometry.id, { x: annotationGeometry.anchor.x, y: annotationGeometry.anchor.y }]]), moved: false, committed: false, duplicate: false };
+    render();
+    return;
+  }
   // Insert mode with a ghost selected: a left-click places the ghost at the
   // snapped cursor and stays on the same component so more can be placed.
   if (mode === 'insert' && pendingPlace) {
@@ -3579,6 +3632,17 @@ function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'annotationtextmove') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      const dx = snap(w.x) - snap(drag.startWorld.x);
+      const dy = snap(w.y) - snap(drag.startWorld.y);
+      drag.label.textAnchor = { x: drag.startText.x + dx, y: drag.startText.y + dy };
+      cursor = { ...drag.label.textAnchor };
+      render();
+    }
+    return;
+  }
   if (drag.mode === 'annotationendpoint') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
@@ -4108,6 +4172,12 @@ function canvasMouseUp(ev) {
         wiresDirty = true;
         logLine(target ? 'attached fixed endpoint' : 'moved fixed endpoint');
       }
+    }
+  } else if (drag.mode === 'annotationtextmove') {
+    if (drag.moved && snapshot() !== drag.startSnapshot) {
+      history.push(drag.startSnapshot);
+      if (history.length > 200) history.shift();
+      future.length = 0;
     }
   } else if (drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (drag.moved) {
