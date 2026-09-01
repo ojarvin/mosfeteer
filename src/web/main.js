@@ -885,14 +885,8 @@ function annotationEndpointAt(world) {
       const q = endpoint === 'start' ? label.anchor : label.end;
       if (Math.abs(p.x - q.x) <= GRID / 2 && Math.abs(p.y - q.y) <= GRID / 2) return { label, endpoint };
     }
-    if (label.kind === 'box') {
-      const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
-      const y0 = Math.min(label.anchor.y, label.end.y); const y1 = Math.max(label.anchor.y, label.end.y);
-      if (Math.abs(p.x - x0) <= GRID / 2 && p.y > y0 + GRID / 2 && p.y < y1 - GRID / 2) return { label, endpoint: 'left' };
-      if (Math.abs(p.x - x1) <= GRID / 2 && p.y > y0 + GRID / 2 && p.y < y1 - GRID / 2) return { label, endpoint: 'right' };
-      if (Math.abs(p.y - y0) <= GRID / 2 && p.x > x0 + GRID / 2 && p.x < x1 - GRID / 2) return { label, endpoint: 'top' };
-      if (Math.abs(p.y - y1) <= GRID / 2 && p.x > x0 + GRID / 2 && p.x < x1 - GRID / 2) return { label, endpoint: 'bottom' };
-    }
+    // Box geometry is defined only by its two corner points.  Its computed
+    // bounding box must not become an independently resizeable object.
   }
   return null;
 }
