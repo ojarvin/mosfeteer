@@ -549,7 +549,8 @@ add a protected uppercase-`W` editor mode.
 - Virtuoso normal mode: `i` fuzzy placement; `w` the single Wire command;
   `F3` toggles orthogonal vs diagonal routing; `m` connected move;
   `Shift+m` detached move; `c` repeated copy ghost; `r` rotate clockwise;
-  `Shift+r` horizontal mirror; `Ctrl+r` vertical mirror; `Ctrl+Shift+r` is
+  `Shift+r` horizontal mirror; `Ctrl+r` vertical mirror; `Ctrl+i` toggles
+  italic and `Ctrl+b` toggles bold on selected labels; `Ctrl+Shift+r` is
   unbound. Uppercase `W` is not a separate wire mode.
 - `t` in insert mode places a label ghost; `Tab` selects the best insert-menu
   match as a component/label ghost; `v` enters visual mode. `Esc` cancels a

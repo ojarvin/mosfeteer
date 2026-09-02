@@ -381,6 +381,8 @@ export class LabelInstance {
       color: opts.style?.color || '#111',
       lineStyle: opts.style?.lineStyle || 'solid',
       width: opts.style?.width || 'normal',
+      bold: opts.style?.bold !== false,
+      italic: opts.style?.italic !== false,
     };
     this.owner = this.netId ? null : (opts.owner || null);
     this.offset = this.owner && opts.offset ? { x: snap(opts.offset.x), y: snap(opts.offset.y) } : null;

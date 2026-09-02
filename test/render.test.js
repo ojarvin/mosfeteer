@@ -147,6 +147,14 @@ test('svgString renders explicit net labels with rich-text net names', () => {
   assert.ok(svg.includes('<tspan') && svg.includes('IN'));
 });
 
+test('svgString applies per-label bold and italic toggles', () => {
+  const c = new Circuit();
+  c.addLabel({ id: 'plain', text: 'plain', x: 0, y: 0, style: { bold: false, italic: false } });
+  const svg = svgString(c);
+  assert.match(svg, /font-weight="normal"/);
+  assert.doesNotMatch(svg, /font-style="italic"/);
+});
+
 test('transistor instance label renders as a dedicated label object (no duplicate refPos)', () => {
   const c = new Circuit();
   c.addComponent('nmos', { x: 520, y: 0 });

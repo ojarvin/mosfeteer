@@ -1557,6 +1557,14 @@ test('labels round-trip through toJSON/fromJSON (standalone and owned)', () => {
   assert.deepEqual(free.anchor, { x: 280, y: 240 });
 });
 
+test('label font style toggles round-trip independently', () => {
+  const c = new Circuit();
+  const label = c.addLabel({ id: 'STYLE_LABEL', text: 'note', x: 0, y: 0, style: { bold: false, italic: true } });
+  const restored = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON()))).labels.get(label.id);
+  assert.equal(restored.style.bold, false);
+  assert.equal(restored.style.italic, true);
+});
+
 test('fromJSON drops orphaned owned labels (owner missing)', () => {
   const c = new Circuit();
   const m1 = c.addComponent('nmos', { x: 520, y: 0 });

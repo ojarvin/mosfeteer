@@ -3,8 +3,8 @@
  *
  * Modes:
  *   NORMAL   h/j/k/l move (selected comp or cursor), r rotate, Shift+r mirror,
- *            dd delete, y/p copy-paste, Ctrl+Shift+V paste style, w single managed wire mode, Tab cycle, Enter select-at-cursor,
- *            u/Ctrl-Z undo, U/Ctrl-Y/Ctrl-R redo, v visual mode, i insert (fuzzy search), ':' ex-mode, ? keymap.
+ *            dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
+ *            toggle italic/bold on selected labels, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
  *   VISUAL   hjkl grows a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
@@ -769,6 +769,22 @@ function selectedLabels() {
 
 function selectedLabel() {
   return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
+}
+function toggleSelectedLabelFont(field) {
+  const targets = new Map();
+  for (const label of selectedLabels()) {
+    targets.set(label.id, label);
+    if (label.kind === 'arrow' || label.kind === 'box') {
+      for (const child of circuit.labels.values()) {
+        if (child.parent === label.id) targets.set(child.id, child);
+      }
+    }
+  }
+  if (!targets.size) return;
+  commit(() => {
+    for (const label of targets.values()) label.style[field] = label.style[field] === false;
+  });
+  render();
 }
 
 function selectedWireTargets() {
@@ -5355,6 +5371,8 @@ function keymapText() {
     'r           rotate selected 90 cw',
     'Shift+r     mirror selected horizontally',
     'Ctrl+r      mirror selected vertically',
+    'Ctrl+i      toggle italic on selected labels',
+    'Ctrl+b      toggle bold on selected labels',
     'C           toggle crosshair visibility',
     'x / Shift+x check / check and save',
     'm           modal move any component/label/annotation/wire; stays armed',
@@ -6666,7 +6684,10 @@ window.addEventListener('keydown', (ev) => {
     && pendingKey?.key === 'd' && Date.now() - pendingKey.at < 800;
   if (ev.metaKey || ev.ctrlKey) {
     const k = ev.key.toLowerCase();
-    if (k === 'z') {
+    if (k === 'i' || k === 'b') {
+      ev.preventDefault();
+      toggleSelectedLabelFont(k === 'i' ? 'italic' : 'bold');
+    } else if (k === 'z') {
       ev.preventDefault();
       if (drag?.mode === 'copyghost') cancelDrag();
       undo();
