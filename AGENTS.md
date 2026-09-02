@@ -155,6 +155,10 @@ and editor UX — skim it whenever you need an exact number.
 - **All components** auto-create an owned instance label in `addComponent`
   (text=refdes, align center) — every symbol sets `refPos:null` +
   `labelOffset`, so no id is drawn as plain font-12 `refPos` text.
+- Applying a color through the Style controls or style paste updates component
+  owned labels and annotation child labels automatically. Coloring a whole net
+  also updates any per-segment wire color overrides, so selected wires become
+  the requested color consistently.
 - `fromJSON` uses `noLabel:true` then loads `data.labels`, drops orphaned
   owned labels.
 - `nextRefdes(prefix)` returns smallest unused positive index (reuse after
@@ -164,8 +168,10 @@ and editor UX — skim it whenever you need an exact number.
   vertically. `Ctrl+Shift+r` is intentionally unbound. The CLI `rotate` /
   `mirror` commands use the same origin-anchored transform: the origin never
   moves, so repeated transforms never translate the component and always stay
-  on the 40-grid. Mirror operations use world horizontal/vertical axes even
-  after a component is rotated.
+  on the 40-grid. Set transforms use the exact selection midpoint, including
+  half-grid midpoints, so repeated horizontal mirrors of odd-width sets remain
+  stable. Mirror operations use world horizontal/vertical axes even after a
+  component is rotated.
   Free labels are not orbited by rotate / mirror.
 - Editor UX (main.js): labels are inserted through **insert mode** (`t`
   picks a label ghost, Enter/click commits at cursor; no normal-mode `t`).
@@ -176,6 +182,10 @@ and editor UX — skim it whenever you need an exact number.
   persistent free-annotation placement. Both modes remain active until
   Escape. Net-label edits rename the physical net; annotation and owned-label
   edits change only their own text.
+- Annotation text defaults are calculated once at creation: box labels are
+  centered above the top edge with their bottom edge touching it; arrow labels
+  attach a text-box corner to the arrow base according to the arrow quadrant.
+  Subsequent movement is independent.
 -  Shift+ArrowLeft/Right cycle align; nudge h/j/k/l (and arrow keys) —
   **nudging moves the wires with the components** (a `moved` map is passed
   to `rerouteNet`, so nets whose terminals all ride nudged components
@@ -183,9 +193,10 @@ and editor UX — skim it whenever you need an exact number.
   double-click inline `<input>` (Enter/blur commit, Esc cancel); palette
   "label" button. **Multi-label selection** supported: `selLabels:Set`
   (plus `selLabel` = primary id), extends/deselects component `multi`.
-  `setLabelSelection(ids, primary)` sets both; `setSelection`/Escape
-  clears both. Selection overlay highlights all `selLabels`
-  (`editorOverlay` `opts.selLabels`).
+  Shift-clicking an annotation and its text label, in either order, preserves
+  both selections. `setLabelSelection(ids, primary)` sets both;
+  `setSelection`/Escape clears both. Selection overlay highlights all
+  `selLabels` (`editorOverlay` `opts.selLabels`).
 - Selection, move, and delete are role-aware across components, owned labels,
   free annotations, electrical net labels, and wire segments. Owned labels
   follow their components; net labels remain attached to a drawable net path,
@@ -220,11 +231,13 @@ and editor UX — skim it whenever you need an exact number.
   the ghost and returns to the copy tool.
 - `r` rotates clockwise, `Shift+r` mirrors horizontally, and `Ctrl+r` mirrors
   vertically. `Ctrl+Shift+r` is unbound. Normal transforms are origin-anchored
-  and mirror against world axes even after component rotation; copy and move
-  ghosts transform around the current cursor pivot and rebase their follow
-  origin, so subsequent movement applies only the pointer delta. Transforms
-  during a move ghost remain part of the same atomic move history entry. The
-  same world-axis behavior applies to insert placement ghosts.
+  and mirror against world axes even after component rotation. Rotating a
+  multi-component set rotates both the symbols' positions and their individual
+  orientations around the set midpoint. Copy and move ghosts transform around
+  the current cursor pivot and rebase their follow origin, so subsequent
+  movement applies only the pointer delta. Transforms during a move ghost remain
+  part of the same atomic move history entry. The same world-axis behavior
+  applies to insert placement ghosts.
 - `x` runs Check. `Shift+x` runs Check & Save. The Design check panel has a
   Clear control; deleting an object also clears the stale report and focus.
 
@@ -365,6 +378,9 @@ add a protected uppercase-`W` editor mode.
   `editorOverlay` draws a blue halo over the net's paths and an r13 ring +
   dot over each junction solder; devices are NOT highlighted. `opts.nets`
   carries the highlighted nets and `opts.netSolder` the solder points.
+- **Net selection also selects its associated junction solder components.**
+  Selecting a net from the side panel or by double-clicking its wire keeps the
+  net highlight and selects every solder dot at that net's junctions.
 - **Cross-net collinear overlap warning.** `crossNetOverlaps` (wiring.js)
   returns collinear overlapping spans between DIFFERENT nets; the editor
   recomputes it whenever wire geometry changes and renders the offending
@@ -484,8 +500,12 @@ add a protected uppercase-`W` editor mode.
   source click is the placement anchor: the copied point stays under the
   cursor, not the set's bounding-box center.
   The pasted set appears as a cursor-following ghost; click or Enter commits it,
-  and each subsequent click commits another copy using the same anchor while
-  staying in copy mode. Escape cancels the ghost and returns to source selection.
+  and each subsequent click commits another copy at that cursor using the same
+  anchor while staying in copy mode. Escape cancels the ghost and returns to
+  source selection.
+  A single copied object also copies its color, line style, and width; a copied
+  set has no style source. `Ctrl+Shift+V` applies a single copied object's style
+  to the selected object or set wherever that style field is supported.
 - Every complete physical net whose terminals all sit on selected components
   (and explicitly selected complete terminal-less nets) keeps route / branches
   / junctions. Net labels travel only with their complete physical net; paste
@@ -538,10 +558,14 @@ add a protected uppercase-`W` editor mode.
   `Backspace` do the same when a selection exists; with no selection they arm
   persistent Delete mode, where clicks delete objects until `Esc`.
   `Backspace` removes the latest uncommitted wire vertex in wiring mode.
-  `u` / `Ctrl+Z` undo; `U` / `Ctrl+Y` redo. Undoing an action while Copy or
-  Move is armed removes only the last action and re-arms the same tool.
+- `u` / `Ctrl+Z` undo; `U` / `Ctrl+Y` redo. Undo works while an insert ghost
+  or copy ghost is active; typing in the insert search field still treats `u`
+  as query text. Copy-ghost undo cancels the uncommitted ghost before undoing
+  its last committed copy. Undoing an action while Copy or Move is armed
+  removes only the last action and re-arms the same tool.
 - `p` / `Ctrl/Cmd+V` paste at cursor. (`y` and `Ctrl/Cmd+C` remain copy
-  aliases; `yy` is not required.)
+  aliases; `yy` is not required.) `Ctrl/Cmd+Shift+V` pastes style from a single
+  copied object onto the current selection.
 - `Ctrl/Cmd+S` saves the current design.
 - Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy.
 - `hjkl` move cursor; in visual mode, grow box; in insert mode, part of

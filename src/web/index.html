@@ -48,7 +48,7 @@
         <button id="btn-mode-visual" class="mode-control" data-mode="visual" aria-pressed="false" title="Select everything completely inside a box (v)">Box select <kbd>v</kbd></button>
         <button id="btn-mode-move" class="mode-control" data-action="move" aria-pressed="false" title="Move the selected object and stay in Move mode until Esc">Move <kbd>m</kbd></button>
         <button id="btn-mode-detach-move" class="mode-control" data-action="detach-move" aria-pressed="false" title="Move without carrying electrical connectivity; stay active until Esc">Detach move <kbd>Shift+m</kbd></button>
-        <button id="btn-mode-copy" class="mode-control" data-action="copy" aria-pressed="false" title="Copy the selected object and stay in Copy mode until Esc">Copy <kbd>c</kbd></button>
+        <button id="btn-mode-copy" class="mode-control" data-action="copy" aria-pressed="false" title="Copy the selected object or set; Ctrl+Shift+V pastes one copied object's style onto selected objects">Copy <kbd>c</kbd></button>
         <button id="btn-mode-delete" class="mode-control" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc">Delete <kbd>Delete</kbd></button>
         <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a net label to name and connect wires">Net label <kbd>L</kbd></button>
         <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires">Annotation <kbd>Shift+N</kbd></button>
@@ -67,7 +67,7 @@
       <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style">
         <span class="toolbar-group-label" id="style-heading">Style</span>
         <label for="style-color">Color</label>
-        <select id="style-color" title="Apply color to the selected objects">
+        <select id="style-color" title="Apply color to the selected objects; Ctrl+Shift+V pastes a copied object's color">
           <option value="#111" style="background:#111;color:#fff">&nbsp;&nbsp;&nbsp;</option>
           <option value="#d96c75" style="background:#d96c75">&nbsp;&nbsp;&nbsp;</option><option value="#e59f71" style="background:#e59f71">&nbsp;&nbsp;&nbsp;</option>
           <option value="#e4c16f" style="background:#e4c16f">&nbsp;&nbsp;&nbsp;</option><option value="#9acb8a" style="background:#9acb8a">&nbsp;&nbsp;&nbsp;</option>
@@ -76,12 +76,12 @@
           <option value="#d889b5" style="background:#d889b5">&nbsp;&nbsp;&nbsp;</option><option value="#9aa7b8" style="background:#9aa7b8">&nbsp;&nbsp;&nbsp;</option>
         </select>
         <label for="style-line">Line</label>
-        <select id="style-line" title="Apply line style to selected arrows and boxes">
+        <select id="style-line" title="Apply line style wherever supported; Ctrl+Shift+V pastes a copied object's line style">
           <option value="solid">Solid</option><option value="dashed">Dashed</option>
           <option value="dash-dot">Dash-dot</option><option value="dotted">Dotted</option>
         </select>
         <label for="style-width">Width</label>
-        <select id="style-width" title="Apply stroke width to selected objects">
+        <select id="style-width" title="Apply stroke width to selected objects; Ctrl+Shift+V pastes a copied object's width">
           <option value="normal">Normal</option><option value="thin">Thin</option><option value="thick">Thick</option>
         </select>
       </div>
@@ -139,7 +139,7 @@
     </form>
   </dialog>
 
-  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Check &amp; save · C Crosshair · F3 Wire shape · ? Help</div>
+  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · Ctrl+Shift+V Paste style · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Check &amp; save · C Crosshair · F3 Wire shape · ? Help</div>
 
   <main class="layout">
       <section class="canvas-pane">
@@ -180,6 +180,6 @@
     <pre class="log" id="log"></pre>
   </footer>
 
-  <script type="module" src="main.js?v=10"></script>
+  <script type="module" src="main.js?v=18"></script>
 </body>
 </html>

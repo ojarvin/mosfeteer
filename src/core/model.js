@@ -321,16 +321,22 @@ export function transformComponentWorld(transform, center, operation = 'rotate')
     else if (operation === 'mirrorY') y = -y;
     return { x: x + center.x, y: y + center.y };
   };
+  const p0 = worldOp({ x: transform.x, y: transform.y });
   const p1 = worldOp(basis(1, 0));
   const p2 = worldOp(basis(0, 1));
   let best = null;
+  let bestScore = Infinity;
   for (const rotation of [0, 90, 180, 270]) for (const mirrorX of [false, true]) for (const mirrorY of [false, true]) {
     const t = { x: origin.x, y: origin.y, rotation, mirrorX, mirrorY };
+    const q0 = applyTransform(t, 0, 0);
     const q1 = applyTransform(t, 1, 0);
     const q2 = applyTransform(t, 0, 1);
-    if (q1.x === p1.x && q1.y === p1.y && q2.x === p2.x && q2.y === p2.y) {
+    const score = (q1.x - q0.x - (p1.x - p0.x)) ** 2 + (q1.y - q0.y - (p1.y - p0.y)) ** 2 +
+      (q2.x - q0.x - (p2.x - p0.x)) ** 2 + (q2.y - q0.y - (p2.y - p0.y)) ** 2;
+    if (score < bestScore) {
       best = t;
-      break;
+      bestScore = score;
+      if (score === 0) break;
     }
   }
   return best || { ...transform, x: origin.x, y: origin.y };
@@ -1021,14 +1027,30 @@ export class Circuit {
       y: a.y,
       end: b,
     });
-    if (opts.text) this.addLabel({
-      text: opts.text,
-      align: opts.align,
-      parent: shape.id,
-      x: opts.textAnchor?.x ?? (a.x + b.x) / 2,
-      y: opts.textAnchor?.y ?? (a.y + b.y) / 2,
-      style: { color: shape.style.color },
-    });
+    if (opts.text) {
+      const child = this.addLabel({
+        text: opts.text,
+        align: opts.align,
+        parent: shape.id,
+        x: opts.textAnchor?.x ?? a.x,
+        y: opts.textAnchor?.y ?? a.y,
+        style: { color: shape.style.color },
+      });
+      if (!opts.textAnchor) {
+        const w = child.colWidth() * GRID;
+        const h = child.rowHeight() * GRID;
+        if (kind === 'box') {
+          child.anchor = { x: snap((a.x + b.x) / 2), y: snap(a.y - h / 2) };
+        } else {
+          const dx = Math.sign(b.x - a.x);
+          const dy = Math.sign(b.y - a.y);
+          child.anchor = {
+            x: snap(dx > 0 ? a.x - w / 2 : dx < 0 ? a.x + w / 2 : a.x),
+            y: snap(dy > 0 ? a.y - h / 2 : a.y + h / 2),
+          };
+        }
+      }
+    }
     return shape;
   }
 

@@ -3,7 +3,7 @@
  *
  * Modes:
  *   NORMAL   h/j/k/l move (selected comp or cursor), r rotate, Shift+r mirror,
- *            dd delete, y/p copy-paste, w single managed wire mode, Tab cycle, Enter select-at-cursor,
+ *            dd delete, y/p copy-paste, Ctrl+Shift+V paste style, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *            u/Ctrl-Z undo, U/Ctrl-Y/Ctrl-R redo, v visual mode, i insert (fuzzy search), ':' ex-mode, ? keymap.
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
  *   VISUAL   hjkl grows a selection box, Enter commits it (like a marquee).
@@ -96,6 +96,7 @@ let multi = new Set(); // all selected component refdes (always includes selecte
 let selLabel = null; // primary id of the selected label object (exclusive with component selection)
 let selLabels = new Set(); // all selected label ids (always includes selLabel if any)
 let selectedNets = new Set(); // ids of highlighted nets
+let selectedNetSolders = new Set(); // solder components selected through net selection
 let selectedWire = null; // primary {netId, branch, segment} of the selected wire segment(s)
 let selectedWires = new Set(); // every selected wire segment, as "netId:branch:segment" keys (always includes selectedWire)
 let cursor = { x: 0, y: 0 };
@@ -153,7 +154,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE', hint: 'DELETE · selected Delete acts like dd; otherwise click objects to delete · Esc cancel' };
   if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE', hint: movePending ? 'DETACHED MOVE · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'DETACHED MOVE · click a component, label, or wire, then move and click/Enter · Esc cancel' };
   if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE', hint: movePending ? 'MOVE · faint objects and connected wires follow the cursor, then click/Enter to commit · Esc cancel' : 'MOVE · click a component, label, or wire, then move and click/Enter · Esc cancel' };
-  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · r rotate · Shift+r mirror · Ctrl+R mirror vertical · Ctrl+Shift+R unbound · x check · Shift+x check-and-save` };
+  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · Ctrl+Shift+V paste style · r rotate · Shift+r mirror · Ctrl+R mirror vertical · x check · Shift+x check-and-save` };
 }
 
 function paneSize() {
@@ -776,6 +777,101 @@ function selectedWireTargets() {
     return wire ? { net: circuit.nets.get(wire.netId), key: `${wire.branch}:${wire.segment}` } : null;
   }).filter((item) => item?.net);
 }
+function syncSelectedNetSolders() {
+  for (const ref of selectedNetSolders) multi.delete(ref);
+  selectedNetSolders = new Set();
+  for (const id of selectedNets) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    for (const junction of net.junctions) {
+      for (const comp of circuit.components.values()) {
+        if (comp.type === 'solder' && comp.transform.x === junction.x && comp.transform.y === junction.y) {
+          selectedNetSolders.add(comp.refdes);
+        }
+      }
+    }
+  }
+  for (const ref of selectedNetSolders) multi.add(ref);
+  if (selectedNetSolders.size && !selected) selected = [...selectedNetSolders][0];
+}
+
+function styleDefaults(field) {
+  return field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal';
+}
+
+function selectedWireTargetKeys() {
+  const keys = new Set(selectedWires);
+  if (selectedWire) keys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
+  return [...keys];
+}
+
+function selectedStyleSource() {
+  const comps = selectedComps();
+  const labels = selectedLabels();
+  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
+  const wireKeys = selectedWireTargetKeys();
+  const total = comps.length + labels.length + nets.length + wireKeys.length;
+  if (total !== 1) return null;
+  if (comps.length === 1) return { kind: 'object', style: { ...(comps[0].style || {}) } };
+  if (labels.length === 1) return { kind: 'object', style: { ...(labels[0].style || {}) } };
+  if (nets.length === 1) return { kind: 'object', style: { ...(nets[0].style || {}) } };
+  const wire = keyToWire(wireKeys[0]);
+  const net = circuit.nets.get(wire.netId);
+  if (!net) return null;
+  return {
+    kind: 'wire',
+    style: { ...(net.wireStyles?.[`${wire.branch}:${wire.segment}`] || net.style || {}) },
+  };
+}
+
+function applyStyleToSelected(style) {
+  const comps = selectedComps();
+  const labels = selectedLabels();
+  const wireTargets = selectedWireTargets();
+  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
+  const wireKeys = selectedWireTargetKeys();
+  if (selectedWire) {
+    const net = circuit.nets.get(selectedWire.netId);
+    if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
+  }
+  const objects = [...comps, ...labels, ...nets];
+  if (!objects.length && !wireTargets.length) {
+    logLine('nothing selected for style paste');
+    return false;
+  }
+  commit(() => {
+    for (const obj of objects) {
+      const next = { ...(obj.style || {}) };
+      for (const field of ['color', 'lineStyle', 'width']) {
+        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box'].includes(obj.kind) || obj.routingMode)) {
+          next[field] = style[field];
+        }
+      }
+      obj.style = next;
+      obj.style = next;
+      if (style.color !== undefined && (obj.kind === 'arrow' || obj.kind === 'box' || obj.refdes)) {
+        for (const child of circuit.labels.values()) {
+          if (child.parent === obj.id || child.owner === obj.refdes) {
+            child.style = { ...(child.style || {}), color: style.color };
+          }
+        }
+      }
+    }
+    for (const { net, key } of wireTargets) {
+      net.wireStyles[key] = { ...(net.wireStyles[key] || net.style || {}), ...style };
+    }
+  });
+  render();
+  return true;
+}
+
+function pasteStyle() {
+  if (!clipboard?.style) {
+    logLine(clipboard ? 'style paste requires a single copied object' : 'nothing copied');
+    return false;
+  }
+  return applyStyleToSelected(clipboard.style);
+}
 
 function applySelectedStyle(field, value) {
   const comps = selectedComps();
@@ -788,16 +884,26 @@ function applySelectedStyle(field, value) {
   }
   const objects = [...comps, ...labels, ...nets];
   if (!objects.length && !wireTargets.length) return;
-  const next = value || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal');
+  const next = value || styleDefaults(field);
   commit(() => {
     for (const obj of objects) {
       if (field === 'lineStyle' && !['arrow', 'box'].includes(obj.kind) && !obj.routingMode) continue;
       obj.style = { ...(obj.style || {}), [field]: next };
-      if (field === 'color' && (obj.kind === 'arrow' || obj.kind === 'box')) {
-        for (const child of circuit.labels.values()) {
-          if (child.parent === obj.id) child.style = { ...(child.style || {}), color: next };
+      if (field === 'color' && obj.routingMode) {
+        for (const key of Object.keys(obj.wireStyles || {})) {
+          obj.wireStyles[key] = { ...(obj.wireStyles[key] || {}), color: next };
         }
       }
+      if (field === 'color' && (obj.kind === 'arrow' || obj.kind === 'box' || obj.refdes)) {
+        for (const child of circuit.labels.values()) {
+          if (child.parent === obj.id || child.owner === obj.refdes) {
+            child.style = { ...(child.style || {}), color: next };
+          }
+        }
+      }
+    }
+    for (const { net, key } of wireTargets) {
+      net.wireStyles[key] = { ...(net.wireStyles[key] || net.style || {}), [field]: next };
     }
   });
   render();
@@ -1000,7 +1106,7 @@ function rotateSelectionAbout(deg) {
   const inCopyGhost = drag?.mode === 'copyghost';
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
-  if (selectedComps().length > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+  if (multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
     const turns = ((deg % 360) + 360) % 360;
     const changed = transformMixedSelection(
       turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate',
@@ -1045,7 +1151,7 @@ function mirrorSelectionAbout(axis) {
   const inCopyGhost = drag?.mode === 'copyghost';
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
-  if (selectedComps().length > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+  if (multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
     const changed = transformMixedSelection(
       axis === 'x' ? 'mirrorX' : 'mirrorY',
       { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
@@ -1077,7 +1183,7 @@ function mirrorSelectionAbout(axis) {
   }
 }
 
-/** World-space transform for a mixed component/label/wire selection.  Attached
+/** World-space transform for a mixed component/label/wire selection. Attached
  * nets must be wholly selected (and all their terminals selected); otherwise a
  * transform would need unsafe detach/rubber-band semantics and is rejected. */
 function transformMixedSelection(operation, { recordHistory = true, center: pivot = null } = {}) {
@@ -1133,7 +1239,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     for (const p of circuit.nets.get(id)?.paths() || []) for (const point of p) add({ x: point.x, y: point.y, w: 0, h: 0 });
   }
   if (!Number.isFinite(x0)) return;
-  const center = pivot || { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
+  const center = pivot || { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
   const before = snapshot();
   const savedSelection = {
     selected,
@@ -1161,19 +1267,25 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
   };
   try {
     const selectedAnnotationIds = new Set(selectedLabels().filter((l) => l.kind === 'arrow' || l.kind === 'box').map((l) => l.id));
-    for (const c of selectedComps()) c.transform = transformComponentWorld(c.transform, center, operation);
+    for (const c of selectedComps()) {
+      c.transform = transformComponentWorld(c.transform, center, operation);
+    }
     for (const l of selectedLabels()) {
       if (l.parent && selectedAnnotationIds.has(l.parent)) continue;
       if (l.owner) continue;
-      if (l.kind === 'arrow' || l.kind === 'box') {
-        l.anchor = transformWorldPoints([l.anchor], center, operation)[0];
+      const p = transformWorldPoints([l.anchorWorld()], center, operation)[0];
+      if (l.netId) {
+        // Net geometry is transformed above; assign the corresponding anchor
+        // directly so moveTo cannot reject the valid transformed path.
+        l.anchor = { x: snap(p.x), y: snap(p.y) };
+      } else if (l.kind === 'arrow' || l.kind === 'box') {
+        l.anchor = p;
         l.end = transformWorldPoints([l.end], center, operation)[0];
         l.textAnchor = transformWorldPoints([l.textAnchor], center, operation)[0];
         for (const child of circuit.labels.values()) {
           if (child.parent === l.id) child.anchor = transformWorldPoints([child.anchor], center, operation)[0];
         }
       } else {
-        const p = transformWorldPoints([l.anchorWorld()], center, operation)[0];
         l.moveTo(p.x, p.y);
       }
     }
@@ -1570,9 +1682,9 @@ function updateNetWarnings() {
   const nets = [...circuit.nets.values()].map((n) => ({ id: n.id, paths: n.paths() }));
   netWarnings = crossNetOverlaps(nets);
 }
-  updateStyleControls();
 
 function render() {
+  syncSelectedNetSolders();
   updateStyleControls();
   validateSelectedWires();
   if (wiresDirty) {
@@ -2961,17 +3073,42 @@ function canvasMouseDown(ev) {
   }
   const annotationText = annotationTextAt(startWorld);
   if (annotationText) {
-    setSelection([]);
-    setLabelSelection([annotationText.id]);
+    if (!ev.shiftKey) setSelection([]);
+    setLabelSelection([annotationText.id], undefined, ev.shiftKey);
+    if (ev.shiftKey) {
+      if (selLabels.has(annotationText.id)) {
+        selLabels.delete(annotationText.id);
+        if (selLabel === annotationText.id) selLabel = selLabels.size ? [...selLabels][0] : null;
+      } else {
+        selLabels.add(annotationText.id);
+        if (!selLabel) selLabel = annotationText.id;
+      }
+      setLabelSelection([...selLabels], selLabel, true);
+      render();
+      return;
+    }
     if (ev.detail >= 2) {
       setTimeout(() => inlineEditLabel(annotationText), 0);
       return;
     }
     drag = { mode: 'annotationtextmove', label: annotationText, startClient, startWorld, startText: { ...annotationText.textAnchor }, startSnapshot: snapshot(), moved: false };
+    render();
     return;
   }
   const annotationGeometry = annotationGeometryAt(startWorld);
   if (annotationGeometry) {
+    if (ev.shiftKey) {
+      if (selLabels.has(annotationGeometry.id)) {
+        selLabels.delete(annotationGeometry.id);
+        if (selLabel === annotationGeometry.id) selLabel = selLabels.size ? [...selLabels][0] : null;
+      } else {
+        selLabels.add(annotationGeometry.id);
+        if (!selLabel) selLabel = annotationGeometry.id;
+      }
+      setLabelSelection([...selLabels], selLabel, true);
+      render();
+      return;
+    }
     setSelection([]);
     setLabelSelection([annotationGeometry.id]);
     drag = { mode: 'labelmove', labelId: annotationGeometry.id, startClient, startWorld, startAnchors: new Map([[annotationGeometry.id, { x: annotationGeometry.anchor.x, y: annotationGeometry.anchor.y }]]), moved: false, committed: false, duplicate: false };
@@ -3029,8 +3166,7 @@ function canvasMouseDown(ev) {
         selLabels.add(labelHit.id);
         if (!selLabel) selLabel = labelHit.id;
       }
-      setSelection([]);
-      setLabelSelection([...selLabels]);
+      setLabelSelection([...selLabels], selLabel, true);
       render();
       return;
     }
@@ -4846,6 +4982,10 @@ function selectInsertMatch() {
 }
 
 function onInsertKey(key, shiftKey = false) {
+  if (key === 'u' && pendingPlace) {
+    undo();
+    return;
+  }
   // Arrow keys move the cursor. Once a ghost is active, vim movement keys do
   // too; before that point they remain ordinary search input.
   const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
@@ -5050,7 +5190,6 @@ function onNormalKey(key, shiftKey = false) {
     render();
     return;
   }
-
   if (key === 'r' || key === 'R') {
     if (shiftKey || key === 'R') {
       selectedTransform('mirror-x');
@@ -5060,7 +5199,6 @@ function onNormalKey(key, shiftKey = false) {
       logLine('nothing selected to rotate');
     } else {
       const total = ((90 * count) % 360 + 360) % 360;
-      const copyPivot = copyPending ? { ...cursor } : null;
       if (total) rotateSelectionAbout(total);
       const primary = selectedComp() || selectedComps()[0];
       if (copyPivot) cursor = copyPivot;
@@ -5151,6 +5289,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'u') {
+    if (drag?.mode === 'copyghost') cancelDrag();
     undo();
     return;
   }
@@ -5209,6 +5348,7 @@ function keymapText() {
   return [
     '-- normal --',
     'L           persistent electrical net-label placement',
+    'u / C-z     undo with an insert or copy ghost; insert search keeps u as text',
     'Shift+N     persistent free annotation placement',
     't           edit the primary selected label (no-op otherwise)',
     'h j k l     move selected comp(s) / cursor (counts: 5l)',
@@ -5222,6 +5362,7 @@ function keymapText() {
     'c           repeated copy ghost: click/Enter commits, Esc returns to source',
     'Delete/Backspace persistent delete: click objects; stays armed',
     'p / C-v     paste the copied set at the cursor (new ids, nets kept)',
+    'C-S-v       paste style from one copied object onto selected object(s)',
     'D           toggle dark mode',
     'w           single managed Wire mode: orthogonal, or F3-selected diagonal path',
     'F3          expose/toggle the Wire route choice (orthogonal / diagonal)',
@@ -5250,6 +5391,7 @@ function keymapText() {
     'Esc/Backspace  cancel ghost (back to search)   Esc exits insert',
     'h j k l / arrows  move cursor while a placement ghost is active',
     '-- labels --',
+    'net selection also selects its associated junction solder dots',
     'L           click an unambiguous wire to place a net label; Esc exits',
     'Shift+N     click anywhere to place an annotation; Esc exits',
     't (normal)  edit the primary selected label',
@@ -5268,6 +5410,7 @@ function keymapText() {
     'wire select click selects a run · Shift-click adds/removes runs · drag re-routes',
     'wire delete dd removes selected runs (legacy fixed geometry stays literal)',
     'y / C-c     copy selected components, free labels, complete nets, and wire fragments',
+    '             a single copied object also provides its style for C-S-v',
     'shift-click toggle in selection     shift-drag marquee adds',
     'middle      drag to pan (view never pans on its own)',
     'right       drag = zoom box · right-click = zoom out',
@@ -5319,7 +5462,6 @@ helpSearch?.addEventListener('keydown', (ev) => {
  * are carried only inside their complete physical net record. */
 let clipboard = null;
 
-/** Copy components/labels plus complete internal nets and selected wire islands. */
 function copySelection() {
   const comps = selectedComps();
   const selectedFreeLabels = selectedLabels().filter((l) => !l.owner && !l.isNetLabel?.());
@@ -5397,6 +5539,7 @@ function copySelection() {
   }
   if (!Number.isFinite(x0)) x0 = y0 = x1 = y1 = 0;
   const anchor = { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
+  const styleSource = selectedStyleSource();
   clipboard = {
     comps: comps.map((c) => ({
       origRef: c.refdes,
@@ -5421,7 +5564,9 @@ function copySelection() {
     nets,
     fragments,
     anchor,
+    style: styleSource?.style || null,
   };
+
   logLine(`copied ${comps.length} component(s), ${freeLabels.length} label(s), ${nets.length} net(s), ${fragments.length} wire island(s)`);
   return true;
 }
@@ -6519,11 +6664,11 @@ window.addEventListener('keydown', (ev) => {
   const isDeleteContinuation = ev.key === 'd' && !ev.ctrlKey && !ev.metaKey && !ev.altKey
     && mode === 'normal' && !visual && !wire && !directWire
     && pendingKey?.key === 'd' && Date.now() - pendingKey.at < 800;
-
   if (ev.metaKey || ev.ctrlKey) {
     const k = ev.key.toLowerCase();
     if (k === 'z') {
       ev.preventDefault();
+      if (drag?.mode === 'copyghost') cancelDrag();
       undo();
     } else if (k === 'y') {
       ev.preventDefault();
@@ -6556,6 +6701,9 @@ window.addEventListener('keydown', (ev) => {
     } else if (k === 'c') {
       ev.preventDefault();
       copySelection();
+    } else if (k === 'v' && ev.shiftKey) {
+      ev.preventDefault();
+      pasteStyle();
     } else if (k === 'v') {
       ev.preventDefault();
       pasteClipboard();

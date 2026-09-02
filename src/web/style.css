@@ -294,10 +294,19 @@ button:disabled {
 #circuit-name {
   width: 9rem;
 }
+/* Keep the native color options readable while hovering. Chromium otherwise
+   paints its opaque accent selection over the swatch. */
+#style-color option:hover,
+#style-color option:focus {
+  background: var(--paper) !important;
+  color: var(--ink) !important;
+  outline: 1px solid currentColor;
+}
 
 /* ----- confirmations -------------------------------------------- */
 
 .confirm-dialog {
+
   width: min(28rem, calc(100vw - 32px));
   padding: 20px;
   color: var(--text);

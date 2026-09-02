@@ -1439,6 +1439,24 @@ test('boxes default to dashed style and child labels inherit annotation color', 
   assert.equal(child.style.color, '#d00');
 });
 
+test('annotation text defaults attach to box top and arrow base direction', () => {
+  const c = new Circuit();
+  const box = c.addAnnotation('box', { x: 160, y: 200, end: { x: 480, y: 400 }, text: 'box' });
+  const boxText = [...c.labels.values()].find((label) => label.parent === box.id);
+  assert.equal(boxText.bbox().y + boxText.bbox().h, box.bbox().y);
+  assert.equal(boxText.bbox().x + boxText.bbox().w / 2, (box.anchor.x + box.end.x) / 2);
+
+  const upRight = c.addAnnotation('arrow', { x: 640, y: 400, end: { x: 800, y: 240 }, text: 'up-right' });
+  const upRightText = [...c.labels.values()].find((label) => label.parent === upRight.id);
+  assert.equal(upRightText.bbox().x + upRightText.bbox().w, upRight.anchor.x);
+  assert.equal(upRightText.bbox().y, upRight.anchor.y);
+
+  const downLeft = c.addAnnotation('arrow', { x: 960, y: 240, end: { x: 800, y: 400 }, text: 'down-left' });
+  const downLeftText = [...c.labels.values()].find((label) => label.parent === downLeft.id);
+  assert.equal(downLeftText.bbox().x, downLeft.anchor.x);
+  assert.equal(downLeftText.bbox().y + downLeftText.bbox().h, downLeft.anchor.y);
+});
+
 test('setText resizes the bbox but keeps the anchor fixed', () => {
   const c = new Circuit();
   const l = c.addLabel({ text: 'R', x: 400, y: 0 });
@@ -1773,6 +1791,16 @@ test('world-space point and component transforms share a snapped center', () => 
   assert.deepEqual(transformWorldPoints([{ x: 0, y: 40 }, { x: 40, y: 40 }], center, 'rotate180'), [
     { x: 80, y: 40 }, { x: 40, y: 40 },
   ]);
+});
+
+test('world-space component rotation keeps orientation at half-grid centers', () => {
+  const transformed = transformComponentWorld(
+    { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false },
+    { x: 20, y: 0 },
+    'rotate',
+  );
+  assert.deepEqual({ x: transformed.x, y: transformed.y }, { x: 40, y: -0 });
+  assert.equal(transformed.rotation, 90);
 });
 
 test('floating endpoint attachment is exact and preserves fixed geometry', () => {
