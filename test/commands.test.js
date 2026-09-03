@@ -486,6 +486,15 @@ test('evaluate flags a wire drilling through its own source body', () => {
   const rep2 = evaluate(c);
   assert.deepEqual(rep2.wireThroughBBoxes, [], 'boundary-hugging route is clean');
 });
+test('evaluate accepts a two-gate MOS bus crossing the participating bodies', () => {
+  const c = fresh();
+  c.addComponent('pmos', { refdes: 'M1', x: 0, y: 0, mirrorY: false });
+  c.addComponent('pmos', { refdes: 'M2', x: 400, y: 0, mirrorY: false });
+  const net = c.connect('M1.g', 'M2.g');
+  net.route = [{ x: -120, y: 0 }, { x: 280, y: 0 }];
+  assert.deepEqual(evaluate(c).wireThroughBBoxes, []);
+});
+
 
 test('evaluate allows fixed diagonals but reports diagonal body drills', () => {
   const c = fresh();

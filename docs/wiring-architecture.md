@@ -25,8 +25,12 @@ debug API. New code must use `paths()`/`wireSegments()` instead of choosing
 between `route`, `branches`, or `points()`.
 
 An unmaterialized two-terminal net has no branches and receives a route
-suggestion on demand. Explicit managed routes may be re-laid out when topology
-changes require a fresh optimization; fixed legacy paths remain protected.
+suggestion on demand. Fresh multi-terminal layouts may use Steiner optimization,
+but topology growth never replaces explicit managed paths: `wireTo`,
+`wirePointTo`, and `connect` commit only the newly suggested branch. Existing
+geometry changes only through an explicit wire edit, transform, reroute, or
+another operation whose purpose is to repair geometry; fixed legacy paths
+remain protected.
 
 ## Automatic routing
 
@@ -47,12 +51,18 @@ Candidate paths are ordered by:
 Crossings are legal and remain visually unambiguous because solder dots are
 created only at electrical junctions, not at a crossing of unrelated nets.
 
-For multi-terminal nets, the router computes the exact rectilinear Steiner
-minimum tree over a coarse-grid graph (Dreyfus–Wagner subset DP; see
-`steinerBranches` in router.js). Total length is the primary objective under
-hard body clearance, with terminal-direction and label preferences as
-tie-breaks; a three-way Y becomes one centered T-junction. Nets too large for
-the exponential DP fall back to the MST-of-shortest-paths approximation.
+For fresh multi-terminal layouts and explicit full-net reroutes, the router
+computes the exact rectilinear Steiner minimum tree over a coarse-grid graph
+(Dreyfus–Wagner subset DP; see `steinerBranches` in router.js). Total length is
+the primary objective under hard body clearance, with terminal-direction and
+label preferences as tie-breaks; a three-way Y becomes one centered T-junction.
+Nets too large for the exponential DP fall back to the MST-of-shortest-paths
+approximation.
+
+During wire drawing, `smartRoute` is a live suggestion for the current draft.
+Committing that draft appends the chosen branch and preserves all prior
+managed paths. Existing geometry changes only through an explicit wire edit,
+transform, reroute, or another operation whose purpose is to repair geometry.
 Existing hand-drawn branches are treated as fixed obstacles when another net
 is routed, and a fresh managed layout excludes other nets' wire spans.
 

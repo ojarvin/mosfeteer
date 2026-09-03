@@ -63,6 +63,27 @@ test('passive symbols use a centered local origin', () => {
   assert.deepEqual(getSymbol('switch_open').labelOffset, { x: 0, y: 40 });
 });
 
+test('independent source circles use the compact 35-unit body and adjacent labels', () => {
+  for (const type of ['current_source', 'voltage_source']) {
+    const def = getSymbol(type);
+    assert.deepEqual(def.bbox, { x: -40, y: -80, w: 80, h: 160 }, `${type} bbox`);
+    assert.equal(def.graphics[0].kind, 'circle');
+    assert.equal(def.graphics[0].r, 35, `${type} circle radius`);
+    assert.deepEqual(def.labelOffset, { x: -80, y: 0 }, `${type} label center offset`);
+    assert.ok(def.graphics.some((g) => g.kind === 'path' && g.d === 'M 0 -35 L 0 -80'));
+    assert.ok(def.graphics.some((g) => g.kind === 'path' && g.d === 'M 0 35 L 0 80'));
+  }
+});
+test('current source arrow is smaller than the compact circle body', () => {
+  const arrow = getSymbol('current_source').graphics[2];
+  assert.deepEqual(arrow.points, [
+    { x: 0, y: 24 },
+    { x: -16, y: -8 },
+    { x: 16, y: -8 },
+  ]);
+});
+
+
 test('MOS and BJT symbols use their channel as the local origin', () => {
   for (const type of ['nmos', 'pmos']) {
     const def = getSymbol(type);

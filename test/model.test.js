@@ -202,19 +202,23 @@ test('connect merges existing nets into one', () => {
   assert.equal(c.netOfTerminal(`${r2.refdes}.b`), merged);
 });
 
-test('merging nets replaces stale islands with one connected safe tree', () => {
+test('merging nets preserves committed paths and adds one safe bridge', () => {
   const c = new Circuit();
   const r1 = c.addComponent('resistor', { x: 80, y: 0 });
   const r2 = c.addComponent('resistor', { x: 480, y: 0 });
   const r3 = c.addComponent('resistor', { x: 880, y: 0 });
   const a = c.connect(`${r1.refdes}.a`, `${r2.refdes}.a`);
   const b = c.connect(`${r2.refdes}.b`, `${r3.refdes}.b`);
-  a.branches = [[{ x: 0, y: 0 }, { x: 0, y: 160 }, { x: 400, y: 160 }]];
+  a.branches = [[{ x: 0, y: 0 }, { x: 0, y: 160 }, { x: 400, y: 160 }, { x: 400, y: 0 }]];
   a.route = a.branches[0];
-  b.branches = [[{ x: 560, y: 0 }, { x: 560, y: -160 }, { x: 800, y: -160 }]];
+  b.branches = [[{ x: 560, y: 0 }, { x: 560, y: -160 }, { x: 960, y: -160 }, { x: 960, y: 0 }]];
   b.route = b.branches[0];
+  const committed = [a.branches[0].map((p) => ({ ...p })), b.branches[0].map((p) => ({ ...p }))];
   const merged = c.connect(`${r1.refdes}.a`, `${r3.refdes}.b`);
   const paths = merged.paths();
+  const samePath = (aPath, bPath) => JSON.stringify(aPath) === JSON.stringify(bPath);
+  assert.ok(paths.some((path) => samePath(path, committed[0])));
+  assert.ok(paths.some((path) => samePath(path, committed[1])));
   for (const t of merged.terminals) {
     const p = c.getComponent(t.comp).terminalWorld(t.term);
     assert.ok(paths.some((path) => path.some((q) => q.x === p.x && q.y === p.y)), `${t.comp}.${t.term} is drawable`);
@@ -227,6 +231,23 @@ test('merging nets replaces stale islands with one connected safe tree', () => {
       }
     }
   }
+});
+
+test('diagonal wirePointTo keeps a component terminal touched at its origin', () => {
+  const c = new Circuit();
+  const r1 = c.addComponent('resistor', { x: 200, y: 200 });
+  const r2 = c.addComponent('resistor', { x: 600, y: 400 });
+  const net = c.wirePointTo(
+    r1.terminalWorld('b'),
+    r2.terminalWorld('a'),
+    [],
+    null,
+    { routeStyle: 'diagonal', allowDiagonal: true },
+  );
+  assert.deepEqual(net.terminals, [
+    { comp: r1.refdes, term: 'b' },
+    { comp: r2.refdes, term: 'a' },
+  ]);
 });
 
 test('diode-connected managed nets merge through a visible safe bridge', () => {
@@ -501,7 +522,7 @@ test('an unrouted 3-terminal net has no obstacle-free drawable fallback', () => 
   assert.deepEqual(net.paths(), []);
 });
 
-test('failed fresh topology growth rolls back connect and wireTo membership', () => {
+test('failed branch routing rolls back connect and wireTo membership', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
@@ -509,18 +530,25 @@ test('failed fresh topology growth rolls back connect and wireTo membership', ()
   const net = c.connect('R1.b', 'R2.a');
   const before = net.terminals.map((t) => `${t.comp}.${t.term}`);
   const route = net.paths();
-  const reroute = c.rerouteNet;
-  c.rerouteNet = () => false;
-  assert.throws(() => c.connect('R1.b', 'R3.a'), /unable to route wire safely/);
-  assert.deepEqual(net.terminals.map((t) => `${t.comp}.${t.term}`), before);
-  assert.deepEqual(net.paths(), route);
-  assert.equal(c.netOfTerminal('R3.a'), null);
+  const baseEnv = c._routingEnv();
+  const originalRoutingEnv = c._routingEnv;
+  c._routingEnv = () => ({
+    ...baseEnv,
+    rects: [{ x: -10000, y: -10000, w: 20000, h: 20000 }],
+  });
+  try {
+    assert.throws(() => c.connect('R1.b', 'R3.a'), /unable to route wire safely/);
+    assert.deepEqual(net.terminals.map((t) => `${t.comp}.${t.term}`), before);
+    assert.deepEqual(net.paths(), route);
+    assert.equal(c.netOfTerminal('R3.a'), null);
 
-  assert.throws(() => c.wireTo('R1.b', c.getComponent('R3').terminalWorld('a')), /unable to route wire safely/);
-  assert.deepEqual(net.terminals.map((t) => `${t.comp}.${t.term}`), before);
-  assert.deepEqual(net.paths(), route);
-  assert.equal(c.netOfTerminal('R3.a'), null);
-  c.rerouteNet = reroute;
+    assert.throws(() => c.wireTo('R1.b', c.getComponent('R3').terminalWorld('a')), /unable to route wire safely/);
+    assert.deepEqual(net.terminals.map((t) => `${t.comp}.${t.term}`), before);
+    assert.deepEqual(net.paths(), route);
+    assert.equal(c.netOfTerminal('R3.a'), null);
+  } finally {
+    c._routingEnv = originalRoutingEnv;
+  }
 });
 
 test('failed movement reroute rolls back the component and keeps old endpoints consistent', () => {
@@ -665,6 +693,66 @@ test('authorized diagonal managed wire can splice and grow to a third terminal',
   assert.ok(n.junctions.some((p) => p.x === 280 && p.y === 200));
   assert.ok(n.paths().some((path) => path.some((p, i) => i && p.x !== path[i - 1].x && p.y !== path[i - 1].y)));
   assert.equal(n.fixedPaths.length, 0);
+});
+
+test('orthogonal wire into a diagonal net preserves its authored geometry', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
+  c.addComponent('resistor', { refdes: 'R3', x: 680, y: 200 });
+  const n = c.wireTo('R1.b', { x: 400, y: 400 }, [], { routeStyle: 'diagonal' });
+  const diagonal = n.paths()[0].map((p) => ({ ...p }));
+  const extended = c.wireTo('R3.a', { x: 280, y: 200 }, [], { routeStyle: 'orthogonal' });
+
+  assert.equal(extended, n);
+  assert.equal(extended.allowDiagonal, true);
+  assert.ok(extended.paths().some((path) =>
+    path.length === 2 && path[0].x === 160 && path[0].y === 0 &&
+    path[1].x === 280 && path[1].y === 200));
+  assert.ok(extended.paths().some((path) =>
+    path.length === 2 && path[0].x === 280 && path[0].y === 200 &&
+    path[1].x === 400 && path[1].y === 400));
+  assert.equal(extended.terminals.length, 3);
+  assert.ok(extended.paths().some((path) => path.some((p) => p.x === 600 && p.y === 200)));
+});
+
+test('orthogonal terminal merge into a diagonal net skips whole-net optimization', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
+  c.addComponent('resistor', { refdes: 'R3', x: 680, y: 400 });
+  const n = c.wireTo('R1.b', { x: 400, y: 400 }, [], { routeStyle: 'diagonal' });
+  const diagonal = n.paths()[0].map((p) => ({ ...p }));
+
+  const merged = c.wireTo('R3.a', { x: 400, y: 400 }, [], { routeStyle: 'orthogonal' });
+
+  assert.strictEqual(merged, n);
+  assert.deepEqual(merged.paths()[0], diagonal);
+  assert.equal(merged.terminals.length, 3);
+  assert.ok(merged.paths().some((path) => path.some((p) => p.x === 600 && p.y === 400)));
+});
+
+test('reattaching a diagonal island at a touched terminal preserves geometry', () => {
+  const c = new Circuit();
+  const r1 = c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  const diagonal = c.createWireNet({
+    allowDiagonal: true,
+    branches: [[{ x: 160, y: 0 }, { x: 400, y: 200 }]],
+  });
+  diagonal.terminals.push({ comp: r1.refdes, term: 'b' });
+  const r3 = c.addComponent('resistor', { refdes: 'R3', x: 480, y: 0 });
+  const target = c.createWireNet({
+    branches: [[{ x: 400, y: 0 }, { x: 600, y: 0 }]],
+  });
+  target.terminals.push({ comp: r3.refdes, term: 'a' });
+  const before = diagonal.paths().map((path) => path.map((p) => ({ ...p })));
+
+  const merged = c.wirePointTo({ x: 400, y: 0 }, { x: 400, y: 0 }, [], diagonal.id, { routeStyle: 'orthogonal' });
+
+  assert.equal(merged, diagonal);
+  assert.equal(c.nets.size, 1);
+  assert.deepEqual(merged.paths(), before.concat(target.paths()));
+  assert.ok(merged.terminals.some((t) => t.comp === r3.refdes && t.term === 'a'));
 });
 
 test('wire target identity selects the intended diagonal net and rejects ambiguity', () => {
@@ -1673,7 +1761,7 @@ test('visual annotations are excluded from routing label obstacles', () => {
   assert.equal(env.labelRects.some((r) => r.x === c.labels.get('L1').bbox().x), true);
 });
 
-test('merge rollback restores net-label attachments and named plus unnamed merges inherit the name', () => {
+test('managed net merges preserve labels and inherit the physical name', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
@@ -1682,19 +1770,16 @@ test('merge rollback restores net-label attachments and named plus unnamed merge
   c.renameNet(named, 'SIG');
   const labelPoint = named.paths()[0][2];
   const label = c.addNetLabel(named, { id: 'SIG_LABEL', anchor: labelPoint });
-  const planner = c._planManagedMerge;
-  c._planManagedMerge = () => { throw new Error('forced merge failure'); };
-  assert.throws(() => c.connect('R1.a', 'R2.a'), /forced merge failure/);
-  assert.equal(label.netId, named.id);
-  assert.equal(c.nets.has(unnamed.id), true);
-  // The unnamed net is the surviving primary here and must inherit the
-  // physical name and label attachments from the named net.
-  c._planManagedMerge = planner;
-  const merged = c.wireDirectTo('R2.a', 'R1.a');
+  const namedPaths = named.paths();
+  const unnamedPaths = unnamed.paths();
+
+  const merged = c.connect('R1.a', 'R2.a');
   assert.equal(merged.name, 'SIG');
   assert.equal(label.netId, merged.id);
-  assert.equal(c.nets.has(unnamed.id), true);
-  assert.equal(c.nets.has(named.id), false);
+  assert.equal(c.nets.has(unnamed.id), false);
+  for (const path of [...namedPaths, ...unnamedPaths]) {
+    assert.ok(merged.paths().some((candidate) => JSON.stringify(candidate) === JSON.stringify(path)));
+  }
 });
 
 test('splitting a fixed wire redistributes labels to their unique child paths', () => {
@@ -1866,16 +1951,22 @@ test('re-wiring an existing T-junction does not create a loop', () => {
   assert.equal(dots.length, 1, 'one junction, one dot');
 });
 
-test('a looped detour is replaced by the cheaper straight path', () => {
+test('a committed detour is preserved when the same endpoints are re-wired', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
   c.wireTo('R1.b', { x: 400, y: 0 });
-  // Re-wire with a longer detour below the existing straight wire.
+  const straight = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
   c.wireTo('R1.b', { x: 400, y: 0 }, [{ x: 160, y: 160 }, { x: 400, y: 160 }]);
   const n = [...c.nets.values()][0];
-  assert.equal(n.branches.length, 1, 'the redundant detour is dropped');
-  assert.deepEqual(n.branches[0], [{ x: 160, y: 0 }, { x: 400, y: 0 }], 'the shorter straight path wins');
+  assert.equal(n.branches.length, 2, 'the existing route and new branch both remain');
+  assert.deepEqual(n.branches[0], straight, 'the committed route is unchanged');
+  assert.deepEqual(n.branches[1], [
+    { x: 160, y: 0 },
+    { x: 160, y: 160 },
+    { x: 400, y: 160 },
+    { x: 400, y: 0 },
+  ], 'the explicitly requested detour is committed as a second branch');
 });
 
 test('a wire run dragged onto a same-net wire merges on commit (no hidden overlap)', async () => {
@@ -1942,11 +2033,10 @@ test('connecting three terminals routes one centered Steiner junction with one s
   assert.deepEqual(dots[0].transform, { x: net.junctions[0].x, y: net.junctions[0].y, rotation: 0, mirrorX: false, mirrorY: false }, 'dot sits on the junction');
 });
 
-test('editor wire-mode chaining (terminal-to-terminal) grows a net into the balanced Steiner T', () => {
+test('editor wire-mode chaining appends a branch without refreshing the existing route', () => {
   // CMOS inverter input net, routed exactly like the editor's wire clicks:
-  // wireTo(VIN.p, M2.g) then wireTo(VIN.p, M1.g). The net must end up as the
-  // optimal balanced T — not as two chained pairwise routes with the junction
-  // (and solder dot) sitting on the port terminal.
+  // wireTo(VIN.p, M2.g) then wireTo(VIN.p, M1.g). The first committed branch
+  // remains unchanged; the second click adds one smart-routed branch.
   const c = new Circuit();
   c.addComponent('input', { refdes: 'VIN', x: -120, y: 0 }); // p at (-120,0)
   c.addComponent('pmos', { refdes: 'M2', x: 320, y: -120, mirrorY: true }); // g at (200,-120)
@@ -1954,19 +2044,19 @@ test('editor wire-mode chaining (terminal-to-terminal) grows a net into the bala
   const g2 = c.getComponent('M2').terminalWorld('g');
   const g1 = c.getComponent('M1').terminalWorld('g');
   c.wireTo('VIN.p', g2);
+  const first = [...c.nets.values()][0].paths()[0];
   const net = c.wireTo('VIN.p', g1);
   assert.equal(net.terminals.length, 3);
-  assert.equal(net.length(), 600, `optimal balanced T length (got ${net.length()})`);
-  assert.equal(net.branches.length, 3, 'three arms: port trunk + two gate legs');
-  assert.deepEqual(net.junctions, [{ x: 160, y: 0 }], 'T-junction centered one cell clear of the gates');
-  // Both gate legs leave their pins WEST (pin-conforming) and meet at the trunk.
+  assert.equal(net.length(), 880, `append-only route length (got ${net.length()})`);
+  assert.equal(net.branches.length, 2, 'the existing branch and new gate leg remain');
+  assert.deepEqual(net.branches[0], first, 'the first committed route is unchanged');
+  assert.deepEqual(net.junctions, [{ x: -80, y: 0 }], 'the only new junction is on the shared trunk');
   const flat = net.branches.map((b) => JSON.stringify(b)).join('\n');
-  assert.ok(flat.includes('[{"x":200,"y":-120},{"x":160,"y":-120},{"x":160,"y":0}]'), `pmos leg straight out west:\n${flat}`);
-  assert.ok(flat.includes('[{"x":200,"y":120},{"x":160,"y":120},{"x":160,"y":0}]'), `nmos leg straight out west:\n${flat}`);
-  // The solder dot lands on the junction, never on the port terminal.
+  assert.ok(flat.includes('[{"x":-120,"y":0},{"x":-80,"y":0},{"x":-80,"y":-120},{"x":200,"y":-120}]'), `pmos leg remains:\n${flat}`);
+  assert.ok(flat.includes('[{"x":-120,"y":0},{"x":-80,"y":0},{"x":-80,"y":120},{"x":200,"y":120}]'), `nmos leg remains:\n${flat}`);
   const dots = [...c.components.values()].filter((x) => x.type === 'solder');
   assert.equal(dots.length, 1, 'one junction, one dot');
-  assert.deepEqual(dots[0].transform, { x: 160, y: 0, rotation: 0, mirrorX: false, mirrorY: false }, 'dot on the centered junction');
+  assert.deepEqual(dots[0].transform, { x: -80, y: 0, rotation: 0, mirrorX: false, mirrorY: false }, 'dot on the new junction');
   assert.ok(!dots.some((d) => d.transform.x === -120 && d.transform.y === 0), 'no dot on the VIN port terminal');
 });
 
@@ -2086,6 +2176,79 @@ test('a set move carries its wires (no stale endpoints, no floating stubs)', () 
     assert.ok(terms.has(`${p.x},${p.y}`), 'no stale endpoint left behind');
   }
   assert.equal(net.wiringErrors().length, 0);
+});
+
+test('complete same-delta managed-net move translates branches, route, and junctions exactly', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 360, y: 400 });
+  const net = c.connect('R1.b', 'R2.a', 'R3.a');
+  net.branches = [
+    [{ x: 160, y: 0 }, { x: 160, y: 160 }, { x: 280, y: 160 }],
+    [{ x: 400, y: 0 }, { x: 400, y: 160 }, { x: 280, y: 160 }],
+    [{ x: 280, y: 400 }, { x: 280, y: 160 }],
+  ];
+  net.route = net.branches[0].map((p) => ({ ...p }));
+  net.junctions = [{ x: 280, y: 160 }];
+  c.renameNet(net, 'INTERNAL');
+  const label = c.addNetLabel(net, { id: 'INTERNAL_LABEL', anchor: net.junctions[0] });
+  const before = {
+    branches: net.branches.map((path) => path.map((p) => ({ ...p }))),
+    route: net.route.map((p) => ({ ...p })),
+    junctions: net.junctions.map((p) => ({ ...p })),
+  };
+  const moved = new Map([
+    ['R1', { dx: 80, dy: 80 }],
+    ['R2', { dx: 80, dy: 80 }],
+    ['R3', { dx: 80, dy: 80 }],
+  ]);
+
+  c.moveComponent('R1', 160, 80);
+  c.moveComponent('R2', 560, 80);
+  c.moveComponent('R3', 440, 480);
+  assert.equal(c.rerouteNet(net, moved), true);
+
+  const translate = (path) => path.map((p) => ({ x: p.x + 80, y: p.y + 80 }));
+  assert.deepEqual(net.branches, before.branches.map(translate));
+  assert.deepEqual(net.route, translate(before.route));
+  assert.deepEqual(net.junctions, translate(before.junctions));
+  assert.equal(c._netLabelAnchorOnPath(net, label.anchorWorld()), true);
+});
+
+test('partial same-delta set move carries internal branches while preserving the boundary side', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 480, y: 400 });
+  const net = c.connect('R1.b', 'R2.a', 'R3.a');
+  const internal = [
+    { x: 160, y: 0 }, { x: 160, y: 80 },
+    { x: 400, y: 80 }, { x: 400, y: 0 },
+  ];
+  const boundary = [{ x: 400, y: 0 }, { x: 400, y: 400 }];
+  net.branches = [
+    internal.map((p) => ({ ...p })),
+    boundary.map((p) => ({ ...p })),
+  ];
+  net.route = net.branches[0].map((p) => ({ ...p }));
+  net.junctions = [];
+
+  c.moveComponent('R1', 80, 80);
+  c.moveComponent('R2', 480, 80);
+  assert.equal(c.rerouteNet(net, new Map([
+    ['R1', { dx: 0, dy: 80 }],
+    ['R2', { dx: 0, dy: 80 }],
+  ])), true);
+
+  assert.deepEqual(net.branches[0], internal.map((p) => ({ x: p.x, y: p.y + 80 })));
+  assert.deepEqual(net.branches[1], [
+    { x: 400, y: 80 },
+    { x: 400, y: 400 },
+  ], 'the unmoved endpoint and vertical boundary body stay fixed');
+  assert.deepEqual(c.getComponent('R3').transform, {
+    x: 480, y: 400, rotation: 0, mirrorX: false, mirrorY: false,
+  });
 });
 
 test('partial set move rejects a translated branch that loses one-cell clearance to an unmoved body', () => {

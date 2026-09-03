@@ -6,14 +6,19 @@ here. Read only the doc that matches your role.
 ## Pick your role
 
 | You are… | Goal | Read |
-|---|---|---|
 | **Developer** agent | Improving the application itself: code quality, cohesion, features, tests, API, instructions. | [DEVELOPER.md](./DEVELOPER.md) |
-| **Circuit author** agent | Drawing a circuit using the running editor. The user watches you work and gives feedback. | [CIRCUIT-AUTHOR.md](./CIRCUIT-AUTHOR.md) |
+| **Circuit author** agent | Drawing a circuit in the running editor for the user. | [CIRCUIT-AUTHOR.md](./CIRCUIT-AUTHOR.md) |
 
-If you are asked to draw a circuit, you are a circuit author — even if you are
-also capable of code work. The split exists so the circuit-author loop stays
-fast (one CLI call per edit, no code spelunking) and the developer loop stays
-structural (refactor, review, document). Don't blur the roles in one session.
+If the request is to draw or revise a circuit, use the circuit-author lane even
+if implementation work would be possible. Read `CIRCUIT-AUTHOR.md` before
+acting and obey its role contract: operate through the editor interface, touch
+only the requested circuit, and do not inspect or modify application source,
+tests, project configuration, or global agent configuration. If the request is
+to change the editor itself, use the developer lane instead.
+
+The two lanes are intentionally not interchangeable. The author lane follows a
+two-phase placement-then-routing workflow with user review at the boundary;
+the developer lane optimizes for repository changes and verification.
 
 Both roles share the visual quality bar — see [style-guide.md](./style-guide.md).
 

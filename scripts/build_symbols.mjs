@@ -9,7 +9,7 @@ const rows = [
   ["resistor", "capacitor", "inductor", "diode",
    "variable_resistor", "variable_capacitor", "variable_inductor",
    "switch_open", "switch_closed"],
-  ["current_source", "current_sink", "voltage_source"],
+  ["current_source", "voltage_source"],
   ["nmos", "pmos", "npn", "pnp"],
   ["inverter", "buffer", "and_gate", "nand_gate", "or_gate", "nor_gate", "xor_gate", "xnor_gate"],
   ["opamp", "opamp_diff"],

@@ -2,7 +2,7 @@ import { Circuit, canonicalNetName, transformComponentWorld } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
-import { balancedCrossCoupling, segThroughInterior, smartRoute, balancedRoute } from './router.js';
+import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute, balancedRoute } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
@@ -266,12 +266,26 @@ export function evaluate(circuit) {
   for (const net of circuit.nets.values()) {
     nets.push({ id: net.id, name: net.name, n: net.terminals.length, length: net.length() });
   }
+  const gatePassagesForNet = (net) => {
+    const passages = [];
+    for (const comp of comps) {
+      if (comp.type !== 'nmos' && comp.type !== 'pmos') continue;
+      const gate = comp.def.terminals.find((t) => t.name === 'g');
+      if (!gate) continue;
+      const gateNet = circuit.netOfTerminal({ comp: comp.refdes, term: gate.name });
+      if (gateNet?.id !== net.id) continue;
+      const point = comp.terminalWorld(gate.name);
+      passages.push({ rect: comp.bboxWorld(), point, dir: pinDir(comp, point.x, point.y) });
+    }
+    return passages.length >= 2 ? passages : [];
+  };
   // Wires running through the strict interior of a component's bounding box.
-  // segThroughInterior counts a segment leaving a boundary pin straight across
-  // its own body too, while allowing wires that hug the boundary line.
+  // A shared MOS gate bus is the intentional exception: it may enter the body
+  // on a gate axis when at least two MOS gates belong to that same physical net.
   const boxViolations = [];
   const diagonalViolations = [];
   for (const net of circuit.nets.values()) {
+    const gateEnv = { gatePassages: gatePassagesForNet(net) };
     for (const pts of evaluationPaths(net)) {
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1];
@@ -288,7 +302,9 @@ export function evaluate(circuit) {
         }
         for (const comp of comps) {
           if (annotated(comp)) continue;
-          if (segThroughInterior(a, b, comp.bboxWorld())) {
+          const compBox = comp.bboxWorld();
+          if (segThroughInterior(a, b, compBox) &&
+              !gateBodyCrossingAllowed(a, b, compBox, gateEnv)) {
             const message = `net ${net.id} seg (${a.x},${a.y})-(${b.x},${b.y}) through ${comp.refdes}(${comp.type}) bbox`;
             boxViolations.push(message);
             addIssue('wire-through-body', message, {

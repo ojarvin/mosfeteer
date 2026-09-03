@@ -55,9 +55,9 @@ src/
 └── cli/
     └── index.js        Thin HTTP client over POST /api/circuits/<name>/cmd.
 test/                   Node test runner (`node --test`).
-circuits/<name>/        Saved user circuits (gitignored? check .gitignore).
+circuits/<name>/        Saved user circuits (gitignored).
 guidelines/             Role docs + style guide.
-AGENTS.md               Current behavior spec (live doc — you maintain it).
+AGENTS.md               Current runtime behavior spec (live doc — maintain it).
 ```
 
 ### Labels and physical nets
@@ -83,11 +83,7 @@ annotation.
 
 ### Three entry points, one command language
 
-`runCommand(circuit, line, io)` in `src/core/commands.js` is the only path for
-editing a circuit. Every UI — the editor's command prompt, `window.__run`,
-the CLI, and the new `POST /api/circuits/<name>/cmd` endpoint — calls into
-it. When you add a command, add it to `runCommand`'s `dispatch` and to
-`commandHelp()`; it then appears everywhere for free.
+`runCommand(circuit, line, io)` in `src/core/commands.js` is the single editing path. The editor command prompt, `window.__run`, CLI, and `POST /api/circuits/<name>/cmd` all call it. Add new commands to `dispatch` and `commandHelp()` so every entry point exposes them.
 
 ### State vs. file I/O
 

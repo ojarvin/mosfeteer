@@ -1,7 +1,7 @@
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
-import { balancedCrossCoupling, balancedPaths, balancedRoute, segThroughInterior, smartRoute } from './router.js';
+import { balancedCrossCoupling, balancedPaths, balancedRoute, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 
@@ -39,6 +39,7 @@ function automaticMovePathSafe(path, env) {
     const a = path[i - 1];
     const b = path[i];
     for (const rect of env.rects || []) {
+      if (gateBodyCrossingAllowed(a, b, rect, env)) continue;
       if (segThroughInterior(a, b, rect)) return false;
       if (moveSegmentRectDistance(a, b, rect) >= GRID) continue;
       // Match the router's turned body-edge allowance.  The first and last
@@ -782,6 +783,11 @@ function diagonalRouteRequested(options) {
     options.route === 'diagonal' || options.style === 'diagonal';
 }
 
+function hasDiagonalGeometry(net) {
+  return net?.paths().some((path) => pathSegments(path).some((segment) =>
+    segment.a.x !== segment.b.x && segment.a.y !== segment.b.y)) === true;
+}
+
 function wireTargetIdentity(options) {
   const target = options?.targetIdentity || options?.target;
   if (target && typeof target === 'object') return target;
@@ -1255,6 +1261,8 @@ export class Circuit {
 
   /** Routing environment for a net's default route: component bboxes + pins
    *  (labels are soft obstacles: they steer the route but never block it).
+   *  `gatePassages` contains only same-net MOS gate axes when at least two
+   *  gates participate, allowing the intentional shared-gate body crossing.
    *  `excludeNetId` (or a Set of ids being re-laid-out) is NOT included in
    *  `wires` — its old branches are about to be replaced and must not act as
    *  obstacles — but every OTHER net's explicit wire geometry is, so a fresh
@@ -1267,6 +1275,8 @@ export class Circuit {
     const rects = [];
     const pins = new Map();
     const pinRects = new Map();
+    const gateCandidates = [];
+    const gateCounts = new Map();
     for (const c of this.components.values()) {
       if (c.type === 'solder') continue;
       const body = c.bboxWorld();
@@ -1278,7 +1288,20 @@ export class Circuit {
         if (!pinRects.has(key)) pinRects.set(key, []);
         pinRects.get(key).push(body);
       }
+      if (c.type === 'nmos' || c.type === 'pmos') {
+        const gate = c.def.terminals.find((t) => t.name === 'g');
+        if (gate) {
+          const point = c.terminalWorld(gate.name);
+          const gateNet = this.netOfTerminal({ comp: c.refdes, term: gate.name });
+          const netId = gateNet?.id || null;
+          if (netId) gateCounts.set(netId, (gateCounts.get(netId) || 0) + 1);
+          gateCandidates.push({ netId, rect: body, point, dir: this._pinDir(c, gate, point.x, point.y) });
+        }
+      }
     }
+    const gatePassages = gateCandidates.filter((candidate) =>
+      candidate.netId && excluded.has(candidate.netId) && gateCounts.get(candidate.netId) >= 2
+    );
     const wires = [];
     for (const n of this.nets.values()) {
       if (excluded.has(n.id)) continue;
@@ -1293,7 +1316,7 @@ export class Circuit {
       if (l.isNetLabel() && excluded.has(l.netId)) continue;
       labelRects.push(l.bbox());
     }
-    return { rects, pins, pinRects, wires, labelRects };
+    return { rects, pins, pinRects, gatePassages, wires, labelRects };
   }
 
   /** Routing environment that also treats every existing wire as an obstacle
@@ -1315,7 +1338,7 @@ export class Circuit {
 
   /** Re-route a net, preserving hand-drawn wire shapes. `moved` (optional) is a
    *  Map of refdes -> {dx,dy} for components that just moved: polylines whose
-   *  endpoints ride the SAME moved component slide with it (manual loops are
+   *  endpoint terminals share one move delta slide with it (manual loops are
    *  kept), one-end-moved legs get re-anchored at the new pin with their drawn
    *  body intact, and untouched polylines stay byte-identical. Routes that were
    *  never hand-drawn are laid out fresh. This is the general-purpose router —
@@ -1353,40 +1376,58 @@ export class Circuit {
       this._completeComponentEdit(net.id);
       return true;
     }
-    // A rigid SET move: every terminal of the net rides a moved component and
-    // all of them moved by the same delta — the wires are part of the set, so
-    // translate the whole drawn geometry with it instead of re-anchoring piece
-    // by piece. Any unmoved terminal or mixed delta falls through to the
-    // per-polyline logic below.
-    if (moved && moved.size > 0 && net.terminals.length > 0) {
+    // A complete same-delta set move is a rigid translation, including
+    // junction-ending branches whose second endpoint cannot be classified as
+    // a component terminal. Its clearance from every moved component is
+    // invariant, so validate only against stationary component bodies before
+    // installing; failures retain the existing component-edit rollback.
+    if (moved instanceof Map && moved.size > 0 && net.terminals.length > 0) {
       let delta = null;
       let rigid = true;
-      for (const t of net.terminals) {
-        const d = moved.get(t.comp);
-        if (!d) { rigid = false; break; }
-        if (!delta) delta = d;
-        else if (delta.dx !== d.dx || delta.dy !== d.dy) { rigid = false; break; }
+      for (const terminal of net.terminals) {
+        const terminalDelta = moved.get(terminal.comp);
+        if (!terminalDelta) {
+          rigid = false;
+          break;
+        }
+        if (!delta) delta = terminalDelta;
+        else if (delta.dx !== terminalDelta.dx || delta.dy !== terminalDelta.dy) {
+          rigid = false;
+          break;
+        }
       }
-      if (rigid && delta) {
-        const { dx, dy } = delta;
-        const movedPaths = net.branches
-          ? net.branches.map((b) => b.map((p) => ({ x: p.x + dx, y: p.y + dy })))
-          : null;
-        const movedRoute = net.route && net.route.length >= 2
-          ? net.route.map((p) => ({ x: p.x + dx, y: p.y + dy }))
-          : null;
-        const movedGeometry = movedPaths || (movedRoute ? [movedRoute] : []);
-        if (movedGeometry.some((path) => !automaticMovePathSafe(path, env))) {
+      const hasGeometry = !!(net.branches?.length || net.route?.length || net.junctions.length);
+      if (rigid && delta && hasGeometry) {
+        const translatePath = (path) => path?.map((p) => ({
+          x: p.x + delta.dx,
+          y: p.y + delta.dy,
+        })) || null;
+        const branches = net.branches?.map(translatePath) || null;
+        const route = translatePath(net.route);
+        const translatedPaths = [...(branches || []), ...(route ? [route] : [])];
+        const rigidEnv = {
+          ...env,
+          rects: [...this.components.values()]
+            .filter((component) => component.type !== 'solder' && !moved.has(component.refdes))
+            .map((component) => component.bboxWorld()),
+        };
+        if (translatedPaths.some((path) => !automaticMovePathSafe(path, rigidEnv))) {
           return this._rerouteFailure(net, moved);
         }
-        net.branches = movedPaths;
-        net.route = movedRoute;
-        net.junctions = net.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+        net.branches = branches;
+        net.route = route;
+        net.junctions = net.junctions.map((p) => ({
+          x: p.x + delta.dx,
+          y: p.y + delta.dy,
+        }));
         this._repairNetLabels(net);
         this._completeComponentEdit(net.id);
         return true;
       }
     }
+    // Partial set moves preserve unselected-side wire bodies and re-anchor
+    // only their boundary legs. Branches wholly inside the moved set translate
+    // in _reroutePolyline when both endpoint terminals share one delta.
     if (net.branches && net.branches.length) {
       const rerouted = net.branches.map((b) => this._reroutePolyline(net, b, moved, env));
       if (rerouted.some((b) => !b)) {
@@ -1551,9 +1592,12 @@ export class Circuit {
     // guard for that case; complete one-cell validation is reserved for paths
     // translated as an automatic set-move candidate below.
     const safeCandidate = (candidate) => candidate && candidate.every((p, i) => i === 0 ||
-      !env.rects.some((rect) => segThroughInterior(candidate[i - 1], p, rect))) ? candidate : null;
-    if (a0 && a1 && a0.refdes === a1.refdes) {
-      // Both ends ride the same moved component: slide the whole drawn body.
+      !env.rects.some((rect) =>
+        segThroughInterior(candidate[i - 1], p, rect) &&
+        !gateBodyCrossingAllowed(candidate[i - 1], p, rect, env))) ? candidate : null;
+    if (a0 && a1 && a0.delta.dx === a1.delta.dx && a0.delta.dy === a1.delta.dy) {
+      // Both endpoint terminals share one move delta: slide the whole drawn
+      // body even when the terminals belong to different components.
       const translated = poly.map((p) => ({ x: p.x + a0.delta.dx, y: p.y + a0.delta.dy }));
       return automaticMovePathSafe(translated, env) ? translated : null;
     }
@@ -1572,14 +1616,27 @@ export class Circuit {
       if (a0) return safeCandidate([...start, ...poly.slice(2)]);
       return safeCandidate([...poly.slice(0, -2), ...end]);
     }
-    if (a0 && a1 && a0.refdes !== a1.refdes) {
-      // Both ends ride DIFFERENT moved components (a set drag). If the two
-      // components moved as a rigid set (identical delta), the whole drawn body
-      // translates with them; otherwise re-route fresh between the two new pin
-      // positions so the wire never dangles at an old grid point.
-      if (a0.delta.dx === a1.delta.dx && a0.delta.dy === a1.delta.dy) {
-        const translated = poly.map((p) => ({ x: p.x + a0.delta.dx, y: p.y + a0.delta.dy }));
-        return automaticMovePathSafe(translated, env) ? translated : null;
+    const endpointLeg = (oldEnd, bodyEnd, currentEnd, atStart) => {
+      const staysVertical = oldEnd.x === bodyEnd.x && currentEnd.x === bodyEnd.x;
+      const staysHorizontal = oldEnd.y === bodyEnd.y && currentEnd.y === bodyEnd.y;
+      if (staysVertical || staysHorizontal) {
+        const direct = atStart
+          ? [{ ...currentEnd }, { ...bodyEnd }]
+          : [{ ...bodyEnd }, { ...currentEnd }];
+        return automaticMovePathSafe(direct, env) ? direct : null;
+      }
+      return atStart
+        ? smartRoute(currentEnd, bodyEnd, env)
+        : smartRoute(bodyEnd, currentEnd, env);
+    };
+    if (a0 && a1) {
+      // The endpoint terminals moved by different deltas. Re-anchor only the
+      // two terminal legs, retaining the authored body between them.
+      if (poly.length > 2) {
+        const start = endpointLeg(poly[0], poly[1], a0.cur, true);
+        const end = endpointLeg(poly[n - 1], poly[n - 2], a1.cur, false);
+        if (!start || !end) return null;
+        return [...start.slice(0, -1), ...poly.slice(1, -1), ...end];
       }
       const leg = smartRoute({ x: a0.cur.x, y: a0.cur.y }, { x: a1.cur.x, y: a1.cur.y }, env);
       // A failed route must not be replaced with a straight segment: that
@@ -1588,22 +1645,18 @@ export class Circuit {
       return leg && leg.length >= 1 ? leg : null;
     }
     if (a0) {
-      // The start pin moved: re-anchor the first leg, keep the drawn body.
-      const leg = smartRoute({ x: a0.cur.x, y: a0.cur.y }, poly[1], env);
-      // Preserve the previous geometry when no safe replacement leg exists.
-      // In particular, never install a direct pin-to-body segment as a
-      // failure fallback.
+      // If the moved pin remains on the old leg's axis, stretch or shrink that
+      // leg directly. Otherwise route a minimum safe connector to the body.
+      const leg = endpointLeg(poly[0], poly[1], a0.cur, true);
       if (!leg || leg.length < 1) return null;
       const out = [...leg, ...poly.slice(1)];
       collapseCollinear(out);
       return safeCandidate(out);
     }
     if (a1) {
-      // The path is stored in start-to-end order. Route forward from the old
-      // penultimate point to the moved end pin; routing in the opposite order
-      // leaves the visible branch ending at the old penultimate point.
-      const leg = smartRoute(poly[n - 2], { x: a1.cur.x, y: a1.cur.y }, env);
-      // Signal failure if the new terminal leg cannot be routed safely.
+      // The path is stored in start-to-end order. Keep a collinear boundary
+      // leg straight; otherwise route forward from its old body endpoint.
+      const leg = endpointLeg(poly[n - 1], poly[n - 2], a1.cur, false);
       if (!leg || leg.length < 1) return null;
       const out = [...poly.slice(0, n - 2), ...leg];
       collapseCollinear(out);
@@ -1931,68 +1984,6 @@ export class Circuit {
     }
   }
 
-  /**
-   * Plan a managed merge without changing either source net.  A merge is a
-   * topology growth operation, even when every requested terminal already
-   * belongs to one of the source nets: the old trees are two separate islands
-   * until a new tree or bridge is installed.  Excluding both old ids is
-   * important here; otherwise each diode tree can make the other half of the
-   * new route look occupied.
-   */
-  _planManagedMerge(sourceNets, members, bridgeRefs) {
-    const points = members.map((t) => this.components.get(t.comp)?.terminalWorld(t.term)).filter(Boolean);
-    const env = this._netEnv(new Set(sourceNets.map((n) => n.id)));
-    const onPath = (p, path) => path.some((q) => q.x === p.x && q.y === p.y) || pointOnPath(p, path);
-    const connected = (paths) => {
-      if (!paths.length || points.some((p) => !paths.some((path) => onPath(p, path)))) return false;
-      const parent = paths.map((_, i) => i);
-      const find = (i) => {
-        while (parent[i] !== i) {
-          parent[i] = parent[parent[i]];
-          i = parent[i];
-        }
-        return i;
-      };
-      const join = (a, b) => {
-        a = find(a); b = find(b);
-        if (a !== b) parent[b] = a;
-      };
-      const overlap = (a, b) => a.some((p) => onPath(p, b)) || b.some((p) => onPath(p, a));
-      for (let i = 0; i < paths.length; i++) {
-        for (let j = i + 1; j < paths.length; j++) if (overlap(paths[i], paths[j])) join(i, j);
-      }
-      const root = find(0);
-      return paths.every((_, i) => find(i) === root);
-    };
-
-    // A Steiner tree is the preferred repair.  It deliberately starts from
-    // every terminal, not from either old route, so it cannot retain a stale
-    // disconnected branch island.
-    let fresh = null;
-    try {
-      if (points.length === 2) {
-        const path = smartRoute(points[0], points[1], env);
-        if (path && connected([path])) fresh = { paths: [path], route: path, branches: null };
-      } else {
-        const paths = balancedPaths(points, env);
-        if (paths?.length && connected(paths)) fresh = { paths, route: paths[0], branches: paths };
-      }
-    } catch {
-      fresh = null;
-    }
-    if (fresh) return fresh;
-
-    // Some valid diode-connected layouts have no single safe Steiner tree:
-    // their two terminal legs consume the only safe escape channels.  Keep
-    // both established trees and add one independently routed bridge instead.
-    const oldPaths = sourceNets.flatMap((n) => this._explicitBranches(n));
-    const a = bridgeRefs?.[0] && this.components.get(bridgeRefs[0].comp)?.terminalWorld(bridgeRefs[0].term);
-    const b = bridgeRefs?.[1] && this.components.get(bridgeRefs[1].comp)?.terminalWorld(bridgeRefs[1].term);
-    const bridge = a && b ? smartRoute(a, b, env) : null;
-    const paths = bridge ? [...oldPaths, bridge] : [];
-    if (bridge && connected(paths)) return { paths, route: paths[0], branches: paths };
-    throw new Error('unable to route wire safely');
-  }
 
   _pathsConnectedToTerminals(net) {
     const paths = this._explicitBranches(net);
@@ -2023,13 +2014,6 @@ export class Circuit {
     return paths.every((_, i) => find(i) === root);
   }
 
-  _commitManagedMerge(primary, others, members, layout) {
-    this._mergeNets(primary, others, members);
-    primary.allowDiagonal = primary.allowDiagonal || others.some((n) => n.allowDiagonal);
-    primary.route = layout.route ? clonePath(layout.route, primary.allowDiagonal) : null;
-    primary.branches = layout.branches ? layout.branches.map((p) => clonePath(p, primary.allowDiagonal)) : null;
-    primary.junctions = this._netJunctions(primary, layout.paths);
-  }
 
   _mergeNameConflict(nets) {
     const names = [...new Set(nets.map((net) => canonicalNetName(net.name)).filter(Boolean))];
@@ -2077,7 +2061,7 @@ export class Circuit {
     }
     const involvedNets = [...new Set(involved.values())];
     this._mergeNameConflict(involvedNets);
-    if (involvedNets.length === 1 && involvedNets[0].routingMode === 'fixed' &&
+    if (involvedNets.length === 1 &&
         okRefs.every((r) => involved.has(`${r.comp}.${r.term}`))) {
       return involvedNets[0];
     }
@@ -2086,34 +2070,27 @@ export class Circuit {
     if (growsFixed) throw new Error('cannot grow a fixed net with managed connect; use wireDirectTo');
     const topology = this._snapshotNetTopology();
     let net;
-    if (involvedNets.length > 1) {
-      // Distinct managed nets need a connected replacement geometry, rather
-      // than merely concatenated branch arrays.  Keep the operation atomic so
-      // a blocked fresh tree or bridge cannot delete either source net.
-      const members = [];
-      for (const source of involvedNets) {
-        for (const t of source.terminals) {
-          if (!members.some((q) => q.comp === t.comp && q.term === t.term)) members.push({ ...t });
-        }
-      }
-      for (const r of okRefs) {
-        if (!members.some((q) => q.comp === r.comp && q.term === r.term)) members.push({ ...r });
-      }
-      const bridgeRefs = involvedNets.map((source) =>
-        okRefs.find((r) => involved.get(`${r.comp}.${r.term}`) === source) || source.terminals[0]);
+    if (involvedNets.length > 1 || (involvedNets.length === 1 &&
+        okRefs.some((r) => !involved.has(`${r.comp}.${r.term}`)))) {
+      net = involvedNets[0] || null;
       try {
-        const layout = this._planManagedMerge(involvedNets, members, bridgeRefs);
-        net = involvedNets[0];
-        this._commitManagedMerge(net, involvedNets.slice(1), members, layout);
-        this._reduceNet(net);
-        if (!this._pathsConnectedToTerminals(net)) throw new Error('unable to route wire safely');
+        const source = () => net.terminals[0];
+        const routeOptions = () => ({ allowDiagonal: net.allowDiagonal });
+        for (const other of involvedNets.slice(1)) {
+          const target = other.terminals[0];
+          const sourceRef = source();
+          this.wireTo(`${sourceRef.comp}.${sourceRef.term}`, this.getComponent(target.comp).terminalWorld(target.term), [], routeOptions());
+        }
+        for (const r of okRefs) {
+          if (involved.has(`${r.comp}.${r.term}`)) continue;
+          const sourceRef = source();
+          this.wireTo(`${sourceRef.comp}.${sourceRef.term}`, this.getComponent(r.comp).terminalWorld(r.term), [], routeOptions());
+        }
+        if (net) return net;
       } catch (err) {
         this._restoreNetTopology(topology);
         throw err;
       }
-      this._inferCrossCoupling(new Set([net]));
-      this.syncJunctionSolders();
-      return net;
     }
     if (involved.size === 0) {
       net = this._createNet();
@@ -2146,24 +2123,16 @@ export class Circuit {
       const key = `${r.comp}.${r.term}`;
       if (!involved.has(key)) net.terminals.push(r);
     }
-    // Re-layout fresh whenever at least one terminal was added to an existing
-    // net. Without this, the new terminal is appended to `net.terminals` but
-    // the carried-over `net.branches`/`net.route` still cover only the
-    // original terminals — `paths()` (and after a save/reload, the persisted
-    // file) returns the smaller wire and the new terminal ends up connected
-    // "by reference" only, with no drawn branch reaching it. The all-new-refs
-    // case below also benefits (cheaper than two separate routing calls).
-    // The all-existing-refs edge case (rare; nothing was added) keeps any
-    // hand-drawn geometry.
+    // A fresh connect call still optimizes a net made entirely from new
+    // terminals. Existing managed geometry is grown through wireTo above:
+    // that path appends one branch and leaves committed routes untouched.
     const addedNew = okRefs.some((r) => !involved.has(`${r.comp}.${r.term}`));
-    if (addedNew && net.terminals.length >= 2) {
-      if (net.routingMode === 'managed') {
-        try {
-          if (this.rerouteNet(net, 'refresh') === false) throw new Error('unable to route wire safely');
-        } catch (err) {
-          this._restoreNetTopology(topology);
-          throw err;
-        }
+    if (addedNew && net.terminals.length >= 2 && net.routingMode === 'managed') {
+      try {
+        if (this.rerouteNet(net, 'refresh') === false) throw new Error('unable to route wire safely');
+      } catch (err) {
+        this._restoreNetTopology(topology);
+        throw err;
       }
     }
     this._reduceNet(net);
@@ -2451,12 +2420,11 @@ export class Circuit {
     return [];
   }
 
-  /** Remove every redundant wire path from a net — parallel branches and
-   *  loops — by reducing the drawn geometry to the minimum spanning tree of
-   *  its connectivity graph (see reduceBranches). Deterministic, idempotent,
-   *  and a no-op for already-minimal nets; terminals are never moved or
-   *  dropped. Run after every wiring/merge/load so a net can never accumulate
-   *  duplicate wires no matter how often two points are re-wired. */
+  /** Reduce a fresh or explicitly edited managed geometry to a deterministic
+   *  minimum spanning tree. Topology growth does not call this: committed
+   *  branches remain user-owned until a wire edit, explicit reroute, load
+   *  normalization, or another operation that intentionally repairs geometry.
+   *  See reduceBranches for the connectivity graph and tie-breaking rules. */
   _reduceNet(net) {
     if (net.routingMode === 'fixed') return;
     // A zero-terminal net is a geometric island, not a connectivity graph.
@@ -2696,6 +2664,8 @@ export class Circuit {
     }
 
     const srcNet = this.netOfTerminal(term);
+    const preserveExistingGeometry = [srcNet, targetNet].some((net) =>
+      net && this._explicitBranches(net).length > 0);
     if (srcNet?.routingMode === 'fixed' || targetNet?.routingMode === 'fixed') {
       throw new Error('fixed net geometry is protected; use wireDirectTo');
     }
@@ -2709,40 +2679,30 @@ export class Circuit {
     if (points.length === 0 && srcNet && srcNet === targetNet &&
         this._explicitBranches(srcNet).some((path) => pointOnPath(P, path))) return srcNet;
 
-    const meetIsTerminal = [...this.components.values()].some((c) =>
-      c.def.terminals.some((t) => {
-        const p = c.terminalWorld(t.name);
-        return p.x === P.x && p.y === P.y;
-      })
-    );
     const waypoints = points.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
-    const prospective = new Set();
-    for (const candidate of [srcNet, targetNet]) {
-      for (const t of candidate?.terminals || []) prospective.add(`${t.comp}.${t.term}`);
-    }
-    prospective.add(`${term.comp}.${term.term}`);
-    for (const c of this.components.values()) {
-      for (const t of c.def.terminals) {
-        const p = c.terminalWorld(t.name);
-        if (p.x === P.x && p.y === P.y) prospective.add(`${c.refdes}.${t.name}`);
-      }
-    }
-    const relayoutCandidate = !allowDiagonal && !waypoints.length && meetIsTerminal && prospective.size >= 3;
 
     // Compute an automatic branch before changing any net membership or
     // geometry.  `smartRoute` returns null when every candidate is unsafe;
     // falling back to [srcPos, P] would let that branch drill a body and would
     // also leave a partially merged net behind if the operation failed later.
     const mergingExisting = srcNet && targetNet && srcNet !== targetNet;
-    const env = mergingExisting
+    let env = mergingExisting
       ? this._netEnv(new Set([srcNet.id, targetNet.id]))
       : this._routingEnv(srcNet?.id || null);
-    const routed = allowDiagonal ? null : waypoints.length ? null : smartRoute(srcPos, P, env);
+    let routed = allowDiagonal ? null : waypoints.length ? null : smartRoute(srcPos, P, env);
+    if (!routed && targetNet && !mergingExisting && !waypoints.length && !allowDiagonal) {
+      // Prefer a branch that clears every committed wire. If no safe corridor
+      // exists, fall back to the target-net-excluded environment so the new
+      // branch can still reach its requested attachment without rewriting the
+      // existing net.
+      env = this._netEnv(targetNet.id);
+      routed = smartRoute(srcPos, P, env);
+    }
     // Reciprocal MOS routes are the one intentional exception: their diagonal
     // geometry is promoted to protected cross-coupling below.  Do not make a
     // generic direct fallback available to managed wires.
     let direct = null;
-    if (!waypoints.length && !routed && !relayoutCandidate && srcPos.x !== P.x && srcPos.y !== P.y) {
+    if (!waypoints.length && !routed && srcPos.x !== P.x && srcPos.y !== P.y) {
       const samePoint = (a, b) => a.x === b.x && a.y === b.y;
       for (const existing of this.nets.values()) {
         if (existing.routingMode !== 'managed' || existing.terminals.length !== 2 || existing.junctions.length) continue;
@@ -2751,7 +2711,9 @@ export class Circuit {
         let paths;
         try { paths = balancedCrossCoupling(pair, [srcPos, P]); } catch { continue; }
         const candidate = paths.find((path) => path.length === 2 && samePoint(path[0], srcPos) && samePoint(path[1], P));
-        if (candidate && !env.rects.some((rect) => segThroughInterior(candidate[0], candidate[1], rect))) {
+        if (candidate && !env.rects.some((rect) =>
+          segThroughInterior(candidate[0], candidate[1], rect) &&
+          !gateBodyCrossingAllowed(candidate[0], candidate[1], rect, env))) {
           direct = candidate;
           break;
         }
@@ -2761,46 +2723,11 @@ export class Circuit {
       ? clonePath([srcPos, ...waypoints, P], true)
       : waypoints.length
       ? clonePath([srcPos, ...waypoints, P])
-      : routed || (relayoutCandidate ? null : direct);
-    if (!newPath && !relayoutCandidate) throw new Error('unable to route wire safely');
+      : routed || direct;
+    if (!newPath) throw new Error('unable to route wire safely');
 
     const topology = this._snapshotNetTopology();
     let net;
-    if (mergingExisting && !allowDiagonal && !waypoints.length && meetIsTerminal) {
-      const members = [];
-      for (const source of [srcNet, targetNet]) {
-        for (const t of source.terminals) {
-          if (!members.some((q) => q.comp === t.comp && q.term === t.term)) members.push({ ...t });
-        }
-      }
-      // Coincident terminals at the landing point are part of the same
-      // topology growth, just as they are for connect().
-      for (const c of this.components.values()) {
-        for (const t of c.def.terminals) {
-          const p = c.terminalWorld(t.name);
-          if (p.x === P.x && p.y === P.y && !members.some((q) => q.comp === c.refdes && q.term === t.name)) {
-            members.push({ comp: c.refdes, term: t.name });
-          }
-        }
-      }
-      const targetRef = targetNet.terminals.find((t) => {
-        const p = this.components.get(t.comp)?.terminalWorld(t.term);
-        return p && p.x === P.x && p.y === P.y;
-      });
-      try {
-        const layout = this._planManagedMerge([srcNet, targetNet], members, [term, targetRef]);
-        net = srcNet;
-        this._commitManagedMerge(net, [targetNet], members, layout);
-        this._reduceNet(net);
-        if (!this._pathsConnectedToTerminals(net)) throw new Error('unable to route wire safely');
-      } catch (err) {
-        this._restoreNetTopology(topology);
-        throw err;
-      }
-      this._inferCrossCoupling(new Set([net]));
-      this.syncJunctionSolders();
-      return net;
-    }
     if (srcNet && targetNet && srcNet !== targetNet) {
       net = srcNet;
       const mergedBranches = [...this._explicitBranches(net), ...this._explicitBranches(targetNet)];
@@ -2813,12 +2740,9 @@ export class Circuit {
     net.allowDiagonal = net.allowDiagonal || (srcNet?.allowDiagonal === true) ||
       (targetNet?.allowDiagonal === true) || allowDiagonal;
 
-    // Terminals already members before this call (used to detect net growth),
-    // and whether `meet` lands exactly on a component terminal rather than the
-    // interior of an existing wire (the latter is a deliberate splice whose
-    // drawn shape must be preserved).
-    const had = new Set(net.terminals.map((t) => `${t.comp}.${t.term}`));
-    // Ensure the wired terminal (and any terminal exactly at `meet`) is a member.
+    // The wired terminal and any terminal exactly at `meet` become members.
+    // The target interior split below is the only permitted edit to old wire
+    // geometry during this topology operation.
     if (!net.terminals.some((t) => t.comp === term.comp && t.term === term.term)) {
       net.terminals.push({ comp: term.comp, term: term.term });
     }
@@ -2831,13 +2755,8 @@ export class Circuit {
       }
     }
 
-    // A direct terminal-to-terminal auto-route (no hand-drawn waypoints) that
-    // grows the net to 3+ terminals must be re-laid-out fresh so the net gets
-    // the optimal balanced Steiner tree (a centered T), exactly like connect().
-    // Chaining pairwise smartRoutes and reducing leaves unbalanced bends and a
-    // junction (solder dot) sitting on the port terminal instead.
-    const grewTerminal = net.terminals.some((t) => !had.has(`${t.comp}.${t.term}`));
-    const relayoutFresh = !allowDiagonal && grewTerminal && net.terminals.length >= 3 && points.length === 0 && meetIsTerminal;
+    // Existing paths are committed geometry. Adding a terminal appends only
+    // the newly routed branch; it never triggers a whole-net Steiner refresh.
 
     // Split any branch whose interior contains the meet point.
     const branches = [];
@@ -2849,26 +2768,13 @@ export class Circuit {
     // Route the new branch from the terminal to the meet point.
     if (newPath) branches.push(clonePath(newPath, net.allowDiagonal));
 
-    if (relayoutFresh) {
-      // Lay the grown net out fresh from all its anchors: 3+ terminal nets
-      // become the balanced multi-branch Steiner tree (the same path connect()
-      // takes), so the junction solder lands at the optimal centered point
-      // instead of on top of the source port terminal.
-      try {
-        if (this.rerouteNet(net, 'refresh') === false) throw new Error('unable to route wire safely');
-      } catch (err) {
-        this._restoreNetTopology(topology);
-        throw err;
-      }
-    } else {
-      net.branches = branches;
-      net.route = branches.length ? clonePath(branches[0], net.allowDiagonal) : null;
-      net.junctions = this._netJunctions(net, branches);
-      this._reduceNet(net);
-      if (mergingExisting && !this._pathsConnectedToTerminals(net)) {
-        this._restoreNetTopology(topology);
-        throw new Error('unable to route wire safely');
-      }
+    net.branches = branches;
+    net.route = branches.length ? clonePath(branches[0], net.allowDiagonal) : null;
+    net.junctions = this._netJunctions(net, branches);
+    if (!preserveExistingGeometry) this._reduceNet(net);
+    if (mergingExisting && !this._pathsConnectedToTerminals(net)) {
+      this._restoreNetTopology(topology);
+      throw new Error('unable to route wire safely');
     }
     this._inferCrossCoupling(new Set([net]));
     this.syncJunctionSolders();
@@ -2877,9 +2783,11 @@ export class Circuit {
 
   /**
    * Route a wire from a free grid point (or a point on an existing wire via
-   * `netId`) to `meet`, splicing into the target net. Terminal membership is
-   * untouched here; use wireTo for terminal origins. Junction solder dots are
-   * derived from the resulting geometry.
+   * `netId`) to `meet`, splicing into the target net. `meet` and the origin
+   * point may each touch a component terminal; those terminals are retained
+   * as net members. `points` are optional hand-drawn waypoints between the
+   * terminal and `meet`. Junction solder dots are derived from the resulting
+   * geometry.
    */
   wirePointTo(point, meet, points = [], netId = null, options = null) {
     if (!Array.isArray(points)) { options = points; points = []; }
@@ -2904,10 +2812,30 @@ export class Circuit {
     }
 
     const originNet = netId ? this.nets.get(netId) : null;
+    const preserveExistingGeometry = [originNet, targetNet].some((net) =>
+      net && this._explicitBranches(net).length > 0);
     if (originNet?.routingMode === 'fixed' || targetNet?.routingMode === 'fixed') {
       throw new Error('fixed net geometry is protected; use wireDirectTo');
     }
-    if (originNet && targetNet && originNet !== targetNet) this._mergeNameConflict([originNet, targetNet]);
+    if (P0.x === P.x && originNet && targetNet && originNet !== targetNet) {
+      // Re-attaching a detached island at an existing terminal is a topology
+      // operation, not a routing request. Preserve both drawn geometries and
+      // only merge membership/junction state.
+      const branches = [...this._explicitBranches(originNet), ...this._explicitBranches(targetNet)];
+      const junctions = [...originNet.junctions, ...targetNet.junctions];
+      this._mergeNameConflict([originNet, targetNet]);
+      this._mergeNets(originNet, [targetNet]);
+      originNet.allowDiagonal = originNet.allowDiagonal || targetNet.allowDiagonal;
+      originNet.branches = branches;
+      originNet.route = branches[0] ? clonePath(branches[0], originNet.allowDiagonal) : null;
+      originNet.junctions = this._netJunctions(originNet, branches);
+      for (const point of junctions) {
+        if (!originNet.junctions.some((p) => p.x === point.x && p.y === point.y)) originNet.junctions.push({ ...point });
+      }
+      this.syncJunctionSolders();
+      return originNet;
+    }
+
 
     // Do not mutate the source/target nets until the automatic branch has a
     // valid route.  A straight fallback here can cross a component body.
@@ -2928,11 +2856,19 @@ export class Circuit {
     }
     net.allowDiagonal = net.allowDiagonal || originNet?.allowDiagonal === true ||
       targetNet?.allowDiagonal === true || allowDiagonal;
-    for (const c of this.components.values()) {
-      for (const t of c.def.terminals) {
-        const p = c.terminalWorld(t.name);
-        if (p.x === P.x && p.y === P.y && !net.terminals.some((q) => q.comp === c.refdes && q.term === t.name)) {
-          net.terminals.push({ comp: c.refdes, term: t.name });
+    // A free-point draft can begin exactly on a component terminal (for
+    // example, when an authored diagonal X is drawn first and output stubs
+    // are connected afterward). Preserve that touched terminal just like the
+    // target terminal at P; otherwise the wire is drawable but eval reports a
+    // dangling pin.
+    for (const endpoint of [P0, P]) {
+      for (const c of this.components.values()) {
+        for (const t of c.def.terminals) {
+          const p = c.terminalWorld(t.name);
+          if (p.x === endpoint.x && p.y === endpoint.y &&
+              !net.terminals.some((q) => q.comp === c.refdes && q.term === t.name)) {
+            net.terminals.push({ comp: c.refdes, term: t.name });
+          }
         }
       }
     }
@@ -2950,7 +2886,7 @@ export class Circuit {
     net.branches = branches;
     net.route = branches.length ? clonePath(branches[0], net.allowDiagonal) : null;
     net.junctions = this._netJunctions(net, branches);
-    this._reduceNet(net);
+    if (!preserveExistingGeometry) this._reduceNet(net);
     this._inferCrossCoupling(new Set([net]));
     this.syncJunctionSolders();
     return net;

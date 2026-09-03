@@ -10,7 +10,7 @@ import { ground } from './ground.js';
 import { vcm } from './vcm.js';
 import { supply } from './supply.js';
 import { portInput, portOutput, portInputOutput, port, port_filled } from './port.js';
-import { current_source, current_sink, voltage_source } from './current.js';
+import { current_source, voltage_source } from './current.js';
 import { opamp, opampDiff, inverter, buffer, and_gate, nand_gate, or_gate, nor_gate, xor_gate, xnor_gate } from './logic.js';
 import { adc, dac } from './converter.js';
 import { variable_resistor, variable_capacitor, variable_inductor } from './variable.js';
@@ -36,7 +36,6 @@ export const symbolTypes = {
   port,
   port_filled,
   current_source,
-  current_sink,
   voltage_source,
   opamp,
   opamp_diff: opampDiff,

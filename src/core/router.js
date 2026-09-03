@@ -188,14 +188,50 @@ function gridDijkstra(initDist, adj, V) {
  *  the valid one-cell pin leg), or lie on top of an existing wire. Legal steps cost
  *  one cell, plus tiny penalties that break length-ties toward pin-conformity
  *  and label clearance. */
+function gatePassageAt(point, env) {
+  return (env.gatePassages || []).find((passage) =>
+    passage.point.x === point.x && passage.point.y === point.y
+  );
+}
+
+function pointOnSegment(point, a, b) {
+  return point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) &&
+    point.y >= Math.min(a.y, b.y) && point.y <= Math.max(a.y, b.y);
+}
+
+/** A shared MOS gate bus may cross its own transistor bodies, but only along
+ * the gate axis and only when the segment touches that component's gate pin. */
+export function gateBodyCrossingAllowed(a, b, r, env = {}) {
+  const passages = env.gatePassages || [];
+  if (passages.length < 2) return false;
+  return passages.some((passage) => {
+    if (passage.rect.x !== r.x || passage.rect.y !== r.y ||
+        passage.rect.w !== r.w || passage.rect.h !== r.h) return false;
+    if (!pointOnSegment(passage.point, a, b)) return false;
+    const horizontal = passage.dir.x !== 0;
+    return horizontal ? a.y === passage.point.y && b.y === passage.point.y
+      : a.x === passage.point.x && b.x === passage.point.x;
+  });
+}
+
+function gatePinAllowsDirection(point, direction, env, source) {
+  const passage = gatePassageAt(point, env);
+  if (!passage) return false;
+  return source
+    ? direction.x === -passage.dir.x && direction.y === -passage.dir.y
+    : direction.x === passage.dir.x && direction.y === passage.dir.y;
+}
+
 function terminalEdgeValid(a, b, env) {
   const pins = env.pins || new Map();
   const aPin = pins.get(`${a.x},${a.y}`);
   const bPin = pins.get(`${b.x},${b.y}`);
   const dx = Math.sign(b.x - a.x);
   const dy = Math.sign(b.y - a.y);
-  if (aPin && (dx !== aPin.x || dy !== aPin.y)) return false;
-  if (bPin && (dx !== -bPin.x || dy !== -bPin.y)) return false;
+  if (aPin && (dx !== aPin.x || dy !== aPin.y) &&
+      !gatePinAllowsDirection(a, { x: dx, y: dy }, env, true)) return false;
+  if (bPin && (dx !== -bPin.x || dy !== -bPin.y) &&
+      !gatePinAllowsDirection(b, { x: dx, y: dy }, env, false)) return false;
   return true;
 }
 
@@ -205,9 +241,10 @@ function edgeWeight(a, b, env) {
   const bPin = pins.get(`${b.x},${b.y}`);
   if (!terminalEdgeValid(a, b, env)) return null;
   for (const r of env.rects || []) {
-    if (segThroughInterior(a, b, r)) return null;
+    if (segThroughInterior(a, b, r) && !gateBodyCrossingAllowed(a, b, r, env)) return null;
   }
   for (const r of env.rects || []) {
+    if (gateBodyCrossingAllowed(a, b, r, env)) continue;
     if (segRectDist(a, b, r) < STEP) {
       const aOk = aPin && onBodyBoundary(a, r);
       const bOk = bPin && onBodyBoundary(b, r);
@@ -708,7 +745,9 @@ function bboxCrossings(pts, env) {
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1];
     const b = pts[i];
-    for (const r of env.rects || []) if (segThroughInterior(a, b, r)) n++;
+    for (const r of env.rects || []) {
+      if (segThroughInterior(a, b, r) && !gateBodyCrossingAllowed(a, b, r, env)) n++;
+    }
   }
   return n;
 }
@@ -779,6 +818,7 @@ function clearanceScore(pts, env) {
     const a = pts[i - 1];
     const b = pts[i];
     for (const r of env.rects || []) {
+      if (gateBodyCrossingAllowed(a, b, r, env)) continue;
       if (segRectDist(a, b, r) < STEP) {
         n++;
         break;
@@ -787,7 +827,6 @@ function clearanceScore(pts, env) {
   }
   return n;
 }
-
 /** Soft preference: segments passing within a grid cell of a label box. Unlike
  *  component bodies (hard clearance, see hardSafe), labels only steer the route
  *  toward a cleaner channel when one exists — they never block a connection. */
@@ -823,8 +862,8 @@ function pointAt(a, b, distance) {
 /**
  * Check body clearance while allowing only the first/last one-cell leg at a
  * valid terminal. A turned, interior obstacle-edge segment is also retained
- * for tightly packed multi-terminal layouts; a direct source-to-drain run is
- * still a terminal leg and cannot use this exception.
+ * for tightly packed multi-terminal layouts. Shared MOS gate passages are
+ * handled before this generic clearance policy.
  */
 function bodyClearanceSafe(a, b, index, points, rect, env) {
   // A route may follow an obstacle edge only after it has turned away from a
@@ -859,9 +898,14 @@ function hardSafe(pts, env) {
     const a = pts[i - 1];
     const b = pts[i];
     for (const r of env.rects || []) {
+      if (gateBodyCrossingAllowed(a, b, r, env)) continue;
       if (segThroughInterior(a, b, r)) return false;
       if (segRectDist(a, b, r) < STEP && !bodyClearanceSafe(a, b, i, pts, r, env)) return false;
     }
+  }
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
     for (const wire of env.wires || []) for (let j = 1; j < wire.length; j++) {
       if (overlapSpan(a, b, wire[j - 1], wire[j])) return false;
     }
@@ -886,13 +930,20 @@ function conformScore(pts, env) {
   const pins = env.pins || new Map();
   const src = pins.get(`${pts[0].x},${pts[0].y}`);
   const dst = pins.get(`${pts[pts.length - 1].x},${pts[pts.length - 1].y}`);
+  const gatePassageFor = (point) => gatePassageAt(point, env);
   if (src) {
     const a = axisOf([pts[0], pts[1]]);
-    s += dirScore(a.x, a.y, src);
+    const passage = gatePassageFor(pts[0]);
+    s += passage && gateBodyCrossingAllowed(pts[0], pts[1], passage.rect, env)
+      ? 0
+      : dirScore(a.x, a.y, src);
   }
   if (dst) {
     const b = axisOf([pts[pts.length - 2], pts[pts.length - 1]]);
-    s += dirScore(b.x, b.y, { x: -dst.x, y: -dst.y });
+    const passage = gatePassageFor(pts[pts.length - 1]);
+    s += passage && gateBodyCrossingAllowed(pts[pts.length - 2], pts[pts.length - 1], passage.rect, env)
+      ? 0
+      : dirScore(b.x, b.y, { x: -dst.x, y: -dst.y });
   }
   return s;
 }
@@ -960,7 +1011,12 @@ function astar(from, to, env) {
       const w = { x: cx * STEP, y: cy * STEP };
       for (const r of env.rects || []) {
         const clear = { x: r.x - STEP, y: r.y - STEP, w: r.w + 2 * STEP, h: r.h + 2 * STEP };
-        if (strictlyInside(w, clear)) return true;
+        const gateRow = (env.gatePassages || []).some((passage) => {
+          if (passage.rect.x !== r.x || passage.rect.y !== r.y ||
+              passage.rect.w !== r.w || passage.rect.h !== r.h) return false;
+          return passage.dir.x !== 0 ? w.y === passage.point.y : w.x === passage.point.x;
+        });
+        if (strictlyInside(w, clear) && !gateRow) return true;
       }
       return false;
     };
@@ -1056,14 +1112,12 @@ function astar(from, to, env) {
 /**
  * Pick the best orthogonal route from -> to given the routing environment.
  * When an endpoint is a component pin, candidates that first extend one grid
- * cell OUTWARD in the pin's direction (a clean outside bend, never drilling the
- * body) are generated alongside the plain straight/L/Z ones; the conform score
- * prefers them, so a wire always leaves a pin in its direction before bending —
- * even when the pins are aligned (e.g. two gates sharing a column: the direct
- * run would hug the component boundary; the gate-facing U keeps one cell of
- * clearance). The A* fallback only kicks in when every enumerated candidate is
- * rejected by the hard-safety checks. It is accepted only after the same
- * checks pass.
+ * cell OUTWARD in the pin's direction (a clean outside bend, never drilling
+ * the body) are generated alongside the plain straight/L/Z ones; the conform
+ * score prefers them, except when a constrained shared MOS gate passage makes
+ * the direct gate bus intentional. The A* fallback only kicks in when every
+ * enumerated candidate is rejected by the hard-safety checks. It is accepted
+ * only after the same checks pass.
  */
 export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   const f = snapP(from);

@@ -33,8 +33,11 @@ ability to debug its own work. Better diagnostics shorten every iteration.
 ## 2. Router should prefer the shortest direct path — resolved
 
 The router now ranks clearance-safe candidates by pin conformity, length, and
-turn count, while preserving explicit manual routes. The current behavior is
-covered by router tests and documented in `AGENTS.md`.
+turn count, while preserving explicit manual routes. During interactive wire
+drawing, the suggestion updates with the cursor; committing it appends only
+that branch. Whole-net optimization is reserved for fresh layouts and explicit
+reroute/edit commands. The current behavior is covered by model, multinet, and
+router tests and documented in `AGENTS.md`.
 
 ## 3. Stale terminal-to-net bookkeeping on move — resolved
 
