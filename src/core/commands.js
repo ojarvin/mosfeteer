@@ -350,6 +350,11 @@ export function evaluate(circuit) {
       labelIds: group.labels.map((label) => label.id),
     })),
     crossNetOverlaps: crossOverlaps,
+    netNameWarnings: (circuit.netNameWarnings || []).map((warning) => ({
+      netId: warning.netId,
+      names: warning.names.slice(),
+      message: warning.message,
+    })),
     issues,
     ok,
     bounds: circuit.bounds(),
@@ -412,6 +417,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     circuit.components.clear();
     circuit.nets.clear();
     circuit.labels.clear();
+    circuit.netNameWarnings = [];
     return result('cleared', null, true);
   }
   if (cmd === 'list') {
@@ -444,6 +450,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (rep.labelComponentOverlaps.length) lines.push(`label-component overlaps: ${rep.labelComponentOverlaps.join(', ')}`);
     if (rep.labelOverlaps.length) lines.push(`label overlaps: ${rep.labelOverlaps.join(', ')}`);
     if (rep.crossNetOverlaps.length) lines.push(`cross-net overlaps: ${rep.crossNetOverlaps.map((x) => `${x.key}/${x.otherKey}`).join(', ')}`);
+    if (rep.netNameWarnings.length) lines.push(`net name conflicts: ${rep.netNameWarnings.map((x) => x.message).join('; ')}`);
     if (rep.ok) {
       lines.push('no dangling terminals, no bbox overlaps, all on grid');
     }
@@ -505,6 +512,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
       const net = circuit.nets.get(id);
       if (net && net.terminals.some((t) => t.comp === c.refdes)) circuit._reduceNet(net);
     }
+    // Re-attach wire pieces that landed back on common endpoints after a
+    // detached move; this also restores any junction solder markers.
+    circuit.reconnectCoincidentNets();
     return result(`moved ${c.refdes} to ${pp(c.transform.x, c.transform.y)}`, { refdes: c.refdes, x: c.transform.x, y: c.transform.y }, true);
   }
   if (cmd === 'rotate') {
@@ -512,7 +522,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const deg = pos[1] !== undefined ? Number(pos[1]) : 90;
     circuit.setTransform(c.refdes, { rotation: c.transform.rotation + deg });
     rerouteNetsFor(circuit, [c.refdes], null, true);
-    circuit.syncJunctionSolders();
+    circuit.reconnectCoincidentNets();
     return result(`rotated ${c.refdes} to ${c.transform.rotation}°`, { refdes: c.refdes, rotation: c.transform.rotation }, true);
   }
   if (cmd === 'mirror') {
@@ -531,6 +541,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
       mirrorY: next.mirrorY,
     });
     rerouteNetsFor(circuit, [c.refdes], null, true);
+    circuit.reconnectCoincidentNets();
     circuit.syncJunctionSolders();
     return result(`mirrored ${c.refdes} along ${axis}`, { refdes: c.refdes, axis }, true);
   }

@@ -444,7 +444,7 @@ test('evaluate() returns structured report keys', () => {
     'overlappingBBoxes',
     'wireThroughBBoxes',
     'gridViolations',
-    'bounds',
+    'netNameWarnings',
   ]) {
     assert.ok(k in rep, `report has key ${k}`);
   }
@@ -452,6 +452,16 @@ test('evaluate() returns structured report keys', () => {
   for (const n of rep.nets) {
     assert.ok('id' in n && 'name' in n && 'n' in n && 'length' in n);
   }
+});
+test('evaluate reports merged net name warnings without making them errors', () => {
+  const c = fresh();
+  c.createWireNet({ name: 'A', route: [{ x: 0, y: 0 }, { x: 40, y: 0 }] });
+  c.createWireNet({ name: 'B', route: [{ x: 40, y: 0 }, { x: 80, y: 0 }] });
+  c.reconnectCoincidentNets();
+  const rep = evaluate(c);
+  assert.equal(rep.netNameWarnings.length, 1);
+  assert.equal(rep.ok, true);
+  assert.match(runCommand(c, 'eval').text, /net name conflicts/);
 });
 
 test('evaluate() reports a clean wired circuit with expected metrics', () => {

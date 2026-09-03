@@ -202,6 +202,27 @@ test('connect merges existing nets into one', () => {
   assert.equal(c.netOfTerminal(`${r2.refdes}.b`), merged);
 });
 
+test('coincident nets merge without routing a zero-length bridge', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 1000, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 800, y: 800, rotation: 90 });
+  c.addComponent('resistor', { refdes: 'R4', x: 1200, y: 800 });
+  const first = c.connect('R1.b', 'R3.a');
+  const second = c.connect('R2.a', 'R4.a');
+  c.components.get('R2').transform = { x: 160, y: 80, rotation: 90, mirrorX: false, mirrorY: false };
+
+  const merged = c.connectCoincident(['R2']);
+
+  assert.equal(merged, 1);
+  assert.equal(c.nets.size, 1);
+  const net = [...c.nets.values()][0];
+  assert.equal(net.terminals.length, 4);
+  assert.ok(net.paths().every((path) => path.length >= 2));
+  assert.ok([first.id, second.id].includes(net.id));
+  assert.equal(c.netOfTerminal('R1.b'), c.netOfTerminal('R2.a'));
+});
+
 test('merging nets preserves committed paths and adds one safe bridge', () => {
   const c = new Circuit();
   const r1 = c.addComponent('resistor', { x: 80, y: 0 });
@@ -1833,6 +1854,65 @@ test('ensureUniqueTerminals rejects conflicting names before mutating membership
   assert.equal(c.nets.size, 2);
   assert.equal(la.netId, a.id);
   assert.equal(lb.netId, b.id);
+});
+test('reconnecting coincident net pieces restores terminals and junction solder', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  c.addComponent('resistor', { refdes: 'R3', x: 200, y: 400 });
+  const left = c.createWireNet({
+    branches: [[{ x: 80, y: 0 }, { x: 160, y: 0 }]],
+  });
+  left.terminals.push({ comp: 'R1', term: 'b' });
+  const right = c.createWireNet({
+    branches: [
+      [{ x: 160, y: 0 }, { x: 320, y: 0 }],
+      [{ x: 160, y: 0 }, { x: 120, y: 400 }],
+    ],
+  });
+  right.terminals.push({ comp: 'R2', term: 'a' }, { comp: 'R3', term: 'a' });
+  c.syncJunctionSolders();
+  assert.equal(c.components.has('SOLDER1'), false);
+  assert.equal(c.reconnectCoincidentNets(), 1);
+  assert.equal(c.nets.size, 1);
+  assert.equal(c.netOfTerminal('R1.b').id, c.netOfTerminal('R2.a').id);
+  assert.equal(c.netOfTerminal('R3.a').id, c.netOfTerminal('R2.a').id);
+  const junctionDots = [...c.components.values()].filter((component) => component.type === 'solder');
+  assert.equal(junctionDots.length, 1);
+  assert.ok(c.nets.values().next().value.junctions.length > 0);
+});
+
+test('reconnecting a floating managed endpoint attaches a landed terminal', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  const net = c.createWireNet({ route: [{ x: 80, y: 0 }, { x: 320, y: 0 }] });
+  net.terminals.push({ comp: 'R2', term: 'a' });
+  assert.equal(c.netOfTerminal('R1.b'), null);
+  c.reconnectCoincidentNets();
+  assert.equal(c.netOfTerminal('R1.b').id, net.id);
+  assert.deepEqual(net.terminals, [
+    { comp: 'R2', term: 'a' },
+    { comp: 'R1', term: 'b' },
+  ]);
+});
+
+test('conflicting net names merge with a reconciliation warning', () => {
+  const c = new Circuit();
+  const a = c.createWireNet({ name: 'A', route: [{ x: 0, y: 0 }, { x: 40, y: 0 }] });
+  const b = c.createWireNet({ name: 'B', route: [{ x: 40, y: 0 }, { x: 80, y: 0 }] });
+  assert.equal(c.reconnectCoincidentNets(), 1);
+  assert.equal(c.nets.size, 1);
+  assert.equal(a.name, 'A');
+  assert.deepEqual(c.netNameWarnings, [{
+    netId: a.id,
+    names: ['A', 'B'],
+    message: 'merged nets retain "A" but also contained B',
+  }]);
+  const loaded = Circuit.fromJSON(c.toJSON());
+  assert.deepEqual(loaded.netNameWarnings, c.netNameWarnings);
+  c.renameNet(a, 'MERGED');
+  assert.deepEqual(c.netNameWarnings, []);
 });
 
 test('floating managed and fixed wire nets survive serialization and have drawable points', () => {

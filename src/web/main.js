@@ -20,6 +20,7 @@ import { segThroughInterior, smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
+import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds } from './selection.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -1062,11 +1063,57 @@ function selectedComps() {
 function refreshCopyGhostBase() {
   if (drag?.mode === 'copyghost' && drag.ghost) {
     drag.ghost.baseSnapshot = snapshot();
+    drag.ghost.baseGeometry = captureCopyGhostGeometry(drag.ghost);
     // The base snapshot now already contains the ghost at the current cursor.
     // Reset the translation origin so the next mousemove applies only its
     // incremental delta instead of translating from the old copy start.
     drag.startWorld = { x: snap(cursor.x), y: snap(cursor.y) };
     drag.ghost.startWorld = { ...drag.startWorld };
+  }
+}
+
+function captureCopyGhostGeometry(ghost) {
+  const comps = new Map();
+  for (const ref of ghost.refs) {
+    const comp = circuit.components.get(ref);
+    if (comp) comps.set(ref, { x: comp.transform.x, y: comp.transform.y });
+  }
+  const labels = new Map();
+  for (const id of ghost.labels) {
+    const label = circuit.labels.get(id);
+    if (!label || label.owner) continue;
+    labels.set(id, {
+      anchor: { ...label.anchor },
+      end: label.end ? { ...label.end } : null,
+      textAnchor: label.textAnchor ? { ...label.textAnchor } : null,
+    });
+  }
+  const nets = new Map();
+  for (const id of ghost.netIds) {
+    const net = circuit.nets.get(id);
+    if (net) nets.set(id, captureNetGeometry(net));
+  }
+  return { comps, labels, nets };
+}
+
+function restoreCopyGhostGeometry(ghost) {
+  for (const [ref, origin] of ghost.baseGeometry?.comps || []) {
+    const comp = circuit.components.get(ref);
+    if (comp) {
+      comp.transform.x = origin.x;
+      comp.transform.y = origin.y;
+    }
+  }
+  for (const [id, origin] of ghost.baseGeometry?.labels || []) {
+    const label = circuit.labels.get(id);
+    if (!label || label.owner) continue;
+    label.anchor = { ...origin.anchor };
+    if (origin.end) label.end = { ...origin.end };
+    if (origin.textAnchor) label.textAnchor = { ...origin.textAnchor };
+  }
+  for (const [id, origin] of ghost.baseGeometry?.nets || []) {
+    const net = circuit.nets.get(id);
+    if (net) translateNetGeometry(net, origin, 0, 0);
   }
 }
 
@@ -3152,32 +3199,33 @@ function canvasMouseDown(ev) {
 
   if (moveMode) {
     const moveWireHit = pickWire(startWorld);
-    if (moveMode === 'connected' && multi.size > 0) {
+    const moveLabelHit = pickLabel(startWorld) || annotationTextAt(startWorld) ||
+      annotationGeometryAt(startWorld);
+    const componentRef = [...multi].find((refdes) => {
+      const box = circuit.components.get(refdes)?.bboxWorld();
       const source = { x: snap(startWorld.x), y: snap(startWorld.y) };
-      let componentRef = null;
-      for (const refdes of multi) {
-        const box = circuit.components.get(refdes)?.bboxWorld();
-        if (box && source.x >= box.x && source.x <= box.x + box.w &&
-            source.y >= box.y && source.y <= box.y + box.h) {
-          componentRef = refdes;
-          break;
-        }
-      }
-      const wireKey = moveWireHit
-        ? `${moveWireHit.net.id}:${moveWireHit.branch}:${moveWireHit.seg}`
-        : null;
-      const labelHit = pickLabel(startWorld) || annotationTextAt(startWorld) ||
-        annotationGeometryAt(startWorld);
-      const selectedMember = componentRef ||
-        (wireKey && selectedWires.has(wireKey)) ||
-        (labelHit && selLabels.has(labelHit.id));
-      if (selectedMember) {
-        const refdes = componentRef ||
-          (selected && multi.has(selected) ? selected : multi.values().next().value);
-        cursor = source;
-        armModalMove({ refdes }, startWorld, startClient);
-        return;
-      }
+      return box && source.x >= box.x && source.x <= box.x + box.w &&
+        source.y >= box.y && source.y <= box.y + box.h;
+    }) || null;
+    // A preselected component set owns the move gesture regardless of which
+    // member was clicked. In particular, a wire in a selected net is a source
+    // confirmation, not permission to fall into wire-only editing. Connected
+    // and detached moves intentionally share this source decision.
+    const refdes = selectedSetMoveSource({
+      selectedRefs: multi,
+      components: circuit.components,
+      componentRef,
+      wire: moveWireHit,
+      label: moveLabelHit,
+      selectedWireKeys: selectedWires,
+      selectedNetIds: selectedNets,
+      touchedNetIds: netsTouching([...multi]),
+      selectedLabelIds: selLabels,
+    });
+    if (refdes) {
+      cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+      armModalMove({ refdes }, startWorld, startClient);
+      return;
     }
     if (moveMode === 'detached' && moveWireHit) {
       const before = snapshot();
@@ -3821,7 +3869,8 @@ function armModalMove(hit, startWorld, startClient) {
   drag = {
     mode: 'move', modal: true, startClient, startWorld,
     startCursor: { ...cursor }, origins, labelOrigins,
-    netRoutes: null, moved: false, committed: false, rubber: null,
+    netRoutes: null, touchedNetIds: null, selectedNetIds: null,
+    moved: false, committed: false, rubber: null,
     duplicate: false, detached: moveMode === 'detached', startSnapshot: snapshot(),
   };
   movePending = true;
@@ -3833,6 +3882,7 @@ function finishMoveMutation(moveDrag) {
   const refs = [...moveDrag.origins.keys()];
   const previewed = moveDrag.netRoutes instanceof Map;
   if (moveDrag.detached) {
+    circuit.reconnectCoincidentNets();
     wiresDirty = true;
     return;
   }
@@ -3858,6 +3908,7 @@ function finishMoveMutation(moveDrag) {
       if (net) circuit._reduceNet(net);
     }
   }
+  circuit.reconnectCoincidentNets();
   wiresDirty = true;
 }
 
@@ -4265,23 +4316,21 @@ function canvasMouseMove(ev) {
               .filter(([, saved]) => saved),
           );
         }
-        // Capture the touched nets' wire geometry once. Every subsequent frame
-        // re-anchors from this snapshot with the cumulative drag delta, so a
-        // long, circular drag can never accumulate new segments.
+        // Capture the touched and explicitly selected complete nets' wire
+        // geometry once. Every subsequent frame re-anchors from this snapshot
+        // with the cumulative drag delta, so a long, circular drag can never
+        // accumulate new segments.
         drag.netRoutes = new Map();
-        for (const id of drag.detached ? [] : netsTouching([...drag.origins.keys()])) {
+        drag.touchedNetIds = netsTouching([...drag.origins.keys()]);
+        drag.selectedNetIds = selectedCompleteNetIds({
+          selectedNetIds: selectedNets,
+          nets: circuit.nets,
+          selectedRefs: [...drag.origins.keys()],
+        });
+        const capturedNetIds = new Set([...drag.touchedNetIds, ...drag.selectedNetIds]);
+        for (const id of drag.detached ? [] : capturedNetIds) {
           const net = circuit.nets.get(id);
-          if (!net) continue;
-          drag.netRoutes.set(id, {
-            route: net.route ? net.route.map((p) => ({ ...p })) : null,
-            branches: net.branches ? net.branches.map((b) => b.map((p) => ({ ...p }))) : null,
-            fixedPaths: net.routingMode === 'fixed' ? net.fixedPaths.map((entry) => ({
-              points: entry.points.map((p) => ({ ...p })),
-              start: entry.start ? { ...entry.start } : null,
-              end: entry.end ? { ...entry.end } : null,
-            })) : null,
-            junctions: net.junctions.map((p) => ({ ...p })),
-          });
+          if (net) drag.netRoutes.set(id, captureNetGeometry(net));
         }
         drag.committed = true;
       }
@@ -4308,20 +4357,16 @@ function canvasMouseMove(ev) {
       }
       // Restore the pre-drag wire geometry and re-anchor from it with the total
       // delta, so wires follow the component without accumulating or detaching.
-      for (const [id, snap] of drag.netRoutes || []) {
+      for (const [id, saved] of drag.netRoutes || []) {
         const net = circuit.nets.get(id);
         if (!net) continue;
-        net.route = snap.route ? snap.route.map((p) => ({ ...p })) : null;
-        net.branches = snap.branches ? snap.branches.map((b) => b.map((p) => ({ ...p }))) : null;
-        if (net.routingMode === 'fixed' && snap.fixedPaths) {
-          net.fixedPaths = snap.fixedPaths.map((entry) => ({
-            points: entry.points.map((p) => ({ ...p })),
-            start: entry.start ? { ...entry.start } : null,
-            end: entry.end ? { ...entry.end } : null,
-          }));
-          net.junctions = snap.junctions.map((p) => ({ ...p }));
+        translateNetGeometry(net, saved, 0, 0);
+        const selectedOnly = drag.selectedNetIds?.has(id) && !drag.touchedNetIds?.has(id);
+        if (selectedOnly && !net.terminals.length) {
+          translateNetGeometry(net, saved, delta.dx, delta.dy);
+        } else {
+          rerouteNet(net, moved);
         }
-        rerouteNet(net, moved);
       }
       for (const [id, saved] of drag.detachedWireRoutes || []) {
         const net = circuit.nets.get(id);
@@ -5420,6 +5465,7 @@ function onNormalKey(key, shiftKey = false) {
         // Nudging moves the wires too, exactly like a drag: a net whose
         // terminals all ride nudged components translates rigidly with them.
         rerouteTouchedNets(refs, moved);
+        circuit.reconnectCoincidentNets();
       });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
@@ -5739,9 +5785,9 @@ function copySelection() {
         id: net.id,
         name: net.name,
         routingMode: net.routingMode,
-        allowDiagonal: net.allowDiagonal,
         terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
         route: net.route ? net.route.map((p) => ({ ...p })) : null,
+        branches: net.branches ? net.branches.map((path) => path.map((p) => ({ ...p }))) : null,
         junctions: net.junctions.map((p) => ({ ...p })),
         fixedPaths: net.routingMode === 'fixed' ? net.fixedPaths.map((e) => ({
           points: e.points.map((p) => ({ ...p })), start: e.start && { ...e.start }, end: e.end && { ...e.end },
@@ -5848,7 +5894,6 @@ function translateCopyGhost(ghost, dx, dy) {
     label.anchor.y += dy;
     if (label.kind === 'arrow' || label.kind === 'box') {
       label.end.x += dx;
-      label.end.y += dy;
       label.textAnchor.x += dx;
       label.textAnchor.y += dy;
     }
@@ -5863,6 +5908,7 @@ function translateCopyGhost(ghost, dx, dy) {
       if (net.route) net.route = net.route.map(move);
       if (net.branches) net.branches = net.branches.map((path) => path.map(move));
     }
+    net.junctions = net.junctions.map(move);
   }
   circuit.syncJunctionSolders();
 }
@@ -5888,6 +5934,7 @@ function startCopyGhost(startWorld, startClient, anchorShift = null) {
   ghost.anchorShift = { ...shift };
   ghost.beforeSnapshot = beforeSnapshot;
   ghost.baseSnapshot = snapshot();
+  ghost.baseGeometry = captureCopyGhostGeometry(ghost);
   ghost.startWorld = start;
   drag = {
     mode: 'copyghost',
@@ -5905,7 +5952,11 @@ function startCopyGhost(startWorld, startClient, anchorShift = null) {
 function moveCopyGhost(w) {
   if (!drag?.ghost) return;
   const ghost = drag.ghost;
-  circuit = Circuit.fromJSON(JSON.parse(ghost.baseSnapshot));
+  if (ghost.baseGeometry) {
+    restoreCopyGhostGeometry(ghost);
+  } else {
+    circuit = Circuit.fromJSON(JSON.parse(ghost.baseSnapshot));
+  }
   const dx = snap(w.x) - snap(drag.startWorld.x);
   const dy = snap(w.y) - snap(drag.startWorld.y);
   translateCopyGhost(ghost, dx, dy);
@@ -5918,6 +5969,7 @@ function commitCopyGhost() {
   if (!drag?.ghost) return false;
   const ghost = drag.ghost;
   circuit.connectCoincident(ghost.refs);
+  circuit.reconnectCoincidentNets();
   circuit.ensureUniqueTerminals(ghost.refs);
   circuit.syncJunctionSolders();
   history.push(ghost.beforeSnapshot);
@@ -6165,6 +6217,7 @@ function renderStatus() {
     parts.push(`check focus ${diagnosticSelection.components.size + diagnosticSelection.nets.size + diagnosticSelection.labels.size}`);
   }
   if (netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
+  if (circuit.netNameWarnings?.length) parts.push('⚠ merged net names require reconciliation');
   statusEl.textContent = parts.join('  ·  ');
   statusEl.className = `status ${interaction.key}`;
   if (directWire) statusEl.classList.add('direct-wire');
@@ -6422,7 +6475,6 @@ function selectedTransform(action) {
   else mirrorSelectionAbout(action === 'mirror-x' ? 'x' : 'y');
   render();
 }
-
 function evaluationText(report) {
   const problems = [
     report.unconnectedTerminals?.length && `${report.unconnectedTerminals.length} unconnected terminal(s)`,
@@ -6433,6 +6485,7 @@ function evaluationText(report) {
     report.crossNetOverlaps?.length && `${report.crossNetOverlaps.length} cross-net overlap(s)`,
     report.labelComponentOverlaps?.length && `${report.labelComponentOverlaps.length} label/component overlap(s)`,
     report.labelOverlaps?.length && `${report.labelOverlaps.length} label overlap(s)`,
+    report.netNameWarnings?.length && `${report.netNameWarnings.length} merged net name conflict(s)`,
   ].filter(Boolean);
   return problems.length ? `Check: ${problems.join('; ')}` : 'Check: no evaluator violations';
 }
@@ -6568,6 +6621,12 @@ function renderCheckSummary() {
     const row = document.createElement('div');
     row.className = count ? 'check-category issue' : 'check-category';
     row.textContent = `${label}: ${count}`;
+    checkSummaryBodyEl.appendChild(row);
+  }
+  for (const warning of lastCheckReport.netNameWarnings || []) {
+    const row = document.createElement('div');
+    row.className = 'check-category warning';
+    row.textContent = `Net naming warning: ${warning.message}`;
     checkSummaryBodyEl.appendChild(row);
   }
   for (const issue of issues) {

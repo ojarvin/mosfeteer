@@ -850,6 +850,8 @@ export class Circuit {
     this._netId = 0;
     /** Junction annotations explicitly removed by the user stay removed. */
     this.suppressedJunctions = new Set();
+    /** Pending warnings from merging separately named physical nets. */
+    this.netNameWarnings = [];
   }
 
   // ----- components -------------------------------------------------
@@ -1083,6 +1085,7 @@ export class Circuit {
     const canonical = canonicalNetName(name);
     if (!canonical && this.netLabels(net).length > 0) throw new Error(`cannot clear name of net ${net.id} while net labels are attached`);
     net.name = canonical;
+    this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     return net;
   }
 
@@ -1863,7 +1866,7 @@ export class Circuit {
     }
     const sourceEntries = this._fixedPathEntries(net);
     const targetEntries = targetNet ? this._fixedPathEntries(targetNet) : [];
-    if (targetNet && targetNet !== net) this._mergeNameConflict([net, targetNet]);
+    if (targetNet && targetNet !== net) this._mergeNameConflict([net, targetNet], { allowConflict: true });
     const allEntries = [...targetEntries, ...sourceEntries];
     const members = [...(targetNet?.terminals || []), ...(net.terminals || [])];
     if (terminal) members.push(terminal);
@@ -1877,7 +1880,7 @@ export class Circuit {
     }
     const keep = targetNet || net;
     keep.allowDiagonal = keep.allowDiagonal || net.allowDiagonal || !!targetNet?.allowDiagonal;
-    if (targetNet && targetNet !== net) this._mergeNets(keep, [net], unique);
+    if (targetNet && targetNet !== net) this._mergeNets(keep, [net], unique, { allowNameConflict: true });
     else keep.terminals = unique;
     const fixedMerge = net.routingMode === 'fixed' || targetNet?.routingMode === 'fixed';
     const mergedJunctions = [...(targetNet?.junctions || []), ...(net.junctions || []), ...(terminal || !targetIsInterior ? [] : [targetPoint])];
@@ -2013,21 +2016,44 @@ export class Circuit {
     const root = find(0);
     return paths.every((_, i) => find(i) === root);
   }
+  _namedNetNames(nets) {
+    return [...new Set(nets.map((net) => canonicalNetName(net.name)).filter(Boolean))];
+  }
 
+  _recordNetNameWarning(primary, sources) {
+    const sourceIds = new Set(sources.map((net) => net.id));
+    const names = new Set(this._namedNetNames(sources));
+    for (const warning of this.netNameWarnings) {
+      if (sourceIds.has(warning.netId)) for (const name of warning.names) names.add(name);
+    }
+    const ordered = [...names];
+    if (ordered.length < 2) return;
+    const warning = {
+      netId: primary.id,
+      names: ordered,
+      message: `merged nets retain "${primary.name}" but also contained ${ordered.filter((name) => name !== primary.name).join(', ')}`,
+    };
+    const key = `${warning.netId}:${warning.names.join('|')}`;
+    this.netNameWarnings = this.netNameWarnings.filter((entry) => entry.netId !== primary.id);
+    if (!this.netNameWarnings.some((entry) => `${entry.netId}:${entry.names.join('|')}` === key)) {
+      this.netNameWarnings.push(warning);
+    }
+  }
 
-  _mergeNameConflict(nets) {
-    const names = [...new Set(nets.map((net) => canonicalNetName(net.name)).filter(Boolean))];
-    if (names.length > 1) throw new Error(`conflicting net names: ${names.join(', ')}`);
+  _mergeNameConflict(nets, { allowConflict = false } = {}) {
+    const names = this._namedNetNames(nets);
+    if (names.length > 1 && !allowConflict) throw new Error(`conflicting net names: ${names.join(', ')}`);
     return names[0] || '';
   }
 
   /** Merge physical net identity and metadata without touching geometry. All
    * topology editors call this before deleting a source net so names and labels
    * cannot silently diverge from the surviving physical net. */
-  _mergeNets(primary, others = [], terminals = null) {
+  _mergeNets(primary, others = [], terminals = null, options = {}) {
     const sources = [primary, ...others].filter(Boolean).filter((net, i, all) => all.indexOf(net) === i);
     if (!sources.length) throw new Error('cannot merge empty net set');
-    const name = this._mergeNameConflict(sources);
+    const name = this._mergeNameConflict(sources, { allowConflict: options.allowNameConflict });
+    if (options.allowNameConflict) this._recordNetNameWarning(primary, sources);
     primary.name = name;
     const members = terminals || sources.flatMap((net) => net.terminals);
     primary.terminals = [];
@@ -2037,6 +2063,7 @@ export class Circuit {
     for (const other of sources.slice(1)) {
       this._retargetNetLabels(other.id, primary.id);
       this.nets.delete(other.id);
+      this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== other.id);
     }
     return primary;
   }
@@ -2060,7 +2087,7 @@ export class Circuit {
       if (net) involved.set(`${r.comp}.${r.term}`, net);
     }
     const involvedNets = [...new Set(involved.values())];
-    this._mergeNameConflict(involvedNets);
+    this._mergeNameConflict(involvedNets, { allowConflict: true });
     if (involvedNets.length === 1 &&
         okRefs.every((r) => involved.has(`${r.comp}.${r.term}`))) {
       return involvedNets[0];
@@ -2069,6 +2096,35 @@ export class Circuit {
       (involvedNets.length > 1 || okRefs.some((r) => !involved.has(`${r.comp}.${r.term}`)));
     if (growsFixed) throw new Error('cannot grow a fixed net with managed connect; use wireDirectTo');
     const topology = this._snapshotNetTopology();
+    // Copying a complete set onto its source can make many pins coincide.
+    // Merge those physical nets directly; routing a zero-length bridge for
+    // every pin is both redundant and needlessly expensive.
+    const coincident = involvedNets.length > 1 && okRefs.length >= 2 && (() => {
+      const points = okRefs.map((r) => this.getComponent(r.comp).terminalWorld(r.term));
+      return points.every((p) => p.x === points[0].x && p.y === points[0].y);
+    })();
+    if (coincident) {
+      const primary = involvedNets[0];
+      const paths = involvedNets.flatMap((candidate) => this._explicitBranches(candidate));
+      const junctions = involvedNets.flatMap((candidate) => candidate.junctions);
+      primary.allowDiagonal = involvedNets.some((candidate) => candidate.allowDiagonal);
+      this._mergeNets(primary, involvedNets.slice(1), null, { allowNameConflict: true });
+      for (const ref of okRefs) {
+        if (!primary.terminals.some((t) => t.comp === ref.comp && t.term === ref.term)) {
+          primary.terminals.push({ ...ref });
+        }
+      }
+      primary.branches = paths.length
+        ? paths.map((path) => clonePath(path, primary.allowDiagonal))
+        : null;
+      primary.route = primary.branches?.[0] ? clonePath(primary.branches[0], primary.allowDiagonal) : null;
+      primary.junctions = [...junctions, ...primary.junctions].filter((point, index, all) =>
+        all.findIndex((other) => other.x === point.x && other.y === point.y) === index);
+      this._reduceNet(primary);
+      this._inferCrossCoupling(new Set([primary]));
+      this.syncJunctionSolders();
+      return primary;
+    }
     let net;
     if (involvedNets.length > 1 || (involvedNets.length === 1 &&
         okRefs.some((r) => !involved.has(`${r.comp}.${r.term}`)))) {
@@ -2107,7 +2163,7 @@ export class Circuit {
         net.allowDiagonal = net.allowDiagonal || other.allowDiagonal;
         const otherPaths = other.paths();
         const otherJunctions = other.junctions.map((p) => ({ ...p }));
-        this._mergeNets(net, [other]);
+        this._mergeNets(net, [other], null, { allowNameConflict: true });
         if (!promoteFixed) {
           if (otherPaths.length) {
             const own = net.branches && net.branches.length ? net.branches : net.route ? [net.route] : [];
@@ -2593,7 +2649,7 @@ export class Circuit {
     const sourceNet = start.term ? this.netOfTerminal(start.term) : netAt(start.point);
     const targetNet = end.term ? this.netOfTerminal(end.term) : netAt(end.point);
     const involved = [...new Set([sourceNet, targetNet].filter(Boolean))];
-    this._mergeNameConflict(involved);
+    this._mergeNameConflict(involved, { allowConflict: true });
     const net = sourceNet || targetNet || this._createNet();
     net.preserveEmpty = true;
     const entries = involved.flatMap((n) => this._fixedPathEntries(n));
@@ -2613,7 +2669,7 @@ export class Circuit {
       }
     }
 
-    if (involved.length > 1) this._mergeNets(net, involved.filter((other) => other !== net));
+    if (involved.length > 1) this._mergeNets(net, involved.filter((other) => other !== net), null, { allowNameConflict: true });
     for (const endpointInfo of [start, end]) {
       const t = endpointInfo.term;
       if (t && !net.terminals.some((q) => q.comp === t.comp && q.term === t.term)) net.terminals.push({ ...t });
@@ -2670,7 +2726,7 @@ export class Circuit {
       throw new Error('fixed net geometry is protected; use wireDirectTo');
     }
     if (srcNet && targetNet && srcNet !== targetNet) {
-      this._mergeNameConflict([srcNet, targetNet]);
+      this._mergeNameConflict([srcNet, targetNet], { allowConflict: true });
     }
     // Repeating an attachment that is already present is a no-op.  Besides
     // avoiding needless reducer work, this prevents the existing branch from
@@ -2731,7 +2787,7 @@ export class Circuit {
     if (srcNet && targetNet && srcNet !== targetNet) {
       net = srcNet;
       const mergedBranches = [...this._explicitBranches(net), ...this._explicitBranches(targetNet)];
-      this._mergeNets(net, [targetNet]);
+      this._mergeNets(net, [targetNet], null, { allowNameConflict: true });
       net.branches = mergedBranches;
     } else {
       net = srcNet || targetNet || this._createNet();
@@ -2823,8 +2879,8 @@ export class Circuit {
       // only merge membership/junction state.
       const branches = [...this._explicitBranches(originNet), ...this._explicitBranches(targetNet)];
       const junctions = [...originNet.junctions, ...targetNet.junctions];
-      this._mergeNameConflict([originNet, targetNet]);
-      this._mergeNets(originNet, [targetNet]);
+      this._mergeNameConflict([originNet, targetNet], { allowConflict: true });
+      this._mergeNets(originNet, [targetNet], null, { allowNameConflict: true });
       originNet.allowDiagonal = originNet.allowDiagonal || targetNet.allowDiagonal;
       originNet.branches = branches;
       originNet.route = branches[0] ? clonePath(branches[0], originNet.allowDiagonal) : null;
@@ -2851,7 +2907,7 @@ export class Circuit {
     net.preserveEmpty = true;
     if (originNet && targetNet && originNet !== targetNet) {
       const mergedBranches = [...this._explicitBranches(net), ...this._explicitBranches(targetNet)];
-      this._mergeNets(net, [targetNet]);
+      this._mergeNets(net, [targetNet], null, { allowNameConflict: true });
       net.branches = mergedBranches;
     }
     net.allowDiagonal = net.allowDiagonal || originNet?.allowDiagonal === true ||
@@ -3196,6 +3252,81 @@ export class Circuit {
     this._redistributeNetLabels(net, children);
   }
 
+  /** Merge managed net pieces whose explicit wire endpoints now coincide.
+   * Component moves can temporarily split a net; landing the pieces back on
+   * the same grid endpoint restores the electrical junction without routing a
+   * new branch. */
+  reconnectCoincidentNets(netIds = null) {
+    const allowed = netIds ? new Set(netIds) : null;
+    let mergedCount = 0;
+    while (true) {
+      const endpointNets = new Map();
+      for (const net of this.nets.values()) {
+        if (allowed && !allowed.has(net.id)) continue;
+        if (net.routingMode === 'fixed') continue;
+        for (const path of this._explicitBranches(net)) {
+          if (path.length < 2) continue;
+          for (const point of [path[0], path.at(-1)]) {
+            const key = `${point.x},${point.y}`;
+            if (!endpointNets.has(key)) endpointNets.set(key, []);
+            endpointNets.get(key).push(net);
+          }
+        }
+      }
+      // A detached move can leave a wire endpoint floating without a terminal
+      // in its net. Landing that terminal back on the endpoint restores the
+      // endpoint membership before distinct net pieces are merged.
+      for (const component of this.components.values()) {
+        for (const terminal of component.worldTerminals()) {
+          if (this.netOfTerminal({ comp: component.refdes, term: terminal.name })) continue;
+          const candidates = endpointNets.get(`${terminal.x},${terminal.y}`) || [];
+          const target = candidates.find((net) => this.nets.get(net.id) === net);
+          if (target) target.terminals.push(this.resolveTerm(`${component.refdes}.${terminal.name}`));
+        }
+      }
+      let merged = false;
+      for (const candidates of endpointNets.values()) {
+        const nets = [...new Set(candidates)].filter((net) => this.nets.get(net.id) === net);
+        if (nets.length < 2) continue;
+        const primary = nets[0];
+        const paths = nets.flatMap((net) => this._explicitBranches(net));
+        const junctions = nets.flatMap((net) => net.junctions);
+        const endpointArms = new Map();
+        for (const path of paths) {
+          for (const point of [path[0], path.at(-1)]) {
+            const key = `${point.x},${point.y}`;
+            endpointArms.set(key, (endpointArms.get(key) || 0) + 1);
+          }
+        }
+        for (const [key, arms] of endpointArms) {
+          if (arms < 3) continue;
+          const [x, y] = key.split(',').map(Number);
+          junctions.push({ x, y });
+        }
+        primary.allowDiagonal = nets.some((net) => net.allowDiagonal);
+        this._mergeNets(primary, nets.slice(1), null, { allowNameConflict: true });
+        primary.branches = paths.length
+          ? paths.map((path) => clonePath(path, primary.allowDiagonal))
+          : null;
+        primary.route = primary.branches?.[0]
+          ? clonePath(primary.branches[0], primary.allowDiagonal)
+          : null;
+        primary.junctions = [
+          ...junctions,
+          ...primary.junctions,
+          ...this._netJunctions(primary, primary.branches || []),
+        ].filter((point, index, all) =>
+          all.findIndex((other) => other.x === point.x && other.y === point.y) === index);
+        mergedCount += nets.length - 1;
+        merged = true;
+        break;
+      }
+      if (!merged) break;
+    }
+    this.syncJunctionSolders();
+    return mergedCount;
+  }
+
   /** Add one terminal to an existing net. */
   connectTo(netId, ref) {
     const net = this.nets.get(netId);
@@ -3232,6 +3363,7 @@ export class Circuit {
   removeNet(netOrId) {
     const net = this._resolveNet(netOrId);
     this.nets.delete(net.id);
+    this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     for (const [id, label] of [...this.labels]) {
       if (label.netId === net.id) this.labels.delete(id);
     }
@@ -3342,6 +3474,11 @@ export class Circuit {
       components: [...this.components.values()].map((c) => c.toJSON()),
       nets: [...this.nets.values()].map((n) => n.toJSON()),
       labels: [...this.labels.values()].map((l) => l.toJSON()),
+      netNameWarnings: this.netNameWarnings.map((warning) => ({
+        netId: warning.netId,
+        names: warning.names.slice(),
+        message: warning.message,
+      })),
       suppressedJunctions: [...this.suppressedJunctions],
     };
   }
@@ -3403,6 +3540,14 @@ export class Circuit {
     // Keep the id counter ahead of every loaded net so new nets never collide
     // with (and silently overwrite) a loaded one.
     circuit._netId = maxNetId;
+    circuit.netNameWarnings = (data.netNameWarnings || [])
+      .filter((warning) => circuit.nets.has(warning.netId) && Array.isArray(warning.names) && warning.names.length > 1)
+      .map((warning) => ({
+        netId: warning.netId,
+        names: [...new Set(warning.names.filter(Boolean))],
+        message: warning.message || `merged nets with names ${warning.names.join(', ')}`,
+      }))
+      .filter((warning) => warning.names.length > 1);
     const loadedLabelIds = new Set();
     for (const l of data.labels || []) {
       if (l.id && loadedLabelIds.has(l.id)) throw new Error(`label id "${l.id}" already in use`);
