@@ -7,7 +7,7 @@
     "cli": "node src/cli/index.js",
     "serve": "node --watch src/web/serve.js",
     "start": "bash start.sh",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=18"
