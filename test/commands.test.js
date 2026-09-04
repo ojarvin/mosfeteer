@@ -54,6 +54,24 @@ test('add component with explicit refdes', () => {
   assert.ok(c.components.has('R7'));
 });
 
+test('CLI adds VCM and connects its vcm terminal', () => {
+  const c = fresh();
+  const added = runCommand(c, 'add vcm --at 400 0');
+  assert.equal(added.mutated, true);
+  assert.equal(added.json.refdes, 'VCM1');
+  assert.deepEqual(added.json.terminals, [{ name: 'vcm', x: 400, y: 0 }]);
+
+  // R1.a lands on VCM's attachment point, exercising touching-pin
+  // connectivity without depending on a particular clearance route.
+  runCommand(c, 'add resistor --at 480 0');
+  const connected = runCommand(c, 'connect VCM1.vcm R1.a');
+  assert.equal(connected.mutated, true);
+  assert.equal(connected.json.terminals.length, 2);
+  assert.ok(connected.json.terminals.some((t) => t.comp === 'VCM1' && t.term === 'vcm'));
+  assert.ok(connected.json.terminals.some((t) => t.comp === 'R1' && t.term === 'a'));
+  assert.equal(c.netOfTerminal('VCM1.vcm').id, c.netOfTerminal('R1.a').id);
+});
+
 test('add component with --rot and --value', () => {
   const c = fresh();
   const res = runCommand(c, 'add resistor --at 400 0 --rot 90 --value 1k');
@@ -117,6 +135,30 @@ test('mirroring a routed-in component re-routes the net to the new terminal', ()
   runCommand(c, 'mirror R2 x'); // a flips from (400,0) to (280,0)
   assert.deepEqual(net.route[net.route.length - 1], c.getComponent('R2').terminalWorld('a'));
 });
+
+test('mirror command uses world axes after rotation', () => {
+  const c = fresh();
+  runCommand(c, 'add nmosb M1 --at 120 80 --rot 90');
+  const comp = c.getComponent('M1');
+  const before = Object.fromEntries(comp.worldTerminals().map((t) => [
+    t.name,
+    { x: t.x - comp.transform.x, y: t.y - comp.transform.y },
+  ]));
+
+  runCommand(c, 'mirror M1 x');
+  for (const t of comp.worldTerminals()) {
+    const actual = { x: t.x - comp.transform.x, y: t.y - comp.transform.y };
+    const expected = { x: -before[t.name].x, y: before[t.name].y };
+    assert.ok(Math.abs(actual.x - expected.x) < 1e-9, `${t.name} reflects x in world space`);
+    assert.equal(actual.y, expected.y, `${t.name} keeps y in world space`);
+  }
+  runCommand(c, 'mirror M1 x');
+  for (const t of comp.worldTerminals()) {
+    assert.equal(t.x - comp.transform.x, before[t.name].x, `${t.name} returns to its original x`);
+    assert.equal(t.y - comp.transform.y, before[t.name].y, `${t.name} returns to its original y`);
+  }
+});
+
 
 test('move, rotate, and mirror report forced reroute failure instead of success', () => {
   for (const command of ['move R2 400 400', 'rotate R2', 'mirror R2 x']) {
@@ -303,6 +345,83 @@ test('eval reports quality of a small circuit', () => {
   assert.equal(rep.nets.length, 2);
 });
 
+test('netlabel commands add, rename, list, and remove physical net labels', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 320 0');
+  runCommand(c, 'add resistor R2 --at 720 0');
+  const connected = runCommand(c, 'connect R1.b R2.a --name SIG');
+  const netId = connected.json.netId;
+  const added = runCommand(c, `netlabel add ${netId} SIG_LABEL SIG 520 0`);
+  assert.equal(added.json.netId, netId);
+  assert.equal(c.labels.get('SIG_LABEL').text, 'SIG');
+  runCommand(c, `netlabel rename SIG_LABEL OUT`);
+  assert.equal(c.nets.get(netId).name, 'OUT');
+  assert.throws(() => runCommand(c, `net ${netId} name "   "`), /cannot clear name/);
+  assert.match(runCommand(c, `netlabel list ${netId}`).text, /SIG_LABEL.*OUT/);
+  runCommand(c, 'netlabel rm SIG_LABEL');
+  assert.equal(c.labels.has('SIG_LABEL'), false);
+  runCommand(c, `netlabel add ${netId} DROP_LABEL OUT 520 0`);
+  runCommand(c, `net ${netId} drop R1.b`);
+  runCommand(c, `net ${netId} drop R2.a`);
+  assert.equal(c.nets.has(netId), false);
+  assert.equal(c.labels.has('DROP_LABEL'), false);
+});
+
+test('netlabel aliases and annotation commands are cohesive and require coordinates', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 320 0');
+  runCommand(c, 'add resistor R2 --at 720 0');
+  const connected = runCommand(c, 'connect R1.b R2.a --name SIG');
+  assert.throws(() => runCommand(c, `net-label add ${connected.json.netId} BAD`), /usage: netlabel add/);
+  runCommand(c, `wire-label add ${connected.json.netId} L1 SIG 520 0`);
+  runCommand(c, `net ${connected.json.netId} label add L2 SIG 520 0`);
+  assert.equal(c.labels.get('L2').netId, connected.json.netId);
+  runCommand(c, 'annotate add NOTE "free note" 80 80');
+  assert.equal(c.labels.get('NOTE').text, 'free note');
+  runCommand(c, 'label rename NOTE changed');
+  runCommand(c, 'annotation move NOTE 120 120');
+  assert.deepEqual(c.labels.get('NOTE').anchor, { x: 120, y: 120 });
+  runCommand(c, 'label rm NOTE');
+  assert.equal(c.labels.has('NOTE'), false);
+});
+
+test('evaluation reports only live structured malformed net labels', () => {
+  const c = fresh();
+  const net = c.createWireNet({ name: 'SIG', route: [{ x: 0, y: 0 }, { x: 80, y: 0 }] });
+  const label = c.addNetLabel(net, { id: 'SIG_LABEL', x: 40, y: 0 });
+  label.setNetId('N404');
+  const rep = evaluate(c);
+  assert.equal(rep.netLabelIssues.length, 1);
+  assert.deepEqual(rep.netLabelIssues[0], {
+    labelId: 'SIG_LABEL', netId: 'N404', message: 'net label SIG_LABEL targets missing net N404',
+  });
+  assert.equal(rep.issues.find((issue) => issue.kind === 'malformed-net-label').labelId, 'SIG_LABEL');
+  const loaded = Circuit.fromJSON({
+    version: 2, grid: 40, components: [], nets: [],
+    labels: [{ id: 'ORPHAN', text: 'SIG', netId: 'N404', owner: null, anchor: { x: 0, y: 0 } }],
+  });
+  assert.deepEqual(evaluate(loaded).netLabelIssues, []);
+});
+
+test('managed VCM-to-VCM routes escape upward and clear both bodies', () => {
+  const c = fresh();
+  runCommand(c, 'add vcm --at 0 0');
+  runCommand(c, 'add vcm --at 240 0');
+  const result = runCommand(c, 'connect VCM1.vcm VCM2.vcm');
+  const net = c.nets.get(result.json.netId);
+  const path = net.paths()[0];
+  const first = c.getComponent('VCM1').terminalWorld('vcm');
+  const last = c.getComponent('VCM2').terminalWorld('vcm');
+
+  assert.deepEqual(path[0], first);
+  assert.deepEqual(path[path.length - 1], last);
+  assert.equal(path[1].x, first.x);
+  assert.ok(path[1].y < first.y, 'source terminal leg escapes upward');
+  assert.equal(path[path.length - 2].x, last.x);
+  assert.ok(path[path.length - 2].y < last.y, 'target terminal leg escapes upward');
+  assert.deepEqual(evaluate(c).wireThroughBBoxes, []);
+});
+
 test('unknown command throws', () => {
   assert.throws(() => runCommand(fresh(), 'frobnicate'), /unknown command/);
 });
@@ -325,7 +444,7 @@ test('evaluate() returns structured report keys', () => {
     'overlappingBBoxes',
     'wireThroughBBoxes',
     'gridViolations',
-    'bounds',
+    'netNameWarnings',
   ]) {
     assert.ok(k in rep, `report has key ${k}`);
   }
@@ -333,6 +452,16 @@ test('evaluate() returns structured report keys', () => {
   for (const n of rep.nets) {
     assert.ok('id' in n && 'name' in n && 'n' in n && 'length' in n);
   }
+});
+test('evaluate reports merged net name warnings without making them errors', () => {
+  const c = fresh();
+  c.createWireNet({ name: 'A', route: [{ x: 0, y: 0 }, { x: 40, y: 0 }] });
+  c.createWireNet({ name: 'B', route: [{ x: 40, y: 0 }, { x: 80, y: 0 }] });
+  c.reconnectCoincidentNets();
+  const rep = evaluate(c);
+  assert.equal(rep.netNameWarnings.length, 1);
+  assert.equal(rep.ok, true);
+  assert.match(runCommand(c, 'eval').text, /net name conflicts/);
 });
 
 test('evaluate() reports a clean wired circuit with expected metrics', () => {
@@ -367,6 +496,15 @@ test('evaluate flags a wire drilling through its own source body', () => {
   const rep2 = evaluate(c);
   assert.deepEqual(rep2.wireThroughBBoxes, [], 'boundary-hugging route is clean');
 });
+test('evaluate accepts a two-gate bulk MOS bus crossing the participating bodies', () => {
+  const c = fresh();
+  c.addComponent('pmosb', { refdes: 'M1', x: 0, y: 0, mirrorY: false });
+  c.addComponent('pmosb', { refdes: 'M2', x: 400, y: 0, mirrorY: false });
+  const net = c.connect('M1.g', 'M2.g');
+  net.route = [{ x: -120, y: 0 }, { x: 280, y: 0 }];
+  assert.deepEqual(evaluate(c).wireThroughBBoxes, []);
+});
+
 
 test('evaluate allows fixed diagonals but reports diagonal body drills', () => {
   const c = fresh();
@@ -378,6 +516,60 @@ test('evaluate allows fixed diagonals but reports diagonal body drills', () => {
   assert.ok(rep.wireThroughBBoxes.some((x) => x.includes('through R1(resistor) bbox')));
 });
 
+test('automatic routing rejects blocked paths while explicit orthogonal waypoints remain reportable', () => {
+  const auto = fresh();
+  auto.addComponent('resistor', { refdes: 'R1', x: 320, y: 0 });
+  auto.addComponent('resistor', { refdes: 'R2', x: 720, y: 0 });
+  auto._netEnv = () => ({
+    rects: [{ x: -10000, y: -10000, w: 20000, h: 20000 }],
+    pins: new Map(), wires: [], labelRects: [],
+  });
+  assert.throws(() => auto.wireTo('R1.a', auto.getComponent('R2').terminalWorld('a')), /unable to route wire safely/);
+
+  const explicit = fresh();
+  explicit.addComponent('resistor', { refdes: 'R1', x: 320, y: 0 });
+  explicit.addComponent('resistor', { refdes: 'R2', x: 720, y: 0 });
+  const net = explicit.wireTo(
+    'R1.a', explicit.getComponent('R2').terminalWorld('a'),
+    [{ x: 320, y: 0 }], { routeStyle: 'orthogonal' },
+  );
+  assert.equal(net.routingMode, 'managed');
+  assert.equal(net.allowDiagonal, false);
+  assert.ok(evaluate(explicit).wireThroughBBoxes.some((x) => x.includes('through R1(resistor) bbox')));
+});
+
+test('explicit diagonal waypoints preserve body drills for Check to report', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 320, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 720, y: 400 });
+  const net = c.wireTo(
+    'R1.a', c.getComponent('R2').terminalWorld('a'),
+    [{ x: 320, y: 80 }], { routeStyle: 'diagonal' },
+  );
+  assert.equal(net.routingMode, 'managed');
+  assert.equal(net.allowDiagonal, true);
+  assert.ok(net.paths().some((path) => path.some((p, i) => i > 0 && p.x !== path[i - 1].x && p.y !== path[i - 1].y)));
+  assert.ok(evaluate(c).wireThroughBBoxes.some((x) => x.includes('through R1(resistor) bbox')));
+});
+
+test('evaluate reports positive-span diagonal overlap between distinct nets', () => {
+  const c = fresh();
+  c.createWireNet({ allowDiagonal: true, branches: [[{ x: 0, y: 0 }, { x: 400, y: 400 }]] });
+  c.createWireNet({ allowDiagonal: true, branches: [[{ x: 200, y: 200 }, { x: 600, y: 600 }]] });
+  const rep = evaluate(c);
+  assert.equal(rep.diagonalWireSegments.length, 0);
+  assert.equal(rep.crossNetOverlaps.length, 1);
+  assert.deepEqual(rep.crossNetOverlaps[0], {
+    key: 'N1:0:1',
+    otherKey: 'N2:0:1',
+    x0: 200,
+    y0: 200,
+    x1: 400,
+    y1: 400,
+  });
+  assert.ok(rep.issues.some((issue) => issue.kind === 'cross-net-overlap'));
+});
+
 test('renaming and dropping terminals update fixed path anchors', () => {
   const c = fresh();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
@@ -387,4 +579,97 @@ test('renaming and dropping terminals update fixed path anchors', () => {
   assert.deepEqual(n.fixedPaths[0].start, { comp: 'R9', term: 'b' });
   runCommand(c, `net ${n.id} drop R9.b`);
   assert.equal(n.fixedPaths[0].start, null);
+});
+
+test('evaluate() emits machine-usable issues for component overlap and dangling pins', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 40, y: 0 });
+
+  const rep = evaluate(c);
+  const overlap = rep.issues.find((issue) => issue.kind === 'component-overlap');
+  const dangling = rep.issues.find((issue) => issue.kind === 'unconnected-terminal');
+  assert.equal(rep.ok, false);
+  assert.deepEqual(overlap.refs, ['R1', 'R2']);
+  assert.equal(overlap.severity, 'error');
+  assert.ok(overlap.points.length === 2);
+  assert.deepEqual(dangling.refs, ['R1.a']);
+  assert.deepEqual(dangling.points, [{ x: -80, y: 0 }]);
+});
+
+test('eval does not pass a managed wire through a component bbox', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 320, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 720, y: 0 });
+  const net = c.connect('R1.a', 'R2.b');
+  net.route = [{ x: 240, y: 0 }, { x: 800, y: 0 }];
+
+  const res = runCommand(c, 'eval');
+  assert.equal(res.json.ok, false);
+  assert.ok(res.json.issues.some((issue) => issue.kind === 'wire-through-body'));
+  assert.match(res.text, /wires through bboxes/);
+  assert.doesNotMatch(res.text, /no dangling terminals, no bbox overlaps, all on grid/);
+});
+
+test('eval does not pass a managed diagonal wire', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 400 });
+  const net = c.connect('R1.b', 'R2.a');
+  net.route = [{ x: 80, y: 0 }, { x: 320, y: 400 }];
+
+  const res = runCommand(c, 'eval');
+  const diagonal = res.json.issues.find((issue) => issue.kind === 'managed-diagonal');
+  assert.equal(res.json.ok, false);
+  assert.equal(diagonal.severity, 'error');
+  assert.deepEqual(diagonal.points, [{ x: 80, y: 0 }, { x: 320, y: 400 }]);
+  assert.match(res.text, /managed diagonal wires/);
+  assert.doesNotMatch(res.text, /no dangling terminals, no bbox overlaps, all on grid/);
+});
+
+test('evaluate reports free and owned label/component overlaps', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addLabel({ id: 'Lfree', text: 'VIN', x: 0, y: 0 });
+  c.addComponent('nmos', { refdes: 'M1', x: 400, y: 0 });
+  const owned = c.labelOf('M1');
+  owned.offset = { x: 0, y: 0 }; // deliberately overlap the parent component
+
+  const res = runCommand(c, 'eval');
+  const rep = res.json;
+  const issues = rep.issues.filter((entry) => entry.kind === 'label-component-overlap');
+  assert.equal(rep.ok, false);
+  assert.deepEqual(rep.labelComponentOverlaps.length, 2);
+  assert.deepEqual(issues.map((entry) => entry.refs), [['Lfree', 'R1'], [owned.id, 'M1']]);
+  assert.ok(issues.every((entry) => entry.severity === 'error'));
+  assert.ok(issues.every((entry) => entry.points.length === 2));
+  assert.match(res.text, /label-component overlaps/);
+});
+
+test('evaluate ignores visual arrow and box annotations', () => {
+  const c = fresh();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addAnnotation('box', { id: 'B1', x: -80, y: -40, end: { x: 80, y: 40 } });
+  c.addAnnotation('arrow', { id: 'A1', x: -120, y: 0, end: { x: 120, y: 0 } });
+
+  const rep = evaluate(c);
+  assert.equal(rep.labelComponentOverlaps.length, 0);
+  assert.equal(rep.labelOverlaps.length, 0);
+  assert.equal(rep.issues.some((issue) => issue.labelId === 'B1' || issue.labelId === 'A1'), false);
+});
+
+test('evaluate reports overlapping distinct label bboxes', () => {
+  const c = fresh();
+  c.addLabel({ id: 'L1', text: 'A', x: 0, y: 0 });
+  c.addLabel({ id: 'L2', text: 'B', x: 40, y: 0 });
+
+  const res = runCommand(c, 'eval');
+  const rep = res.json;
+  const issue = rep.issues.find((entry) => entry.kind === 'label-overlap');
+  assert.equal(rep.ok, false);
+  assert.equal(rep.labelOverlaps.length, 1);
+  assert.deepEqual(issue.refs, ['L1', 'L2']);
+  assert.equal(issue.severity, 'error');
+  assert.deepEqual(issue.points, [{ x: 0, y: -40 }, { x: 40, y: 40 }]);
+  assert.match(res.text, /label overlaps/);
 });

@@ -2,12 +2,12 @@ import { GRID, snap } from './grid.js';
 
 /**
  * Interactive re-routing of an explicit wire polyline by dragging a segment.
- *
- * A route is an ordered list of grid points. A "run" is a maximal run of
- * consecutive collinear (horizontal or vertical) segments. Dragging a segment
- * moves its whole run perpendicularly. `endpointMeta` identifies path endpoints
- * as `{ type: 'terminal'|'junction' }`; omitted metadata retains the historical
- * terminal-endpoint behavior.
+ * A route is an ordered list of grid points. By default a "run" is a maximal
+ * run of consecutive collinear segments; callers may provide topology breaks
+ * to treat aligned segments on either side of a terminal or junction
+ * independently. Dragging a segment moves its bounded run perpendicularly.
+ * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
+ * omitted metadata retains the historical terminal-endpoint behavior.
  *
  * Key behaviors:
  *  - The run may slide as far as an adjacent run; reaching it collapses the
@@ -19,22 +19,24 @@ import { GRID, snap } from './grid.js';
  *    endpoints together; a standalone pin-to-pin run remains immovable.
  */
 
-/** Maximal collinear run of the polyline containing segment `seg` (pts[seg-1]->pts[seg]). */
-export function wireRunAt(pts, seg) {
+/** Collinear run containing segment `seg`, stopping at optional topology
+ * points. Topology breaks let adjacent aligned branch segments move
+ * independently when a junction sits between them. */
+export function wireRunAt(pts, seg, breaks = null) {
   const n = pts.length;
   const i = Math.max(1, Math.min(seg, n - 1));
   const orient = pts[i - 1].y === pts[i].y ? 'h' : 'v';
   const val = orient === 'h' ? pts[i].y : pts[i].x;
   const same = (p) => (orient === 'h' ? p.y === val : p.x === val);
+  const isBreak = (p) => breaks?.has(`${p.x},${p.y}`);
   let lo = i - 1;
   let hi = i;
-  while (lo > 0 && same(pts[lo - 1])) lo--;
-  while (hi < n - 1 && same(pts[hi + 1])) hi++;
+  while (lo > 0 && same(pts[lo - 1]) && !isBreak(pts[lo])) lo--;
+  while (hi < n - 1 && same(pts[hi + 1]) && !isBreak(pts[hi])) hi++;
   return { lo, hi, orient, val };
 }
 
-/**
- * Drop consecutive duplicates and any middle point collinear with its
+/** Drop consecutive duplicates and any middle point collinear with its
  * neighbours, in place. Endpoints (terminal pins) are always preserved.
  * Returns the new length.
  */
@@ -124,22 +126,27 @@ export function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpo
 }
 
 /**
- * Move the maximal collinear run of orientation `orient` presently at
- * perpendicular line `line` to `target` (grid-snapped along the perpendicular
- * axis). The run may slide as far as an adjacent run (reaching it collapses the
- * shared corner, removing the now-invisible collinear vertex) but never past it
- * (no inverted folds). Runs touching a terminal endpoint keep that pin fixed and
- * EXTEND the wire with an added connector segment so the pin stays connected.
+ * Move the collinear run of orientation `orient` presently at perpendicular
+ * line `line` to `target` (grid-snapped along the perpendicular axis).
+ * `endpointMeta.runBounds` and `endpointMeta.breaks` may bound the run at
+ * electrical topology points; otherwise the maximal run is used. The run may
+ * slide as far as an adjacent run (reaching it collapses the shared corner)
+ * but never past it (no inverted folds). Runs touching a terminal endpoint
+ * keep that pin fixed and extend the wire with a connector segment.
  * `endpointMeta` is optional for compatibility with callers whose paths are
  * known to be terminal-ended: `{ start: { type }, end: { type } }`.
  * Returns the perpendicular line value the run actually ended on (== `line`
  * when nothing could move).
  */
 export function moveWireRun(pts, orient, line, target, endpointMeta = null) {
-  const si = findRunLine(pts, orient, line);
+  const si = Number.isInteger(endpointMeta?.segment)
+    ? Math.max(1, Math.min(endpointMeta.segment, pts.length - 1))
+    : findRunLine(pts, orient, line);
   if (si < 0) return line;
-  const run = wireRunAt(pts, si);
-  const { lo, hi } = run;
+  const run = wireRunAt(pts, si, endpointMeta?.breaks);
+  const forcedInterior = endpointMeta?.interiorRun === true;
+  const lo = endpointMeta?.runBounds?.lo ?? (forcedInterior ? 1 : run.lo);
+  const hi = endpointMeta?.runBounds?.hi ?? (forcedInterior ? pts.length - 2 : run.hi);
   const n = pts.length;
   const loEnd = lo === 0;
   const hiEnd = hi === n - 1;
@@ -176,9 +183,49 @@ export function moveWireRun(pts, orient, line, target, endpointMeta = null) {
     return t;
   }
 
+  const boundedRun = !!endpointMeta?.runBounds;
+  const anchoredStart = boundedRun && loEnd && (startTerminal || startType === 'junction');
+  const anchoredEnd = boundedRun && hiEnd && (endTerminal || endType === 'junction');
+  if (anchoredStart || anchoredEnd) {
+    // A topology-bounded run moves without moving its electrical anchors.
+    // Keep each terminal/junction fixed and add connector legs at the ends;
+    // incident branches therefore remain stationary unless explicitly selected.
+    if (anchoredStart && anchoredEnd) {
+      const a = { ...pts[0] };
+      const b = { ...pts[n - 1] };
+      if (orient === 'h') {
+        for (let i = 1; i < n - 1; i++) pts[i].y = t;
+        pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
+      } else {
+        for (let i = 1; i < n - 1; i++) pts[i].x = t;
+        pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
+      }
+      return t;
+    }
+    if (anchoredStart) {
+      const p = { ...pts[0] };
+      if (orient === 'h') {
+        for (let i = 1; i <= hi; i++) pts[i].y = t;
+        pts.splice(1, 0, { x: p.x, y: t });
+      } else {
+        for (let i = 1; i <= hi; i++) pts[i].x = t;
+        pts.splice(1, 0, { x: t, y: p.y });
+      }
+      return t;
+    }
+    const p = { ...pts[n - 1] };
+    if (orient === 'h') {
+      for (let i = lo; i < n - 1; i++) pts[i].y = t;
+      pts.splice(n - 1, 0, { x: p.x, y: t });
+    } else {
+      for (let i = lo; i < n - 1; i++) pts[i].x = t;
+      pts.splice(n - 1, 0, { x: t, y: p.y });
+    }
+    return t;
+  }
+
   // A standalone bridge is bounded by two real junctions rather than pins.
-  // Move both endpoints on the perpendicular axis; the editor propagates the
-  // endpoint deltas to every branch incident to those junctions.
+  // Legacy callers without run bounds retain the historical whole-bridge move.
   if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
     for (const p of pts) {
       if (orient === 'h') p.y = t;
@@ -187,11 +234,17 @@ export function moveWireRun(pts, orient, line, target, endpointMeta = null) {
     return t;
   }
 
-  // A run touching terminal endpoints keeps those pins fixed and pushes the
-  // run away from them, adding a connector segment so the wire stays attached.
-  // This is intentionally limited to the case where BOTH endpoint kinds are
-  // actual terminals; junction-ended two-point bridges are editable above.
-  if (loEnd && hiEnd && startTerminal && endTerminal) return val;
+  if (loEnd && hiEnd && startTerminal && endTerminal) {
+    if (!boundedRun) return val;
+    const a = { ...pts[0] };
+    const b = { ...pts[n - 1] };
+    if (orient === 'h') {
+      pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
+    } else {
+      pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
+    }
+    return t;
+  }
   if (orient === 'h') {
     if (loEnd && (!hiEnd || startTerminal)) {
       const px = pts[0].x;

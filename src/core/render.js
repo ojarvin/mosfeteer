@@ -1,7 +1,7 @@
 import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
-import { fontAttrs, strokeAttrs } from './style.js';
+import { fontAttrs, resolveColor, strokeAttrs, styleAttrs } from './style.js';
 import { LabelInstance, parseLabelRuns } from './model.js';
 
 function fmt(n) {
@@ -16,39 +16,50 @@ function polygonPoints(g) {
   return (g.points || []).map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' ');
 }
 
-function graphicsToSvg(g) {
+function graphicsToSvg(g, textTransform = '', objectStyle = null) {
+  const stroke = objectStyle ? styleAttrs(objectStyle, g.style) : strokeAttrs(g.style);
   switch (g.kind) {
     case 'path':
-      return `<path d="${g.d}" fill="none" ${strokeAttrs(g.style)}/>`;
+      return `<path d="${g.d}" fill="none" ${stroke}/>`;
     case 'circle':
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${strokeAttrs(g.style)}/>`;
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${stroke}/>`;
     case 'rect':
-      return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${strokeAttrs(g.style)}/>`;
+      return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${stroke}/>`;
     case 'polygon':
-      // Filled bodies (Razavi gate bars, arrowheads, power slabs) fill with the
-      // foreground color and no stroke; otherwise the polygon is stroked open.
       if (g.fill === 'foreground') {
-        return `<polygon points="${polygonPoints(g)}" fill="#111" stroke="none"/>`;
+        return `<polygon points="${polygonPoints(g)}" fill="${resolveColor(objectStyle?.color || '#111')}" stroke="none"/>`;
       }
-      return `<polygon points="${polygonPoints(g)}" fill="${g.fill || 'none'}" ${strokeAttrs(g.style)}/>`;
+      return `<polygon points="${polygonPoints(g)}" fill="${resolveColor(g.fill || 'none')}" ${stroke}/>`;
+    case 'text':
+      return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${g.text}</text>`;
     case 'dot':
-      // Solder dot: a plain black dot marking a connection at a wire crossing.
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${g.fill || '#111'}" stroke="none"/>`;
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${resolveColor(objectStyle?.color || g.fill || '#111')}" stroke="none"/>`;
     default:
       return '';
   }
 }
 
+function symbolTextSvg(g, t, color = '#111') {
+  const p = applyTransform(t, g.x, g.y);
+  const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${resolveColor(color)}"`);
+  return `<text x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none">${g.text}</text>`;
+}
+
 function textEl(x, y, text, anchor, size, fill) {
-  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${fill || '#111'}" stroke="none">${text}</text>`;
+  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${resolveColor(fill || '#111')}" stroke="none">${text}</text>`;
 }
 
 // Label-object text with one of the style.js font kinds ("instance" | "label").
 // Runs with `sub`/`super` render as tspans (baseline-shift + smaller size) so
 // instance labels like M1 render as M with a subscript 1, keeping the text's
 // alignment/anchor untouched (alignment is handled by the parent <text>).
-function labelTextEl(x, y, runs, anchor, kind) {
-  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${fontAttrs(kind)} stroke="none"`;
+function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
+  let font = fontAttrs(kind)
+    .replace(/fill="[^"]+"/, `fill="${resolveColor(color)}"`)
+    .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
+    .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
+  if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
+  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
   if (runs.length === 1 && !runs[0].sub && !runs[0].super) {
     return `<text ${attrs}>${runs[0].text}</text>`;
   }
@@ -63,6 +74,20 @@ function labelTextEl(x, y, runs, anchor, kind) {
   return `<text ${attrs}>${body}</text>`;
 }
 
+function shapeAnnotationSvg(label, opacity = '') {
+  const a = label.anchor; const b = label.end;
+  const attrs = styleAttrs(label.style);
+  if (label.kind === 'box') {
+    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+    return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
+  }
+  const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  const tip = 40; const half = 24;
+  const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
+  const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
+  const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
+  return `<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${resolveColor(label.style?.color || '#111')}" stroke="none"${opacity}/>`;
+}
 /**
  * Render a Circuit to an SVG string.
  * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
@@ -73,6 +98,9 @@ function labelTextEl(x, y, runs, anchor, kind) {
  */
 export function svgString(circuit, opts = {}) {
   const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, ...opts };
+  const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
+  const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
+  const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
   const b = circuit.bounds(o.grid || o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
@@ -126,14 +154,30 @@ export function svgString(circuit, opts = {}) {
       }
     }
   }
-
-  // Components.
+  // The crosshair is a navigation aid, not an object highlight. Render it
+  // before components, wires, and labels so those objects remain readable.
+  if (o.cursor && o.cursorCrosshair) {
+    const { x, y } = o.cursor;
+    const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
+    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
+  }
   const comps = [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
+  for (const label of circuit.labels.values()) {
+    if (!['arrow', 'box'].includes(label.kind) || label.id === o.editingLabel) continue;
+    const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+    parts.push(shapeAnnotationSvg(label, opacity));
+    const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
+    parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
+  }
   for (const c of comps) {
     const t = c.transform;
-    parts.push(`<g transform="${transformToSvg(t)}"><g class="sym" data-ref="${c.refdes}">`);
-    for (const g of c.def.graphics) parts.push(graphicsToSvg(g));
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
+    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
+    parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${c.refdes}">`);
+    for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
     parts.push('</g></g>');
+    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
     if (o.includeBBox) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
@@ -141,7 +185,6 @@ export function svgString(circuit, opts = {}) {
   }
 
   // Wires draw ON TOP of component bodies so an overlapping wire stays visible
-  // and selectable (component linework no longer hides it).
   for (const net of circuit.nets.values()) {
     // Fixed paths are already the complete authored geometry. Keep the legacy
     // managed fallback below so multi-terminal managed nets retain their old
@@ -153,17 +196,24 @@ export function svgString(circuit, opts = {}) {
         : !net.route && net.terminals.length >= 3
           ? balancedPaths(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
           : [net.points()];
-    for (const pts of paths) {
+    const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
+    for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
       const wireHelp = net.routingMode === 'fixed'
         ? 'Fixed/direct wire — drag vertices, segments, or junctions'
         : 'Managed wire — drag orthogonal segments';
-      parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none" ${strokeAttrs()}><title>${wireHelp}</title></path>`);
-      if (o.netNames && net.name) {
-        const mid = pts[Math.floor(pts.length / 2)];
-        parts.push(textEl(mid.x + 6, mid.y - 6, net.name, 'start', 11, '#666'));
+      const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
+      if (!segmentStyles) {
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'line')}><title>${wireHelp}</title></path>`);
+        continue;
+      }
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1]; const b = pts[i];
+        const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
+        const segmentStyle = net.wireStyles[`${branch}:${i}`] || net.style;
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(segmentStyle, 'line')}><title>${wireHelp}</title></path>`);
       }
     }
   }
@@ -194,20 +244,20 @@ export function svgString(circuit, opts = {}) {
   }
 
   // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
-  // label (def.labelOffset) skip the built-in refPos text.
   for (const c of comps) {
     const def = c.def;
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
     if (def.refPrefix && def.refPos && !def.labelOffset) {
       const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
       // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
       // matching the dedicated instance labels used by transistors (e.g. nmos).
       parts.push(
-        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none">${c.refdes}</text>`,
+        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${c.refdes}</text>`,
       );
     }
     if (def.textPos && c.value !== undefined && c.value !== '') {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
-      parts.push(textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333'));
+      parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333')}</g>`);
     }
   }
 
@@ -216,8 +266,10 @@ export function svgString(circuit, opts = {}) {
   // label's rendered box (left/center/right) and vertically centered.
   for (const label of circuit.labels.values()) {
     if (label.id === o.editingLabel) continue;
+    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
+    if (label.kind === 'box' || label.kind === 'arrow') continue;
     const t = label.textPos();
-    parts.push(labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label'));
+    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style)}</g>`);
   }
 
   parts.push('</svg>');
@@ -231,20 +283,11 @@ export function svgString(circuit, opts = {}) {
  * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
  * opts.wireMode: show all component terminals, colored by net membership.
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
- * opts.directWirePreview: literal, protected direct-wire draft.
  */
 export function editorOverlay(circuit, opts = {}) {
   const parts = [];
   const halo = (r) =>
     `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#4f9cf9" stroke-width="2" rx="3"/>`;
-
-  // Keep the placement/move target legible beneath the rest of the editor
-  // overlay. The small cursor marker below remains the precise grid cue.
-  if (opts.cursor && opts.cursorCrosshair) {
-    const { x, y } = opts.cursor;
-    const { x: vx, y: vy, w: vw, h: vh } = opts.cursorCrosshair;
-    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
-  }
 
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
@@ -372,6 +415,21 @@ export function editorOverlay(circuit, opts = {}) {
     }
     parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="#4f9cf9"/>`);
   }
+  if (opts.annotationPreview) {
+    const { kind, a, b } = opts.annotationPreview;
+    const attrs = 'stroke="#4f9cf9" stroke-width="6" stroke-dasharray="10 7" fill="none"';
+    if (kind === 'box') {
+      const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+      parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
+    } else {
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+      const tip = 40; const half = 24;
+      const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
+      const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
+      const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="#4f9cf9" stroke="none" opacity=".8"/>`);
+    }
+  }
 
   if (opts.directWirePreview) {
     const { from, pts } = opts.directWirePreview;
@@ -410,8 +468,9 @@ export function editorOverlay(circuit, opts = {}) {
       parts.push('</g>');
     } else if (g.def) {
       const t = transformToSvg({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY });
-      const body = g.def.graphics.map((gg) => graphicsToSvg(gg)).join('');
-      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>`);
+      const body = g.def.graphics.filter((gg) => gg.kind !== 'text').map((gg) => graphicsToSvg(gg)).join('');
+      const text = g.def.graphics.filter((gg) => gg.kind === 'text').map((gg) => symbolTextSvg(gg, { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY })).join('');
+      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>${text}`);
     }
   }
 

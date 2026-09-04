@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { autoRoute, balancedCrossCoupling, segmentsCross, smartRoute, segThroughInterior, steinerBranches, steinerRoute } from '../src/core/router.js';
+import { autoRoute, balancedCrossCoupling, gateBodyCrossingAllowed, segmentsCross, smartRoute, segThroughInterior, steinerBranches, steinerRoute } from '../src/core/router.js';
 import { onGrid } from '../src/core/grid.js';
 import { junctionPoints } from '../src/core/wiring.js';
 
@@ -334,6 +334,31 @@ test('segThroughInterior catches a fixed diagonal drilling through a body', () =
   assert.equal(segThroughInterior({ x: 0, y: 0 }, { x: 40, y: 40 }, body), false, 'corner touch is not interior');
   assert.equal(segThroughInterior({ x: 0, y: 40 }, { x: 240, y: 40 }, body), false, 'edge hug is not interior');
 });
+test('smartRoute permits a shared MOS gate bus through participating bodies only', () => {
+  const left = { x: 0, y: -80, w: 120, h: 160 };
+  const right = { x: 400, y: -80, w: 120, h: 160 };
+  const env = {
+    rects: [left, right],
+    pins: new Map([
+      ['0,0', { x: -1, y: 0 }],
+      ['400,0', { x: -1, y: 0 }],
+    ]),
+    gatePassages: [
+      { rect: left, point: { x: 0, y: 0 }, dir: { x: -1, y: 0 } },
+      { rect: right, point: { x: 400, y: 0 }, dir: { x: -1, y: 0 } },
+    ],
+    wires: [],
+  };
+  const route = smartRoute({ x: 0, y: 0 }, { x: 400, y: 0 }, env);
+  assert.deepEqual(route, [{ x: 0, y: 0 }, { x: 400, y: 0 }]);
+  assert.equal(gateBodyCrossingAllowed(route[0], route[1], left, env), true);
+  assert.equal(gateBodyCrossingAllowed(route[0], route[1], right, env), true);
+
+  const singleGateEnv = { ...env, gatePassages: [env.gatePassages[0]] };
+  const safeRoute = smartRoute({ x: 0, y: 0 }, { x: 400, y: 0 }, singleGateEnv);
+  assert.ok(safeRoute.every((p, i) => i === 0 || !segThroughInterior(safeRoute[i - 1], p, left)));
+});
+
 
 test('smartRoute: collinear pair stays straight and on grid', () => {
   const pts = runRobots({ x: 0, y: 0 }, { x: 120, y: 0 }, [], []);
@@ -518,6 +543,19 @@ test('smartRoute prefers the terminal outward direction (a down-pointing NMOS so
   const d = { x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y };
   assert.equal(d.x, 0, `first segment leaves straight down, got ${JSON.stringify(d)}`);
   assert.ok(d.y > 0, `first segment leaves downward, got ${JSON.stringify(d)}`);
+  allOnGrid(pts);
+});
+
+test('smartRoute leaves a bulk pin through its outward direction', () => {
+  const env = {
+    rects: [{ x: 0, y: -80, w: 120, h: 160 }],
+    pins: new Map([['120,0', { x: 1, y: 0 }]]),
+    wires: [],
+  };
+  const pts = smartRoute({ x: 120, y: 0 }, { x: 320, y: 240 }, env);
+  const d = { x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y };
+  assert.ok(d.x > 0, `first segment leaves bulk pin outward, got ${JSON.stringify(d)}`);
+  assert.equal(d.y, 0, `bulk pin first segment is horizontal, got ${JSON.stringify(d)}`);
   allOnGrid(pts);
 });
 

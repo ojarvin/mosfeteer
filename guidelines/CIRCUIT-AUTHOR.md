@@ -1,20 +1,54 @@
 # Circuit Author Guide
 
 You are asked to draw a circuit using the running editor. The user is watching
-your work live and will give feedback. Your job is to deliver a textbook-grade
-schematic, one command at a time, while the user watches.
+your work live and will give feedback. Work in two reviewable phases: place all
+components first, then route all connections. Commands within either phase may
+be batched in one CLI/HTTP request.
 
-**Do not read the application source code.** The command language and the
-live editor expose every operation the workflow needs. Inspecting
-implementation details will slow you down and tempt you to script around
-the tool. If the editor lacks an operation you think you need, change your
-approach — do not invent one.
+## Role contract
 
-**Draw only what the user asked for.** Create only the circuit(s) the user
-explicitly requested — never additional test circuits, scratch circuits,
-or "practice" versions under other names. Every new circuit name is a
-delivery the user has to look at; keep the workspace to exactly the
-requested design(s).
+For a drawing request, stay in the **circuit-author lane**, not the developer
+lane. Use the running editor's CLI, HTTP endpoint, or browser controls to
+modify the requested circuit and to inspect its saved state.
+
+**Allowed:**
+
+- read this guide, `style-guide.md`, `AGENTS.md` when an exact behavior matters,
+  and the requested circuit's `circuit.json`, `circuit.svg`, and
+  `learnings.md`;
+- use `add`, `move`, `rotate`, `mirror`, `connect`, `net`, `disconnect`,
+  `rename`, `value`, and `rm` against the requested circuit;
+- run `eval`, `state`, `bounds`, `nets`, `list`, and `ascii` as read-only
+  checks;
+- ask the user before choosing among materially different topologies,
+  polarities, bias schemes, port meanings, or supply conventions.
+
+**Never:**
+
+- read or modify `src/`, `test/`, package files, configuration, or unrelated
+  circuits while drawing;
+- edit source code, tests, `AGENTS.md`, the style guide, or the user's global
+  agent configuration;
+- run project-wide tests, install dependencies, clone dependencies, or inspect
+  git history as part of drawing;
+- write or patch circuit JSON directly, use implementation internals, or
+  invent a command when the CLI cannot express the desired edit;
+- create scratch, practice, duplicate, or test circuits; clear an existing
+  circuit without an explicit request;
+- invent unspecified electrical behavior, add explanatory/value text, or add
+  `solder` components by hand;
+- use a clean `eval` report as a substitute for visual inspection, or report
+  completion while a required decision or defect remains.
+
+If a needed operation is unavailable, preserve the existing design, explain the
+specific limitation, and ask for the smallest decision that unblocks the work.
+
+The CLI persists every mutated command automatically. That persistence is not
+user approval: do not create alternate snapshots or claim the design is final
+until the user accepts it.
+
+This contract is intentionally project-local and provider-neutral. It is the
+role prompt; the rest of this file is its operating procedure.
 
 Companion docs:
 
@@ -24,23 +58,60 @@ Companion docs:
 - `AGENTS.md` — current symbol geometry, terminal names, label model,
   routing details; skim when you need an exact number.
 
-## The fast loop
+## Authoring workflow
 
-Every edit is one command. The user's browser shows it within ~500 ms. You
-make a small change, see the result, ask for feedback, iterate.
+Follow one reviewable sequence:
 
-```sh
-# Production server + browser for the user:
-./start.sh                    # HTTP at 127.0.0.1:8080, browser opens
+1. **Functional placement** — state the intended topology and signal names,
+   place the functional components, and apply connectivity-aware mirroring,
+   rotation, spacing, and alignment. Keep the layout readable: inputs
+   generally left-to-right, supplies top-to-bottom, matched structures
+   aligned, and at least one empty grid cell around bodies, labels, and wires.
+   Inspect `list`, `bounds`, `state`, `ascii`, and the fitted browser view.
+2. **Rails, grounds, and ports** — after the functional layout is established,
+   add supply and ground symbols, then external input/output ports. Do not let
+   ports dictate device placement, and do not add visible supply or ground
+   labels unless requested.
+3. **Placement review** — fit the browser view, verify orientation, spacing,
+   labels, topology, and visual balance, and ask the user for feedback before
+   routing. This is the decision gate for materially different topology,
+   polarity, bias, port meaning, supply convention, or other speculative
+   choices. Batch clear placement moves, rotations, or mirrors, then review
+   again.
+4. **Route logical groups** — only after placement is accepted, route one
+   logical net group or functional block at a time. Prefer short orthogonal
+   routes and intentional, legible crossings; use named labels or global rails
+   rather than duplicating long wires. The routing tool creates junction solder
+   dots automatically at multi-terminal nodes: never add `solder` components
+   by hand, and keep shared branches off terminal rows so junctions are real T
+   connections. Inspect the fitted view and run `eval` between meaningful
+   groups. If routing becomes tangled or requires a materially different
+   interpretation, stop and ask the user rather than committing a speculative
+   batch.
+5. **Labels and evaluation** — route ports and add requested labels from the
+   established circuit, keeping component identity separate from signal names.
+   Use formatted external labels such as `V_{OUT}` and never remove a requested
+   port label merely because its reference is already present. Run `eval`,
+   inspect `state` when a net is ambiguous, and correct topology, placement,
+   labels, or routes before continuing. A clean `eval` report cannot replace
+   visual review of hierarchy, symmetry, label clearance, or signal flow.
+6. **Final browser and SVG inspection** — before presenting the circuit as
+   complete, inspect every component-label position and wire crossing in the
+   fitted browser view and saved SVG together. Remove unrequested value or
+   explanatory text; confirm readable component IDs, visible wires and real
+   junctions, clear whitespace, and agreement with the JSON topology; then
+   perform the command checks in **Final verification** below.
 
-# Then drive it from the CLI (each call = one server-side command):
-node src/cli/index.js <circuit> "add nmos M1 --at 120 120"
-node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL"
-node src/cli/index.js <circuit> "eval"
-node src/cli/index.js <circuit> "state"          # dump JSON
-```
+When the user requests a change, preserve accepted topology and manual routes
+unless the request explicitly changes them.
 
-Or run an interactive REPL bound to one circuit:
+
+Commands within a placement or routing step may be batched in one CLI/HTTP
+request when the topology is clear, but keep the circuit editable after each
+meaningful step. Read-only checks do not require fitting after every mutation.
+
+
+Interactive REPL:
 
 ```sh
 node src/cli/index.js <circuit>
@@ -50,35 +121,14 @@ sch> eval
 sch> quit
 ```
 
-The browser polls `circuits/<name>/circuit.json` every 500 ms and re-fits the
-view on every change. Every CLI call writes the file; the user sees it live.
-
-A bare `node src/cli/index.js` (no `<circuit>`) enters a circuit picker
-after a moment — but the named-circuit form above is the one you want.
+The browser polls `/api/active` and the active circuit every 500 ms; CLI commands set the active circuit, and mutated commands persist `circuit.json` and `circuit.svg`. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
 
 ## Start so the user sees you live
 
-1. **Start the server.** `./start.sh` (or `PORT=<random-port> node
-   src/web/serve.js` for an isolated session, with Chromium on its own random
-   debug port). Track the processes you started so you can shut down only those
-   owned processes when the session ends.
-2. **Tell the user to open the app** at `http://127.0.0.1:<port>/` once
-   and leave it open. They don't type a circuit name or click anything —
-   the browser auto-loads whatever you start editing.
-3. **Pick a circuit name** (e.g. `5t-ota`, `low-voltage-cascode`) and run
-   your first command against it. The server marks it active; the user's
-   browser picks it up on the next poll (≤ 500 ms) and loads it.
-4. **Drive the loop** from the CLI — one command per shell call. Every
-   mutated command is persisted to `circuits/<name>/circuit.json` and
-   `circuits/<name>/circuit.svg`; the user's view re-renders
-   automatically.
-5. **Fit the view after every edit** — press `F` in the browser, or send
-   the `F` key event over CDP. Never leave the canvas zoomed away from
-   what you just did. (You can also run `fitView` indirectly via the CLI
-   if you wire one, but the easiest is just to send the key event.)
-
-The user does **not** load the circuit by hand, does **not** click Save,
-and does **not** refresh — the live session takes care of it.
+1. Use an existing server/browser if present. Otherwise run `./start.sh`, or an isolated `PORT=<random-port> node src/web/serve.js` with Chromium on its own random debug port. Track and stop only processes you started; never launch a competing editor instance.
+2. Have the user open `http://127.0.0.1:<port>/` once and leave it open. They do not type a circuit name, click Load or Save, or refresh; the active circuit loads automatically.
+3. Choose a circuit name (for example `5t-ota` or `low-voltage-cascode`) and issue the first command. The server marks it active and the browser loads it on the next poll (≤500 ms).
+4. Drive placement, review, then routing through CLI or HTTP. Fit the view after each phase and after later edits that change drawing extents; never leave the final review zoomed away.
 
 ## Reliable automation (don't lose a session to these)
 
@@ -161,96 +211,110 @@ help                           full command list
   the exact same fixed cross already exists.
 
 ### Terminal names (current grid = 40)
-
 ```text
-nmos/pmos: g d s
-npn/pnp:   b c e
+nmos/pmos:   g d s
+nmosb/pmosb: g d s b
+npn/pnp:     b c e
 two-pin parts: a b
-ports:     p
-ground:    gnd
-supply:    p
-sources:   a b
+ports:        p
+ground:       gnd
+supply:       p
+sources:      a b
+adc:          ain d
+dac:          d aout
 ```
+Bulk MOS variants place `b` at the channel center `(0,0)` and route it
+outward to the right in the local frame (`dir:{x:1,y:0}`); the symbol includes
+an internal path from the channel edge to that pin. Their owned bulk label uses
+local offset `{x:40,y:-40}` (toward the local drain), so PMOS mirroring carries
+it toward the semantic drain. Three-terminal `nmos`/`pmos` keep `{x:40,y:0}`.
 
 Full per-symbol geometry is in `AGENTS.md`; the rules for how to lay them
 out are in `style-guide.md`.
 
-### Browser editing hotkeys and direct wires
+### Browser editing hotkeys and legacy fixed paths
 
 - `y` yanks the selected set; `p` pastes it with fresh ids. `yy` is not
   required. `Ctrl/Cmd+C` and `Ctrl/Cmd+V` are equivalent copy/paste shortcuts.
 - `Ctrl/Cmd+S` saves the current design. The design dropdown refuses to switch
   while the current design has unsaved changes; save first, or the selection is
   restored and an unsaved-changes warning is logged.
-- Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy.
-- Uppercase `W` enters protected direct/manual wire mode, separate from managed
-  `w` mode. Click a terminal, click any intermediate points as literal
-  waypoints, then click or press Enter on the target terminal. The endpoints
-  are terminals; waypoints are grid-snapped but retained in the exact clicked
-  sequence, so diagonal segments are valid.
-- Direct-wire crossings do not splice or join other wires. The committed net's
-  geometry is fixed: autorouting, orthogonalization, branch reduction, and
-  ordinary wire-segment dragging/deletion do not rewrite it. To add another
-  path to a fixed net, use `W` again; managed wiring reports that fixed geometry
-  is protected.
-- Moving a component re-anchors its fixed path endpoint without autorouting;
-  moving a complete selected set translates its fixed paths with the set.
+- Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy. In armed Move or Copy mode, drag from empty space to box-select the complete set before clicking to enter ghost mode.
+- `w` is the single managed Wire command. It supports orthogonal or diagonal
+  routes and can start at a terminal, an existing wire, or any grid point.
+  Clicking a terminal commits immediately; clicking elsewhere adds a route
+  point. The preview autoroutes each leg through committed points, and Enter
+  commits at a free point or wire interior, so the new endpoint need not be a
+  terminal. `F3` toggles the route choice for new wires. There is no separate
+  uppercase-`W` editor mode.
+- Persisted nets with `routingMode: "fixed"` remain loadable for compatibility,
+  including legacy diagonal paths. Use the `net` command's fixed-path
+  operations when inspecting or deliberately editing such data; ordinary
+  managed routing does not convert a fixed net into a managed one.
+- Moving a component re-anchors legacy fixed-path endpoints without
+  autorouting; moving a complete selected set translates fixed paths with it.
 
-## Drafting order
 
-Work in this order for a new diagram:
+## General authoring rules
 
-1. **Place the functional components first**, without input/output pins.
-2. **Apply connectivity-aware mirroring, rotation, spacing, alignment.**
-   Symbol defaults already give you PMOS source-up and mirrored output
-   ports; add `--mirrorX` for the right-hand matched device. For
-   differential structures, establish the center grid column and align
-   shared-terminal rows; for mirror/active loads, face the control
-   terminals inward. Keep gaps an even number of cells and give the
-   layout room to breathe.
-3. **Wire the functional components.** Junction solder dots at multi-
-   terminal nodes are placed automatically — never add `solder`
-   components by hand. Keep the shared branch off the terminal row so
-   the junction is a real T.
-4. **Add ground and supply symbols.**
-5. **Add input and output pins last**, routing them from the already-
-   established circuit rather than letting them dictate device placement.
-6. **Label external signals** with the `V_{...}` / `I_{...}` subscript
-   pattern; do not label supply/ground. Place port labels one square from
-   the port, aligned toward it. Instance labels appear automatically.
+These rules apply when the requested topology is familiar and when it is not.
+Use them as a planning checklist, not as permission to invent unspecified
+electrical behavior.
 
-After each step: `eval`, then fit the view, then iterate.
+### Resolve the electrical contract first
 
-## Iterate with the user
+Before placing a component, write down the intended electrical contract in
+compact terms:
 
-The loop:
+- functional blocks and the components each block requires;
+- every terminal-to-net relationship, including shared nodes and intentional
+  open terminals;
+- signal direction, input polarity, feedback paths, bias sources, supplies,
+  and grounds;
+- which connections are local wires, which are global rails, and which
+  crossings must remain electrically separate;
+- required reference designators, values, external ports, and signal labels.
 
-1. State the intended topology and signal names.
-2. Place a logical block or small group of components.
-3. Connect its nets and let the user see the result (fit the view).
-4. Run `eval` and inspect the rendered view.
-5. Fix topology, placement, labels, or routes before continuing.
-6. Ask the user to confirm ambiguous conventions (input polarity, supply
-   naming, single-ended vs differential output, active-load style) before
-   committing a large amount of work.
-7. Save only after the user accepts the design.
+If any topology or implementation choice is unspecified and more than one
+reasonable circuit would satisfy the request, **ask the user before drawing
+that part**. Do not guess a net connection, transistor polarity, feedback
+path, bias scheme, logic implementation, port direction, or supply convention
+just because one choice is common. Ask the smallest set of concrete questions
+that resolves the ambiguity, and state the alternatives when useful.
 
-Avoid one opaque batch operation when live browser automation is available.
-Keep the circuit editable after every meaningful step. When the user asks
-for a change, preserve accepted topology and manual routes unless the
-request explicitly changes them.
+Keep component identity and displayed signal naming separate. Keep component
+reference designators plain (`VINP`, `VINN`, `VOUT`), but format external
+voltage labels as `V_{INP}`, `V_{INN}`, and `V_{OUT}`. Format current labels as
+`I_{...}`. Edit the owned port label text rather than renaming the component or
+using raw `VINP` / `VOUT` text. Never delete an external port label merely
+because the component reference is already present; verify every formatted
+label remains visible and clear after fitting the view.
 
-Before saving, review every component label position and every wire
-crossing. Remove unrequested value or explanatory text; orient symmetric
-components toward open label space; rely on the router's automatic solder
-dots for junction annotations.
+
+### Plan the page before routing
+
+- Choose one dominant reading direction, normally inputs left-to-right and
+  supplies top-to-bottom.
+- Establish a centerline, device rows, stack columns, rail rows, and generous
+  margins before adding long wires.
+- Reserve at least one empty grid cell around every body and a clear corridor
+  for every label and wire. Widen the layout instead of accepting a cramped
+  detour.
+- Group components by function. Keep matched, repeated, or feedback-related
+  structures aligned and symmetric where the topology calls for it.
+- Prefer one short orthogonal route per intended connection. Use a named net
+  label or global rail rather than duplicating a long wire.
+- Make every crossing intentional and visually legible; a crossing is not a
+  junction unless the topology says it is.
+
 
 ## Save and learn
 
 Saving produces both `circuits/<name>/circuit.json` (source of truth) and
 `circuits/<name>/circuit.svg` (review/export artifact). The CLI / HTTP
-endpoint already saves on every mutated command; for an explicit "snapshot
-now" use the GUI Save button or `PUT /api/circuits/<name>`.
+endpoint already saves on every mutated command. Do not make extra snapshots
+or create another circuit to preserve an unaccepted draft; the current
+requested circuit is the working draft and remains the only delivery.
 
 When placing components, do not add explanatory or value text unless the
 user explicitly requests it. Components render only their inherent
@@ -300,12 +364,14 @@ node src/cli/index.js <circuit> state
 Confirm that:
 
 - every required electrical terminal is connected or intentionally exposed;
-- there are no component overlaps;
+- there are no component, label/component, or label/label overlaps;
 - there are no off-grid coordinates;
-- there are no unintended diagonal managed-wire segments; any diagonal fixed
-  direct-wire path is intentional;
-- wires do not run through component interiors;
-- labels identify external pins, supplies, ground, and output;
+- no unintended diagonal managed-wire segments; diagonal routes are reserved
+  for deliberate cross-coupled or other topology-specific structures and must
+  be visually justified and symmetric where they represent a matched pair;
+- wires do not run through component interiors or overlap another net
+  collinearly;
+- every multi-terminal net's `branches` reach all of its terminals;
+- labels identify external pins, bias/reference nodes, and important outputs;
+  supply and ground symbols remain unlabeled unless the user requests text;
 - the browser view and saved SVG agree with the JSON topology.
-
-Then fit the view in the browser (`F`) and walk the same checks by eye.
