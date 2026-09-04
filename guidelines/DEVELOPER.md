@@ -39,6 +39,7 @@ src/
 │   ├── wireedit.js     Wire drag/edit primitives.
 │   ├── render.js       SVG renderer (svgString).
 │   ├── ascii.js        Coarse ASCII preview.
+│   ├── circuitSpec.js  Versioned generator-facing topology contract.
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning
@@ -55,6 +56,7 @@ src/
 └── cli/
     └── index.js        Thin HTTP client over POST /api/circuits/<name>/cmd.
 test/                   Node test runner (`node --test`).
+fixtures/circuit-spec/  Topology-only CircuitSpec examples.
 circuits/<name>/        Saved user circuits (gitignored).
 guidelines/             Role docs + style guide.
 AGENTS.md               Current runtime behavior spec (live doc — maintain it).
@@ -122,8 +124,8 @@ through the server).
 ## Tests
 
 `npm test` runs the Node test runner over `test/**/*.test.js`. Tests use plain
-`node --test`; no Jest, no fixtures, no transpilation. Read one existing
-`test/<thing>.test.js` before writing a new one.
+`node --test`; no Jest or transpilation. JSON fixtures live under
+`fixtures/`. Read one existing `test/<thing>.test.js` before writing a new one.
 
 Add a test for any new behavior, any new command, any new symbol, and any
 edge case in `Circuit` that you touch. If a test would be slow, factor the
@@ -191,7 +193,7 @@ flags are the user's only view of the CLI surface — keep them honest.
 
 ## Headless verification (CDP)
 
-The headless tests live outside the repo (no fixtures, no flaky network).
+The headless tests live outside the repo and use no flaky network.
 The pattern is:
 
 ```js

@@ -1,0 +1,1 @@
+{"version":1,"motif":"resistor-divider","components":[{"id":"R1","type":"resistor"},{"id":"R2","type":"resistor"}],"nets":[{"id":"vin","name":"VIN","terminals":[{"component":"R1","terminal":"a"}]},{"id":"vout","name":"VOUT","terminals":[{"component":"R1","terminal":"b"},{"component":"R2","terminal":"a"}]},{"id":"gnd","name":"GND","terminals":[{"component":"R2","terminal":"b"}]}]}

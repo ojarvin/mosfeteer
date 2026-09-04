@@ -152,7 +152,7 @@ Persisted `routingMode:"fixed"` nets with literal paths, including legacy diagon
 
 ## Verification and test-environment facts
 
-`npm test` runs the Node test runner over `test/**/*.test.js` (model, commands, router, render, wireedit, multinet, and symbols). The HTTP endpoint reuses `runCommand`; CLI tests cover argument parsing. Use the browser smoke tests below for server/editor behavior rather than relying on unit tests alone.
+`npm test` runs the Node test runner over `test/**/*.test.js` (model, commands, router, render, wireedit, multinet, symbols, and CircuitSpec). The HTTP endpoint reuses `runCommand`; CLI tests cover argument parsing. Use the browser smoke tests below for server/editor behavior rather than relying on unit tests alone.
 
 Headless CDP suites live in `/tmp/opencode/`:
 
@@ -168,3 +168,10 @@ Debug hooks: `window.__circuit()` returns `{comps,nets,labels}`, with label `wor
 `serve.js` sends `Cache-Control: no-store`; `index.html` references `main.js?v=7`. `circuits/`, `data/`, and `node_modules/` are gitignored; `data/active.json` is the live active-circuit record. With no active circuit, the browser opens an empty editor or localStorage draft; the first command POST marks its circuit active and the browser loads it automatically.
 
 When starting a server, `npm start` and `npm run serve` use Node watch mode, so imported source changes—including the symbol registry—restart the process automatically. Direct `node src/web/serve.js` launches a fixed process and must be restarted after source changes.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

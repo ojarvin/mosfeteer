@@ -66,7 +66,7 @@ export const symbolTypeNames = Object.keys(symbolTypes);
 
 /** Look up a symbol definition by type; throws on unknown type. */
 export function getSymbol(type) {
-  const def = symbolTypes[type];
+  const def = Object.hasOwn(symbolTypes, type) ? symbolTypes[type] : undefined;
   if (!def) {
     throw new Error(`unknown component type "${type}"; known: ${symbolTypeNames.join(', ')}`);
   }

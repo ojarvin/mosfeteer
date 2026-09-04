@@ -32,12 +32,14 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
   optional `learnings.md`); the circuit author's source of truth.
 - `src/core/` — pure model: `model.js` (Circuit, Component, Net, Label),
   `commands.js` (command language), `router.js` (smartRoute + A*),
-  `wiring.js` (wire geometry), `render.js` (SVG), `components/` (symbols),
-  `grid.js`, `geometry.js`, `ascii.js`.
+  `wiring.js` (wire geometry), `render.js` (SVG), `circuitSpec.js`
+  (generator-facing topology contract), `components/` (symbols), `grid.js`,
+  `geometry.js`, `ascii.js`.
 - `src/web/` — HTTP server (`serve.js`) and the in-browser editor
   (`index.html`, `main.js`, `style.css`).
 - `src/cli/index.js` — single-command CLI; thin HTTP client over the server.
 - `test/` — Node test suite (`npm test`); current count is reported by the test runner.
+- `fixtures/circuit-spec/` — topology-only CircuitSpec examples.
 
 ## Headless server + browser
 
