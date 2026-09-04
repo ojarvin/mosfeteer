@@ -386,6 +386,15 @@ corresponding net branch.
   connectivity only as required to keep pins attached.
 - Avoid wire crossings. If a crossing is unavoidable, make the connectivity
   distinction obvious and use a junction only when the net is actually joined.
+- **Treat coincident physical nets as distinct.** Equal net names do not connect
+  separate nets. A positive-length collinear overlap between different physical
+  nets is an electrical violation, not a junction, and must never be repaired
+  by auto-merging. Select or highlight one physical net when coincident
+  geometry must be targeted for deliberate repair.
+- **Same-net reconnects are normalized at repair boundaries.** When copy/move
+  makes endpoint-coincident pieces of one managed net reconnect, positive
+  collinear overlap is pruned. Reducer overlap boundaries are not junctions;
+  reserve junction dots for actual joined topology.
 - **Let wires END at ports; tap loads in open wire.** A port (input /
   output pin) should be a wire endpoint, not a pass-through junction — a
   junction dot directly on a port pin looks bad. Loads and load capacitors

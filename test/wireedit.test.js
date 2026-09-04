@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wireRunAt, collapseCollinear, moveJunctionEndpoint, moveWireRun } from '../src/core/wireedit.js';
-import { deleteWireSegment, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
+import { deleteWireSegment, hasPositiveBranchOverlap, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
 import { onGrid } from '../src/core/grid.js';
 import { Circuit } from '../src/core/model.js';
 
@@ -248,6 +248,38 @@ test('reduceBranches is idempotent and keeps a clean tree untouched', () => {
   const once = reduceBranches(t, terminals);
   assert.deepEqual(once, t, 'a tree is returned unchanged');
   assert.deepEqual(reduceBranches(once, terminals), once, 'reducing twice is a no-op');
+});
+
+test('hasPositiveBranchOverlap only detects positive overlap across branches', () => {
+  const sameBranch = [[
+    { x: 0, y: 0 }, { x: 160, y: 0 }, { x: 80, y: 0 },
+  ]];
+  assert.equal(hasPositiveBranchOverlap(sameBranch), false);
+  assert.equal(hasPositiveBranchOverlap([
+    [{ x: 0, y: 0 }, { x: 160, y: 0 }],
+    [{ x: 160, y: 0 }, { x: 320, y: 0 }],
+  ]), false, 'touching at an endpoint is not overlap');
+  assert.equal(hasPositiveBranchOverlap([
+    [{ x: 0, y: 0 }, { x: 160, y: 0 }],
+    [{ x: 80, y: 0 }, { x: 240, y: 0 }],
+  ]), true);
+});
+
+test('reduceBranches preserves outer-terminal connectivity for a partial overlap', () => {
+  const paths = [
+    [{ x: 0, y: 0 }, { x: 400, y: 0 }],
+    [{ x: 80, y: 0 }, { x: 320, y: 0 }],
+  ];
+  const terminals = [{ x: 0, y: 0 }, { x: 400, y: 0 }];
+  const reduced = reduceBranches(paths, terminals);
+  assert.deepEqual(reduced, [
+    [{ x: 0, y: 0 }, { x: 80, y: 0 }],
+    [{ x: 80, y: 0 }, { x: 320, y: 0 }],
+    [{ x: 320, y: 0 }, { x: 400, y: 0 }],
+  ]);
+  assert.equal(hasPositiveBranchOverlap(reduced), false);
+  assert.deepEqual(junctionPoints(paths, terminals), [], 'overlap boundaries are not electrical junctions');
+  assert.deepEqual(reduceBranches(reduced, terminals), reduced, 'reduction is idempotent');
 });
 
 test('reduceBranches merges a run dragged onto a same-net wire (no hidden overlap)', () => {

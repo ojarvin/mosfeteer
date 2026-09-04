@@ -265,17 +265,6 @@ export function crossNetOverlaps(nets) {
       if (sa.netId === sb.netId) continue;
       const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
       if (overlap) out.push({ key: sa.key, otherKey: sb.key, ...overlap });
-      if (false) {
-        // both vertical on the same x
-        const lo = Math.max(Math.min(sa.a.y, sa.b.y), Math.min(sb.a.y, sb.b.y));
-        const hi = Math.min(Math.max(sa.a.y, sa.b.y), Math.max(sb.a.y, sb.b.y));
-        if (hi > lo) out.push({ key: sa.key, otherKey: sb.key, x0: sa.a.x, y0: lo, x1: sa.a.x, y1: hi });
-      } else if (false && sa.a.y === sa.b.y && sb.a.y === sb.b.y && sa.a.y === sb.a.y) {
-        // both horizontal on the same y
-        const lo = Math.max(Math.min(sa.a.x, sa.b.x), Math.min(sb.a.x, sb.b.x));
-        const hi = Math.min(Math.max(sa.a.x, sa.b.x), Math.max(sb.a.x, sb.b.x));
-        if (hi > lo) out.push({ key: sa.key, otherKey: sb.key, x0: lo, y0: sa.a.y, x1: hi, y1: sa.a.y });
-      }
     }
   }
   return out;
@@ -308,21 +297,24 @@ function overlapEndpoints(paths = [], allowDiagonal = false) {
       for (const sa of segmentsA) for (const sb of segmentsB) {
         const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
         if (overlap) out.push({ x: overlap.x0, y: overlap.y0 }, { x: overlap.x1, y: overlap.y1 });
-        if (false && sa.a.x === sa.b.x && sb.a.x === sb.b.x && sa.a.x === sb.a.x) {
-          // both vertical on the same x
-          const lo = Math.max(Math.min(sa.a.y, sb.a.y), Math.min(sb.a.y, sb.b.y));
-          const hi = Math.min(Math.max(sa.a.y, sb.a.y), Math.max(sb.a.y, sb.b.y));
-          if (hi > lo) { out.push({ x: sa.a.x, y: lo }, { x: sa.a.x, y: hi }); }
-        } else if (false && sa.a.y === sa.b.y && sb.a.y === sb.b.y && sa.a.y === sb.a.y) {
-          // both horizontal on the same y
-          const lo = Math.max(Math.min(sa.a.x, sb.a.x), Math.min(sb.a.x, sb.b.x));
-          const hi = Math.min(Math.max(sa.a.x, sb.a.x), Math.max(sb.a.x, sb.b.x));
-          if (hi > lo) { out.push({ x: lo, y: sa.a.y }, { x: hi, y: sa.a.y }); }
-        }
       }
     }
   }
   return out;
+}
+
+/** True when different branches contain a positive-length collinear overlap. */
+export function hasPositiveBranchOverlap(paths = [], allowDiagonal = false) {
+  for (let i = 0; i < paths.length; i++) {
+    const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
+    for (let j = i + 1; j < paths.length; j++) {
+      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
+      for (const sa of segmentsA) for (const sb of segmentsB) {
+        if (collinearOverlap(sa.a, sa.b, sb.a, sb.b)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -341,12 +333,13 @@ function overlapEndpoints(paths = [], allowDiagonal = false) {
  */
 export function reduceBranches(paths = [], terminalPoints = [], allowDiagonal = false) {
   const terminals = terminalPoints.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
+  const overlapPoints = overlapEndpoints(paths, allowDiagonal);
   // Split every branch at every shared vertex, terminal, junction, and
   // collinear-overlap boundary so all intersections become real vertices
   // before the graph is built.
   const split = normalizeBranches(
     paths,
-    [...terminals, ...junctionPoints(paths, terminalPoints, allowDiagonal), ...overlapEndpoints(paths, allowDiagonal)],
+    [...terminals, ...junctionPoints(paths, terminalPoints, allowDiagonal), ...overlapPoints],
     allowDiagonal,
   ).filter((p) => p.length >= 2);
   if (split.length === 0) return [];
@@ -361,8 +354,14 @@ export function reduceBranches(paths = [], terminalPoints = [], allowDiagonal = 
   ).filter((p) => p.length >= 2);
   if (open.length === 0) return [];
 
-  // Branch points: terminals plus junctions of the split geometry (3+ arms).
-  const branchPoints = new Set([...terminalKeys, ...junctionPoints(open, terminalPoints, allowDiagonal).map(key)]);
+  // Branch points: terminals, overlap boundaries, plus junctions of the split
+  // geometry (3+ electrical arms). Overlap boundaries are graph vertices but
+  // are intentionally not junctions merely because two branches overlap.
+  const branchPoints = new Set([
+    ...terminalKeys,
+    ...overlapPoints.map(key),
+    ...junctionPoints(open, terminalPoints, allowDiagonal).map(key),
+  ]);
 
   // Runs: maximal spans of each branch between branch points (or the branch's
   // own dangling ends). Each run is one graph edge carrying its polyline.

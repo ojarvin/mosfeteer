@@ -1644,6 +1644,13 @@ test('all component types auto-create an owned instance label for their id', () 
   assert.equal(lab.text, r.refdes);
 });
 
+test('owned component labels inherit the component color', () => {
+  const c = new Circuit();
+  const r = c.addComponent('resistor', { style: { color: '#d00' } });
+  assert.equal(c.labelOf(r.refdes)?.style.color, '#d00');
+});
+
+
 test('nextRefdes reuses the smallest available index', () => {
   const c = new Circuit();
   const r1 = c.addComponent('resistor');
@@ -1898,6 +1905,70 @@ test('reconnecting coincident net pieces restores terminals and junction solder'
   const junctionDots = [...c.components.values()].filter((component) => component.type === 'solder');
   assert.equal(junctionDots.length, 1);
   assert.ok(c.nets.values().next().value.junctions.length > 0);
+});
+
+test('reconnecting coincident nets prunes partial same-net overlap after closure', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
+  const left = c.createWireNet({
+    style: { color: '#d00', lineStyle: 'dashed', width: 'thick' },
+    branches: [[{ x: 80, y: 0 }, { x: 240, y: 0 }]],
+  });
+  left.terminals.push({ comp: 'R1', term: 'b' });
+  const right = c.createWireNet({
+    style: { color: '#00f', lineStyle: 'solid', width: 'normal' },
+    branches: [[{ x: 240, y: 0 }, { x: 120, y: 0 }, { x: 320, y: 0 }]],
+  });
+  right.terminals.push({ comp: 'R2', term: 'a' });
+  assert.equal(c.reconnectCoincidentNets(), 1);
+  assert.equal(c.nets.size, 1);
+  assert.equal(c.netOfTerminal('R1.b').id, left.id);
+  assert.equal(c.netOfTerminal('R2.a').id, left.id);
+  assert.deepEqual(left.style, { color: '#d00', lineStyle: 'dashed', width: 'thick' });
+  assert.deepEqual(left.wireStyles, {
+    '0:1': { color: '#d00', lineStyle: 'dashed', width: 'thick' },
+    '1:1': { color: '#d00', lineStyle: 'dashed', width: 'thick' },
+    '2:1': { color: '#00f', lineStyle: 'solid', width: 'normal' },
+  });
+  assert.deepEqual(left.branches, [
+    [{ x: 80, y: 0 }, { x: 120, y: 0 }],
+    [{ x: 120, y: 0 }, { x: 240, y: 0 }],
+    [{ x: 240, y: 0 }, { x: 320, y: 0 }],
+  ]);
+});
+
+test('reconnecting coincident nets preserves authored geometry without overlap', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 160, y: 0 });
+  const left = c.createWireNet({
+    style: { color: '#d00' },
+    wireStyles: { '0:1': { color: '#0a0' } },
+    branches: [[{ x: 0, y: 0 }, { x: 40, y: 0 }]],
+  });
+  left.terminals.push({ comp: 'R1', term: 'a' });
+  const right = c.createWireNet({
+    style: { color: '#00f', lineStyle: 'dotted' },
+    wireStyles: { '1:1': { color: '#0a0', lineStyle: 'dashed' } },
+    branches: [
+      [{ x: 40, y: 0 }, { x: 80, y: 0 }],
+      [{ x: 40, y: 0 }, { x: 40, y: 40 }],
+    ],
+  });
+  right.terminals.push({ comp: 'R2', term: 'a' });
+  const authored = right.branches.map((branch) => branch.map((point) => ({ ...point })));
+  assert.equal(c.reconnectCoincidentNets(), 1);
+  assert.deepEqual(left.branches, [
+    [{ x: 0, y: 0 }, { x: 40, y: 0 }],
+    ...authored,
+  ]);
+  assert.deepEqual(left.style, { color: '#d00', lineStyle: 'solid', width: 'normal' });
+  assert.deepEqual(left.wireStyles, {
+    '0:1': { color: '#0a0' },
+    '1:1': { color: '#00f', lineStyle: 'dotted', width: 'normal' },
+    '2:1': { color: '#0a0', lineStyle: 'dashed' },
+  });
 });
 
 test('reconnecting a floating managed endpoint attaches a landed terminal', () => {

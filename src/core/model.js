@@ -3,7 +3,7 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
 import { balancedCrossCoupling, balancedPaths, balancedRoute, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
-import { cloneFixedPath, clonePath, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
+import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -876,7 +876,7 @@ export class Circuit {
     this.components.set(inst.refdes, inst);
     // Transistor-style symbols carry a dedicated instance label from the start.
     if (inst.def.labelOffset && !opts.noLabel) {
-      this.addLabel({ text: inst.refdes, owner: inst.refdes, offset: inst.def.labelOffset, align: 'center' });
+      this.addLabel({ text: inst.refdes, owner: inst.refdes, offset: inst.def.labelOffset, align: 'center', style: { color: inst.style.color } });
     }
     // Touching pins connect: a newly placed component whose terminal lands on
     // another component's terminal joins that net immediately. Skipped while a
@@ -1740,6 +1740,8 @@ export class Circuit {
     const net = new Net(this, {
       id: opts.id,
       name: opts.name,
+      style: opts.style,
+      wireStyles: opts.wireStyles,
       routingMode: opts.routingMode,
       allowDiagonal: opts.allowDiagonal,
       route: opts.route,
@@ -2489,8 +2491,34 @@ export class Circuit {
     const terminals = net.terminals
       .map((t) => this.getComponent(t.comp)?.terminalWorld(t.term))
       .filter(Boolean);
-    const reduced = reduceBranches(paths, terminals, net.allowDiagonal);
+    const styledSegments = Object.entries(net.wireStyles || {})
+      .map(([key, style], order) => {
+        const match = key.match(/^(\d+):(\d+)$/);
+        if (!match) return null;
+        const branch = Number(match[1]);
+        const segment = Number(match[2]);
+        const a = paths[branch]?.[segment - 1];
+        const b = paths[branch]?.[segment];
+        return a && b ? { branch, segment, a, b, style: { ...style }, order } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.branch - b.branch || a.segment - b.segment || a.order - b.order);
+    const reductionAnchors = styledSegments.flatMap(({ a, b }) => [a, b]);
+    const reduced = reduceBranches(paths, [...terminals, ...reductionAnchors], net.allowDiagonal);
     if (!reduced.length || samePolylineSet(paths, reduced)) return;
+    const onSegment = (p, a, b) =>
+      (b.x - a.x) * (p.y - a.y) === (b.y - a.y) * (p.x - a.x) &&
+      p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) &&
+      p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
+    const rebuiltStyles = {};
+    reduced.forEach((path, branch) => {
+      for (let i = 1; i < path.length; i++) {
+        const match = styledSegments.find(({ a, b }) =>
+          onSegment(path[i - 1], a, b) && onSegment(path[i], a, b));
+        if (match) rebuiltStyles[`${branch}:${i}`] = { ...match.style };
+      }
+    });
+    net.wireStyles = rebuiltStyles;
     net.branches = reduced.map((p) => clonePath(p, net.allowDiagonal));
     net.route = clonePath(reduced[0], net.allowDiagonal);
     net.junctions = this._netJunctions(net, net.branches);
@@ -3257,6 +3285,7 @@ export class Circuit {
   reconnectCoincidentNets(netIds = null) {
     const allowed = netIds ? new Set(netIds) : null;
     let mergedCount = 0;
+    const reducedCandidates = new Set();
     while (true) {
       const endpointNets = new Map();
       for (const net of this.nets.values()) {
@@ -3287,7 +3316,23 @@ export class Circuit {
         const nets = [...new Set(candidates)].filter((net) => this.nets.get(net.id) === net);
         if (nets.length < 2) continue;
         const primary = nets[0];
-        const paths = nets.flatMap((net) => this._explicitBranches(net));
+        const sourcePaths = nets.map((net) => this._explicitBranches(net));
+        const paths = sourcePaths.flat();
+        const mergedWireStyles = {};
+        let branchOffset = 0;
+        for (let ni = 0; ni < nets.length; ni++) {
+          const source = nets[ni];
+          const sourceBranches = sourcePaths[ni];
+          for (let branch = 0; branch < sourceBranches.length; branch++) {
+            const segmentStyles = source.wireStyles || {};
+            for (let segment = 1; segment < sourceBranches[branch].length; segment++) {
+              const key = `${branchOffset + branch}:${segment}`;
+              const sourceKey = `${branch}:${segment}`;
+              mergedWireStyles[key] = { ...(segmentStyles[sourceKey] || source.style) };
+            }
+          }
+          branchOffset += sourceBranches.length;
+        }
         const junctions = nets.flatMap((net) => net.junctions);
         const endpointArms = new Map();
         for (const path of paths) {
@@ -3302,7 +3347,9 @@ export class Circuit {
           junctions.push({ x, y });
         }
         primary.allowDiagonal = nets.some((net) => net.allowDiagonal);
+        reducedCandidates.add(primary);
         this._mergeNets(primary, nets.slice(1), null, { allowNameConflict: true });
+        primary.wireStyles = mergedWireStyles;
         primary.branches = paths.length
           ? paths.map((path) => clonePath(path, primary.allowDiagonal))
           : null;
@@ -3321,8 +3368,15 @@ export class Circuit {
       }
       if (!merged) break;
     }
+    for (const candidate of reducedCandidates) {
+      if (this.nets.get(candidate.id) !== candidate ||
+          candidate.routingMode === 'fixed' || candidate.terminals.length === 0) continue;
+      const paths = this._explicitBranches(candidate);
+      if (hasPositiveBranchOverlap(paths, candidate.allowDiagonal)) this._reduceNet(candidate);
+    }
     this.syncJunctionSolders();
     return mergedCount;
+
   }
 
   /** Add one terminal to an existing net. */

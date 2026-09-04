@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { completeSelectedNetIds, selectedSetMoveSource } from '../src/web/selection.js';
+import { chooseWireHitCandidate, completeSelectedNetIds, selectedSetMoveSource } from '../src/web/selection.js';
 
 const components = new Map([
   ['R1', { type: 'resistor' }],
@@ -64,4 +64,62 @@ test('complete selected-net helper accepts terminal-less nets', () => {
     }),
     new Set(['N1', 'N2']),
   );
+});
+
+const candidate = (id, distance, extra = {}) => ({
+  net: { id },
+  branch: 0,
+  seg: 1,
+  ...extra,
+  distance,
+});
+
+const pick = (candidates, selectedNets = [], diagnosticNets = []) =>
+  chooseWireHitCandidate({
+    candidates,
+    selectedNets: new Set(selectedNets),
+    diagnosticNets: new Set(diagnosticNets),
+  });
+
+test('nearer wire beats a selected-net preference', () => {
+  const near = candidate('N1', 1);
+  const far = candidate('N2', 2);
+  assert.equal(pick([near, far], ['N2']), near);
+});
+
+test('selected net wins an effectively equal-distance overlap', () => {
+  const first = candidate('N1', 1);
+  const selected = candidate('N2', 1 + 1e-12);
+  assert.equal(pick([first, selected], ['N2']), selected);
+});
+
+test('one diagnostic net wins an effectively equal-distance overlap', () => {
+  const first = candidate('N1', 1);
+  const diagnostic = candidate('N2', 1);
+  assert.equal(pick([first, diagnostic], [], ['N2']), diagnostic);
+});
+
+test('selected net outranks diagnostic preference', () => {
+  const selected = candidate('N1', 1);
+  const diagnostic = candidate('N2', 1);
+  assert.equal(pick([selected, diagnostic], ['N1'], ['N2']), selected);
+});
+
+test('stale preferences are ignored', () => {
+  const first = candidate('N1', 1);
+  const second = candidate('N2', 1);
+  assert.equal(pick([first, second], ['missing'], ['also-missing']), first);
+});
+
+test('equal-distance fallback preserves candidate iteration order', () => {
+  const first = candidate('N1', 1);
+  const second = candidate('N2', 1);
+  assert.equal(pick([first, second]), first);
+});
+
+test('diagnostic preference deduplicates tied segments from one net', () => {
+  const first = candidate('N1', 1);
+  const diagnosticA = candidate('N2', 1, { seg: 2 });
+  const diagnosticB = candidate('N2', 1, { seg: 3 });
+  assert.equal(pick([first, diagnosticA, diagnosticB], [], ['N2']), diagnosticA);
 });

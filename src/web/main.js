@@ -20,7 +20,7 @@ import { segThroughInterior, smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
-import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds } from './selection.js';
+import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -2180,26 +2180,26 @@ function pickWire(w) {
   const pxPerUnit = p ? view.w / p.w : 1;
   const tol = 12 / pxPerUnit;
   const snapped = { x: snap(w.x), y: snap(w.y) };
-  let best = null;
-  let bestD = tol;
+  const candidates = [];
   for (const net of circuit.nets.values()) {
     const paths = net.paths();
     for (let bi = 0; bi < paths.length; bi++) {
       const pts = paths[bi];
       for (let i = 1; i < pts.length; i++) {
         if (pts[i].x === pts[i - 1].x && pts[i].y === pts[i - 1].y) continue;
-        const d = Math.min(
+        const distance = Math.min(
           distToSegment(w.x, w.y, pts[i - 1], pts[i]),
           distToSegment(snapped.x, snapped.y, pts[i - 1], pts[i]),
         );
-        if (d < bestD) {
-          bestD = d;
-          best = { net, branch: bi, seg: i, pts };
-        }
+        if (distance < tol) candidates.push({ net, branch: bi, seg: i, pts, distance });
       }
     }
   }
-  return best;
+  return chooseWireHitCandidate({
+    candidates,
+    selectedNets,
+    diagnosticNets: diagnosticSelection.nets,
+  });
 }
 
 function fixedWireDragAt(hit, w, startClient, ev) {
@@ -5471,6 +5471,7 @@ function onNormalKey(key, shiftKey = false) {
         rerouteTouchedNets(refs, moved);
         circuit.reconnectCoincidentNets();
       });
+      wiresDirty = true;
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
       if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
@@ -5843,6 +5844,7 @@ function copySelection() {
       rotation: c.transform.rotation,
       mirrorX: c.transform.mirrorX,
       mirrorY: c.transform.mirrorY,
+      style: { ...(c.style || {}) },
     })),
     labels: freeLabels.map((l) => ({
       id: l.id,
@@ -6012,6 +6014,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           rotation: c.rotation,
           mirrorX: c.mirrorX,
           mirrorY: c.mirrorY,
+          style: c.style,
         });
         refMap.set(c.origRef, comp.refdes);
         addedComps.push(comp.refdes);
