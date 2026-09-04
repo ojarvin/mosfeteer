@@ -159,7 +159,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE', hint: 'DELETE · selected Delete acts like dd; otherwise click objects to delete · Esc cancel' };
   if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE', hint: movePending ? 'DETACHED MOVE · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'DETACHED MOVE · drag empty space to box-select, or click a component, label, or wire · Esc cancel' };
   if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE', hint: movePending ? 'MOVE · faint objects and connected wires follow the cursor, then click/Enter to commit · Esc cancel' : 'MOVE · drag empty space to box-select, or click a component, label, or wire · Esc cancel' };
-  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · Ctrl+Shift+V paste style · r rotate · Shift+r mirror · Ctrl+R mirror vertical · x check · Shift+x check-and-save` };
+  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · Ctrl+Shift+V paste style · r rotate · Shift+r mirror · Ctrl+R mirror vertical · x check · Shift+x save` };
 }
 
 function paneSize() {
@@ -5679,10 +5679,11 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // x is a quality check now; Shift+x checks and then saves.  Mirroring is
+  // x is a quality check now; Shift+x saves without checking.  Mirroring is
   // intentionally no longer bound to x/X (see r/R below).
   if (key === 'x' || key === 'X') {
-    runCheck(key === 'X' || shiftKey);
+    if (key === 'X' || shiftKey) saveCircuit();
+    else runCheck();
     return;
   }
 
@@ -5918,7 +5919,7 @@ function keymapText() {
     'Ctrl+i      toggle italic on selected labels',
     'Ctrl+b      toggle bold on selected labels',
     'C           toggle crosshair visibility',
-    'x / Shift+x check / check and save',
+    'x / Shift+x check / save',
     'm           modal move any component/label/annotation/wire; empty drag box-selects before ghost; stays armed',
     'Shift+m     modal detached component move; empty drag box-selects before ghost; stays armed',
     'c           repeated copy ghost: empty drag box-selects before ghost; click/Enter commits, Esc returns to source',
@@ -6409,7 +6410,7 @@ const TOOLBAR_IDS = {
   'mirror-x': ['btn-mirror-x', 'btn-mirror-horizontal', 'tool-mirror-x', 'tool-mirror-horizontal'],
   'mirror-y': ['btn-mirror-y', 'btn-mirror-vertical', 'tool-mirror-y', 'tool-mirror-vertical'],
   check: ['btn-check', 'btn-evaluate', 'tool-check'],
-  'check-save': ['btn-check-save', 'btn-evaluate-save', 'tool-check-save'],
+  save: ['btn-save', 'btn-save-circuit', 'tool-save'],
 };
 
 function interactionState() {
@@ -6916,7 +6917,7 @@ function renderCheckSummary() {
   }
 }
 
-function runCheck(save = false) {
+function runCheck() {
   try {
     const report = evaluate(circuit);
     lastCheckReport = report;
@@ -6925,10 +6926,6 @@ function runCheck(save = false) {
     const hasProblems = report.ok === false || CHECK_CATEGORIES.map(([key]) => key)
       .some((key) => report[key]?.length);
     logLine(evaluationText(report), hasProblems ? 'error' : undefined);
-    if (save) {
-      if (hasProblems) logLine('Check & save skipped: resolve the reported issues first.', 'error');
-      else saveCircuit();
-    }
     return report;
   } catch (err) {
     logLine(`Check failed: ${err.message || err}`, 'error');
@@ -7018,8 +7015,8 @@ function bindInteractionControls() {
     rotate: () => selectedTransform('rotate'),
     'mirror-x': () => selectedTransform('mirror-x'),
     'mirror-y': () => selectedTransform('mirror-y'),
-    check: () => runCheck(false),
-    'check-save': () => runCheck(true),
+    check: runCheck,
+    save: saveCircuit,
   };
   for (const [action, fn] of Object.entries(actions)) {
     for (const el of toolbarElements(action)) {

@@ -29,7 +29,8 @@
         <button id="btn-load-circuit" title="Load the circuit named in the field">Load</button>
         <button id="btn-new-circuit" title="Start a new, empty circuit">New</button>
         <button id="btn-delete-circuit" class="danger-action" title="Permanently delete the saved current circuit" disabled>Delete circuit</button>
-        <button id="btn-check-save" data-action="check-save" title="Check the current circuit, then save it if it passes">Check &amp; save</button>
+        <button id="btn-check" data-action="check" title="Check the current circuit">Check</button>
+        <button id="btn-save" data-action="save" title="Save the current circuit, including designs with issues">Save</button>
       </div>
 
       <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style">
@@ -107,7 +108,7 @@
     </form>
   </dialog>
 
-  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · Ctrl+Shift+V Paste style · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Check &amp; save · C Crosshair · F3 Wire shape · ? Help</div>
+  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · Ctrl+Shift+V Paste style · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Save · C Crosshair · F3 Wire shape · ? Help</div>
 
   <main class="layout">
     <section class="canvas-pane">

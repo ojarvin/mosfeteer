@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
+import { evaluate } from '../src/core/commands.js';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SERVER = join(ROOT, 'src/web/serve.js');
@@ -100,6 +101,24 @@ test('PUT accepts registered symbols and explains an outdated server registry', 
   const { error } = await rejected.json();
   assert.match(error, /unknown component type "future_mos"/);
   assert.match(error, /restart the server after changing the symbol registry/);
+});
+
+test('saves a circuit with check issues without changing it', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 240, y: 240 });
+  const state = circuit.toJSON();
+  assert.equal(evaluate(circuit).ok, false);
+  const saved = await fetch(`${app.base}/api/circuits/unfinished`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state }),
+  });
+  assert.equal(saved.status, 200);
+  const loaded = await (await fetch(`${app.base}/api/circuits/unfinished`)).json();
+  assert.deepEqual(loaded.state, state);
 });
 
 test('DELETE circuit removes only the circuit and manages active state', async (t) => {
