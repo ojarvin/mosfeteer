@@ -188,6 +188,14 @@ test('svgString renders filled polygon bodies (Razavi gate bars)', () => {
   assert.ok(svg.includes('fill="#111" stroke="none"'), 'foreground fill present');
 });
 
+
+test('svgString renders bulk MOS terminal and channel connection', () => {
+  const c = new Circuit();
+  c.addComponent('nmosb', { x: 520, y: 0 });
+  const svg = svgString(c);
+  assert.match(svg, /M -54\.65 0 L 0 0/, 'bulk graphic joins channel');
+  assert.match(svg, /<text[^>]*>M/, 'bulk MOS owned label renders');
+});
 test('Razavi symbols render (sources, opamp, gates, ports)', () => {
   const c = new Circuit();
   c.addComponent('current_source', { x: 400, y: 0 });

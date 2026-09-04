@@ -164,14 +164,13 @@ async function handleCircuitApi(req, res, url) {
       const body = await requestBody(req);
       const state = body.state;
       const circuit = Circuit.fromJSON(state);
-      await mkdir(dir, { recursive: true });
-      await writeFile(statePath, JSON.stringify(circuit.toJSON(), null, 2));
-      await writeFile(join(dir, 'circuit.svg'), svgString(circuit, {
-        grid: true, terminals: false, junctions: false, background: true, netNames: true,
-      }));
+      await saveCircuit(circuit, name);
       json(res, 200, { name, files: ['circuit.json', 'circuit.svg'] });
     } catch (err) {
-      json(res, 400, { error: `could not save circuit: ${err.message}` });
+      const hint = err.message.includes('unknown component type')
+        ? '; restart the server after changing the symbol registry'
+        : '';
+      json(res, 400, { error: `could not save circuit: ${err.message}${hint}` });
     }
     return true;
   }

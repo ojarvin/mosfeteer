@@ -546,6 +546,19 @@ test('smartRoute prefers the terminal outward direction (a down-pointing NMOS so
   allOnGrid(pts);
 });
 
+test('smartRoute leaves a bulk pin through its outward direction', () => {
+  const env = {
+    rects: [{ x: 0, y: -80, w: 120, h: 160 }],
+    pins: new Map([['120,0', { x: 1, y: 0 }]]),
+    wires: [],
+  };
+  const pts = smartRoute({ x: 120, y: 0 }, { x: 320, y: 240 }, env);
+  const d = { x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y };
+  assert.ok(d.x > 0, `first segment leaves bulk pin outward, got ${JSON.stringify(d)}`);
+  assert.equal(d.y, 0, `bulk pin first segment is horizontal, got ${JSON.stringify(d)}`);
+  allOnGrid(pts);
+});
+
 test('smartRoute does not route the first segment up INTO the component from a downward pin', () => {
   const env = {
     rects: [{ x: 0, y: -80, w: 120, h: 160 }],

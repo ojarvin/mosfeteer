@@ -58,12 +58,58 @@ Companion docs:
 - `AGENTS.md` — current symbol geometry, terminal names, label model,
   routing details; skim when you need an exact number.
 
-## Two-phase authoring workflow
+## Authoring workflow
 
-1. **Placement** — add all requested functional components first, then supplies/grounds and external ports; do not wire yet. Inspect `list`, `bounds`, `state`, `ascii`, and the fitted browser view. Show the placement and ask for feedback. Batch any moves, rotations, or mirrors and repeat the review.
-2. **Routing** — only after placement is accepted, route one logical net group or functional block at a time. Inspect the fitted view and run `eval` between meaningful groups; add or adjust labels with the relevant group. If routes fail or become tangled, return to placement, widen or realign rows/columns, review again, and retry.
+Follow one reviewable sequence:
 
-The placement review is the main user decision boundary for topology, orientation, spacing, port meaning, and visual balance. Batch commands within either phase when the topology is clear; pause for review when routing reveals a materially different interpretation or requires a speculative choice. Read-only checks (`eval`, `state`, `bounds`, `nets`, `list`, `ascii`) do not require a fit after every mutation.
+1. **Functional placement** — state the intended topology and signal names,
+   place the functional components, and apply connectivity-aware mirroring,
+   rotation, spacing, and alignment. Keep the layout readable: inputs
+   generally left-to-right, supplies top-to-bottom, matched structures
+   aligned, and at least one empty grid cell around bodies, labels, and wires.
+   Inspect `list`, `bounds`, `state`, `ascii`, and the fitted browser view.
+2. **Rails, grounds, and ports** — after the functional layout is established,
+   add supply and ground symbols, then external input/output ports. Do not let
+   ports dictate device placement, and do not add visible supply or ground
+   labels unless requested.
+3. **Placement review** — fit the browser view, verify orientation, spacing,
+   labels, topology, and visual balance, and ask the user for feedback before
+   routing. This is the decision gate for materially different topology,
+   polarity, bias, port meaning, supply convention, or other speculative
+   choices. Batch clear placement moves, rotations, or mirrors, then review
+   again.
+4. **Route logical groups** — only after placement is accepted, route one
+   logical net group or functional block at a time. Prefer short orthogonal
+   routes and intentional, legible crossings; use named labels or global rails
+   rather than duplicating long wires. The routing tool creates junction solder
+   dots automatically at multi-terminal nodes: never add `solder` components
+   by hand, and keep shared branches off terminal rows so junctions are real T
+   connections. Inspect the fitted view and run `eval` between meaningful
+   groups. If routing becomes tangled or requires a materially different
+   interpretation, stop and ask the user rather than committing a speculative
+   batch.
+5. **Labels and evaluation** — route ports and add requested labels from the
+   established circuit, keeping component identity separate from signal names.
+   Use formatted external labels such as `V_{OUT}` and never remove a requested
+   port label merely because its reference is already present. Run `eval`,
+   inspect `state` when a net is ambiguous, and correct topology, placement,
+   labels, or routes before continuing. A clean `eval` report cannot replace
+   visual review of hierarchy, symmetry, label clearance, or signal flow.
+6. **Final browser and SVG inspection** — before presenting the circuit as
+   complete, inspect every component-label position and wire crossing in the
+   fitted browser view and saved SVG together. Remove unrequested value or
+   explanatory text; confirm readable component IDs, visible wires and real
+   junctions, clear whitespace, and agreement with the JSON topology; then
+   perform the command checks in **Final verification** below.
+
+When the user requests a change, preserve accepted topology and manual routes
+unless the request explicitly changes them.
+
+
+Commands within a placement or routing step may be batched in one CLI/HTTP
+request when the topology is clear, but keep the circuit editable after each
+meaningful step. Read-only checks do not require fitting after every mutation.
+
 
 Interactive REPL:
 
@@ -166,16 +212,22 @@ help                           full command list
 
 ### Terminal names (current grid = 40)
 ```text
-nmos/pmos: g d s
-npn/pnp:   b c e
+nmos/pmos:   g d s
+nmosb/pmosb: g d s b
+npn/pnp:     b c e
 two-pin parts: a b
-ports:     p
-ground:    gnd
-supply:    p
-sources:   a b
-adc:       ain d
-dac:       d aout
+ports:        p
+ground:       gnd
+supply:       p
+sources:      a b
+adc:          ain d
+dac:          d aout
 ```
+Bulk MOS variants place `b` at the channel center `(0,0)` and route it
+outward to the right in the local frame (`dir:{x:1,y:0}`); the symbol includes
+an internal path from the channel edge to that pin. Their owned bulk label uses
+local offset `{x:40,y:-40}` (toward the local drain), so PMOS mirroring carries
+it toward the semantic drain. Three-terminal `nmos`/`pmos` keep `{x:40,y:0}`.
 
 Full per-symbol geometry is in `AGENTS.md`; the rules for how to lay them
 out are in `style-guide.md`.
@@ -202,33 +254,6 @@ out are in `style-guide.md`.
 - Moving a component re-anchors legacy fixed-path endpoints without
   autorouting; moving a complete selected set translates fixed paths with it.
 
-## Drafting order
-
-Work in this order for a new diagram:
-
-1. **Place the functional components first**, without input/output pins.
-2. **Apply connectivity-aware mirroring, rotation, spacing, and alignment.**
-   Symbol defaults already give you PMOS source-up and mirrored output
-   ports; add `--mirrorX` for the right-hand matched device. For
-   differential structures, establish the center grid column and align
-   shared-terminal rows; for mirror/active loads, face the control
-   terminals inward. Keep gaps an even number of cells and give the
-   layout room to breathe.
-3. **Add supply and ground symbols, then input and output ports.** Ports are
-   placed after the functional layout is established, but still before the
-   placement review and before routing. Do not let external ports dictate
-   device placement.
-4. **After placement is accepted, wire the functional components.** The
-   routing tool automatically creates junction solder dots at multi-terminal
-   nodes — never add `solder` components by hand. Keep the shared branch off
-   the terminal row so the junction is a real T.
-5. **Route ports and add requested labels** from the already-established
-   circuit. Do not add visible supply or ground labels unless requested.
-
-After each meaningful milestone, run `eval`, inspect `state` when a net is
-ambiguous, fit the view, and correct defects before continuing. Do not wait
-until the final report to discover a topology, routing, or visual-balance
-problem.
 
 ## General authoring rules
 
@@ -282,53 +307,6 @@ label remains visible and clear after fitting the view.
 - Make every crossing intentional and visually legible; a crossing is not a
   junction unless the topology says it is.
 
-### Build and inspect in small milestones
-
-1. Place the functional blocks and verify orientation, spacing, and labels.
-2. Connect one logical block or net group at a time.
-3. Add rails, grounds, ports, and external labels after the core is stable.
-4. After each milestone, run `eval`, inspect `state` when a net is ambiguous,
-   fit the browser view, and correct errors before continuing.
-5. Before saving, inspect both the fitted browser view and the saved SVG:
-   component IDs must be readable, wires must not disappear behind bodies,
-   junctions must be real, and whitespace must make the signal flow obvious.
-
-Do not use a clean `eval` report as proof of a finished drawing. It cannot
-replace visual review of hierarchy, symmetry, label clearance, signal flow, or
-whether the chosen implementation communicates the intended circuit.
-
-
-## Iterate with the user
-
-The loop:
-
-1. State the intended topology and signal names.
-2. Place a logical block or small group of components.
-3. Connect its nets and let the user see the result (fit the view).
-4. Run `eval` and inspect the rendered view.
-5. Fix topology, placement, labels, or routes before continuing.
-6. Ask the user to confirm ambiguous conventions (input polarity, supply
-   naming, single-ended vs differential output, active-load style) before
-   committing a large amount of work.
-7. Treat CLI persistence as an implementation detail, not approval. The CLI
-   saves each mutation; do not create an alternate snapshot or call the GUI
-   Save/HTTP snapshot operation as a substitute for user acceptance.
-8. If you feel stuck, stop before committing a speculative topology or a
-   large opaque batch and ask the user for feedback. Describe what is known,
-   the concrete obstacle, and the smallest decision or review that would let
-   you continue. Asking for feedback is preferable to silently choosing a
-   convention the user may not want.
-
-
-Avoid one opaque batch operation when live browser automation is available.
-Keep the circuit editable after every meaningful step. When the user asks
-for a change, preserve accepted topology and manual routes unless the
-request explicitly changes them.
-
-Before saving, review every component label position and every wire
-crossing. Remove unrequested value or explanatory text; orient symmetric
-components toward open label space; rely on the router's automatic solder
-dots for junction annotations.
 
 ## Save and learn
 
@@ -397,5 +375,3 @@ Confirm that:
 - labels identify external pins, bias/reference nodes, and important outputs;
   supply and ground symbols remain unlabeled unless the user requests text;
 - the browser view and saved SVG agree with the JSON topology.
-
-Then fit the view in the browser (`F`) and walk the same checks by eye.

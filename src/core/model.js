@@ -1291,15 +1291,13 @@ export class Circuit {
         if (!pinRects.has(key)) pinRects.set(key, []);
         pinRects.get(key).push(body);
       }
-      if (c.type === 'nmos' || c.type === 'pmos') {
-        const gate = c.def.terminals.find((t) => t.name === 'g');
-        if (gate) {
-          const point = c.terminalWorld(gate.name);
-          const gateNet = this.netOfTerminal({ comp: c.refdes, term: gate.name });
-          const netId = gateNet?.id || null;
-          if (netId) gateCounts.set(netId, (gateCounts.get(netId) || 0) + 1);
-          gateCandidates.push({ netId, rect: body, point, dir: this._pinDir(c, gate, point.x, point.y) });
-        }
+      const gate = c.def.terminals.find((t) => t.direction === 'gate');
+      if (gate) {
+        const point = c.terminalWorld(gate.name);
+        const gateNet = this.netOfTerminal({ comp: c.refdes, term: gate.name });
+        const netId = gateNet?.id || null;
+        if (netId) gateCounts.set(netId, (gateCounts.get(netId) || 0) + 1);
+        gateCandidates.push({ netId, rect: body, point, dir: this._pinDir(c, gate, point.x, point.y) });
       }
     }
     const gatePassages = gateCandidates.filter((candidate) =>

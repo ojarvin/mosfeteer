@@ -2,22 +2,10 @@ import { Circuit, canonicalNetName, transformComponentWorld } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
-import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute, balancedRoute } from './router.js';
+import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
-
-/** Build the routing environment for a circuit (component bboxes + pin dirs). */
-function routeEnv(circuit) {
-  const rects = [];
-  const pins = new Map();
-  for (const comp of circuit.components.values()) {
-    if (comp.type === 'solder') continue;
-    rects.push(comp.bboxWorld());
-    for (const t of comp.worldTerminals()) pins.set(`${t.x},${t.y}`, pinDir(comp, t.x, t.y));
-  }
-  return { rects, pins, wires: [] };
-}
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -269,8 +257,7 @@ export function evaluate(circuit) {
   const gatePassagesForNet = (net) => {
     const passages = [];
     for (const comp of comps) {
-      if (comp.type !== 'nmos' && comp.type !== 'pmos') continue;
-      const gate = comp.def.terminals.find((t) => t.name === 'g');
+      const gate = comp.def.terminals.find((t) => t.direction === 'gate');
       if (!gate) continue;
       const gateNet = circuit.netOfTerminal({ comp: comp.refdes, term: gate.name });
       if (gateNet?.id !== net.id) continue;

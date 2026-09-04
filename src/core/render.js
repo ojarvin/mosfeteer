@@ -267,26 +267,6 @@ export function svgString(circuit, opts = {}) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
     if (label.kind === 'box' || label.kind === 'arrow') continue;
-    if (label.kind === 'box' || label.kind === 'arrow') {
-      const a = label.anchor;
-      const b = label.end;
-      const attrs = styleAttrs(label.style);
-      if (label.kind === 'box') {
-        const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-        parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`);
-      } else {
-        const angle = Math.atan2(b.y - a.y, b.x - a.x);
-        const tip = 40;
-        const half = 24;
-        const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
-        const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
-        const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
-        parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`);
-      }
-      const mid = label.textAnchor || { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', label.style?.color || '#111', label.style?.width, label.style)}</g>`);
-      continue;
-    }
     const t = label.textPos();
     parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', label.style?.color || '#111', label.style?.width, label.style)}</g>`);
   }

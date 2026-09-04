@@ -5177,7 +5177,9 @@ const PLACEMENT = {
 // the menu while the underlying type remains the stable placement value.
 const PLACEMENT_LABELS = {
   resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode',
-  nmos: 'NMOS transistor', pmos: 'PMOS transistor', npn: 'NPN transistor', pnp: 'PNP transistor',
+  nmos: 'NMOS transistor', pmos: 'PMOS transistor',
+  nmosb: 'NMOS transistor with bulk', pmosb: 'PMOS transistor with bulk',
+  npn: 'NPN transistor', pnp: 'PNP transistor',
   ground: 'Ground', vcm: 'VCM (Common potential)', supply: 'Supply (VDD/VCC)',
   input: 'Input port', output: 'Output port', inputoutput: 'Input/output port',
   port: 'Port', port_filled: 'Filled port',
@@ -5192,7 +5194,9 @@ const PLACEMENT_LABELS = {
 
 const PLACEMENT_ALIASES = {
   resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'],
-  nmos: ['mos', 'n-channel'], pmos: ['mos', 'p-channel'], npn: ['bjt'], pnp: ['bjt'],
+  nmos: ['mos', 'n-channel'], pmos: ['mos', 'p-channel'],
+  nmosb: ['mos', 'body', 'bulk', 'n-channel'], pmosb: ['mos', 'body', 'bulk', 'p-channel'],
+  npn: ['bjt'], pnp: ['bjt'],
   supply: ['vdd', 'vcc', 'power'], vcm: ['common', 'potential', 'vcm'], input: ['in'], output: ['out'], inputoutput: ['io'],
   current_source: ['idc', 'current'], voltage_source: ['vdc', 'voltage'],
   opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
@@ -5207,7 +5211,7 @@ const PLACEMENT_ALIASES = {
 const INSERT_COMPONENT_TYPES = [...symbolTypeNames];
 const INSERT_CATEGORY_RULES = [
   ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(diode|switch_)/],
-  ['Semiconductors / actives', /^(nmos|pmos|npn|pnp)$/],
+  ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
   ['Sources & power', /^(current_source|voltage_source|supply|ground|vcm)$/],
   ['Logic', /^(opamp|opamp_diff|inverter|buffer|.*_gate|adc|dac)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port|port_filled)$/],

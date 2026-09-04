@@ -173,7 +173,8 @@ mirror flag to override that default.
 |------|-----------|--------------------|
 | resistor / capacitor / inductor / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
 | diode | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
-| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | x:-120..0, y:-80..80 |
+| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox `{-120,-80,120,160}` |
+| nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox `{-120,-80,120,160}`; bulk pin points right with a visible internal path from the channel edge |
 | npn / pnp | `b` (left) `c` (top) `e` (bottom) | x:-160..0, y:-120..120 |
 | current_source / voltage_source | `a` (top) `b` (bottom) | body x:-40..40, y:-80..80; default label center offset x:-80 (bbox edge x:-40) |
 | ground | `gnd` (top edge) | x:0..80, y:0..120 |
@@ -191,6 +192,10 @@ Notes:
   drain / collector at the channel origin, source / emitter below it. A
   **PMOS places source-up by default** (source top, drain bottom);
   verify `s` / `d` from the `add` output before wiring.
+- Bulk variants add `b` at the channel center `(0,0)`, directed right
+  (`dir:{x:1,y:0}`), with a symbol path joining the channel edge to that pin.
+  Their owned bulk label is one cell toward the local drain, offset
+  `{x:40,y:-40}`; transforms carry that offset toward the semantic drain.
 - **Mirroring builds matched pairs**: `--mirrorX` flips the body across the
   gate line so the two halves of a differential pair open like a mirror —
   drains face the shared output rows, sources face the shared tail row.
@@ -241,11 +246,12 @@ overlap.
   drop a short tap at each gate column — taps that run along a gate
   column touch only bbox *edges*, which `eval` does not count as crossings.
 - Sanctioned exception: a shared gate bus may pass *through* a MOS body's
-  interior when every MOS gate it crosses belongs to the same physical net.
-  The crossing must touch that component's gate terminal and follow the gate
-  axis; diode-connected gate/drain terminals and a current-source feed may
-  share the net. `eval` and the autorouter recognize only this constrained
-  nmos/pmos exception. Flag and justify it; never use it for any other net.
+  interior, including a bulk variant, when every MOS gate it crosses belongs
+  to the same physical net. The crossing must touch that component's gate
+  terminal and follow the gate axis; diode-connected gate/drain terminals and
+  a current-source feed may share the net. `eval` and the autorouter recognize
+  only this constrained MOS exception. Flag and justify it; never use it for
+  any other net.
 
 ### 4.4 Columns: shared source / drain
 

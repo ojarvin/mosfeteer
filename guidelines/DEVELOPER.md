@@ -165,6 +165,12 @@ When you fix a bug, write the failing test first, watch it fail, then fix.
 6. Update `AGENTS.md` symbol geometry table + `style-guide.md` reference
    table.
 
+`Circuit.fromJSON` intentionally rejects types absent from the registry: the
+model and renderer require a real symbol definition. `npm start` and
+`npm run serve` run the server in Node watch mode, so changing the imported
+registry restarts it automatically. A server started directly with
+`node src/web/serve.js` must be restarted after symbol-source changes.
+
 ## Adding a new CLI command or HTTP route
 
 The command language lives in `src/core/commands.js`. Every command:

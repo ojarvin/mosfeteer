@@ -4,6 +4,8 @@ import { inductor } from './inductor.js';
 import { diode } from './diode.js';
 import { nmos } from './nmos.js';
 import { pmos } from './pmos.js';
+import { nmosb } from './nmosb.js';
+import { pmosb } from './pmosb.js';
 import { npn } from './npn.js';
 import { pnp } from './pnp.js';
 import { ground } from './ground.js';
@@ -25,6 +27,8 @@ export const symbolTypes = {
   diode,
   nmos,
   pmos,
+  nmosb,
+  pmosb,
   npn,
   pnp,
   ground,

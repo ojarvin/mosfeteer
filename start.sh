@@ -27,4 +27,4 @@ fi
 
 echo "Starting schematic-spawner at $URL (Ctrl-C to stop)"
 (sleep 1; open_url) &
-exec node src/web/serve.js
+exec node --watch src/web/serve.js

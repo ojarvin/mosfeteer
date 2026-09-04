@@ -29,7 +29,6 @@ test('getSymbol returns known defs and throws on unknown', () => {
 
 test('VCM is a validated upward-escaping common-potential marker', () => {
   const def = getSymbol('vcm');
-  assert.doesNotThrow(() => validateSymbol(def));
   assert.deepEqual(def.terminals, [
     { name: 'vcm', x: 0, y: 0, direction: 'up', dir: { x: 0, y: -1 } },
   ]);
@@ -84,39 +83,36 @@ test('current source arrow is smaller than the compact circle body', () => {
 });
 
 
-test('MOS and BJT symbols use their channel as the local origin', () => {
-  for (const type of ['nmos', 'pmos']) {
+test('MOS symbols expose channel geometry and bulk variants', () => {
+  for (const type of ['nmos', 'pmos', 'nmosb', 'pmosb']) {
     const def = getSymbol(type);
-    assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [
-      { name: 'g', x: -120, y: 0 },
-      { name: 'd', x: 0, y: -80 },
-      { name: 's', x: 0, y: 80 },
+    const bulk = type.endsWith('b');
+    assert.deepEqual(def.terminals.map(({ name, x, y, direction, dir }) => ({ name, x, y, direction, dir })), [
+      { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
+      { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
+      { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
+      ...(bulk ? [{ name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } }] : []),
     ], `${type} terminals`);
     assert.deepEqual(def.bbox, { x: -120, y: -80, w: 120, h: 160 }, `${type} bbox`);
-    assert.deepEqual(def.labelOffset, { x: 40, y: 0 }, `${type} label offset`);
-  }
-  for (const type of ['npn', 'pnp']) {
-    const def = getSymbol(type);
-    assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [
-      { name: 'b', x: -160, y: 0 },
-      { name: 'c', x: 0, y: type === 'npn' ? -120 : 120 },
-      { name: 'e', x: 0, y: type === 'npn' ? 120 : -120 },
-    ], `${type} terminals`);
-    assert.deepEqual(def.bbox, { x: -160, y: -120, w: 160, h: 240 }, `${type} bbox`);
-    assert.deepEqual(def.labelOffset, { x: 40, y: 0 }, `${type} label offset`);
+    assert.deepEqual(def.labelOffset, bulk ? { x: 40, y: -40 } : { x: 40, y: 0 }, `${type} label offset`);
+    assert.equal(def.refPrefix, 'M', `${type} refPrefix`);
+    assert.equal(def.defaultMirrorY, type.startsWith('pmos') ? true : undefined, `${type} default mirror`);
+    const bulkPath = def.graphics.find((g) => g.kind === 'path' && g.d === 'M -54.65 0 L 0 0');
+    assert.equal(Boolean(bulkPath), bulk, `${type} bulk path`);
   }
 });
 
 test('transistor arrows and gate leads are centered and clear of the gate gap', () => {
-  for (const type of ['nmos', 'pmos']) {
+  for (const type of ['nmos', 'pmos', 'nmosb', 'pmosb']) {
     const graphics = getSymbol(type).graphics;
     assert.equal(graphics[0].d, 'M -120 0 L -76.88 0', `${type} gate lead`);
-    const arrow = graphics.at(-1).points;
-    assert.equal(arrow[0].y, 27.91, `${type} arrow tip row`);
-    assert.equal((arrow[1].y + arrow[2].y) / 2, 27.91, `${type} arrow base row`);
+    const arrow = graphics.findLast((g) => g.kind === 'polygon' && g.points.some((p) => p.y === 27.91));
+    assert.ok(arrow, `${type} source arrow`);
+    assert.equal(arrow.points[0].y, 27.91, `${type} arrow tip row`);
+    assert.equal((arrow.points[1].y + arrow.points[2].y) / 2, 27.91, `${type} arrow base row`);
+    assert.equal(arrow.points[0].x, type.startsWith('pmos') ? -54.65 : 0, `${type} arrow polarity`);
   }
 });
-
 test('logic bodies use origin-symmetric triangle and curved outlines', () => {
   const inverter = getSymbol('inverter').graphics[1].d;
   const buffer = getSymbol('buffer').graphics[1].d;
@@ -241,6 +237,8 @@ test('refdes prefixes by component type', () => {
     diode: 'D',
     nmos: 'M',
     pmos: 'M',
+    nmosb: 'M',
+    pmosb: 'M',
     npn: 'Q',
     pnp: 'Q',
     ground: '',

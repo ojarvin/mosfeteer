@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Circuit } from '../src/core/model.js';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SERVER = join(ROOT, 'src/web/serve.js');
@@ -70,6 +71,36 @@ async function createCircuit(base, name) {
   });
   assert.equal(response.status, 200);
 }
+
+test('PUT accepts registered symbols and explains an outdated server registry', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+
+  const circuit = new Circuit();
+  circuit.addComponent('nmosb', { refdes: 'M1', x: 240, y: 240 });
+  const state = circuit.toJSON();
+  const saved = await fetch(`${app.base}/api/circuits/bulk-mos`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state }),
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), {
+    name: 'bulk-mos',
+    files: ['circuit.json', 'circuit.svg'],
+  });
+
+  state.components[0].type = 'future_mos';
+  const rejected = await fetch(`${app.base}/api/circuits/future-symbol`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state }),
+  });
+  assert.equal(rejected.status, 400);
+  const { error } = await rejected.json();
+  assert.match(error, /unknown component type "future_mos"/);
+  assert.match(error, /restart the server after changing the symbol registry/);
+});
 
 test('DELETE circuit removes only the circuit and manages active state', async (t) => {
   const app = await startServer();

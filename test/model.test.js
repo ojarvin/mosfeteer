@@ -63,6 +63,24 @@ test('symbol defaultMirror flags apply when not overridden', () => {
   assert.equal(o2.transform.mirrorX, false, 'explicit mirrorX overrides the output default');
 });
 
+test('bulk MOS components use M refs, bulk terminal, and semantic label offsets', () => {
+  const c = new Circuit();
+  const n = c.addComponent('nmosb', { x: 400, y: 400 });
+  const p = c.addComponent('pmosb', { x: 800, y: 400 });
+  assert.equal(n.refdes, 'M1');
+  assert.equal(p.refdes, 'M2');
+  assert.deepEqual(n.worldTerminals().map(({ name, x, y }) => ({ name, x, y })), [
+    { name: 'g', x: 280, y: 400 }, { name: 'd', x: 400, y: 320 },
+    { name: 's', x: 400, y: 480 }, { name: 'b', x: 400, y: 400 },
+  ]);
+  assert.deepEqual(p.worldTerminals().find(({ name }) => name === 'b'), { name: 'b', x: 800, y: 400 });
+  assert.deepEqual(c.labelOf(n.refdes).offset, { x: 40, y: -40 });
+  assert.deepEqual(c.labelOf(p.refdes).offset, { x: 40, y: -40 });
+  assert.equal(p.transform.mirrorY, true);
+  assert.deepEqual(p.worldTerminals().find(({ name }) => name === 'd'), { name: 'd', x: 800, y: 480 });
+  assert.deepEqual(c.labelOf(p.refdes).anchorWorld(), { x: 840, y: 440 });
+});
+
 test('addComponent rejects duplicate refdes', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R9' });
