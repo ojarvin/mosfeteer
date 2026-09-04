@@ -2357,15 +2357,6 @@ function netInBox(net, box) {
   return true;
 }
 
-function zoomOutAt(w) {
-  const f = 1.35;
-  const nw = Math.min(view.w * f, maxViewW());
-  const factor = nw / view.w;
-  view.x = w.x - (w.x - view.x) * factor;
-  view.y = w.y - (w.y - view.y) * factor;
-  view.w = nw;
-  view.h *= factor;
-}
 
 function zoomToWorldRect(r) {
   const pad = 60;
@@ -4412,11 +4403,7 @@ function canvasMouseUp(ev) {
   }
 
   if (drag.mode === 'zoom') {
-    if (!drag.moved) {
-      zoomOutAt(w);
-    } else {
-      zoomToWorldRect(worldRect(drag.startWorld, w));
-    }
+    if (drag.moved) zoomToWorldRect(worldRect(drag.startWorld, w));
   } else if (drag.mode === 'wireseg') {
     if (drag.modal) {
       render();
@@ -5988,7 +5975,7 @@ function keymapText() {
     '             a single copied object also provides its style for C-S-v',
     'shift-click toggle in selection     shift-drag marquee adds',
     'middle      drag to pan (view never pans on its own)',
-    'right       drag = zoom box · right-click = zoom out',
+    'right       drag = zoom box · click without dragging does nothing',
     'wheel       zoom about the pointer (scroll up = in, down = out)',
     'F / f fit   view fills the pane · crosshair is visible only over the canvas',
   ].join('\n');
