@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wireRunAt, collapseCollinear, moveJunctionEndpoint, moveWireRun } from '../src/core/wireedit.js';
-import { deleteWireSegment, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
+import { deleteWireSegment, hasPositiveBranchOverlap, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
 import { onGrid } from '../src/core/grid.js';
 import { Circuit } from '../src/core/model.js';
 
@@ -18,6 +18,13 @@ test('wireRunAt returns the maximal collinear run of a segment', () => {
   assert.deepEqual(h, { lo: 1, hi: 2, orient: 'h', val: 40 });
   const v = wireRunAt(pts, 1); // vertical x=0 lead
   assert.deepEqual(v, { lo: 0, hi: 1, orient: 'v', val: 0 });
+});
+
+test('wireRunAt stops aligned runs at a topology break', () => {
+  const pts = [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 400, y: 0 }];
+  const breaks = new Set(['200,0']);
+  assert.deepEqual(wireRunAt(pts, 1, breaks), { lo: 0, hi: 1, orient: 'h', val: 0 });
+  assert.deepEqual(wireRunAt(pts, 2, breaks), { lo: 1, hi: 2, orient: 'h', val: 0 });
 });
 
 test('dragging an interior run into line with a neighbouring run collapses the corner', () => {
@@ -70,6 +77,21 @@ test('dragging a two-point junction bridge moves both junction endpoints', () =>
   assert.deepEqual(pts, [{ x: 80, y: 160 }, { x: 320, y: 160 }]);
   ortho(pts);
 });
+test('topology-bounded junction bridge moves without moving its anchors', () => {
+  const pts = [{ x: 80, y: 80 }, { x: 320, y: 80 }];
+  const endpointMeta = {
+    start: { type: 'junction' },
+    end: { type: 'junction' },
+    runBounds: { lo: 0, hi: 1 },
+  };
+  assert.equal(moveWireRun(pts, 'h', 80, 160, endpointMeta), 160);
+  assert.deepEqual(pts, [
+    { x: 80, y: 80 }, { x: 80, y: 160 },
+    { x: 320, y: 160 }, { x: 320, y: 80 },
+  ]);
+  ortho(pts);
+});
+
 
 test('a straight pin-to-pin run remains immovable with terminal metadata', () => {
   const pts = [{ x: 80, y: 80 }, { x: 320, y: 80 }];
@@ -79,6 +101,24 @@ test('a straight pin-to-pin run remains immovable with terminal metadata', () =>
   };
   assert.equal(moveWireRun(pts, 'h', 80, 160, endpointMeta), 80);
   assert.deepEqual(pts, [{ x: 80, y: 80 }, { x: 320, y: 80 }]);
+});
+
+test('a collapsed terminal-aligned interior run remains movable with an editor hint', () => {
+  const pts = [
+    { x: -120, y: 160 }, { x: -120, y: 160 },
+    { x: -120, y: -160 }, { x: -120, y: -160 },
+  ];
+  const endpointMeta = {
+    start: { type: 'terminal' },
+    end: { type: 'terminal' },
+    interiorRun: true,
+  };
+  assert.equal(moveWireRun(pts, 'v', -120, -200, endpointMeta), -200);
+  assert.deepEqual(pts, [
+    { x: -120, y: 160 }, { x: -200, y: 160 },
+    { x: -200, y: -160 }, { x: -120, y: -160 },
+  ]);
+  ortho(pts);
 });
 
 test('moving the standard bridge upward rebuilds incident elbows at the target junctions', () => {
@@ -150,6 +190,15 @@ test('normalizePath keeps a terminal out-and-back (route reversal is a real vert
   ]);
 });
 
+test('junction arm directions distinguish same-quadrant diagonal slopes', () => {
+  const paths = [
+    [{ x: 0, y: 0 }, { x: 80, y: 40 }],
+    [{ x: 0, y: 0 }, { x: 120, y: 80 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 120 }],
+  ];
+  assert.ok(junctionPoints(paths, [], true).some((p) => p.x === 0 && p.y === 0));
+});
+
 test('deleting a segment splits a branch without moving its remaining geometry', () => {
   const paths = [[{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 160, y: 80 }]];
   const next = deleteWireSegment(paths, 0, 1);
@@ -199,6 +248,38 @@ test('reduceBranches is idempotent and keeps a clean tree untouched', () => {
   const once = reduceBranches(t, terminals);
   assert.deepEqual(once, t, 'a tree is returned unchanged');
   assert.deepEqual(reduceBranches(once, terminals), once, 'reducing twice is a no-op');
+});
+
+test('hasPositiveBranchOverlap only detects positive overlap across branches', () => {
+  const sameBranch = [[
+    { x: 0, y: 0 }, { x: 160, y: 0 }, { x: 80, y: 0 },
+  ]];
+  assert.equal(hasPositiveBranchOverlap(sameBranch), false);
+  assert.equal(hasPositiveBranchOverlap([
+    [{ x: 0, y: 0 }, { x: 160, y: 0 }],
+    [{ x: 160, y: 0 }, { x: 320, y: 0 }],
+  ]), false, 'touching at an endpoint is not overlap');
+  assert.equal(hasPositiveBranchOverlap([
+    [{ x: 0, y: 0 }, { x: 160, y: 0 }],
+    [{ x: 80, y: 0 }, { x: 240, y: 0 }],
+  ]), true);
+});
+
+test('reduceBranches preserves outer-terminal connectivity for a partial overlap', () => {
+  const paths = [
+    [{ x: 0, y: 0 }, { x: 400, y: 0 }],
+    [{ x: 80, y: 0 }, { x: 320, y: 0 }],
+  ];
+  const terminals = [{ x: 0, y: 0 }, { x: 400, y: 0 }];
+  const reduced = reduceBranches(paths, terminals);
+  assert.deepEqual(reduced, [
+    [{ x: 0, y: 0 }, { x: 80, y: 0 }],
+    [{ x: 80, y: 0 }, { x: 320, y: 0 }],
+    [{ x: 320, y: 0 }, { x: 400, y: 0 }],
+  ]);
+  assert.equal(hasPositiveBranchOverlap(reduced), false);
+  assert.deepEqual(junctionPoints(paths, terminals), [], 'overlap boundaries are not electrical junctions');
+  assert.deepEqual(reduceBranches(reduced, terminals), reduced, 'reduction is idempotent');
 });
 
 test('reduceBranches merges a run dragged onto a same-net wire (no hidden overlap)', () => {

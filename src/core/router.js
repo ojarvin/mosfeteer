@@ -97,14 +97,12 @@ export function pruneRoute(points, protectedPoints = []) {
 // Multi-terminal net routing: rectilinear Steiner minimum tree (RSMT) over the
 // coarse 40-grid with obstacle avoidance. This is the exact version of the
 // "rat nest" router: Dreyfus–Wagner subset DP on a grid graph whose vertices
-// are every cell of the terminals' padded bounding box and whose edges are the
-// grid steps that stay clear of component bodies (hard) and steer off label
-// boxes (soft). Edge cost is one cell plus tiny tie-break penalties that prefer
-// pin-conformity and label clearance — total length is the primary objective,
-// spacing is a hard constraint, and the number of bends/junctions falls out of
-// the length optimum (a single centered T for a three-way Y). Nets too large
-// for the exponential DP fall back to the classic MST-of-shortest-paths Steiner
-// approximation, so any net is routable.
+// are every cell of the terminals' padded bounding box; edge cost is one cell
+// plus tiny tie-break penalties that prefer pin-conformity and label clearance.
+// The DP minimizes total length; visible candidate routes prioritize fewer bends
+// before comparing lengths. Nets too large for the exponential DP fall back to
+// the classic MST-of-shortest-paths Steiner approximation, so any net is
+// routable.
 // ---------------------------------------------------------------------------
 
 // Pin-conformity penalties for the first/last segment of a net. Leaving a pin
@@ -190,14 +188,50 @@ function gridDijkstra(initDist, adj, V) {
  *  the valid one-cell pin leg), or lie on top of an existing wire. Legal steps cost
  *  one cell, plus tiny penalties that break length-ties toward pin-conformity
  *  and label clearance. */
+function gatePassageAt(point, env) {
+  return (env.gatePassages || []).find((passage) =>
+    passage.point.x === point.x && passage.point.y === point.y
+  );
+}
+
+function pointOnSegment(point, a, b) {
+  return point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) &&
+    point.y >= Math.min(a.y, b.y) && point.y <= Math.max(a.y, b.y);
+}
+
+/** A shared MOS gate bus may cross its own transistor bodies, but only along
+ * the gate axis and only when the segment touches that component's gate pin. */
+export function gateBodyCrossingAllowed(a, b, r, env = {}) {
+  const passages = env.gatePassages || [];
+  if (passages.length < 2) return false;
+  return passages.some((passage) => {
+    if (passage.rect.x !== r.x || passage.rect.y !== r.y ||
+        passage.rect.w !== r.w || passage.rect.h !== r.h) return false;
+    if (!pointOnSegment(passage.point, a, b)) return false;
+    const horizontal = passage.dir.x !== 0;
+    return horizontal ? a.y === passage.point.y && b.y === passage.point.y
+      : a.x === passage.point.x && b.x === passage.point.x;
+  });
+}
+
+function gatePinAllowsDirection(point, direction, env, source) {
+  const passage = gatePassageAt(point, env);
+  if (!passage) return false;
+  return source
+    ? direction.x === -passage.dir.x && direction.y === -passage.dir.y
+    : direction.x === passage.dir.x && direction.y === passage.dir.y;
+}
+
 function terminalEdgeValid(a, b, env) {
   const pins = env.pins || new Map();
   const aPin = pins.get(`${a.x},${a.y}`);
   const bPin = pins.get(`${b.x},${b.y}`);
   const dx = Math.sign(b.x - a.x);
   const dy = Math.sign(b.y - a.y);
-  if (aPin && (dx !== aPin.x || dy !== aPin.y)) return false;
-  if (bPin && (dx !== -bPin.x || dy !== -bPin.y)) return false;
+  if (aPin && (dx !== aPin.x || dy !== aPin.y) &&
+      !gatePinAllowsDirection(a, { x: dx, y: dy }, env, true)) return false;
+  if (bPin && (dx !== -bPin.x || dy !== -bPin.y) &&
+      !gatePinAllowsDirection(b, { x: dx, y: dy }, env, false)) return false;
   return true;
 }
 
@@ -207,9 +241,10 @@ function edgeWeight(a, b, env) {
   const bPin = pins.get(`${b.x},${b.y}`);
   if (!terminalEdgeValid(a, b, env)) return null;
   for (const r of env.rects || []) {
-    if (segThroughInterior(a, b, r)) return null;
+    if (segThroughInterior(a, b, r) && !gateBodyCrossingAllowed(a, b, r, env)) return null;
   }
   for (const r of env.rects || []) {
+    if (gateBodyCrossingAllowed(a, b, r, env)) continue;
     if (segRectDist(a, b, r) < STEP) {
       const aOk = aPin && onBodyBoundary(a, r);
       const bOk = bPin && onBodyBoundary(b, r);
@@ -385,11 +420,38 @@ function steinerDP(graph, terminals) {
   return segs;
 }
 
+/** Turn a polyline's grid edges into a bend count. */
+function bendCount(path) {
+  let bends = 0;
+  let previous = null;
+  for (let i = 1; i < path.length; i++) {
+    const current = path[i - 1].x === path[i].x ? 'v' : 'h';
+    if (previous && current !== previous) bends++;
+    previous = current;
+  }
+  return bends;
+}
+
+/** Replace a shortest staircase between two branch points with an equally
+ * short route having fewer bends when the routing environment permits it. */
+function simplifyBranch(path, env) {
+  if (!path || path.length < 3) return path;
+  const candidate = smartRoute(path[0], path[path.length - 1], env);
+  if (!candidate || candidate.length < 2) return path;
+  const oldLength = routeLength(path);
+  const newLength = routeLength(candidate);
+  const oldBends = bendCount(path);
+  const newBends = bendCount(candidate);
+  if (newBends < oldBends || (newBends === oldBends && newLength < oldLength)) {
+    return candidate;
+  }
+  return path;
+}
 /** Turn a Steiner tree's segment set into renderable branches. Branch points are
  *  the terminals plus every vertex whose degree differs from 2; each maximal
  *  chain between two branch points becomes one polyline (collinear cells
  *  compressed away). */
-function branchesFromSegments(segs, graph, allTerminalPts) {
+function branchesFromSegments(segs, graph, allTerminalPts, env) {
   const { V, id, px } = graph;
   if (segs.size === 0) return [];
   const adj = new Map();
@@ -424,7 +486,8 @@ function branchesFromSegments(segs, graph, allTerminalPts) {
         prev = cur;
         cur = next;
       }
-      branches.push(compressElbow(poly.map(px)));
+      const points = compressElbow(poly.map(px));
+      branches.push(simplifyBranch(points, env));
     }
   }
   return branches;
@@ -468,7 +531,7 @@ export function steinerBranches(terminals, env = { rects: [], pins: new Map(), w
     }
     return reduceBranches(paths, unique);
   }
-  return branchesFromSegments(tree.segs, tree.graph, pts);
+  return branchesFromSegments(tree.segs, tree.graph, pts, env);
 }
 
 /** Compute the Steiner tree's segment set, growing the routing region until all
@@ -682,7 +745,9 @@ function bboxCrossings(pts, env) {
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1];
     const b = pts[i];
-    for (const r of env.rects || []) if (segThroughInterior(a, b, r)) n++;
+    for (const r of env.rects || []) {
+      if (segThroughInterior(a, b, r) && !gateBodyCrossingAllowed(a, b, r, env)) n++;
+    }
   }
   return n;
 }
@@ -753,6 +818,7 @@ function clearanceScore(pts, env) {
     const a = pts[i - 1];
     const b = pts[i];
     for (const r of env.rects || []) {
+      if (gateBodyCrossingAllowed(a, b, r, env)) continue;
       if (segRectDist(a, b, r) < STEP) {
         n++;
         break;
@@ -761,7 +827,6 @@ function clearanceScore(pts, env) {
   }
   return n;
 }
-
 /** Soft preference: segments passing within a grid cell of a label box. Unlike
  *  component bodies (hard clearance, see hardSafe), labels only steer the route
  *  toward a cleaner channel when one exists — they never block a connection. */
@@ -797,8 +862,8 @@ function pointAt(a, b, distance) {
 /**
  * Check body clearance while allowing only the first/last one-cell leg at a
  * valid terminal. A turned, interior obstacle-edge segment is also retained
- * for tightly packed multi-terminal layouts; a direct source-to-drain run is
- * still a terminal leg and cannot use this exception.
+ * for tightly packed multi-terminal layouts. Shared MOS gate passages are
+ * handled before this generic clearance policy.
  */
 function bodyClearanceSafe(a, b, index, points, rect, env) {
   // A route may follow an obstacle edge only after it has turned away from a
@@ -833,9 +898,14 @@ function hardSafe(pts, env) {
     const a = pts[i - 1];
     const b = pts[i];
     for (const r of env.rects || []) {
+      if (gateBodyCrossingAllowed(a, b, r, env)) continue;
       if (segThroughInterior(a, b, r)) return false;
       if (segRectDist(a, b, r) < STEP && !bodyClearanceSafe(a, b, i, pts, r, env)) return false;
     }
+  }
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
     for (const wire of env.wires || []) for (let j = 1; j < wire.length; j++) {
       if (overlapSpan(a, b, wire[j - 1], wire[j])) return false;
     }
@@ -860,13 +930,20 @@ function conformScore(pts, env) {
   const pins = env.pins || new Map();
   const src = pins.get(`${pts[0].x},${pts[0].y}`);
   const dst = pins.get(`${pts[pts.length - 1].x},${pts[pts.length - 1].y}`);
+  const gatePassageFor = (point) => gatePassageAt(point, env);
   if (src) {
     const a = axisOf([pts[0], pts[1]]);
-    s += dirScore(a.x, a.y, src);
+    const passage = gatePassageFor(pts[0]);
+    s += passage && gateBodyCrossingAllowed(pts[0], pts[1], passage.rect, env)
+      ? 0
+      : dirScore(a.x, a.y, src);
   }
   if (dst) {
     const b = axisOf([pts[pts.length - 2], pts[pts.length - 1]]);
-    s += dirScore(b.x, b.y, { x: -dst.x, y: -dst.y });
+    const passage = gatePassageFor(pts[pts.length - 1]);
+    s += passage && gateBodyCrossingAllowed(pts[pts.length - 2], pts[pts.length - 1], passage.rect, env)
+      ? 0
+      : dirScore(b.x, b.y, { x: -dst.x, y: -dst.y });
   }
   return s;
 }
@@ -877,7 +954,7 @@ function routeLength(pts) {
   return len;
 }
 
-/** Compare two candidate routes by (bbox, wireCross, overlap, turns, conform, length). */
+/** Compare candidates lexicographically by safety, then bends, then length. */
 function cmpScore(a, b) {
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
     if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
@@ -890,9 +967,8 @@ function scoreCandidate(pts, env) {
   // Crossing is a legal visual operation; collinear overlap is not. Prefer
   // separate wire channels before minimizing crossings. Labels are soft:
   // component clearance is hard, label clearance steers. After spacing and
-  // pin-direction conformity, minimize the route length (prefers symmetric
-  // minimal nets); turn count is the weakest term.
-  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), routeLength(pts), Math.max(0, pts.length - 2)];
+  // pin-direction conformity, minimize visible bends, then route length.
+  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), bendCount(pts), routeLength(pts)];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */
@@ -935,18 +1011,24 @@ function astar(from, to, env) {
       const w = { x: cx * STEP, y: cy * STEP };
       for (const r of env.rects || []) {
         const clear = { x: r.x - STEP, y: r.y - STEP, w: r.w + 2 * STEP, h: r.h + 2 * STEP };
-        if (strictlyInside(w, clear)) return true;
+        const gateRow = (env.gatePassages || []).some((passage) => {
+          if (passage.rect.x !== r.x || passage.rect.y !== r.y ||
+              passage.rect.w !== r.w || passage.rect.h !== r.h) return false;
+          return passage.dir.x !== 0 ? w.y === passage.point.y : w.x === passage.point.x;
+        });
+        if (strictlyInside(w, clear) && !gateRow) return true;
       }
       return false;
     };
     const occupied = (a, b) => (env.wires || []).some((wire) => wire.some((p, i) => i > 0 && overlapSpan(a, b, wire[i - 1], p)));
-    const TURN = 6;
+    const LENGTH_WEIGHT = 1;
+    const BEND_WEIGHT = 20;
     const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     const g = new Map();
     const back = new Map();
     const open = [];
     const addOpen = (cost, cx0, cy0, d) => {
-      open.push([cost + Math.abs(cx0 - tx) + Math.abs(cy0 - ty), cost, cx0, cy0, d]);
+      open.push([cost + (Math.abs(cx0 - tx) + Math.abs(cy0 - ty)) * LENGTH_WEIGHT, cost, cx0, cy0, d]);
     };
     for (let d = 0; d < 4; d++) {
       const nx = sx + D[d][0];
@@ -954,9 +1036,9 @@ function astar(from, to, env) {
       if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
       if (!terminalEdgeValid({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
       if (occupied({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
-      g.set(`${nx},${ny},${d}`, 1);
+      g.set(`${nx},${ny},${d}`, LENGTH_WEIGHT);
       back.set(`${nx},${ny},${d}`, `${sx},${sy},-1`);
-      addOpen(1, nx, ny, d);
+      addOpen(LENGTH_WEIGHT, nx, ny, d);
     }
     let best = null;
     while (open.length) {
@@ -977,8 +1059,7 @@ function astar(from, to, env) {
         const ny = cy0 + D[nd][1];
         if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
         if (!terminalEdgeValid({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
-        if (occupied({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
-        const nc = cost + 1 + (nd === d ? 0 : TURN);
+        const nc = cost + LENGTH_WEIGHT + (nd === d ? 0 : BEND_WEIGHT);
         const nk = `${nx},${ny},${nd}`;
         if (nc < (g.get(nk) ?? Infinity)) {
           g.set(nk, nc);
@@ -1031,14 +1112,12 @@ function astar(from, to, env) {
 /**
  * Pick the best orthogonal route from -> to given the routing environment.
  * When an endpoint is a component pin, candidates that first extend one grid
- * cell OUTWARD in the pin's direction (a clean outside bend, never drilling the
- * body) are generated alongside the plain straight/L/Z ones; the conform score
- * prefers them, so a wire always leaves a pin in its direction before bending —
- * even when the pins are aligned (e.g. two gates sharing a column: the direct
- * run would hug the component boundary; the gate-facing U keeps one cell of
- * clearance). The A* fallback only kicks in when every enumerated candidate is
- * rejected by the hard-safety checks. It is accepted only after the same
- * checks pass.
+ * cell OUTWARD in the pin's direction (a clean outside bend, never drilling
+ * the body) are generated alongside the plain straight/L/Z ones; the conform
+ * score prefers them, except when a constrained shared MOS gate passage makes
+ * the direct gate bus intentional. The A* fallback only kicks in when every
+ * enumerated candidate is rejected by the hard-safety checks. It is accepted
+ * only after the same checks pass.
  */
 export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   const f = snapP(from);

@@ -98,9 +98,8 @@ async function runOnce(circuit, line) {
 async function runOnceBatch(circuit, lines) {
   let mutated = false;
   for (const line of lines) {
-    const data = await postCommand(circuit, line);
-    printResponse(data);
-    if (data.mutated) mutated = true;
+    const lineMutated = await runOnce(circuit, line);
+    if (lineMutated) mutated = true;
   }
   return mutated;
 }

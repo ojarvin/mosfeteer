@@ -55,18 +55,35 @@ src/
 └── cli/
     └── index.js        Thin HTTP client over POST /api/circuits/<name>/cmd.
 test/                   Node test runner (`node --test`).
-circuits/<name>/        Saved user circuits (gitignored? check .gitignore).
+circuits/<name>/        Saved user circuits (gitignored).
 guidelines/             Role docs + style guide.
-AGENTS.md               Current behavior spec (live doc — you maintain it).
+AGENTS.md               Current runtime behavior spec (live doc — maintain it).
 ```
+
+### Labels and physical nets
+
+`LabelInstance` has exactly three roles: an owned instance label with an
+`owner` refdes and local `offset`; a persistent electrical label with a
+`netId`; or a free annotation with neither `owner` nor `netId`. A `netId` is a
+physical net identity. Equal canonical names group nets logically for naming
+and reporting, but do not connect their geometry or terminals.
+
+Use `addNetLabel`, `renameNet`, and `renameNetLabel` for electrical-label and
+net-name changes; do not write `net.name` from editor code. Net-label text is
+derived from its physical net name, and removing one occurrence leaves the net
+and its name intact. Net labels are placed on drawable wire paths; the editor's
+`L` tool requires an unambiguous physical wire, using one selected/highlighted
+net to resolve a crossing. `Shift+N` places persistent free annotations.
+
+Selection, movement, deletion, routing, and Check must preserve the role: owned
+labels follow components, net labels remain on their paths, and annotations are
+independent. Complete copied physical nets carry their net labels through paste
+with fresh IDs and translated anchors; a net label must never become an
+annotation.
 
 ### Three entry points, one command language
 
-`runCommand(circuit, line, io)` in `src/core/commands.js` is the only path for
-editing a circuit. Every UI — the editor's command prompt, `window.__run`,
-the CLI, and the new `POST /api/circuits/<name>/cmd` endpoint — calls into
-it. When you add a command, add it to `runCommand`'s `dispatch` and to
-`commandHelp()`; it then appears everywhere for free.
+`runCommand(circuit, line, io)` in `src/core/commands.js` is the single editing path. The editor command prompt, `window.__run`, CLI, and `POST /api/circuits/<name>/cmd` all call it. Add new commands to `dispatch` and `commandHelp()` so every entry point exposes them.
 
 ### State vs. file I/O
 
@@ -147,6 +164,12 @@ When you fix a bug, write the failing test first, watch it fail, then fix.
    quirks (e.g. mirror defaults).
 6. Update `AGENTS.md` symbol geometry table + `style-guide.md` reference
    table.
+
+`Circuit.fromJSON` intentionally rejects types absent from the registry: the
+model and renderer require a real symbol definition. `npm start` and
+`npm run serve` run the server in Node watch mode, so changing the imported
+registry restarts it automatically. A server started directly with
+`node src/web/serve.js` must be restarted after symbol-source changes.
 
 ## Adding a new CLI command or HTTP route
 

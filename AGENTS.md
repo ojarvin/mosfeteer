@@ -1,495 +1,170 @@
 # schematic-spawner — working context
 
 Programmatic/agent-assisted schematic editor. Connectivity-based model rendered to SVG.
-Git repo → private `ojarvin/schematic-spawner`.
-**Push only over HTTPS** (SSH permanently unavailable headless, "Permission denied (publickey)");
-`origin` = HTTPS URL, `gh` is the credential helper.
+Repository: private `ojarvin/schematic-spawner`.
+Push over HTTPS only: SSH is unavailable headlessly; `origin` is HTTPS and `gh` is the credential helper.
 
-## Agent generation instructions
+## Agent roles and source of truth
 
-Two distinct roles work here. Pick yours from
-[`guidelines/README.md`](./guidelines/README.md):
+Choose a role from [`guidelines/README.md`](./guidelines/README.md):
 
-- **Developer agent** (improving the app): read
-  [`guidelines/DEVELOPER.md`](./guidelines/DEVELOPER.md).
-- **Circuit author agent** (drawing circuits): read
-  [`guidelines/CIRCUIT-AUTHOR.md`](./guidelines/CIRCUIT-AUTHOR.md).
+- **Developer** — improve the application; read [`guidelines/DEVELOPER.md`](./guidelines/DEVELOPER.md).
+- **Circuit author** — draw circuits in the running editor; read [`guidelines/CIRCUIT-AUTHOR.md`](./guidelines/CIRCUIT-AUTHOR.md).
 
-Both roles share the visual standard in
-[`guidelines/style-guide.md`](./guidelines/style-guide.md). This file is the
-**live spec** for current symbol geometry, the label model, routing behavior,
-and editor UX — skim it whenever you need an exact number.
+Both roles share [`guidelines/style-guide.md`](./guidelines/style-guide.md). This file is the live specification for current symbol geometry, labels, routing, and editor UX. Keep it accurate when behavior changes.
 
-## Symbol style (Razavi look)
+## Visual and symbol rules
 
-- All symbols use the classic textbook look: **filled gate bars /
-  arrowheads / power slabs** via a `polygon` primitive with
-  `fill:'foreground'`; symbol linework uses **butt caps / miter joins**.
-- `style.js` stroke roles (select with `style:'…'` in a graphic):
-  `symbol` (normal, butt), `emph` (9.6), `ground` (11.6), `supply` (7.2),
-  plus the legacy `LINE` (round, wires) / `THICK`. `fontAttrs('instance'|'label')`
-  unchanged.
-- **Labels support subscripts:** `_{...}` markup (e.g. `C_{GS}`); owned
-  instance labels auto-subscript a trailing numeral (M1 → M with subscript 1).
-  Alignment/anchors/bbox model unchanged (`textWidth` scales sub/super runs
-  ×0.62).
+All symbols use the classic Razavi/textbook look: filled gate bars, arrowheads, and power slabs are `polygon` graphics with `fill:'foreground'`; symbol linework uses butt caps and miter joins. `style.js` stroke roles are `symbol` (normal, butt), `emph` (9.6), `ground` (11.6), `supply` (7.2), and legacy `LINE` (round wires) / `THICK`. `fontAttrs('instance'|'label')` is unchanged.
 
-## Current symbol geometry (affects tests / wire tests)
+Labels support `_{...}` markup, such as `C_{GS}`. Owned instance labels auto-subscript a trailing numeral (`M1` renders as `M` with subscript `1`). Alignment, anchors, and the bbox model are unchanged; `textWidth` scales sub/superscript runs by ×0.62.
 
-- **resistor / capacitor / inductor / switch\* / variable\_\***: terminals
-  `a`(-80,0) (left) / `b`(80,0) (right) on the 40-grid; resistor / capacitor / inductor /
-  switch all **160 wide**, bbox `{-80,-40,160,80}` (cap plates at x
-  -12.94/12.94, inductor coil spans x -58.49..58.49 — centered on the
-  origin). Diode uses the same centered 160-wide footprint, terminals
-  `a`(-80,0) / `b`(80,0), bbox `{-80,-40,160,80}`.
-- **nmos / pmos**: terminals `g`(-120,0), `d`(0,-80), `s`(0,80), bbox
-  `{-120,-80,120,160}`; gate = two filled bars (x -87.2..-75.6, -66.3..-54.6);
-  NMOS source arrow (filled) points OUT, PMOS points INTO the channel.
-  `defaultMirrorY:true` on pmos → placed source-up. `ComponentInstance`
-  applies `defaultMirrorX/Y` only when `opts.mirror*` is `undefined`; the
-  CLI `add` command omits the mirror flags unless `--mirrorX/--mirrorY` is
-  given, so **symbol defaults apply everywhere** (output ports come out
-  mirrorX, pmos source-up).
-- **npn / pnp**: terminals `b`(-160,0), `c`(0,-120), `e`(0,120) [pnp: c
-  bottom, e top]; filled emitter arrow; base bar `emph`. bbox
-  `{-160,-120,160,240}`. **Label on the right at `{40,0}`** (one square
-  past the body).
-- **ground**: `gnd`(0,0), stub to y40, three `ground`-width bars (y
-  40/63.26/84.19), bbox `{0,0,80,120}`. **supply**: `p`(0,0), filled slab
-  above, bbox `{-40,-80,80,80}`.
-- **current_source / current_sink / voltage_source**: `a`(0,-80)/`b`(0,80),
-  circle r43, filled arrow (or ± marks); bbox `{-80,-80,160,160}`.
-  refPrefix `I` / `V`.
-- **opamp**: `ip`(-200,40), `im`(-200,-40), `o`(160,0). **opamp_diff**
-  (fully differential): same bbox `{0,-120,360,240}`-style
-  `{-200,-120,360,240}`, same two inputs, plus `op`(160,-40) & `om`(160,40)
-  — two output leads exit the triangle's slanted edges at the input rows
-  (x≈12.8/12.81) and run to x=160. All four polarity marks are 28-unit
-  (same size), centered on the input/output rows y=±40: input −/+ at x≈-76,
-  output **flipped** +/− at x≈-38 (op top, om bottom), kept clear of the
-  body's slanted edges. The plain opamp's input marks sit on the same rows
-  y=±40. refPrefix `U` for both. **inverter/buffer**: `a`(-120,0), `y`(120
-  or 80, 0). **gates** (and/or/nand/nor): `a`(-120,-40), `b`(-120,40),
-  `y`(120,0); xor/xnor `y`(160,0). refPrefix `U`. **Gate bodies**: every
-  body is ONE continuous closed path (`Z`). AND/NAND's top edge meets the
-  curved front at the same point (no seam/kink). OR/NOR's concave back is
-  shifted left (-8) so it overlaps the input lead tips (which end at
-  x=-76.88). XOR/XNOR shift the body AND the extra input-side line left
-  (-22) together (fixed spacing); the extra line lands ON the wire tips
-  (x≈-77 at the input rows) and the wires stop there — they never extend
-  into the gap between the two curves. The output lead and negation bubble
-  shift with the body. Buffer/inverter triangle bodies are closed with `Z`
-  so the apex is a sharp miter (the inverter's apex hides behind its
-  bubble).
-- **solder**: pure annotation dot (`SOLDER_DOT_RADIUS=12`); its bbox is
-  exactly the drawn dot (`{-12,-12,24,24}`) — not a grid cell — because
-  solder is placed on and selected at the junction grid point directly.
-  `validateSymbol` exempts terminal-less annotations from the bbox-on-grid
-  rule. Excluded from the routing env and from `evaluate()` overlap checks.
-- **port / port_filled** (Razavi circle markers): `p`(0,0), circle left of
-  the lead. **input/output/inputoutput** are Razavi-style boxed ports
-  (refPrefix `I`/`O`/`IO` + owned id label to the LEFT at labelOffset
-  `{-120,0}`); **output defaults to `defaultMirrorX:true`** (terminal on
-  the circuit side, box+arrow outward) — the label offset mirrors with
-  the symbol.
-- **variable_\*** (adjustable): composed at load time from the plain
-  resistor / capacitor / inductor definitions (`[...base.graphics,
-  ...ADJUST]` in `variable.js`) so they track the base body geometry.
-  The adjustment arrow is a 45° shaft + filled head over the centered body
-  (shaft `M -48 48 L 36 -36`, head tip at (48,-48)).
-- **labelOffsets**: nmos/pmos `{40,0}`, npn/pnp `{40,0}` (right side);
-  resistor / variable / cap / inductor / diode `{0,80}`, switch `{0,40}`;
-  sources
-  `{80,0}`; ports `{-120,0}`; logic / opamp below body.
+### Current symbol geometry (40-unit grid)
 
-## Label model
+These values affect tests and wire routing:
 
-- Labels are NOT a component / symbol type: separate
-  `circuit.labels: Map<id, LabelInstance>` (like solder — no terminals,
-  don't block routing in `netEnv`).
-- `LabelInstance`: `id, text, align (center|left|right), owner
-  (refdes|null), offset (local grid-snapped when owned), anchor (world
-  grid-snapped)`.
-- **Bbox model**: tight text bbox computed from per-glyph widths
-  (`LABEL_FONT_SIZE=38` matches the rendered `INSTANCE_FONT` /
-  `LABEL_FONT` size; `LABEL_CHAR_W=8` at font 12 for the bold + italic
-  label face; narrow / default / wide buckets) and `LABEL_CAP_H =
-  round(38*0.7) = 27` height. The rendered box expands the tight box to
-  **even multiples of a grid cell in BOTH dimensions** (`colWidth()` /
-  `rowHeight()`, min 2 cells) and is **centered on the anchor**, so the
-  box center is always on a grid point. The box always updates on
-  `setText`. `bbox()` = centered box; `textPos()` returns the `<text>`
-  `{x, y, anchor}` so the text is horizontally aligned inside the box
-  (left/right/center) and **vertically centered** (baseline `y = anchor.y
-  + LABEL_CAP_H/2`).
-- **Sub / superscript editing**: labels support `_{...}` / `^{...}`
-  markup (rendered as tspans). The inline label editor wraps a text
-  selection with **Ctrl+, / Ctrl+.** (subscript / superscript); pressing
-  again on the selection unwraps it, and a mixed selection reverts every
-  touched group to plain text. The pure toggle lives in `model.js` as
-  `applyMarkup(text, s, e, mark)` (unit-tested).
-- **All components** auto-create an owned instance label in `addComponent`
-  (text=refdes, align center) — every symbol sets `refPos:null` +
-  `labelOffset`, so no id is drawn as plain font-12 `refPos` text.
-- `fromJSON` uses `noLabel:true` then loads `data.labels`, drops orphaned
-  owned labels.
-- `nextRefdes(prefix)` returns smallest unused positive index (reuse after
-  deletion).
-- **Rotate / mirror is origin-anchored (pure, stable).** The editor's
-  `r`/`R`/`x`/`X` (and the CLI `rotate` / `mirror`) rotate or mirror each
-  selected component about its OWN origin — the origin never moves, so
-  repeated rotations / mirrors never translate the component and always
-  stay on the 40-grid (matching the CLI). Free labels are not orbited by
-  rotate / mirror.
-- Editor UX (main.js): labels are inserted through **insert mode** (`t`
-  picks a label ghost, Enter/click commits at cursor; no normal-mode `t`).
-  Shift+ArrowLeft/Right cycle align; nudge h/j/k/l (and arrow keys) —
-  **nudging moves the wires with the components** (a `moved` map is passed
-  to `rerouteNet`, so nets whose terminals all ride nudged components
-  translate rigidly, exactly like a drag); dd/Delete removes;
-  double-click inline `<input>` (Enter/blur commit, Esc cancel); palette
-  "label" button. **Multi-label selection** supported: `selLabels:Set`
-  (plus `selLabel` = primary id), extends/deselects component `multi`.
-  `setLabelSelection(ids, primary)` sets both; `setSelection`/Escape
-  clears both. Selection overlay highlights all `selLabels`
-  (`editorOverlay` `opts.selLabels`).
+- **resistor, capacitor, inductor, switch*, variable_***: terminals `a`(-80,0) and `b`(80,0); 160-wide bbox `{-80,-40,160,80}`. Capacitor plates are at x -12.94 and 12.94; the inductor coil spans x -58.49..58.49, centered on the origin. Diode uses the same centered footprint and terminals.
+- **nmos, pmos**: `g`(-120,0), `d`(0,-80), `s`(0,80); bbox `{-120,-80,120,160}`. The gate has two filled bars at x -87.2..-75.6 and -66.3..-54.6. NMOS source arrow points out; PMOS source arrow points into the channel. PMOS has `defaultMirrorY:true`, placing its source up. **nmosb, pmosb** add `b`(0,0), `dir:{x:1,y:0}`, and `direction:'bulk'`; an internal symbol-style path joins the channel edge near x=-54.65 to `b`. PMOS bulk retains `defaultMirrorY:true`. Their bulk label offset is `{40,-40}` (one grid cell toward local drain); plain MOS labels remain `{40,0}`.
+- **npn, pnp**: `b`(-160,0), `c`(0,-120), `e`(0,120); PNP has collector bottom and emitter top. Filled emitter arrow, `emph` base bar, bbox `{-160,-120,160,240}`, and label at `{40,0}` on the right.
+- **ground**: `gnd`(0,0), stub to y40, three `ground`-width bars at y 40/63.26/84.19, bbox `{0,0,80,120}`. **supply**: `p`(0,0), filled slab above, bbox `{-40,-80,80,80}`.
+- **vcm**: `vcm`(0,0), upward-escaping terminal, downward stub to y24, open outline-only downward triangle from y24 to y56 (56 wide, 32 deep), bbox `{-40,0,80,80}`. No instance label; normal `symbol` stroke.
+- **current_source, voltage_source**: `a`(0,-80), `b`(0,80), circle radius 35 with leads from ±35, bbox `{-40,-80,80,160}`, label center offset `{-80,0}` so a one-square default label's bbox edge is 40 units left of the origin. Current source has a filled downward arrow; voltage source has ± marks. Ref prefixes `I` and `V`.
+- **opamp**: `ip`(-200,40), `im`(-200,-40), `o`(160,0). **opamp_diff** adds `op`(160,-40) and `om`(160,40); both use bbox `{-200,-120,360,240}` and ref prefix `U`. Differential output leads leave the slanted edges at x≈12.8/12.81 and run to x=160. All polarity marks are 28 units, centered at y=±40: input −/+ at x≈-76; output is flipped +/− at x≈-38 (`op` top, `om` bottom), clear of the body. Plain opamp input marks use the same rows.
+- **inverter, buffer**: `a`(-120,0), `y`(120 or 80,0).
+- **and, or, nand, nor**: `a`(-120,-40), `b`(-120,40), `y`(120,0). **xor, xnor** use `y`(160,0). Logic ref prefix is `U`. Every body is one continuous closed path (`Z`). AND/NAND top edge meets the curved front without a seam. OR/NOR concave backs shift left by -8 to overlap input lead tips ending at x=-76.88. XOR/XNOR shift the body and extra input-side line left by -22 together; that line lands on wire tips at x≈-77, and wires stop there rather than entering the gap between curves. Output lead and negation bubble shift with the body. Buffer/inverter triangles are closed with `Z` for a sharp miter; the inverter apex is hidden by its bubble.
+- **adc, dac**: `emph` outline. ADC has a pointed analog-input side and flat digital-output side; DAC is reversed. ADC terminals `ain`(-200,0), `d`(200,0); DAC terminals `d`(-200,0), `aout`(200,0). A short diagonal slash crosses the digital lead. Centered upright label-font text says `ADC` or `DAC`; bbox `{-200,-120,400,240}`.
+- **solder**: annotation dot only, radius `SOLDER_DOT_RADIUS=12`, exact bbox `{-12,-12,24,24}`. It is selected at its junction grid point, not as a grid cell. Terminal-less annotations are exempt from `validateSymbol`'s bbox-on-grid rule and from routing-environment and `evaluate()` overlap checks.
+- **port, port_filled**: Razavi circle marker, terminal `p`(0,0), circle left of the lead. **input, output, inputoutput**: boxed Razavi ports with ref prefixes `I`, `O`, `IO`, owned id label to the left at label offset `{-120,0}`. `output` has `defaultMirrorX:true`, putting its terminal on the circuit side and its box/arrow outward; the label offset mirrors with the symbol.
+- **variable_resistor, variable_capacitor, variable_inductor**: composed at load time from the plain symbol definitions (`[...base.graphics, ...ADJUST]` in `variable.js`) so body geometry tracks the base. Adjustment arrow is a 45° shaft `M -48 48 L 36 -36` with filled head tip at (48,-48).
 
-## Direct/manual wire mode
+Label offsets: nmos/pmos `{40,0}`; nmosb/pmosb bulk labels `{40,-40}`; npn/pnp `{40,0}`; resistor/variable/capacitor/inductor/diode `{0,80}`; switch `{0,40}`; sources `{-80,0}`; ports `{-120,0}`; logic/opamps below the body.
 
-- Uppercase `W` enters protected direct-wire mode, distinct from managed `w`
-  wire mode. Click a terminal to start, click one or more intermediate points
-  as literal waypoints, then click or press Enter on the target terminal. The
-  endpoints are terminals; points are grid-snapped and retained in the exact
-  clicked sequence, so diagonal segments are allowed.
-- Crossings do not splice or join other wires. The resulting net is fixed:
-  autorouting, orthogonalization, branch reduction, and ordinary wire segment
-  drag/delete operations do not rewrite it. To add another path to a fixed net,
-  use `W` again; normal managed wiring reports that fixed geometry is protected.
-- Moving a component re-anchors its fixed path endpoint without autorouting;
-  moving a complete selected set translates its fixed paths with the set.
+`ComponentInstance` applies `defaultMirrorX/Y` only when the corresponding `opts.mirror*` is `undefined`. The CLI `add` command omits mirror flags unless explicitly passed, so symbol defaults apply everywhere.
 
-## Routing & connectivity
+## Labels, selection, and transforms
 
-- **Touching pins connect:** `Circuit#connectCoincident()` joins any
-  terminal that lands exactly on another component's terminal into one
-  net (runs in `addComponent`, `moveComponent`, `setTransform`,
-  `fromJSON`). Dropping a ground onto a MOS source connects them;
-  dragging either component apart keeps the net and routes a wire between
-  them. `fromJSON` runs it after loading explicit nets (guarded by
-  `_loading`).
-- **Nets are reduced to a minimum spanning tree (no parallel wires /
-  loops).** Wiring two points that are already connected in the same net
-  must never pile up duplicate or looped wires: every `wireTo`,
-  `wirePointTo`, `connect`, `fromJSON`, and every drag commit
-  (wireseg + component drags in `canvasMouseUp`, CLI `move`) runs
-  `Circuit#_reduceNet`, which calls `reduceBranches` (wiring.js). That is
-  a deterministic Kruskal MST over the net's connectivity graph — the
-  conventional ratsnest-style reduction (KiCad `RN_NET::kruskalMST`,
-  EAGLE RATSNEST): terminals + junctions (T/cross points) are the
-  vertices, each polyline run between two vertices is an edge weighted by
-  its Manhattan length, and parallel edges (2-cycles) and cycle edges are
-  dropped, keeping the cheapest connected structure. Collinearly
-  OVERLAPPING runs (a wire dragged on top of a same-net wire) are split
-  at the overlap boundaries first, so the shared span becomes a parallel
-  edge and merges into one drawn wire — no hidden overlapping geometry.
-  Ties break by insertion order (older branches win), so the result is
-  idempotent and deterministic; bridges are never removed and terminals
-  always stay branch endpoints (wire legs keep re-anchoring on move).
-  Closed single-branch loops are opened first so they reduce like any
-  path. Covered by `reduceBranches` unit tests (wireedit.test.js) and the
-  `wireTo`/`fromJSON`/drag-commit model tests.
-- **Balanced routes keep terminal legs.** `normalizePath` (wiring.js)
-  merges a collinear middle point ONLY when the run is monotonic; a point
-  where the polyline reverses direction (e.g. the balanced route's
-  terminal visit `(120,120)→(120,80)→(120,120)`) is a real vertex and is
-  preserved. Without this, `clonePath` / `fromJSON` / render silently
-  dropped a 3-way junction's terminal leg (the terminal stayed in the net
-  but its wire vanished). Covered by `test/wireedit.test.js`.
-- **Router pin escapes:** `smartRoute` generates "escaped" candidates that
-  extend one grid cell OUTWARD from each pin (in its terminal `dir`, via
-  `applyDir`) before bending, so a gate→drain wire leaves the gate west
-  and approaches the drain from the north — a clean outside bend that
-  never drills the body. The conform score prefers the escaped candidates
-  for EVERY pin pair — including aligned ones (two gates sharing a column
-  route as a gate-facing U in the channel one cell off the bodies, never
-  as a straight run hugging the body edge). Facing pins (escapes collinear
-  with the target) still collapse to a straight wire. Both `main.js` and
-  `commands.js` `pinDir` honor `t.dir` first (bbox heuristic is the
-  fallback). `scoreCandidate` ranks: bbox crossings, overlap, wire cross,
-  component clearance, label clearance, pin conformity, LENGTH, then turn
-  count — so among clearance- and direction-equal routes the shortest (and
-  for symmetric placements, the symmetric) one wins.
-- **Clearance:** `hardSafe` (router.js) keeps every committed segment at
-  least one grid cell from every component bbox (pin-connected legs
-  exempt); the routing env also carries `labelRects` — label boxes are
-  SOFT obstacles (`labelScore` in `scoreCandidate`): the router prefers a
-  channel one cell clear of a label when one exists, but never hard-blocks
-  a connection through a label. Solder dots are excluded from both.
-  **Fresh layouts avoid other nets' wires:** `_netEnv(excludeNetId)`
-  collects every OTHER net's explicit branches into `wires`, and
-  `rerouteNet` / `_layoutFresh` / `Net.points()` pass the net's own id, so
-  a re-laid-out net never collinearly overlaps a different net's drawn wire
-  (crossing is still legal). Collinear overlap with another net is the one
-  pattern that is never auto-created.
-- **Multi-terminal nets route as an exact rectilinear Steiner minimum tree**
-  (`steinerBranches` / `steinerRoute` in router.js, used by `autoRoute`,
-  `balancedPaths`, `balancedRoute`). Dreyfus–Wagner subset DP over a coarse-grid
-  graph (every cell of the terminals' padded bbox); edge cost is one cell plus
-  penalties for pin-direction conformity (`CONFORM_SIDE=30` for a
-  perpendicular escape, `CONFORM_OPP=8` for an opposite-direction one — the
-  first cell from a pin must continue in the pin's direction, e.g. a diff-pair
-  virtual-ground net's source pins escape DOWN and the T lands one cell below
-  the pair row, never a pin-row trunk) and label clearance (LABEL_EPS) — total
-  length is the primary objective, one-cell body clearance is a hard
-  constraint, labels steer softly, and the bend/junction count falls
-  out of the length optimum (a three-way Y becomes a single centered T at the
-  coordinate median). Nets too large for the exponential DP fall back to the
-  MST-of-shortest-paths Steiner 2-approximation, so any net is routable.
-- **Wire-mode click priority:** terminal clicks (within `max(GRID/2,
-  12px/unit)` via `nearestTerminal`) always start / end a wire in wire mode,
-  even when a wire passes through the pin.
-- **Wire click = select, click-and-drag = re-route.** A plain click on a wire
-  selects its segment(s) and highlights them (orange in `editorOverlay`);
-  **shift+click toggles more segments into the selection** (`selectedWires`
-  set of `"netId:branch:segment"` keys, `selectedWire` = primary), and
-  **drag-drag moves every selected run together** (same-orientation runs move
-  as a group; runs of the other orientation stay put but stay selected). `dd` /
-  Delete removes all selected segments at once via `Circuit#deleteWireSegments`
-  (cuts are applied against one branch snapshot, so indices never shift under
-  one another; the net splits into the connected components that remain). A
-  click that never moves the pointer (or moves < threshold) just selects —
-  it never mutates the net. A straight pin-to-pin run can't be dragged
-  (`moveWireRun` keeps both pins fixed). **Escape cancels an in-progress drag**
-  (`cancelDrag()` restores every pre-drag polyline) — the history entry is
-  pushed once on mouseup, so undo/redo round-trip a committed drag.
-  **`dragMoved()` = pointer moved BOTH >6px (client) AND >`GRID/2` (world)**,
-  so jittery clicks never drag at any zoom, and a "drag" that never actually
-  moves the run is still treated as a click (route restored, no history).
-  **A plain click clears the drag state** — the wireseg click path in
-  `canvasMouseUp` sets `drag = null` before returning, so a bare mousemove
-  after clicking a wire never re-routes it (the old "sticky drag").
-  **Wires win over component bodies in hit-testing:** normal-mode picking
-  is label → exact terminal → wire (`pickWire`) → component bbox → empty
-  space, so a wire running along/inside a component bbox is selectable and
-  draggable (wires render on top; the body is only picked when no wire is
-  under the cursor).
-- **Highlighted net highlights its wires and junction solder dots only.**
-  `editorOverlay` draws a blue halo over the net's paths and an r13 ring +
-  dot over each junction solder; devices are NOT highlighted. `opts.nets`
-  carries the highlighted nets and `opts.netSolder` the solder points.
-- **Cross-net collinear overlap warning.** `crossNetOverlaps` (wiring.js)
-  returns collinear overlapping spans between DIFFERENT nets; the editor
-  recomputes it whenever wire geometry changes and renders the offending
-  spans in red (`opts.warnOverlaps`) plus a `⚠ wire overlap with another
-  net (highlighted)` status marker. Dragging net1's run onto a parallel
-  run of net2 shows the warning live during the drag and it persists until
-  the overlap is resolved.
-- **Nets are renamable from the right toolbar:** double-click a net name
-  in the nets list opens an inline `<input>` (Enter/blur commits
-  `net.name`, Esc cancels). A plain click re-renders the list and replaces
-  the row, so the browser's native `dblclick` never fires — the rename
-  double-click is detected manually in the click handler (timing + position
-  fallback, like labels and wires). **Shift-click in the right-toolbar lists
-  multi-selects:** components toggle in/out of the component selection,
-  nets toggle in/out of the highlighted-net set (plain click replaces).
-  **`Ctrl+A` selects every component, every label, and every non-empty net.**
-  **Double-clicking a wire in the editor selects its net** (blue halo), via
-  `ev.detail>=2` + a manual timing fallback (the headless CDP driver never
-  fires a native `dblclick`).
-- **Segment wire building:** in wire mode click a terminal (source), then
-  click points to build the wire in segments; clicking or pressing
-  **Enter** on a target terminal connects them (the hand-drawn path
-  becomes the route, made orthogonal / collinear-collapsed). Pressing
-  **Enter** on another wire's interior merges the two nets: the junction
-  becomes a mid-wire anchor (`net.junctions`), the route walks both
-  halves of the target wire from the junction, and a **solder** marks
-  it. `rerouteNet` / `routeNet` walk nets that carry junctions through
-  all anchors (terminals + junctions).
-  **Terminal-to-terminal auto-routes that grow a net re-optimize it:**
-  when a no-waypoint `wireTo` adds a NEW terminal to a net that now has
-  3+ terminals (meet lands on a component terminal, not a wire interior),
-  the net is re-laid-out fresh (`rerouteNet 'refresh'` → balanced Steiner
-  `balancedPaths`), exactly like `connect()`. Chaining pairwise routes
-  would otherwise leave an unbalanced bent net with the junction solder
-  dot sitting on the port terminal (e.g. the CMOS inverter input net:
-  VIN.p→M2.g then VIN.p→M1.g must become the centered T at (160,0), 600u).
-  Wire-interior splices and waypoint-shaped routes still keep their drawn
-  geometry.
-- **Wiring starts from any point:** empty-space click in wire mode starts
-  a free-point draft (`wire.source={x,y}`); clicking an existing wire
-  starts a branch (`{x,y,netId}` — junction+solder materialize on
-  commit). Committing a free/on-wire draft onto a terminal or wire
-  **splices it into the target net preserving that net's existing wire**
-  (never overwrites the route).
-- **Drags re-route holistically:** moving / rotating / mirroring a
-  component re-routes every touched net from its terminals + environment
-  (`rerouteNet`), never hand-carrying wire bodies — a drag cannot leave
-  wires dangling or collapse them. Touching pins connect only at the
-  COMMITTED position (mouseup / `move` command), never mid-drag.
-  **Set moves carry their wires:** when EVERY terminal of a net rides a
-  moved component by the same delta (a Ctrl+A multi-select drag), the whole
-  net geometry — branches, route, junctions — is translated rigidly with
-  the set. Polylines whose two ends ride DIFFERENT moved components do the
-  same (or re-route fresh between the two new pins when the deltas differ).
-  A defensive `_pruneDanglingBranches` then drops any branch whose endpoints
-  are neither terminals, junction anchors, nor points shared by >=2 branches
-  — floating stubs that lead nowhere never survive a component move
-  (1-terminal deliberate wire stubs are left alone).
-- **Clearance & consistency:** `smartRoute` keeps at least one grid cell
-  of clearance from every component body (excluding the pin-escape legs),
-  even if it means a longer way around. `Net.points()` uses the same
-  escape-aware routing for route-null two-terminal nets, so committed and
-  rendered wires always agree. Joined (multi-way) nets store explicit
-  `net.branches` (list of polylines) and `net.junctions` (mid-wire
-  anchor grid points); the renderer draws every branch and the model
-  walks branches for bounds / length / eval.
-- **Insert hotkeys → fuzzy search:** insert mode is type-driven — typing
-  filters the component / label list (`fuzzyScore`: prefix > substring >
-  subsequence, shorter wins), Enter picks the best match as a ghost,
-  click/Enter places, Esc drops the ghost back to search, Esc again
-  exits insert. Arrow keys move the cursor; all printable keys (incl.
-  `h j k l`) go into the query. The `#insert-menu` dropdown shows the
-  live query + filtered entries. (`PLACEMENT` map still labels the menu's
-  hotkey column.)
-- **Visual mode:** `v` (normal) anchors the cursor and draws a green box
-  as `hjkl` / arrows move it; Enter commits the box selection
-  (`applyBoxSelection` — components by bbox, labels by bbox, nets by
-  route; shared with the mouse marquee) and exits; Esc cancels. Status
-  bar shows VISUAL. **Marquee selection only captures objects COMPLETELY
-  inside the box** (`rectContained`; a net only when every route point is
-  inside) — merely intersecting a box selects nothing.
+Labels are not symbols or components. They live in `circuit.labels: Map<id, LabelInstance>` and provide no connectivity. A `LabelInstance` has exactly one role:
 
-## Web UI
+1. owned instance label: `owner` is a component refdes and `offset` is local;
+2. persistent electrical net label: `netId` identifies one physical net; or
+3. free annotation: `owner:null`, `netId:null`, independent text and anchor.
 
-- **Zoom is clamped** so a grid cell never exceeds ~120px on screen
-  (`minViewW()`) and the drawn grid never exceeds ~1000 lines
-  (`maxViewW()`). `fitView`, drag-zoom, wheel zoom, right-click zoom-out
-  and `resizeView` all clamp.
-- **Dark mode**: `html.dark` class toggles CSS variables; the inline SVG
-  ink is recolored via attribute-value CSS overrides
-  (`html.dark .canvas svg [stroke="#111"] { stroke: #dde1e8 }`,
-  `[fill="#fff"] → var(--paper)`, etc.) — presentation attributes are
-  overridden by CSS, so no core renderer changes were needed and
-  colored overlays (halos, wire source) are untouched. `#btn-theme`
-  toggles, persisted in localStorage (`schematic-spawner:theme`),
-  defaults to system `prefers-color-scheme`.
-- **`#` toggles the grid** (`setGrid()`); `#btn-grid` mirrors it.
-  Toolbar buttons carry `title` tooltips.
-- **Z-order:** wires render ON TOP of component bodies (svgString draws
-  components, then nets, then pin/junction dots) so an overlapping wire
-  stays visible and clickable; labels and the overlay (selection halos,
-  net highlights) draw last.
-- **`D` toggles dark mode** (plus `#btn-theme`).
-- **Yank / paste on selected sets:** `y` / `Ctrl/Cmd+C` (`copySelection`)
-  captures the selected components + free labels + every net whose
-  terminals all sit on selected components (route / branches / junctions
-  kept); `p` / `Ctrl/Cmd+V` (`pasteClipboard`) re-instantiates everything at
-  the cursor with fresh refdes / label ids / net ids, preserving
-  relative positions and connectivity.
-- Side-panel lists are condensed (smaller row padding / fonts) so the
-  components / nets / terminals lists stay short.
-- The design dropdown refuses to switch while the current design is dirty;
-  save first with `Ctrl/Cmd+S` or the Save button. The selection is restored to
-  the current design and an unsaved-changes warning is logged.
+A `netId` identifies one physical net and its drawable geometry. Nets with the same canonical name are only a logical naming/reporting group; equal names never connect separate physical nets.
 
-## Fast loop: CLI → server → browser
+Use `addNetLabel`, `renameNet`, and `renameNetLabel`; editor code must not assign `net.name` directly. Net-label text derives from the physical net name. Removing one label occurrence leaves the net and name intact. A provisional label on an unnamed net is committed atomically only after a non-empty name; otherwise it is discarded.
 
-- **`POST /api/circuits/<name>/cmd`** — body `{ "cmd": "<line>" }` or
-  `{ "cmd": "line1\nline2\n..." }`. Server loads the named circuit (or
-  starts a new one), runs `runCommand` for each line, persists
-  `circuits/<name>/circuit.json` + `circuit.svg` if any line mutated,
-  and returns `{ name, mutated, results, state }`. The CLI is a thin
-  HTTP client (`src/cli/index.js`) over this endpoint.
-- **`GET /api/active`** → `{ active: "<name>" | "" }`. The server tracks
-  the active circuit in memory and persists to `data/active.json`. Every
-  `POST .../cmd` sets `active = <name>`; the browser's `syncActiveCircuit`
-  polls this endpoint and **auto-loads** the active circuit on first open
-  or whenever it changes. The user only has to keep the browser tab
-  open — they never type a circuit name or click Load.
-- **`PUT/POST /api/active`** → `{ active: "<name>" }` to set explicitly.
-  **`DELETE /api/active`** → clears it.
-- The browser poll is 500 ms (existing `syncActiveCircuit`). The same
-  poll still syncs content updates for the loaded circuit. So one
-  tick = "is the active different? switch if so" + "is the file
-  different? merge if so". A switch whose load fails (the agent marked a
-  brand-new circuit active before its first file write) does NOT advance
-  the "seen active" state: the poll retries on every tick (logged once)
-  until the circuit file appears — no manual refresh needed.
-- Old behavior (CLI writes `data/state.json`, GUI Save writes
-  `circuits/<name>/circuit.json`, two unrelated paths) is gone.
+Editor `L` starts persistent electrical net-label placement. A click must land on one unambiguous physical wire; at a crossing, one selected/highlighted net must identify the target or placement is rejected. Named nets add another label occurrence. Unnamed nets open the provisional inline edit described above. `Shift+N` starts persistent free-annotation placement. Both modes remain active until Escape. Editing a net label renames its physical net; editing an annotation or owned label changes only that label.
 
-## Editor behavior — hotkeys
+`LabelInstance` fields: `id`, `text`, `align` (`center|left|right`), `owner` (`refdes|null`), local grid-snapped `offset` for owned labels, world grid-snapped `anchor`, and net-label `netSide` (`above|below|left|right`).
 
-- `i` insert mode (fuzzy search). `w` managed wire mode; `W` protected direct
-  wire mode. `t` (insert mode)
-  label ghost.
-- `v` visual mode. `Esc` cancels ghost / box / drag.
-- `r`/`R` rotate +90 / -90 (normal). `x`/`X` mirror along axis.
-- `dd` delete selection (chord). `Delete` / `Backspace` same.
-- `u` / `Ctrl+Z` undo; `U` / `Ctrl+Y` / `Ctrl+R` redo.
-- `y` yank; `p` / `Ctrl/Cmd+V` paste at cursor. (`yy` is not required.)
-- `Ctrl/Cmd+S` saves the current design.
-- Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy.
-- `hjkl` move cursor; in visual mode, grow box; in insert mode, part of
-  the query.
-- `F` fit view; `D` toggle dark mode; `#` toggle grid; `?` keymap.
-- All printable keys (incl. `h j k l`) in insert mode append to the
-  fuzzy query.
+Label bboxes use tight per-glyph widths (`LABEL_FONT_SIZE=38`, matching rendered `INSTANCE_FONT` / `LABEL_FONT`; `LABEL_CHAR_W=8` at font 12 for the bold/italic label face; narrow/default/wide buckets) and `LABEL_CAP_H=round(38*0.7)=27`. Rendering expands the tight box to even grid-cell multiples in both dimensions (`colWidth()` / `rowHeight()`), minimum two cells. Free and owned labels center on their anchors. Net labels keep the electrical anchor on the wire and put one box edge on it: `above` for horizontal paths and `left` for vertical paths. `setText` always updates the box. `textPos()` returns the `<text>` `{x,y,anchor}`, horizontally aligned inside the box and vertically centered.
 
-## Working-context notes
+Inline label editing supports `_{...}` and `^{...}` rendered as tspans. Ctrl+, and Ctrl+. wrap a selection as subscript/superscript; repeating the same operation unwraps it, and a mixed selection makes every touched group plain text. The pure helper is `model.js` `applyMarkup(text,s,e,mark)` and is unit-tested.
 
-- `npm test` = **182/182** green (model / commands / router / render /
-  wireedit / multinet / symbols). The HTTP endpoint reuses `runCommand()` and is
-  covered by the existing tests; the CLI is a thin client over it and is
-  exercised by `npm test` only for argument parsing (the server itself is
-  verified by the smoke test below).
-- CDP browser suites (headless chromium) live in `/tmp/opencode/`:
-  - `mos_label_test.mjs` — NMOS / PMOS hotkeys, PMOS defaultMirrorY,
-    MOS id label on bulk side / gate height, double-click inline edit,
-    Ctrl+A + marquee label selection, wire follows moved / rotated /
-    mirrored terminal.
-  - `feature_test.mjs` — insert-mode `#insert-menu`, switch components,
-    normal-mode `t` is no-op for labels, owned-label moves when its
-    component is nudged, `u`/`U` undo / redo, mixed component+free-
-    label Ctrl+A drag.
-  - `ghost_test.mjs` — insert-menu is `pointer-events:none` and hides
-    during ghost, `n` / `p` / `t` etc. select ghosts, Escape cancels,
-    all parts get owned instance labels.
-  - `wiredrag_test.mjs` — `__circuit().nets[i].route` is the live
-    array; drag an interior run collapses a corner, drag a run
-    touching a terminal extends with a connector.
-- CDP notes: headless **never fires native `dblclick`** — dispatch
-  clickCount 1 then 2 (real CDP `Input.dispatchMouseEvent` with
-  `clickCount:2`); the inline `<input>` selector is
-  `input[style*="position: absolute"]`; Ctrl+A =
-  `keyDown('a',{modifiers:MOD,code:'KeyA',keyCode:65})`;
-  `__circuit().comps` returns **serialized** (flat
-  `{refdes,type,x,y,rot,mx,my}`, no `transform`) so assert on `c.x`.
-  Inline-editor Escape closes the editor first; a second Escape exits
-  insert mode.
-- Router: scoring `[bboxCrossings, wireCross, overlap, conform, turns,
-  length]` with diagonal filtering; `segThroughInterior` (wires
-  leaving a boundary pin straight through own body are violations;
-  boundary-hugging legal); `evaluate().wireThroughBBoxes` uses it.
-  `astar()` is the live `smartRoute` fallback (NOT dead code).
-- `window.__circuit()` debug hook returns `{ comps, nets, labels }`
-  where labels include a `world` anchor.
-- `window.__run(cmd)` runs a single command on the visible circuit.
-- `window.__load(state)` overwrites the visible circuit from a JSON
-  state object.
-- Demo circuit is **gone** (`src/core/templates.js` deleted, `demo`
-  command + `#btn-demo` toolbar button removed). `test/commands.test.js`
-  uses a tiny inline `smallCircuit()` for report / svg tests.
+`addComponent` auto-creates an owned instance label (`text=refdes`, centered). Every symbol uses `refPos:null` plus `labelOffset`; no id is drawn as legacy plain font-12 `refPos` text. `fromJSON` constructs components with `noLabel:true`, then loads `data.labels` and drops orphaned owned labels. `nextRefdes(prefix)` returns the smallest unused positive index, reusing numbers after deletion.
 
-## Test-env facts
+Style controls and style paste recolor component owned labels and annotation child labels. Coloring a whole net also updates all per-segment wire color overrides.
 
-- **CDP sessions:** use isolated random HTTP and Chromium debug ports for each
-  developer session. Track the server/browser processes you own and shut down
-  those exact processes only; never use broad `pkill` against the live editor
-  or a shared browser.
-- `serve.js` sends `Cache-Control: no-store`; `index.html` `main.js?v=7`.
-- `circuits/`, `data/`, `node_modules/` are gitignored. `data/active.json`
-  is the live record of which circuit the agent is editing.
-- Browser open without an active circuit loads an empty editor (or the
-  localStorage draft); as soon as the agent POSTs a command, the active
-  circuit switches and the browser auto-loads it.
+Transforms are origin-anchored and pure: component origin never moves, repeated transforms remain stable and grid-aligned. In Virtuoso mode and ghosts, `r` rotates clockwise, `Shift+r` mirrors horizontally, and `Ctrl+r` mirrors vertically; `Ctrl+Shift+r` is unbound. CLI `rotate`/`mirror` use the same component transform. Set transforms use the exact selection midpoint, including half-grid midpoints, so odd-width sets mirror stably. Mirrors use world horizontal/vertical axes even after component rotation. Free labels are never orbited by transforms. Rotating a multi-component set rotates positions and individual orientations around the set midpoint.
+
+Owned labels follow components. Net labels stay attached to drawable paths, switch above/below or left/right according to drag side, and keep their bbox edge on the wire; dragging projects attachment to the nearest drawable point. Free annotations and wire geometry move independently. Annotation defaults are calculated once: box labels center above the top edge with their bottom edge touching it; arrow labels attach a text-box corner to the arrow base according to arrow quadrant. Later movement is independent.
+
+Selection is role-aware across components, owned labels, free annotations, net labels, and wire segments. `selLabels:Set` plus primary `selLabel` supports multi-label selection; Shift-clicking an annotation and its text label in either order preserves both. `setLabelSelection(ids,primary)` updates both; `setSelection` and Escape clear both. `editorOverlay` highlights every `selLabels`. Shift+ArrowLeft/Right cycles label alignment. Nudge with h/j/k/l or arrows moves wires with components by passing a `moved` map to `rerouteNet`; nets whose terminals all share a delta translate rigidly, like a drag. `dd`/Delete removes the selected role-aware set. Double-click opens an inline `<input>`; Enter/blur commits and Escape cancels. The palette has a label button.
+
+Selecting a net from the side panel or double-clicking its wire selects its junction solder components too. A highlighted net draws a blue halo over its paths and an r13 ring plus dot over each junction solder; devices are not highlighted. `opts.nets` carries highlighted nets and `opts.netSolder` carries their solder points.
+
+The nets list and wire highlighting identify the physical net targeted by wire repair. When two physical nets occupy coincident geometry, select/highlight exactly one of them before editing; the selected net is the target, so either coincident net can be deliberately repaired without merging the nets. For tied wire picks, an explicit `selectedNets` preference outranks `diagnosticSelection.nets`; the diagnostic preference applies only when it identifies exactly one tied candidate. Stale or non-candidate IDs are ignored, and original iteration order is the deterministic fallback. Cross-net positive-length collinear overlap remains an electrical violation and is never auto-merged. Equal net names do not change this physical-net distinction.
+
+## Virtuoso editor
+
+Normal mode uses this vocabulary:
+
+- `i` starts fuzzy placement. Type to filter components and labels; Enter or Tab picks the best match, then click or Enter places the ghost. Fuzzy ranking is prefix > substring > subsequence, with shorter matches first. `#insert-menu` shows the live query and filtered entries; its `PLACEMENT` map labels the hotkey column. All printable keys, including h/j/k/l, append to the query. Arrow keys move the cursor. `t` selects a label ghost only in insert mode; normal-mode `t` does nothing for labels. Escape first drops a ghost back to search, then exits insert.
+- `w` is the only Wire command. It starts from a terminal, existing wire, or free grid point. Clicks on terminals commit immediately; other clicks add committed route points. The live preview autoroutes each leg from the source through those points to the cursor. Press Enter to commit at any nonterminal point, including an open-ended wire. F3 toggles orthogonal/diagonal routing for new wires. There is no uppercase-W protected-wire editor mode.
+- `m` arms connected move. Before a ghost exists, drag from empty space to box-select a complete set; click any member of a preselected component/label/net/wire set to start the same whole-set ghost, regardless of whether the hit is a component, label, annotation, or wire. Moving any selected component, label, annotation, or wire segment carries or re-routes its electrical connectivity; the moving set and connected wires are faint ghosts until the destination commits. `Shift+m` arms detached move with the same source-hit rule: selected wire islands split from their nets, move with the selected component set, and retain selected terminal connections; unselected islands remain floating. Wire can reconnect split ends.
+- `c` starts repeated copy. Before a ghost exists, drag from empty space to box-select a complete set; when a set is already selected, clicking any of its members—including a wire—starts the same complete copy source rather than narrowing the selection. Move the ghost, then click or Enter to commit; each later click commits another copy at that cursor. The clicked source point is the copy anchor, not the set bbox center. Relative geometry is preserved. Rotate/mirror before placement persist; each transform uses the current copy point and rebases the follow origin, so later motion is only pointer delta. Escape cancels the ghost and returns to copy-tool source selection.
+- `x` runs Check; `Shift+x` runs Check & Save. The Design check panel has Clear; deleting an object clears stale report and focus.
+
+Connected move/transform ghosts remain one atomic history entry. Insert ghosts use the same world-space transform semantics. Touching pins connect only at committed position, never during a drag.
+
+### Wire interaction
+
+Terminal clicks have priority in Wire mode: `nearestTerminal` accepts a click within `max(GRID/2,12px/unit)`, even when a wire crosses the pin. A wire click selects its segment(s) and highlights them orange; Shift-click toggles `selectedWires` keys of the form `netId:branch:segment`, with `selectedWire` as primary. Dragging moves every selected run: same-orientation runs move as a group; other orientations stay put but selected. A single aligned segment between topology points is independently bounded; adjacent aligned segments move together only when both are selected. Ordinary straight pin-to-pin runs cannot drag unless explicitly bounded by topology (`moveWireRun` keeps direct pins fixed).
+
+`dd`/Delete calls `Circuit#deleteWireSegments`; all cuts use one branch snapshot so indices do not shift, and remaining geometry splits into connected components. A click that does not move, or moves less than threshold, never mutates the net. `dragMoved()` requires both >6 px client movement and >`GRID/2` world movement. Escape calls `cancelDrag()` and restores every pre-drag polyline. History is pushed once on mouseup; undo/redo round-trips a committed drag. A plain wire click sets `drag=null` before returning, preventing a later mousemove from causing a sticky reroute.
+
+Normal picking order is label → exact terminal → wire (`pickWire`) → component bbox → empty space. Wires render above bodies, so a wire inside or along a component body remains visible, selectable, and draggable.
+
+Wire-mode construction starts with a terminal, empty-space point (`wire.source={x,y}`), or existing wire (`{x,y,netId}`). Clicks on terminals commit immediately; clicks elsewhere add route points. The preview autoroutes each leg from the source through committed points to the cursor, and Enter commits the resulting managed route at a free point or wire interior, so an endpoint need not be a terminal. Collinear points collapse where valid. Enter on wire interior merges nets: the junction is a mid-wire anchor in `net.junctions`, both target-wire halves are walked, and a solder dot is created. `rerouteNet` and `routeNet` walk all anchors (terminals and junctions). At a coincident cross-net span, selection/highlighting of one physical net is required to identify the wire being edited; the overlap itself does not create a junction.
+
+During partial connected-set moves, outside wire bodies remain fixed and boundary legs re-anchor; branches wholly inside the moved set translate with same-delta endpoint terminals. Connected component moves, rotations, and mirrors reroute every touched net holistically from terminals plus environment (`rerouteNet`) rather than hand-carrying wire bodies. Detached moves split selected islands and leave unselected islands in place. If every terminal of a net rides a moved component by the same delta (including Ctrl+A drags), translate all branches, route, and junctions rigidly. A polyline whose endpoint terminals ride components with matching deltas also translates; differing deltas re-anchor both legs while retaining the authored body. `_pruneDanglingBranches` drops branches whose endpoints are neither terminals, junction anchors, nor points shared by at least two branches; intentionally detached floating islands are retained.
+
+## Routing and connectivity invariants
+
+`Circuit#connectCoincident()` joins terminals that land exactly together. It runs in `addComponent`, `moveComponent`, `setTransform`, and `fromJSON`; loading runs it after explicit nets with `_loading` guarding recursion. Dropping ground on a MOS source connects them. Moving either component apart retains the net and routes a wire between them.
+
+Managed nets are reduced to a deterministic minimum spanning tree by `Circuit#_reduceNet` → `reduceBranches` in `wiring.js` when geometry is freshly created, explicitly edited, loaded, or intentionally re-routed. Topology growth through `wireTo`, `wirePointTo`, and `connect` appends one smart-routed branch and preserves every existing branch; it does not reduce or refresh the whole net. Explicit wire edits and transform/reroute commands remain the user-controlled geometry changes. Vertices are terminals and T/cross junctions; each polyline run between vertices is an edge weighted by Manhattan length. Parallel/duplicate and cycle edges are removed only at those explicit repair boundaries, including collinear overlaps after splitting at overlap boundaries. Reducer overlap boundaries are not junctions. Managed same-net positive collinear overlaps are pruned when endpoint-coincident pieces reconnect after copy/move; cross-net positive overlaps remain violations and are never merged automatically. Old…
+
+`normalizePath` removes a collinear middle point only on a monotonic run. A reversal at a terminal or junction is a real vertex and is preserved; this prevents clone/fromJSON/render from dropping a terminal leg in a balanced three-way net. Joined managed nets store explicit `net.branches` (polylines) and `net.junctions` (mid-wire anchors); single route-null two-terminal nets may derive their route from `Net.points()`.
+
+### Router behavior
+
+For orthogonal managed routes, `smartRoute` adds candidates that escape one grid cell outward along each terminal's `dir` (`applyDir`) before bending. Thus gate→drain leaves the gate west and approaches the drain from north, outside the body. Escaped candidates are preferred even for aligned pins; two gates sharing a column use a gate-facing U in a one-cell-off channel instead of a body-hugging straight line. Facing escapes collapse to a straight wire. `main.js` and `commands.js` `pinDir` prefer `t.dir`, falling back to bbox heuristics.
+
+`hardSafe` keeps committed segments at least one grid cell from every component bbox, exempting valid pin-connected escape legs. The shared MOS gate-bus exception allows a managed segment through the strict interior of an NMOS/PMOS body, including bulk variants, only if at least two MOS gate terminals share that physical net, the segment touches the crossed device's gate pin, and it follows that gate axis. `hardSafe`, automatic move validation, and `evaluate().wireThroughBBoxes` use the same exception; it never permits source, drain, bulk, passive, supply, or unrelated-net body crossings. Boundary-hugging is legal.
+
+The routing environment includes `labelRects` as soft obstacles: `labelScore` prefers a one-cell-clear channel when available but never blocks a route through a label. Solder dots are excluded. Net labels remain electrically anchored to a drawable path and put a bbox edge on it. Fresh layout uses `_netEnv(excludeNetId)` to include every other net's explicit branches as wires, so `rerouteNet`, `_layoutFresh`, and `Net.points()` never auto-create collinear overlap with another net; crossings remain legal. `crossNetOverlaps` reports existing cross-net collinear spans.
+
+Two-point candidate scoring is lexicographic: `[bboxCrossings, overlap, wireCross, componentClearance, labelClearance, pinConform, turns, length]`. After safety and spacing, fewer visible bends win before route length. A* (`astar`) is the live `smartRoute` fallback, not dead code. Diagonal candidates are filtered according to route mode.
+
+Three or more terminals use `steinerBranches`/`steinerRoute` through `autoRoute`, `balancedPaths`, and `balancedRoute` for fresh layouts and explicit full-net reroutes. A topology-growth click does not invoke those whole-net optimizers: it previews a smart route and commits only the new branch. The exact rectilinear Steiner attempt uses Dreyfus–Wagner subset DP on every coarse-grid cell in the terminals' padded bbox, under hard body clearance. Edge cost is one cell plus pin-conformity penalties (`CONFORM_SIDE=30` for perpendicular escape; `CONFORM_OPP=8` for opposite direction) and label clearance (`LABEL_EPS`). The first cell from a pin follows its direction; for example, a differential-pair virtual-ground source escapes downward and the T lands below the pair row, never on the pin row. The DP minimizes total tree length. Large nets fall back to an MST-of-shortest-paths Steiner 2-approximation, so all fresh layouts remain routable.
+
+## Design Check and compatibility
+
+The right-side **Design check** panel retains the latest report until another Check, object deletion, or Clear. Categories: dangling/unconnected terminals; component, component–label, and label–label overlaps; wire drills through component bodies; managed diagonal segments; grid errors; and cross-net collinear wire overlaps. Each issue focuses its component or net. Normal selection clears diagnostic focus without discarding the report. Check & Save saves after the same report.
+
+Persisted `routingMode:"fixed"` nets with literal paths, including legacy diagonals, remain loadable/renderable. This compatibility does not create a protected uppercase-W editor mode. Fixed paths re-anchor endpoints on component movement without autorouting; moving a complete selected set translates fixed paths with it.
+
+## Web UI and persistence
+
+- Zoom is clamped so a grid cell is never over about 120 px and the grid never exceeds about 1000 lines. `fitView`, drag-zoom, wheel zoom, right-click zoom-out, and `resizeView` all clamp via `minViewW()` / `maxViewW()`.
+- `html.dark` toggles CSS variables. Inline SVG presentation attributes are recolored by CSS overrides (for example, `.canvas svg [stroke="#111"]` and `[fill="#fff"]`), so core renderer colors need not change. Dark mode makes the crosshair amber, hides it outside the drawing area, and leaves colored halos/wire-source overlays untouched. `C` and `#btn-crosshair` toggle it. `#btn-theme` toggles and persists `schematic-spawner:theme` in localStorage, defaulting to system `prefers-color-scheme`.
+- `#` calls `setGrid()`; `#btn-grid` mirrors it. Toolbar buttons have `title` tooltips. SVG z-order is crosshair, components, wires, labels, pin/junction dots, then selection/net overlays. Wires remain above component bodies.
+- `?` and Help open a modal keyboard/command reference. The search field receives focus, typing filters the reference, and only the reference pane scrolls. Escape closes it.
+- Copy mode is `c` (`y` and Ctrl/Cmd+C aliases). If nothing is selected, the source click copies the clicked component, label, or wire; otherwise the complete selected component/label/wire/net set is copied regardless of click location. The clicked point is the cursor anchor. A ghost follows the cursor; click/Enter commits and later clicks commit more copies without leaving copy mode. Escape cancels the ghost to source selection. A single copied object carries color, line style, and width; a set has no style source. Ctrl+Shift+V applies a single copied object's style to the current selection wherever supported.
+- A complete physical net is copied only when all its terminals are on selected components, or when a complete terminal-less net is explicitly selected. Its route/branches/junctions and net labels are preserved; pasted labels and nets receive fresh IDs and translated on-path anchors, never becoming annotations. `p` / Ctrl/Cmd+V (`pasteClipboard`) remains one-shot paste at the cursor and preserves relative positions/connectivity.
+- Components/nets/terminals side lists are condensed. Switching designs from the dropdown prompts when dirty: Keep cancels; Discard abandons unsaved changes and loads the selected circuit.
+
+### CLI → server → browser fast loop
+
+`POST /api/circuits/<name>/cmd` accepts `{ "cmd":"<line>" }` or `{ "cmd":"line1\nline2\n..." }`. The server loads the named circuit or starts one, runs `runCommand` for each line, saves `circuits/<name>/circuit.json` and `circuit.svg` if anything mutated, and returns `{ name, mutated, results, state }`. The CLI (`src/cli/index.js`) is a thin HTTP client over this endpoint.
+
+
+`GET /api/active` returns `{active:"<name>"|""}`. The server tracks the active circuit in memory and persists it to `data/active.json`; every command POST sets it. `PUT`/`POST /api/active` sets it explicitly; `DELETE` clears it. `syncActiveCircuit` polls every 500 ms, switches/auto-loads the active circuit on first open or change, and still merges file updates for the loaded circuit. A valid named browser draft restored on reload wins the first active poll, so the currently edited schematic is not replaced by stale server-active state; later active changes still load normally. If a newly marked active circuit has no file yet, the failed load does not advance the seen-active state; polling retries each tick and logs once until the file appears. Users do not need to type a circuit name or click Load.
+
+- Normal: `i` insert/search, `w` Wire, F3 route mode, `m` connected move, Shift+`m` detached move, `c` repeated copy, `r` rotate, Shift+`r` horizontal mirror, Ctrl+`r` vertical mirror, `v` visual, `x` Check, Shift+`x` Check & Save.
+- Insert: `t` label ghost, Tab best match, printable keys query, arrows/hjkl cursor, `r`/Shift+`r`/Ctrl+`r` world transforms, Escape ghost/search exit.
+- Visual: `v` anchors a green box; hjkl/arrows grow it; Enter commits `applyBoxSelection` and exits. In Delete mode Enter deletes fully contained selection and stays armed. Mouse marquee uses the same complete-containment rule, deletes on mouseup in Delete mode, and selects nets only when every route point is inside. Intersection alone selects nothing. Escape cancels; status says VISUAL.
+- Delete: `dd`, Delete, or Backspace deletes the selected component/label/net/wire set. With no selection Delete/Backspace arms persistent Delete mode; clicks delete until Escape. In Wire mode Backspace removes the latest uncommitted vertex.
+- History: `u`/Ctrl+Z undo; `U`/Ctrl+Y redo. Insert-search typing treats `u` as query text. Undo while a ghost is active cancels an uncommitted ghost first; undo while Copy/Move is armed removes only the last action and re-arms the tool. Copy-ghost undo cancels the uncommitted ghost before undoing its last committed copy.
+- Paste/style/save: `p` / Ctrl/Cmd+V one-shot paste; `y` / Ctrl/Cmd+C copy aliases; Ctrl/Cmd+Shift+V style paste; Ctrl/Cmd+S save. Ctrl/Cmd-drag duplicates a selected component set, then lets the copy move.
+- Cursor/view: hjkl moves the cursor; F fits; D toggles dark mode; `#` grid; C crosshair; `?` help (Escape closes). Ctrl+i toggles italic and Ctrl+b bold on selected labels. `Ctrl+Shift+r` is intentionally unbound.
+
+## Verification and test-environment facts
+
+`npm test` runs the Node test runner over `test/**/*.test.js` (model, commands, router, render, wireedit, multinet, and symbols). The HTTP endpoint reuses `runCommand`; CLI tests cover argument parsing. Use the browser smoke tests below for server/editor behavior rather than relying on unit tests alone.
+
+Headless CDP suites live in `/tmp/opencode/`:
+
+- `mos_label_test.mjs`: NMOS/PMOS hotkeys, PMOS defaultMirrorY, MOS bulk-side/gate-height labels, inline edit, Ctrl+A/marquee labels, and wires following moved/rotated/mirrored terminals.
+- `feature_test.mjs`: insert menu, switches, normal-mode `t`, owned-label nudge, undo/redo, and mixed component/free-label Ctrl+A drag.
+- `ghost_test.mjs`: insert-menu pointer-events/hiding, ghost selection (`n`, `p`, `t`, etc.), Escape, and owned labels on all parts.
+- `wiredrag_test.mjs`: live `__circuit().nets[i].route`, interior-run corner collapse, and terminal-run connector extension.
+
+CDP rules: use one persistent connection per session, isolated random HTTP and Chromium debug ports, and terminate only processes you started. Never use broad `pkill`. Headless Chromium does not fire native `dblclick`; use real `Input.dispatchMouseEvent` with clickCount 1 then 2. Inline editors match `input[style*="position: absolute"]`. Ctrl+A is `keyDown('a',{modifiers:MOD,code:'KeyA',keyCode:65})`. `__circuit().comps` is serialized flat `{refdes,type,x,y,rot,mx,my}` with no `transform`; assert `c.x` etc. Inline-editor Escape closes the editor first; a second Escape exits insert mode.
+
+Debug hooks: `window.__circuit()` returns `{comps,nets,labels}`, with label `world` anchors; `window.__run(cmd)` runs one command on the visible circuit; `window.__load(state)` replaces the visible circuit from JSON. The demo circuit is gone (`src/core/templates.js`, `demo`, and `#btn-demo` were removed); command report/SVG tests use an inline `smallCircuit()`.
+
+`serve.js` sends `Cache-Control: no-store`; `index.html` references `main.js?v=7`. `circuits/`, `data/`, and `node_modules/` are gitignored; `data/active.json` is the live active-circuit record. With no active circuit, the browser opens an empty editor or localStorage draft; the first command POST marks its circuit active and the browser loads it automatically.
+
+When starting a server, `npm start` and `npm run serve` use Node watch mode, so imported source changes—including the symbol registry—restart the process automatically. Direct `node src/web/serve.js` launches a fixed process and must be restarted after source changes.

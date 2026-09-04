@@ -1,8 +1,6 @@
 # Schematic Style Guide
 
-The visual / electrical standard every schematic-spawner drawing must meet.
-This is the **single canonical source** for layout, geometry, naming, and
-labels — duplicated rules in other docs are bugs.
+The visual and electrical standard every schematic-spawner drawing must meet. This is the canonical source for layout, visual geometry, naming, and label-authoring rules. `AGENTS.md` is authoritative for current runtime behavior and exact symbol geometry, terminals, routing, and editor UX; use it for implementation-specific details.
 
 Companion docs:
 
@@ -30,6 +28,64 @@ deliverable must also report clean in `eval`.
 - A successful schematic is **electrically correct, readable, editable, and
   easy to review**. Passing `eval` alone is not sufficient — it doesn't
   check labels, signal-flow sense, or textbook polish.
+
+### 1.1 Universal composition heuristics
+
+When a topology-specific convention is unavailable, prefer the arrangement
+that makes the electrical story obvious without relying on text:
+
+- establish a primary reading direction and keep related signal paths
+  visually parallel;
+- use alignment, repetition, symmetry, and consistent spacing to expose
+  functional relationships;
+- separate functional blocks with whitespace and reserve corridors for wires,
+  labels, and future edits;
+- keep the shortest, clearest route for the most important signal paths;
+  move a device rather than forcing a long or tangled wire;
+- make boundaries and ownership visible: a component label belongs in open
+  space near its component, a port label faces the circuit, and a junction dot
+  appears only where nets actually join;
+- use names and labels to clarify external intent, not to compensate for an
+  ambiguous or poorly routed topology.
+
+These heuristics never authorize inventing electrical connections. If the
+requested implementation leaves topology, polarity, biasing, feedback,
+rail conventions, or port meaning ambiguous, the author must ask the user
+before choosing among materially different circuits.
+
+### 1.2 Visual balance and symmetry
+
+“Pretty” means that the visual hierarchy is intentional, not merely that the
+schematic has no errors. Review the whole fitted page as a figure:
+
+- Keep the main signal path visually dominant: it should be the shortest,
+  clearest path and should not be forced around secondary bias or feedback
+  wiring.
+- Balance visual mass around the page center. Avoid putting all large symbols,
+  labels, or long routes on one side while leaving a large dead region on the
+  other. Move blocks or widen the page rather than filling empty space with
+  decorative wiring.
+- Use consistent horizontal and vertical lanes. Parallel paths should share
+  rows or have deliberate, repeated offsets; unrelated paths should not
+  accidentally look like a matched group.
+- Preserve symmetry wherever the circuit has a matched relationship:
+  differential pairs, current mirrors, complementary devices, repeated stages,
+  and cross-coupled structures. Symmetry includes device pitch, terminal rows,
+  label clearance, bend positions, and route lengths—not only symbol placement.
+- Place shared circuitry on the true geometric centerline when it is shared by
+  matched halves. Keep the centerline visible through the whitespace and do not
+  let labels or unrelated routes obscure it.
+- Make asymmetry intentional and local. A bias input, supply entry, output
+  load, or feedback return may break global symmetry, but it should not make a
+  matched structure appear accidentally misaligned.
+- Prefer a slightly larger, balanced composition over a compact composition
+  with uneven whitespace. Empty space is part of the figure's hierarchy.
+
+As a final visual test, temporarily ignore the labels and ask whether the
+device groups, signal direction, symmetry axes, and feedback paths are still
+obvious. Then restore the labels and check that they reinforce rather than
+compete with that structure.
+
 
 ---
 
@@ -75,6 +131,34 @@ common readability failure — they look "correct but busy".
 - Verify the result is airy by reviewing the fitted view (`F`), not just by
   a clean `eval`.
 
+### 2.2 Placement planning before wiring
+
+Place the complete component set before drawing any wire. Treat placement as a
+topology plan, not as a sequence of local additions:
+
+- Put PMOS devices on deliberate upper rows and NMOS devices on deliberate
+  lower rows. Leave a real open corridor between the rows; four grid cells
+  (160 units) is a useful starting gap for MOS rows when labels and vertical
+  branches must pass between them.
+- Use shared columns for stacked devices: align the upper source with the lower
+  drain, and keep the stack pitch equal to the device height so the shared node
+  is a clean boundary connection.
+- Put differential pairs and matched loads on wide, symmetric pitches. Reserve
+  an open centerline for tail/current circuitry and balanced junctions.
+- Keep bias-generation devices and bias sources at the left or another clearly
+  separated edge. Keep second-stage devices and output/compensation parts to
+  the right, with a clear central corridor for the high-value signal path.
+- Align devices that share a gate net whenever practical. A straight gate bus
+  is easier to inspect than several long taps; the documented MOS gate-bus
+  exception is a fallback for intentional shared-gate geometry, not a reason to
+  compress unrelated rows.
+- Fit and review this placement before routing. If routing later produces many
+  failures, move rows/columns and re-review instead of accumulating detours.
+
+This placement pass may be submitted as one batched command request. The
+routing pass starts only after the placement review.
+
+
 ---
 
 ## 3. Component reference
@@ -89,13 +173,15 @@ mirror flag to override that default.
 |------|-----------|--------------------|
 | resistor / capacitor / inductor / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
 | diode | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
-| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | x:-120..0, y:-80..80 |
+| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox `{-120,-80,120,160}` |
+| nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox `{-120,-80,120,160}`; bulk pin points right with a visible internal path from the channel edge |
 | npn / pnp | `b` (left) `c` (top) `e` (bottom) | x:-160..0, y:-120..120 |
-| current_source / current_sink / voltage_source | `a` (top) `b` (bottom) | x:-80..80, y:-80..80 |
+| current_source / voltage_source | `a` (top) `b` (bottom) | body x:-40..40, y:-80..80; default label center offset x:-80 (bbox edge x:-40) |
 | ground | `gnd` (top edge) | x:0..80, y:0..120 |
+| vcm | `vcm` (top edge) | x:-40..40, y:0..80 |
 | supply | `p` (bottom edge) | x:-40..40, y:-80..0 |
 | input / output / inputoutput | `p` (circuit side) | boxed port, id label on circuit-outer side |
-| opamp / gates / inverter / buffer | `ip` / `im` / `a` / `b` in, `o` / `y` out | logic- or triangle-shaped bodies |
+| adc / dac | ADC: `ain` in, `d` out; DAC: `d` in, `aout` out | ADC point-to-flat left-to-right; DAC flat-to-point left-to-right; one diagonal slash marks the digital bus; centered `ADC` / `DAC` label |
 
 Notes:
 
@@ -106,6 +192,10 @@ Notes:
   drain / collector at the channel origin, source / emitter below it. A
   **PMOS places source-up by default** (source top, drain bottom);
   verify `s` / `d` from the `add` output before wiring.
+- Bulk variants add `b` at the channel center `(0,0)`, directed right
+  (`dir:{x:1,y:0}`), with a symbol path joining the channel edge to that pin.
+  Their owned bulk label is one cell toward the local drain, offset
+  `{x:40,y:-40}`; transforms carry that offset toward the semantic drain.
 - **Mirroring builds matched pairs**: `--mirrorX` flips the body across the
   gate line so the two halves of a differential pair open like a mirror —
   drains face the shared output rows, sources face the shared tail row.
@@ -155,10 +245,13 @@ overlap.
 - Keep that bus clear of bodies: run it on the row's bbox **edge** and
   drop a short tap at each gate column — taps that run along a gate
   column touch only bbox *edges*, which `eval` does not count as crossings.
-- Sanctioned exception: where the bus must pass *through* a body's
-  interior and **every terminal on that net is a gate**, this single
-  overlap is allowed — it is the documented special case for matched gate
-  arrays. Flag it and justify it; never use it for any other net.
+- Sanctioned exception: a shared gate bus may pass *through* a MOS body's
+  interior, including a bulk variant, when every MOS gate it crosses belongs
+  to the same physical net. The crossing must touch that component's gate
+  terminal and follow the gate axis; diode-connected gate/drain terminals and
+  a current-source feed may share the net. `eval` and the autorouter recognize
+  only this constrained MOS exception. Flag and justify it; never use it for
+  any other net.
 
 ### 4.4 Columns: shared source / drain
 
@@ -241,27 +334,67 @@ above (or below) a differential core — e.g. the PMOS load of a 5T OTA.
 - Final manual cleanup may compress spacing and remove redundant bends, but
   it must preserve symmetry and must not introduce label crossings.
 
+### 4.5d Cross-coupled gate latches
+
+For a visually balanced NOR latch or similar cross-coupled gate pair:
+
+- mirror both gates individually across the horizontal center axis so their
+  instance labels face away from the central wiring corridor;
+- place the two external input ports on symmetric outer rows;
+- determine `Q` and `QB` from the Boolean equations, not from which gate is
+  drawn uppermost. Swap output port identities if the initial placement gives
+  the opposite polarity;
+- construct the feedback X in diagonal router mode first. Start each branch
+  at the input-side escape point one grid cell outside the symbol, at equal
+  and opposite offsets about the centerline; end at the corresponding
+  output-side escape point one grid cell outside the symbol;
+- connect the escape points to the actual input and output terminals with
+  short orthogonal stubs. This keeps the diagonal spans in open space and
+  prevents them from drilling through gate bodies;
+- the two diagonal spans must be geometric mirror images and must cross without
+  a solder dot. Add junction dots only where a feedback branch joins its own
+  output wire;
+- connect the output ports only after the X is complete when manual routing is
+  required. A single multi-terminal autoroute may reduce or reshape the
+  intended X.
+
+After manual label edits, verify that the output symbols still have connected
+electrical terminals. A visible `Q` or `QB` annotation does not itself connect
+to a net; inspect `eval` and confirm the output terminal appears in the
+corresponding net branch.
+
 ---
 
 ## 5. Geometry and routing
 
 - Place all origins, terminals, labels, and route points on the 40-unit
   grid.
-- Keep component bounding boxes separated. Touching edges are preferable
-  to positive-area overlaps when a compact layout is necessary.
-- Keep every wire segment horizontal or vertical. **Never leave diagonal
-  segments in JSON or SVG.**
+- Keep component bounding boxes separated except for deliberate shared-boundary
+  topology such as a stacked device pair.
+- Keep wire segments horizontal or vertical by default. Diagonal segments are
+  allowed only when they materially clarify a deliberate cross-coupled or
+  otherwise topology-specific structure; use them sparingly and symmetrically.
+  Do not use diagonals merely to save space.
 - Route around component interiors. Boundary-hugging is acceptable where
   the router and evaluator define the boundary as non-interior.
 - Prefer short, direct routes with few bends, but do not trade away
   readability.
 - Use explicit routes for deliberate hand-edited wiring. Do not silently
   replace a user's manual route with a fresh autoroute.
-- When moving a component, preserve the existing wire body and move only
-  the terminal connection portions needed to keep pins attached.
-- Avoid wire crossings. If a crossing is unavoidable, make the
-  connectivity distinction obvious and use a junction only when the net is
-  actually joined.
+- When moving a component, preserve the existing wire body whenever possible;
+  use the editor's connected-move behavior to reroute or translate affected
+  connectivity only as required to keep pins attached.
+- Avoid wire crossings. If a crossing is unavoidable, make the connectivity
+  distinction obvious and use a junction only when the net is actually joined.
+- **Treat coincident physical nets as distinct.** Equal net names do not connect
+  separate nets. A positive-length collinear overlap between different physical
+  nets is an electrical violation, not a junction, and must never be repaired
+  by auto-merging. Select or highlight one physical net when coincident
+  geometry must be targeted for deliberate repair.
+- **Same-net reconnects are normalized at repair boundaries.** When copy/move
+  makes endpoint-coincident pieces of one managed net reconnect, positive
+  collinear overlap is pruned. Reducer overlap boundaries are not junctions;
+  reserve junction dots for actual joined topology.
 - **Let wires END at ports; tap loads in open wire.** A port (input /
   output pin) should be a wire endpoint, not a pass-through junction — a
   junction dot directly on a port pin looks bad. Loads and load capacitors
@@ -272,53 +405,11 @@ above (or below) a differential core — e.g. the PMOS load of a 5T OTA.
 
 ## 6. Visual structure
 
-Use a consistent signal-flow layout unless the circuit convention suggests
-otherwise:
+Unless circuit convention dictates otherwise, use supplies at the top, grounds or sinks at the bottom, inputs from the left, outputs to the right, grouped active loads/mirrors, and bias inputs near the devices they control. Leave whitespace for labels and future edits; never hide terminals or wires under labels; keep component IDs readable and unique.
 
-- supplies at the top;
-- ground or sinks at the bottom;
-- inputs entering from the left;
-- outputs leaving toward the right;
-- active loads and mirrors grouped together;
-- bias inputs placed near the devices they control.
+For differential or matched structures, apply the full symmetry rules in §4.5: mirror the right-hand device across the vertical center axis, use an even pitch whose midpoint is on the 40-grid, center shared tail/source circuitry there, align corresponding output and shared terminals on common rows, orient bias terminals toward their source, and leave enough pitch for labels and wire corridors. Keep output leads straight where possible and align same-side endpoints. The same visual contract applies across MOS, BJT, folded/cascode, active-load, and complementary pairs: equal halves, one centerline, aligned rows, and centered shared circuitry.
 
-Leave enough whitespace for labels and future edits. Do not hide a
-terminal or wire under a symbol label. Component IDs should remain
-readable and unique.
-
-For differential structures:
-
-- Mirror the right-hand device across the vertical center axis; do not
-  merely place two identical unmirrored symbols side by side.
-- Choose an even device pitch so the exact midpoint is itself a 40-unit
-  grid point. Put shared tail or source circuitry on that midpoint.
-- Give the pair enough pitch for separate instance labels and clean wire
-  corridors; symmetry is not useful if labels overlap.
-- Align both halves' corresponding output terminals on one horizontal row
-  and corresponding shared terminals on another horizontal row.
-- Center the tail current source or bias device so its shared terminal is
-  on the midpoint grid column. Orient its gate / base toward the side
-  where its bias source will enter.
-- Keep output leads straight where possible. If both leads run to the
-  right, make their final endpoints share the same horizontal row and
-  avoid unnecessary doglegs.
-
-These rules generalize by device type: use drain / source for MOS pairs,
-collector / emitter for BJT pairs, and the corresponding output / common
-terminals for other matched devices. The polarity may change, but the
-visual contract does not: equal halves, one explicit centerline, aligned
-terminal rows, and centered shared circuitry. Apply the same discipline to
-PMOS input pairs, folded or cascode differential cores, active loads, and
-complementary pairs.
-
-For a three-terminal shared node, route the branch to a center junction
-first, then route balanced left and right branches. Do not let JSON
-terminal order create an asymmetric visual tree. Multi-branch junctions
-(3+ terminals of one net) are marked automatically: the routing algorithm
-places an actual `solder` component at the balanced junction, so the agent
-never adds one by hand. Keep the shared branch off the terminal row so a
-real T-junction (not a collinear line) exists. An ordinary corner does not
-receive a dot, and different nets that merely cross never share one.
+For a three-terminal shared node, route first to a centered junction, then split into balanced left/right branches. Do not let terminal order make the tree asymmetric. Multi-branch junctions (3+ terminals) receive an automatic `solder` component only at the real T-junction; never add one by hand or expect one at an ordinary corner. Keep the shared branch off the terminal row, and never add a dot where different nets merely cross.
 
 ---
 
@@ -328,9 +419,17 @@ Signal names are lowercase-free, typed signal names with a leading
 voltage or current letter and a subscript for the rest: `V_{INP}`,
 `V_{INN}`, `V_{BIAS}`, `V_{OUT}`, `V_{DD}`, `I_{BIAS}`, `V_{REF}`. In JSON,
 net names and port refdes use the plain form (`VINP`, `VOUT`, `BIAS`);
-the label text carries the markup (`V_{INP}`). Name nets for their purpose
+the label text carries the markup (`V_{INP}`). For digital or control signals
+that are not naturally voltages or currents, use a concise plain name such as
+`CLK`, `RESET`, or `EN` consistently at both the port and net level.
+Differential suffixes such as `P` / `N` are preferred over mixing them with
+`+` / `-` notation. Name nets for their purpose
 (`TAIL`, `GND`, `VDD`, `VOUT`, `DIODE`, `BIAS`) — a net's name appears in
 the editor's net list, so it should tell the reader what the node does.
+
+`netId` identifies one physical net and its drawable geometry. Separate
+physical nets may share a canonical name for logical grouping and reporting,
+but a shared name never connects them electrically.
 
 ---
 
@@ -343,13 +442,33 @@ minimum, label:
 - bias / reference nodes;
 - feedback or mirror nodes when their purpose is not obvious.
 
-**Do not label supply or ground.** The supply and ground symbols already
-say it; adding "VDD" / "GND" text is redundant clutter. Rail *names*
-still matter for the net name (a net named `VDD` is fine).
+**Do not add visible labels to supply or ground symbols unless the user
+requests them.** The symbols already communicate their usual meaning.
+Supply/ground net names may still be meaningful in the model and net list.
+When a visible rail name is explicitly required, use one deliberate label,
+not repeated labels on every symbol.
 
-Labels are separate `LabelInstance` objects, not component types. Owned
-instance labels identify components; free labels identify circuit signals.
-Keep free labels off component bodies and route paths.
+Labels are separate `LabelInstance` objects, not component types. There are
+three roles: owned instance labels (`owner` = component refdes, with a local
+offset), persistent electrical net labels (`netId` = one physical net), and
+free annotations (`owner:null`, `netId:null`, independent text/anchor). Owned
+labels identify components; net labels name a physical wire; free annotations
+are independent text. Keep free annotations off component bodies and route
+paths; net labels belong on drawable wire paths.
+
+Use the canonical `addNetLabel`, `renameNet`, and `renameNetLabel` APIs for
+electrical labels and net names. Net-label text follows the physical net name;
+removing one label occurrence does not remove or rename its net. In the editor,
+`L` persistently places a net label only on an unambiguous physical wire; at a
+crossing, select/highlight the intended net first. `Shift+N` persistently places
+a free annotation. The generic insert-menu entry is also an annotation.
+
+Selection and editing preserve these roles: owned labels follow their
+components, net labels remain on their drawable paths, and annotations move
+independently. Deleting a net-label occurrence leaves the physical net and its
+name intact. Clipboard operations carry net labels only with a complete copied
+physical net, using fresh net/label IDs and translated on-path anchors; they
+never turn them into annotations.
 
 **No font-12 value / refdes text.** Component identifiers are dedicated
 owned label objects. Ports auto-create their identifier label from the
@@ -411,10 +530,10 @@ These short command sequences build the core patterns. Verify with
 ### Mirrored differential pair (shared sources on the center column)
 
 ```sh
-node src/cli/index.js demo clear
-node src/cli/index.js demo "add nmos M1 --at 0 0"
-node src/cli/index.js demo "add nmos M2 --at 480 0 --mirrorX"
-node src/cli/index.js demo "connect M1.s M2.s --name TAIL"
+node src/cli/index.js <circuit> clear
+node src/cli/index.js <circuit> "add nmos M1 --at 0 0"
+node src/cli/index.js <circuit> "add nmos M2 --at 480 0 --mirrorX"
+node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL"
 ```
 
 The two sources meet on the symmetry column; `M1.d` and `M2.d` sit on one
@@ -424,9 +543,9 @@ clean label space.
 ### Vertical stack (shared source / drain on one grid line)
 
 ```sh
-node src/cli/index.js demo "add nmos M1 --at 0 0"
-node src/cli/index.js demo "add nmos M2 --at 0 160"
-node src/cli/index.js demo "connect M1.s M2.d --name N"
+node src/cli/index.js <circuit> "add nmos M1 --at 0 0"
+node src/cli/index.js <circuit> "add nmos M2 --at 0 160"
+node src/cli/index.js <circuit> "connect M1.s M2.d --name N"
 ```
 
 `M1.s` and `M2.d` coincide; bboxes touch along the shared boundary. Extend
@@ -436,40 +555,41 @@ below.
 ### Supplies on a rail, grounds on a rail
 
 ```sh
-node src/cli/index.js demo "add supply VDD --at 240 -320"
-node src/cli/index.js demo "add supply VDD2 --at 720 -320"
-node src/cli/index.js demo "add ground GND --at 240 320"
-node src/cli/index.js demo "add ground GND2 --at 600 320"
+node src/cli/index.js <circuit> "add supply VDD --at 240 -320"
+node src/cli/index.js <circuit> "add supply VDD2 --at 720 -320"
+node src/cli/index.js <circuit> "add ground GND --at 240 320"
+node src/cli/index.js <circuit> "add ground GND2 --at 600 320"
 ```
 
 Both supplies sit on the same top rail line and both grounds on the same
-bottom rail line; there is **no net between them** — each icon cools its
-own local net. Identify a rail with a free label (e.g. "VDD") where its
-name must appear.
-
+bottom rail line; there is **no net between them** — each icon connects to its
+own local physical net. Do not add visible `VDD` or `GND` text unless requested;
+the symbols provide that visual convention. If a visible rail name is requested,
+use one deliberate label rather than labeling every icon.
 ---
 
 ## 11. Evaluation checklist
 
-Run after every mutation and before reporting success:
+Run after each meaningful mutation or milestone, and before reporting success:
 
 ```sh
 node src/cli/index.js <circuit> eval
 ```
 
 **Treat any of these as a defect unless explicitly justified:**
-
+- diagonal segments used without a clear cross-coupled or topology-specific
+  purpose
 - `unconnectedTerminals` — dangling pins that aren't intentional ports
 - `overlappingBBoxes` — bodies intersect
 - `gridViolations` — origin or terminal off the 40-grid
 - `wireThroughBBoxes` — a wire runs through a body interior
-- `diagonalWireSegments` — none should remain in the JSON or SVG
 
 `eval --json` gives the machine-readable report.
 
-`eval` **ignores labels** — it reports a terminal "connected" if it is in
-a net even when no wire reaches it, and it never checks that a label box
-is clear. In addition to `eval`, verify:
+`eval` reports electrical connectivity and wire geometry separately from label
+placement. Check also reports label/component and label/label overlaps; label
+boxes remain soft routing obstacles, so they steer routes but do not block a
+connection. In addition to `eval`, verify:
 
 - every terminal's world position appears in some net `branch` (a 3+
   terminal net stores one polyline per arm; `route` is only the first);

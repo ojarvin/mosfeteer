@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "cli": "node src/cli/index.js",
-    "serve": "node src/web/serve.js",
+    "serve": "node --watch src/web/serve.js",
     "start": "bash start.sh",
     "test": "node --test \"test/**/*.test.js\""
   },

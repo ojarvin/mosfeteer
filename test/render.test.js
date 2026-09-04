@@ -4,6 +4,20 @@ import { svgString } from '../src/core/render.js';
 import { Circuit } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 
+import { strokeAttrs, setColorToken, resolveColor } from '../src/core/style.js';
+
+test('default wire stroke uses flat caps, miter joins, and semantic colors resolve dynamically', () => {
+  assert.match(strokeAttrs('unknown'), /stroke-linecap="flat"/);
+  assert.match(strokeAttrs('unknown'), /stroke-linejoin="miter"/);
+  const original = '#d96c75';
+  assert.equal(resolveColor(original), original);
+  setColorToken('red', '#ff4477');
+  try {
+    assert.equal(resolveColor(original), '#ff4477');
+  } finally {
+    setColorToken('red', original);
+  }
+});
 test('svgString of an empty circuit renders without throwing', () => {
   const c = new Circuit();
   const svg = svgString(c);
@@ -43,11 +57,37 @@ test('svgString includes refdes only for components with refPrefix/refPos', () =
   assert.ok(!svg.includes('>GROUND1<'));
 });
 
+test('svgString renders VCM outline without a VCM instance label', () => {
+  const c = new Circuit();
+  c.addComponent('vcm', { x: 400, y: 120 });
+  const svg = svgString(c);
+  assert.ok(svg.includes('M -28 24 L 28 24 L 0 56 Z'), 'VCM triangle outline present');
+  assert.doesNotMatch(svg, /<polygon\b/, 'VCM has no filled polygon primitive');
+  assert.doesNotMatch(svg, /<text\b/, 'VCM has no instance label');
+});
+
 test('svgString draws value text when present', () => {
   const c = new Circuit();
   c.addComponent('resistor', { x: 480, y: 0, value: '1k' });
   const svg = svgString(c);
   assert.ok(svg.includes('>1k<'));
+});
+
+test('svgString renders ADC and DAC body labels in label font', () => {
+  const c = new Circuit();
+  c.addComponent('adc', { x: 480, y: 0 });
+  c.addComponent('dac', { x: 960, y: 0 });
+  const svg = svgString(c);
+  assert.match(svg, /font-weight="bold" font-style="italic"[^>]*>ADC<\/text>/);
+  assert.match(svg, /font-weight="bold" font-style="italic"[^>]*>DAC<\/text>/);
+  assert.ok(svg.includes('M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z'));
+});
+
+test('converter labels stay upright when the symbol is mirrored', () => {
+  const c = new Circuit();
+  c.addComponent('adc', { x: 480, y: 0, mirrorX: true });
+  const svg = svgString(c);
+  assert.match(svg, /<text x="460" y="0" dominant-baseline="middle"[^>]*>ADC<\/text>/);
 });
 
 test('svgString renders component terminal dots by default', () => {
@@ -112,6 +152,23 @@ test('svgString renders standalone label text with its alignment anchor', () => 
   assert.ok(svg.includes('text-anchor="start"'), 'left-aligned label anchors start');
 });
 
+test('svgString renders explicit net labels with rich-text net names', () => {
+  const c = new Circuit();
+  const net = c.createWireNet({ name: 'V_{IN}', route: [{ x: 0, y: 0 }, { x: 80, y: 0 }] });
+  c.addNetLabel(net, { id: 'VIN_LABEL', x: 80, y: 0 });
+  const svg = svgString(c);
+  assert.ok(svg.includes('class="label"') || svg.includes('font-style'));
+  assert.ok(svg.includes('<tspan') && svg.includes('IN'));
+});
+
+test('svgString applies per-label bold and italic toggles', () => {
+  const c = new Circuit();
+  c.addLabel({ id: 'plain', text: 'plain', x: 0, y: 0, style: { bold: false, italic: false } });
+  const svg = svgString(c);
+  assert.match(svg, /font-weight="normal"/);
+  assert.doesNotMatch(svg, /font-style="italic"/);
+});
+
 test('transistor instance label renders as a dedicated label object (no duplicate refPos)', () => {
   const c = new Circuit();
   c.addComponent('nmos', { x: 520, y: 0 });
@@ -145,6 +202,14 @@ test('svgString renders filled polygon bodies (Razavi gate bars)', () => {
   assert.ok(svg.includes('fill="#111" stroke="none"'), 'foreground fill present');
 });
 
+
+test('svgString renders bulk MOS terminal and channel connection', () => {
+  const c = new Circuit();
+  c.addComponent('nmosb', { x: 520, y: 0 });
+  const svg = svgString(c);
+  assert.match(svg, /M -54\.65 0 L 0 0/, 'bulk graphic joins channel');
+  assert.match(svg, /<text[^>]*>M/, 'bulk MOS owned label renders');
+});
 test('Razavi symbols render (sources, opamp, gates, ports)', () => {
   const c = new Circuit();
   c.addComponent('current_source', { x: 400, y: 0 });
@@ -206,6 +271,19 @@ test('wires render ON TOP of component bodies (z-order)', () => {
   // and before the terminal dots (pin markers stay readable on top of wires)
   const terminalDot = svg.indexOf('r="3" fill="#111"');
   assert.ok(terminalDot > wire, 'terminal dots draw above wires');
+});
+
+test('crosshair renders behind component objects', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  const svg = svgString(c, {
+    viewport: { x: -200, y: -120, w: 400, h: 240 },
+    cursor: { x: 0, y: 0 },
+    cursorCrosshair: { x: -200, y: -120, w: 400, h: 240 },
+  });
+  const crosshair = svg.indexOf('class="editor-cursor-crosshair"');
+  const component = svg.indexOf('<g class="sym"');
+  assert.ok(crosshair >= 0 && component >= 0 && crosshair < component);
 });
 
 test('renderer draws every fixed path after managed promotion', () => {
