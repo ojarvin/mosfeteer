@@ -541,25 +541,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'rename') {
     const c = circuit.getComponent(pos[0]);
     const newName = pos[1];
-    if (circuit.components.has(newName)) throw new Error(`refdes ${newName} taken`);
-    circuit.components.delete(c.refdes);
-    c.refdes = newName;
-    circuit.components.set(newName, c);
-    for (const net of circuit.nets.values()) {
-      for (const t of net.terminals) if (t.comp === pos[0]) t.comp = newName;
-      if (net.routingMode === 'fixed') {
-        for (const path of net.fixedPaths) {
-          if (path.start?.comp === pos[0]) path.start.comp = newName;
-          if (path.end?.comp === pos[0]) path.end.comp = newName;
-        }
-      }
-    }
-    // the instance label follows its owner (its text mirrors the refdes)
-    const lab = circuit.labelOf(c.refdes);
-    if (lab) {
-      lab.owner = newName;
-      if (lab.text === pos[0]) lab.text = newName;
-    }
+    circuit.renameComponent(c.refdes, newName);
     return result(`renamed ${pos[0]} -> ${newName}`, { from: pos[0], to: newName }, true);
   }
   if (cmd === 'rm' || cmd === 'remove') {

@@ -4,6 +4,20 @@ import { svgString } from '../src/core/render.js';
 import { Circuit } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 
+import { strokeAttrs, setColorToken, resolveColor } from '../src/core/style.js';
+
+test('default wire stroke uses flat caps, miter joins, and semantic colors resolve dynamically', () => {
+  assert.match(strokeAttrs('unknown'), /stroke-linecap="flat"/);
+  assert.match(strokeAttrs('unknown'), /stroke-linejoin="miter"/);
+  const original = '#d96c75';
+  assert.equal(resolveColor(original), original);
+  setColorToken('red', '#ff4477');
+  try {
+    assert.equal(resolveColor(original), '#ff4477');
+  } finally {
+    setColorToken('red', original);
+  }
+});
 test('svgString of an empty circuit renders without throwing', () => {
   const c = new Circuit();
   const svg = svgString(c);

@@ -38,6 +38,7 @@ window.addEventListener('error', (ev) => {
 // ----- element references -----------------------------------------
 
 const canvasEl = document.getElementById('canvas');
+const componentContextMenuEl = document.getElementById('component-context-menu');
 const componentsListEl = document.getElementById('components-list');
 const netsListEl = document.getElementById('nets-list');
 const detailEl = document.getElementById('detail');
@@ -48,8 +49,6 @@ const circuitSelectEl = document.getElementById('circuit-select');
 const circuitNameEl = document.getElementById('circuit-name');
 const saveStateEl = document.getElementById('save-state');
 const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
-const clearDialog = document.getElementById('clear-dialog');
-const clearDialogMessage = document.getElementById('clear-dialog-message');
 const deleteDialog = document.getElementById('delete-dialog');
 const deleteDialogMessage = document.getElementById('delete-dialog-message');
 const switchDialog = document.getElementById('switch-dialog');
@@ -97,6 +96,8 @@ let multi = new Set(); // all selected component refdes (always includes selecte
 let selLabel = null; // primary id of the selected label object (exclusive with component selection)
 let selLabels = new Set(); // all selected label ids (always includes selLabel if any)
 let selectedNets = new Set(); // ids of highlighted nets
+let componentRangeAnchor = null; // last component row used as a range anchor
+let netRangeAnchor = null; // last net row used as a range anchor
 let selectedNetSolders = new Set(); // solder components selected through net selection
 let selectedWire = null; // primary {netId, branch, segment} of the selected wire segment(s)
 let selectedWires = new Set(); // every selected wire segment, as "netId:branch:segment" keys (always includes selectedWire)
@@ -151,6 +152,8 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (visual) return { key: 'visual', canvasClass: 'mode-visual', toolbar: 'visual', label: 'VISUAL', hint: 'VISUAL · hjkl/arrows grow the box · Enter select · Esc cancel' };
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL', hint: 'NET LABEL · click an unambiguous wire to place · stays active · Esc cancel' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION', hint: 'ANNOTATION · click to place free text · stays active · Esc cancel' };
+  if (labelMode === 'arrow') return { key: 'arrow', canvasClass: 'mode-annotation', toolbar: 'arrow', label: 'ARROW', hint: 'ARROW · click two points to draw · stays active · Esc cancel' };
+  if (labelMode === 'box') return { key: 'box', canvasClass: 'mode-annotation', toolbar: 'box', label: 'BOX', hint: 'BOX · click two points to draw · stays active · Esc cancel' };
   if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'PLACE', hint: 'PLACE · type to search, Enter picks, click/Enter places · Esc cancel' };
   if (copyMode) return { key: 'copy', canvasClass: 'mode-copy', toolbar: 'copy', label: 'COPY', hint: copyPending ? 'COPY · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'COPY · drag empty space to box-select, or click an object/existing selection · Esc cancel' };
   if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE', hint: 'DELETE · selected Delete acts like dd; otherwise click objects to delete · Esc cancel' };
@@ -370,36 +373,6 @@ function renderSaveState() {
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentCircuitName || deleteInFlight;
 }
 
-function clearCanvas() {
-  history.push(snapshot());
-  future.length = 0;
-  circuit = new Circuit();
-  resetCheckState();
-  directWire = null;
-  wire = null;
-  drag = null;
-  visual = null;
-  deleteMode = false;
-  moveMode = null;
-  copyMode = false;
-  movePending = false;
-  copyPending = false;
-  pendingPlace = null;
-  labelMode = null;
-  setSelection([]);
-  cursor = { x: 0, y: 0 };
-  view = viewFromCenter(0, 0);
-  render();
-  logLine('Cleared canvas. The saved circuit was not deleted.');
-}
-
-function askClearCanvas() {
-  if (!clearDialog) return clearCanvas();
-  clearDialogMessage.textContent = hasUnsavedChanges()
-    ? 'This removes everything from the canvas and discards the current unsaved changes. The saved circuit is not deleted; you can undo after confirming.'
-    : 'This removes everything from the canvas. If there are unsaved changes, they will be discarded; the saved circuit is not deleted, and the change can be undone.';
-  clearDialog.showModal();
-}
 
 async function deleteSavedCircuit() {
   const name = currentCircuitName;
@@ -570,6 +543,8 @@ function applyJson(blob) {
   selectedWire = null;
   selectedWires.clear();
   selectedNets.clear();
+  componentRangeAnchor = null;
+  netRangeAnchor = null;
 }
 
 function cancelDirectDraft() {
@@ -621,6 +596,21 @@ function redo() {
 
 function sortedComps() {
   return [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
+}
+
+function visibleNets() {
+  return [...circuit.nets.values()]
+    .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2))
+    .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id));
+}
+
+function rangeValues(items, anchor, value, getValue) {
+  const end = items.findIndex((item) => getValue(item) === value);
+  const start = items.findIndex((item) => getValue(item) === anchor);
+  if (end < 0) return [];
+  const from = start < 0 ? end : Math.min(start, end);
+  const to = start < 0 ? end : Math.max(start, end);
+  return items.slice(from, to + 1).map(getValue);
 }
 
 /** Match a world point: exact terminal first, then containing bbox. */
@@ -893,15 +883,8 @@ function applyStyleToSelected(style) {
           next[field] = style[field];
         }
       }
-      obj.style = next;
-      obj.style = next;
-      if (style.color !== undefined && (obj.kind === 'arrow' || obj.kind === 'box' || obj.refdes)) {
-        for (const child of circuit.labels.values()) {
-          if (child.parent === obj.id || child.owner === obj.refdes) {
-            child.style = { ...(child.style || {}), color: style.color };
-          }
-        }
-      }
+      if (style.color !== undefined && typeof obj.setColor === 'function') obj.setColor(style.color);
+      obj.style = { ...(obj.style || {}), ...next };
     }
     for (const { net, key } of wireTargets) {
       net.wireStyles[key] = { ...(net.wireStyles[key] || net.style || {}), ...style };
@@ -934,19 +917,8 @@ function applySelectedStyle(field, value) {
   commit(() => {
     for (const obj of objects) {
       if (field === 'lineStyle' && !['arrow', 'box'].includes(obj.kind) && !obj.routingMode) continue;
-      obj.style = { ...(obj.style || {}), [field]: next };
-      if (field === 'color' && obj.routingMode) {
-        for (const key of Object.keys(obj.wireStyles || {})) {
-          obj.wireStyles[key] = { ...(obj.wireStyles[key] || {}), color: next };
-        }
-      }
-      if (field === 'color' && (obj.kind === 'arrow' || obj.kind === 'box' || obj.refdes)) {
-        for (const child of circuit.labels.values()) {
-          if (child.parent === obj.id || child.owner === obj.refdes) {
-            child.style = { ...(child.style || {}), color: next };
-          }
-        }
-      }
+      if (field === 'color' && typeof obj.setColor === 'function') obj.setColor(next);
+      else obj.style = { ...(obj.style || {}), [field]: next };
     }
     for (const { net, key } of wireTargets) {
       net.wireStyles[key] = { ...(net.wireStyles[key] || net.style || {}), [field]: next };
@@ -954,7 +926,6 @@ function applySelectedStyle(field, value) {
   });
   render();
 }
-
 function updateStyleControls() {
   const line = document.getElementById('style-line');
   const color = document.getElementById('style-color');
@@ -979,8 +950,8 @@ function updateStyleControls() {
   }
   for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
     const values = [
-      ...objects.map((o) => o.style?.[field] || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal')),
-      ...wireTargets.map(({ net, key }) => net.wireStyles?.[key]?.[field] || net.style?.[field] || (field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal')),
+      ...objects.map((o) => o.style?.[field] || styleDefaults(field)),
+      ...wireTargets.map(({ net, key }) => net.wireStyles?.[key]?.[field] || net.style?.[field] || styleDefaults(field)),
     ];
     const value = values[0];
     el.value = values.length && values.every((v) => v === value) ? value : '';
@@ -1526,17 +1497,38 @@ function fitView() {
     x1 = 120;
     y1 = 120;
   }
-  const M = 120;
-  const aspect = view.w / view.h;
-  let tw = x1 - x0 + 2 * M;
-  let th = y1 - y0 + 2 * M;
-  if (tw / th > aspect) th = tw / aspect;
-  else tw = th * aspect;
-  tw = Math.min(Math.max(tw, minViewW()), maxViewW());
-  th = tw / aspect;
+  const pane = document.querySelector('.canvas-pane');
+  const rail = document.querySelector('.mode-toolbar');
+  const paneRect = pane?.getBoundingClientRect();
+  const railRect = rail?.getBoundingClientRect();
+  const paneW = paneRect?.width || 1;
+  const paneH = paneRect?.height || 1;
+  const leftPx = railRect
+    ? Math.max(0, railRect.right - (paneRect?.left || 0))
+    : 0;
+  const usableW = Math.max(1, paneW - leftPx);
+  const usableCenterPx = leftPx + usableW / 2;
+  const marginPx = 16;
+  const fitW = Math.max(1, usableW - marginPx * 2);
+  const fitH = Math.max(1, paneH - marginPx * 2);
+  const rangeW = Math.max(1, x1 - x0);
+  const rangeH = Math.max(1, y1 - y0);
+  const scale = Math.min(fitW / rangeW, fitH / rangeH);
+  const aspect = paneW / paneH;
+  let tw = paneW / scale;
+  let th = paneH / scale;
+  const minW = minViewW();
+  const maxW = maxViewW();
+  if (tw < minW) {
+    tw = minW;
+    th = tw / aspect;
+  } else if (tw > maxW) {
+    tw = maxW;
+    th = tw / aspect;
+  }
   view.w = tw;
   view.h = th;
-  view.x = (x0 + x1) / 2 - tw / 2;
+  view.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
   view.y = (y0 + y1) / 2 - th / 2;
   render();
 }
@@ -1686,11 +1678,14 @@ function placeShapeAnnotation(world, endOverride = null) {
     return;
   }
   const end = endOverride || point;
-  let annotation;
-  let annotationLabel;
   commit(() => {
-    annotation = circuit.addAnnotation(labelMode, { x: annotationStart.x, y: annotationStart.y, end });
-    annotationLabel = circuit.addLabel({ text: 'label', align: 'center', parent: annotation.id, x: (annotationStart.x + end.x) / 2, y: (annotationStart.y + end.y) / 2 });
+    annotation = circuit.addAnnotation(labelMode, {
+      x: annotationStart.x,
+      y: annotationStart.y,
+      end,
+      text: 'label',
+    });
+    annotationLabel = [...circuit.labels.values()].find((label) => label.parent === annotation.id);
   });
   setSelection([]);
   setLabelSelection([annotation.id]);
@@ -1776,6 +1771,8 @@ function updateNetWarnings() {
 }
 
 function render() {
+  // A context menu is independent of canvas repainting. Closing it here made
+  // it vanish on the first pointer move after opening it.
   syncSelectedNetSolders();
   updateStyleControls();
   validateSelectedWires();
@@ -1947,11 +1944,11 @@ function renderCanvas() {
     selLabels: [...new Set([...selLabels, ...diagnosticSelection.labels])],
     nets,
     previewSelection,
-    // Show the first-to-second-point ghost even before the second click starts
-    // a drag gesture.
+    // Keep this expression null-safe: after the first click the draft normally
+    // has ended, while annotationStart remains as the persistent first point.
     annotationPreview: (drag?.mode === 'annotationplace' && (annotationStart || drag.previewEnd))
       || (['arrow', 'box'].includes(labelMode) && annotationStart)
-      ? { kind: labelMode, a: annotationStart || drag.startWorld, b: drag.previewEnd || cursor }
+      ? { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
       : undefined,
     warnOverlaps: netWarnings,
     rubber: visual
@@ -1977,6 +1974,7 @@ let inlineInput = null; // the active inline-edit <input>, if any
 let lastLabelClick = null; // { id, x, y, at } of the previous label click (for double-click fallback)
 let lastWireClick = null; // { key, x, y, at } of the previous wire click (for double-click fallback)
 let lastNetClick = null; // { netId, x, y, at } of the previous nets-list click (for double-click fallback)
+let lastComponentClick = null; // { refdes, x, y, at } of the previous component-list click
 
 /** A press becomes a drag once the pointer has moved BOTH more than the pixel
  *  threshold (a few px of click jitter is never a drag) AND more than half a
@@ -2048,6 +2046,9 @@ function cancelDrag() {
     circuit.restoreFixedGeometry(drag.net, drag.saved.fixedPaths, drag.saved.junctions);
     wiresDirty = true;
   }
+  // A cancelled shape gesture abandons the whole two-point draft. The tool
+  // remains armed, so the next click starts a fresh annotation.
+  if (drag?.mode === 'annotationplace') annotationStart = null;
   drag = null;
   render();
 }
@@ -3115,6 +3116,12 @@ function canvasMouseDown(ev) {
     return;
   }
   if (b === 2) {
+    const hit = matchAt(snap(startWorld.x), snap(startWorld.y));
+    if (hit?.refdes && circuit.components.has(hit.refdes)) {
+      ev.preventDefault();
+      drag = null;
+      return;
+    }
     ev.preventDefault();
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
     return;
@@ -3164,7 +3171,18 @@ function canvasMouseDown(ev) {
   const openEndpoint = openFixedEndpointAt(startWorld);
 
   if (labelMode === 'arrow' || labelMode === 'box') {
-    drag = { mode: 'annotationplace', startClient, startWorld, moved: false, rubber: null };
+    // Keep the cursor and preview anchored to the actual press. When a first
+    // click has already established annotationStart, the next press begins
+    // with its endpoint visible before any movement occurs.
+    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    drag = {
+      mode: 'annotationplace',
+      startClient,
+      startWorld,
+      moved: false,
+      previewEnd: annotationStart ? { ...cursor } : null,
+      rubber: null,
+    };
     return;
   }
   if (labelMode) {
@@ -4049,16 +4067,14 @@ function deleteAtPoint(world) {
 
 function canvasMouseMove(ev) {
   const w = clientToWorld(ev.clientX, ev.clientY);
+  const nextCursor = { x: snap(w.x), y: snap(w.y) };
+  const cursorChanged = nextCursor.x !== cursor.x || nextCursor.y !== cursor.y;
+  cursor = nextCursor;
 
   if (!drag) {
     // The cursor follows the mouse, always snapped to the nearest grid point.
     // The view never pans on its own — pan manually with the middle button.
-    const nx = snap(w.x);
-    const ny = snap(w.y);
-    if (nx !== cursor.x || ny !== cursor.y) {
-      cursor = { x: nx, y: ny };
-      render();
-    }
+    if (cursorChanged) render();
     return;
   }
 
@@ -4066,7 +4082,7 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationplace') {
     if (movedOut) drag.moved = true;
     if (annotationStart || drag.moved) {
-      drag.previewEnd = { x: snap(w.x), y: snap(w.y) };
+      drag.previewEnd = { ...cursor };
       render();
     }
     return;
@@ -4689,6 +4705,34 @@ function canvasMouseUp(ev) {
 }
 canvasEl.addEventListener('mousedown', canvasMouseDown);
 canvasEl.addEventListener('mousemove', canvasMouseMove);
+// Keep the two-point shape preview alive after the first click. The normal
+// mousemove path also updates the cursor, but pointermove remains available
+// after the SVG is replaced during a repaint.
+function updateShapePreviewCursor(ev) {
+  if (!annotationStart || !['arrow', 'box'].includes(labelMode)) return;
+  const w = clientToWorld(ev.clientX, ev.clientY);
+  const next = { x: snap(w.x), y: snap(w.y) };
+  if (next.x === cursor.x && next.y === cursor.y && !drag?.previewEnd) return;
+  cursor = next;
+  if (drag?.mode === 'annotationplace') drag.previewEnd = { ...next };
+  render();
+}
+// Replacing the SVG during render can move the pointer off the old target
+// before the bubbling mousemove reaches the canvas. Capture the movement at
+// window level while a shape draft is active so the preview cannot stall.
+window.addEventListener('pointermove', (ev) => {
+  if (!annotationStart || !['arrow', 'box'].includes(labelMode)) return;
+  const r = document.querySelector('.canvas-pane')?.getBoundingClientRect();
+  if (!r || ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) return;
+  updateShapePreviewCursor(ev);
+}, true);
+window.addEventListener('mousemove', (ev) => {
+  if (!annotationStart || !['arrow', 'box'].includes(labelMode)) return;
+  const r = document.querySelector('.canvas-pane')?.getBoundingClientRect();
+  if (!r || ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) return;
+  updateShapePreviewCursor(ev);
+}, true);
+canvasEl.addEventListener('pointermove', updateShapePreviewCursor);
 canvasEl.addEventListener('mouseenter', () => {
   cursorInCanvas = true;
   render();
@@ -4697,9 +4741,183 @@ canvasEl.addEventListener('mouseleave', () => {
   cursorInCanvas = false;
   render();
 });
-window.addEventListener('mouseup', canvasMouseUp);
-canvasEl.addEventListener('contextmenu', (ev) => ev.preventDefault());
+function contextStyleValue(target, field) {
+  if (target?.kind === 'wire') {
+    const { net, branch, segment } = target.value;
+    return net.wireStyles?.[`${branch}:${segment}`]?.[field] || net.style?.[field] || styleDefaults(field);
+  }
+  return target?.value?.style?.[field] || styleDefaults(field);
+}
+
+function contextTargetType(target) {
+  return target.kind === 'component' ? 'component' : target.kind === 'wire' ? 'wire' : 'label';
+}
+
+function contextMatches(target, candidate, criterion) {
+  if (criterion === 'type' && contextTargetType(target) !== contextTargetType(candidate)) return false;
+  if (criterion === 'type') {
+    if (target.kind === 'component') return candidate.value.type === target.value.type;
+    if (target.kind === 'wire') return !!candidate.value.net.routingMode === !!target.value.net.routingMode;
+    return candidate.value.kind === target.value.kind &&
+      !!candidate.value.owner === !!target.value.owner &&
+      !!candidate.value.netId === !!target.value.netId;
+  }
+  if (criterion === 'color' || criterion === 'lineStyle') {
+    const field = criterion === 'color' ? 'color' : 'lineStyle';
+    return contextStyleValue(candidate, field) === contextStyleValue(target, field);
+  }
+  return false;
+}
+
+let componentContextTarget = null;
+let componentContextSubmenu = null;
+
+function closeComponentContextMenu() {
+  componentContextTarget = null;
+  componentContextSubmenu = null;
+  if (componentContextMenuEl) {
+    componentContextMenuEl.hidden = true;
+    componentContextMenuEl.replaceChildren();
+  }
+}
+
+function contextCandidates(target, criterion) {
+  if (criterion === 'color' || criterion === 'lineStyle') {
+    const candidates = [...circuit.components.values()].map((value) => ({ kind: 'component', value }));
+    candidates.push(...[...circuit.labels.values()].map((value) => ({ kind: 'label', value })));
+    for (const net of circuit.nets.values()) {
+      const paths = net.paths();
+      for (let branch = 0; branch < paths.length; branch++) {
+        for (let segment = 1; segment < paths[branch].length; segment++) {
+          candidates.push({ kind: 'wire', value: { net, branch, segment } });
+        }
+      }
+    }
+    return candidates;
+  }
+  if (target.kind === 'component') {
+    return [...circuit.components.values()].map((value) => ({ kind: 'component', value }));
+  }
+  if (target.kind === 'label') {
+    return [...circuit.labels.values()].map((value) => ({ kind: 'label', value }));
+  }
+  const candidates = [];
+  for (const net of circuit.nets.values()) {
+    const paths = net.paths();
+    for (let branch = 0; branch < paths.length; branch++) {
+      for (let segment = 1; segment < paths[branch].length; segment++) {
+        candidates.push({ kind: 'wire', value: { net, branch, segment } });
+      }
+    }
+  }
+  return candidates;
+}
+
+function selectSameTarget(criterion) {
+  const target = componentContextTarget;
+  if (!target) return;
+  const candidates = contextCandidates(target, criterion).filter((candidate) => contextMatches(target, candidate, criterion));
+  const refs = candidates.filter(({ kind }) => kind === 'component').map(({ value }) => value.refdes);
+  const labels = candidates.filter(({ kind }) => kind === 'label').map(({ value }) => value.id);
+  const wires = candidates.filter(({ kind }) => kind === 'wire')
+    .map(({ value }) => `${value.net.id}:${value.branch}:${value.segment}`);
+  setSelection(refs, target.kind === 'component' ? target.value.refdes : refs[0], true);
+  setLabelSelection(labels, target.kind === 'label' ? target.value.id : labels[0], true);
+  selectedWires = new Set(wires);
+  syncSelectedWire();
+  closeComponentContextMenu();
+  render();
+}
+
+function openComponentContextMenu(target, x, y) {
+  if (!componentContextMenuEl || !target) return;
+  closeComponentContextMenu();
+  componentContextTarget = target;
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 220))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 90))}px`;
+
+  const sameButton = document.createElement('button');
+  sameButton.type = 'button';
+  sameButton.textContent = 'Select same';
+  sameButton.setAttribute('aria-haspopup', 'true');
+  sameButton.setAttribute('aria-expanded', 'false');
+  const arrow = document.createElement('span');
+  arrow.textContent = '›';
+  arrow.setAttribute('aria-hidden', 'true');
+  sameButton.appendChild(arrow);
+
+  const submenu = document.createElement('div');
+  submenu.className = 'context-submenu';
+  submenu.setAttribute('role', 'menu');
+  submenu.setAttribute('aria-label', 'Select same criteria');
+  const typeLabel = target.kind === 'component' ? 'Component type' : target.kind === 'wire' ? 'Wire type' : 'Label type';
+  for (const [criterion, label] of [['type', typeLabel], ['color', 'Color'], ['lineStyle', 'Linestyle']]) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = label;
+    item.setAttribute('role', 'menuitem');
+    item.addEventListener('click', () => selectSameTarget(criterion));
+    submenu.appendChild(item);
+  }
+  const openSubmenu = () => {
+    submenu.classList.add('open');
+    componentContextSubmenu = submenu;
+    sameButton.setAttribute('aria-expanded', 'true');
+  };
+  sameButton.addEventListener('mouseenter', openSubmenu);
+  sameButton.addEventListener('focus', openSubmenu);
+  sameButton.addEventListener('click', openSubmenu);
+  sameButton.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowRight' || ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      openSubmenu();
+      submenu.querySelector('button')?.focus();
+    }
+  });
+  menu.append(sameButton, submenu);
+  sameButton.focus();
+}
+
+canvasEl.addEventListener('contextmenu', (ev) => {
+  const world = clientToWorld(ev.clientX, ev.clientY);
+  const label = pickLabel(world);
+  const annotation = annotationGeometryAt(world);
+  const hit = matchAt(snap(world.x), snap(world.y));
+  const wire = pickWire(world);
+  const target = label
+    ? { kind: 'label', value: label }
+    : annotation
+      ? { kind: 'label', value: annotation }
+      : hit?.refdes && circuit.components.has(hit.refdes)
+        ? { kind: 'component', value: circuit.components.get(hit.refdes) }
+        : wire
+          ? { kind: 'wire', value: { net: wire.net, branch: wire.branch, segment: wire.seg } }
+          : null;
+  ev.preventDefault();
+  if (target) openComponentContextMenu(target, ev.clientX, ev.clientY);
+  else closeComponentContextMenu();
+});
+window.addEventListener('mousedown', (ev) => {
+  if (componentContextMenuEl?.hidden || componentContextMenuEl.contains(ev.target)) return;
+  closeComponentContextMenu();
+});
+window.addEventListener('keydown', (ev) => {
+  if (componentContextMenuEl?.hidden) return;
+  if (ev.key === 'Escape') {
+    ev.preventDefault();
+    closeComponentContextMenu();
+    return;
+  }
+  if (ev.key === 'ArrowLeft' && componentContextSubmenu?.contains(document.activeElement)) {
+    ev.preventDefault();
+    componentContextSubmenu.classList.remove('open');
+    componentContextSubmenu.previousElementSibling?.focus();
+  }
+});
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
+window.addEventListener('mouseup', canvasMouseUp);
 
 // Double-click a label to edit its text inline.
 canvasEl.addEventListener('dblclick', (ev) => {
@@ -4852,10 +5070,13 @@ function renderComponents() {
     componentsListEl.innerHTML = '<div class="no-items">No components</div>';
     return;
   }
-  for (const comp of sortedComps()) {
+  const comps = sortedComps();
+  for (const comp of comps) {
     const row = document.createElement('div');
     row.className = 'row' + (multi.has(comp.refdes) ? ' selected' : '');
     row.dataset.ref = comp.refdes;
+    row.dataset.refdes = comp.refdes;
+    row.dataset.type = comp.type;
 
     const ref = document.createElement('span');
     ref.className = 'ref';
@@ -4863,14 +5084,14 @@ function renderComponents() {
 
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = `${comp.type}  ${comp.transform.x},${comp.transform.y}  rot${comp.transform.rotation}${
-      comp.transform.mirrorX ? ' X' : ''
-    }${comp.transform.mirrorY ? ' Y' : ''}`;
+    meta.textContent = comp.type;
 
     const remove = document.createElement('button');
     remove.className = 'remove';
-    remove.textContent = 'Remove';
+    remove.type = 'button';
+    remove.textContent = '×';
     remove.title = `Remove ${comp.refdes}`;
+    remove.setAttribute('aria-label', `Remove ${comp.refdes}`);
     remove.addEventListener('click', (ev) => {
       ev.stopPropagation();
       const touched = netsTouching([comp.refdes]);
@@ -4892,19 +5113,34 @@ function renderComponents() {
 
     row.addEventListener('click', (ev) => {
       cursor = { x: comp.transform.x, y: comp.transform.y };
+      const now = Date.now();
+      const prev = lastComponentClick;
+      const doubleClick =
+        !ev.shiftKey &&
+        prev &&
+        prev.refdes === comp.refdes &&
+        now - prev.at < 500 &&
+        Math.abs(ev.clientX - prev.x) <= 6 &&
+        Math.abs(ev.clientY - prev.y) <= 6;
+      lastComponentClick = { refdes: comp.refdes, x: ev.clientX, y: ev.clientY, at: now };
+      if (doubleClick) {
+        startComponentRename(comp, ref);
+        return;
+      }
       if (ev.shiftKey) {
-        // Shift-click toggles this instance in/out of the multi-selection.
-        if (multi.has(comp.refdes)) {
-          multi.delete(comp.refdes);
-          if (selected === comp.refdes) selected = multi.size ? [...multi][0] : null;
-        } else {
-          multi.add(comp.refdes);
-          if (!selected) selected = comp.refdes;
-        }
+        const refs = rangeValues(comps, componentRangeAnchor, comp.refdes, (item) => item.refdes);
+        setSelection(refs.length ? refs : [comp.refdes], comp.refdes);
       } else {
         setSelection([comp.refdes]);
       }
+      componentRangeAnchor = comp.refdes;
+      netRangeAnchor = null;
       render();
+    });
+    row.addEventListener('dblclick', () => {
+      // Native dblclick backup for browsers that deliver it (manual detection
+      // in the click handler covers row replacement during the first click).
+      startComponentRename(comp, ref);
     });
 
     componentsListEl.appendChild(row);
@@ -4917,8 +5153,7 @@ function renderNets() {
     netsListEl.innerHTML = '<div class="no-items">No nets</div>';
     return;
   }
-  for (const net of circuit.nets.values()) {
-    if (!net.terminals.length && !net.paths().some((path) => path.length >= 2)) continue;
+  for (const net of visibleNets()) {
     const row = document.createElement('div');
     row.className = 'row' + (selectedNets.has(net.id) ? ' selected' : '');
 
@@ -4954,12 +5189,13 @@ function renderNets() {
         return;
       }
       if (ev.shiftKey) {
-        // Shift-click toggles this net in/out of the highlighted set.
-        if (selectedNets.has(net.id)) selectedNets.delete(net.id);
-        else selectedNets.add(net.id);
+        const ids = rangeValues(visibleNets(), netRangeAnchor, net.id, (item) => item.id);
+        selectedNets = new Set(ids.length ? ids : [net.id]);
       } else {
         selectedNets = new Set([net.id]);
       }
+      componentRangeAnchor = null;
+      netRangeAnchor = net.id;
       const pt = net.points()[Math.floor(net.points().length / 2)];
       if (pt) cursor = { x: pt.x, y: pt.y };
       render();
@@ -4975,11 +5211,56 @@ function renderNets() {
   }
 }
 
+/** Open the inline refdes editor for a component row. Invalid or occupied
+ * names are rejected before commit, leaving the model and selection untouched. */
+function startComponentRename(comp, ref) {
+  if (!comp || inlineInput) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'rename-input';
+  input.value = comp.refdes;
+  input.placeholder = comp.refdes;
+  input.spellcheck = false;
+  ref.replaceWith(input);
+  inlineInput = input;
+  input.focus();
+  input.select();
+  let closed = false;
+  const done = (applyText) => {
+    if (closed) return;
+    closed = true;
+    inlineInput = null;
+    const next = input.value.trim();
+    input.replaceWith(ref);
+    if (applyText && next && next !== comp.refdes &&
+        /^[A-Za-z][A-Za-z0-9_]*$/.test(next) &&
+        !circuit.components.has(next)) {
+      const previous = comp.refdes;
+      commit(() => circuit.renameComponent(previous, next));
+      if (componentRangeAnchor === previous) componentRangeAnchor = next;
+      if (selected === previous) selected = next;
+      if (multi.has(previous)) {
+        multi.delete(previous);
+        multi.add(next);
+      }
+    }
+    render();
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') done(true);
+    else if (ev.key === 'Escape') done(false);
+  });
+  input.addEventListener('blur', () => done(true));
+}
+
 /** Open the inline rename <input> for a net's row (Enter/blur commits, Esc
  *  cancels). The net name is replaced in place so the row is not re-rendered
  *  mid-edit. */
 function startNetRename(net, ref) {
   selectedNets = new Set([net.id]);
+  netRangeAnchor = net.id;
+  componentRangeAnchor = null;
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'rename-input';
@@ -5628,7 +5909,7 @@ function onNormalKey(key, shiftKey = false) {
     movePending = false;
     copyPending = false;
     labelMode = null;
-    setSelection([]);
+    annotationStart = null;
     setLabelSelection([]);
     selectedNets.clear();
     render();
@@ -6135,6 +6416,8 @@ const TOOLBAR_IDS = {
   delete: ['btn-delete', 'btn-mode-delete', 'tool-delete', 'mode-delete'],
   'net-label': ['btn-net-label', 'btn-mode-net-label', 'tool-net-label', 'mode-net-label'],
   annotation: ['btn-annotation', 'btn-mode-annotation', 'tool-annotation', 'mode-annotation'],
+  arrow: ['btn-arrow', 'btn-mode-arrow', 'tool-arrow', 'mode-arrow'],
+  box: ['btn-box', 'btn-mode-box', 'tool-box', 'mode-box'],
   rotate: ['btn-rotate', 'tool-rotate'],
   'mirror-x': ['btn-mirror-x', 'btn-mirror-horizontal', 'tool-mirror-x', 'tool-mirror-horizontal'],
   'mirror-y': ['btn-mirror-y', 'btn-mirror-vertical', 'tool-mirror-y', 'tool-mirror-vertical'],
@@ -6791,14 +7074,6 @@ for (const [id, field] of [['style-color', 'color'], ['style-line', 'lineStyle']
   document.getElementById(id)?.addEventListener('change', (ev) => applySelectedStyle(field, ev.target.value));
 }
 
-document.getElementById('btn-clear').addEventListener('click', askClearCanvas);
-deleteCircuitBtn.addEventListener('click', askDeleteCircuit);
-
-if (clearDialog) {
-  clearDialog.addEventListener('close', () => {
-    if (clearDialog.returnValue === 'confirm') clearCanvas();
-  });
-}
 clearCheckButtonEl?.addEventListener('click', () => {
   clearCheckReport();
   render();
@@ -6844,22 +7119,9 @@ document.getElementById('btn-new-circuit').addEventListener('click', () => {
 });
 
 document.getElementById('btn-load-circuit').addEventListener('click', () => requestCircuitLoad());
-document.getElementById('btn-save-circuit').addEventListener('click', saveCircuit);
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => requestCircuitLoad(circuitSelectEl.value));
 
-document.getElementById('btn-export').addEventListener('click', () => {
-  const svg = svgString(circuit, { grid: true, terminals: false, junctions: false, background: true });
-  const blob = new Blob([svg], { type: 'image/svg+xml' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'schematic.svg';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-});
 
 document.getElementById('btn-help').addEventListener('click', () => {
   showHelp();

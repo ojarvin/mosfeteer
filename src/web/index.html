@@ -14,11 +14,11 @@
   </div>
 
   <header class="toolbar">
-    <h1 class="title"><span class="title-line">Schematic</span> <span class="title-line">Spawner</span></h1>
+    <!-- The product name is kept in the document title; controls get the full width. -->
 
     <div class="toolbar-actions">
       <div class="toolbar-group workspace-group" aria-labelledby="workspace-heading">
-        <span class="toolbar-group-label" id="workspace-heading">Workspace</span>
+        <span class="toolbar-group-label" id="workspace-heading">File</span>
         <div class="circuit-picker">
           <select id="circuit-select" aria-label="Choose a saved circuit" title="Choose a saved circuit to open">
             <option value="">Choose saved circuit...</option>
@@ -27,48 +27,17 @@
           <span id="save-state" class="save-state" aria-live="polite"></span>
         </div>
         <button id="btn-load-circuit" title="Load the circuit named in the field">Load</button>
-        <button id="btn-save-circuit" title="Save the current circuit to the server">Save</button>
         <button id="btn-new-circuit" title="Start a new, empty circuit">New</button>
         <button id="btn-delete-circuit" class="danger-action" title="Permanently delete the saved current circuit" disabled>Delete circuit</button>
+        <button id="btn-check-save" data-action="check-save" title="Check the current circuit, then save it if it passes">Check &amp; save</button>
       </div>
 
-      <div class="toolbar-group circuit-actions" aria-labelledby="circuit-actions-heading">
-        <span class="toolbar-group-label" id="circuit-actions-heading">Circuit actions</span>
-        <button id="btn-clear" title="Clear the canvas (undoable; does not delete the saved circuit)">Clear canvas</button>
-        <button id="btn-export" title="Export the circuit as an SVG file">Export SVG</button>
-        <button id="btn-check" data-action="check" title="Check the current circuit">Check</button>
-        <button id="btn-check-save" data-action="check-and-save" title="Check the current circuit, then save it if it passes">Check &amp; save</button>
-      </div>
-
-      <div class="toolbar-group mode-group" aria-labelledby="mode-heading" data-control-group="mode">
-        <span class="toolbar-group-label" id="mode-heading">Mode</span>
-        <button id="btn-mode-select" class="mode-control" data-mode="select" aria-pressed="true" title="Select and edit objects (Esc)">Select <kbd>Esc</kbd></button>
-        <button id="btn-mode-place" class="mode-control" data-mode="place" aria-pressed="false" title="Place a component or label (i)">Place <kbd>i</kbd></button>
-        <button id="btn-mode-wire" class="mode-control" data-mode="wire" aria-pressed="false" title="Draw a wire using the selected shape (w)">Wire <kbd>w</kbd></button>
-        <button id="btn-mode-visual" class="mode-control" data-mode="visual" aria-pressed="false" title="Select everything completely inside a box (v)">Box select <kbd>v</kbd></button>
-        <button id="btn-mode-move" class="mode-control" data-action="move" aria-pressed="false" title="Move the selected object and stay in Move mode until Esc">Move <kbd>m</kbd></button>
-        <button id="btn-mode-detach-move" class="mode-control" data-action="detach-move" aria-pressed="false" title="Move without carrying electrical connectivity; stay active until Esc">Detach move <kbd>Shift+m</kbd></button>
-        <button id="btn-mode-copy" class="mode-control" data-action="copy" aria-pressed="false" title="Copy the selected object or set; Ctrl+Shift+V pastes one copied object's style onto selected objects">Copy <kbd>c</kbd></button>
-        <button id="btn-mode-delete" class="mode-control" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc">Delete <kbd>Delete</kbd></button>
-        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a net label to name and connect wires">Net label <kbd>L</kbd></button>
-        <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires">Annotation <kbd>Shift+N</kbd></button>
-        <button id="btn-mode-arrow" class="mode-control annotation-control" data-action="arrow" aria-pressed="false" title="Draw a two-point arrow">Arrow <kbd>a</kbd></button>
-        <button id="btn-mode-box" class="mode-control annotation-control" data-action="box" aria-pressed="false" title="Draw a two-point box">Box <kbd>b</kbd></button>
-      </div>
-
-      <div class="toolbar-group routing-group" aria-labelledby="routing-heading" data-control-group="routing">
-        <span class="toolbar-group-label" id="routing-heading">Routing</span>
-        <label class="routing-label" for="routing-mode">Wire shape <kbd>F3</kbd></label>
-        <select id="routing-mode" data-routing-mode="true" title="Choose the shape used for new wires (F3)">
-          <option value="orthogonal">Orthogonal</option>
-          <option value="diagonal">Diagonal</option>
-        </select>
-      </div>
       <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style">
-        <span class="toolbar-group-label" id="style-heading">Style</span>
+        <span class="toolbar-group-label" id="style-heading">Design style</span>
         <label for="style-color">Color</label>
         <select id="style-color" title="Apply color to the selected objects; Ctrl+Shift+V pastes a copied object's color">
           <option value="#111" style="background:#111;color:#fff">&nbsp;&nbsp;&nbsp;</option>
+          <option value="#7a7d85" style="background:#7a7d85;color:#fff">&nbsp;&nbsp;&nbsp;</option>
           <option value="#d96c75" style="background:#d96c75">&nbsp;&nbsp;&nbsp;</option><option value="#e59f71" style="background:#e59f71">&nbsp;&nbsp;&nbsp;</option>
           <option value="#e4c16f" style="background:#e4c16f">&nbsp;&nbsp;&nbsp;</option><option value="#9acb8a" style="background:#9acb8a">&nbsp;&nbsp;&nbsp;</option>
           <option value="#62b5a7" style="background:#62b5a7">&nbsp;&nbsp;&nbsp;</option><option value="#6fa8dc" style="background:#6fa8dc">&nbsp;&nbsp;&nbsp;</option>
@@ -86,6 +55,14 @@
         </select>
       </div>
 
+      <div class="toolbar-group routing-group" aria-labelledby="routing-heading" data-control-group="routing">
+        <span class="toolbar-group-label" id="routing-heading">Routing</span>
+        <label class="routing-label" for="routing-mode">Wire shape <kbd>F3</kbd></label>
+        <select id="routing-mode" data-routing-mode="true" title="Choose the shape used for new wires (F3)">
+          <option value="orthogonal">Orthogonal</option>
+          <option value="diagonal">Diagonal</option>
+        </select>
+      </div>
       <div class="toolbar-group view-actions" aria-labelledby="view-heading">
         <span class="toolbar-group-label" id="view-heading">View</span>
         <button id="btn-grid" title="Hide the placement grid (#)">Grid</button>
@@ -96,16 +73,7 @@
 
   </header>
 
-  <dialog id="clear-dialog" class="confirm-dialog" aria-labelledby="clear-dialog-title">
-    <form method="dialog">
-      <h2 id="clear-dialog-title">Clear canvas?</h2>
-      <p id="clear-dialog-message"></p>
-      <div class="dialog-actions">
-        <button value="cancel">Cancel</button>
-        <button id="confirm-clear" value="confirm" class="confirm-action">Clear canvas</button>
-      </div>
-    </form>
-  </dialog>
+
 
   <dialog id="delete-dialog" class="confirm-dialog" aria-labelledby="delete-dialog-title">
     <form method="dialog">
@@ -142,8 +110,24 @@
   <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · Ctrl+Shift+V Paste style · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Check &amp; save · C Crosshair · F3 Wire shape · ? Help</div>
 
   <main class="layout">
-      <section class="canvas-pane">
+    <section class="canvas-pane">
+      <div class="mode-group mode-toolbar" aria-labelledby="mode-heading" data-control-group="mode">
+        <span class="toolbar-group-label" id="mode-heading">Edit tools</span>
+        <button id="btn-mode-select" class="mode-control" data-mode="select" aria-pressed="true" title="Select and edit objects (Esc)" aria-label="Select and edit objects">Select <kbd>Esc</kbd></button>
+        <button id="btn-mode-place" class="mode-control" data-mode="place" aria-pressed="false" title="Place a component or label (i)" aria-label="Place a component or label">Place <kbd>i</kbd></button>
+        <button id="btn-mode-wire" class="mode-control" data-mode="wire" aria-pressed="false" title="Draw a wire using the selected shape (w)" aria-label="Draw a wire">Wire <kbd>w</kbd></button>
+        <button id="btn-mode-visual" class="mode-control" data-mode="visual" aria-pressed="false" title="Select everything completely inside a box (v)" aria-label="Box select">Box select <kbd>v</kbd></button>
+        <button id="btn-mode-move" class="mode-control" data-action="move" aria-pressed="false" title="Move the selected object and stay in Move mode until Esc" aria-label="Move selected object">Move <kbd>m</kbd></button>
+        <button id="btn-mode-detach-move" class="mode-control" data-action="detach-move" aria-pressed="false" title="Move without carrying electrical connectivity; stay active until Esc" aria-label="Detach move">Detach move <kbd>Shift+m</kbd></button>
+        <button id="btn-mode-copy" class="mode-control" data-action="copy" aria-pressed="false" title="Copy the selected object or set; Ctrl+Shift+V pastes one copied object's style onto selected objects" aria-label="Copy selected object">Copy <kbd>c</kbd></button>
+        <button id="btn-mode-delete" class="mode-control" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc" aria-label="Delete selected objects">Delete <kbd>Delete</kbd></button>
+        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a net label to name and connect wires" aria-label="Place net label">Net label <kbd>L</kbd></button>
+        <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires" aria-label="Place annotation">Annotation <kbd>Shift+N</kbd></button>
+        <button id="btn-mode-arrow" class="mode-control annotation-control" data-action="arrow" aria-pressed="false" title="Draw a two-point arrow" aria-label="Draw arrow">Arrow <kbd>a</kbd></button>
+        <button id="btn-mode-box" class="mode-control annotation-control" data-action="box" aria-pressed="false" title="Draw a two-point box" aria-label="Draw box">Box <kbd>b</kbd></button>
+      </div>
       <div class="canvas" id="canvas"></div>
+      <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Component actions"></div>
     </section>
 
     <aside class="side-panel">

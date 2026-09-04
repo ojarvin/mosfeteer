@@ -2,8 +2,8 @@
  * Centralized schematic line styles.
  *
  * LINE  — general wiring and component linework. The default; use unless a
- *         symbol part explicitly says otherwise. Rounded caps/joins keep
- *         routing intersections and corners from looking jagged.
+ *         symbol part explicitly says otherwise. Flat caps and miter joins
+ *         keep wire bends sharp and aligned with textbook symbol linework.
  * THICK — heavier linework (~1.5x the default) for selected features of some
  *         symbols (e.g. a MOSFET gate bar, bold power/ground rails).
  *
@@ -11,18 +11,50 @@
  * look). Symbols select a role via `style`: 'symbol' (normal), 'emph'
  * (emphasis), 'ground', 'supply'. Filled body shapes use polygon fill.
  */
-export const LINE = { stroke: '#111', width: 6, cap: 'round', join: 'round' };
+export const LINE = { stroke: '#111', width: 6, cap: 'flat', join: 'miter' };
 export const THICK = { stroke: '#111', width: Math.round(LINE.width * 1.5), cap: 'flat', join: 'flat' };
 export const SYMBOL = { stroke: '#111', width: 6, cap: 'butt', join: 'miter' };
 export const EMPH = { stroke: '#111', width: 9.6, cap: 'butt', join: 'miter' };
 export const GROUND = { stroke: '#111', width: 11.6, cap: 'butt', join: 'miter' };
 export const SUPPLY = { stroke: '#111', width: 7.2, cap: 'butt', join: 'miter' };
 
-export const STYLE_COLORS = Object.freeze([
-  '#d96c75', '#e59f71', '#e4c16f', '#9acb8a', '#62b5a7',
-  '#6fa8dc', '#8f8bd1', '#b08ac6', '#d889b5', '#9aa7b8',
-]);
-export const LINE_STYLES = Object.freeze(['solid', 'dashed', 'dash-dot', 'dotted']);
+/** Named semantic colors. Values are intentionally mutable so a theme can
+ * update a token and already-loaded drawings immediately pick it up. */
+export const COLOR_PALETTE = {
+  red: '#d96c75',
+  orange: '#e59f71',
+  yellow: '#e4c16f',
+  green: '#9acb8a',
+  teal: '#62b5a7',
+  blue: '#6fa8dc',
+  indigo: '#8f8bd1',
+  purple: '#b08ac6',
+  pink: '#d889b5',
+  slate: '#9aa7b8',
+  gray: '#7a7d85',
+};
+// Public aliases make the palette useful to callers without coupling them to
+// the UI's control names.
+export const SEMANTIC_COLORS = COLOR_PALETTE;
+export const COLOR_TOKENS = COLOR_PALETTE;
+export const STYLE_COLORS = Object.freeze(Object.values(COLOR_PALETTE));
+
+const LEGACY_COLORS = new Map(Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]));
+export function resolveColor(value) {
+  if (typeof value !== 'string' || !value) return '#111';
+  const token = value.startsWith('$') ? value.slice(1) : value;
+  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return COLOR_PALETTE[token];
+  const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
+  return legacyToken ? COLOR_PALETTE[legacyToken] : value;
+}
+export function setColorToken(token, value) {
+  if (!Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) throw new Error(`unknown color token "${token}"`);
+  if (typeof value !== 'string' || !value) throw new Error('color token value must be a CSS color');
+  COLOR_PALETTE[token] = value;
+  return value;
+}
+
+export const LEGACY_STYLE_COLORS = STYLE_COLORS;
 
 const STYLES = { thick: THICK, symbol: SYMBOL, emph: EMPH, ground: GROUND, supply: SUPPLY };
 export function strokeAttrs(styleName) {
@@ -32,13 +64,13 @@ export function strokeAttrs(styleName) {
 export function fontAttrs(kind) {
   const f = kind === 'instance' ? INSTANCE_FONT : kind === 'label' ? LABEL_FONT : null;
   if (!f) return '';
-  const parts = [`font-size="${f.size}"`, `fill="${f.fill}"`];
+  const parts = [`font-size="${f.size}"`, `fill="${resolveColor(f.fill)}"`];
   if (f.weight) parts.push(`font-weight="${f.weight}"`);
   if (f.italic) parts.push(`font-style="italic"`);
   return parts.join(' ');
 }
 export function styleAttrs(style = {}, base = 'symbol') {
-  let attrs = strokeAttrs(base).replace('stroke="#111"', `stroke="${style.color || '#111'}"`);
+  let attrs = strokeAttrs(base).replace('stroke="#111"', `stroke="${resolveColor(style.color || '#111')}"`);
   if (style.width === 'thin' || style.width === 'thick') {
     attrs = attrs.replace(/stroke-width="[^"]+"/, `stroke-width="${style.width === 'thin' ? 3 : 9}"`);
   }

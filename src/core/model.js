@@ -531,6 +531,15 @@ export class LabelInstance {
       this._text = String(text);
     }
   }
+  setColor(color) {
+    const previous = this.style.color;
+    this.style.color = color;
+    for (const child of this.circuit.labels.values()) {
+      if (child.parent === this.id && child.style.color === previous) child.style.color = color;
+    }
+    return this;
+  }
+
 
   setAlign(a) {
     if (['center', 'left', 'right'].includes(a)) this.align = a;
@@ -618,6 +627,15 @@ export class ComponentInstance {
   bboxWorld() {
     return transformRect(this.transform, this.def.bbox);
   }
+  setColor(color) {
+    const previous = this.style.color;
+    this.style.color = color;
+    for (const label of this.circuit.labels.values()) {
+      if (label.owner === this.refdes && label.style.color === previous) label.style.color = color;
+    }
+    return this;
+  }
+
   toJSON() {
     return {
       refdes: this.refdes,
@@ -754,9 +772,21 @@ export class Net {
   }
 
   wiringErrors() { return validateWiring(this); }
+  setColor(color) {
+    const previous = this.style.color;
+    this.style.color = color;
+    for (const style of Object.values(this.wireStyles)) {
+      if (style.color === previous) style.color = color;
+    }
+    for (const label of this.circuit.labels.values()) {
+      if (label.netId === this.id && label.style.color === previous) label.style.color = color;
+    }
+    return this;
+  }
   toJSON() {
     return {
       id: this.id,
+
       name: this.name,
       style: { ...this.style },
       wireStyles: Object.fromEntries(Object.entries(this.wireStyles).map(([key, style]) => [key, { ...style }])),
@@ -890,6 +920,43 @@ export class Circuit {
     if (!c) throw new Error(`unknown component "${refdes}"`);
     return c;
   }
+  /**
+   * Rename a component while preserving its identity throughout the circuit.
+   * Refdes values are intentionally conservative: they must begin with a
+   * letter and contain only letters, digits, or underscores so terminal refs
+   * (`REFDES.TERM`) remain unambiguous.
+   */
+  renameComponent(refdes, newRefdes) {
+    const component = this.getComponent(refdes);
+    const next = String(newRefdes ?? '').trim();
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) {
+      throw new Error(`invalid refdes "${next}"`);
+    }
+    if (next === refdes) return component;
+    if (this.components.has(next)) throw new Error(`refdes ${next} taken`);
+
+    this.components.delete(refdes);
+    component.refdes = next;
+    this.components.set(next, component);
+    for (const net of this.nets.values()) {
+      for (const terminal of net.terminals) {
+        if (terminal.comp === refdes) terminal.comp = next;
+      }
+      if (net.routingMode === 'fixed') {
+        for (const path of net.fixedPaths) {
+          if (path.start?.comp === refdes) path.start.comp = next;
+          if (path.end?.comp === refdes) path.end.comp = next;
+        }
+      }
+    }
+    const label = this.labelOf(refdes);
+    if (label) {
+      label.owner = next;
+      if (label.text === refdes) label.text = next;
+    }
+    return component;
+  }
+
 
   _beginComponentEdit(refdes, previous) {
     const current = this._componentEdit;
@@ -1050,13 +1117,14 @@ export class Circuit {
         const w = child.colWidth() * GRID;
         const h = child.rowHeight() * GRID;
         if (kind === 'box') {
-          child.anchor = { x: snap((a.x + b.x) / 2), y: snap(a.y - h / 2) };
+          const top = Math.min(a.y, b.y);
+          child.anchor = { x: snap((a.x + b.x) / 2), y: snap(top - h / 2) };
         } else {
           const dx = Math.sign(b.x - a.x);
           const dy = Math.sign(b.y - a.y);
           child.anchor = {
             x: snap(dx > 0 ? a.x - w / 2 : dx < 0 ? a.x + w / 2 : a.x),
-            y: snap(dy > 0 ? a.y - h / 2 : a.y + h / 2),
+            y: snap(dy > 0 ? a.y - h / 2 : dy < 0 ? a.y + h / 2 : a.y),
           };
         }
       }
@@ -1120,7 +1188,7 @@ export class Circuit {
     const netSide = ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
       : this._defaultNetLabelSide(net, anchor);
-    return this.addLabel({ ...opts, text: net.name, name: undefined, owner: null, netId: net.id, netSide, offset: null, x: anchor.x, y: anchor.y });
+    return this.addLabel({ ...opts, text: net.name, name: undefined, owner: null, netId: net.id, netSide, offset: null, x: anchor.x, y: anchor.y, style: opts.style || { color: net.style.color } });
   }
 
   _netLabelAnchorOnPath(netOrId, point) {

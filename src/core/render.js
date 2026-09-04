@@ -1,7 +1,7 @@
 import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
-import { fontAttrs, strokeAttrs, styleAttrs } from './style.js';
+import { fontAttrs, resolveColor, strokeAttrs, styleAttrs } from './style.js';
 import { LabelInstance, parseLabelRuns } from './model.js';
 
 function fmt(n) {
@@ -27,25 +27,26 @@ function graphicsToSvg(g, textTransform = '', objectStyle = null) {
       return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${stroke}/>`;
     case 'polygon':
       if (g.fill === 'foreground') {
-        return `<polygon points="${polygonPoints(g)}" fill="${objectStyle?.color || '#111'}" stroke="none"/>`;
+        return `<polygon points="${polygonPoints(g)}" fill="${resolveColor(objectStyle?.color || '#111')}" stroke="none"/>`;
       }
-      return `<polygon points="${polygonPoints(g)}" fill="${g.fill || 'none'}" ${stroke}/>`;
+      return `<polygon points="${polygonPoints(g)}" fill="${resolveColor(g.fill || 'none')}" ${stroke}/>`;
     case 'text':
       return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${g.text}</text>`;
     case 'dot':
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${objectStyle?.color || g.fill || '#111'}" stroke="none"/>`;
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${resolveColor(objectStyle?.color || g.fill || '#111')}" stroke="none"/>`;
     default:
       return '';
   }
 }
 
-function symbolTextSvg(g, t) {
+function symbolTextSvg(g, t, color = '#111') {
   const p = applyTransform(t, g.x, g.y);
-  return `<text x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none">${g.text}</text>`;
+  const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${resolveColor(color)}"`);
+  return `<text x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none">${g.text}</text>`;
 }
 
 function textEl(x, y, text, anchor, size, fill) {
-  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${fill || '#111'}" stroke="none">${text}</text>`;
+  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${resolveColor(fill || '#111')}" stroke="none">${text}</text>`;
 }
 
 // Label-object text with one of the style.js font kinds ("instance" | "label").
@@ -54,7 +55,7 @@ function textEl(x, y, text, anchor, size, fill) {
 // alignment/anchor untouched (alignment is handled by the parent <text>).
 function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
   let font = fontAttrs(kind)
-    .replace(/fill="[^"]+"/, `fill="${color}"`)
+    .replace(/fill="[^"]+"/, `fill="${resolveColor(color)}"`)
     .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
     .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
   if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
@@ -85,7 +86,7 @@ function shapeAnnotationSvg(label, opacity = '') {
   const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
   const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
   const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
-  return `<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${label.style?.color || '#111'}" stroke="none"${opacity}/>`;
+  return `<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${resolveColor(label.style?.color || '#111')}" stroke="none"${opacity}/>`;
 }
 /**
  * Render a Circuit to an SVG string.
@@ -166,7 +167,7 @@ export function svgString(circuit, opts = {}) {
     const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
     parts.push(shapeAnnotationSvg(label, opacity));
     const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
-    parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', label.style?.color || '#111', label.style?.width)}</g>`);
+    parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
   }
   for (const c of comps) {
     const t = c.transform;
@@ -176,7 +177,7 @@ export function svgString(circuit, opts = {}) {
     parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${c.refdes}">`);
     for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
     parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(symbolTextSvg(g, t));
+    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
     if (o.includeBBox) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
@@ -268,7 +269,7 @@ export function svgString(circuit, opts = {}) {
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
     if (label.kind === 'box' || label.kind === 'arrow') continue;
     const t = label.textPos();
-    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', label.style?.color || '#111', label.style?.width, label.style)}</g>`);
+    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style)}</g>`);
   }
 
   parts.push('</svg>');
