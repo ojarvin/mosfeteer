@@ -2,7 +2,9 @@
 
 Schematic Spawner is a programmatic circuit schematic editor. It combines a connectivity-aware circuit model, automatic routing, an interactive web editor, SVG rendering, and a CLI/API command interface.
 
-![Folded-cascode OTA example](docs/images/folded-cascode-ota.svg)
+![Folded-cascode OTA — light mode](docs/images/folded-cascode-ota-light.png)
+
+![Folded-cascode OTA — dark mode](docs/images/folded-cascode-ota-dark.png)
 
 ## Quick start
 
