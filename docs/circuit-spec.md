@@ -1,4 +1,4 @@
-# CircuitSpec (Phase 0)
+# CircuitSpec (Phase 0–1)
 
 `CircuitSpec` is the versioned, generator-facing description of topology. It is
 not a saved `Circuit`, and it does not contain placement, routing, graphics, or
@@ -28,6 +28,26 @@ The pure seam is `normalizeCircuitSpec` (also exported as
 `validateCircuitSpec`) in `src/core/circuitSpec.js`. It validates the complete
 spec before a future phase may apply anything to a `Circuit`; malformed
 ownership therefore cannot partially mutate an editor circuit.
+
+## Phase 1 compiler
+
+`expandCircuitSpec` expands the six fixture-backed motifs listed below. An
+explicit `components`/`nets` pair is accepted for any of those motifs; when
+omitted, the small built-in template is expanded. Template component values
+may be supplied with `values: {"R1":"10k"}`. `openTerminals` records deliberate
+unconnected pins, and `ports` records `{id, type, net}` declarations (the
+normalizer also accepts `direction`/`netId` aliases). Component `role`, `group`,
+and `template` hints plus net `kind` and `logicalGroup` are retained as
+semantic metadata.
+
+`generateCircuit(spec)` returns `{spec, topology, circuit, report}`. It first
+normalizes the expanded spec, then stages a temporary `Circuit` from explicit
+component and physical-net membership. Components have zero placement only in
+that temporary validation circuit; generated topology contains no placement,
+wire path, routing, labels, or time-based IDs. Passing a live `Circuit` as the
+first argument is supported for transactional callers; it is never changed.
+Use `tryGenerateCircuit` when a structured `{ok:false, error}` result is more
+convenient than the normal throwing validation boundary.
 
 ## Ambiguity policy
 
