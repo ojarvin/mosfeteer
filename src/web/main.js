@@ -1031,6 +1031,7 @@ function selectedComps() {
   }
   return out;
 }
+
 function refreshCopyGhostBase() {
   if (drag?.mode === 'copyghost' && drag.ghost) {
     drag.ghost.baseSnapshot = snapshot();
@@ -3450,9 +3451,9 @@ function canvasMouseDown(ev) {
   lastLabelClick = null;
   lastWireClick = null;
 
-  // Wires render on top of component bodies, so a wire running along/inside a
-  // body must be pickable first. Hit order: exact TERMINAL, then WIRE, then
-  // component bbox, then empty space.
+  // Wires render behind component bodies, but remain selectable inside or
+  // along them. Hit order: exact TERMINAL, then WIRE, then component bbox,
+  // then empty space.
   const hit = pickAt(startWorld);
   const termHit = hit && hit.term ? hit : null;
   if (termHit) {

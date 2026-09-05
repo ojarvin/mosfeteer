@@ -15,7 +15,7 @@ Both roles share [`guidelines/style-guide.md`](./guidelines/style-guide.md). Thi
 
 ## Visual and symbol rules
 
-All symbols use the classic Razavi/textbook look: filled gate bars, arrowheads, and power slabs are `polygon` graphics with `fill:'foreground'`; symbol linework uses butt caps and miter joins. `style.js` stroke roles are `symbol` (normal, butt), `emph` (9.6), `ground` (11.6), `supply` (7.2), and legacy `LINE` (round wires) / `THICK`. `fontAttrs('instance'|'label')` is unchanged.
+All symbols use the classic Razavi/textbook look: filled gate bars, arrowheads, and power slabs are `polygon` graphics with `fill:'foreground'`; symbol linework uses butt caps and miter joins. `style.js` stroke roles are `symbol` (normal, butt), `wire` (round endpoint caps, miter joins), `emph` (9.6), `ground` (11.6), `supply` (7.2), and legacy `LINE` / `THICK`. SVG defaults to bottom annotations, middle wires, and top components/labels; `drawOrder` only restacks objects within their category. `fontAttrs('instance'|'label')` is unchanged.
 
 Labels support `_{...}` markup, such as `C_{GS}`. Owned instance labels auto-subscript a trailing numeral (`M1` renders as `M` with subscript `1`). Alignment, anchors, and the bbox model are unchanged; `textWidth` scales sub/superscript runs by ×0.62.
 
@@ -93,7 +93,7 @@ Terminal clicks have priority in Wire mode: `nearestTerminal` accepts a click wi
 
 `dd`/Delete calls `Circuit#deleteWireSegments`; all cuts use one branch snapshot so indices do not shift, and remaining geometry splits into connected components. A click that does not move, or moves less than threshold, never mutates the net. `dragMoved()` requires both >6 px client movement and >`GRID/2` world movement. Escape calls `cancelDrag()` and restores every pre-drag polyline. History is pushed once on mouseup; undo/redo round-trips a committed drag. A plain wire click sets `drag=null` before returning, preventing a later mousemove from causing a sticky reroute.
 
-Normal picking order is label → exact terminal → wire (`pickWire`) → component bbox → empty space. Wires render above bodies, so a wire inside or along a component body remains visible, selectable, and draggable.
+Normal picking order is label → exact terminal → wire (`pickWire`) → component bbox → empty space. Wires render behind bodies by default, but remain selectable and draggable inside or along a component body.
 
 Wire-mode construction starts with a terminal, empty-space point (`wire.source={x,y}`), or existing wire (`{x,y,netId}`). Clicks on terminals commit immediately; clicks elsewhere add route points. The preview autoroutes each leg from the source through committed points to the cursor, and Enter commits the resulting managed route at a free point or wire interior, so an endpoint need not be a terminal. Collinear points collapse where valid. Enter on wire interior merges nets: the junction is a mid-wire anchor in `net.junctions`, both target-wire halves are walked, and a solder dot is created. `rerouteNet` and `routeNet` walk all anchors (terminals and junctions). At a coincident cross-net span, selection/highlighting of one physical net is required to identify the wire being edited; the overlap itself does not create a junction.
 
@@ -129,7 +129,7 @@ Persisted `routingMode:"fixed"` nets with literal paths, including legacy diagon
 
 - Zoom is clamped so a grid cell is never over about 120 px and the grid never exceeds about 1000 lines. `fitView`, drag-zoom, wheel zoom, right-click zoom-out, and `resizeView` all clamp via `minViewW()` / `maxViewW()`.
 - `html.dark` toggles CSS variables. Inline SVG presentation attributes are recolored by CSS overrides (for example, `.canvas svg [stroke="#111"]` and `[fill="#fff"]`), so core renderer colors need not change. Dark mode makes the crosshair amber, hides it outside the drawing area, and leaves colored halos/wire-source overlays untouched. `C` and `#btn-crosshair` toggle it. `#btn-theme` toggles and persists `schematic-spawner:theme` in localStorage, defaulting to system `prefers-color-scheme`.
-- `#` calls `setGrid()`; `#btn-grid` mirrors it. Toolbar buttons have `title` tooltips. SVG z-order is crosshair, components, wires, labels, pin/junction dots, then selection/net overlays. Wires remain above component bodies.
+- `#` calls `setGrid()`; `#btn-grid` mirrors it. Toolbar buttons have `title` tooltips. SVG z-order is crosshair, bottom annotations, middle wires, top components/labels, pin/junction dots, then selection/net overlays. Back/Front restacks selected objects only within their default layer.
 - `?` and Help open a modal keyboard/command reference. The search field receives focus, typing filters the reference, and only the reference pane scrolls. Escape closes it.
 - Copy mode is `c` (`y` and Ctrl/Cmd+C aliases). If nothing is selected, the source click copies the clicked component, label, or wire; otherwise the complete selected component/label/wire/net set is copied regardless of click location. The clicked point is the cursor anchor. A ghost follows the cursor; click/Enter commits and later clicks commit more copies without leaving copy mode. Escape cancels the ghost to source selection. A single copied object carries color, line style, and width; a set has no style source. Ctrl+Shift+V applies a single copied object's style to the current selection wherever supported.
 - A complete physical net is copied only when all its terminals are on selected components, or when a complete terminal-less net is explicitly selected. Its route/branches/junctions and net labels are preserved; pasted labels and nets receive fresh IDs and translated on-path anchors, never becoming annotations. `p` / Ctrl/Cmd+V (`pasteClipboard`) remains one-shot paste at the cursor and preserves relative positions/connectivity.
@@ -176,6 +176,12 @@ Phase 2's pure analog placement seam is `src/core/placement.js` (`placeCircuit` 
 topology, uses `ComponentInstance` world geometry, and returns component
 placements plus declared ports, rail metadata, reserved corridors, and a
 bounded deterministic report; it does not mutate or route a `Circuit`.
+
+Phase 3's pure batch-routing seam is `src/core/routing.js` (`routeCircuit` /
+`tryRouteCircuit`). It materializes declared physical nets through the model's
+public reroute machinery, preserves fixed/authored paths, retries a bounded set
+of stable net orders, and returns a routed circuit plus structured metrics or an
+atomic failure; equal net names never merge physical nets.
 
 ## Maintaining this file
 

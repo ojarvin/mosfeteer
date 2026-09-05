@@ -74,6 +74,28 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
   return `<text ${attrs}>${body}</text>`;
 }
 
+const ANNOTATION_ARROW_LENGTH = 32;
+const ANNOTATION_ARROW_HALF_WIDTH = 18;
+
+function annotationArrowPoints(a, b) {
+  const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  const shaft = {
+    x: b.x - ANNOTATION_ARROW_LENGTH * Math.cos(angle),
+    y: b.y - ANNOTATION_ARROW_LENGTH * Math.sin(angle),
+  };
+  return {
+    shaft,
+    left: {
+      x: shaft.x + ANNOTATION_ARROW_HALF_WIDTH * Math.sin(angle),
+      y: shaft.y - ANNOTATION_ARROW_HALF_WIDTH * Math.cos(angle),
+    },
+    right: {
+      x: shaft.x - ANNOTATION_ARROW_HALF_WIDTH * Math.sin(angle),
+      y: shaft.y + ANNOTATION_ARROW_HALF_WIDTH * Math.cos(angle),
+    },
+  };
+}
+
 function shapeAnnotationSvg(label, opacity = '') {
   const a = label.anchor; const b = label.end;
   const attrs = styleAttrs(label.style);
@@ -81,11 +103,7 @@ function shapeAnnotationSvg(label, opacity = '') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
   }
-  const angle = Math.atan2(b.y - a.y, b.x - a.x);
-  const tip = 40; const half = 24;
-  const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
-  const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
-  const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
+  const { shaft, left, right } = annotationArrowPoints(a, b);
   return `<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${resolveColor(label.style?.color || '#111')}" stroke="none"${opacity}/>`;
 }
 /**
@@ -161,31 +179,33 @@ export function svgString(circuit, opts = {}) {
     const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
   }
+  const labels = [...circuit.labels.values()];
   const comps = [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
-  for (const label of circuit.labels.values()) {
-    if (!['arrow', 'box'].includes(label.kind) || label.id === o.editingLabel) continue;
+
+  // Bottom layer: visual shape annotations and their child labels. Keeping
+  // these together prevents annotation text from floating above the other
+  // default layers when a box or arrow has a caption.
+  const annotationShapes = labels
+    .filter((label) => ['arrow', 'box'].includes(label.kind))
+    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
+  for (const label of annotationShapes) {
+    if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
     parts.push(shapeAnnotationSvg(label, opacity));
     const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
     parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
-  }
-  for (const c of comps) {
-    const t = c.transform;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
-    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
-    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
-    parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${c.refdes}">`);
-    for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
-    parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
-    if (o.includeBBox) {
-      const r = c.bboxWorld();
-      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
+    for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
+      if (child.id === o.editingLabel) continue;
+      const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+      const t = child.textPos();
+      parts.push(`<g${childOpacity}>${labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style)}</g>`);
     }
   }
 
-  // Wires draw ON TOP of component bodies so an overlapping wire stays visible
-  for (const net of circuit.nets.values()) {
+  // Middle layer: wires deliberately sit behind components and labels. Their
+  // rounded caps still overlap terminal leads at the exact electrical point.
+  const nets = [...circuit.nets.values()];
+  for (const net of nets) {
     // Fixed paths are already the complete authored geometry. Keep the legacy
     // managed fallback below so multi-terminal managed nets retain their old
     // rendering behavior.
@@ -206,17 +226,34 @@ export function svgString(circuit, opts = {}) {
       const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'line')}><title>${wireHelp}</title></path>`);
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'wire')}><title>${wireHelp}</title></path>`);
         continue;
       }
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]; const b = pts[i];
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = net.wireStyles[`${branch}:${i}`] || net.style;
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(segmentStyle, 'line')}><title>${wireHelp}</title></path>`);
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(segmentStyle, 'wire')}><title>${wireHelp}</title></path>`);
       }
     }
   }
+
+  // Top layer: components and their body/value graphics sit above wires.
+  for (const c of comps) {
+    const t = c.transform;
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
+    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
+    parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${c.refdes}">`);
+    for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
+    parts.push('</g></g>');
+    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
+    if (o.includeBBox) {
+      const r = c.bboxWorld();
+      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
+    }
+  }
+
   // Junction dots are placed by the routing algorithm as actual `solder`
   // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
   // circle at net junctions.
@@ -243,6 +280,8 @@ export function svgString(circuit, opts = {}) {
     }
   }
 
+  // Top layer: components, instance labels, free labels, and net labels draw
+  // above the middle wires.
   // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
   for (const c of comps) {
     const def = c.def;
@@ -264,10 +303,9 @@ export function svgString(circuit, opts = {}) {
   // Dedicated / instance label objects (instance identifiers are bold+italic and
   // larger than free-standing annotation labels). Text is aligned inside the
   // label's rendered box (left/center/right) and vertically centered.
-  for (const label of circuit.labels.values()) {
+  for (const label of labels.filter((candidate) => candidate.kind !== 'box' && candidate.kind !== 'arrow' && !candidate.parent)) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
-    if (label.kind === 'box' || label.kind === 'arrow') continue;
     const t = label.textPos();
     parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style)}</g>`);
   }
@@ -422,11 +460,7 @@ export function editorOverlay(circuit, opts = {}) {
       const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
       parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
     } else {
-      const angle = Math.atan2(b.y - a.y, b.x - a.x);
-      const tip = 40; const half = 24;
-      const shaft = { x: b.x - tip * Math.cos(angle), y: b.y - tip * Math.sin(angle) };
-      const left = { x: shaft.x + half * Math.sin(angle), y: shaft.y - half * Math.cos(angle) };
-      const right = { x: shaft.x - half * Math.sin(angle), y: shaft.y + half * Math.cos(angle) };
+      const { shaft, left, right } = annotationArrowPoints(a, b);
       parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="#4f9cf9" stroke="none" opacity=".8"/>`);
     }
   }

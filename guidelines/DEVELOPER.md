@@ -49,7 +49,7 @@ src/
 │   │   └── variable.js Composed symbols (variable_resistor/cap/inductor).
 │   ├── grid.js         GRID = 40; snap/ceilGrid.
 │   ├── geometry.js     bbox/transform helpers.
-│   └── style.js        Stroke roles (symbol/emph/ground/supply) and font attrs.
+│   └── style.js        Stroke roles (symbol/wire/emph/ground/supply) and font attrs.
 ├── web/
 │   ├── serve.js        Static + HTTP API (circuits + commands).
 │   ├── index.html      Single-page app entry.
@@ -151,7 +151,7 @@ When you fix a bug, write the failing test first, watch it fail, then fix.
          bbox: { x: -80, y: -40, w: 160, h: 80 },
          graphics: [
            // { kind:'line'|'polyline'|'polygon'|'circle'|'text'|'arc', ... }
-           // style: 'symbol' | 'emph' | 'ground' | 'supply' | 'LINE' | 'THICK'
+           // style: 'symbol' | 'wire' | 'emph' | 'ground' | 'supply' | 'LINE' | 'THICK'
          ],
          labelOffset: { x: 0, y: 80 },   // one-square label gap, grid-snapped
          refPos: null,                   // owned label auto-created

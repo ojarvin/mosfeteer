@@ -6,7 +6,30 @@ import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 
 import { strokeAttrs, setColorToken, resolveColor } from '../src/core/style.js';
 
-test('default wire stroke uses flat caps, miter joins, and semantic colors resolve dynamically', () => {
+test('wire rendering uses round caps without changing symbol stroke roles', () => {
+  assert.match(strokeAttrs('unknown'), /stroke-linecap="flat"/);
+  assert.match(strokeAttrs('unknown'), /stroke-linejoin="miter"/);
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  const net = c.connect('R1.b', 'R2.a');
+  assert.deepEqual(net.paths()[0], [{ x: 160, y: 0 }, { x: 400, y: 0 }]);
+  const svg = svgString(c);
+  const wire = svg.match(/<path class="wire-managed"[^>]+>/)?.[0] || '';
+  assert.match(wire, /stroke-linecap="round"/);
+  assert.match(wire, /stroke-linejoin="miter"/);
+  assert.match(svg.match(/<path d="M -80 0 L -34\.88 0[^>]+>/)?.[0] || '', /stroke-linecap="butt"/);
+});
+
+test('annotation arrowheads stay close to MOS source-arrow size', () => {
+  const c = new Circuit();
+  c.addAnnotation('arrow', { x: 0, y: 0, end: { x: 160, y: 0 } });
+  const svg = svgString(c);
+  assert.match(svg, /<polygon points="160 0 128 -18 128 18"/);
+  assert.doesNotMatch(svg, /<polygon points="160 0 120 24 120 -24"/);
+});
+
+test('default wire stroke keeps semantic colors resolving dynamically', () => {
   assert.match(strokeAttrs('unknown'), /stroke-linecap="flat"/);
   assert.match(strokeAttrs('unknown'), /stroke-linejoin="miter"/);
   const original = '#d96c75';
@@ -257,18 +280,22 @@ test('fully differential opamp shares the opamp footprint with two outputs', () 
   assert.ok(svg.includes('>U<tspan'), 'U2 instance label rendered');
 });
 
-test('wires render ON TOP of component bodies (z-order)', () => {
+test('default render layers keep annotations below wires and components above wires', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
   c.wireTo('R1.b', { x: 400, y: 0 });
+  c.addAnnotation('arrow', { x: 0, y: 200, end: { x: 160, y: 200 }, text: 'NOTE' });
+  c.addLabel({ text: 'TOP', x: 240, y: 200 });
   const svg = svgString(c);
-  // The net wire (160,0)->(400,0) must be emitted after the LAST component
-  // group so component linework can never hide it.
+  const annotation = svg.indexOf('M 0 200 L 128 200');
+  const annotationText = svg.indexOf('>NOTE<');
   const wire = svg.indexOf('M 160 0 L 400 0');
-  const lastCompGroup = svg.lastIndexOf('<g class="sym"');
-  assert.ok(wire > lastCompGroup, `net wire must come after the last component group (wire @${wire}, last comp @${lastCompGroup})`);
-  // and before the terminal dots (pin markers stay readable on top of wires)
+  const component = svg.indexOf('<g class="sym"');
+  const label = svg.indexOf('>TOP<');
+  assert.ok(annotation >= 0 && annotation < wire);
+  assert.ok(annotationText > annotation && annotationText < wire);
+  assert.ok(wire < component && component < label);
   const terminalDot = svg.indexOf('r="3" fill="#111"');
   assert.ok(terminalDot > wire, 'terminal dots draw above wires');
 });

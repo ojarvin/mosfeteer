@@ -68,6 +68,25 @@ placement-owned vocabulary; unknown hard/soft strings remain in
 `report.deferredConstraints` for later phases. `tryPlaceCircuit` is the
 non-throwing adapter.
 
+## Phase 3 deterministic routing
+
+`routeCircuit` in `src/core/routing.js` consumes a normalized spec plus a Phase 2
+placement (or computes the placement), materializes each declared physical net,
+and calls `Circuit#rerouteNet` for fresh managed geometry. Nets are routed in a
+stable priority order (semantic kind, terminal count, name, then ID); retries
+are bounded and only change that deterministic order. Fixed paths and authored
+managed paths supplied by an existing `Circuit` are retained. Equal names never
+merge physical nets.
+
+The result is `{ok, spec, placement, circuit, state, metrics, report}` for a
+valid candidate, or a structured failure without a circuit. Metrics include
+reachability, body/overlap and diagonal violations, collinear cross-net
+violations, perpendicular crossings, bends, length, clearance, label overlap,
+and placement symmetry. Named nets receive labels only after a drawable path
+exists, through `Circuit#addNetLabel`; no parallel wire graph or router is
+created. `tryRouteCircuit` is the non-throwing adapter. Routing attempts are
+bounded by `MAX_ROUTING_ATTEMPTS`.
+
 ## Ambiguity policy
 
 Phase 0 rejects ambiguity rather than guessing: duplicate IDs, unknown symbols

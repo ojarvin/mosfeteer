@@ -1,19 +1,23 @@
 /**
  * Centralized schematic line styles.
  *
- * LINE  — general wiring and component linework. The default; use unless a
- *         symbol part explicitly says otherwise. Flat caps and miter joins
- *         keep wire bends sharp and aligned with textbook symbol linework.
+ * LINE  — legacy/default fallback for wiring and component linework. Flat
+ *         caps and miter joins keep fallback strokes aligned with the textbook
+ *         look. Rendered managed wires use WIRE instead.
  * THICK — heavier linework (~1.5x the default) for selected features of some
  *         symbols (e.g. a MOSFET gate bar, bold power/ground rails).
  *
  * Razavi-style symbol roles (butt caps / miter joins for the crisp textbook
- * look). Symbols select a role via `style`: 'symbol' (normal), 'emph'
- * (emphasis), 'ground', 'supply'. Filled body shapes use polygon fill.
+ * look). Symbols select a role via `style`: 'symbol' (normal), 'wire',
+ * 'emph' (emphasis), 'ground', or 'supply'. Filled body shapes use polygon
+ * fill.
  */
 export const LINE = { stroke: '#111', width: 6, cap: 'flat', join: 'miter' };
 export const THICK = { stroke: '#111', width: Math.round(LINE.width * 1.5), cap: 'flat', join: 'flat' };
 export const SYMBOL = { stroke: '#111', width: 6, cap: 'butt', join: 'miter' };
+// Wires overlap their pin's terminal lead at the same coordinate. Round caps
+// hide the anti-aliased seam without changing the electrical path.
+export const WIRE = { stroke: '#111', width: 6, cap: 'round', join: 'miter' };
 export const EMPH = { stroke: '#111', width: 9.6, cap: 'butt', join: 'miter' };
 export const GROUND = { stroke: '#111', width: 11.6, cap: 'butt', join: 'miter' };
 export const SUPPLY = { stroke: '#111', width: 7.2, cap: 'butt', join: 'miter' };
@@ -56,7 +60,7 @@ export function setColorToken(token, value) {
 
 export const LEGACY_STYLE_COLORS = STYLE_COLORS;
 
-const STYLES = { thick: THICK, symbol: SYMBOL, emph: EMPH, ground: GROUND, supply: SUPPLY };
+const STYLES = { thick: THICK, symbol: SYMBOL, wire: WIRE, emph: EMPH, ground: GROUND, supply: SUPPLY };
 export function strokeAttrs(styleName) {
   const s = STYLES[styleName] || LINE;
   return `stroke="${s.stroke}" stroke-width="${s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"`;
