@@ -156,6 +156,13 @@ function normalizeConstraints(input) {
     out.spacing = detachedConstraint(input.spacing);
     if (out.spacing.minCells !== undefined && (!Number.isInteger(out.spacing.minCells) || out.spacing.minCells < 0)) throw new CircuitSpecError('constraints.spacing.minCells must be a non-negative integer');
   }
+  if (input?.corridors !== undefined) {
+    if (!Array.isArray(input.corridors)) throw new CircuitSpecError('constraints.corridors must be an array');
+    out.corridors = input.corridors.map((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new CircuitSpecError('constraints.corridors entries must be objects');
+      return detachedConstraint(value);
+    }).sort((a, b) => compare(JSON.stringify(a), JSON.stringify(b)));
+  }
   return out;
 }
 

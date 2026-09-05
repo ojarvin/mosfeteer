@@ -1,5 +1,5 @@
-/** Phase 1 topology compiler facade. Kept separate so future placement and
- * routing phases can grow without changing the CircuitSpec contract module. */
+/** Generation facades. Topology compilation and Phase 2 placement stay pure;
+ * routing remains a later seam. */
 import {
   CIRCUIT_SPEC_VERSION,
   SUPPORTED_TEMPLATES,
@@ -12,6 +12,9 @@ import {
   tryGenerateCircuit,
   validateCircuitSpec,
 } from './circuitSpec.js';
+import { PLACEMENT_VERSION, MAX_PLACEMENT_CANDIDATES, placeCircuit, tryPlaceCircuit } from './placement.js';
+
+export { PLACEMENT_VERSION, MAX_PLACEMENT_CANDIDATES, placeCircuit, tryPlaceCircuit };
 
 export {
   CIRCUIT_SPEC_VERSION,

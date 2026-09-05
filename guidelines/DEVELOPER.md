@@ -40,7 +40,8 @@ src/
 │   ├── render.js       SVG renderer (svgString).
 │   ├── ascii.js        Coarse ASCII preview.
 │   ├── circuitSpec.js  Versioned generator-facing topology contract.
-│   ├── generator.js    Phase 1 topology compiler facade.
+│   ├── generator.js    Topology compiler and placement facades.
+│   ├── placement.js    Phase 2 deterministic analog placer.
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning

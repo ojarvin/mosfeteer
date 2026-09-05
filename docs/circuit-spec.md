@@ -1,4 +1,4 @@
-# CircuitSpec (Phase 0–1)
+# CircuitSpec (Phase 0–2)
 
 `CircuitSpec` is the versioned, generator-facing description of topology. It is
 not a saved `Circuit`, and it does not contain placement, routing, graphics, or
@@ -49,6 +49,25 @@ first argument is supported for transactional callers; it is never changed.
 Use `tryGenerateCircuit` when a structured `{ok:false, error}` result is more
 convenient than the normal throwing validation boundary.
 
+## Phase 2 placement
+
+`placeCircuit(spec)` in `src/core/placement.js` consumes the normalized topology
+(or a `generateCircuit` result) and returns `{ok, placements, ports, rails,
+corridors, report}`. It is pure: each candidate is evaluated with the model's
+`ComponentInstance.bboxWorld()` and `worldTerminals()` geometry, and no live
+`Circuit` is changed. Candidates use stable component ordering, 40-unit
+origins, analog PMOS/NMOS rows, matched groups, transistor columns/stacks,
+and left/right declared ports. Supply and ground metadata is reported as top
+and bottom rails; no wire or label geometry is fabricated.
+
+The search is bounded (`MAX_PLACEMENT_CANDIDATES`), integer-scored with the
+canonical candidate tuple, and deterministic. Bounding-box and critical or
+feedback corridor conflicts are hard failures rather than topology guesses.
+Constraint `groups`, `rows`, `columns`, `spacing`, and `corridors` are the
+placement-owned vocabulary; unknown hard/soft strings remain in
+`report.deferredConstraints` for later phases. `tryPlaceCircuit` is the
+non-throwing adapter.
+
 ## Ambiguity policy
 
 Phase 0 rejects ambiguity rather than guessing: duplicate IDs, unknown symbols
@@ -62,8 +81,8 @@ to the caller instead of silently choosing a topology.
 **Hard constraints** are gates: violations make a candidate invalid (terminal
 ownership, satisfiable required topology, and unique IDs). **Soft constraints**
 rank otherwise-valid candidates (compactness, readable signal flow, and
-symmetry). The arrays in a spec are descriptive phase-0 metadata; their
-interpretation belongs to later generation phases.
+symmetry). Placement interprets its documented geometry constraints; other
+hard and soft entries remain deferred for later generation phases.
 
 ## Candidate score
 

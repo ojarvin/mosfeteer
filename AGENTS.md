@@ -169,6 +169,14 @@ Debug hooks: `window.__circuit()` returns `{comps,nets,labels}`, with label `wor
 
 When starting a server, `npm start` and `npm run serve` use Node watch mode, so imported source changes—including the symbol registry—restart the process automatically. Direct `node src/web/serve.js` launches a fixed process and must be restarted after source changes.
 
+## Generated placement
+
+Phase 2's pure analog placement seam is `src/core/placement.js` (`placeCircuit` /
+`tryPlaceCircuit`), documented in `docs/circuit-spec.md`. It consumes normalized
+topology, uses `ComponentInstance` world geometry, and returns component
+placements plus declared ports, rail metadata, reserved corridors, and a
+bounded deterministic report; it does not mutate or route a `Circuit`.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
