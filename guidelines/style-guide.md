@@ -42,6 +42,8 @@ that makes the electrical story obvious without relying on text:
   labels, and future edits;
 - keep the shortest, clearest route for the most important signal paths;
   move a device rather than forcing a long or tangled wire;
+- keep bias and reference circuitry visually distinct from the main signal path,
+  but close enough that its purpose and controlled devices are easy to relate;
 - make boundaries and ownership visible: a component label belongs in open
   space near its component, a port label faces the circuit, and a junction dot
   appears only where nets actually join;
@@ -143,15 +145,22 @@ topology plan, not as a sequence of local additions:
 - Use shared columns for stacked devices: align the upper source with the lower
   drain, and keep the stack pitch equal to the device height so the shared node
   is a clean boundary connection.
-- Put differential pairs and matched loads on wide, symmetric pitches. Reserve
-  an open centerline for tail/current circuitry and balanced junctions.
-- Keep bias-generation devices and bias sources at the left or another clearly
-  separated edge. Keep second-stage devices and output/compensation parts to
-  the right, with a clear central corridor for the high-value signal path.
+- Put differential pairs and matched loads on wide, symmetric pitches. Choose
+  the polarity-aware orientation that keeps both input terminals readable from
+  the input side; reserve an open centerline for tail/current circuitry and
+  balanced junctions.
+- Keep bias-generation devices and bias sources in a distinct, compact area
+  near the devices they control, without blocking the main signal corridor.
+  Keep second-stage devices and output/compensation parts to the right, with a
+  clear central corridor for horizontal signal flow.
 - Align devices that share a gate net whenever practical. A straight gate bus
   is easier to inspect than several long taps; the documented MOS gate-bus
   exception is a fallback for intentional shared-gate geometry, not a reason to
   compress unrelated rows.
+- For a current mirror, align the control terminals on a common row or column
+  and orient the diode-connected reference so its gate/drain tie meets the
+  control bus through open space. Align mirror outputs with the stages they
+  feed; do not make a bias reference leg carry an avoidable long detour.
 - Fit and review this placement before routing. If routing later produces many
   failures, move rows/columns and re-review instead of accumulating detours.
 
@@ -218,10 +227,10 @@ overlap.
 
 - All `supply` symbols go on one line — the **top rail**. All `ground`
   symbols go on one line — the **bottom rail**.
-- **Never wire two supplies together; never wire two grounds together.** A
-  supply / ground icon attached to a net is that net's rail connection;
-  rails are implicitly global. Real wires between them are redundant
-  clutter.
+- Connect each supply or ground symbol directly to the intended local net.
+  Symbols on the same visual rail remain independent: never wire two supplies
+  together or two grounds together unless the topology explicitly requires it.
+  The symbol is the rail connection; extra rail-to-rail wiring is clutter.
 - Only **local** device nets carry real wires: signal flow between gates /
   drains / sources and passives.
 
@@ -290,31 +299,22 @@ load, and complementary differential structures. Change the polarity and
 terminal names as needed, but retain equal spacing, matched mirroring,
 aligned rows, and centered shared circuitry.
 
-### 4.5b Mirrors and active loads: control terminals face inward
+### 4.5b Current mirrors and active loads
 
-The same symmetry idea applies to a mirror / active-load pair sitting
-above (or below) a differential core — e.g. the PMOS load of a 5T OTA.
+Use the topology—not a named amplifier—as the source of truth for mirror
+orientation:
 
-- **Mirror the two load devices so their CONTROL terminals face each
-  other.** The left load gets `--mirrorX` (its gate points right), the
-  right load stays default (gate points left). Their gates then meet
-  across a short open gap, so the mirror-gate connection is one clean wire
-  with the bodies on the outer sides.
-- **Align each load's output terminal (drain) to the corresponding core
-  terminal's column** so the connection drops straight down — no diagonal
-  or long detour. In the 5T OTA this means M4.d aligns with M1.d and M5.d
-  with M2.d.
-- **Diode-connected device:** the drain-to-gate tie is a deliberate route;
-  craft it explicitly with a full cell of clearance around the body and
-  reach the gate with a short lead, rather than trusting the auto-router
-  to hug the outline. The tie's junction sits in OPEN SPACE — never start
-  the tie on a terminal pin or hug the body edge; route it under / around
-  the body so it connects the control terminal to its own DRAIN (an
-  over-the-top route can touch the source instead). Verify with `eval`
-  (no `wireThroughBBoxes`).
-- Symmetry axis, even gaps, and the two bodies mirrored "back to back"
-  apply exactly as in §4.5: equal halves, gates inward, output terminals
-  aligned.
+- Align matched control terminals on a common row or column. Orient the pair
+  so the control bus is short, clear, and does not pass through unrelated
+  bodies; matched output terminals should align with the stages they feed.
+- Make the diode-connected reference unmistakable: its gate/drain tie should
+  enter open space, use a short direct route, and avoid the body and source
+  terminal. Do not rely on a body-hugging autoroute when a small placement move
+  makes the reference leg obvious.
+- Keep the bias reference separate from the main signal path but close to the
+  mirror it controls. Preserve equal spacing and label clearance for matched
+  devices, adapting the facing convention to NMOS, PMOS, BJT, or active-load
+  polarity.
 
 ### 4.5c Cross-coupled, fully differential structures
 
@@ -377,15 +377,18 @@ corresponding net branch.
   Do not use diagonals merely to save space.
 - Route around component interiors. Boundary-hugging is acceptable where
   the router and evaluator define the boundary as non-interior.
-- Prefer short, direct routes with few bends, but do not trade away
-  readability.
+- Prefer short, direct orthogonal routes with few bends, but do not trade away
+  readability. Avoid loops and redundant parallel branches; one branch should
+  represent one intended connection.
 - Use explicit routes for deliberate hand-edited wiring. Do not silently
   replace a user's manual route with a fresh autoroute.
 - When moving a component, preserve the existing wire body whenever possible;
   use the editor's connected-move behavior to reroute or translate affected
   connectivity only as required to keep pins attached.
 - Avoid wire crossings. If a crossing is unavoidable, make the connectivity
-  distinction obvious and use a junction only when the net is actually joined.
+  distinction obvious. A real branching net gets one visible junction dot at
+  its actual open-space T/cross junction; an ordinary bend or crossing gets no
+  dot, and never add a `solder` component by hand.
 - **Treat coincident physical nets as distinct.** Equal net names do not connect
   separate nets. A positive-length collinear overlap between different physical
   nets is an electrical violation, not a junction, and must never be repaired
@@ -409,7 +412,7 @@ Unless circuit convention dictates otherwise, use supplies at the top, grounds o
 
 For differential or matched structures, apply the full symmetry rules in §4.5: mirror the right-hand device across the vertical center axis, use an even pitch whose midpoint is on the 40-grid, center shared tail/source circuitry there, align corresponding output and shared terminals on common rows, orient bias terminals toward their source, and leave enough pitch for labels and wire corridors. Keep output leads straight where possible and align same-side endpoints. The same visual contract applies across MOS, BJT, folded/cascode, active-load, and complementary pairs: equal halves, one centerline, aligned rows, and centered shared circuitry.
 
-For a three-terminal shared node, route first to a centered junction, then split into balanced left/right branches. Do not let terminal order make the tree asymmetric. Multi-branch junctions (3+ terminals) receive an automatic `solder` component only at the real T-junction; never add one by hand or expect one at an ordinary corner. Keep the shared branch off the terminal row, and never add a dot where different nets merely cross.
+For a three-terminal shared node, route first to a centered junction, then split into balanced left/right branches. Do not let terminal order make the tree asymmetric. Follow the junction rule in §5: multi-branch junctions receive an automatic `solder` component only at the real open-space T-junction; never add one by hand or expect one at an ordinary corner. Keep the shared branch off the terminal row, and never add a dot where different nets merely cross.
 
 ---
 
@@ -486,11 +489,18 @@ center, or right edge); changing text length may resize the box symmetrically
 around the same center. The dimensions and markup metrics are shared with the
 inline preview.
 
+**Keep related input/output ports adjacent to their signal endpoints.** Put
+inputs on the input side and outputs on the output side; when several ports
+share an edge, align and space them consistently rather than scattering them
+around the drawing.
+
 **Port labels sit one grid square from the port symbol, aligned toward
 it.** Left-of-port labels are `align: right`; right-of-port labels are
 `align: left`. The label box edge is 40 units clear of the port box —
-never overlapping the symbol. Horizontal ports are the common case; keep
-the same one-square rule for any label near a symbol.
+never overlapping the symbol. Use the same gap and baseline for a related set,
+and use `_{...}` subscript markup consistently (`V_{INP}`, `V_{OUT}`).
+Horizontal ports are the common case; keep the same one-square rule for any
+label near a symbol.
 
 **Edge symbols put their label on the OUTSIDE.** A current source,
 capacitor, or other part at the edge of the drawing gets its label on

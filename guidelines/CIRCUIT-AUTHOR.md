@@ -137,15 +137,20 @@ Companion docs:
 Follow one reviewable sequence:
 
 1. **Functional placement** — state the intended topology and signal names,
-   place the functional components, and apply connectivity-aware mirroring,
-   rotation, spacing, and alignment. Keep the layout readable: inputs
-   generally left-to-right, supplies top-to-bottom, matched structures
-   aligned, and at least one empty grid cell around bodies, labels, and wires.
-   Inspect `list`, `bounds`, `state`, `ascii`, and the fitted browser view.
+   then apply connectivity-aware mirroring, rotation, spacing, and alignment.
+   Keep signal flow compact and horizontal; make matched pairs symmetric while
+   keeping their input terminals readable for either transistor polarity. Keep
+   bias/reference circuitry separate from the main path but close to the
+   devices it controls. Leave at least one empty grid cell around bodies,
+   labels, and wires. Inspect `list`, `bounds`, `state`, `ascii`, and the fitted
+   browser view.
 2. **Rails, grounds, and ports** — after the functional layout is established,
-   add supply and ground symbols, then external input/output ports. Do not let
-   ports dictate device placement, and do not add visible supply or ground
-   labels unless requested.
+   add supply and ground symbols, then external input/output ports. Connect each
+   rail symbol directly to its intended net; aligned symbols are independent
+   unless the topology explicitly connects them. Keep related input/output port
+   components adjacent and their labels consistently spaced. Do not let ports
+   dictate device placement, and do not add visible supply or ground labels
+   unless requested. See the style guide for the rail and label standard.
 3. **Placement review** — fit the browser view, verify orientation, spacing,
    labels, topology, and visual balance, and ask the user for feedback before
    routing. This is the decision gate for materially different topology,
@@ -153,28 +158,31 @@ Follow one reviewable sequence:
    choices. Batch clear placement moves, rotations, or mirrors, then review
    again.
 4. **Route logical groups** — only after placement is accepted, route one
-   logical net group or functional block at a time. Prefer short orthogonal
-   routes and intentional, legible crossings; use named labels or global rails
-   rather than duplicating long wires. The routing tool creates junction solder
-   dots automatically at multi-terminal nodes: never add `solder` components
-   by hand, and keep shared branches off terminal rows so junctions are real T
-   connections. Inspect the fitted view and run `eval` between meaningful
+   logical net group or functional block at a time. Prefer short, direct
+   orthogonal routes. Avoid loops, unnecessary crossings, and redundant branch
+   wiring; use named labels or global rails rather than duplicating long wires.
+   Route a branching net through one open-space junction so the editor creates
+   the real solder dot; never add `solder` components by hand or hide a branch
+   on a terminal row. Inspect the fitted view and run `eval` between meaningful
    groups. If routing becomes tangled or requires a materially different
    interpretation, stop and ask the user rather than committing a speculative
    batch.
 5. **Labels and evaluation** — route ports and add requested labels from the
    established circuit, keeping component identity separate from signal names.
    Use formatted external labels such as `V_{OUT}` and never remove a requested
-   port label merely because its reference is already present. Run `eval`,
-   inspect `state` when a net is ambiguous, and correct topology, placement,
-   labels, or routes before continuing. A clean `eval` report cannot replace
-   visual review of hierarchy, symmetry, label clearance, or signal flow.
-6. **Final browser and SVG inspection** — before presenting the circuit as
-   complete, inspect every component-label position and wire crossing in the
-   fitted browser view and saved SVG together. Remove unrequested value or
-   explanatory text; confirm readable component IDs, visible wires and real
-   junctions, clear whitespace, and agreement with the JSON topology; then
-   perform the command checks in **Final verification** below.
+   port label merely because its reference is already present. If ports or
+   labels already exist, move or edit them rather than recreating them. Run
+   `eval`, inspect `state` when a net is ambiguous, and correct topology,
+   placement, labels, or routes before continuing. A clean `eval` report cannot
+   replace visual review of hierarchy, symmetry, label clearance, or signal
+   flow.
+6. **Final browser and SVG inspection** — `eval` is the structural check, not
+   the visual review. Before presenting the circuit as complete, inspect every
+   component-label position and wire crossing in both the fitted browser view
+   and saved SVG. Remove unrequested value or explanatory text; confirm
+   readable component IDs, visible wires and real junctions, clear whitespace,
+   and agreement with the JSON topology; then perform the command checks in
+   **Final verification** below.
 
 When the user requests a change, preserve accepted topology and manual routes
 unless the request explicitly changes them.
@@ -201,7 +209,7 @@ The browser polls `/api/active` and the active circuit every 500 ms; CLI command
 
 1. Use an existing server/browser if present. Otherwise run `./start.sh`, or an isolated `PORT=<random-port> node src/web/serve.js` with Chromium on its own random debug port. Track and stop only processes you started; never launch a competing editor instance.
 2. Have the user open `http://127.0.0.1:<port>/` once and leave it open. They do not type a circuit name, click Load or Save, or refresh; the active circuit loads automatically.
-3. Choose a circuit name (for example `5t-ota` or `low-voltage-cascode`) and issue the first command. The server marks it active and the browser loads it on the next poll (≤500 ms).
+3. Choose a circuit name (for example `analog-block` or `low-voltage-cascode`) and issue the first command. The server marks it active and the browser loads it on the next poll (≤500 ms).
 4. Drive placement, review, then routing through CLI or HTTP. Fit the view after each phase and after later edits that change drawing extents; never leave the final review zoomed away.
 
 ## Reliable automation (don't lose a session to these)
