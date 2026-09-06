@@ -173,8 +173,8 @@ mirror flag to override that default.
 |------|-----------|--------------------|
 | resistor / capacitor / inductor / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
 | diode | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
-| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox `{-120,-80,120,160}` |
-| nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox `{-120,-80,120,160}`; bulk pin points right with a visible internal path from the channel edge |
+| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox `{-120,-80,120,160}`; drain and source leads end at their terminals and share the wire-cap overlap |
+| nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox `{-120,-80,120,160}`; bulk pin points right with a visible internal path ending at the terminal and sharing the wire-cap overlap |
 | npn / pnp | `b` (left) `c` (top) `e` (bottom) | x:-160..0, y:-120..120 |
 | current_source / voltage_source | `a` (top) `b` (bottom) | body x:-40..40, y:-80..80; default label center offset x:-80 (bbox edge x:-40) |
 | ground | `gnd` (top edge) | x:0..80, y:0..120 |
@@ -461,7 +461,9 @@ electrical labels and net names. Net-label text follows the physical net name;
 removing one label occurrence does not remove or rename its net. In the editor,
 `L` persistently places a net label only on an unambiguous physical wire; at a
 crossing, select/highlight the intended net first. `Shift+N` persistently places
-a free annotation. The generic insert-menu entry is also an annotation.
+a free annotation. The generic insert-menu entry is also an annotation. `l`
+draws a non-electrical multi-point line annotation with rounded caps; its
+snapped vertices and segments remain editable.
 
 Selection and editing preserve these roles: owned labels follow their
 components, net labels remain on their drawable paths, and annotations move

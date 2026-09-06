@@ -29,6 +29,16 @@ test('annotation arrowheads stay close to MOS source-arrow size', () => {
   assert.doesNotMatch(svg, /<polygon points="160 0 120 24 120 -24"/);
 });
 
+test('line annotations render as rounded non-connectivity paths', () => {
+  const c = new Circuit();
+  c.addAnnotation('line', { points: [{ x: 0, y: 0 }, { x: 80, y: 40 }, { x: 160, y: 0 }], style: { color: '#d00', lineStyle: 'dashed' } });
+  const svg = svgString(c);
+  assert.match(svg, /<path d="M 0 0 L 80 40 L 160 0"/);
+  assert.match(svg, /stroke-linecap="round"/);
+  assert.match(svg, /stroke-dasharray="12 8"/);
+  assert.doesNotMatch(svg, /class="wire-managed"/);
+});
+
 test('default wire stroke keeps semantic colors resolving dynamically', () => {
   assert.match(strokeAttrs('unknown'), /stroke-linecap="flat"/);
   assert.match(strokeAttrs('unknown'), /stroke-linejoin="miter"/);
@@ -226,11 +236,33 @@ test('svgString renders filled polygon bodies (Razavi gate bars)', () => {
 });
 
 
+test('MOS terminal-facing leads end at their rendered terminal coordinates', () => {
+  const endpoint = (d) => {
+    const match = d.match(/L (-?[\d.]+) (-?[\d.]+)$/);
+    assert.ok(match, `path has a final line endpoint: ${d}`);
+    return { x: Number(match[1]), y: Number(match[2]) };
+  };
+
+  for (const type of ['nmos', 'pmos', 'nmosb', 'pmosb']) {
+    const c = new Circuit();
+    const component = c.addComponent(type, { x: 520, y: 0 });
+    const symbol = svgString(c).match(/<g class="sym"[^>]*>([\s\S]*?)<\/g><\/g>/)?.[1] || '';
+    const paths = [...symbol.matchAll(/<path d="([^"]+)"/g)].map((match) => endpoint(match[1]));
+
+    for (const terminal of component.def.terminals.filter(({ name }) => ['d', 's', 'b'].includes(name))) {
+      assert.ok(
+        paths.some((point) => point.x === terminal.x && point.y === terminal.y),
+        `${type}.${terminal.name} lead reaches its terminal in rendered SVG`,
+      );
+    }
+  }
+});
+
 test('svgString renders bulk MOS terminal and channel connection', () => {
   const c = new Circuit();
   c.addComponent('nmosb', { x: 520, y: 0 });
   const svg = svgString(c);
-  assert.match(svg, /M -54\.65 0 L 0 0/, 'bulk graphic joins channel');
+  assert.match(svg, /M -54\.65 0 L 0 0/, 'bulk graphic joins the channel at its terminal');
   assert.match(svg, /<text[^>]*>M/, 'bulk MOS owned label renders');
 });
 test('Razavi symbols render (sources, opamp, gates, ports)', () => {

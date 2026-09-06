@@ -2,7 +2,7 @@
  * Schematic Spawner — vim-like keyboard editor.
  *
  * Modes:
- *   NORMAL   h/j/k/l move (selected comp or cursor), r rotate, Shift+r mirror,
+ *   NORMAL   h/j/k and arrows move (selected comp or cursor), l line annotation, r rotate, Shift+r mirror,
  *            Shift+Up/Down layer, dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
  *            toggle italic/bold on selected labels, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
@@ -64,8 +64,9 @@ const helpSearch = document.getElementById('help-search');
 
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
-let labelMode = null; // null | 'net' | 'annotation' | 'arrow' | 'box'
+let labelMode = null; // null | 'net' | 'annotation' | 'arrow' | 'box' | 'line'
 let annotationStart = null;
+let annotationPoints = [];
 let moveMode = null; // null | 'connected' | 'detached' (armed one-shot move)
 let copyMode = false; // armed one-shot copy placement
 let deleteMode = false; // persistent one-shot delete tool
@@ -152,6 +153,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (visual) return { key: 'visual', canvasClass: 'mode-visual', toolbar: 'visual', label: 'VISUAL', hint: 'VISUAL · hjkl/arrows grow the box · Enter select · Esc cancel' };
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL', hint: 'NET LABEL · click an unambiguous wire to place · stays active · Esc cancel' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION', hint: 'ANNOTATION · click to place free text · stays active · Esc cancel' };
+  if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE', hint: 'LINE · click successive points, Enter or double-click commits · Esc cancel' };
   if (labelMode === 'arrow') return { key: 'arrow', canvasClass: 'mode-annotation', toolbar: 'arrow', label: 'ARROW', hint: 'ARROW · click two points to draw · stays active · Esc cancel' };
   if (labelMode === 'box') return { key: 'box', canvasClass: 'mode-annotation', toolbar: 'box', label: 'BOX', hint: 'BOX · click two points to draw · stays active · Esc cancel' };
   if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'PLACE', hint: 'PLACE · type to search, Enter picks, click/Enter places · Esc cancel' };
@@ -159,7 +161,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE', hint: 'DELETE · selected Delete acts like dd; otherwise click objects to delete · Esc cancel' };
   if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE', hint: movePending ? 'DETACHED MOVE · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'DETACHED MOVE · drag empty space to box-select, or click a component, label, or wire · Esc cancel' };
   if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE', hint: movePending ? 'MOVE · faint objects and connected wires follow the cursor, then click/Enter to commit · Esc cancel' : 'MOVE · drag empty space to box-select, or click a component, label, or wire · Esc cancel' };
-  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · Ctrl+Shift+V paste style · r rotate · Shift+r mirror · Shift+↑/↓ layer · Ctrl+R mirror vertical · x check · Shift+x save` };
+  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · l line · Ctrl+Shift+V paste style · r rotate · Shift+r mirror · Shift+↑/↓ layer · Ctrl+R mirror vertical · x check · Shift+x save` };
 }
 
 function paneSize() {
@@ -399,6 +401,7 @@ async function deleteSavedCircuit() {
     visual = null;
     pendingPlace = null;
     labelMode = null;
+    annotationPoints = [];
     setSelection([]);
     selectedNets.clear();
     cursor = { x: 0, y: 0 };
@@ -531,6 +534,7 @@ function applyJson(blob) {
   visual = null;
   mode = 'normal';
   labelMode = null;
+  annotationPoints = [];
   resetCheckState();
   circuit = Circuit.fromJSON(JSON.parse(blob));
   wiresDirty = true; // wire geometry may have changed under any wholesale load
@@ -557,6 +561,7 @@ function restoreToolState(state) {
   if (!state?.copyMode && !state?.moveMode && !state?.deleteMode) return;
   mode = 'normal';
   labelMode = null;
+  annotationPoints = [];
   visual = null;
   drag = null;
   copyMode = !!state.copyMode;
@@ -879,7 +884,7 @@ function applyStyleToSelected(style) {
     for (const obj of objects) {
       const next = { ...(obj.style || {}) };
       for (const field of ['color', 'lineStyle', 'width']) {
-        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box'].includes(obj.kind) || obj.routingMode)) {
+        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box', 'line'].includes(obj.kind) || obj.routingMode)) {
           next[field] = style[field];
         }
       }
@@ -916,7 +921,7 @@ function applySelectedStyle(field, value) {
   const next = value || styleDefaults(field);
   commit(() => {
     for (const obj of objects) {
-      if (field === 'lineStyle' && !['arrow', 'box'].includes(obj.kind) && !obj.routingMode) continue;
+      if (field === 'lineStyle' && !['arrow', 'box', 'line'].includes(obj.kind) && !obj.routingMode) continue;
       if (field === 'color' && typeof obj.setColor === 'function') obj.setColor(next);
       else obj.style = { ...(obj.style || {}), [field]: next };
     }
@@ -938,7 +943,7 @@ function updateStyleControls() {
   }
   const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean)];
   const hasWireSelection = wireTargets.length > 0 || selectedWire || selectedWires.size > 0 || selectedNets.size > 0;
-  const supportsLine = hasWireSelection || objects.some((o) => ['arrow', 'box'].includes(o.kind));
+  const supportsLine = hasWireSelection || objects.some((o) => ['arrow', 'box', 'line'].includes(o.kind));
   line.disabled = (!objects.length && !wireTargets.length) || !supportsLine;
   color.disabled = width.disabled = !objects.length && !wireTargets.length;
   if (!objects.length && !wireTargets.length) {
@@ -964,7 +969,7 @@ function pickLabel(w) {
   const x = snap(w.x);
   const y = snap(w.y);
   for (const label of circuit.labels.values()) {
-    if (label.kind === 'arrow' || label.kind === 'box') continue;
+    if (['arrow', 'box', 'line'].includes(label.kind)) continue;
     const r = label.bbox();
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
   }
@@ -992,6 +997,7 @@ function annotationGeometryAt(world) {
     return Math.hypot(p.x - q.x, p.y - q.y) <= GRID / 2;
   };
   for (const label of circuit.labels.values()) {
+    if (label.kind === 'line' && label.points.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
     if (label.kind === 'arrow' && near(label.anchor, label.end)) return label;
     if (label.kind === 'box') {
       const a = label.anchor; const b = label.end;
@@ -1007,6 +1013,10 @@ function annotationGeometryAt(world) {
 function annotationEndpointAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   for (const label of circuit.labels.values()) {
+    if (label.kind === 'line') {
+      const index = label.points.findIndex((point) => Math.abs(p.x - point.x) <= GRID / 2 && Math.abs(p.y - point.y) <= GRID / 2);
+      if (index >= 0) return { label, endpoint: `vertex:${index}` };
+    }
     if (!['arrow', 'box'].includes(label.kind)) continue;
     if (label.kind === 'box') {
       const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
@@ -1018,6 +1028,24 @@ function annotationEndpointAt(world) {
     for (const endpoint of ['start', 'end']) {
       const q = endpoint === 'start' ? label.anchor : label.end;
       if (Math.abs(p.x - q.x) <= GRID / 2 && Math.abs(p.y - q.y) <= GRID / 2) return { label, endpoint };
+    }
+  }
+  return null;
+}
+
+function annotationSegmentAt(world) {
+  const p = { x: snap(world.x), y: snap(world.y) };
+  const near = (a, b) => {
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+    const q = { x: a.x + dx * t, y: a.y + dy * t };
+    return Math.hypot(p.x - q.x, p.y - q.y) <= GRID / 2;
+  };
+  for (const label of circuit.labels.values()) {
+    if (label.kind !== 'line') continue;
+    for (let i = 1; i < label.points.length; i++) {
+      if (near(label.points[i - 1], label.points[i])) return { label, segment: i };
     }
   }
   return null;
@@ -1048,7 +1076,7 @@ function selectedDrawTargets() {
       const parent = label.parent ? circuit.labels.get(label.parent) : label;
       return [parent?.id, parent];
     }).filter(([, label]) => label)).values()];
-    const isAnnotation = (label) => label.kind === 'arrow' || label.kind === 'box';
+    const isAnnotation = (label) => ['arrow', 'box', 'line'].includes(label.kind);
     const allLabels = [...circuit.labels.values()];
     groups.push(...[
       {
@@ -1108,6 +1136,7 @@ function captureCopyGhostGeometry(ghost) {
     labels.set(id, {
       anchor: { ...label.anchor },
       end: label.end ? { ...label.end } : null,
+      points: label.points ? label.points.map((point) => ({ ...point })) : null,
       textAnchor: label.textAnchor ? { ...label.textAnchor } : null,
     });
   }
@@ -1132,6 +1161,7 @@ function restoreCopyGhostGeometry(ghost) {
     if (!label || label.owner) continue;
     label.anchor = { ...origin.anchor };
     if (origin.end) label.end = { ...origin.end };
+    if (origin.points) label.points = origin.points.map((point) => ({ ...point }));
     if (origin.textAnchor) label.textAnchor = { ...origin.textAnchor };
   }
   for (const [id, origin] of ghost.baseGeometry?.nets || []) {
@@ -1381,7 +1411,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     if (savedSelection.selectedWire && !selectedWire) syncSelectedWire();
   };
   try {
-    const selectedAnnotationIds = new Set(selectedLabels().filter((l) => l.kind === 'arrow' || l.kind === 'box').map((l) => l.id));
+    const selectedAnnotationIds = new Set(selectedLabels().filter((l) => ['arrow', 'box', 'line'].includes(l.kind)).map((l) => l.id));
     for (const c of selectedComps()) {
       c.transform = transformComponentWorld(c.transform, center, operation);
     }
@@ -1393,9 +1423,10 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
         // Net geometry is transformed above; assign the corresponding anchor
         // directly so moveTo cannot reject the valid transformed path.
         l.anchor = { x: snap(p.x), y: snap(p.y) };
-      } else if (l.kind === 'arrow' || l.kind === 'box') {
+      } else if (['arrow', 'box', 'line'].includes(l.kind)) {
         l.anchor = p;
         l.end = transformWorldPoints([l.end], center, operation)[0];
+        if (l.kind === 'line') l.points = transformWorldPoints(l.points, center, operation);
         l.textAnchor = transformWorldPoints([l.textAnchor], center, operation)[0];
         for (const child of circuit.labels.values()) {
           if (child.parent === l.id) child.anchor = transformWorldPoints([child.anchor], center, operation)[0];
@@ -1721,6 +1752,19 @@ function placeAnnotationAt(world) {
   inlineEditLabel(label);
 }
 
+function commitLineAnnotation() {
+  if (annotationPoints.length < 2) return false;
+  let annotation;
+  commit(() => { annotation = circuit.addAnnotation('line', { points: annotationPoints }); });
+  setSelection([]);
+  setLabelSelection([annotation.id]);
+  logLine(`placed line annotation with ${annotationPoints.length} points`);
+  annotationPoints = [];
+  lastLineClick = null;
+  render();
+  return true;
+}
+
 function placeShapeAnnotation(world, endOverride = null) {
   const point = { x: snap(world.x), y: snap(world.y) };
   if (!annotationStart) {
@@ -1996,12 +2040,13 @@ function renderCanvas() {
     selLabels: [...new Set([...selLabels, ...diagnosticSelection.labels])],
     nets,
     previewSelection,
-    // Keep this expression null-safe: after the first click the draft normally
-    // has ended, while annotationStart remains as the persistent first point.
-    annotationPreview: (drag?.mode === 'annotationplace' && (annotationStart || drag.previewEnd))
-      || (['arrow', 'box'].includes(labelMode) && annotationStart)
-      ? { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
-      : undefined,
+    // Keep the committed clicks visible while a line is being drafted.
+    annotationPreview: labelMode === 'line' && (annotationPoints.length || drag?.mode === 'annotationlineplace')
+      ? { kind: 'line', points: [...annotationPoints, ...(drag?.previewEnd ? [drag.previewEnd] : [cursor])] }
+      : (drag?.mode === 'annotationplace' && (annotationStart || drag.previewEnd))
+        || (['arrow', 'box'].includes(labelMode) && annotationStart)
+        ? { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
+        : undefined,
     warnOverlaps: netWarnings,
     rubber: visual
       ? { x0: Math.min(visual.x, cursor.x), y0: Math.min(visual.y, cursor.y), x1: Math.max(visual.x, cursor.x), y1: Math.max(visual.y, cursor.y), color: '#2e7d32' }
@@ -2024,6 +2069,7 @@ const DRAG_THRESH = 6; // px before a press becomes a drag
 let drag = null;
 let inlineInput = null; // the active inline-edit <input>, if any
 let lastLabelClick = null; // { id, x, y, at } of the previous label click (for double-click fallback)
+let lastLineClick = null;
 let lastWireClick = null; // { key, x, y, at } of the previous wire click (for double-click fallback)
 let lastNetClick = null; // { netId, x, y, at } of the previous nets-list click (for double-click fallback)
 let lastComponentClick = null; // { refdes, x, y, at } of the previous component-list click
@@ -2101,6 +2147,7 @@ function cancelDrag() {
   // A cancelled shape gesture abandons the whole two-point draft. The tool
   // remains armed, so the next click starts a fresh annotation.
   if (drag?.mode === 'annotationplace') annotationStart = null;
+  if (drag?.mode === 'annotationlineplace') annotationPoints = [];
   drag = null;
   render();
 }
@@ -3213,6 +3260,11 @@ function canvasMouseDown(ev) {
 
   const openEndpoint = openFixedEndpointAt(startWorld);
 
+  if (labelMode === 'line') {
+    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    drag = { mode: 'annotationlineplace', startClient, startWorld, moved: false, previewEnd: { ...cursor }, rubber: null };
+    return;
+  }
   if (labelMode === 'arrow' || labelMode === 'box') {
     // Keep the cursor and preview anchored to the actual press. When a first
     // click has already established annotationStart, the next press begins
@@ -3389,6 +3441,23 @@ function canvasMouseDown(ev) {
       return;
     }
     drag = { mode: 'annotationtextmove', label: annotationText, startClient, startWorld, startText: { ...annotationText.textAnchor }, startSnapshot: snapshot(), moved: false };
+    render();
+    return;
+  }
+  const annotationSegment = annotationSegmentAt(startWorld);
+  if (annotationSegment) {
+    setSelection([]);
+    setLabelSelection([annotationSegment.label.id]);
+    drag = {
+      mode: 'annotationsegment',
+      label: annotationSegment.label,
+      segment: annotationSegment.segment,
+      startClient,
+      startWorld,
+      startPoints: annotationSegment.label.points.map((point) => ({ ...point })),
+      startSnapshot: snapshot(),
+      moved: false,
+    };
     render();
     return;
   }
@@ -4071,7 +4140,7 @@ function beginCopySource(startWorld, startClient) {
   return startCopyGhost(startWorld, startClient);
 }
 function deleteAtPoint(world) {
-  const label = pickLabel(world);
+  const label = pickLabel(world) || annotationGeometryAt(world);
   const hitWire = pickWire(world);
   const hitComp = matchAt(snap(world.x), snap(world.y));
   if (label) {
@@ -4123,6 +4192,12 @@ function canvasMouseMove(ev) {
   }
 
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
+  if (drag.mode === 'annotationlineplace') {
+    if (movedOut) drag.moved = true;
+    drag.previewEnd = { ...cursor };
+    render();
+    return;
+  }
   if (drag.mode === 'annotationplace') {
     if (movedOut) drag.moved = true;
     if (annotationStart || drag.moved) {
@@ -4142,13 +4217,29 @@ function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'annotationsegment') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      const dx = snap(w.x) - snap(drag.startWorld.x);
+      const dy = snap(w.y) - snap(drag.startWorld.y);
+      drag.label.points = drag.startPoints.map((point) => ({ ...point }));
+      drag.label.moveSegment(drag.segment, dx, dy);
+      cursor = { ...cursor };
+      render();
+    }
+    return;
+  }
   if (drag.mode === 'annotationendpoint') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
       const oldAnchor = { ...drag.label.anchor };
       const oldEnd = { ...drag.label.end };
+      const oldPoints = drag.label.points?.map((point) => ({ ...point }));
       const p = { x: snap(w.x), y: snap(w.y) };
-      if (drag.endpoint.startsWith('corner:')) {
+      if (drag.label.kind === 'line' && drag.endpoint.startsWith('vertex:')) {
+        const index = Number(drag.endpoint.slice(7));
+        drag.label.moveVertex(index, p.x, p.y);
+      } else if (drag.endpoint.startsWith('corner:')) {
         const corner = drag.endpoint.slice(7);
         const x0 = Math.min(drag.label.anchor.x, drag.label.end.x);
         const x1 = Math.max(drag.label.anchor.x, drag.label.end.x);
@@ -4175,10 +4266,11 @@ function canvasMouseMove(ev) {
       }
       const invalid = drag.label.kind === 'arrow'
         ? Math.hypot(drag.label.anchor.x - drag.label.end.x, drag.label.anchor.y - drag.label.end.y) < 80
-        : drag.label.anchor.x === drag.label.end.x || drag.label.anchor.y === drag.label.end.y;
+        : drag.label.kind === 'box' && (drag.label.anchor.x === drag.label.end.x || drag.label.anchor.y === drag.label.end.y);
       if (invalid) {
         drag.label.anchor = oldAnchor;
         drag.label.end = oldEnd;
+        if (oldPoints) drag.label.points = oldPoints;
       }
       cursor = p;
       render();
@@ -4690,6 +4782,17 @@ function canvasMouseUp(ev) {
         logLine(target ? 'attached fixed endpoint' : 'moved fixed endpoint');
       }
     }
+  } else if (drag.mode === 'annotationlineplace') {
+    if (!movedOut) {
+      const point = { x: snap(w.x), y: snap(w.y) };
+      if (!annotationPoints.length || point.x !== annotationPoints.at(-1).x || point.y !== annotationPoints.at(-1).y) annotationPoints.push(point);
+      const now = Date.now();
+      const previous = lastLineClick;
+      const doubleClick = ev.detail >= 2 || (previous && now - previous.at < 500 &&
+        Math.abs(point.x - previous.x) <= GRID && Math.abs(point.y - previous.y) <= GRID);
+      lastLineClick = { x: point.x, y: point.y, at: now };
+      if (doubleClick) commitLineAnnotation();
+    }
   } else if (drag.mode === 'annotationtextmove') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       history.push(drag.startSnapshot);
@@ -4705,7 +4808,7 @@ function canvasMouseUp(ev) {
       if (copySelectionExists()) deleteSelection();
       else deleteAtPoint(w);
     }
-  } else if (drag.mode === 'annotationendpoint') {
+  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       history.push(drag.startSnapshot);
       if (history.length > 200) history.shift();
@@ -5710,6 +5813,10 @@ function onNormalKey(key, shiftKey = false) {
   const count = counts || 1;
   counts = 0;
 
+  if (key === 'Enter' && labelMode === 'line') {
+    commitLineAnnotation();
+    return;
+  }
   if (key === 'm' || key === 'M') {
     activateMove(shiftKey ? 'detached' : 'connected');
     return;
@@ -5720,6 +5827,10 @@ function onNormalKey(key, shiftKey = false) {
   }
   if (key === 'b') {
     activateShapeAnnotation('box');
+    return;
+  }
+  if (key === 'l') {
+    activateShapeAnnotation('line');
     return;
   }
   if (key === 'C' || (key === 'c' && shiftKey)) {
@@ -5763,7 +5874,6 @@ function onNormalKey(key, shiftKey = false) {
     h: [-1, 0],
     j: [0, 1],
     k: [0, -1],
-    l: [1, 0],
     ArrowLeft: [-1, 0],
     ArrowDown: [0, 1],
     ArrowUp: [0, -1],
@@ -5925,7 +6035,18 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === 'Delete' || key === 'Backspace') {
+  if (key === 'Backspace') {
+    if (labelMode === 'line') {
+      if (annotationPoints.length) {
+        annotationPoints.pop();
+        lastLineClick = null;
+        render();
+      }
+    }
+    return;
+  }
+
+  if (key === 'Delete') {
     if (deleteMode) {
       if (deleteSelection()) render();
     } else if (copySelectionExists()) {
@@ -5951,6 +6072,7 @@ function onNormalKey(key, shiftKey = false) {
     copyPending = false;
     labelMode = null;
     annotationStart = null;
+    annotationPoints = [];
     setLabelSelection([]);
     selectedNets.clear();
     render();
@@ -5964,8 +6086,9 @@ function keymapText() {
     'L           persistent electrical net-label placement',
     'u / C-z     undo with an insert or copy ghost; insert search keeps u as text',
     'Shift+N     persistent free annotation placement',
+    'l           persistent multi-point line annotation placement',
     't           edit the primary selected label (no-op otherwise)',
-    'h j k l     move selected comp(s) / cursor (counts: 5l)',
+    'h j k / arrows move selected comp(s) / cursor (counts: 5j)',
     'r           rotate selected 90 cw',
     'Shift+r     mirror selected horizontally',
     'Ctrl+r      mirror selected vertically',
@@ -6083,7 +6206,7 @@ let clipboard = null;
 function copySelection() {
   const comps = selectedComps();
   const selectedFreeLabels = selectedLabels().filter((l) => !l.owner && !l.isNetLabel?.());
-  const parentIds = new Set(selectedFreeLabels.filter((l) => l.kind === 'arrow' || l.kind === 'box').map((l) => l.id));
+  const parentIds = new Set(selectedFreeLabels.filter((l) => ['arrow', 'box', 'line'].includes(l.kind)).map((l) => l.id));
   const freeLabels = [...new Map([...selectedFreeLabels, ...circuit.labels.values()].filter((l) => !l.owner && !l.isNetLabel?.() && (selectedFreeLabels.includes(l) || parentIds.has(l.parent))).map((l) => [l.id, l])).values()];
   const hasWholeTerminallessNet = [...selectedNets].some((id) => {
     const net = circuit.nets.get(id);
@@ -6180,6 +6303,7 @@ function copySelection() {
       x: l.anchorWorld().x,
       y: l.anchorWorld().y,
       end: l.kind === 'label' ? null : { ...l.end },
+      points: l.kind === 'line' ? l.points.map((point) => ({ ...point })) : null,
       style: { ...(l.style || {}) },
     })),
     nets,
@@ -6223,8 +6347,10 @@ function translateCopyGhost(ghost, dx, dy) {
     if (!label || label.owner) continue;
     label.anchor.x += dx;
     label.anchor.y += dy;
-    if (label.kind === 'arrow' || label.kind === 'box') {
+    if (['arrow', 'box', 'line'].includes(label.kind)) {
       label.end.x += dx;
+      label.end.y += dy;
+      if (label.kind === 'line') label.points = label.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
       label.textAnchor.x += dx;
       label.textAnchor.y += dy;
     }
@@ -6345,8 +6471,11 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         addedComps.push(comp.refdes);
       }
       const labelMap = new Map();
-      for (const l of clipboard.labels.filter((label) => label.kind === 'arrow' || label.kind === 'box')) {
-        const shape = circuit.addAnnotation(l.kind, { x: l.x + dx, y: l.y + dy, end: { x: l.end.x + dx, y: l.end.y + dy }, style: l.style });
+      for (const l of clipboard.labels.filter((label) => ['arrow', 'box', 'line'].includes(label.kind))) {
+        const shape = circuit.addAnnotation(l.kind, {
+          x: l.x + dx, y: l.y + dy, end: l.end && { x: l.end.x + dx, y: l.end.y + dy },
+          points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
+        });
         labelMap.set(l.id, shape.id);
         addedLabels.push(shape.id);
       }
@@ -6464,6 +6593,7 @@ const TOOLBAR_IDS = {
   annotation: ['btn-annotation', 'btn-mode-annotation', 'tool-annotation', 'mode-annotation'],
   arrow: ['btn-arrow', 'btn-mode-arrow', 'tool-arrow', 'mode-arrow'],
   box: ['btn-box', 'btn-mode-box', 'tool-box', 'mode-box'],
+  line: ['btn-line', 'btn-mode-line', 'tool-line', 'mode-line'],
   rotate: ['btn-rotate', 'tool-rotate'],
   'mirror-x': ['btn-mirror-x', 'btn-mirror-horizontal', 'tool-mirror-x', 'tool-mirror-horizontal'],
   'mirror-y': ['btn-mirror-y', 'btn-mirror-vertical', 'tool-mirror-y', 'tool-mirror-vertical'],
@@ -6671,6 +6801,7 @@ function activateLabelPlacement(kind) {
   copyPending = false;
   labelMode = kind;
   annotationStart = null;
+  annotationPoints = [];
   logLine(kind === 'net'
     ? 'NET LABEL: click a physical wire; stays active until Esc'
     : kind === 'annotation'
@@ -6700,6 +6831,7 @@ function activatePlace() {
   copyPending = false;
   visual = null;
   labelMode = null;
+  annotationPoints = [];
   mode = 'insert';
   pendingPlace = null;
   insertQuery = '';
@@ -6713,6 +6845,7 @@ function activateSelect() {
   insertQuery = '';
   visual = null;
   labelMode = null;
+  annotationPoints = [];
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -6730,6 +6863,7 @@ function activateVisual() {
   movePending = false;
   copyPending = false;
   labelMode = null;
+  annotationPoints = [];
   visual = { x: cursor.x, y: cursor.y };
   selectedNets.clear();
   render();
@@ -6750,6 +6884,7 @@ function activateDelete() {
   movePending = false;
   copyPending = false;
   labelMode = null;
+  annotationPoints = [];
   deleteMode = true;
   render();
 }
@@ -6765,6 +6900,7 @@ function activateWire() {
   copyPending = false;
   visual = null;
   labelMode = null;
+  annotationPoints = [];
   mode = 'normal';
   // F3 changes the route style of this same managed workflow.  Diagonal wires
   // never become direct/fixed nets.
@@ -6782,6 +6918,7 @@ function activateMove(kind = 'connected') {
   movePending = false;
   copyPending = false;
   labelMode = null;
+  annotationPoints = [];
   moveMode = kind === 'detached' ? 'detached' : 'connected';
   render();
 }
@@ -6795,6 +6932,7 @@ function activateCopy() {
   movePending = false;
   copyPending = false;
   labelMode = null;
+  annotationPoints = [];
   copyMode = true; // source click and placement are handled by the canvas
   logLine('COPY: click an object, or use the existing selection; move the copy, then click/Enter (Esc exits)');
   render();
@@ -7072,6 +7210,7 @@ function bindInteractionControls() {
     annotation: activateAnnotation,
     arrow: () => activateShapeAnnotation('arrow'),
     box: () => activateShapeAnnotation('box'),
+    line: () => activateShapeAnnotation('line'),
     rotate: () => selectedTransform('rotate'),
     'mirror-x': () => selectedTransform('mirror-x'),
     'mirror-y': () => selectedTransform('mirror-y'),
@@ -7399,6 +7538,8 @@ window.addEventListener('keydown', (ev) => {
     } else if (key === 'Escape') {
       directWire = null;
       logLine('direct wire cancelled');
+    } else if (key === 'Backspace') {
+      if (directWire.points.length) directWire.points.pop();
     } else if (key === 'Enter') {
       commitDirectAtCursor();
     } else if (key === 'h') moveCursor(-1, 0);

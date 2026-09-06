@@ -369,7 +369,7 @@ export class LabelInstance {
   constructor(circuit, opts = {}) {
     this.circuit = circuit;
     this.id = opts.id || uid();
-    this.kind = ['label', 'arrow', 'box'].includes(opts.kind) ? opts.kind : 'label';
+    this.kind = ['label', 'arrow', 'box', 'line'].includes(opts.kind) ? opts.kind : 'label';
     this.netId = opts.netId !== undefined && opts.netId !== null && opts.netId !== '' ? String(opts.netId) : null;
     this.parent = opts.parent || null;
     this.roleError = null;
@@ -388,10 +388,13 @@ export class LabelInstance {
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
     this.owner = this.netId ? null : (opts.owner || null);
     this.offset = this.owner && opts.offset ? { x: snap(opts.offset.x), y: snap(opts.offset.y) } : null;
-    const p = snapPoint(opts.x || 0, opts.y || 0);
+    const rawPoints = this.kind === 'line' && Array.isArray(opts.points) ? opts.points : null;
+    const points = rawPoints?.map((point) => snapPoint(point?.x || 0, point?.y || 0)) || [];
+    const p = points[0] || snapPoint(opts.x || 0, opts.y || 0);
     this.anchor = { x: p.x, y: p.y };
-    const e = opts.end ? snapPoint(opts.end.x, opts.end.y) : p;
+    const e = points.at(-1) || (opts.end ? snapPoint(opts.end.x, opts.end.y) : p);
     this.end = { x: e.x, y: e.y };
+    this.points = this.kind === 'line' ? (points.length ? points : [{ ...p }, { ...e }]) : null;
     const textPoint = opts.textAnchor ? snapPoint(opts.textAnchor.x, opts.textAnchor.y) : { x: snap((p.x + e.x) / 2), y: snap((p.y + e.y) / 2) };
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
     const net = this.netId ? circuit.nets.get(this.netId) : null;
@@ -487,6 +490,13 @@ export class LabelInstance {
       const y = Math.min(this.anchor.y, this.end.y);
       return { x, y, w: Math.max(GRID, Math.abs(this.end.x - this.anchor.x)), h: Math.max(GRID, Math.abs(this.end.y - this.anchor.y)) };
     }
+    if (this.kind === 'line') {
+      const x0 = Math.min(...this.points.map((point) => point.x));
+      const y0 = Math.min(...this.points.map((point) => point.y));
+      const x1 = Math.max(...this.points.map((point) => point.x));
+      const y1 = Math.max(...this.points.map((point) => point.y));
+      return { x: x0, y: y0, w: Math.max(GRID, x1 - x0), h: Math.max(GRID, y1 - y0) };
+    }
     const a = this.anchorWorld();
     const w = this.colWidth() * GRID;
     const h = this.rowHeight() * GRID;
@@ -549,11 +559,12 @@ export class LabelInstance {
   moveTo(wx, wy) {
     wx = snap(wx);
     wy = snap(wy);
-    if (this.kind === 'arrow' || this.kind === 'box') {
+    if (this.kind === 'arrow' || this.kind === 'box' || this.kind === 'line') {
       const dx = wx - this.anchor.x;
       const dy = wy - this.anchor.y;
       this.anchor = { x: wx, y: wy };
       this.end = { x: this.end.x + dx, y: this.end.y + dy };
+      if (this.kind === 'line') this.points = this.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
       this.textAnchor = { x: this.textAnchor.x + dx, y: this.textAnchor.y + dy };
       for (const label of this.circuit.labels.values()) {
         if (label.parent === this.id) label.anchor = { x: label.anchor.x + dx, y: label.anchor.y + dy };
@@ -573,6 +584,26 @@ export class LabelInstance {
     }
     this.anchor = { x: wx, y: wy };
   }
+
+  moveSegment(index, dx, dy) {
+    if (this.kind !== 'line' || !Number.isInteger(index) || index < 1 || index >= this.points.length) return false;
+    for (const point of [this.points[index - 1], this.points[index]]) {
+      point.x += dx;
+      point.y += dy;
+    }
+    this.anchor = { ...this.points[0] };
+    this.end = { ...this.points.at(-1) };
+    return true;
+  }
+
+  moveVertex(index, wx, wy) {
+    if (this.kind !== 'line' || !Number.isInteger(index) || index < 0 || index >= this.points.length) return false;
+    this.points[index] = snapPoint(wx, wy);
+    this.anchor = { ...this.points[0] };
+    this.end = { ...this.points.at(-1) };
+    return true;
+  }
+
   toJSON() {
     return {
       id: this.id,
@@ -586,6 +617,7 @@ export class LabelInstance {
       offset: this.offset ? { ...this.offset } : null,
       anchor: this.owner ? null : { ...this.anchor },
       end: this.kind === 'label' ? null : { ...this.end },
+      points: this.kind === 'line' ? this.points.map((point) => ({ ...point })) : null,
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       style: { ...this.style },
       drawOrder: this.drawOrder,
@@ -1096,11 +1128,15 @@ export class Circuit {
     return true;
   }
   addAnnotation(kind, opts = {}) {
-    if (!['arrow', 'box'].includes(kind)) throw new Error(`unknown annotation kind "${kind}"`);
-    const a = { x: snap(opts.x || 0), y: snap(opts.y || 0) };
-    const b = opts.end ? { x: snap(opts.end.x), y: snap(opts.end.y) } : a;
+    if (!['arrow', 'box', 'line'].includes(kind)) throw new Error(`unknown annotation kind "${kind}"`);
+    const points = kind === 'line' && Array.isArray(opts.points)
+      ? opts.points.map((point) => ({ x: snap(point.x), y: snap(point.y) }))
+      : null;
+    const a = points?.[0] || { x: snap(opts.x || 0), y: snap(opts.y || 0) };
+    const b = points?.at(-1) || (opts.end ? { x: snap(opts.end.x), y: snap(opts.end.y) } : a);
     if (kind === 'arrow' && Math.hypot(a.x - b.x, a.y - b.y) < GRID * 2) throw new Error('arrow must have non-zero length and minimum length of two grid cells');
     if (kind === 'box' && (a.x === b.x || a.y === b.y)) throw new Error('box must have non-zero width and height');
+    if (kind === 'line' && (!points || points.length < 2 || points.every((point) => point.x === a.x && point.y === a.y))) throw new Error('line must have at least two distinct points');
     const shape = this.addLabel({
       ...opts,
       kind,
@@ -1109,6 +1145,7 @@ export class Circuit {
       x: a.x,
       y: a.y,
       end: b,
+      ...(points ? { points } : {}),
     });
     if (opts.text) {
       const child = this.addLabel({
@@ -1385,7 +1422,7 @@ export class Circuit {
     const labelRects = [];
     for (const l of this.labels.values()) {
       // Shape annotations are visual-only and must not influence routing.
-      if (['arrow', 'box'].includes(l.kind)) continue;
+      if (['arrow', 'box', 'line'].includes(l.kind)) continue;
       // The net being re-laid-out may pass through its own label. Other net
       // labels remain soft obstacles just like free annotations.
       if (l.isNetLabel() && excluded.has(l.netId)) continue;
@@ -3700,6 +3737,7 @@ export class Circuit {
           x: l.anchor ? l.anchor.x : 0,
           y: l.anchor ? l.anchor.y : 0,
           end: l.end || null,
+          points: l.points || null,
           textAnchor: l.textAnchor || null,
           style: l.style || null,
           drawOrder: l.drawOrder,

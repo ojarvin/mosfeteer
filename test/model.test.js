@@ -1556,6 +1556,43 @@ test('arrow and box annotations persist geometry and move as selected labels', (
   assert.throws(() => c.addAnnotation('box', { x: 0, y: 0, end: { x: 0, y: 40 } }), /non-zero width/);
 });
 
+test('line annotations preserve multi-point geometry and move as annotations', () => {
+  const c = new Circuit();
+  const line = c.addAnnotation('line', { points: [{ x: 0, y: 0 }, { x: 80, y: 40 }, { x: 160, y: 0 }] });
+  assert.deepEqual(line.points, [{ x: 0, y: 0 }, { x: 80, y: 40 }, { x: 160, y: 0 }]);
+  assert.deepEqual(line.bbox(), { x: 0, y: 0, w: 160, h: 40 });
+  assert.equal(line.moveSegment(1, 40, 40), true);
+  assert.deepEqual(line.points, [{ x: 40, y: 40 }, { x: 120, y: 80 }, { x: 160, y: 0 }]);
+  assert.equal(line.moveVertex(1, 160, 80), true);
+  assert.deepEqual(line.points, [{ x: 40, y: 40 }, { x: 160, y: 80 }, { x: 160, y: 0 }]);
+  line.moveTo(40, 40);
+  assert.deepEqual(line.points, [{ x: 40, y: 40 }, { x: 160, y: 80 }, { x: 160, y: 0 }]);
+  const restored = Circuit.fromJSON(c.toJSON()).labels.get(line.id);
+  assert.equal(restored.kind, 'line');
+  assert.deepEqual(restored.points, line.points);
+  assert.throws(() => c.addAnnotation('line', { points: [{ x: 0, y: 0 }] }), /at least two/);
+});
+
+test('line vertices may become collinear and segment drags preserve their angle', () => {
+  const c = new Circuit();
+  const line = c.addAnnotation('line', {
+    points: [{ x: 0, y: 0 }, { x: 80, y: 0 }, { x: 80, y: -80 }, { x: 160, y: -80 }, { x: 160, y: 40 }],
+  });
+  assert.equal(line.moveVertex(4, 160, 0), true);
+  assert.deepEqual(line.points.at(-1), { x: 160, y: 0 });
+
+  const before = line.points.slice(2, 4).map((point) => ({ ...point }));
+  assert.equal(line.moveSegment(3, 40, 40), true);
+  assert.deepEqual(
+    line.points.slice(2, 4).map((point, i) => ({ x: point.x - before[i].x, y: point.y - before[i].y })),
+    [{ x: 40, y: 40 }, { x: 40, y: 40 }],
+  );
+  assert.deepEqual(
+    { x: line.points[3].x - line.points[2].x, y: line.points[3].y - line.points[2].y },
+    { x: before[1].x - before[0].x, y: before[1].y - before[0].y },
+  );
+});
+
 test('annotation labels are separate child labels that move and delete independently', () => {
   const c = new Circuit();
   const shape = c.addAnnotation('box', { x: 0, y: 0, end: { x: 160, y: 160 }, text: 'note' });

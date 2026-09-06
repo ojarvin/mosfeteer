@@ -98,6 +98,10 @@ function annotationArrowPoints(a, b) {
 
 function shapeAnnotationSvg(label, opacity = '') {
   const a = label.anchor; const b = label.end;
+  if (label.kind === 'line') {
+    const d = label.points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+    return `<path d="${d}" fill="none"${opacity} ${styleAttrs(label.style, 'wire')}/>`;
+  }
   const attrs = styleAttrs(label.style);
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
@@ -188,14 +192,16 @@ export function svgString(circuit, opts = {}) {
   // these together prevents annotation text from floating above the other
   // default layers when a box or arrow has a caption.
   const annotationShapes = labels
-    .filter((label) => ['arrow', 'box'].includes(label.kind))
+    .filter((label) => ['arrow', 'box', 'line'].includes(label.kind))
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
   for (const label of annotationShapes) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
     parts.push(shapeAnnotationSvg(label, opacity));
-    const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
-    parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
+    if (label.kind !== 'line') {
+      const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
+      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
+    }
     for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
       if (child.id === o.editingLabel) continue;
       const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
@@ -307,7 +313,7 @@ export function svgString(circuit, opts = {}) {
   // larger than free-standing annotation labels). Text is aligned inside the
   // label's rendered box (left/center/right) and vertically centered.
   for (const label of labels
-    .filter((candidate) => candidate.kind !== 'box' && candidate.kind !== 'arrow' && !candidate.parent)
+    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent)
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
@@ -459,9 +465,12 @@ export function editorOverlay(circuit, opts = {}) {
     parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="#4f9cf9"/>`);
   }
   if (opts.annotationPreview) {
-    const { kind, a, b } = opts.annotationPreview;
-    const attrs = 'stroke="#4f9cf9" stroke-width="6" stroke-dasharray="10 7" fill="none"';
-    if (kind === 'box') {
+    const { kind, a, b, points } = opts.annotationPreview;
+    const attrs = 'stroke="#4f9cf9" stroke-width="6" stroke-dasharray="10 7" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+    if (kind === 'line') {
+      const d = points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+      parts.push(`<path d="${d}" ${attrs}/>`);
+    } else if (kind === 'box') {
       const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
       parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
     } else {
