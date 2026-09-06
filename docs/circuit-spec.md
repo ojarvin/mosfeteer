@@ -168,27 +168,3 @@ The small corpus under `fixtures/circuit-spec/` covers `resistor-divider`,
 `rc-filter`, `common-source`, `differential-pair`, `current-mirror`, and
 `5t-ota`. Fixtures describe topology only and are intentionally not placed or
 routed.
-
-## Natural-language agent adapter
-
-The web server optionally accepts natural-language generation when
-`SCHEMATIC_AGENT` names an executable. It invokes that executable directly,
-without a shell or provider-specific arguments. One JSON request is written to
-stdin and exactly one JSON response is read from stdout; diagnostic text should
-be written to stderr. A wrapper is the intended way to adapt an existing AI
-CLI. Timeout and output limits are bounded by the server (override with
-`SCHEMATIC_AGENT_TIMEOUT_MS` and `SCHEMATIC_AGENT_MAX_OUTPUT_BYTES`). To expose
-multiple safe choices, set `SCHEMATIC_AGENT_COMMANDS` to a comma-separated list
-of executables; `/api/generate/agents` lists the configured choices and
-`/api/generate` accepts `agent` to select one. Commands are spawned without a
-shell.
-
-The request includes the user's `request`, this schema's required fields, and
-current symbol/template/constraint capabilities. The response may be a
-CircuitSpec directly or `{ "spec": CircuitSpec, "explanation": "..." }`.
-`POST /api/generate` validates the response and runs the deterministic
-placement/routing/SVG/ASCII/semantic-check pipeline. It stores no changes in
-the current circuit and returns a preview ID. `POST /api/generate/commit` with
-that ID explicitly commits the reviewed result under a new circuit name;
-an optional `name` selects an unused target and never overwrites an existing circuit. The agent is not an analog correctness
-oracle: deterministic semantic checks remain authoritative.

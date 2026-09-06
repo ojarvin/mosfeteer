@@ -13,8 +13,7 @@ import { Circuit } from '../core/model.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { renderAscii } from '../core/ascii.js';
 import { svgString } from '../core/render.js';
-import { generateCircuit, normalizeCircuitSpec, routeCircuit } from '../core/generator.js';
-import { AgentAdapterError, configuredExecutables, runAgent } from '../core/agent.js';
+import { generateCircuit, routeCircuit } from '../core/generator.js';
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT) || 8080;
@@ -75,108 +74,6 @@ function generationError(message, status = 422, code = 'generation-error') {
   error.status = status;
   error.code = code;
   return error;
-}
-
-function responseSpec(response) {
-  if (response && typeof response === 'object' && response.spec !== undefined) return response.spec;
-  if (response && typeof response === 'object' && response.circuitSpec !== undefined) return response.circuitSpec;
-  return response;
-}
-
-async function generatePreview(request, executable) {
-  if (typeof request !== 'string' || !request.trim()) throw generationError('request must be a non-empty string', 400, 'invalid-request');
-  if (request.length > 20_000) throw generationError('request is too long', 413, 'request-too-large');
-  const configured = configuredExecutables();
-  if (executable !== undefined && !configured.includes(String(executable))) throw generationError('agent command is not configured', 400, 'invalid-agent');
-  let response;
-  try { response = await runAgent(request.trim(), executable === undefined ? {} : { executable: String(executable) }); }
-  catch (error) {
-    if (error instanceof AgentAdapterError) {
-      const status = error.code === 'not-configured' ? 503 : error.code === 'timeout' || error.code === 'output-too-large' ? 504 : 502;
-      throw generationError(error.message, status, error.code);
-    }
-    throw error;
-  }
-  const specInput = responseSpec(response);
-  let spec;
-  try { spec = normalizeCircuitSpec(specInput); }
-  catch (error) { throw generationError(error.message, 422, 'invalid-spec'); }
-  let routed;
-  try { routed = routeCircuit(generateCircuit(spec)); }
-  catch (error) { throw generationError(`deterministic generation failed: ${error.message}`, 422, 'pipeline-error'); }
-  if (!routed.ok) throw generationError(`deterministic routing failed: ${(routed.report.errors || []).join('; ') || 'no valid layout'}`, 422, 'routing-failed');
-  const state = routed.state;
-  const preview = {
-    previewId: randomUUID(),
-    suggestedName: suggestedCircuitName({ spec }),
-    request: request.trim(),
-    explanation: typeof response?.explanation === 'string' ? response.explanation : '',
-    spec,
-    state,
-    report: { generation: routed.report, placement: routed.placement.report, evaluation: evaluate(routed.circuit) },
-    metrics: routed.metrics,
-    ascii: renderAscii(routed.circuit),
-    svg: svgString(routed.circuit, { grid: true, terminals: false, junctions: false, background: true, netNames: true }),
-  };
-  generationPreviews.set(preview.previewId, preview);
-  while (generationPreviews.size > MAX_GENERATION_PREVIEWS) generationPreviews.delete(generationPreviews.keys().next().value);
-  return preview;
-}
-
-function suggestedCircuitName(preview) {
-  const motif = String(preview.spec.motif || 'generated-circuit').replace(/[^A-Za-z0-9_-]/g, '-').replace(/^-+/, '') || 'generated-circuit';
-  return motif.slice(0, 48);
-}
-
-async function uniqueCircuitName(base) {
-  let name = base;
-  let index = 2;
-  while (true) {
-    try { await stat(join(CIRCUITS_ROOT, name)); name = `${base}-${index++}`; }
-    catch (error) { if (error.code === 'ENOENT') return name; throw error; }
-  }
-}
-
-async function commitGeneration(body) {
-  const preview = body?.previewId ? generationPreviews.get(body.previewId) : null;
-  if (!preview || !preview.spec || !preview.state) throw generationError('previewId is missing or expired; generate a preview first', 409, 'preview-required');
-  // Re-validate the reviewed payload at the commit boundary. No live editor
-  // circuit is involved, so a failed commit cannot replace or mutate it.
-  let committed;
-  try { committed = Circuit.fromJSON(preview.state); normalizeCircuitSpec(preview.spec); }
-  catch (error) { throw generationError(`preview is no longer valid: ${error.message}`, 422, 'invalid-preview'); }
-  const requested = body.name;
-  let name;
-  if (requested !== undefined) {
-    name = circuitName(requested);
-    if (!name) throw generationError('target circuit name is invalid', 400, 'invalid-circuit-name');
-  } else name = await uniqueCircuitName(suggestedCircuitName(preview));
-  if (name === activeName) throw generationError('generated circuits cannot replace the active circuit', 409, 'circuit-exists');
-  try { await stat(join(CIRCUITS_ROOT, name)); throw generationError('target circuit already exists', 409, 'circuit-exists'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  await saveNewCircuit(committed, name);
-  await setActive(name);
-  generationPreviews.delete(preview.previewId);
-  return { name, state: committed.toJSON(), svg: svgString(committed, { grid: true, terminals: false, junctions: false, background: true, netNames: true }), ascii: renderAscii(committed), spec: preview.spec, explanation: preview.explanation };
-}
-
-async function handleGenerationApi(req, res, url) {
-  if (url.pathname === '/api/generate/agents') {
-    if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }); res.end(); return true; }
-    json(res, 200, { agents: configuredExecutables().filter(Boolean) });
-    return true;
-  }
-  if (url.pathname !== '/api/generate' && url.pathname !== '/api/generate/commit') return false;
-  if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return true; }
-  try {
-    const body = await requestBody(req);
-    if (url.pathname === '/api/generate/commit') json(res, 200, await commitGeneration(body));
-    else json(res, 200, await generatePreview(body.request, body.agent));
-  } catch (error) {
-    const status = Number.isInteger(error.status) ? error.status : 400;
-    json(res, status, { error: error.message, code: error.code || 'request-error' });
-  }
-  return true;
 }
 
 async function handleCircuitApi(req, res, url) {
@@ -447,9 +344,6 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     if (url.pathname === '/api/active') {
       if (await handleActiveApi(req, res, url)) return;
-    }
-    if (url.pathname === '/api/generate' || url.pathname === '/api/generate/commit') {
-      if (await handleGenerationApi(req, res, url)) return;
     }
     if (url.pathname.startsWith('/api/circuits')) {
       if (await handleCircuitApi(req, res, url)) return;

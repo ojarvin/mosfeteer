@@ -66,6 +66,17 @@ async function generate(base, name, mode, spec) {
 
 const spec = fixture('resistor-divider');
 
+test('the browser and server expose only deterministic generation', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const agents = await fetch(`${app.base}/api/generate/agents`);
+  assert.equal(agents.status, 404);
+  const legacy = await fetch(`${app.base}/api/generate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request: 'divider' }),
+  });
+  assert.equal(legacy.status, 404);
+});
+
 test('generation preview is non-mutating and returns consistent SVG/ASCII artifacts', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
