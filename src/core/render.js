@@ -179,8 +179,10 @@ export function svgString(circuit, opts = {}) {
     const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
   }
+  const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
+  const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);
   const labels = [...circuit.labels.values()];
-  const comps = [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
+  const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
 
   // Bottom layer: visual shape annotations and their child labels. Keeping
   // these together prevents annotation text from floating above the other
@@ -204,7 +206,7 @@ export function svgString(circuit, opts = {}) {
 
   // Middle layer: wires deliberately sit behind components and labels. Their
   // rounded caps still overlap terminal leads at the exact electrical point.
-  const nets = [...circuit.nets.values()];
+  const nets = [...circuit.nets.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
   for (const net of nets) {
     // Fixed paths are already the complete authored geometry. Keep the legacy
     // managed fallback below so multi-terminal managed nets retain their old
@@ -281,7 +283,8 @@ export function svgString(circuit, opts = {}) {
   }
 
   // Top layer: components, instance labels, free labels, and net labels draw
-  // above the middle wires.
+  // above the middle wires. Component drawOrder only changes stacking within
+  // this layer, so a pushed-back component remains above every wire.
   // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
   for (const c of comps) {
     const def = c.def;
@@ -303,7 +306,9 @@ export function svgString(circuit, opts = {}) {
   // Dedicated / instance label objects (instance identifiers are bold+italic and
   // larger than free-standing annotation labels). Text is aligned inside the
   // label's rendered box (left/center/right) and vertically centered.
-  for (const label of labels.filter((candidate) => candidate.kind !== 'box' && candidate.kind !== 'arrow' && !candidate.parent)) {
+  for (const label of labels
+    .filter((candidate) => candidate.kind !== 'box' && candidate.kind !== 'arrow' && !candidate.parent)
+    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
     const t = label.textPos();

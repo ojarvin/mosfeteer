@@ -6,6 +6,7 @@ import { Circuit } from './model.js';
 import { segmentsCross } from './router.js';
 import { crossNetOverlaps, pathSegments } from './wiring.js';
 import { GRID } from './grid.js';
+import { checkSemantics } from './semantic.js';
 
 export const ROUTING_VERSION = 1;
 export const MAX_ROUTING_ATTEMPTS = 3;
@@ -321,8 +322,9 @@ function unpack(input, placementOrOptions, maybeOptions) {
 /** Route a placed topology without mutating the spec, placement, or source circuit. */
 export function routeCircuit(input, placementOrOptions = {}, maybeOptions = {}) {
   const { spec, placement, options, existing } = unpack(input, placementOrOptions, maybeOptions);
+  const semantic = checkSemantics(spec);
   if (!placement?.ok) {
-    return { ok: false, success: false, spec, placement, report: { ok: false, version: ROUTING_VERSION, attempts: 0, errors: placement?.report?.errors || ['placement failed'] } };
+    return { ok: false, success: false, spec, placement, semantic, report: { ok: false, version: ROUTING_VERSION, attempts: 0, errors: placement?.report?.errors || ['placement failed'], semantic } };
   }
   const requested = Number.isInteger(options.maxAttempts) ? options.maxAttempts : MAX_ROUTING_ATTEMPTS;
   const maxAttempts = Math.max(1, Math.min(MAX_ROUTING_ATTEMPTS, requested));
@@ -351,6 +353,7 @@ export function routeCircuit(input, placementOrOptions = {}, maybeOptions = {}) 
     attempts: candidates.length,
     maxAttempts,
     netOrder: routeOrder(spec, 0).map((net) => net.id),
+    semantic,
     errors: best ? [] : [...new Set(candidates.flatMap((candidate) => [
       ...(candidate.failures || []),
       ...(candidate.metrics?.evaluation?.issues?.map((issue) => issue.message) || []),
@@ -364,6 +367,7 @@ export function routeCircuit(input, placementOrOptions = {}, maybeOptions = {}) 
     success: true,
     spec,
     placement,
+    semantic,
     circuit: best.circuit,
     state: best.circuit.toJSON(),
     metrics: best.metrics,

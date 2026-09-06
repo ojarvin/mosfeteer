@@ -3,6 +3,7 @@ import { rectsOverlap } from './geometry.js';
 import { GRID, onGrid } from './grid.js';
 import { Circuit, ComponentInstance } from './model.js';
 import { candidateScore, expandCircuitSpec, normalizeCircuitSpec } from './circuitSpec.js';
+import { checkSemantics } from './semantic.js';
 
 export const PLACEMENT_VERSION = 1;
 export const MAX_PLACEMENT_CANDIDATES = 8;
@@ -50,14 +51,11 @@ function groupsFor(spec) {
   }
   for (const [name, members] of [...named.entries()].sort(([a], [b]) => compare(a, b))) add(members, `group:${name}`);
 
-  // A shared source or gate is the only topology evidence needed to infer a
-  // small matched pair. This covers the supplied analog motifs without
-  // inventing a second connectivity graph.
   for (const net of spec.nets) {
-    for (const terminalName of ['s', 'g']) {
-      const members = net.terminals.filter((t) => t.terminal === terminalName && byId.get(t.component) && isMos(byId.get(t.component).type)).map((t) => t.component);
-      if (members.length >= 2) add(members.slice(0, 2), `net:${net.id}.${terminalName}`);
-    }
+    const members = net.terminals.filter((t) => t.terminal === 's' && byId.get(t.component) && isMos(byId.get(t.component).type)).map((t) => t.component);
+    if (members.length < 2) continue;
+    const gateNets = new Set(members.map((id) => spec.nets.find((candidate) => candidate.terminals.some((t) => t.component === id && t.terminal === 'g'))?.id));
+    if (gateNets.size === members.length) add(members.slice(0, 2), `net:${net.id}.s`);
   }
   return groups;
 }
@@ -313,7 +311,8 @@ function metadataErrors(spec) {
 export function placeCircuit(input, options = {}) {
   const spec = normalizeCircuitSpec(sourceSpec(input));
   const metadata = metadataErrors(spec);
-  if (metadata.length) return { ok: false, success: false, spec, placements: [], ports: [], rails: [], corridors: [], report: { ok: false, version: PLACEMENT_VERSION, motif: spec.motif, candidateCount: 0, score: candidateScore({ hardViolations: metadata.length }), errors: metadata, interpretedConstraints: [], deferredConstraints: deferredConstraints(spec) } };
+  const semantic = checkSemantics(spec);
+  if (metadata.length) return { ok: false, success: false, spec, placements: [], ports: [], rails: [], corridors: [], report: { ok: false, version: PLACEMENT_VERSION, motif: spec.motif, candidateCount: 0, score: candidateScore({ hardViolations: metadata.length }), errors: metadata, semantic, interpretedConstraints: [], deferredConstraints: deferredConstraints(spec) } };
   const requested = Number.isInteger(options.maxCandidates) ? options.maxCandidates : MAX_PLACEMENT_CANDIDATES;
   const maxCandidates = Math.max(1, Math.min(MAX_PLACEMENT_CANDIDATES, requested));
   const spacing = Number.isInteger(spec.constraints.spacing?.minCells) ? spec.constraints.spacing.minCells : 2;
@@ -340,6 +339,7 @@ export function placeCircuit(input, options = {}) {
     candidateCount: candidates.length,
     score: best.score,
     errors: best.errors,
+    semantic,
     interpretedConstraints: ['groups', 'rows', 'columns', 'spacing', 'corridors'].filter((field) => spec.constraints[field] !== undefined),
     componentCount: spec.components.length,
     portCount: spec.ports?.length || 0,
@@ -352,6 +352,7 @@ export function placeCircuit(input, options = {}) {
     ok: true,
     success: true,
     report,
+    semantic,
     spec,
     constraints: spec.constraints,
     placements: best.placements,
@@ -365,4 +366,3 @@ export function tryPlaceCircuit(input, options = {}) {
   try { return placeCircuit(input, options); }
   catch (error) { return { ok: false, success: false, report: { ok: false, errors: [error.message] }, error }; }
 }
-

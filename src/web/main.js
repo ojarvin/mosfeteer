@@ -59,7 +59,6 @@ const clearCheckButtonEl = document.getElementById('btn-clear-check');
 const helpDialog = document.getElementById('help-dialog');
 const helpDialogContent = document.getElementById('help-dialog-content');
 const helpSearch = document.getElementById('help-search');
-
 // ----- editor state ----------------------------------------------
 
 let circuit = new Circuit();

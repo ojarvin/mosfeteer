@@ -13,9 +13,11 @@ import {
 } from './circuitSpec.js';
 import { PLACEMENT_VERSION, MAX_PLACEMENT_CANDIDATES, placeCircuit, tryPlaceCircuit } from './placement.js';
 import { ROUTING_VERSION, MAX_ROUTING_ATTEMPTS, routeCircuit, tryRouteCircuit, routePlacedCircuit, tryRoutePlacedCircuit } from './routing.js';
+import { checkSemantics, evaluateSemantics, semanticChecks } from './semantic.js';
 
 export { PLACEMENT_VERSION, MAX_PLACEMENT_CANDIDATES, placeCircuit, tryPlaceCircuit };
 export { ROUTING_VERSION, MAX_ROUTING_ATTEMPTS, routeCircuit, tryRouteCircuit, routePlacedCircuit, tryRoutePlacedCircuit };
+export { checkSemantics, evaluateSemantics, semanticChecks };
 
 export {
   CIRCUIT_SPEC_VERSION,

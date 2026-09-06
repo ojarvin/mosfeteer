@@ -17,8 +17,13 @@ tests, project configuration, or global agent configuration. If the request is
 to change the editor itself, use the developer lane instead.
 
 The two lanes are intentionally not interchangeable. The author lane follows a
-two-phase placement-then-routing workflow with user review at the boundary;
-the developer lane optimizes for repository changes and verification.
+placement-then-routing workflow with user review at the boundary. For
+natural-language requests, the operating AI agent creates the explicit
+CircuitSpec and uses the deterministic CLI preview/commit workflow; this author
+workflow does not require the project to invoke an AI provider. Details live in
+[CIRCUIT-AUTHOR.md](./CIRCUIT-AUTHOR.md) and
+[`docs/circuit-spec.md`](../docs/circuit-spec.md). The developer lane optimizes
+for repository changes and verification.
 
 Both roles share the visual quality bar — see [style-guide.md](./style-guide.md).
 
@@ -33,12 +38,12 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
 - `src/core/` — pure model: `model.js` (Circuit, Component, Net, Label),
   `commands.js` (command language), `router.js` (smartRoute + A*),
   `wiring.js` (wire geometry), `render.js` (SVG), `circuitSpec.js`
-  (generator-facing topology contract), `generator.js` (Phase 1 compiler),
+  (generator-facing topology contract), `generator.js` (generation facades),
   `components/` (symbols), `grid.js`,
-  `geometry.js`, `ascii.js`.
+  `geometry.js`, `ascii.js`, `semantic.js`, `placement.js`, `routing.js`.
 - `src/web/` — HTTP server (`serve.js`) and the in-browser editor
   (`index.html`, `main.js`, `style.css`).
-- `src/cli/index.js` — single-command CLI; thin HTTP client over the server.
+- `src/cli/index.js` — command and generation CLI; thin HTTP client over the server.
 - `test/` — Node test suite (`npm test`); current count is reported by the test runner.
 - `fixtures/circuit-spec/` — topology-only CircuitSpec examples.
 

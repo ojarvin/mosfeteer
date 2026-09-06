@@ -6,10 +6,11 @@
  *   node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL\neval"
  *   node src/cli/index.js <circuit>      # interactive REPL bound to <circuit>
  *
- * The CLI sends every command to POST /api/circuits/<name>/cmd on the running
- * server, which runs `runCommand()` against the live model and (when mutated)
- * writes `circuits/<name>/circuit.json` + `circuit.svg`. The browser polls
- * the active circuit and re-renders automatically — no separate save step.
+ * The CLI sends commands to POST /api/circuits/<name>/cmd and generation
+ * requests to POST /api/circuits/<name>/generate. Command mutations write
+ * `circuits/<name>/circuit.json` + `circuit.svg`; generation preview is
+ * non-mutating and commit writes the generated candidate. The browser polls
+ * the active circuit and re-renders automatically.
  *
  * Server is selected with SP_SERVER (default http://127.0.0.1:8080). The
  * command language is the same one the in-browser command prompt uses; see
@@ -17,6 +18,7 @@
  */
 
 import { createInterface } from 'node:readline';
+import { readFile } from 'node:fs/promises';
 
 const SERVER = process.env.SP_SERVER || 'http://127.0.0.1:8080';
 
@@ -27,6 +29,7 @@ function usage() {
     'Usage:',
     `  node src/cli/index.js <circuit> "<command>" [<command> ...]`,
     `  node src/cli/index.js <circuit>               # REPL bound to <circuit>`,
+    `  node src/cli/index.js <circuit> generate [--preview|--commit] [--file spec.json]`,
     '',
     'Environment:',
     `  SP_SERVER   base URL of the server (default ${SERVER})`,
@@ -34,10 +37,11 @@ function usage() {
     'Examples:',
     `  node src/cli/index.js 5t-ota "add nmos M1 --at 120 120"`,
     `  node src/cli/index.js 5t-ota "connect M1.s M2.s --name TAIL" "eval"`,
-    `  node src/cli/index.js 5t-ota "add pmos M2 --at 120 -120\\nconnect M1.d M2.d --name OUT\\neval"`,
+    `  node src/cli/index.js ota generate --preview --file ota.json`,
+    `  cat ota.json | node src/cli/index.js ota generate --commit`,
     '',
-    'Every command hits POST /api/circuits/<circuit>/cmd and the server',
-    'persists + broadcasts the result. The browser auto-loads the circuit.',
+    'Commands hit POST /api/circuits/<circuit>/cmd; generation uses',
+    'POST /api/circuits/<circuit>/generate. The browser auto-loads commits.'
   ].join('\n');
 }
 
@@ -89,6 +93,64 @@ function printHelpAndExit(code = 0) {
   process.exit(code);
 }
 
+async function postGeneration(circuit, mode, spec) {
+  const url = `${SERVER}/api/circuits/${encodeURIComponent(circuit)}/generate`;
+  const request = async (body) => {
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      throw new Error(`could not reach server at ${SERVER}: ${err.message}`);
+    }
+    const data = await response.json().catch(async () => {
+      throw new Error(`server returned non-JSON (status ${response.status}): ${await response.text().catch(() => '')}`);
+    });
+    if (!response.ok) throw new Error(data?.error || `server returned ${response.status}`);
+    return data;
+  };
+  const preview = await request({ mode: mode === 'commit' ? 'preview' : mode, spec });
+  return mode === 'commit' ? request({ mode, previewId: preview.previewId }) : preview;
+}
+
+async function readGenerationSpec(file) {
+  const source = file && file !== '-' ? await readFile(file, 'utf8') : await new Promise((resolve, reject) => {
+    let input = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { input += chunk; });
+    process.stdin.on('end', () => resolve(input));
+    process.stdin.on('error', reject);
+  });
+  try { return JSON.parse(source); }
+  catch (err) { throw new Error(`could not parse generation spec${file ? ` ${file}` : ''}: ${err.message}`); }
+}
+
+async function generateOnce(circuit, args) {
+  let mode = 'preview';
+  let file = null;
+  const positionals = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--preview' || arg === '--commit') mode = arg.slice(2);
+    else if (arg === '--file') {
+      if (!args[++i]) throw new Error('--file expects a path or -');
+      file = args[i];
+    } else if (arg === '--mode') {
+      mode = args[++i];
+      if (mode !== 'preview' && mode !== 'commit') throw new Error('--mode must be preview or commit');
+    } else if (arg.startsWith('--')) throw new Error(`unknown generation flag ${arg}`);
+    else positionals.push(arg);
+  }
+  if (positionals.length > 1) throw new Error('generate accepts one spec file (or stdin)');
+  file ||= positionals[0] || '-';
+  const data = await postGeneration(circuit, mode, await readGenerationSpec(file));
+  process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+  return data.mutated;
+}
+
 async function runOnce(circuit, line) {
   const data = await postCommand(circuit, line);
   printResponse(data);
@@ -137,7 +199,9 @@ async function main() {
   const rest = argv.slice(1);
   if (rest.length === 0) return repl(circuit);
   try {
-    const mutated = await runOnceBatch(circuit, rest);
+    const mutated = rest[0] === 'generate'
+      ? await generateOnce(circuit, rest.slice(1))
+      : await runOnceBatch(circuit, rest);
     process.exitCode = mutated ? 0 : 0;
   } catch (err) {
     process.stderr.write(`error: ${err.message}\n`);

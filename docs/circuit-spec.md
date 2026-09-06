@@ -1,4 +1,4 @@
-# CircuitSpec (Phase 0–2)
+# CircuitSpec (Phases 0–5)
 
 `CircuitSpec` is the versioned, generator-facing description of topology. It is
 not a saved `Circuit`, and it does not contain placement, routing, graphics, or
@@ -40,7 +40,7 @@ normalizer also accepts `direction`/`netId` aliases). Component `role`, `group`,
 and `template` hints plus net `kind` and `logicalGroup` are retained as
 semantic metadata.
 
-`generateCircuit(spec)` returns `{spec, topology, circuit, report}`. It first
+`generateCircuit(spec)` returns `{spec, topology, circuit, report, semantic}`. It first
 normalizes the expanded spec, then stages a temporary `Circuit` from explicit
 component and physical-net membership. Components have zero placement only in
 that temporary validation circuit; generated topology contains no placement,
@@ -53,7 +53,7 @@ convenient than the normal throwing validation boundary.
 
 `placeCircuit(spec)` in `src/core/placement.js` consumes the normalized topology
 (or a `generateCircuit` result) and returns `{ok, placements, ports, rails,
-corridors, report}`. It is pure: each candidate is evaluated with the model's
+corridors, report, semantic}`. It is pure: each candidate is evaluated with the model's
 `ComponentInstance.bboxWorld()` and `worldTerminals()` geometry, and no live
 `Circuit` is changed. Candidates use stable component ordering, 40-unit
 origins, analog PMOS/NMOS rows, matched groups, transistor columns/stacks,
@@ -78,14 +78,64 @@ are bounded and only change that deterministic order. Fixed paths and authored
 managed paths supplied by an existing `Circuit` are retained. Equal names never
 merge physical nets.
 
-The result is `{ok, spec, placement, circuit, state, metrics, report}` for a
-valid candidate, or a structured failure without a circuit. Metrics include
+The result is `{ok, spec, placement, circuit, state, metrics, report, semantic}`
+for a valid candidate, or a structured failure without a circuit. Metrics include
 reachability, body/overlap and diagonal violations, collinear cross-net
 violations, perpendicular crossings, bends, length, clearance, label overlap,
 and placement symmetry. Named nets receive labels only after a drawable path
 exists, through `Circuit#addNetLabel`; no parallel wire graph or router is
 created. `tryRouteCircuit` is the non-throwing adapter. Routing attempts are
 bounded by `MAX_ROUTING_ATTEMPTS`.
+
+## Phase 4 preview and commit API
+
+`POST /api/circuits/<name>/generate` accepts `{mode, spec, options}`. `mode`
+may be `preview` (the default) or `commit`; for preview, `spec` is either an
+explicit CircuitSpec or a supported template input. The server first normalizes,
+places, routes, and evaluates a temporary candidate. A preview never loads,
+changes, saves, or activates the named circuit and returns `normalizedSpec`,
+`topology`, `candidate` (score, issues, placement, metrics, and report),
+`state`, and `artifacts.svg` / `artifacts.ascii`. Commit requires the `previewId`
+from a successful preview, revalidates that preview, and saves the named circuit
+only when it is new. Failed, malformed, or existing targets return a structured
+error without changing the saved circuit.
+
+The CLI keeps JSON out of shell quoting:
+
+```sh
+node src/cli/index.js ota generate --preview --file ota.json
+cat ota.json | node src/cli/index.js ota generate --commit
+```
+
+The web editor has no natural-language generation tool and does not invoke an
+AI provider. The deterministic JSON API may be called directly, while ordinary
+command-mode editing remains on `POST /api/circuits/<name>/cmd`. Use the
+circuit-author workflow for preview review and explicit approval.
+
+## Phase 5 semantic checks
+
+`checkSemantics` (also exported as `evaluateSemantics` and `semanticChecks`) is
+a pure check of explicitly declared intent. It consumes a normalized spec and
+returns `semantic: {ok, issues, errors, warnings, clarifications}`. Each issue
+has a stable `code`, `severity`, `refs`, `nets`, `explanation`, and
+`clarification`; semantic errors and warnings are not mixed with route or
+placement errors. The pass never mutates a `Circuit`, changes connectivity, or
+changes layout, and it does not simulate or establish analog correctness.
+
+Declarations live in `semantics` (the `semantic` alias is accepted). Supported
+vocabulary includes `requiredRails`, `requiredBiasNets`,
+`requiredConnections`, required `ports`/`inputs`/`outputs`, `matchedGroups`,
+`roleExpectations`/`templateRoles`, `driverLoads`, and
+`allowedOpenTerminals`/`prohibitedOpenTerminals`. Explicit differential groups
+can require shared `s` and distinct `g`/`d` physical nets. Net IDs are always
+preferred; equal names never merge physical nets, and duplicate name matches
+produce a clarification instead of a guess. A few explicit hard aliases
+(`require-supply`, `require-ground`, and `require-bias`) are also checked.
+
+Generation, placement, routing, and the generation preview response expose the
+same semantic report under `semantic`; semantic errors do not turn a geometrically
+valid candidate into a failed route. Thus callers can decide whether a warning
+or semantic error needs clarification without losing a clean geometry result.
 
 ## Ambiguity policy
 
@@ -118,3 +168,27 @@ The small corpus under `fixtures/circuit-spec/` covers `resistor-divider`,
 `rc-filter`, `common-source`, `differential-pair`, `current-mirror`, and
 `5t-ota`. Fixtures describe topology only and are intentionally not placed or
 routed.
+
+## Natural-language agent adapter
+
+The web server optionally accepts natural-language generation when
+`SCHEMATIC_AGENT` names an executable. It invokes that executable directly,
+without a shell or provider-specific arguments. One JSON request is written to
+stdin and exactly one JSON response is read from stdout; diagnostic text should
+be written to stderr. A wrapper is the intended way to adapt an existing AI
+CLI. Timeout and output limits are bounded by the server (override with
+`SCHEMATIC_AGENT_TIMEOUT_MS` and `SCHEMATIC_AGENT_MAX_OUTPUT_BYTES`). To expose
+multiple safe choices, set `SCHEMATIC_AGENT_COMMANDS` to a comma-separated list
+of executables; `/api/generate/agents` lists the configured choices and
+`/api/generate` accepts `agent` to select one. Commands are spawned without a
+shell.
+
+The request includes the user's `request`, this schema's required fields, and
+current symbol/template/constraint capabilities. The response may be a
+CircuitSpec directly or `{ "spec": CircuitSpec, "explanation": "..." }`.
+`POST /api/generate` validates the response and runs the deterministic
+placement/routing/SVG/ASCII/semantic-check pipeline. It stores no changes in
+the current circuit and returns a preview ID. `POST /api/generate/commit` with
+that ID explicitly commits the reviewed result under a new circuit name;
+an optional `name` selects an unused target and never overwrites an existing circuit. The agent is not an analog correctness
+oracle: deterministic semantic checks remain authoritative.

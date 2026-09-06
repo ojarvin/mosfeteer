@@ -300,6 +300,16 @@ test('default render layers keep annotations below wires and components above wi
   assert.ok(terminalDot > wire, 'terminal dots draw above wires');
 });
 
+test('pushed-back components retain the top layer above wires', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 80, y: 0, drawOrder: -1 });
+  const svg = svgString(c);
+  assert.ok(svg.indexOf('data-ref="R2"') < svg.indexOf('data-ref="R1"'));
+  const restored = Circuit.fromJSON(c.toJSON());
+  assert.equal(restored.getComponent('R2').drawOrder, -1);
+});
+
 test('crosshair renders behind component objects', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });

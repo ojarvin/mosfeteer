@@ -40,8 +40,10 @@ src/
 │   ├── render.js       SVG renderer (svgString).
 │   ├── ascii.js        Coarse ASCII preview.
 │   ├── circuitSpec.js  Versioned generator-facing topology contract.
+│   ├── semantic.js     Pure checks for declared analog intent.
 │   ├── generator.js    Topology compiler and placement facades.
 │   ├── placement.js    Phase 2 deterministic analog placer.
+│   ├── routing.js      Phase 3 deterministic batch router.
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning
@@ -51,12 +53,12 @@ src/
 │   ├── geometry.js     bbox/transform helpers.
 │   └── style.js        Stroke roles (symbol/wire/emph/ground/supply) and font attrs.
 ├── web/
-│   ├── serve.js        Static + HTTP API (circuits + commands).
+│   ├── serve.js        Static + HTTP API (circuits, commands, generation).
 │   ├── index.html      Single-page app entry.
 │   ├── main.js         Editor (input, render, undo/redo, ghost, wire drag).
 │   └── style.css       Layout, dark mode, toolbars.
 └── cli/
-    └── index.js        Thin HTTP client over POST /api/circuits/<name>/cmd.
+    └── index.js        Thin HTTP client over command and generation endpoints.
 test/                   Node test runner (`node --test`).
 fixtures/circuit-spec/  Topology-only CircuitSpec examples.
 circuits/<name>/        Saved user circuits (gitignored).

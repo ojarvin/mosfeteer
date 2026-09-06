@@ -385,6 +385,7 @@ export class LabelInstance {
       bold: opts.style?.bold !== false,
       italic: opts.style?.italic !== false,
     };
+    this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
     this.owner = this.netId ? null : (opts.owner || null);
     this.offset = this.owner && opts.offset ? { x: snap(opts.offset.x), y: snap(opts.offset.y) } : null;
     const p = snapPoint(opts.x || 0, opts.y || 0);
@@ -587,6 +588,7 @@ export class LabelInstance {
       end: this.kind === 'label' ? null : { ...this.end },
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       style: { ...this.style },
+      drawOrder: this.drawOrder,
     };
   }
 }
@@ -606,6 +608,7 @@ export class ComponentInstance {
       mirrorY: opts.mirrorY !== undefined ? !!opts.mirrorY : !!(this.def && this.def.defaultMirrorY),
     };
     this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
+    this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
   }
 
   localTerminal(name) {
@@ -643,6 +646,7 @@ export class ComponentInstance {
       value: this.value,
       transform: { ...this.transform },
       style: { ...this.style },
+      drawOrder: this.drawOrder,
     };
   }
 }
@@ -656,6 +660,7 @@ export class Net {
     // when their last terminal is detached.  Ordinary connect() nets retain
     // the historical cleanup of an unreferenced auto-route.
     this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
+    this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
     this.wireStyles = { ...(opts.wireStyles || {}) };
     this.preserveEmpty = !!opts.preserveEmpty;
     /** Ordered list of {comp, term} terminal references. */
@@ -789,6 +794,7 @@ export class Net {
 
       name: this.name,
       style: { ...this.style },
+      drawOrder: this.drawOrder,
       wireStyles: Object.fromEntries(Object.entries(this.wireStyles).map(([key, style]) => [key, { ...style }])),
       preserveEmpty: this.preserveEmpty,
       terminals: this.terminals.map((t) => ({ ...t })),
@@ -3618,6 +3624,7 @@ export class Circuit {
         mirrorX: c.transform.mirrorX,
         mirrorY: c.transform.mirrorY,
         style: c.style,
+        drawOrder: c.drawOrder,
         noLabel: true,
       });
     }
@@ -3627,6 +3634,7 @@ export class Circuit {
       const net = new Net(circuit, {
         name: n.name,
         style: n.style,
+        drawOrder: n.drawOrder,
         wireStyles: n.wireStyles,
         routingMode: fixed ? 'fixed' : 'managed',
         allowDiagonal: !fixed && n.allowDiagonal === true,
@@ -3692,6 +3700,7 @@ export class Circuit {
           end: l.end || null,
           textAnchor: l.textAnchor || null,
           style: l.style || null,
+          drawOrder: l.drawOrder,
         });
       } catch (err) {
         continue;

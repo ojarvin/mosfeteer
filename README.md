@@ -31,3 +31,12 @@ npm test
 - `src/web/` — browser editor and HTTP server
 - `src/cli/` — command-line client
 - `test/` — Node.js test suite
+
+## Deterministic generation
+
+The circuit-author agent translates an approved electrical request into an
+explicit CircuitSpec, then uses the CLI to preview and commit a generated
+circuit. The editor has no natural-language generation tool and does not invoke
+an AI provider. The deterministic API and workflow are documented in
+[`guidelines/CIRCUIT-AUTHOR.md`](guidelines/CIRCUIT-AUTHOR.md) and
+[`docs/circuit-spec.md`](docs/circuit-spec.md).

@@ -1,6 +1,7 @@
 /** Versioned, topology-only input and compiler boundary for generated circuits. */
 import { getSymbol } from './components/index.js';
 import { Circuit } from './model.js';
+import { checkSemantics } from './semantic.js';
 
 export const CIRCUIT_SPEC_VERSION = 1;
 export const HARD_CONSTRAINTS = Object.freeze([
@@ -94,7 +95,7 @@ function templateValue(motif, input) {
 export function expandCircuitSpec(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new CircuitSpecError('spec must be an object');
   const motif = input.motif ?? input.template;
-  if (typeof motif !== 'string' || !SUPPORTED_TEMPLATES.includes(motif)) {
+  if (typeof motif !== 'string' || (!SUPPORTED_TEMPLATES.includes(motif) && !(Array.isArray(input.components) && Array.isArray(input.nets)))) {
     throw new CircuitSpecError(`unsupported template "${motif ?? ''}"`);
   }
   if (input.template !== undefined && input.motif !== undefined && input.template !== input.motif) {
@@ -120,6 +121,12 @@ function detachedConstraint(value) {
   if (Array.isArray(value)) return value.map(detachedConstraint);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort(compare).map((key) => [key, detachedConstraint(value[key])]));
   return value;
+}
+
+function normalizeSemantics(input) {
+  if (input === undefined || input === null) return undefined;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new CircuitSpecError('semantics must be an object');
+  return detachedConstraint(input);
 }
 
 function normalizeConstraints(input) {
@@ -258,6 +265,7 @@ export function normalizeCircuitSpec(input) {
   sorted(ports, (port) => port.id);
 
   const constraints = normalizeConstraints(input.constraints);
+  const semantics = normalizeSemantics(input.semantics ?? input.semantic ?? input.constraints?.semantic);
   const hard = new Set(constraints.hard);
   if ((hard.has('no-open-terminals') || hard.has('require-all-terminals-connected')) && openTerminals.length) {
     throw new CircuitSpecError('hard constraints forbid explicit open terminals');
@@ -270,11 +278,15 @@ export function normalizeCircuitSpec(input) {
     nets: sorted(nets, (net) => net.id),
     ...(openTerminals.length ? { openTerminals } : {}),
     ...(ports.length ? { ports } : {}),
+    ...(semantics === undefined ? {} : { semantics }),
     constraints,
   };
 }
 
 export const validateCircuitSpec = normalizeCircuitSpec;
+export { checkSemantics };
+export const evaluateSemantics = checkSemantics;
+export const semanticChecks = checkSemantics;
 
 function topologyState(spec) {
   const refdes = new Map(spec.components.map((component) => [component.id, component.refdes || component.id]));
@@ -319,8 +331,9 @@ export function generateCircuit(input, maybeCircuit) {
     openTerminalCount: spec.openTerminals?.length || 0,
     portCount: spec.ports?.length || 0,
     errors: [],
+    semantic: checkSemantics(spec),
   };
-  return { ok: true, success: true, report, spec, topology: spec, circuit };
+  return { ok: true, success: true, report, semantic: report.semantic, spec, topology: spec, circuit };
 }
 
 /** Non-throwing adapter for callers that want a structured failure report. */
