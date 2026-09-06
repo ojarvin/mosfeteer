@@ -1815,6 +1815,7 @@ export class Circuit {
       id: opts.id,
       name: opts.name,
       style: opts.style,
+      drawOrder: opts.drawOrder,
       wireStyles: opts.wireStyles,
       routingMode: opts.routingMode,
       allowDiagonal: opts.allowDiagonal,
@@ -3257,6 +3258,7 @@ export class Circuit {
         const child = this.createWireNet({
           name: net.name,
           routingMode: 'fixed',
+          drawOrder: net.drawOrder,
           fixedPaths: islands[i].pieces,
           junctions: islands[i].junctions,
           preserveEmpty: true,

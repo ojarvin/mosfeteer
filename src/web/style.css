@@ -1163,6 +1163,8 @@ button.off {
 .mode-toolbar #btn-mode-annotation::before { content: "T"; }
 .mode-toolbar #btn-mode-arrow::before { content: "➜"; }
 .mode-toolbar #btn-mode-box::before { content: "▣"; }
+.mode-toolbar #btn-bring-front::before { content: "↑"; }
+.mode-toolbar #btn-send-back::before { content: "↓"; }
 
 .layout {
   min-height: 0;

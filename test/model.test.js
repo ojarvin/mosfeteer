@@ -1476,6 +1476,22 @@ test('toJSON / fromJSON round-trips refs, positions, transforms, net membership,
   }
 });
 
+test('draw order round-trips for components, nets, and labels', () => {
+  const c = new Circuit();
+  const r1 = c.addComponent('resistor', { refdes: 'R1', x: 80, drawOrder: 7 });
+  const r2 = c.addComponent('resistor', { refdes: 'R2', x: 480 });
+  const net = c.connect(`${r1.refdes}.b`, `${r2.refdes}.a`);
+  net.drawOrder = -3;
+  const label = [...c.labels.values()].find((item) => item.owner === r1.refdes);
+  label.drawOrder = 11;
+
+  const restored = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.equal(restored.getComponent('R1').drawOrder, 7);
+  assert.equal(restored.getComponent('R2').drawOrder, 0);
+  assert.equal(restored.getComponent('R1').circuit.netOfTerminal('R1.b').drawOrder, -3);
+  assert.equal([...restored.labels.values()].find((item) => item.owner === 'R1').drawOrder, 11);
+});
+
 test('fromJSON rejects bad version', () => {
   assert.throws(() => Circuit.fromJSON({ version: 99 }), /unsupported state/);
 });

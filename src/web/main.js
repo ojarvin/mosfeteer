@@ -3,7 +3,7 @@
  *
  * Modes:
  *   NORMAL   h/j/k/l move (selected comp or cursor), r rotate, Shift+r mirror,
- *            dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
+ *            Shift+Up/Down layer, dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
  *            toggle italic/bold on selected labels, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
  *   VISUAL   hjkl grows a selection box, Enter commits it (like a marquee).
@@ -21,6 +21,7 @@ import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
+import { layerActionForKey } from './toolbar.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -158,7 +159,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE', hint: 'DELETE · selected Delete acts like dd; otherwise click objects to delete · Esc cancel' };
   if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE', hint: movePending ? 'DETACHED MOVE · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'DETACHED MOVE · drag empty space to box-select, or click a component, label, or wire · Esc cancel' };
   if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE', hint: movePending ? 'MOVE · faint objects and connected wires follow the cursor, then click/Enter to commit · Esc cancel' : 'MOVE · drag empty space to box-select, or click a component, label, or wire · Esc cancel' };
-  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · Ctrl+Shift+V paste style · r rotate · Shift+r mirror · Ctrl+R mirror vertical · x check · Shift+x save` };
+  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · Ctrl+Shift+V paste style · r rotate · Shift+r mirror · Shift+↑/↓ layer · Ctrl+R mirror vertical · x check · Shift+x save` };
 }
 
 function paneSize() {
@@ -1029,6 +1030,57 @@ function selectedComps() {
     if (c) out.push(c);
   }
   return out;
+}
+
+function selectedDrawTargets() {
+  const groups = [];
+  const netIds = new Set(selectedNets);
+  if (selectedWire) netIds.add(selectedWire.netId);
+  const nets = [...netIds].map((id) => circuit.nets.get(id)).filter(Boolean);
+  if (nets.length) groups.push({ objects: nets, peers: [...circuit.nets.values()] });
+
+  const comps = selectedComps().filter((comp) => !selectedNetSolders.has(comp.refdes));
+  if (comps.length) groups.push({ objects: comps, peers: [...circuit.components.values()] });
+
+  const labels = selectedLabels();
+  if (labels.length) {
+    const objects = [...new Map(labels.map((label) => {
+      const parent = label.parent ? circuit.labels.get(label.parent) : label;
+      return [parent?.id, parent];
+    }).filter(([, label]) => label)).values()];
+    const isAnnotation = (label) => label.kind === 'arrow' || label.kind === 'box';
+    const allLabels = [...circuit.labels.values()];
+    groups.push(...[
+      {
+        objects: objects.filter(isAnnotation),
+        peers: allLabels.filter(isAnnotation),
+      },
+      {
+        objects: objects.filter((label) => !isAnnotation(label)),
+        peers: allLabels.filter((label) => !isAnnotation(label) && !label.parent),
+      },
+    ].filter(({ objects: group }) => group.length));
+  }
+  return groups.length ? { groups } : null;
+}
+
+function restackSelected(direction) {
+  pendingKey = null;
+  const targets = selectedDrawTargets();
+  if (!targets) {
+    logLine('select an object to move it front or back');
+    return;
+  }
+  commit(() => {
+    for (const { objects, peers } of targets.groups) {
+      const ordered = [...objects].sort((a, b) => a.drawOrder - b.drawOrder);
+      const base = direction === 'front'
+        ? Math.max(...peers.map((object) => object.drawOrder)) + 1
+        : Math.min(...peers.map((object) => object.drawOrder)) - ordered.length;
+      ordered.forEach((object, index) => { object.drawOrder = base + index; });
+    }
+  });
+  render();
 }
 
 function refreshCopyGhostBase() {
@@ -3715,6 +3767,7 @@ function splitDetachedWireNet(net, selected, movedRefs) {
     name: net.name,
     routingMode: net.routingMode,
     allowDiagonal: net.allowDiagonal,
+    drawOrder: net.drawOrder,
     preserveEmpty: true,
   }));
   const anchorAt = (point, terminals) => {
@@ -5924,6 +5977,8 @@ function keymapText() {
     'Shift+m     modal detached component move; empty drag box-selects before ghost; stays armed',
     'c           repeated copy ghost: empty drag box-selects before ghost; click/Enter commits, Esc returns to source',
     'Delete/Backspace persistent delete: click objects; stays armed',
+    'Shift+Up / Shift+Down  bring selected object to front / send to back',
+    'Bring to front / Send to back buttons  restack within the default layer',
     'p / C-v     paste the copied set at the cursor (new ids, nets kept)',
     'C-S-v       paste style from one copied object onto selected object(s)',
     'D           toggle dark mode',
@@ -6059,6 +6114,7 @@ function copySelection() {
         id: net.id,
         name: net.name,
         routingMode: net.routingMode,
+        drawOrder: net.drawOrder,
         terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
         route: net.route ? net.route.map((p) => ({ ...p })) : null,
         branches: net.branches ? net.branches.map((path) => path.map((p) => ({ ...p }))) : null,
@@ -6079,7 +6135,7 @@ function copySelection() {
       const selected = ownKeys.map((key) => { const w = keyToWire(key); return { branch: w.branch, segment: w.segment }; });
       for (const island of extractWireFragments(paths, selected, net.junctions)) {
         fragments.push({ name: net.name, routingMode: net.routingMode,
-          allowDiagonal: net.allowDiagonal, paths: island.paths, junctions: island.junctions });
+          allowDiagonal: net.allowDiagonal, drawOrder: net.drawOrder, paths: island.paths, junctions: island.junctions });
       }
     }
   }
@@ -6305,7 +6361,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         start: e.start && refMap.has(e.start.comp) ? { comp: refMap.get(e.start.comp), term: e.start.term } : null,
         end: e.end && refMap.has(e.end.comp) ? { comp: refMap.get(e.end.comp), term: e.end.term } : null,
       })) : null;
-      const net = circuit.createWireNet({ name: n.name, routingMode: n.routingMode, allowDiagonal: n.allowDiagonal, fixedPaths });
+      const net = circuit.createWireNet({ name: n.name, routingMode: n.routingMode, allowDiagonal: n.allowDiagonal, drawOrder: n.drawOrder, fixedPaths });
       netMap.set(n.id, net);
       for (const t of n.terminals) {
         const newRef = refMap.get(t.comp);
@@ -6329,8 +6385,8 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       for (const fragment of clipboard.fragments || []) {
       const paths = fragment.paths.map((path) => path.map((p) => ({ x: p.x + dx, y: p.y + dy })));
       const net = circuit.createWireNet(fragment.routingMode === 'fixed'
-        ? { name: fragment.name, routingMode: 'fixed', fixedPaths: paths.map((path) => ({ points: path, start: null, end: null })), junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
-        : { name: fragment.name, routingMode: 'managed', allowDiagonal: fragment.allowDiagonal, branches: paths, route: paths[0], junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
+        ? { name: fragment.name, routingMode: 'fixed', drawOrder: fragment.drawOrder, fixedPaths: paths.map((path) => ({ points: path, start: null, end: null })), junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
+        : { name: fragment.name, routingMode: 'managed', allowDiagonal: fragment.allowDiagonal, drawOrder: fragment.drawOrder, branches: paths, route: paths[0], junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
         for (let branch = 0; branch < paths.length; branch++) {
           for (let segment = 1; segment < paths[branch].length; segment++) {
             if (paths[branch][segment - 1].x === paths[branch][segment].x && paths[branch][segment - 1].y === paths[branch][segment].y) continue;
@@ -6402,6 +6458,8 @@ const TOOLBAR_IDS = {
   'move-detached': ['btn-move-detached', 'btn-detach-move', 'btn-mode-detach-move', 'btn-detached-move', 'tool-move-detached', 'mode-detached-move'],
   copy: ['btn-copy', 'btn-mode-copy', 'tool-copy', 'mode-copy'],
   delete: ['btn-delete', 'btn-mode-delete', 'tool-delete', 'mode-delete'],
+  'send-back': ['btn-send-back'],
+  'bring-front': ['btn-bring-front'],
   'net-label': ['btn-net-label', 'btn-mode-net-label', 'tool-net-label', 'mode-net-label'],
   annotation: ['btn-annotation', 'btn-mode-annotation', 'tool-annotation', 'mode-annotation'],
   arrow: ['btn-arrow', 'btn-mode-arrow', 'tool-arrow', 'mode-arrow'],
@@ -7008,6 +7066,8 @@ function bindInteractionControls() {
     'detach-move': () => activateMove('detached'),
     copy: activateCopy,
     delete: activateDelete,
+    'send-back': () => restackSelected('back'),
+    'bring-front': () => restackSelected('front'),
     'net-label': activateNetLabel,
     annotation: activateAnnotation,
     arrow: () => activateShapeAnnotation('arrow'),
@@ -7301,6 +7361,19 @@ window.addEventListener('keydown', (ev) => {
       copyPending = false;
       render();
     }
+    return;
+  }
+
+  // Layering is available only in idle normal mode. The helper keeps arrow
+  // keys available to active interactions and text controls.
+  const layerAction = layerActionForKey({
+    key, shiftKey: ev.shiftKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, altKey: ev.altKey,
+    mode, wire: !!wire, directWire: !!directWire, visual: !!visual, drag: !!drag,
+    moveMode, copyMode, deleteMode, labelMode,
+  });
+  if (layerAction) {
+    ev.preventDefault();
+    restackSelected(layerAction === 'bring-front' ? 'front' : 'back');
     return;
   }
 
