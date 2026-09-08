@@ -1,12 +1,12 @@
 /**
- * Schematic Spawner — vim-like keyboard editor.
+ * Schematic Spawner — keyboard-driven schematic editor.
  *
  * Modes:
- *   NORMAL   h/j/k and arrows move (selected comp or cursor), l line annotation, r rotate, Shift+r mirror,
+ *   NORMAL   arrows move (selected comp or cursor), l line annotation, r rotate, Shift+r mirror,
  *            Shift+Up/Down layer, dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
  *            toggle italic/bold on selected labels, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
- *   VISUAL   hjkl grows a selection box, Enter commits it (like a marquee).
+ *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
 
@@ -21,7 +21,7 @@ import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
-import { componentPaletteItems, layerActionForKey } from './toolbar.js';
+import { componentPaletteItems, editorKeymapText, layerActionForKey } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
 
 // ----- boot failure surface --------------------------------------
@@ -47,6 +47,8 @@ const detailEl = document.getElementById('detail');
 const statusEl = document.getElementById('status');
 const logEl = document.getElementById('log');
 const cmdInput = document.getElementById('cmd-input');
+const consoleEl = document.getElementById('console-panel');
+const consoleResizerEl = document.getElementById('console-resizer');
 const circuitSelectEl = document.getElementById('circuit-select');
 const circuitNameEl = document.getElementById('circuit-name');
 const saveStateEl = document.getElementById('save-state');
@@ -56,7 +58,6 @@ const deleteDialog = document.getElementById('delete-dialog');
 const deleteDialogMessage = document.getElementById('delete-dialog-message');
 const switchDialog = document.getElementById('switch-dialog');
 const switchDialogMessage = document.getElementById('switch-dialog-message');
-const hintEl = document.getElementById('hint');
 const checkSummaryBodyEl = document.getElementById('check-summary-body');
 const clearCheckButtonEl = document.getElementById('btn-clear-check');
 const helpDialog = document.getElementById('help-dialog');
@@ -185,39 +186,36 @@ let netWarnings = []; // [{ key, otherKey, x0, y0, x1, y1 }]
 let wiresDirty = true; // set when wire geometry may have changed; recomputes netWarnings
 
 /**
- * Derive the one interaction state used by the toolbar, canvas, hint, and
- * status line.  Keeping this small and pure also makes the keyboard vocabulary
- * usable by alternate (Virtuoso-style) control surfaces without duplicating
- * mode precedence rules.
+ * Derive the one interaction state used by the toolbar, canvas, and status
+ * line. Keeping this small and pure also makes the keyboard vocabulary usable
+ * by alternate (Virtuoso-style) control surfaces without duplicating mode
+ * precedence rules.
  */
 export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
-  const route = routeMode === 'diagonal' ? 'diagonal' : 'orthogonal';
   if (directWire) return {
     key: 'wire',
     canvasClass: 'direct-wire-mode',
     toolbar: 'wire',
     label: directWire.routeMode === 'diagonal' ? 'DIAGONAL WIRE' : 'LEGACY FIXED WIRE',
-    hint: `${directWire.routeMode === 'diagonal' ? 'DIAGONAL' : 'LEGACY FIXED'} WIRE · click terminal, add points, then target · Esc cancel`,
   };
   if (wire) return {
     key: 'wire',
     canvasClass: 'wire-mode',
     toolbar: 'wire',
     label: 'WIRE',
-    hint: `WIRE (${wire.routeMode || route}) · click terminal or point, then target · Esc cancel`,
   };
-  if (visual) return { key: 'visual', canvasClass: 'mode-visual', toolbar: 'visual', label: 'VISUAL', hint: 'VISUAL · hjkl/arrows grow the box · Enter select · Esc cancel' };
-  if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL', hint: 'NET LABEL · click an unambiguous wire to place · stays active · Esc cancel' };
-  if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION', hint: 'ANNOTATION · click to place free text · stays active · Esc cancel' };
-  if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE', hint: 'LINE · click successive points, Enter or double-click commits · Esc cancel' };
-  if (labelMode === 'arrow') return { key: 'arrow', canvasClass: 'mode-annotation', toolbar: 'arrow', label: 'ARROW', hint: 'ARROW · click two points to draw · stays active · Esc cancel' };
-  if (labelMode === 'box') return { key: 'box', canvasClass: 'mode-annotation', toolbar: 'box', label: 'BOX', hint: 'BOX · click two points to draw · stays active · Esc cancel' };
-  if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'PLACE', hint: 'PLACE · type to search, Enter picks, click/Enter places · Esc cancel' };
-  if (copyMode) return { key: 'copy', canvasClass: 'mode-copy', toolbar: 'copy', label: 'COPY', hint: copyPending ? 'COPY · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'COPY · drag empty space to box-select, or click an object/existing selection · Esc cancel' };
-  if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE', hint: 'DELETE · selected Delete acts like dd; otherwise click objects to delete · Esc cancel' };
-  if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE', hint: movePending ? 'DETACHED MOVE · faint objects follow the cursor, then click/Enter to commit · Esc cancel' : 'DETACHED MOVE · drag empty space to box-select, or click a component, label, or wire · Esc cancel' };
-  if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE', hint: movePending ? 'MOVE · faint objects and connected wires follow the cursor, then click/Enter to commit · Esc cancel' : 'MOVE · drag empty space to box-select, or click a component, label, or wire · Esc cancel' };
-  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL', hint: `NORMAL · i place/search · w wire (${route}) · m move · Shift+m detached move · c copy · l line · Ctrl+Shift+V paste style · r rotate · Shift+r mirror · Shift+↑/↓ layer · Ctrl+R mirror vertical · x check · Shift+x save` };
+  if (visual) return { key: 'visual', canvasClass: 'mode-visual', toolbar: 'visual', label: 'VISUAL' };
+  if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL' };
+  if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION' };
+  if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE' };
+  if (labelMode === 'arrow') return { key: 'arrow', canvasClass: 'mode-annotation', toolbar: 'arrow', label: 'ARROW' };
+  if (labelMode === 'box') return { key: 'box', canvasClass: 'mode-annotation', toolbar: 'box', label: 'BOX' };
+  if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'PLACE' };
+  if (copyMode) return { key: 'copy', canvasClass: 'mode-copy', toolbar: 'copy', label: 'COPY' };
+  if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE' };
+  if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE' };
+  if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE' };
+  return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL' };
 }
 
 function paneSize() {
@@ -5613,14 +5611,6 @@ function onWireKey(key) {
     }
   } else if (key === 'Enter') {
     commitWireAtCursor();
-  } else if (key === 'h') {
-    moveCursor(-1, 0);
-  } else if (key === 'j') {
-    moveCursor(0, 1);
-  } else if (key === 'k') {
-    moveCursor(0, -1);
-  } else if (key === 'l') {
-    moveCursor(1, 0);
   } else if (key === 'Tab') {
     // Wires and wire highlights are never part of Tab cycling.
     return;
@@ -5775,23 +5765,13 @@ function onInsertKey(key, shiftKey = false) {
     undo();
     return;
   }
-  // Arrow keys move the cursor. Once a ghost is active, vim movement keys do
-  // too; before that point they remain ordinary search input.
+  // Arrow keys move the cursor and placement ghost.
   const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
   if (arrow) {
     moveCursor(arrow[0], arrow[1]);
     render();
     return;
   }
-  if (pendingPlace) {
-    const vimMove = { h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0] }[key];
-    if (vimMove) {
-      moveCursor(vimMove[0], vimMove[1]);
-      render();
-      return;
-    }
-  }
-
   // With a ghost selected, r rotates CW and Shift+r mirrors horizontally.
   if (pendingPlace && pendingPlace.kind === 'component' && key === 'r' && !shiftKey) {
     transformPendingComponent('rotate');
@@ -5840,14 +5820,9 @@ function onInsertKey(key, shiftKey = false) {
   }
 }
 
-/** Visual mode: hjkl moves the cursor to grow a selection box; Enter commits
- *  the box selection and leaves visual mode, Escape cancels without selecting. */
+/** Arrow keys grow the selection box; Enter commits it and Escape cancels. */
 function onVisualKey(key) {
   const move = {
-    h: [-1, 0],
-    j: [0, 1],
-    k: [0, -1],
-    l: [1, 0],
     ArrowLeft: [-1, 0],
     ArrowDown: [0, 1],
     ArrowUp: [0, -1],
@@ -5946,9 +5921,6 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   const nudgeKey = {
-    h: [-1, 0],
-    j: [0, 1],
-    k: [0, -1],
     ArrowLeft: [-1, 0],
     ArrowDown: [0, 1],
     ArrowUp: [0, -1],
@@ -6054,8 +6026,8 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'v') {
-    // Visual mode: the box grows from the cursor as you move with hjkl; Enter
-    // commits the box selection (like a marquee), Esc cancels.
+    // Visual mode: the box grows from the cursor as you move with arrows;
+    // Enter commits the box selection (like a marquee), Esc cancels.
     activateVisual();
     return;
   }
@@ -6156,83 +6128,7 @@ function onNormalKey(key, shiftKey = false) {
 }
 
 function keymapText() {
-  return [
-    '-- normal --',
-    'L           persistent electrical net-label placement',
-    'u / C-z     undo with an insert or copy ghost; insert search keeps u as text',
-    'Shift+N     persistent free annotation placement',
-    'l           persistent multi-point line annotation placement',
-    't           edit the primary selected label (no-op otherwise)',
-    'h j k / arrows move selected comp(s) / cursor (counts: 5j)',
-    'r           rotate selected 90 cw',
-    'Shift+r     mirror selected horizontally',
-    'Ctrl+r      mirror selected vertically',
-    'Ctrl+i      toggle italic on selected labels',
-    'Ctrl+b      toggle bold on selected labels',
-    'C           toggle crosshair visibility',
-    'x / Shift+x check / save',
-    'm           modal move any component/label/annotation/wire; empty drag box-selects before ghost; stays armed',
-    'Shift+m     modal detached component move; empty drag box-selects before ghost; stays armed',
-    'c           repeated copy ghost: empty drag box-selects before ghost; click/Enter commits, Esc returns to source',
-    'Delete/Backspace persistent delete: click objects; stays armed',
-    'Shift+Up / Shift+Down  bring selected object to front / send to back',
-    'Bring to front / Send to back buttons  restack within the default layer',
-    'p / C-v     paste the copied set at the cursor (new ids, nets kept)',
-    'C-S-v       paste style from one copied object onto selected object(s)',
-    'D           toggle dark mode',
-    'w           single managed Wire mode: orthogonal, or F3-selected diagonal path',
-    'F3          expose/toggle the Wire route choice (orthogonal / diagonal)',
-    '            click a terminal to commit; click points to guide autorouting; Enter commits a free point or wire target',
-    '            legacy fixed nets remain editable as literal geometry',
-    '            drag legacy fixed vertices, segments, or open endpoints',
-    '            open endpoints can be extended/reconnected to terminals or exact wire targets',
-    '            dd deletes selected fixed segments literally',
-    'Tab / S-Tab  cycle singleton component/label forward / backward; otherwise no-op',
-    'Ctrl-A      select all components, labels, and non-empty nets',
-    'Enter       select component under cursor',
-    'u / C-z     undo    U / C-y  redo',
-    'F / f       fit view to contents',
-    '#           toggle the placement grid on / off',
-    'Delete/Backspace persistent delete: click an object; Backspace removes the latest wire vertex while wiring',
-    'v           visual mode: hjkl grows a box · Enter selects · Esc cancels',
-    'i           insert mode (fuzzy-search component & label placement)',
-    ':           ex-mode command line (e.g. :connect R1.a R2.a)',
-    '?           this help',
-    '-- insert --',
-    'type        fuzzy-search names and aliases (e.g. nmos, idc, vdc, sw)',
-    'Enter/Tab   pick the best match as a placement ghost',
-    'Enter/click place ghost at cursor · h j k l / arrows move ghost',
-    'r / Shift+r rotate / horizontally mirror component ghost',
-    'Backspace   edit the search string',
-    'Esc/Backspace  cancel ghost (back to search)   Esc exits insert',
-    'h j k l / arrows  move cursor while a placement ghost is active',
-    '-- labels --',
-    'net selection also selects its associated junction solder dots',
-    'L           click an unambiguous wire to place a net label; Esc exits',
-    'Shift+N     click anywhere to place an annotation; Esc exits',
-    't (normal)  edit the primary selected label',
-    't (insert)  place a label (double-click or t to edit text)',
-    'Shift+Left / Shift+Right  align left / right (centre default)',
-    'h j k l     move a selected label (set its offset if it belongs to a part)',
-    'dd           delete the selected label',
-    'double-click  edit the label text inline',
-    'Tab / S-Tab  commit label edit, then select next / previous label',
-    'C-, / C-.    in the label editor: subscript / superscript the selection',
-    '             (press again to revert; mixed selection reverts to normal)',
-    '-- mouse --',
-    'left        click select · drag marquee-select · in Move/Copy, empty drag selects before ghost · drag comp to move',
-    'wire        w, then click a terminal or any point; terminal clicks commit; other clicks guide the preview; Enter commits',
-    'wire join   click an existing wire to branch; Enter on a wire joins it',
-    'wire select click selects a run · Shift-click adds/removes runs · drag re-routes',
-    'wire delete dd removes selected runs (legacy fixed geometry stays literal)',
-    'y / C-c     copy selected components, free labels, complete nets, and wire fragments',
-    '             a single copied object also provides its style for C-S-v',
-    'shift-click toggle in selection     shift-drag marquee adds',
-    'middle      drag to pan (view never pans on its own)',
-    'right       drag = zoom box · click without dragging does nothing',
-    'wheel       zoom about the pointer (scroll up = in, down = out)',
-    'F / f fit   view fills the pane · crosshair is visible only over the canvas',
-  ].join('\n');
+  return editorKeymapText();
 }
 
 function logKeymap() {
@@ -6714,7 +6610,6 @@ function syncInteractionUI() {
   canvasEl.classList.add(state.canvasClass);
   if (wire) canvasEl.classList.add('wire-mode');
   if (directWire) canvasEl.classList.add('direct-wire-mode');
-  if (hintEl) hintEl.textContent = state.hint;
   return state;
 }
 
@@ -6729,10 +6624,10 @@ function renderStatus() {
       : '-';
   const parts = [interaction.label, `sel ${sel}`, `@${cursor.x},${cursor.y}`];
   if (visual) {
-    parts.push('box from cursor · hjkl grow · Enter select · Esc cancel');
+    parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
   }
   if (mode === 'insert') {
-    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · h j k l / arrows move · R/X · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
+    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/X · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
   }
   if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
   if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
@@ -6752,7 +6647,6 @@ function renderStatus() {
       ? `${directWire.source.fixed ? 'fixed endpoint suffix' : `${directWire.routeMode || routeMode} direct path`}${directWire.points.length ? ` · ${directWire.points.length} point${directWire.points.length === 1 ? '' : 's'}` : ''} · click waypoints / terminal / wire · Enter · Esc cancel`
       : 'click a terminal or open fixed endpoint to start · Esc cancel');
   }
-  if (!directWire && !wire && mode === 'normal') parts.push('Tab/S-Tab: singleton cycle · t: edit selected label');
   if (selectedNets.size) parts.push(`nets ${selectedNets.size}`);
   if (lastCheckReport && (diagnosticSelection.components.size || diagnosticSelection.nets.size || diagnosticSelection.labels.size)) {
     parts.push(`check focus ${diagnosticSelection.components.size + diagnosticSelection.nets.size + diagnosticSelection.labels.size}`);
@@ -7618,10 +7512,7 @@ window.addEventListener('keydown', (ev) => {
       if (directWire.points.length) directWire.points.pop();
     } else if (key === 'Enter') {
       commitDirectAtCursor();
-    } else if (key === 'h') moveCursor(-1, 0);
-    else if (key === 'j') moveCursor(0, 1);
-    else if (key === 'k') moveCursor(0, -1);
-    else if (key === 'l') moveCursor(1, 0);
+    }
     render();
   } else if (wire) {
     onWireKey(key);
@@ -7691,4 +7582,68 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
     resizeView();
     render();
   }).observe(paneEl);
+}
+
+// The footer also has a native CSS resize affordance. This small handle adds
+// keyboard access and keeps its separator value useful to assistive tech.
+function consoleHeightBounds() {
+  if (!consoleEl) return { min: 92, max: 420 };
+  const style = getComputedStyle(consoleEl);
+  const min = Number.parseFloat(style.minHeight) || 92;
+  const maxValue = Number.parseFloat(style.maxHeight);
+  return { min, max: Number.isFinite(maxValue) ? Math.max(min, maxValue) : Math.max(min, window.innerHeight) };
+}
+
+function syncConsoleResizer() {
+  if (!consoleEl || !consoleResizerEl) return;
+  const { min, max } = consoleHeightBounds();
+  const height = Math.round(consoleEl.getBoundingClientRect().height);
+  consoleResizerEl.setAttribute('aria-valuemin', String(Math.round(min)));
+  consoleResizerEl.setAttribute('aria-valuemax', String(Math.round(max)));
+  consoleResizerEl.setAttribute('aria-valuenow', String(Math.max(Math.round(min), Math.min(Math.round(max), height))));
+  consoleResizerEl.setAttribute('aria-valuetext', `${height} pixels`);
+}
+
+function setConsoleHeight(height) {
+  if (!consoleEl) return;
+  const { min, max } = consoleHeightBounds();
+  consoleEl.style.height = `${Math.max(min, Math.min(max, height))}px`;
+  syncConsoleResizer();
+}
+
+if (consoleResizerEl && consoleEl) {
+  let resizeStart = null;
+  consoleResizerEl.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    resizeStart = { y: ev.clientY, height: consoleEl.getBoundingClientRect().height };
+    consoleResizerEl.setPointerCapture?.(ev.pointerId);
+    consoleResizerEl.classList.add('dragging');
+    ev.preventDefault();
+  });
+  consoleResizerEl.addEventListener('pointermove', (ev) => {
+    if (!resizeStart) return;
+    setConsoleHeight(resizeStart.height - ev.clientY + resizeStart.y);
+    ev.preventDefault();
+  });
+  const endConsoleResize = (ev) => {
+    if (!resizeStart) return;
+    resizeStart = null;
+    consoleResizerEl.classList.remove('dragging');
+    if (ev.pointerId !== undefined) consoleResizerEl.releasePointerCapture?.(ev.pointerId);
+  };
+  consoleResizerEl.addEventListener('pointerup', endConsoleResize);
+  consoleResizerEl.addEventListener('pointercancel', endConsoleResize);
+  consoleResizerEl.addEventListener('keydown', (ev) => {
+    const { min, max } = consoleHeightBounds();
+    const step = ev.shiftKey ? 64 : 16;
+    if (ev.key === 'ArrowUp') setConsoleHeight(consoleEl.getBoundingClientRect().height + step);
+    else if (ev.key === 'ArrowDown') setConsoleHeight(consoleEl.getBoundingClientRect().height - step);
+    else if (ev.key === 'Home') setConsoleHeight(min);
+    else if (ev.key === 'End') setConsoleHeight(max);
+    else return;
+    ev.preventDefault();
+  });
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(syncConsoleResizer).observe(consoleEl);
+  window.addEventListener('resize', syncConsoleResizer);
+  syncConsoleResizer();
 }

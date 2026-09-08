@@ -108,8 +108,6 @@
     </form>
   </dialog>
 
-  <div class="hint" id="hint" data-role="contextual-hint" aria-live="polite"><strong>Virtuoso</strong> · i Place · w Wire · m Move · Shift+m Detach move · c Copy ghost · l Line · Ctrl+Shift+V Paste style · Delete Delete · r Rotate · Shift+r Mirror X · Ctrl+r Mirror Y · x Check · Shift+x Save · C Crosshair · F3 Wire shape · ? Help</div>
-
   <main class="layout">
     <section class="canvas-pane">
       <div class="mode-group mode-toolbar" aria-labelledby="mode-heading" data-control-group="mode">
@@ -159,7 +157,19 @@
     </aside>
   </main>
 
-  <footer class="console">
+  <footer class="console" id="console-panel" role="region" aria-label="Command and status panel">
+    <div
+      id="console-resizer"
+      class="console-resizer"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize command and status panel"
+      aria-controls="cmd-input log"
+      aria-valuemin="92"
+      aria-valuemax="420"
+      aria-valuenow="140"
+      tabindex="0"
+    ></div>
     <div class="status" id="status"></div>
     <div class="console-row">
       <button id="btn-help" data-icon="help" title="Show keyboard and command help (?)">Help</button>

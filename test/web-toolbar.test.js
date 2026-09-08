@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { componentPaletteItems, layerActionForKey } from '../src/web/toolbar.js';
+import { componentPaletteItems, editorKeymapText, layerActionForKey } from '../src/web/toolbar.js';
 
 test('component palette omits generated solder dots but keeps real components', () => {
   const items = componentPaletteItems([
@@ -23,4 +23,14 @@ test('layer shortcuts dispatch only in an idle normal editor', () => {
     { key: 'ArrowUp', shiftKey: true, moveMode: 'connected' },
     { key: 'ArrowUp', shiftKey: true, textEntry: true },
   ]) assert.equal(layerActionForKey(state), null);
+});
+
+test('keyboard help is generated from current bindings without Vim movement keys', () => {
+  const help = editorKeymapText();
+  assert.match(help, /Arrow keys/);
+  assert.match(help, /console separator/);
+  assert.match(help, /normal --\n/);
+  assert.doesNotMatch(help, /\\n/);
+  assert.match(help, /l\s+.*line annotation/);
+  assert.doesNotMatch(help, /h j k|h j k l|hjkl/i);
 });
