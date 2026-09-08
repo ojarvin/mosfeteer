@@ -85,6 +85,24 @@ button:hover {
   background: var(--bg-hover);
 }
 
+button[data-icon] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.button-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
 button:active {
   background: var(--accent-dim);
 }
@@ -181,7 +199,13 @@ button:active {
   color: var(--accent);
   background: var(--accent-dim);
   border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  outline-offset: 1px;
   font-weight: 700;
+}
+
+.mode-control[aria-pressed="true"] .button-icon {
+  stroke-width: 2.2;
 }
 
 .mode-control kbd,
@@ -204,6 +228,11 @@ button:active {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, var(--bg-panel));
   border-color: var(--danger);
+}
+
+.mode-control[data-action="delete"][aria-pressed="true"] {
+  outline-color: color-mix(in srgb, var(--danger) 42%, transparent);
+  box-shadow: 0 0 0 1px var(--danger), 0 2px 6px color-mix(in srgb, var(--danger) 24%, transparent);
 }
 
 .mode-control[data-action="delete"][aria-pressed="true"] kbd {
@@ -488,8 +517,14 @@ button:disabled {
   line-height: 1.4;
 }
 
-.row:hover {
+.row:hover,
+.row:focus-visible {
   background: var(--bg-hover);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .row.selected {
@@ -1145,27 +1180,14 @@ button.off {
 .mode-toolbar .mode-control kbd {
   display: none;
 }
-.mode-toolbar .mode-control::before {
-  display: inline-block;
-  font-size: 18px;
-  font-weight: 700;
+.mode-toolbar .mode-control .button-icon {
+  width: 18px;
+  height: 18px;
 }
 
-.mode-toolbar #btn-mode-select::before { content: "↖"; }
-.mode-toolbar #btn-mode-place::before { content: "+"; }
-.mode-toolbar #btn-mode-wire::before { content: "⌁"; }
-.mode-toolbar #btn-mode-visual::before { content: "□"; }
-.mode-toolbar #btn-mode-move::before { content: "✥"; }
-.mode-toolbar #btn-mode-detach-move::before { content: "⇱"; }
-.mode-toolbar #btn-mode-copy::before { content: "⧉"; }
-.mode-toolbar #btn-mode-delete::before { content: "×"; }
-.mode-toolbar #btn-mode-net-label::before { content: "⌁"; }
-.mode-toolbar #btn-mode-annotation::before { content: "T"; }
-.mode-toolbar #btn-mode-arrow::before { content: "➜"; }
-.mode-toolbar #btn-mode-box::before { content: "▣"; }
-.mode-toolbar #btn-mode-line::before { content: "╱"; }
-.mode-toolbar #btn-bring-front::before { content: "↑"; }
-.mode-toolbar #btn-send-back::before { content: "↓"; }
+.mode-toolbar .mode-control[aria-pressed="true"] {
+  box-shadow: 0 0 0 1px var(--accent), 0 2px 6px color-mix(in srgb, var(--accent) 28%, transparent);
+}
 
 .layout {
   min-height: 0;
@@ -1194,6 +1216,20 @@ button.off {
     padding: 4px 6px;
   }
 
+  .mode-toolbar {
+    right: 6px;
+    width: auto;
+    max-height: calc(100% - 12px);
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    overflow: auto;
+  }
+
+  .mode-toolbar .mode-control {
+    flex: 0 0 28px;
+  }
+
   .toolbar-actions {
     width: 100%;
     overflow-x: auto;
@@ -1213,6 +1249,23 @@ button.off {
   }
 
   .console {
-    height: 112px;
+    height: 92px;
+  }
+}
+
+@media (max-width: 600px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .canvas-pane {
+    min-height: 240px;
+  }
+
+  .side-panel {
+    width: auto;
+    max-height: 180px;
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
 }

@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { layerActionForKey } from '../src/web/toolbar.js';
+import { componentPaletteItems, layerActionForKey } from '../src/web/toolbar.js';
+
+test('component palette omits generated solder dots but keeps real components', () => {
+  const items = componentPaletteItems([
+    { refdes: 'M1', type: 'nmos' },
+    { refdes: 'J1', type: 'solder' },
+    { refdes: 'R1', type: 'resistor' },
+  ]);
+  assert.deepEqual(items.map(({ refdes }) => refdes), ['M1', 'R1']);
+});
 
 test('layer shortcuts dispatch only in an idle normal editor', () => {
   assert.equal(layerActionForKey({ key: 'ArrowUp', shiftKey: true }), 'bring-front');

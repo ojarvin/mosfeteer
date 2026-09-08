@@ -21,7 +21,7 @@ import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
-import { layerActionForKey } from './toolbar.js';
+import { componentPaletteItems, layerActionForKey } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
 
 // ----- boot failure surface --------------------------------------
@@ -62,6 +62,58 @@ const clearCheckButtonEl = document.getElementById('btn-clear-check');
 const helpDialog = document.getElementById('help-dialog');
 const helpDialogContent = document.getElementById('help-dialog-content');
 const helpSearch = document.getElementById('help-search');
+
+// Small line icons keep the compact tool rail scannable without a dependency.
+// Button text and existing aria labels remain the accessible names.
+const ICON_PATHS = {
+  'folder-open': '<path d="M3 6.5h6l2 2h10v9H3z"/><path d="M3 6.5V5h7l2 2h9"/>',
+  'file-plus': '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M12 11v6M9 14h6"/>',
+  trash: '<path d="M5 7h14M10 11v6M14 11v6M8 7l1-3h6l1 3m-11 0 1 14h10l1-14"/>',
+  check: '<path d="m4 12 5 5L20 6"/>',
+  save: '<path d="M5 4h12l3 3v13H4V4zM8 4v6h8V4M8 20v-6h8v6"/>',
+  download: '<path d="M12 3v12m0 0 5-5m-5 5-5-5M4 20h16"/>',
+  grid: '<path d="M4 4h16v16H4zM4 10h16M4 16h16M10 4v16M16 4v16"/>',
+  crosshair: '<circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>',
+  moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z"/>',
+  cursor: '<path d="m5 3 4 17 3-7 7-3z"/>',
+  plus: '<path d="M12 4v16M4 12h16"/>',
+  wire: '<path d="M3 17h5l4-10h5l4 6"/>',
+  'box-select': '<path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/>',
+  move: '<path d="M12 3v18m0-18-3 3m3-3 3 3M12 21l-3-3m3 3 3-3M3 12h18m-18 0 3-3m-3 3 3 3m15-3-3-3m3 3-3 3"/>',
+  detach: '<path d="M5 5h7m0 0v7m0-7L5 12M19 19h-7m0 0v-7m0 7 7-7"/>',
+  copy: '<path d="M8 8h11v12H8zM5 16H4V4h12v1"/>',
+  tag: '<path d="M4 5v6l9 9 7-7-9-9H4zM8 8h.01"/>',
+  text: '<path d="M5 5h14M12 5v14M8 19h8"/>',
+  arrow: '<path d="M4 18 18 6m0 0h-7m7 0v7"/>',
+  rectangle: '<rect x="4" y="5" width="16" height="14" rx="1"/>',
+  line: '<path d="M5 19 19 5"/>',
+  front: '<path d="M12 19V5m0 0-5 5m5-5 5 5"/>',
+  back: '<path d="M12 5v14m0 0-5-5m5 5 5-5"/>',
+  'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
+};
+
+function installButtonIcons() {
+  for (const button of document.querySelectorAll('button[data-icon]')) {
+    const path = ICON_PATHS[button.dataset.icon];
+    if (!path || button.querySelector('.button-icon')) continue;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.classList.add('button-icon');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.setAttribute('focusable', 'false');
+    icon.innerHTML = path;
+    button.prepend(icon);
+  }
+}
+
+function setButtonLabel(button, text) {
+  if (!button) return;
+  const icon = button.querySelector('.button-icon');
+  button.replaceChildren(...(icon ? [icon, document.createTextNode(text)] : [document.createTextNode(text)]));
+}
+
+installButtonIcons();
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
@@ -5214,17 +5266,21 @@ canvasEl.addEventListener(
 
 function renderComponents() {
   componentsListEl.innerHTML = '';
-  if (circuit.components.size === 0) {
+  componentsListEl.setAttribute('role', 'listbox');
+  const comps = componentPaletteItems(sortedComps());
+  if (comps.length === 0) {
     componentsListEl.innerHTML = '<div class="no-items">No components</div>';
     return;
   }
-  const comps = sortedComps();
   for (const comp of comps) {
     const row = document.createElement('div');
     row.className = 'row' + (multi.has(comp.refdes) ? ' selected' : '');
     row.dataset.ref = comp.refdes;
     row.dataset.refdes = comp.refdes;
     row.dataset.type = comp.type;
+    row.setAttribute('role', 'option');
+    row.tabIndex = 0;
+    row.setAttribute('aria-selected', String(multi.has(comp.refdes)));
 
     const ref = document.createElement('span');
     ref.className = 'ref';
@@ -5290,6 +5346,11 @@ function renderComponents() {
       // in the click handler covers row replacement during the first click).
       startComponentRename(comp, ref);
     });
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      row.click();
+    });
 
     componentsListEl.appendChild(row);
   }
@@ -5297,6 +5358,7 @@ function renderComponents() {
 
 function renderNets() {
   netsListEl.innerHTML = '';
+  netsListEl.setAttribute('role', 'listbox');
   if (circuit.nets.size === 0) {
     netsListEl.innerHTML = '<div class="no-items">No nets</div>';
     return;
@@ -5304,6 +5366,9 @@ function renderNets() {
   for (const net of visibleNets()) {
     const row = document.createElement('div');
     row.className = 'row' + (selectedNets.has(net.id) ? ' selected' : '');
+    row.setAttribute('role', 'option');
+    row.tabIndex = 0;
+    row.setAttribute('aria-selected', String(selectedNets.has(net.id)));
 
     const ref = document.createElement('span');
     ref.className = 'ref';
@@ -5353,6 +5418,11 @@ function renderNets() {
       // Native dblclick backup for browsers that deliver it (the manual
       // detection above covers the row-replacing re-render case).
       startNetRename(net, ref);
+    });
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      row.click();
     });
 
     netsListEl.appendChild(row);
@@ -7323,7 +7393,7 @@ const themeBtn = document.getElementById('btn-theme');
 
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
-  if (themeBtn) themeBtn.textContent = dark ? 'Light' : 'Dark';
+  setButtonLabel(themeBtn, dark ? 'Light' : 'Dark');
   if (themeBtn) themeBtn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
   try {
     localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
@@ -7352,7 +7422,7 @@ function setGrid(on) {
   showGrid = on;
   if (gridBtn) {
     gridBtn.classList.toggle('off', !showGrid);
-    gridBtn.textContent = showGrid ? 'Grid' : 'Grid off';
+    setButtonLabel(gridBtn, showGrid ? 'Grid' : 'Grid off');
     gridBtn.title = showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
   }
   render();
@@ -7361,7 +7431,7 @@ function setGrid(on) {
 
 if (gridBtn) {
   gridBtn.addEventListener('click', () => setGrid(!showGrid));
-  gridBtn.textContent = showGrid ? 'Grid' : 'Grid off';
+  setButtonLabel(gridBtn, showGrid ? 'Grid' : 'Grid off');
   gridBtn.title = 'Hide the placement grid (#)';
 }
 
@@ -7374,7 +7444,7 @@ function setCrosshair(on, announce = true) {
 
   if (crosshairBtn) {
     crosshairBtn.classList.toggle('off', !crosshairVisible);
-    crosshairBtn.textContent = crosshairVisible ? 'Crosshair' : 'Crosshair off';
+    setButtonLabel(crosshairBtn, crosshairVisible ? 'Crosshair' : 'Crosshair off');
     crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
   }
   render();
@@ -7383,7 +7453,7 @@ function setCrosshair(on, announce = true) {
 if (crosshairBtn) {
   crosshairBtn.addEventListener('click', () => setCrosshair(!crosshairVisible));
   crosshairBtn.classList.toggle('off', !crosshairVisible);
-  crosshairBtn.textContent = crosshairVisible ? 'Crosshair' : 'Crosshair off';
+  setButtonLabel(crosshairBtn, crosshairVisible ? 'Crosshair' : 'Crosshair off');
   crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
 }
 

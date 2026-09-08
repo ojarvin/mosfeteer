@@ -1,3 +1,8 @@
+/** Keep generated junction markers out of the user-facing component list. */
+export function componentPaletteItems(components) {
+  return [...components].filter((component) => component.type !== 'solder');
+}
+
 /** Return a layer command for an unmodified normal-mode arrow shortcut. */
 export function layerActionForKey({
   key,
