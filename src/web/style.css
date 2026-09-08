@@ -18,7 +18,6 @@
   --svg-mid: #292929;
   --svg-faint: #666666;
   --grid: #e9e9e9;
-  --grid-major: #d7dce5;
   --label-edit-bg: rgba(255, 255, 255, 0.9);
 }
 
@@ -987,7 +986,6 @@ html.dark {
   --ok: #4ade80;
   --paper: #15171c;
   --grid: #22262e;
-  --grid-major: #343b49;
   --label-edit-bg: rgba(25, 28, 36, 0.94);
 }
 
@@ -1016,7 +1014,6 @@ html.dark .canvas svg [stroke="#292929"] { stroke: #dde1e8; }
 html.dark .canvas svg [stroke="#333"] { stroke: #dde1e8; }
 html.dark .canvas svg [stroke="#666"] { stroke: #9aa3b2; }
 html.dark .canvas svg [stroke="#e9e9e9"] { stroke: var(--grid); }
-.canvas svg .major-grid { stroke: var(--grid-major); stroke-width: 1.5; }
 html.dark .canvas svg [fill="#111"] { fill: #dde1e8; }
 html.dark .canvas svg [fill="#292929"] { fill: #dde1e8; }
 html.dark .canvas svg [fill="#333"] { fill: #dde1e8; }
