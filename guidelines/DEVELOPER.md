@@ -84,7 +84,8 @@ net-name changes; do not write `net.name` from editor code. Net-label text is
 derived from its physical net name, and removing one occurrence leaves the net
 and its name intact. Net labels are placed on drawable wire paths; the editor's
 `L` tool requires an unambiguous physical wire, using one selected/highlighted
-net to resolve a crossing. `Shift+N` places persistent free annotations.
+net to resolve a crossing. `Shift+N` places one free annotation and then
+returns to selection; `a` and `b` likewise place one arrow or box annotation.
 
 Selection, movement, deletion, routing, and Check must preserve the role: owned
 labels follow components, net labels remain on their paths, and annotations are

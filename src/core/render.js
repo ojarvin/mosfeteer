@@ -132,8 +132,8 @@ export function svgString(circuit, opts = {}) {
     const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
     parts.push(`<rect width="${w}" height="${h}" fill="#fff"/>`);
     if (o.grid) {
-      for (let x = 0; x <= w; x += GRID) parts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="#eee" stroke-width="1"/>`);
-      for (let y = 0; y <= h; y += GRID) parts.push(`<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#eee" stroke-width="1"/>`);
+      for (let x = 0; x <= w; x += GRID) parts.push(`<line class="grid-line${x / GRID % 8 === 0 ? ' major-grid' : ''}" x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="#eee" stroke-width="${x / GRID % 8 === 0 ? '1.5' : '1'}"/>`);
+      for (let y = 0; y <= h; y += GRID) parts.push(`<line class="grid-line${y / GRID % 8 === 0 ? ' major-grid' : ''}" x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#eee" stroke-width="${y / GRID % 8 === 0 ? '1.5' : '1'}"/>`);
     }
     parts.push(textEl(w / 2, h / 2, 'empty schematic', 'middle', 16, '#999'));
     parts.push('</svg>');
@@ -162,17 +162,17 @@ export function svgString(circuit, opts = {}) {
   if (o.grid) {
     if (vp) {
       for (let x = ceilGrid(vp.x); x <= ceilGrid(vp.x + vp.w); x += GRID) {
-        parts.push(`<line x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
+        parts.push(`<line class="grid-line${Math.round(x / GRID) % 8 === 0 ? ' major-grid' : ''}" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="${Math.round(x / GRID) % 8 === 0 ? '1.5' : '1'}"/>`);
       }
       for (let y = ceilGrid(vp.y); y <= ceilGrid(vp.y + vp.h); y += GRID) {
-        parts.push(`<line x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
+        parts.push(`<line class="grid-line${Math.round(y / GRID) % 8 === 0 ? ' major-grid' : ''}" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="${Math.round(y / GRID) % 8 === 0 ? '1.5' : '1'}"/>`);
       }
     } else {
       for (let x = x0; x <= x1; x += GRID) {
-        parts.push(`<line x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
+        parts.push(`<line class="grid-line${Math.round(x / GRID) % 8 === 0 ? ' major-grid' : ''}" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="${Math.round(x / GRID) % 8 === 0 ? '1.5' : '1'}"/>`);
       }
       for (let y = y0; y <= y1; y += GRID) {
-        parts.push(`<line x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
+        parts.push(`<line class="grid-line${Math.round(y / GRID) % 8 === 0 ? ' major-grid' : ''}" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="${Math.round(y / GRID) % 8 === 0 ? '1.5' : '1'}"/>`);
       }
     }
   }

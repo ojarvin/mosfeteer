@@ -463,8 +463,9 @@ Use the canonical `addNetLabel`, `renameNet`, and `renameNetLabel` APIs for
 electrical labels and net names. Net-label text follows the physical net name;
 removing one label occurrence does not remove or rename its net. In the editor,
 `L` persistently places a net label only on an unambiguous physical wire; at a
-crossing, select/highlight the intended net first. `Shift+N` persistently places
-a free annotation. The generic insert-menu entry is also an annotation. `l`
+crossing, select/highlight the intended net first. `Shift+N` places one free
+annotation and then returns to selection; `a` and `b` likewise place one arrow
+or box annotation. The generic insert-menu entry is also an annotation. `l`
 draws a non-electrical multi-point line annotation with rounded caps; its
 snapped vertices and segments remain editable.
 

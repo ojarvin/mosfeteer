@@ -1802,6 +1802,7 @@ function placeAnnotationAt(world) {
   commit(() => { label = circuit.addLabel({ text: 'label', x: point.x, y: point.y, align: 'center' }); });
   setSelection([]);
   setLabelSelection([label.id]);
+  labelMode = null;
   logLine(`placed annotation @ (${point.x},${point.y})`);
   render();
   inlineEditLabel(label);
