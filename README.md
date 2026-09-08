@@ -10,6 +10,18 @@ Schematic Spawner is a programmatic circuit schematic editor. It combines a conn
 
 ```sh
 npm install
+npm run desktop
+```
+
+The desktop app supports Linux and macOS. On first launch it imports existing
+repository circuits into Electron's per-user application data folder, and saves
+each named circuit with its `circuit.json` and `circuit.svg` files there. It does
+not start an HTTP server.
+To package a distributable app, run `npm run desktop:package`.
+
+For browser development and CLI/agent automation, keep using the HTTP server:
+
+```sh
 npm start
 ```
 
@@ -28,7 +40,8 @@ npm test
 ## Project layout
 
 - `src/core/` — circuit model, symbols, routing, and SVG renderer
-- `src/web/` — browser editor and HTTP server
+- `src/web/` — browser editor, persistence adapter, and HTTP server
+- `src/desktop/` — Electron main/preload boundary and native workspace storage
 - `src/cli/` — command-line client
 - `test/` — Node.js test suite
 

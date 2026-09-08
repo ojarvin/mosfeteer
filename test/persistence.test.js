@@ -1,0 +1,90 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Circuit } from '../src/core/model.js';
+import { createNativeStorage } from '../src/desktop/storage.js';
+import { createPersistenceAdapter } from '../src/web/persistence.js';
+
+function response(body, ok = true, status = 200) {
+  return { ok, status, async json() { return body; } };
+}
+
+test('desktop persistence stores validated circuit files in its workspace', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'schematic-spawner-storage-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const storage = createNativeStorage(root);
+  const state = new Circuit().toJSON();
+
+  assert.deepEqual(await storage.list(), { circuits: [] });
+  assert.deepEqual(await storage.save('bench_1', state), {
+    name: 'bench_1', files: ['circuit.json', 'circuit.svg'],
+  });
+  assert.deepEqual(await storage.list(), { circuits: ['bench_1'] });
+  assert.deepEqual((await storage.load('bench_1')).state, state);
+  assert.match(await readFile(join(root, 'bench_1', 'circuit.svg'), 'utf8'), /^<svg/);
+  await assert.rejects(storage.load('../outside'), /invalid circuit name/);
+  assert.deepEqual(await storage.delete('bench_1'), { name: 'bench_1', deleted: true });
+  await assert.rejects(storage.load('bench_1'));
+});
+
+test('desktop persistence imports repository circuits without overwriting native circuits', async (t) => {
+  const sourceRoot = await mkdtemp(join(tmpdir(), 'schematic-spawner-source-'));
+  const targetRoot = await mkdtemp(join(tmpdir(), 'schematic-spawner-target-'));
+  t.after(() => Promise.all([
+    rm(sourceRoot, { recursive: true, force: true }),
+    rm(targetRoot, { recursive: true, force: true }),
+  ]));
+  const source = createNativeStorage(sourceRoot);
+  const target = createNativeStorage(targetRoot);
+  const sourceState = new Circuit().toJSON();
+  sourceState.grid = 80;
+  await source.save('repository-circuit', sourceState);
+  await target.save('repository-circuit', new Circuit().toJSON());
+  await source.save('new-circuit', new Circuit().toJSON());
+
+  assert.deepEqual(await target.importFrom(sourceRoot), { circuits: ['new-circuit'] });
+  assert.deepEqual((await target.load('new-circuit')).state, new Circuit().toJSON());
+  assert.equal((await target.load('repository-circuit')).state.grid, 40);
+  assert.deepEqual(await target.importFrom(sourceRoot), { circuits: [] });
+});
+
+test('persistence adapter keeps native and HTTP contracts narrow', async () => {
+  const calls = [];
+  const native = {
+    list: async () => ({ circuits: ['native'] }),
+    load: async (name) => ({ name, state: { native: true } }),
+    save: async (...args) => { calls.push(['save', ...args]); return { name: args[0] }; },
+    delete: async (name) => ({ name, deleted: true }),
+    export: async (options) => ({ canceled: false, path: options.suggestedName }),
+  };
+  const desktop = createPersistenceAdapter({ nativeApi: native });
+  assert.equal(desktop.mode, 'desktop');
+  assert.equal(desktop.liveSync, false);
+  assert.deepEqual(await desktop.list(), { circuits: ['native'] });
+  await desktop.save('one', { ok: true });
+  assert.deepEqual(calls, [['save', 'one', { ok: true }]]);
+  assert.deepEqual(await desktop.export({ suggestedName: 'one.svg' }), { canceled: false, path: 'one.svg' });
+
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push([url, options]);
+    return response(url === '/api/circuits' ? { circuits: ['http'] } : { name: 'a/b', state: {} });
+  };
+  const browser = createPersistenceAdapter({ nativeApi: null, fetchImpl });
+  assert.equal(browser.mode, 'http');
+  assert.equal(browser.liveSync, true);
+  assert.deepEqual(await browser.list(), { circuits: ['http'] });
+  await browser.load('a/b');
+  await browser.save('a/b', { ok: true });
+  await browser.delete('a/b');
+  assert.deepEqual(requests.map(([url]) => url), [
+    '/api/circuits',
+    '/api/circuits/a%2Fb',
+    '/api/circuits/a%2Fb',
+    '/api/circuits/a%2Fb',
+  ]);
+  assert.equal(requests[2][1].method, 'PUT');
+  assert.equal(requests[3][1].method, 'DELETE');
+});

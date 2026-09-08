@@ -8,9 +8,8 @@
 </head>
 <body>
   <div id="boot-banner" class="boot-banner">
-    Loading schematic-spawner&hellip; If this stays visible, the app could not start: open it
-    through the server (<code>npm run serve</code> then visit <code>http://127.0.0.1:8080/</code>).
-    Double-clicking this file doesn't work — browsers block ES modules over <code>file://</code>.
+    Loading schematic-spawner&hellip; If this stays visible, the app could not start. In browser mode,
+    open it through the development server (<code>npm run serve</code>).
   </div>
 
   <header class="toolbar">
@@ -31,6 +30,7 @@
         <button id="btn-delete-circuit" class="danger-action" title="Permanently delete the saved current circuit" disabled>Delete circuit</button>
         <button id="btn-check" data-action="check" title="Check the current circuit (x)">Check</button>
         <button id="btn-save" data-action="save" title="Save the current circuit, including designs with issues (Shift+x)">Save</button>
+        <button id="btn-export" title="Export the current circuit as SVG">Export</button>
       </div>
 
       <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style">

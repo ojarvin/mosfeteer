@@ -3,14 +3,21 @@
   "version": "0.1.0",
   "description": "Programmatic/agent-assisted circuit schematic generator. Connectivity-based model rendered to SVG.",
   "type": "module",
+  "main": "src/desktop/main.js",
   "scripts": {
     "cli": "node src/cli/index.js",
     "serve": "node --watch src/web/serve.js",
     "start": "bash start.sh",
+    "desktop": "electron .",
+    "desktop:package": "electron-packager . SchematicSpawner --out=dist --overwrite --prune=true --ignore='(^|/)(test|docs|guidelines|data)(/|$)'",
     "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "@electron/packager": "^20.3.0"
+  }
 }

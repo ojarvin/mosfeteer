@@ -22,6 +22,7 @@ import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.j
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { layerActionForKey } from './toolbar.js';
+import { createPersistenceAdapter } from './persistence.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -31,7 +32,7 @@ const banner = () => document.getElementById('boot-banner');
 window.addEventListener('error', (ev) => {
   const b = banner();
   if (b) {
-    b.textContent = `App failed to start: ${ev.message || 'unknown error'} — open it via server (npm run serve → http://127.0.0.1:8080/); double-clicking index.html is blocked by the browser.`;
+    b.textContent = `App failed to start: ${ev.message || 'unknown error'} — in browser mode, use npm run serve.`;
     b.classList.add('error');
   }
 });
@@ -50,6 +51,7 @@ const circuitSelectEl = document.getElementById('circuit-select');
 const circuitNameEl = document.getElementById('circuit-name');
 const saveStateEl = document.getElementById('save-state');
 const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
+const exportCircuitBtn = document.getElementById('btn-export');
 const deleteDialog = document.getElementById('delete-dialog');
 const deleteDialogMessage = document.getElementById('delete-dialog-message');
 const switchDialog = document.getElementById('switch-dialog');
@@ -61,6 +63,8 @@ const helpDialog = document.getElementById('help-dialog');
 const helpDialogContent = document.getElementById('help-dialog-content');
 const helpSearch = document.getElementById('help-search');
 // ----- editor state ----------------------------------------------
+
+const persistence = createPersistenceAdapter();
 
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
@@ -260,7 +264,7 @@ function persistDraft() {
       savedSnapshot: lastSavedSnapshot,
     }));
   } catch (err) {
-    logLine(`Could not preserve browser draft: ${err.message}`, 'error');
+    logLine(`Could not preserve local draft: ${err.message}`, 'error');
   }
 }
 function restoreDraft() {
@@ -278,16 +282,14 @@ function restoreDraft() {
       ? currentCircuitName
       : null;
   } catch (err) {
-    logLine(`Could not restore browser draft: ${err.message}`, 'error');
+    logLine(`Could not restore local draft: ${err.message}`, 'error');
     lastSavedSnapshot = snapshot();
   }
 }
 
 async function refreshCircuitList() {
   try {
-    const response = await fetch('/api/circuits', { cache: 'no-store' });
-    if (!response.ok) throw new Error(`server returned ${response.status}`);
-    const data = await response.json();
+    const data = await persistence.list();
     circuitSelectEl.replaceChildren(new Option('Open circuit...', ''));
     for (const name of data.circuits || []) circuitSelectEl.appendChild(new Option(name, name));
     if (currentCircuitName) circuitSelectEl.value = currentCircuitName;
@@ -304,13 +306,7 @@ async function saveCircuit() {
     return;
   }
   try {
-    const response = await fetch(`/api/circuits/${encodeURIComponent(name)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state: circuit.toJSON() }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `server returned ${response.status}`);
+    const data = await persistence.save(name, circuit.toJSON());
     currentCircuitName = name;
     lastSavedSnapshot = snapshot();
     persistDraft();
@@ -322,12 +318,24 @@ async function saveCircuit() {
   }
 }
 
+async function exportCircuit() {
+  const name = circuitNameEl.value.trim() || 'circuit';
+  try {
+    const result = await persistence.export({
+      content: svgString(circuit, { grid: true, terminals: false, junctions: false, background: true, netNames: true }),
+      suggestedName: `${name}.svg`,
+      extension: 'svg',
+    });
+    if (!result.canceled) logLine(`Exported ${result.path || `${name}.svg`}.`);
+  } catch (err) {
+    logLine(`Could not export circuit: ${err.message}`, 'error');
+  }
+}
+
 async function loadCircuit(name = circuitSelectEl.value, quiet = false) {
   if (!name) return;
   try {
-    const response = await fetch(`/api/circuits/${encodeURIComponent(name)}`, { cache: 'no-store' });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `server returned ${response.status}`);
+    const data = await persistence.load(name);
     history.push(snapshot());
     future.length = 0;
     applyJson(JSON.stringify(data.state));
@@ -352,7 +360,7 @@ function hasUnsavedChanges() {
   return snapshot() !== lastSavedSnapshot;
 }
 
-function requestCircuitLoad(name = circuitSelectEl.value) {
+function requestCircuitLoad(name = circuitSelectEl.value || circuitNameEl.value.trim()) {
   if (!name) return;
   if (!hasUnsavedChanges()) {
     loadCircuit(name);
@@ -382,9 +390,7 @@ async function deleteSavedCircuit() {
   deleteInFlight = true;
   renderSaveState();
   try {
-    const response = await fetch(`/api/circuits/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `server returned ${response.status}`);
+    const data = await persistence.delete(name);
 
     history = [];
     future = [];
@@ -430,14 +436,15 @@ function askDeleteCircuit() {
   const name = currentCircuitName;
   if (!name || !deleteDialog) return;
   deleteDialogMessage.textContent = hasUnsavedChanges()
-    ? `This permanently deletes "${name}" from the server and discards its unsaved editor changes. This cannot be undone.`
-    : `This permanently deletes "${name}" and its saved files from the server. This cannot be undone.`;
+    ? `This permanently deletes "${name}" and discards its unsaved editor changes. This cannot be undone.`
+    : `This permanently deletes "${name}" and its saved files. This cannot be undone.`;
   deleteDialog.showModal();
 }
 
 let lastSeenActive = null;
 let lastFailedActive = null; // active circuit whose load failed (retry silently)
 async function syncActiveCircuit() {
+  if (!persistence.liveSync) return;
   // First, follow the server's "active circuit" — the agent drives it, the browser
   // mirrors it. This lets the user open the page once and watch the agent's work
   // appear automatically, without typing the circuit name or clicking Load.
@@ -493,9 +500,7 @@ async function syncActiveCircuit() {
   }
   if (!currentCircuitName) return;
   try {
-    const response = await fetch(`/api/circuits/${encodeURIComponent(currentCircuitName)}`, { cache: 'no-store' });
-    if (!response.ok) return;
-    const data = await response.json();
+    const data = await persistence.load(currentCircuitName);
     // The model normalizes loaded state (notably reducible net geometry), so
     // compare and record the canonical representation rather than the raw
     // JSON returned by the server. Otherwise a clean design can become
@@ -7277,9 +7282,7 @@ if (switchDialog) {
 }
 
 document.getElementById('btn-new-circuit').addEventListener('click', () => {
-  const name = window.prompt('New circuit name:');
-  if (name === null) return;
-  circuitNameEl.value = name.trim();
+  circuitNameEl.value = '';
   currentCircuitName = '';
   history.push(snapshot());
   future.length = 0;
@@ -7298,10 +7301,13 @@ document.getElementById('btn-new-circuit').addEventListener('click', () => {
   cursor = { x: 0, y: 0 };
   view = viewFromCenter(0, 0);
   render();
-  logLine(`Started new circuit "${circuitNameEl.value}". Save to create its directory.`);
+  circuitNameEl.focus();
+  logLine('Started a new circuit. Enter a name and save to create its files.');
 });
 
 document.getElementById('btn-load-circuit').addEventListener('click', () => requestCircuitLoad());
+deleteCircuitBtn?.addEventListener('click', askDeleteCircuit);
+exportCircuitBtn?.addEventListener('click', exportCircuit);
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => requestCircuitLoad(circuitSelectEl.value));
 

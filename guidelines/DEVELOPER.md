@@ -54,9 +54,14 @@ src/
 │   └── style.js        Stroke roles (symbol/wire/emph/ground/supply) and font attrs.
 ├── web/
 │   ├── serve.js        Static + HTTP API (circuits, commands, generation).
+│   ├── persistence.js  Desktop preload or browser HTTP persistence adapter.
 │   ├── index.html      Single-page app entry.
 │   ├── main.js         Editor (input, render, undo/redo, ghost, wire drag).
 │   └── style.css       Layout, dark mode, toolbars.
+├── desktop/
+│   ├── main.js         Electron app lifecycle and IPC handlers.
+│   ├── preload.cjs     Narrow renderer-to-main storage bridge.
+│   └── storage.js      Secure Linux/macOS native workspace storage.
 └── cli/
     └── index.js        Thin HTTP client over command and generation endpoints.
 test/                   Node test runner (`node --test`).

@@ -41,15 +41,17 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
   (generator-facing topology contract), `generator.js` (generation facades),
   `components/` (symbols), `grid.js`,
   `geometry.js`, `ascii.js`, `semantic.js`, `placement.js`, `routing.js`.
-- `src/web/` — HTTP server (`serve.js`) and the in-browser editor
-  (`index.html`, `main.js`, `style.css`).
+- `src/web/` — HTTP server (`serve.js`), persistence adapter, and the
+  in-browser editor (`index.html`, `main.js`, `style.css`).
+- `src/desktop/` — Electron main/preload boundary and native workspace storage.
 - `src/cli/index.js` — command and generation CLI; thin HTTP client over the server.
 - `test/` — Node test suite (`npm test`); current count is reported by the test runner.
 - `fixtures/circuit-spec/` — topology-only CircuitSpec examples.
 
 ## Headless server + browser
 
-- Production: `./start.sh` (HTTP at `127.0.0.1:8080`).
+- Desktop: `npm run desktop` (Linux and macOS; native per-user storage).
+- HTTP development and automation: `./start.sh` (HTTP at `127.0.0.1:8080`).
 - Isolated dev sessions: `PORT=<port> HOST=<host> node src/web/serve.js` plus
   `chromium --remote-debugging-port=<port>` and CDP via `Runtime.evaluate`.
 - The browser polls `/api/active` and the active circuit endpoint every 500 ms.
