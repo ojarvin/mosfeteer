@@ -325,7 +325,7 @@ out are in `style-guide.md`.
 - `Ctrl/Cmd+S` saves the current design. The design dropdown refuses to switch
   while the current design has unsaved changes; save first, or the selection is
   restored and an unsaved-changes warning is logged.
-- Ctrl/Cmd-drag a selected component set to duplicate it, then drag the copy. In armed Move or Copy mode, drag from empty space to box-select the complete set before clicking to enter ghost mode.
+- Ctrl/Cmd-drag a selected set to duplicate it, then drag the copy; labels remain part of mixed selections. In armed Move or Copy mode, drag from empty space to box-select the complete set before clicking to enter ghost mode.
 - `l` starts a non-connectivity multi-point line annotation; click successive points and press Enter or double-click to commit. Selected line segments and vertices can be dragged.
 - `w` is the single managed Wire command. It supports orthogonal or diagonal
   routes and can start at a terminal, an existing wire, or any grid point.

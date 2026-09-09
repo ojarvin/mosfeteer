@@ -3478,8 +3478,10 @@ function canvasMouseDown(ev) {
   }
   const annotationText = annotationTextAt(startWorld);
   if (annotationText) {
-    if (!ev.shiftKey) setSelection([]);
-    setLabelSelection([annotationText.id], undefined, ev.shiftKey);
+    if (!ev.shiftKey) {
+      setSelection([]);
+      setLabelSelection([annotationText.id]);
+    }
     if (ev.shiftKey) {
       if (selLabels.has(annotationText.id)) {
         selLabels.delete(annotationText.id);
@@ -3592,10 +3594,17 @@ function canvasMouseDown(ev) {
       render();
       return;
     }
-    const duplicateLabel = (ev.ctrlKey || ev.metaKey) && selLabels.has(labelHit.id);
-    if (!duplicateLabel) {
+    const selectedMember = selLabels.has(labelHit.id);
+    const duplicateLabel = (ev.ctrlKey || ev.metaKey) && selectedMember;
+    if (!duplicateLabel && !selectedMember) {
       setSelection([]);
       setLabelSelection([labelHit.id]);
+    }
+    // A selected label is a confirmation of the whole mixed set, just like a
+    // selected component. Do not narrow a multi-label drag to the hit label.
+    if (!duplicateLabel && selectedMember && multi.size) {
+      beginObjectMove([...multi], [...selLabels], startWorld, startClient);
+      return;
     }
     const startAnchors = new Map();
     for (const id of selLabels) {
@@ -3799,6 +3808,34 @@ function canvasMouseDown(ev) {
   beginMarqueeSelection(startWorld, startClient, ev);
 }
 
+/** Arm one translation drag for any selected object combination. Keeping
+ * this collection in one place makes component, label, and mixed drags share
+ * the same relative-anchor and wire behavior. */
+function beginObjectMove(refs, labelIds, startWorld, startClient, options = {}) {
+  const componentRefs = [...new Set(refs)].filter((refdes) => circuit.components.has(refdes));
+  const labels = [...new Set(labelIds)].filter((id) => circuit.labels.has(id));
+  setSelection(componentRefs, componentRefs[0], true);
+  setLabelSelection(labels, labels[0], true);
+  const origins = new Map(componentRefs.map((refdes) => {
+    const c = circuit.components.get(refdes);
+    return [refdes, { x: c.transform.x, y: c.transform.y }];
+  }));
+  const labelOrigins = new Map(labels.map((id) => {
+    const l = circuit.labels.get(id);
+    return [id, { x: l.anchorWorld().x, y: l.anchorWorld().y }];
+  }));
+  drag = {
+    mode: 'move', modal: !!options.modal, startClient, startWorld,
+    startCursor: { ...cursor }, origins, labelOrigins,
+    netRoutes: null, detachedWireRoutes: null, touchedNetIds: null, selectedNetIds: null,
+    moved: false, committed: false, rubber: null,
+    duplicate: !!options.duplicate, detached: !!options.detached,
+    startSnapshot: options.modal ? snapshot() : undefined,
+  };
+  movePending = !!options.modal;
+  render();
+}
+
 /** Select the component (or shift-toggle the multi-selection) and arm a move
  *  drag. Shared by exact-terminal hits and bbox fallback picks. */
 function beginComponentDrag(hit, startWorld, startClient, ev, options = {}) {
@@ -3815,36 +3852,11 @@ function beginComponentDrag(hit, startWorld, startClient, ev, options = {}) {
     return;
   }
   const duplicate = (ev.ctrlKey || ev.metaKey) && multi.has(hit.refdes);
-  // A plain click replaces incompatible label/wire/net selections, while a
-  // click on an already selected component keeps the selected component set
-  // available for group dragging.
-  if (multi.has(hit.refdes)) setSelection([...multi], hit.refdes);
-  else setSelection([hit.refdes]);
-  const origins = new Map();
-  for (const r of multi) {
-    const c = circuit.components.get(r);
-    if (c) origins.set(r, { x: c.transform.x, y: c.transform.y });
-  }
-  const labelOrigins = new Map();
-  for (const id of selLabels) {
-    const l = circuit.labels.get(id);
-    if (l) labelOrigins.set(id, { x: l.anchorWorld().x, y: l.anchorWorld().y });
-  }
-  drag = {
-    mode: 'move',
-    startClient,
-    startWorld,
-    startCursor: { ...cursor },
-    origins,
-    netRoutes: null,
-    detachedWireRoutes: null,
-    labelOrigins,
-    moved: false,
-    rubber: null,
-    duplicate,
-    detached: !!options.detached,
-  };
-  render();
+  // A click on an existing member confirms the complete mixed selection;
+  // clicking a new component starts a component-only selection.
+  const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
+  const labels = multi.has(hit.refdes) ? [...selLabels] : [];
+  beginObjectMove(refs, labels, startWorld, startClient, { duplicate, detached: options.detached });
 }
 /** Split selected wire runs before a detached component move.  The selected
  * islands become independent nets; unselected islands retain their exact
@@ -4040,28 +4052,11 @@ function armModalMove(hit, startWorld, startClient) {
   // Preserve a preselected component set when the source click lands on one
   // of its members. A mixed component/label selection remains mixed.
   const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
-  const labelIds = [...selLabels];
-  setSelection(refs, hit.refdes, true);
-  setLabelSelection(labelIds, labelIds[0], true);
-  const origins = new Map();
-  for (const refdes of refs) {
-    const comp = circuit.components.get(refdes);
-    if (comp) origins.set(refdes, { x: comp.transform.x, y: comp.transform.y });
-  }
-  const labelOrigins = new Map();
-  for (const id of labelIds) {
-    const label = circuit.labels.get(id);
-    if (label) labelOrigins.set(id, { x: label.anchorWorld().x, y: label.anchorWorld().y });
-  }
-  drag = {
-    mode: 'move', modal: true, startClient, startWorld,
-    startCursor: { ...cursor }, origins, labelOrigins,
-    netRoutes: null, touchedNetIds: null, selectedNetIds: null,
-    moved: false, committed: false, rubber: null,
-    duplicate: false, detached: moveMode === 'detached', startSnapshot: snapshot(),
-  };
-  movePending = true;
-  render();
+  const labelIds = multi.has(hit.refdes) ? [...selLabels] : [];
+  beginObjectMove(refs, labelIds, startWorld, startClient, {
+    modal: true,
+    detached: moveMode === 'detached',
+  });
 }
 
 function finishMoveMutation(moveDrag) {
@@ -4555,12 +4550,13 @@ function canvasMouseMove(ev) {
         c.transform.y = ny;
         moved.set(r, { dx: nx - o.x, dy: ny - o.y });
       }
-      // Free labels selected alongside components follow the drag (owned labels
-      // already track their component's transform).
+      // Labels share the same drag delta as every other selected object.
+      // Owned labels follow their component; net labels wait until their net
+      // has been re-anchored below so the new attachment remains valid.
       if (drag.labelOrigins) {
         for (const [id, o] of drag.labelOrigins) {
           const l = circuit.labels.get(id);
-          if (l && !l.owner && !l.netId) l.moveTo(o.x + delta.dx, o.y + delta.dy);
+          if (l && !l.owner && !l.netId) moveLabelSafely(l, o.x + delta.dx, o.y + delta.dy);
         }
       }
       // Restore the pre-drag wire geometry and re-anchor from it with the total
@@ -4579,6 +4575,10 @@ function canvasMouseMove(ev) {
       for (const [id, saved] of drag.detachedWireRoutes || []) {
         const net = circuit.nets.get(id);
         if (net) translateNetGeometry(net, saved, delta.dx, delta.dy);
+      }
+      for (const [id, o] of drag.labelOrigins || []) {
+        const l = circuit.labels.get(id);
+        if (l?.netId) moveLabelSafely(l, o.x + delta.dx, o.y + delta.dy);
       }
       if (drag.detached) circuit.syncJunctionSolders();
       cursor = { x: drag.startCursor.x + delta.dx, y: drag.startCursor.y + delta.dy };
@@ -6176,11 +6176,23 @@ helpSearch?.addEventListener('keydown', (ev) => {
 let clipboard = null;
 
 function copySelection() {
-  const comps = selectedComps();
-  const selectedFreeLabels = selectedLabels().filter((l) => !l.owner && !l.isNetLabel?.());
+  // A selected owned/net label is still a real copy source: owned labels bring
+  // their component, while net labels bring their physical net. Keep this
+  // expansion here so keyboard copy, copy mode, and repeated ghosts agree.
+  const labels = selectedLabels();
+  const refs = new Set(multi);
+  for (const label of labels) if (label.owner) refs.add(label.owner);
+  const copyNetIds = new Set(selectedNets);
+  for (const label of labels) if (label.netId) copyNetIds.add(label.netId);
+  for (const id of copyNetIds) {
+    const net = circuit.nets.get(id);
+    for (const terminal of net?.terminals || []) refs.add(terminal.comp);
+  }
+  const comps = [...refs].map((refdes) => circuit.components.get(refdes)).filter(Boolean);
+  const selectedFreeLabels = labels.filter((l) => !l.owner && !l.isNetLabel?.());
   const parentIds = new Set(selectedFreeLabels.filter((l) => ['arrow', 'box', 'line'].includes(l.kind)).map((l) => l.id));
   const freeLabels = [...new Map([...selectedFreeLabels, ...circuit.labels.values()].filter((l) => !l.owner && !l.isNetLabel?.() && (selectedFreeLabels.includes(l) || parentIds.has(l.parent))).map((l) => [l.id, l])).values()];
-  const hasWholeTerminallessNet = [...selectedNets].some((id) => {
+  const hasWholeTerminallessNet = [...copyNetIds].some((id) => {
     const net = circuit.nets.get(id);
     return net && net.terminals.length === 0 && net.paths().some((path) => path.length >= 2);
   });
@@ -6201,7 +6213,7 @@ function copySelection() {
       .map(({ segment }) => `${net.id}:${branch}:${segment + 1}`));
     const internal = net.terminals.length && net.terminals.every((t) => compRefs.has(t.comp));
     const completeTerminalless = !net.terminals.length &&
-      (selectedNets.has(net.id) || (ownKeys.length > 0 && ownKeys.length === allKeys.length));
+      (copyNetIds.has(net.id) || (ownKeys.length > 0 && ownKeys.length === allKeys.length));
     // A selected complete internal net is copied once as an ordinary net. A
     // partial selection is extracted below and must not duplicate the net.
     if ((internal && (!ownKeys.length || ownKeys.length === allKeys.length)) || completeTerminalless) {

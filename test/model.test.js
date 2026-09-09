@@ -1514,6 +1514,24 @@ test('addLabel places a standalone label with a grid-aligned anchor', () => {
   assert.equal(b.y + b.h / 2, l.anchor.y);
 });
 
+test('a group of labels preserves relative anchors when moved together', () => {
+  const c = new Circuit();
+  const first = c.addLabel({ id: 'GROUP_A', text: 'A', x: 80, y: 120 });
+  const second = c.addLabel({ id: 'GROUP_B', text: 'B', x: 280, y: 200 });
+  const before = [first, second].map((label) => ({ ...label.anchorWorld() }));
+  const delta = { x: 160, y: -80 };
+  for (const label of [first, second]) {
+    const point = label.anchorWorld();
+    label.moveTo(point.x + delta.x, point.y + delta.y);
+  }
+  assert.deepEqual(first.anchorWorld(), { x: before[0].x + delta.x, y: before[0].y + delta.y });
+  assert.deepEqual(second.anchorWorld(), { x: before[1].x + delta.x, y: before[1].y + delta.y });
+  assert.deepEqual(
+    { x: second.anchorWorld().x - first.anchorWorld().x, y: second.anchorWorld().y - first.anchorWorld().y },
+    { x: before[1].x - before[0].x, y: before[1].y - before[0].y },
+  );
+});
+
 test('label align keeps stable centered bounds and positions text inside them', () => {
   const c = new Circuit();
   const l = c.addLabel({ text: 'M1', x: 400, y: 0 });
