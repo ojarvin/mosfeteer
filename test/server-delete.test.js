@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -119,6 +119,37 @@ test('saves a circuit with check issues without changing it', async (t) => {
   assert.equal(saved.status, 200);
   const loaded = await (await fetch(`${app.base}/api/circuits/unfinished`)).json();
   assert.deepEqual(loaded.state, state);
+});
+
+test('active revisions avoid unchanged circuit responses and support conditional GETs', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+
+  const created = await fetch(`${app.base}/api/circuits/revisioned/cmd`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd: 'add resistor R1' }),
+  });
+  assert.equal(created.status, 200);
+  const first = await fetch(`${app.base}/api/circuits/revisioned`);
+  assert.equal(first.status, 200);
+  const revision = first.headers.get('x-circuit-revision');
+  assert.ok(revision);
+  assert.equal(first.headers.get('etag'), `"${revision}"`);
+  const active = await fetch(`${app.base}/api/active`);
+  assert.equal(active.headers.get('x-active-revision'), revision);
+
+  const cached = await fetch(`${app.base}/api/circuits/revisioned`, { headers: { 'If-None-Match': first.headers.get('etag') } });
+  assert.equal(cached.status, 304);
+  assert.equal(await cached.text(), '');
+
+  const changed = await fetch(`${app.base}/api/circuits/revisioned/cmd`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd: 'add capacitor C1' }),
+  });
+  assert.equal(changed.status, 200);
+  assert.notEqual(changed.headers.get('x-circuit-revision'), revision);
+  const refreshed = await fetch(`${app.base}/api/circuits/revisioned`, { headers: { 'If-None-Match': `"${revision}"` } });
+  assert.equal(refreshed.status, 200);
+  assert.equal((await refreshed.json()).state.components.length, 2);
+  assert.equal((await readdir(app.circuits)).some((name) => name.includes('.tmp') || name.includes('.old')), false);
 });
 
 test('DELETE circuit removes only the circuit and manages active state', async (t) => {

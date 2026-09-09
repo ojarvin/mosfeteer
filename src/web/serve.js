@@ -24,6 +24,7 @@ const CIRCUITS_ROOT = resolve(process.env.CIRCUITS_ROOT || join(ROOT, 'circuits'
 const DATA_ROOT = resolve(process.env.DATA_ROOT || join(ROOT, 'data'));
 const ACTIVE_FILE = resolve(process.env.ACTIVE_FILE || join(DATA_ROOT, 'active.json'));
 const generationPreviews = new Map();
+const circuitLocks = new Map();
 const MAX_GENERATION_PREVIEWS = 32;
 
 const MIME = {
@@ -41,8 +42,12 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-function json(res, status, value) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store, max-age=0' });
+function json(res, status, value, headers = {}) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store, max-age=0',
+    ...headers,
+  });
   res.end(JSON.stringify(value));
 }
 
@@ -76,6 +81,77 @@ function generationError(message, status = 422, code = 'generation-error') {
   return error;
 }
 
+function withCircuitLock(name, action) {
+  const previous = circuitLocks.get(name);
+  const run = (previous || Promise.resolve()).catch(() => {}).then(action);
+  circuitLocks.set(name, run);
+  return run.finally(() => {
+    if (circuitLocks.get(name) === run) circuitLocks.delete(name);
+  });
+}
+
+async function circuitRevision(name) {
+  try {
+    const info = await stat(join(CIRCUITS_ROOT, name, 'circuit.json'), { bigint: true });
+    return `${info.mtimeNs.toString(36)}-${info.size.toString(36)}`;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function circuitHeaders(revision) {
+  return revision ? { ETag: `"${revision}"`, 'X-Circuit-Revision': revision } : {};
+}
+
+function ifNoneMatch(req, revision) {
+  if (!revision) return false;
+  const value = req.headers['if-none-match'];
+  if (!value) return false;
+  const etag = `"${revision}"`;
+  return value.split(',').some((tag) => tag.trim() === '*' || tag.trim() === revision || tag.trim() === etag);
+}
+
+async function atomicCircuitSave(name, files, { createOnly = false } = {}) {
+  await mkdir(CIRCUITS_ROOT, { recursive: true });
+  const dir = resolve(CIRCUITS_ROOT, name);
+  const stage = join(CIRCUITS_ROOT, `.${name}.${randomUUID()}.tmp`);
+  const backup = join(CIRCUITS_ROOT, `.${name}.${randomUUID()}.old`);
+  await mkdir(stage);
+  let staged = true;
+  let replaced = false;
+  try {
+    for (const [fileName, content] of files) await writeFile(join(stage, fileName), content);
+    try {
+      await rename(dir, backup);
+      replaced = true;
+      if (createOnly) {
+        await rename(backup, dir);
+        replaced = false;
+        const error = new Error('circuit already exists');
+        error.code = 'EEXIST';
+        throw error;
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    try {
+      await rename(stage, dir);
+      staged = false;
+    } catch (error) {
+      if (replaced) {
+        await rename(backup, dir).catch(() => {});
+        replaced = false;
+      }
+      throw error;
+    }
+    if (replaced) await rm(backup, { recursive: true, force: true }).catch(() => {});
+  } finally {
+    if (staged) await rm(stage, { recursive: true, force: true }).catch(() => {});
+    if (replaced) await rm(backup, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function handleCircuitApi(req, res, url) {
   const generateMatch = url.pathname.match(/^\/api\/circuits\/([^/]+)\/generate$/);
   if (generateMatch) {
@@ -93,10 +169,10 @@ async function handleCircuitApi(req, res, url) {
         if (name === activeName) throw generationError('generated circuits cannot replace the active circuit', 409, 'circuit-exists');
         try { await stat(join(CIRCUITS_ROOT, name)); throw generationError('target circuit already exists', 409, 'circuit-exists'); }
         catch (error) { if (error.code !== 'ENOENT') throw error; }
-        await saveNewCircuit(committed, name);
+        const revision = await saveNewCircuit(committed, name);
         await setActive(name);
         generationPreviews.delete(body.previewId);
-        json(res, 200, { ...preview.response, mode, mutated: true, committed: true });
+        json(res, 200, { ...preview.response, mode, mutated: true, committed: true }, circuitHeaders(revision));
         return true;
       }
       const generated = routeCircuit(generateCircuit(body.spec), body.options || {});
@@ -166,22 +242,26 @@ async function handleCircuitApi(req, res, url) {
       const lines = Array.isArray(rawCmd)
         ? rawCmd.map((s) => String(s)).filter((s) => s.trim() !== '')
         : String(rawCmd).split('\n').map((s) => s.trim()).filter((s) => s !== '');
-      const circuit = await loadOrCreateCircuit(name);
-      const results = [];
-      let mutated = false;
-      for (const line of lines) {
-        try {
-          const r = runCommand(circuit, line);
-          results.push({ ok: true, text: r.text, json: r.json, mutated: !!r.mutated });
-          if (r.mutated) mutated = true;
-        } catch (err) {
-          results.push({ ok: false, error: err.message, line });
-          break; // stop on first error so state is consistent
+      const response = await withCircuitLock(name, async () => {
+        const circuit = await loadOrCreateCircuit(name);
+        const results = [];
+        let mutated = false;
+        for (const line of lines) {
+          try {
+            const r = runCommand(circuit, line);
+            results.push({ ok: true, text: r.text, json: r.json, mutated: !!r.mutated });
+            if (r.mutated) mutated = true;
+          } catch (err) {
+            results.push({ ok: false, error: err.message, line });
+            break; // stop on first error so state is consistent
+          }
         }
-      }
-      if (mutated) await saveCircuit(circuit, name);
-      await setActive(name); // any command (even a read-only one) selects the circuit
-      json(res, 200, { name, mutated, results, state: circuit.toJSON() });
+        const revision = mutated ? await saveCircuitFiles(circuit, name) : await circuitRevision(name);
+        await setActive(name); // any command (even a read-only one) selects the circuit
+        return { name, mutated, results, state: circuit.toJSON(), revision };
+      });
+      const { revision, ...resultBody } = response;
+      json(res, 200, resultBody, circuitHeaders(revision));
     } catch (err) {
       json(res, 400, { error: `could not run command: ${err.message}` });
     }
@@ -199,37 +279,47 @@ async function handleCircuitApi(req, res, url) {
   const statePath = join(dir, 'circuit.json');
 
   if (req.method === 'DELETE') {
-    try {
-      const entry = await lstat(dir);
-      // Refuse to remove anything other than an actual persisted circuit
-      // directory. In particular, do not follow a symlink outside CIRCUITS_ROOT.
-      if (!entry.isDirectory() || entry.isSymbolicLink()) {
-        json(res, 404, { error: 'circuit not found' });
+    return withCircuitLock(name, async () => {
+      try {
+        const entry = await lstat(dir);
+        // Refuse to remove anything other than an actual persisted circuit
+        // directory. In particular, do not follow a symlink outside CIRCUITS_ROOT.
+        if (!entry.isDirectory() || entry.isSymbolicLink()) {
+          json(res, 404, { error: 'circuit not found' });
+          return true;
+        }
+        await rm(dir, { recursive: true, force: false });
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          json(res, 404, { error: 'circuit not found' });
+        } else {
+          json(res, 500, { error: `could not delete circuit: ${err.message}` });
+        }
         return true;
       }
-      await rm(dir, { recursive: true, force: false });
-    } catch (err) {
-      if (err.code === 'ENOENT') {
-        json(res, 404, { error: 'circuit not found' });
-      } else {
-        json(res, 500, { error: `could not delete circuit: ${err.message}` });
-      }
+      if (activeName === name) await setActive('');
+      json(res, 200, { name, deleted: true });
       return true;
-    }
-    if (activeName === name) await setActive('');
-    json(res, 200, { name, deleted: true });
-    return true;
+    });
   }
 
   if (req.method === 'GET') {
-    try {
-      const state = JSON.parse(await readFile(statePath, 'utf8'));
-      Circuit.fromJSON(state); // Validate and ensure the current model can reload it.
-      json(res, 200, { name, state });
-    } catch (err) {
-      json(res, err.code === 'ENOENT' ? 404 : 400, { error: `could not load circuit: ${err.message}` });
-    }
-    return true;
+    return withCircuitLock(name, async () => {
+      try {
+        const revision = await circuitRevision(name);
+        if (ifNoneMatch(req, revision)) {
+          res.writeHead(304, { 'Cache-Control': 'no-store, max-age=0', ...circuitHeaders(revision) });
+          res.end();
+          return true;
+        }
+        const state = JSON.parse(await readFile(statePath, 'utf8'));
+        Circuit.fromJSON(state); // Validate and ensure the current model can reload it.
+        json(res, 200, { name, state }, circuitHeaders(revision));
+      } catch (err) {
+        json(res, err.code === 'ENOENT' ? 404 : 400, { error: `could not load circuit: ${err.message}` });
+      }
+      return true;
+    });
   }
 
   if (req.method === 'PUT') {
@@ -237,8 +327,8 @@ async function handleCircuitApi(req, res, url) {
       const body = await requestBody(req);
       const state = body.state;
       const circuit = Circuit.fromJSON(state);
-      await saveCircuit(circuit, name);
-      json(res, 200, { name, files: ['circuit.json', 'circuit.svg'] });
+      const revision = await saveCircuit(circuit, name);
+      json(res, 200, { name, files: ['circuit.json', 'circuit.svg'] }, circuitHeaders(revision));
     } catch (err) {
       const hint = err.message.includes('unknown component type')
         ? '; restart the server after changing the symbol registry'
@@ -283,7 +373,9 @@ async function setActive(name) {
 async function handleActiveApi(req, res, url) {
   if (url.pathname !== '/api/active') return false;
   if (req.method === 'GET') {
-    json(res, 200, { active: activeName });
+    const active = activeName;
+    const revision = active ? await withCircuitLock(active, () => circuitRevision(active)) : null;
+    json(res, 200, { active }, revision ? { 'X-Active-Revision': revision } : {});
     return true;
   }
   if (req.method === 'PUT' || req.method === 'POST') {
@@ -320,22 +412,21 @@ async function loadOrCreateCircuit(name) {
   }
 }
 
-async function saveNewCircuit(circuit, name) {
-  const dir = resolve(CIRCUITS_ROOT, name);
-  await mkdir(dir);
-  await writeFile(join(dir, 'circuit.json'), JSON.stringify(circuit.toJSON(), null, 2));
-  await writeFile(join(dir, 'circuit.svg'), svgString(circuit, {
+async function saveCircuitFiles(circuit, name, options) {
+  const jsonText = JSON.stringify(circuit.toJSON(), null, 2);
+  const svgText = svgString(circuit, {
     grid: true, terminals: false, junctions: false, background: true, netNames: true,
-  }));
+  });
+  await atomicCircuitSave(name, [['circuit.json', jsonText], ['circuit.svg', svgText]], options);
+  return circuitRevision(name);
+}
+
+async function saveNewCircuit(circuit, name) {
+  return withCircuitLock(name, () => saveCircuitFiles(circuit, name, { createOnly: true }));
 }
 
 async function saveCircuit(circuit, name) {
-  const dir = resolve(CIRCUITS_ROOT, name);
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'circuit.json'), JSON.stringify(circuit.toJSON(), null, 2));
-  await writeFile(join(dir, 'circuit.svg'), svgString(circuit, {
-    grid: true, terminals: false, junctions: false, background: true, netNames: true,
-  }));
+  return withCircuitLock(name, () => saveCircuitFiles(circuit, name));
 }
 
 const server = createServer(async (req, res) => {

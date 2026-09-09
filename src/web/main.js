@@ -181,6 +181,11 @@ let deleteInFlight = false;
 const DRAFT_KEY = 'schematic-spawner:draft';
 let restoredDraftName = null;
 let remoteConflictLogged = false;
+let lastSeenRevision = null;
+let lastCircuitTag = null;
+let syncInFlight = null;
+let syncGeneration = 0;
+let saveInFlight = false;
 // Cross-net collinear wire overlaps (B4): highlighted spans + status warning.
 let netWarnings = []; // [{ key, otherKey, x0, y0, x1, y1 }]
 let wiresDirty = true; // set when wire geometry may have changed; recomputes netWarnings
@@ -355,9 +360,13 @@ async function saveCircuit() {
     circuitNameEl.focus();
     return;
   }
+  syncGeneration += 1;
+  saveInFlight += 1;
   try {
     const data = await persistence.save(name, circuit.toJSON());
     currentCircuitName = name;
+    lastSeenRevision = data.revision || null;
+    lastCircuitTag = data.etag || null;
     lastSavedSnapshot = snapshot();
     persistDraft();
     await refreshCircuitList();
@@ -365,6 +374,9 @@ async function saveCircuit() {
     logLine(`Saved ${name} (circuit.json and circuit.svg).`);
   } catch (err) {
     logLine(`Could not save circuit: ${err.message}`, 'error');
+  } finally {
+    saveInFlight -= 1;
+    syncGeneration += 1;
   }
 }
 
@@ -382,10 +394,17 @@ async function exportCircuit() {
   }
 }
 
-async function loadCircuit(name = circuitSelectEl.value, quiet = false) {
-  if (!name) return;
+async function loadCircuit(name = circuitSelectEl.value, quiet = false, options = {}) {
+  if (!name) return false;
+  const { syncGeneration: expectedGeneration, ...loadOptions } = options;
   try {
-    const data = await persistence.load(name);
+    const data = await persistence.load(name, loadOptions);
+    if (expectedGeneration !== undefined && (saveInFlight || expectedGeneration !== syncGeneration)) return false;
+    if (data.notModified) {
+      if (data.revision) lastSeenRevision = data.revision;
+      if (data.etag) lastCircuitTag = data.etag;
+      return true;
+    }
     history.push(snapshot());
     future.length = 0;
     applyJson(JSON.stringify(data.state));
@@ -396,13 +415,17 @@ async function loadCircuit(name = circuitSelectEl.value, quiet = false) {
     circuitNameEl.value = data.name;
     circuitSelectEl.value = data.name;
     lastSavedSnapshot = snapshot();
+    lastSeenRevision = data.revision || null;
+    lastCircuitTag = data.etag || null;
     fitView();
     render();
     logLine(`Loaded ${data.name}.`);
+    return true;
   } catch (err) {
     // A transient load failure (active circuit whose file does not exist yet)
     // is retried by syncActiveCircuit on the next poll — log only the first.
     if (!quiet) logLine(`Could not load circuit: ${err.message}`, 'error');
+    return false;
   }
 }
 
@@ -468,6 +491,8 @@ async function deleteSavedCircuit() {
     lastSavedSnapshot = snapshot();
     lastSeenActive = null;
     lastFailedActive = null;
+    lastSeenRevision = null;
+    lastCircuitTag = null;
     restoredDraftName = null;
     remoteConflictLogged = false;
     try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
@@ -493,8 +518,9 @@ function askDeleteCircuit() {
 
 let lastSeenActive = null;
 let lastFailedActive = null; // active circuit whose load failed (retry silently)
-async function syncActiveCircuit() {
+async function syncActiveCircuitOnce() {
   if (!persistence.liveSync) return;
+  const generation = syncGeneration;
   // First, follow the server's "active circuit" — the agent drives it, the browser
   // mirrors it. This lets the user open the page once and watch the agent's work
   // appear automatically, without typing the circuit name or clicking Load.
@@ -502,6 +528,7 @@ async function syncActiveCircuit() {
   // every poll where active merely differs from currentCircuitName — otherwise
   // a manual load gets clobbered by the next tick.
   let active = null;
+  let activeRevision = null;
   let activeResponseSucceeded = false;
   try {
     const ar = await fetch('/api/active', { cache: 'no-store' });
@@ -509,6 +536,7 @@ async function syncActiveCircuit() {
       const data = await ar.json();
       if (typeof data.active === 'string') {
         active = data.active;
+        activeRevision = ar.headers?.get('x-active-revision') || null;
         activeResponseSucceeded = true;
       }
     }
@@ -516,12 +544,15 @@ async function syncActiveCircuit() {
     // network blip — keep going with the content sync below
   }
 
+  if (saveInFlight || generation !== syncGeneration) return;
+
   // A named local draft is the user's current editing session. On the first
   // successful active response after boot, seed the seen value but do not
   // replace that draft with a stale server-active circuit. Later active changes
   // still follow the normal auto-load path.
   if (activeResponseSucceeded && restoredDraftName && currentCircuitName === restoredDraftName) {
     lastSeenActive = active;
+    lastSeenRevision = activeRevision;
     restoredDraftName = null;
     return;
   }
@@ -537,7 +568,7 @@ async function syncActiveCircuit() {
       // the file appears. Retry on every tick (silently after the first error)
       // until the circuit actually loads.
       const quietRetry = active === lastFailedActive;
-      await loadCircuit(active, quietRetry);
+      await loadCircuit(active, quietRetry, { syncGeneration: generation });
       if (currentCircuitName === active) {
         lastSeenActive = active;
         lastFailedActive = null;
@@ -549,14 +580,28 @@ async function syncActiveCircuit() {
     lastSeenActive = active;
   }
   if (!currentCircuitName) return;
+  // The active endpoint is intentionally tiny. Avoid a JSON GET and model parse
+  // when its revision has not changed. Older servers without the header still
+  // get the conditional GET fallback below.
+  if (active === currentCircuitName && activeRevision && activeRevision === lastSeenRevision) return;
   try {
-    const data = await persistence.load(currentCircuitName);
+    const data = await persistence.load(currentCircuitName, { ifNoneMatch: lastCircuitTag });
+    if (saveInFlight || generation !== syncGeneration) return;
+    if (data.notModified) {
+      if (data.revision) lastSeenRevision = data.revision;
+      if (data.etag) lastCircuitTag = data.etag;
+      return;
+    }
     // The model normalizes loaded state (notably reducible net geometry), so
     // compare and record the canonical representation rather than the raw
     // JSON returned by the server. Otherwise a clean design can become
     // permanently dirty after the first poll of a normalized save.
     const remoteSnapshot = JSON.stringify(Circuit.fromJSON(data.state).toJSON());
+    const remoteRevision = data.revision || activeRevision;
+    const remoteTag = data.etag || lastCircuitTag;
     const currentSnapshot = snapshot();
+    lastSeenRevision = remoteRevision || null;
+    lastCircuitTag = remoteTag || null;
     if (remoteSnapshot === currentSnapshot) return;
     if (currentSnapshot !== lastSavedSnapshot) {
       if (!remoteConflictLogged) {
@@ -573,6 +618,13 @@ async function syncActiveCircuit() {
   } catch {
     // A transient server restart should not interrupt editing.
   }
+}
+
+async function syncActiveCircuit() {
+  if (!persistence.liveSync || document.hidden) return;
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = syncActiveCircuitOnce().finally(() => { syncInFlight = null; });
+  return syncInFlight;
 }
 
 function applyJson(blob) {
@@ -7555,6 +7607,9 @@ try {
   refreshCircuitList();
   syncActiveCircuit(); // pick up the agent's active circuit immediately
   window.setInterval(syncActiveCircuit, 500);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) syncActiveCircuit();
+  });
   logLine('Schematic Spawner ready. Press ? for the keymap. Normal: i to insert, w to wire, u undo.');
 } catch (err) {
   const b = banner();

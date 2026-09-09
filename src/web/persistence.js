@@ -7,11 +7,25 @@ function encoded(name) {
   return encodeURIComponent(name);
 }
 
-async function httpJson(fetchImpl, url, options) {
+function responseHeader(response, name) {
+  return typeof response.headers?.get === 'function' ? response.headers.get(name) : null;
+}
+
+function withResponseMeta(data, response, notModified = false) {
+  Object.defineProperties(data, {
+    revision: { value: responseHeader(response, 'x-circuit-revision') || responseHeader(response, 'x-active-revision'), enumerable: false },
+    etag: { value: responseHeader(response, 'etag'), enumerable: false },
+    notModified: { value: notModified, enumerable: false },
+  });
+  return data;
+}
+
+async function httpJson(fetchImpl, url, options = {}) {
   const response = await fetchImpl(url, { cache: 'no-store', ...options });
+  if (response.status === 304) return withResponseMeta({}, response, true);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `server returned ${response.status}`);
-  return data;
+  return withResponseMeta(data, response);
 }
 
 function browserExport({ content, suggestedName = 'circuit.svg', extension = 'svg' }) {
@@ -43,7 +57,9 @@ export function createPersistenceAdapter({ nativeApi = globalThis.schematicStora
     mode: 'http',
     liveSync: true,
     list: () => httpJson(fetchImpl, '/api/circuits'),
-    load: (name) => httpJson(fetchImpl, `/api/circuits/${encoded(name)}`),
+    load: (name, { ifNoneMatch } = {}) => httpJson(fetchImpl, `/api/circuits/${encoded(name)}`, {
+      ...(ifNoneMatch ? { headers: { 'If-None-Match': ifNoneMatch } } : {}),
+    }),
     save: (name, state) => httpJson(fetchImpl, `/api/circuits/${encoded(name)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

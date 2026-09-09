@@ -54,6 +54,6 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
 - HTTP development and automation: `./start.sh` (HTTP at `127.0.0.1:8080`).
 - Isolated dev sessions: `PORT=<port> HOST=<host> node src/web/serve.js` plus
   `chromium --remote-debugging-port=<port>` and CDP via `Runtime.evaluate`.
-- The browser polls `/api/active` and the active circuit endpoint every 500 ms.
-  CLI commands set the active circuit and the browser auto-loads it; mutated
-  commands persist `circuit.json` and `circuit.svg`.
+- CLI commands set the active circuit and the browser auto-loads changed
+  revisions through live sync. Mutated commands persist `circuit.json` and
+  `circuit.svg`; see `AGENTS.md` for the sync and persistence contract.

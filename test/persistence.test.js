@@ -7,8 +7,8 @@ import { Circuit } from '../src/core/model.js';
 import { createNativeStorage } from '../src/desktop/storage.js';
 import { createPersistenceAdapter } from '../src/web/persistence.js';
 
-function response(body, ok = true, status = 200) {
-  return { ok, status, async json() { return body; } };
+function response(body, ok = true, status = 200, headers = {}) {
+  return { ok, status, headers: { get(name) { return headers[name.toLowerCase()] || null; } }, async json() { return body; } };
 }
 
 test('desktop persistence stores validated circuit files in its workspace', async (t) => {
@@ -48,6 +48,35 @@ test('desktop persistence imports repository circuits without overwriting native
   assert.deepEqual((await target.load('new-circuit')).state, new Circuit().toJSON());
   assert.equal((await target.load('repository-circuit')).state.grid, 40);
   assert.deepEqual(await target.importFrom(sourceRoot), { circuits: [] });
+});
+
+test('atomic desktop saves keep the previous pair when rendering fails', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'schematic-spawner-atomic-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const state = new Circuit().toJSON();
+  const storage = createNativeStorage(root);
+  await storage.save('pair', state);
+  const beforeJson = await readFile(join(root, 'pair', 'circuit.json'), 'utf8');
+  const beforeSvg = await readFile(join(root, 'pair', 'circuit.svg'), 'utf8');
+  const failing = createNativeStorage(root, { render: () => { throw new Error('render failed'); } });
+  await assert.rejects(failing.save('pair', { ...state, grid: 80 }), /render failed/);
+  assert.equal(await readFile(join(root, 'pair', 'circuit.json'), 'utf8'), beforeJson);
+  assert.equal(await readFile(join(root, 'pair', 'circuit.svg'), 'utf8'), beforeSvg);
+});
+
+test('HTTP persistence exposes conditional loads without changing response data', async () => {
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push([url, options]);
+    return response({}, false, 304, { etag: '"rev-1"', 'x-circuit-revision': 'rev-1' });
+  };
+  const browser = createPersistenceAdapter({ nativeApi: null, fetchImpl });
+  const data = await browser.load('a/b', { ifNoneMatch: '"rev-1"' });
+  assert.equal(data.notModified, true);
+  assert.equal(data.revision, 'rev-1');
+  assert.equal(data.etag, '"rev-1"');
+  assert.deepEqual(Object.keys(data), []);
+  assert.equal(requests[0][1].headers['If-None-Match'], '"rev-1"');
 });
 
 test('persistence adapter keeps native and HTTP contracts narrow', async () => {

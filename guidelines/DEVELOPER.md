@@ -246,5 +246,6 @@ See `/tmp/opencode/` for existing examples (`mos_label_test.mjs`,
   and `window.__run(cmd)` from the dev console.
 - `window.__load(state)` overwrites the visible circuit — useful for
   reproducing a bug from a saved `circuit.json`.
-- The browser polls `circuit.json` every 500 ms; writing a file from
-  outside the editor shows up live.
+- The browser's revision-aware live sync polls every 500 ms while visible and
+  applies changed external saves; see the authoritative behavior in
+  `AGENTS.md`.

@@ -1,5 +1,6 @@
 import { constants } from 'node:fs';
-import { mkdir, open, readdir, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, open, readdir, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Circuit } from '../core/model.js';
 import { svgString } from '../core/render.js';
@@ -49,6 +50,15 @@ export function createNativeStorage(root, { render = svgString } = {}) {
       await file.close();
     }
   };
+  const locks = new Map();
+  const withCircuitLock = (name, action) => {
+    const previous = locks.get(name);
+    const run = (previous || Promise.resolve()).catch(() => {}).then(action);
+    locks.set(name, run);
+    return run.finally(() => {
+      if (locks.get(name) === run) locks.delete(name);
+    });
+  };
 
   return {
     async list() {
@@ -73,46 +83,86 @@ export function createNativeStorage(root, { render = svgString } = {}) {
     async load(name) {
       const safe = validCircuitName(name);
       if (!safe) throw new Error('invalid circuit name');
-      let rootHandle;
-      let circuitHandle;
-      try {
-        rootHandle = await openRoot();
-        circuitHandle = await openCircuit(rootHandle, safe);
-        return await withFile(circuitHandle, 'circuit.json', constants.O_RDONLY | secureFileFlags, async (file) => {
-          const state = JSON.parse(await file.readFile('utf8'));
-          Circuit.fromJSON(state);
-          return { name: safe, state };
-        });
-      } finally {
-        await circuitHandle?.close();
-        await rootHandle?.close();
-      }
+      return withCircuitLock(safe, async () => {
+        let rootHandle;
+        let circuitHandle;
+        try {
+          rootHandle = await openRoot();
+          circuitHandle = await openCircuit(rootHandle, safe);
+          return await withFile(circuitHandle, 'circuit.json', constants.O_RDONLY | secureFileFlags, async (file) => {
+            const state = JSON.parse(await file.readFile('utf8'));
+            Circuit.fromJSON(state);
+            return { name: safe, state };
+          });
+        } finally {
+          await circuitHandle?.close();
+          await rootHandle?.close();
+        }
+      });
     },
 
     async save(name, state) {
       const safe = validCircuitName(name);
       if (!safe) throw new Error('invalid circuit name');
-      const circuit = Circuit.fromJSON(state);
-      let rootHandle;
-      let circuitHandle;
-      try {
-        rootHandle = await openRoot(true);
-        circuitHandle = await openCircuit(rootHandle, safe, true);
+      return withCircuitLock(safe, async () => {
+        const circuit = Circuit.fromJSON(state);
         const files = [
           ['circuit.json', JSON.stringify(circuit.toJSON(), null, 2)],
           ['circuit.svg', render(circuit, {
             grid: true, terminals: false, junctions: false, background: true, netNames: true,
           })],
         ];
-        for (const [name, content] of files) {
-          await withFile(circuitHandle, name, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | secureFileFlags,
-            (file) => file.writeFile(content));
+        let rootHandle;
+        let stageHandle;
+        let stagePath;
+        try {
+          rootHandle = await openRoot(true);
+          // Validate the existing path without following a symlink before the swap.
+          let existing = false;
+          try {
+            const current = await openCircuit(rootHandle, safe);
+            await current.close();
+            existing = true;
+          } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+          }
+          const stageName = `.${safe}.${randomUUID()}.tmp`;
+          const backupName = `.${safe}.${randomUUID()}.old`;
+          stagePath = join(fdPath(rootHandle), stageName);
+          await mkdir(stagePath);
+          stageHandle = await openDirectory(stagePath);
+          try {
+            for (const [fileName, content] of files) {
+              await withFile(stageHandle, fileName, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | secureFileFlags,
+                (file) => file.writeFile(content));
+            }
+          } finally {
+            await stageHandle.close();
+            stageHandle = null;
+          }
+          const targetPath = join(fdPath(rootHandle), safe);
+          const backupPath = join(fdPath(rootHandle), backupName);
+          let replaced = false;
+          try {
+            if (existing) {
+              await rename(targetPath, backupPath);
+              replaced = true;
+            }
+            await rename(stagePath, targetPath);
+            stagePath = null;
+            if (replaced) await rm(backupPath, { recursive: true, force: true }).catch(() => {});
+          } catch (error) {
+            if (replaced) await rename(backupPath, targetPath).catch(() => {});
+            if (stagePath) await rm(stagePath, { recursive: true, force: true }).catch(() => {});
+            throw error;
+          }
+          return { name: safe, files: ['circuit.json', 'circuit.svg'] };
+        } finally {
+          await stageHandle?.close();
+          if (stagePath) await rm(stagePath, { recursive: true, force: true }).catch(() => {});
+          await rootHandle?.close();
         }
-        return { name: safe, files: ['circuit.json', 'circuit.svg'] };
-      } finally {
-        await circuitHandle?.close();
-        await rootHandle?.close();
-      }
+      });
     },
 
     async importFrom(sourceRoot) {
@@ -132,17 +182,19 @@ export function createNativeStorage(root, { render = svgString } = {}) {
     async delete(name) {
       const safe = validCircuitName(name);
       if (!safe) throw new Error('invalid circuit name');
-      let rootHandle;
-      try {
-        rootHandle = await openRoot();
-        await rm(join(fdPath(rootHandle), safe), { recursive: true, force: false });
-        return { name: safe, deleted: true };
-      } catch (error) {
-        if (error.code === 'ENOENT') throw new Error('circuit not found');
-        throw error;
-      } finally {
-        await rootHandle?.close();
-      }
+      return withCircuitLock(safe, async () => {
+        let rootHandle;
+        try {
+          rootHandle = await openRoot();
+          await rm(join(fdPath(rootHandle), safe), { recursive: true, force: false });
+          return { name: safe, deleted: true };
+        } catch (error) {
+          if (error.code === 'ENOENT') throw new Error('circuit not found');
+          throw error;
+        } finally {
+          await rootHandle?.close();
+        }
+      });
     },
   };
 }

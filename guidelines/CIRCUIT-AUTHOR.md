@@ -203,13 +203,13 @@ sch> eval
 sch> quit
 ```
 
-The browser polls `/api/active` and the active circuit every 500 ms; CLI commands set the active circuit, and mutated commands persist `circuit.json` and `circuit.svg`. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
+The browser live-syncs changed active-circuit revisions while visible; CLI commands set the active circuit, and mutated commands persist `circuit.json` and `circuit.svg`. See `AGENTS.md` for the authoritative sync contract. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
 
 ## Start so the user sees you live
 
 1. Use an existing server/browser if present. Otherwise run `./start.sh`, or an isolated `PORT=<random-port> node src/web/serve.js` with Chromium on its own random debug port. Track and stop only processes you started; never launch a competing editor instance.
 2. Have the user open `http://127.0.0.1:<port>/` once and leave it open. They do not type a circuit name, click Load or Save, or refresh; the active circuit loads automatically.
-3. Choose a circuit name (for example `analog-block` or `low-voltage-cascode`) and issue the first command. The server marks it active and the browser loads it on the next poll (≤500 ms).
+3. Choose a circuit name (for example `analog-block` or `low-voltage-cascode`) and issue the first command. The server marks it active and the browser loads it on the next visible sync cycle.
 4. Drive placement, review, then routing through CLI or HTTP. Fit the view after each phase and after later edits that change drawing extents; never leave the final review zoomed away.
 
 ## Reliable automation (don't lose a session to these)
@@ -224,10 +224,9 @@ The browser polls `/api/active` and the active circuit every 500 ms; CLI command
   `Input.dispatchMouseEvent` with `clickCount: 2`. Inline editors are
   `input[style*="position: absolute"]`. Ctrl+A =
   `keyDown('a', { modifiers: MOD, code: 'KeyA', keyCode: 65 })`.
-- **`syncActiveCircuit` can silently revert local state** when there are
-  no unsaved changes. Build deterministically and, after every save,
-  **verify the file** with `GET /api/circuits/<name>` — never trust only
-  the live tab.
+- **`syncActiveCircuit` protects a just-saved design from stale in-flight
+  responses**, but after every save still **verify the file** with
+  `GET /api/circuits/<name>` — never trust only the live tab.
 - **Multi-terminal net coverage lives in `branches`, not just `eval`.**
   `eval` reports a terminal "connected" if it's in a net even when no wire
   reaches it. A 3+ terminal net is stored as `branches` (one polyline per
