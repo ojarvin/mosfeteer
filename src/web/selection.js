@@ -1,3 +1,34 @@
+/** Keep label-only copy sources separate from explicitly selected topology. */
+export function copySelectionParts({ labels = [], refs = [], netIds = [] } = {}) {
+  const copyRefs = new Set(refs);
+  for (const label of labels) if (label.owner) copyRefs.add(label.owner);
+  return {
+    refs: copyRefs,
+    netIds: new Set(netIds),
+    labels: labels.filter((label) => !label.owner),
+  };
+}
+
+/** Convert any standalone visual label, including a net label, to the
+ * label-only clipboard shape. Deliberately omits owner/netId so the pasted
+ * object is a floating annotation rather than electrical topology. */
+export function copyableLabelPayload(label) {
+  if (!label || label.owner) return null;
+  const anchor = typeof label.anchorWorld === 'function' ? label.anchorWorld() : label.anchor;
+  return {
+    id: label.id,
+    kind: label.kind,
+    parent: label.parent || null,
+    text: label.text,
+    align: label.align,
+    x: anchor.x,
+    y: anchor.y,
+    end: label.kind === 'label' ? null : { ...label.end },
+    points: label.kind === 'line' ? label.points.map((point) => ({ ...point })) : null,
+    style: { ...(label.style || {}) },
+  };
+}
+
 /**
  * Return the selected component that should own a move gesture, or null when
  * the hit is not a member of a preselected component set. Wire and label hits

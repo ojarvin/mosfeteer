@@ -20,7 +20,7 @@ import { segThroughInterior, smartRoute } from '../core/router.js';
 import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
-import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
+import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { componentPaletteItems, editorKeymapText, layerActionForKey } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
 
@@ -4145,7 +4145,6 @@ function copySelectionExists() {
 }
 function expandCopyNetSelection() {
   const netIds = new Set(selectedNets);
-  for (const label of selectedLabels()) if (label.netId) netIds.add(label.netId);
   const refs = new Set(multi);
   for (const id of netIds) {
     const net = circuit.nets.get(id);
@@ -4166,10 +4165,7 @@ function beginCopySource(startWorld, startClient) {
     if (annotation) {
       setLabelSelection([annotation.id]);
     } else if (label?.netId) {
-      const net = circuit.nets.get(label.netId);
-      const refs = [...new Set((net?.terminals || []).map((t) => t.comp))];
-      if (refs.length) setSelection(refs);
-      else selectedNets = new Set([label.netId]);
+      setLabelSelection([label.id]);
     } else if (label?.owner && circuit.components.has(label.owner)) {
       setSelection([label.owner]);
     } else if (label) {
@@ -6170,28 +6166,28 @@ helpSearch?.addEventListener('keydown', (ev) => {
 
 // ----- command console ---------------------------------------------------
 
-/** Copied selection.  `nets` are complete electrical nets; `fragments` are
- * terminal-less geometric islands extracted from selected segments. Net labels
- * are carried only inside their complete physical net record. */
+/** Copied selection. `nets` are complete electrical nets; `fragments` are
+ * terminal-less geometric islands extracted from selected segments. A net label
+ * selected on its own is stored in `labels` as a floating annotation. */
 let clipboard = null;
 
 function copySelection() {
-  // A selected owned/net label is still a real copy source: owned labels bring
-  // their component, while net labels bring their physical net. Keep this
-  // expansion here so keyboard copy, copy mode, and repeated ghosts agree.
+  // Owned labels bring their component; a net label alone is copied as a
+  // floating annotation rather than expanding its physical net.
   const labels = selectedLabels();
-  const refs = new Set(multi);
-  for (const label of labels) if (label.owner) refs.add(label.owner);
-  const copyNetIds = new Set(selectedNets);
-  for (const label of labels) if (label.netId) copyNetIds.add(label.netId);
+  const copy = copySelectionParts({ labels, refs: multi, netIds: selectedNets });
+  const refs = copy.refs;
+  const copyNetIds = copy.netIds;
   for (const id of copyNetIds) {
     const net = circuit.nets.get(id);
     for (const terminal of net?.terminals || []) refs.add(terminal.comp);
   }
   const comps = [...refs].map((refdes) => circuit.components.get(refdes)).filter(Boolean);
-  const selectedFreeLabels = labels.filter((l) => !l.owner && !l.isNetLabel?.());
+  const selectedFreeLabels = copy.labels;
   const parentIds = new Set(selectedFreeLabels.filter((l) => ['arrow', 'box', 'line'].includes(l.kind)).map((l) => l.id));
-  const freeLabels = [...new Map([...selectedFreeLabels, ...circuit.labels.values()].filter((l) => !l.owner && !l.isNetLabel?.() && (selectedFreeLabels.includes(l) || parentIds.has(l.parent))).map((l) => [l.id, l])).values()];
+  const freeLabels = [...new Map([...selectedFreeLabels, ...circuit.labels.values()]
+    .filter((l) => !l.owner && (selectedFreeLabels.includes(l) || (!l.isNetLabel?.() && parentIds.has(l.parent))))
+    .map((l) => [l.id, l])).values()];
   const hasWholeTerminallessNet = [...copyNetIds].some((id) => {
     const net = circuit.nets.get(id);
     return net && net.terminals.length === 0 && net.paths().some((path) => path.length >= 2);
@@ -6278,18 +6274,7 @@ function copySelection() {
       mirrorY: c.transform.mirrorY,
       style: { ...(c.style || {}) },
     })),
-    labels: freeLabels.map((l) => ({
-      id: l.id,
-      kind: l.kind,
-      parent: l.parent,
-      text: l.text,
-      align: l.align,
-      x: l.anchorWorld().x,
-      y: l.anchorWorld().y,
-      end: l.kind === 'label' ? null : { ...l.end },
-      points: l.kind === 'line' ? l.points.map((point) => ({ ...point })) : null,
-      style: { ...(l.style || {}) },
-    })),
+    labels: freeLabels.map(copyableLabelPayload),
     nets,
     fragments,
     anchor,

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseWireHitCandidate, completeSelectedNetIds, selectedSetMoveSource } from '../src/web/selection.js';
+import { chooseWireHitCandidate, completeSelectedNetIds, copySelectionParts, copyableLabelPayload, selectedSetMoveSource } from '../src/web/selection.js';
 
 const components = new Map([
   ['R1', { type: 'resistor' }],
@@ -9,6 +9,26 @@ const components = new Map([
 ]);
 
 const wire = (id = 'N1') => ({ net: { id }, branch: 0, seg: 1 });
+
+test('copying a net label does not expand its physical net', () => {
+  const label = {
+    id: 'SIG_LABEL', kind: 'label', text: 'SIG', align: 'center', owner: null,
+    netId: 'N1', anchor: { x: 200, y: 0 }, anchorWorld: () => ({ x: 200, y: 0 }),
+    style: { color: '#111' },
+  };
+  const parts = copySelectionParts({ labels: [label] });
+  assert.deepEqual([...parts.refs], []);
+  assert.deepEqual([...parts.netIds], []);
+  assert.deepEqual(parts.labels, [label]);
+
+  const payload = copyableLabelPayload(label);
+  assert.deepEqual(payload, {
+    id: 'SIG_LABEL', kind: 'label', parent: null, text: 'SIG', align: 'center',
+    x: 200, y: 0, end: null, points: null, style: { color: '#111' },
+  });
+  assert.equal('netId' in payload, false);
+  assert.equal(copyableLabelPayload({ owner: 'R1' }), null);
+});
 
 function selection(overrides = {}) {
   return {
