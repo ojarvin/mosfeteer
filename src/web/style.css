@@ -1039,27 +1039,6 @@ button.off {
 }
 
 @media (max-width: 1100px) {
-  .toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    gap: 4px 12px;
-    padding-top: 4px;
-    padding-bottom: 4px;
-  }
-
-  .toolbar-actions {
-    grid-column: 1;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
-    min-width: 0;
-    gap: 4px;
-  }
-
-  .toolbar-actions .workspace-group {
-    grid-column: 1 / -1;
-  }
-
   .toolbar-group {
     min-height: 38px;
     padding: 20px 12px 2px;
@@ -1128,9 +1107,8 @@ button.off {
 .toolbar-actions {
   gap: 5px;
   align-items: stretch;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  flex-wrap: wrap;
+  overflow: visible;
 }
 
 .toolbar-group {
@@ -1260,7 +1238,6 @@ button.off {
 
   .toolbar-actions {
     width: 100%;
-    overflow-x: auto;
   }
 
   .toolbar-group {

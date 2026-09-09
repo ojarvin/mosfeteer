@@ -6,12 +6,11 @@ import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 
 import { strokeAttrs, setColorToken, resolveColor } from '../src/core/style.js';
 
-test('grid lines use one uniform style', () => {
+test('grid lines use the ordinary style throughout', () => {
   const svg = svgString(new Circuit(), { grid: true, viewport: { x: -40, y: -40, w: 400, h: 400 } });
-  const lines = [...svg.matchAll(/<line class="grid-line"[^>]+>/g)].map(([line]) => line);
-  assert.ok(lines.length > 0);
-  assert.equal(lines.every((line) => line.includes('stroke-width="1"')), true);
-  assert.doesNotMatch(svg, /major-grid|stroke-width="1\.5"/);
+  assert.doesNotMatch(svg, /major-grid/);
+  assert.match(svg, /class="grid-line"[^>]+x1="0"/);
+  assert.match(svg, /class="grid-line"[^>]+x1="40"/);
 });
 
 test('wire rendering uses round caps without changing symbol stroke roles', () => {
