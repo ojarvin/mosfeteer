@@ -184,6 +184,26 @@ test('routing places an actual solder component at a balanced net junction', () 
   assert.ok(svg.includes(`r="${SOLDER_DOT_RADIUS}"`), 'solder component renders at the full solder radius');
 });
 
+test('svgString escapes literal text without breaking rich markup', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '<tag & "quoted">', x: 0, y: 0 });
+  c.addLabel({ text: 'M_{<1>}', x: 160, y: 0 });
+  const svg = svgString(c);
+  assert.match(svg, /&lt;tag &amp; &quot;quoted&quot;&gt;/);
+  assert.match(svg, /M\s*<tspan[^>]*>&lt;1&gt;<\/tspan>/);
+  assert.doesNotMatch(svg, /<tag/);
+});
+
+test('svgString escapes component attributes and style colors', () => {
+  const c = new Circuit();
+  const refdes = 'R\"/><script>alert(1)</script>';
+  c.addComponent('resistor', { refdes, style: { color: '\" onload=\"alert(2)' } });
+  const svg = svgString(c);
+  assert.match(svg, /data-ref="R&quot;\/&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;"/);
+  assert.match(svg, /stroke="&quot; onload=&quot;alert\(2\)/);
+  assert.doesNotMatch(svg, /<script|" onload=/);
+});
+
 test('svgString renders standalone label text with its alignment anchor', () => {
   const c = new Circuit();
   c.addLabel({ text: 'TP1', x: 400, y: 0, align: 'left' });

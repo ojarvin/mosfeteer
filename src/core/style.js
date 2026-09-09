@@ -61,20 +61,21 @@ export function setColorToken(token, value) {
 export const LEGACY_STYLE_COLORS = STYLE_COLORS;
 
 const STYLES = { thick: THICK, symbol: SYMBOL, wire: WIRE, emph: EMPH, ground: GROUND, supply: SUPPLY };
+const escapeSvgAttr = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 export function strokeAttrs(styleName) {
   const s = STYLES[styleName] || LINE;
-  return `stroke="${s.stroke}" stroke-width="${s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"`;
+  return `stroke="${escapeSvgAttr(s.stroke)}" stroke-width="${s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"`;
 }
 export function fontAttrs(kind) {
   const f = kind === 'instance' ? INSTANCE_FONT : kind === 'label' ? LABEL_FONT : null;
   if (!f) return '';
-  const parts = [`font-size="${f.size}"`, `fill="${resolveColor(f.fill)}"`];
+  const parts = [`font-size="${f.size}"`, `fill="${escapeSvgAttr(resolveColor(f.fill))}"`];
   if (f.weight) parts.push(`font-weight="${f.weight}"`);
   if (f.italic) parts.push(`font-style="italic"`);
   return parts.join(' ');
 }
 export function styleAttrs(style = {}, base = 'symbol') {
-  let attrs = strokeAttrs(base).replace('stroke="#111"', `stroke="${resolveColor(style.color || '#111')}"`);
+  let attrs = strokeAttrs(base).replace(`stroke="${escapeSvgAttr('#111')}"`, `stroke="${escapeSvgAttr(resolveColor(style.color || '#111'))}"`);
   if (style.width === 'thin' || style.width === 'thick') {
     attrs = attrs.replace(/stroke-width="[^"]+"/, `stroke-width="${style.width === 'thin' ? 3 : 9}"`);
   }

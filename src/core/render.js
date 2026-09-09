@@ -4,6 +4,10 @@ import { autoRoute, balancedPaths } from './router.js';
 import { fontAttrs, resolveColor, strokeAttrs, styleAttrs } from './style.js';
 import { LabelInstance, parseLabelRuns } from './model.js';
 
+function escapeSvg(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
 function fmt(n) {
   return Number.isInteger(n) ? String(n) : n.toFixed(2);
 }
@@ -27,13 +31,13 @@ function graphicsToSvg(g, textTransform = '', objectStyle = null) {
       return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${stroke}/>`;
     case 'polygon':
       if (g.fill === 'foreground') {
-        return `<polygon points="${polygonPoints(g)}" fill="${resolveColor(objectStyle?.color || '#111')}" stroke="none"/>`;
+        return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(objectStyle?.color || '#111'))}" stroke="none"/>`;
       }
-      return `<polygon points="${polygonPoints(g)}" fill="${resolveColor(g.fill || 'none')}" ${stroke}/>`;
+      return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(g.fill || 'none'))}" ${stroke}/>`;
     case 'text':
-      return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${g.text}</text>`;
+      return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${escapeSvg(g.text)}</text>`;
     case 'dot':
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${resolveColor(objectStyle?.color || g.fill || '#111')}" stroke="none"/>`;
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${escapeSvg(resolveColor(objectStyle?.color || g.fill || '#111'))}" stroke="none"/>`;
     default:
       return '';
   }
@@ -41,12 +45,12 @@ function graphicsToSvg(g, textTransform = '', objectStyle = null) {
 
 function symbolTextSvg(g, t, color = '#111') {
   const p = applyTransform(t, g.x, g.y);
-  const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${resolveColor(color)}"`);
-  return `<text x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none">${g.text}</text>`;
+  const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`);
+  return `<text x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none">${escapeSvg(g.text)}</text>`;
 }
 
 function textEl(x, y, text, anchor, size, fill) {
-  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${resolveColor(fill || '#111')}" stroke="none">${text}</text>`;
+  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${escapeSvg(resolveColor(fill || '#111'))}" stroke="none">${escapeSvg(text)}</text>`;
 }
 
 // Label-object text with one of the style.js font kinds ("instance" | "label").
@@ -55,20 +59,20 @@ function textEl(x, y, text, anchor, size, fill) {
 // alignment/anchor untouched (alignment is handled by the parent <text>).
 function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
   let font = fontAttrs(kind)
-    .replace(/fill="[^"]+"/, `fill="${resolveColor(color)}"`)
+    .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`)
     .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
     .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
   if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
   const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
   if (runs.length === 1 && !runs[0].sub && !runs[0].super) {
-    return `<text ${attrs}>${runs[0].text}</text>`;
+    return `<text ${attrs}>${escapeSvg(runs[0].text)}</text>`;
   }
   const body = runs
     .map((r) => {
-      if (!r.sub && !r.super) return r.text;
+      if (!r.sub && !r.super) return escapeSvg(r.text);
       const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
       const size = r.sub || r.super ? ' font-size="0.62em"' : '';
-      return `<tspan ${shift}${size}>${r.text}</tspan>`;
+      return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
     })
     .join('');
   return `<text ${attrs}>${body}</text>`;
@@ -108,7 +112,7 @@ function shapeAnnotationSvg(label, opacity = '') {
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
   }
   const { shaft, left, right } = annotationArrowPoints(a, b);
-  return `<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${resolveColor(label.style?.color || '#111')}" stroke="none"${opacity}/>`;
+  return `<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${escapeSvg(resolveColor(label.style?.color || '#111'))}" stroke="none"${opacity}/>`;
 }
 /**
  * Render a Circuit to an SVG string.
@@ -234,14 +238,14 @@ export function svgString(circuit, opts = {}) {
       const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'wire')}><title>${wireHelp}</title></path>`);
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'wire')}><title>${escapeSvg(wireHelp)}</title></path>`);
         continue;
       }
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]; const b = pts[i];
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = net.wireStyles[`${branch}:${i}`] || net.style;
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(segmentStyle, 'wire')}><title>${wireHelp}</title></path>`);
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(segmentStyle, 'wire')}><title>${escapeSvg(wireHelp)}</title></path>`);
       }
     }
   }
@@ -252,7 +256,7 @@ export function svgString(circuit, opts = {}) {
     const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
     const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
     const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
-    parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${c.refdes}">`);
+    parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
     parts.push('</g></g>');
     for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
@@ -300,7 +304,7 @@ export function svgString(circuit, opts = {}) {
       // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
       // matching the dedicated instance labels used by transistors (e.g. nmos).
       parts.push(
-        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${c.refdes}</text>`,
+        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${escapeSvg(c.refdes)}</text>`,
       );
     }
     if (def.textPos && c.value !== undefined && c.value !== '') {
@@ -451,7 +455,7 @@ export function editorOverlay(circuit, opts = {}) {
     const y = Math.min(r.y0, r.y1);
     const w = Math.abs(r.x1 - r.x0);
     const h = Math.abs(r.y1 - r.y0);
-    const color = r.color || '#4f9cf9';
+    const color = escapeSvg(r.color || '#4f9cf9');
     parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
   }
 
