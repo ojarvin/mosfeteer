@@ -10,6 +10,7 @@ import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'no
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Circuit } from '../core/model.js';
+import { loadDocument, renderDocument } from '../core/document.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { renderAscii } from '../core/ascii.js';
 import { svgString } from '../core/render.js';
@@ -165,7 +166,7 @@ async function handleCircuitApi(req, res, url) {
       if (mode === 'commit') {
         const preview = body.previewId ? generationPreviews.get(body.previewId) : null;
         if (!preview || preview.target !== name || !preview.state) throw generationError('previewId is missing or does not match this circuit', 409, 'preview-required');
-        const committed = Circuit.fromJSON(preview.state);
+        const committed = loadDocument(preview.state);
         if (name === activeName) throw generationError('generated circuits cannot replace the active circuit', 409, 'circuit-exists');
         try { await stat(join(CIRCUITS_ROOT, name)); throw generationError('target circuit already exists', 409, 'circuit-exists'); }
         catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -313,7 +314,7 @@ async function handleCircuitApi(req, res, url) {
           return true;
         }
         const state = JSON.parse(await readFile(statePath, 'utf8'));
-        Circuit.fromJSON(state); // Validate and ensure the current model can reload it.
+        loadDocument(state); // Validate and ensure the current document can reload it.
         json(res, 200, { name, state }, circuitHeaders(revision));
       } catch (err) {
         json(res, err.code === 'ENOENT' ? 404 : 400, { error: `could not load circuit: ${err.message}` });
@@ -326,7 +327,7 @@ async function handleCircuitApi(req, res, url) {
     try {
       const body = await requestBody(req);
       const state = body.state;
-      const circuit = Circuit.fromJSON(state);
+      const circuit = loadDocument(state);
       const revision = await saveCircuit(circuit, name);
       json(res, 200, { name, files: ['circuit.json', 'circuit.svg'] }, circuitHeaders(revision));
     } catch (err) {
@@ -405,7 +406,7 @@ async function loadOrCreateCircuit(name) {
   const statePath = join(CIRCUITS_ROOT, name, 'circuit.json');
   try {
     const state = JSON.parse(await readFile(statePath, 'utf8'));
-    return Circuit.fromJSON(state);
+    return loadDocument(state);
   } catch (err) {
     if (err.code === 'ENOENT') return new Circuit();
     throw err;
@@ -414,7 +415,7 @@ async function loadOrCreateCircuit(name) {
 
 async function saveCircuitFiles(circuit, name, options) {
   const jsonText = JSON.stringify(circuit.toJSON(), null, 2);
-  const svgText = svgString(circuit, {
+  const svgText = renderDocument(circuit, {
     grid: true, terminals: false, junctions: false, background: true, netNames: true,
   });
   await atomicCircuitSave(name, [['circuit.json', jsonText], ['circuit.svg', svgText]], options);

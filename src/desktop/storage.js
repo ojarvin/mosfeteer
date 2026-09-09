@@ -2,8 +2,7 @@ import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readdir, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { Circuit } from '../core/model.js';
-import { svgString } from '../core/render.js';
+import { loadDocument, renderDocument } from '../core/document.js';
 
 export const CIRCUIT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
@@ -16,7 +15,7 @@ const secureDirectoryFlags = constants.O_RDONLY | constants.O_DIRECTORY | consta
 const secureFileFlags = constants.O_NOFOLLOW;
 const fdRoot = process.platform === 'linux' ? '/proc/self/fd' : process.platform === 'darwin' ? '/dev/fd' : null;
 
-export function createNativeStorage(root, { render = svgString } = {}) {
+export function createNativeStorage(root, { render = renderDocument } = {}) {
   if (!fdRoot || typeof constants.O_NOFOLLOW !== 'number' || typeof constants.O_DIRECTORY !== 'number') {
     throw new Error('desktop app supports only Linux and macOS');
   }
@@ -91,7 +90,7 @@ export function createNativeStorage(root, { render = svgString } = {}) {
           circuitHandle = await openCircuit(rootHandle, safe);
           return await withFile(circuitHandle, 'circuit.json', constants.O_RDONLY | secureFileFlags, async (file) => {
             const state = JSON.parse(await file.readFile('utf8'));
-            Circuit.fromJSON(state);
+            loadDocument(state);
             return { name: safe, state };
           });
         } finally {
@@ -105,7 +104,7 @@ export function createNativeStorage(root, { render = svgString } = {}) {
       const safe = validCircuitName(name);
       if (!safe) throw new Error('invalid circuit name');
       return withCircuitLock(safe, async () => {
-        const circuit = Circuit.fromJSON(state);
+        const circuit = loadDocument(state);
         const files = [
           ['circuit.json', JSON.stringify(circuit.toJSON(), null, 2)],
           ['circuit.svg', render(circuit, {

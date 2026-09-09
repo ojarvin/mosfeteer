@@ -14,6 +14,7 @@ import { Circuit, LABEL_FONT_SIZE, containedWireSegments, extractWireFragments, 
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
+import { isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { applyMarkup } from '../core/model.js';
 import { segThroughInterior, smartRoute } from '../core/router.js';
@@ -384,7 +385,7 @@ async function exportCircuit() {
   const name = circuitNameEl.value.trim() || 'circuit';
   try {
     const result = await persistence.export({
-      content: svgString(circuit, { grid: true, terminals: false, junctions: false, background: true, netNames: true }),
+      content: renderDocument(circuit, { grid: true, terminals: false, junctions: false, background: true, netNames: true }),
       suggestedName: `${name}.svg`,
       extension: 'svg',
     });
@@ -596,7 +597,7 @@ async function syncActiveCircuitOnce() {
     // compare and record the canonical representation rather than the raw
     // JSON returned by the server. Otherwise a clean design can become
     // permanently dirty after the first poll of a normalized save.
-    const remoteSnapshot = JSON.stringify(Circuit.fromJSON(data.state).toJSON());
+    const remoteSnapshot = JSON.stringify(loadDocument(data.state).toJSON());
     const remoteRevision = data.revision || activeRevision;
     const remoteTag = data.etag || lastCircuitTag;
     const currentSnapshot = snapshot();
@@ -643,7 +644,7 @@ function applyJson(blob) {
   labelMode = null;
   annotationPoints = [];
   resetCheckState();
-  circuit = Circuit.fromJSON(JSON.parse(blob));
+  circuit = loadDocument(JSON.parse(blob));
   wiresDirty = true; // wire geometry may have changed under any wholesale load
   // A wholesale replacement has no compatible editor selection.  Do not carry
   // stale branch indices, labels, or net highlights across load/undo/redo.
@@ -1159,6 +1160,7 @@ function annotationSegmentAt(world) {
 }
 
 function selectedComps() {
+  if (isBlockDiagram(circuit)) return [];
   const out = [];
   for (const r of multi) {
     const c = circuit.components.get(r);
@@ -1975,6 +1977,17 @@ function updateNetWarnings() {
 }
 
 function render() {
+  if (isBlockDiagram(circuit)) {
+    persistDraft();
+    renderCanvas();
+    componentsListEl.replaceChildren();
+    netsListEl.replaceChildren();
+    detailEl.replaceChildren();
+    checkSummaryBodyEl.replaceChildren();
+    renderSaveState();
+    statusEl.textContent = 'BLOCK DIAGRAM (read-only editor view)';
+    return;
+  }
   // A context menu is independent of canvas repainting. Closing it here made
   // it vanish on the first pointer move after opening it.
   syncSelectedNetSolders();
@@ -2050,7 +2063,9 @@ function renderCanvas() {
   } else if (drag?.mode === 'labelmove') {
     for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
   }
-  let svg = svgString(circuit, {
+  let svg = isBlockDiagram(circuit)
+    ? renderDocument(circuit, { background: true, viewport: { x: view.x, y: view.y, w: view.w, h: view.h } })
+    : svgString(circuit, {
     grid: showGrid,
     terminals: false,
     junctions: false,
@@ -2063,6 +2078,10 @@ function renderCanvas() {
     cursor,
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
+  if (isBlockDiagram(circuit)) {
+    canvasEl.innerHTML = svg;
+    return;
+  }
   const highlightedNetIds = new Set([...selectedNets, ...diagnosticSelection.nets]);
   const nets = [...highlightedNetIds].map((id) => circuit.nets.get(id)).filter(Boolean);
   // Solder dots sitting on a highlighted net's junction points get a halo so
@@ -6627,9 +6646,11 @@ function runLine(line) {
     history.push(before);
     if (history.length > 200) history.shift();
     future.length = 0;
-    wiresDirty = true; // commands can re-route / splice nets
-    multi = new Set([...multi].filter((r) => circuit.components.has(r)));
-    if (!circuit.components.has(selected)) selected = multi.size ? [...multi][0] : null;
+    if (!isBlockDiagram(circuit)) {
+      wiresDirty = true; // commands can re-route / splice nets
+      multi = new Set([...multi].filter((r) => circuit.components.has(r)));
+      if (!circuit.components.has(selected)) selected = multi.size ? [...multi][0] : null;
+    }
   }
   render();
 }

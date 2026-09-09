@@ -66,26 +66,18 @@ only their endpoint points.
 The tip is exactly the last route point; the default filled head is 32 units
 long and 36 units wide, using the final cardinal segment for orientation.
 
-## Persistence and command seam
+## Persistence, commands, and rendering
 
-The future document boundary should dispatch by `data.kind` without changing
-electrical state handling:
+`src/core/document.js` is the document boundary. It dispatches by `data.kind`
+(`block` selects `BlockDiagram.fromJSON()`, while a missing kind remains
+legacy electrical state), validates through the selected model, and selects
+the matching SVG renderer. The HTTP server, desktop storage, browser load/sync
+path, and SVG export all use this boundary, so block data never passes through
+`Circuit.fromJSON()` or electrical `evaluate()`.
 
-```js
-function deserializeDocument(data) {
-  return data?.kind === 'block'
-    ? BlockDiagram.fromJSON(data)
-    : Circuit.fromJSON(data); // missing kind remains legacy electrical state
-}
-```
-
-The same boundary should choose the block SVG renderer and persistence
-validation. A command layer may dispatch block verbs to a block-specific
-handler, but electrical verbs (`connect`, `net`, `eval`, symbol placement)
-must reject a `BlockDiagram`; block verbs must reject a `Circuit`. Keep the
-existing `/api/circuits/<name>` transport and filenames if desired, but never
-pass block data through `Circuit.fromJSON()` or electrical `evaluate()`.
-
-This slice intentionally does not add commands, HTTP, desktop, rendering, or
-browser mode. Those integrations should consume the public model/router
-seams above and preserve the one-kind-per-document boundary.
+`runCommand()` dispatches block documents to block-specific verbs: `help`,
+`list`, `state`, `bounds`, `add-block`, `add-arrow`, `svg`/`export`, and `save`.
+Electrical verbs remain isolated from `BlockDiagram`. The existing
+`/api/circuits/<name>` transport and `circuit.json`/`circuit.svg` filenames are
+shared by both document kinds. The browser loads and renders block documents
+in a read-only view; editing interactions remain electrical-circuit only.

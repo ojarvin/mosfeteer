@@ -6,6 +6,8 @@ import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior } fr
 import { crossNetOverlaps } from './wiring.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
+import { BlockDiagram } from './block-model.js';
+import { blockSvgString } from './block-render.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -388,6 +390,7 @@ export function commandHelp() {
 }
 
 export function runCommand(circuit, line, io) {
+  if (circuit instanceof BlockDiagram) return runBlockCommand(circuit, line, io);
   const { pos, flags } = parseArgs(splitArgs(line));
   const cmd = pos.shift() || 'help';
   return dispatch(circuit, cmd, pos, flags, io);
@@ -654,6 +657,20 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
 
   throw new Error(`unknown command "${cmd}" (try: help)`);
+}
+
+function runBlockCommand(diagram, line, io) {
+  const { pos, flags } = parseArgs(splitArgs(line)); const cmd = pos.shift() || 'help';
+  const result = (text, json = null, mutated = false) => ({ text, json, mutated });
+  if (cmd === 'help') return result('add-block ID TEXT X Y W H | add-arrow ID FROM TO | list | state | bounds | svg [file] | save <file>');
+  if (cmd === 'list') return result([...diagram.blocks.values()].map(b => `${b.id} ${b.text}`).join('\n') || '(no blocks)');
+  if (cmd === 'state') return result(JSON.stringify(diagram.toJSON(), null, 2), diagram.toJSON());
+  if (cmd === 'bounds') return result(JSON.stringify(diagram.bounds()), diagram.bounds());
+  if (cmd === 'add-block') { const [id,text,x,y,w,h] = pos; diagram.addBlock({ id, text, x:Number(x), y:Number(y), w:Number(w), h:Number(h) }); return result(`added ${id}`, null, true); }
+  if (cmd === 'add-arrow') { const [id,from,to] = pos; diagram.addArrow({ id, from, to }); return result(`added ${id}`, null, true); }
+  if (cmd === 'svg' || cmd === 'export') { const file=pos[0]||'data/preview.svg', svg=blockSvgString(diagram, { background:true }); if (io) { io.writeTextFile(file,svg); return result(`wrote ${file} (${svg.length} bytes)`); } return result('SVG below', {svg}); }
+  if (cmd === 'save') { if (!io || !pos[0]) throw new Error('save requires file I/O and a path'); io.writeTextFile(pos[0], JSON.stringify(diagram.toJSON(), null, 2)); return result(`saved state to ${pos[0]}`); }
+  throw new Error(`unknown block command "${cmd}" (try: help)`);
 }
 
 function netList(circuit, result) {

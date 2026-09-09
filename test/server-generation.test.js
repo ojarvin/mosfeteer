@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { BlockDiagram } from '../src/core/block-model.js';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SERVER = join(ROOT, 'src/web/serve.js');
@@ -179,6 +180,23 @@ test('command API reports post-delete net state in each result', async (t) => {
   assert.equal(data.results[0].mutated, true);
   assert.equal(data.results[0].json, null);
   assert.equal(data.state.nets.length, 0);
+});
+
+test('HTTP persistence accepts and renders block documents', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const state = new BlockDiagram().toJSON();
+  state.blocks.push({ id: 'B1', text: 'Input', rect: { x: 0, y: 0, w: 160, h: 80 }, terminals: [] });
+  const saved = await fetch(`${app.base}/api/circuits/block-doc`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state }),
+  });
+  assert.equal(saved.status, 200);
+  const loaded = await fetch(`${app.base}/api/circuits/block-doc`);
+  assert.equal(loaded.status, 200);
+  const data = await loaded.json();
+  assert.equal(data.state.kind, 'block');
+  const svg = await readFile(join(app.circuits, 'block-doc', 'circuit.svg'), 'utf8');
+  assert.match(svg, /<rect[^>]+width="160"/);
 });
 
 test('CLI sends a spec file without shell-quoting JSON', async (t) => {
