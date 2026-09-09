@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BlockDiagram } from '../src/core/block-model.js';
 import { runCommand } from '../src/core/commands.js';
-import { loadDocument, renderDocument } from '../src/core/document.js';
+import { isBlockDiagram, loadDocument, renderDocument } from '../src/core/document.js';
 
 function diagram() {
   const d = new BlockDiagram();
@@ -18,6 +18,7 @@ test('document dispatch round-trips and renders block styles', () => {
   const original = diagram();
   const loaded = loadDocument(original.toJSON());
   assert.ok(loaded instanceof BlockDiagram);
+  assert.equal(isBlockDiagram(loaded), true);
   const svg = renderDocument(loaded);
   assert.match(svg, /stroke="#d00" stroke-width="9"/);
   assert.match(svg, /stroke-dasharray="12 8"/);
