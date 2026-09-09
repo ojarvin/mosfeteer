@@ -339,6 +339,11 @@ export function svgString(circuit, opts = {}) {
  */
 export function editorOverlay(circuit, opts = {}) {
   const parts = [];
+  if (opts.cursor && opts.cursorCrosshair) {
+    const { x, y } = opts.cursor;
+    const { x: vx, y: vy, w, h } = opts.cursorCrosshair;
+    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + w)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + h)}" fill="none"/>`);
+  }
   const halo = (r) =>
     `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#4f9cf9" stroke-width="2" rx="3"/>`;
 

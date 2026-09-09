@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Schematic editor benchmark</title>
+<iframe id="editor" src="../src/web/index.html" style="width:100%;height:600px;border:0"></iframe>
+<pre id="result">loading editor…</pre>
+<script>
+const output = document.querySelector('#result');
+const frame = document.querySelector('#editor');
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+window.addEventListener('error', (event) => { output.textContent = `ERROR: ${event.error?.message || event.message}`; });
+let ran = false;
+const run = async () => {
+  if (ran) return;
+  ran = true;
+  const app = frame.contentWindow;
+  while (!app.__load || !app.__run) await wait(10);
+  app.__load({ version: 2, components: [], nets: [], labels: [] });
+  app.__run('add resistor R1 --at 320 0');
+  app.__run('add resistor R2 --at 720 0');
+  app.__run('connect R1.b R2.a --name SIG');
+  await wait(0);
+  const nextFrame = () => new Promise(app.requestAnimationFrame.bind(app));
+  await nextFrame();
+  const before = app.__app.renders.length;
+  const pane = app.document.querySelector('.canvas-pane');
+  const canvas = app.document.querySelector('#canvas');
+  const rect = pane.getBoundingClientRect();
+  const committedDom = canvas.firstElementChild;
+  const start = performance.now();
+  for (let i = 0; i < 500; i++) {
+    canvas.dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true, clientX: rect.left + 20 + i * 10, clientY: rect.top + 20,
+    }));
+  }
+  const afterImmediate = app.__app.renders.length;
+  await nextFrame();
+  const pointerMs = performance.now() - start;
+  const after = app.__app.renders.length;
+  const rafCoalesced = afterImmediate === before && after > before;
+  const committedDomPreserved = canvas.firstElementChild === committedDom;
+  if (!rafCoalesced || !committedDomPreserved) throw new Error(`pointer rendering was not coalesced or committed DOM was rebuilt (immediate=${afterImmediate - before}, renders=${after - before}, preserved=${committedDomPreserved})`);
+  app.__run('netlabel add ' + app.__circuit().nets[0].id + ' LABEL SIG 520 0');
+  app.__run('netlabel rename LABEL OUT');
+  await wait(0);
+  const panelUpdated = app.document.querySelector('#nets-list').textContent.includes('OUT');
+  await wait(180);
+  const draftFlushed = !!app.localStorage.getItem('schematic-spawner:draft');
+  if (!panelUpdated || !draftFlushed) throw new Error('panel invalidation or draft flush failed');
+  output.textContent = JSON.stringify({
+    pointerMs, renders: after - before, panelUpdated, draftFlushed,
+  }, null, 2);
+};
+const reportError = (error) => { output.textContent = `ERROR: ${error.message}`; };
+frame.addEventListener('load', () => run().catch(reportError));
+if (frame.contentDocument?.readyState === 'complete') run().catch(reportError);
+</script>

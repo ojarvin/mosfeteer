@@ -187,6 +187,13 @@ let lastCircuitTag = null;
 let syncInFlight = null;
 let syncGeneration = 0;
 let saveInFlight = false;
+let draftTimer = null;
+let renderFrame = null;
+let panelStateKey = '';
+let modelRevision = 0;
+let committedCanvasKey = '';
+let canvasSvgEl = null;
+let overlayEl = null;
 // Cross-net collinear wire overlaps (B4): highlighted spans + status warning.
 let netWarnings = []; // [{ key, otherKey, x0, y0, x1, y1 }]
 let wiresDirty = true; // set when wire geometry may have changed; recomputes netWarnings
@@ -300,11 +307,18 @@ function logCommand(line) {
 
 // ----- history --------------------------------------------------------
 
+function markModelChanged(wires = true) {
+  modelRevision += 1;
+  if (wires) wiresDirty = true;
+  persistDraft();
+}
+
 function commit(fn) {
   history.push(JSON.stringify(circuit.toJSON()));
   if (history.length > 200) history.shift();
   future.length = 0;
   fn();
+  markModelChanged();
 }
 
 function snapshot() {
@@ -312,16 +326,19 @@ function snapshot() {
 }
 
 function persistDraft() {
+  if (!draftReady || draftTimer) return;
+  draftTimer = setTimeout(flushDraft, 150);
+}
+function flushDraft() {
+  if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
   if (!draftReady) return;
   try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
-      name: currentCircuitName,
-      state: circuit.toJSON(),
-      savedSnapshot: lastSavedSnapshot,
-    }));
-  } catch (err) {
-    logLine(`Could not preserve local draft: ${err.message}`, 'error');
-  }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ name: currentCircuitName, state: circuit.toJSON(), savedSnapshot: lastSavedSnapshot }));
+  } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
+}
+function scheduleInteractionRender() {
+  if (renderFrame !== null) return;
+  renderFrame = requestAnimationFrame(() => { renderFrame = null; render(); });
 }
 function restoreDraft() {
   try {
@@ -469,6 +486,7 @@ async function deleteSavedCircuit() {
     history = [];
     future = [];
     circuit = new Circuit();
+    markModelChanged(false);
     resetCheckState();
     directWire = null;
     wire = null;
@@ -645,7 +663,7 @@ function applyJson(blob) {
   annotationPoints = [];
   resetCheckState();
   circuit = loadDocument(JSON.parse(blob));
-  wiresDirty = true; // wire geometry may have changed under any wholesale load
+  markModelChanged(); // wire geometry may have changed under any wholesale load
   // A wholesale replacement has no compatible editor selection.  Do not carry
   // stale branch indices, labels, or net highlights across load/undo/redo.
   selected = null;
@@ -1570,7 +1588,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
       if (history.length > 200) history.shift();
       future.length = 0;
     }
-    wiresDirty = true;
+    markModelChanged();
     return true;
   } catch (err) {
     const keepMoveGhost = moveGhostActive() && !recordHistory;
@@ -1589,7 +1607,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
       drag = null;
       directWire = null;
     }
-    wiresDirty = true;
+    markModelChanged();
     logLine(`transform cancelled: ${err.message}`, 'error');
     return false;
   }
@@ -1652,7 +1670,7 @@ function deleteSelection() {
   setSelection([]);
   setLabelSelection([]);
   selectedNets.clear();
-  wiresDirty = true;
+  markModelChanged();
   return true;
 }
 
@@ -1925,6 +1943,7 @@ function placeNetLabelAt(world) {
       label = circuit.addLabel({ text: '', netId: net.id, x: point.x, y: point.y, align: 'center' });
       label._provisionalInitialName = net.name || '';
       label._provisionalInitialSnapshot = initialSnapshot;
+      markModelChanged(false);
     } else {
       commit(() => { label = circuit.addNetLabel(net.id, { anchor: point, align: 'center' }); });
     }
@@ -1964,7 +1983,6 @@ function placePending() {
     setSelection([comp.refdes]);
     logLine(`placed ${comp.refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
   }
-  render();
 }
 
 // ----- render -----------------------------------------------------------
@@ -1997,11 +2015,15 @@ function render() {
     updateNetWarnings();
     wiresDirty = false;
   }
-  persistDraft();
-  renderCanvas();
-  renderComponents();
-  renderNets();
-  renderDetail();
+  const modelKey = modelRevision;
+  renderCanvas(modelKey);
+  const nextPanelStateKey = `${modelKey}|${selected || ''}|${selLabel || ''}|${[...multi].join(',')}|${[...selLabels].join(',')}|${[...selectedNets].join(',')}`;
+  if (nextPanelStateKey !== panelStateKey) {
+    panelStateKey = nextPanelStateKey;
+    renderComponents();
+    renderNets();
+    renderDetail();
+  }
   renderCheckSummary();
   renderStatus();
   renderSaveState();
@@ -2038,7 +2060,7 @@ function draftWirePreview(draft) {
   return { from: pts[0], to: pts[pts.length - 1], pts };
 }
 
-function renderCanvas() {
+function renderCanvas(modelKey) {
   const wirePreview = draftWirePreview(wire);
   // Legacy fixed-net editing deliberately does no routing or orthogonalization.
   const directFrom = directWire?.source ? wireOrigin(directWire.source) : null;
@@ -2063,24 +2085,29 @@ function renderCanvas() {
   } else if (drag?.mode === 'labelmove') {
     for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
   }
-  let svg = isBlockDiagram(circuit)
-    ? renderDocument(circuit, { background: true, viewport: { x: view.x, y: view.y, w: view.w, h: view.h } })
-    : svgString(circuit, {
-    grid: showGrid,
-    terminals: false,
-    junctions: false,
-    background: true,
-    viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
-    editingLabel: inlineInput?.dataset.labelId,
-    ghostRefs,
-    ghostLabels,
-    ghostNets,
-    cursor,
-    cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
-  });
   if (isBlockDiagram(circuit)) {
-    canvasEl.innerHTML = svg;
+    canvasEl.innerHTML = renderDocument(circuit, { background: true, viewport: { x: view.x, y: view.y, w: view.w, h: view.h } });
     return;
+  }
+  const editingLabelId = inlineInput?.dataset.labelId || '';
+  const canvasKey = `${modelKey}|${showGrid}|${view.x},${view.y},${view.w},${view.h}|${editingLabelId}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
+  if (canvasKey !== committedCanvasKey) {
+    committedCanvasKey = canvasKey;
+    canvasEl.innerHTML = svgString(circuit, {
+      grid: showGrid,
+      terminals: false,
+      junctions: false,
+      background: true,
+      viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
+      ghostRefs,
+      ghostLabels,
+      ghostNets,
+      editingLabel: editingLabelId,
+    });
+    canvasSvgEl = canvasEl.querySelector('svg');
+    overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    overlayEl.setAttribute('class', 'editor-overlay');
+    canvasSvgEl.appendChild(overlayEl);
   }
   const highlightedNetIds = new Set([...selectedNets, ...diagnosticSelection.nets]);
   const nets = [...highlightedNetIds].map((id) => circuit.nets.get(id)).filter(Boolean);
@@ -2185,9 +2212,9 @@ function renderCanvas() {
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
     ghost,
+    cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
-  svg = svg.replace('</svg>', `${overlay}\n</svg>`);
-  canvasEl.innerHTML = svg;
+  overlayEl.innerHTML = overlay;
 }
 
 // ----- mouse ------------------------------------------------------------
@@ -2216,7 +2243,7 @@ function dragMoved(startWorld, startClient, w, ev) {
 function cancelDrag() {
   if (drag?.mode === 'copyghost') {
     circuit = Circuit.fromJSON(JSON.parse(drag.ghost.beforeSnapshot));
-    wiresDirty = true;
+    markModelChanged();
     drag = null;
     copyPending = false;
     copyMode = true;
@@ -2241,7 +2268,7 @@ function cancelDrag() {
   if (drag && drag.mode === 'wireseg') {
     restoreManagedNetSnapshots(drag.netSnapshots);
     circuit.syncJunctionSolders();
-    wiresDirty = true;
+    markModelChanged();
   }
   if (drag && drag.mode === 'floatingwire') {
     for (const f of drag.fragments || []) {
@@ -2253,7 +2280,7 @@ function cancelDrag() {
       } else if (f.branch === 0) f.net.route = f.orig.map((p) => ({ ...p }));
     }
     circuit.syncJunctionSolders();
-    wiresDirty = true;
+    markModelChanged();
   }
   if (drag && drag.mode === 'fixedwire') {
     for (const [net, saved] of drag.fixedSnapshots) {
@@ -2265,11 +2292,11 @@ function cancelDrag() {
       net.junctions = saved.junctions.map((p) => ({ ...p }));
     }
     circuit.syncJunctionSolders();
-    wiresDirty = true;
+    markModelChanged();
   }
   if (drag && drag.mode === 'fixedendpoint') {
     circuit.restoreFixedGeometry(drag.net, drag.saved.fixedPaths, drag.saved.junctions);
-    wiresDirty = true;
+    markModelChanged();
   }
   // A cancelled shape gesture abandons the whole two-point draft. The tool
   // remains armed, so the next click starts a fresh annotation.
@@ -2530,7 +2557,7 @@ function commitFixedEndpointDraft(source, target, points, mode) {
     history.push(before);
     if (history.length > 200) history.shift();
     future.length = 0;
-    wiresDirty = true;
+    markModelChanged();
     logLine(`fixed endpoint attached to ${typeof target === 'string' ? target : `net ${target.netId}`}`);
     return result;
   } catch (err) {
@@ -2835,7 +2862,7 @@ function connectTwo(src, dst, points) {
   const before = snapshot();
   const meet = circuit.components.get(dst.refdes).terminalWorld(dst.term);
   const net = circuit.wireTo(`${src.refdes}.${src.term}`, meet, points, wireRouteOptions());
-  wiresDirty = true; // wireTo grew / spliced a net
+  markModelChanged(); // wireTo grew / spliced a net
   history.push(before);
   future.length = 0;
   // Stay in wiring mode so the next click can start another connection.
@@ -2898,7 +2925,7 @@ function commitDirectWire(dst) {
     history.push(before);
     if (history.length > 200) history.shift();
     future.length = 0;
-    wiresDirty = true;
+    markModelChanged();
     directWire = { source: null, points: [] };
     setSelection([dst.refdes]);
     selectedNets = new Set([net.id]);
@@ -3110,7 +3137,7 @@ function commitWireAtCursor() {
     const net = wire.source.refdes
       ? circuit.wireTo(`${wire.source.refdes}.${wire.source.term}`, path[path.length - 1], points, wireRouteOptions())
       : circuit.wirePointTo(wire.source, path[path.length - 1], points, wire.source.netId, wireRouteOptions());
-    wiresDirty = true;
+    markModelChanged();
     history.push(before);
     future.length = 0;
     wire = newWireDraft();
@@ -3144,7 +3171,7 @@ function connectWireToTerminal(dst) {
   }
   const before = snapshot();
   const net = circuit.wirePointTo({ x: src.x, y: src.y }, end, points, src.netId, wireRouteOptions());
-  wiresDirty = true; // a draft spliced into the target net
+  markModelChanged(); // a draft spliced into the target net
   history.push(before);
   future.length = 0;
   wire = newWireDraft();
@@ -3208,7 +3235,7 @@ function joinWireToNet(wireHit, selectedTarget = null) {
   const net = src.refdes
     ? circuit.wireTo(`${src.refdes}.${src.term}`, P, points, wireRouteOptions(targetIdentity))
     : circuit.wirePointTo(src, P, points, src.netId, wireRouteOptions(targetIdentity));
-  wiresDirty = true; // a draft joined into an existing net
+  markModelChanged(); // a draft joined into an existing net
   history.push(before);
   future.length = 0;
   wire = newWireDraft();
@@ -3641,6 +3668,7 @@ function canvasMouseDown(ev) {
   if (mode === 'insert' && pendingPlace) {
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
     commit(() => placePending());
+    render();
     return;
   }
 
@@ -4162,7 +4190,7 @@ function finishMoveMutation(moveDrag) {
   const previewed = moveDrag.netRoutes instanceof Map;
   if (moveDrag.detached) {
     circuit.reconnectCoincidentNets();
-    wiresDirty = true;
+    markModelChanged();
     return;
   }
   const moved = new Map();
@@ -4188,7 +4216,7 @@ function finishMoveMutation(moveDrag) {
     }
   }
   circuit.reconnectCoincidentNets();
-  wiresDirty = true;
+  markModelChanged();
 }
 
 function commitModalMove() {
@@ -4299,7 +4327,7 @@ function deleteAtPoint(world) {
     clearCheckReport();
     selectedWire = null;
     selectedWires.clear();
-    wiresDirty = true;
+    markModelChanged();
     render();
     return true;
   }
@@ -4331,7 +4359,7 @@ function canvasMouseMove(ev) {
   if (!drag) {
     // The cursor follows the mouse, always snapped to the nearest grid point.
     // The view never pans on its own — pan manually with the middle button.
-    if (cursorChanged) render();
+    if (cursorChanged) scheduleInteractionRender();
     return;
   }
 
@@ -4350,14 +4378,14 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationlineplace') {
     if (movedOut) drag.moved = true;
     drag.previewEnd = { ...cursor };
-    render();
+    scheduleInteractionRender();
     return;
   }
   if (drag.mode === 'annotationplace') {
     if (movedOut) drag.moved = true;
     if (annotationStart || drag.moved) {
       drag.previewEnd = { ...cursor };
-      render();
+      scheduleInteractionRender();
     }
     return;
   }
@@ -4368,7 +4396,8 @@ function canvasMouseMove(ev) {
       const dy = snap(w.y) - snap(drag.startWorld.y);
       drag.label.textAnchor = { x: drag.startText.x + dx, y: drag.startText.y + dy };
       cursor = { ...drag.label.textAnchor };
-      render();
+      markModelChanged(false);
+      scheduleInteractionRender();
     }
     return;
   }
@@ -4380,7 +4409,8 @@ function canvasMouseMove(ev) {
       drag.label.points = drag.startPoints.map((point) => ({ ...point }));
       drag.label.moveSegment(drag.segment, dx, dy);
       cursor = { ...cursor };
-      render();
+      markModelChanged(false);
+      scheduleInteractionRender();
     }
     return;
   }
@@ -4428,14 +4458,15 @@ function canvasMouseMove(ev) {
         if (oldPoints) drag.label.points = oldPoints;
       }
       cursor = p;
-      render();
+      markModelChanged(false);
+      scheduleInteractionRender();
     }
     return;
   }
   if (drag.mode === 'copyghost') {
     drag.moved = movedOut || drag.moved;
     moveCopyGhost(w);
-    render();
+    scheduleInteractionRender();
     return;
   }
 
@@ -4445,7 +4476,7 @@ function canvasMouseMove(ev) {
     const p = clientToWorld(ev.clientX, ev.clientY, drag.startView);
     view.x = drag.startView.x - (p.x - drag.startWorld.x);
     view.y = drag.startView.y - (p.y - drag.startWorld.y);
-    render();
+    scheduleInteractionRender();
     return;
   }
 
@@ -4454,7 +4485,7 @@ function canvasMouseMove(ev) {
     const r = worldRect(drag.startWorld, w);
     drag.rubber = { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, color: drag.mode === 'zoom' ? '#a06b13' : '#4f9cf9' };
     if (!movedOut) drag.rubber = null;
-    render();
+    scheduleInteractionRender();
     return;
   }
 
@@ -4490,8 +4521,8 @@ function canvasMouseMove(ev) {
         const target = r.startLine + delta;
         moveManagedWireRun(r, target);
       }
-      wiresDirty = true; // live re-route changes wire geometry every frame
-      render();
+      markModelChanged(); // live re-route changes wire geometry every frame
+      scheduleInteractionRender();
     }
     return;
   }
@@ -4510,9 +4541,9 @@ function canvasMouseMove(ev) {
         }
       }
       cursor = { x: snap(w.x), y: snap(w.y) };
-      wiresDirty = true;
+      markModelChanged();
     }
-    render();
+    scheduleInteractionRender();
     return;
   }
 
@@ -4551,7 +4582,8 @@ function canvasMouseMove(ev) {
         }
       }
       cursor = { x: snap(w.x), y: snap(w.y) };
-      render();
+      markModelChanged();
+      scheduleInteractionRender();
     }
     return;
   }
@@ -4587,8 +4619,9 @@ function canvasMouseMove(ev) {
         const a = primary.anchorWorld();
         cursor = { x: a.x, y: a.y };
       }
+      markModelChanged(false);
     }
-    render();
+    scheduleInteractionRender();
     return;
   }
   if (drag.mode === 'move') {
@@ -4686,8 +4719,9 @@ function canvasMouseMove(ev) {
       }
       if (drag.detached) circuit.syncJunctionSolders();
       cursor = { x: drag.startCursor.x + delta.dx, y: drag.startCursor.y + delta.dy };
+      markModelChanged();
     }
-    render();
+    scheduleInteractionRender();
     return;
   }
 }
@@ -4800,14 +4834,14 @@ function canvasMouseUp(ev) {
         }
       }
       circuit.syncJunctionSolders();
-      wiresDirty = true; // committed wire drag changed net geometry
+      markModelChanged(); // committed wire drag changed net geometry
       history.push(drag.startSnapshot);
       if (history.length > 200) history.shift();
       future.length = 0;
     } catch (err) {
       restoreManagedNetSnapshots(drag.netSnapshots);
       circuit.syncJunctionSolders();
-      wiresDirty = true;
+      markModelChanged();
       logLine(`wire drag cancelled: ${err.message}`, 'error');
       drag = null;
       render();
@@ -4870,7 +4904,7 @@ function canvasMouseUp(ev) {
         }
       }
       circuit.syncJunctionSolders();
-      wiresDirty = true;
+      markModelChanged();
       if (snapshot() !== drag.startSnapshot) {
         history.push(drag.startSnapshot);
         if (history.length > 200) history.shift();
@@ -4899,7 +4933,7 @@ function canvasMouseUp(ev) {
         history.push(drag.startSnapshot);
         if (history.length > 200) history.shift();
         future.length = 0;
-        wiresDirty = true;
+        markModelChanged();
         logLine(drag.junction >= 0 ? 'moved fixed junction dot' : 'moved fixed wire geometry');
       } else {
         logLine('fixed endpoint has no movable geometry');
@@ -4938,7 +4972,7 @@ function canvasMouseUp(ev) {
         history.push(drag.startSnapshot);
         if (history.length > 200) history.shift();
         future.length = 0;
-        wiresDirty = true;
+        markModelChanged();
         logLine(target ? 'attached fixed endpoint' : 'moved fixed endpoint');
       }
     }
@@ -5018,7 +5052,7 @@ function updateShapePreviewCursor(ev) {
   if (next.x === cursor.x && next.y === cursor.y && !drag?.previewEnd) return;
   cursor = next;
   if (drag?.mode === 'annotationplace') drag.previewEnd = { ...next };
-  render();
+  scheduleInteractionRender();
 }
 // Replacing the SVG during render can move the pointer off the old target
 // before the bubbling mousemove reaches the canvas. Capture the movement at
@@ -5038,11 +5072,11 @@ window.addEventListener('mousemove', (ev) => {
 canvasEl.addEventListener('pointermove', updateShapePreviewCursor);
 canvasEl.addEventListener('mouseenter', () => {
   cursorInCanvas = true;
-  render();
+  scheduleInteractionRender();
 });
 canvasEl.addEventListener('mouseleave', () => {
   cursorInCanvas = false;
-  render();
+  scheduleInteractionRender();
 });
 function contextStyleValue(target, field) {
   if (target?.kind === 'wire') {
@@ -5311,6 +5345,7 @@ function inlineEditLabel(label, options = {}) {
       } else {
         restoreProvisionalLabel(label, initialName);
       }
+      markModelChanged(false);
     } else if (applyText && v && v !== label.text) commit(() => renameLabelThroughModel(label, v));
     else if (options.removeOnEmpty && !v) commit(() => circuit.removeLabel(label.id));
     render();
@@ -5325,8 +5360,10 @@ function inlineEditLabel(label, options = {}) {
     if (!res) return;
     input.value = res.text;
     input.setSelectionRange(res.selStart, res.selEnd);
-    if (provisional) renameLabelThroughModel(label, res.text);
-    else commit(() => renameLabelThroughModel(label, res.text));
+    if (provisional) {
+      renameLabelThroughModel(label, res.text);
+      markModelChanged(false);
+    } else commit(() => renameLabelThroughModel(label, res.text));
     render();
   };
   input.addEventListener('keydown', (ev) => {
@@ -5893,7 +5930,8 @@ function onInsertKey(key, shiftKey = false) {
   // the search picker so a different component can be typed.
   if (pendingPlace) {
     if (key === 'Enter') {
-      placePending();
+      commit(() => placePending());
+      render();
     } else if (key === 'Escape' || key === 'Backspace') {
       pendingPlace = null;
       insertQuery = '';
@@ -6055,7 +6093,7 @@ function onNormalKey(key, shiftKey = false) {
         rerouteTouchedNets(refs, moved);
         circuit.reconnectCoincidentNets();
       });
-      wiresDirty = true;
+      markModelChanged();
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
       if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
@@ -6466,6 +6504,7 @@ function startCopyGhost(startWorld, startClient, anchorShift = null) {
   };
   translateCopyGhost(ghost, shift.x, shift.y);
   ghost.anchorShift = { ...shift };
+  markModelChanged();
   ghost.beforeSnapshot = beforeSnapshot;
   ghost.baseSnapshot = snapshot();
   ghost.baseGeometry = captureCopyGhostGeometry(ghost);
@@ -6496,7 +6535,7 @@ function moveCopyGhost(w) {
   translateCopyGhost(ghost, dx, dy);
   restoreCopyGhostSelection(ghost);
   cursor = { x: snap(w.x), y: snap(w.y) };
-  wiresDirty = true;
+  markModelChanged();
 }
 
 function commitCopyGhost() {
@@ -6647,7 +6686,7 @@ function runLine(line) {
     if (history.length > 200) history.shift();
     future.length = 0;
     if (!isBlockDiagram(circuit)) {
-      wiresDirty = true; // commands can re-route / splice nets
+      markModelChanged(); // commands can re-route / splice nets
       multi = new Set([...multi].filter((r) => circuit.components.has(r)));
       if (!circuit.components.has(selected)) selected = multi.size ? [...multi][0] : null;
     }
@@ -7359,6 +7398,7 @@ document.getElementById('btn-new-circuit').addEventListener('click', () => {
   history.push(snapshot());
   future.length = 0;
   circuit = new Circuit();
+  markModelChanged(false);
   resetCheckState();
   directWire = null;
   wire = null;
@@ -7657,6 +7697,7 @@ window.__circuit = () => ({
 });
 
 view = viewFromCenter(0, 0);
+window.__app ||= { renders: [] };
 
 try {
   restoreDraft();
@@ -7681,7 +7722,7 @@ const bb = banner();
 if (bb) bb.remove();
 
 window.addEventListener('beforeunload', (ev) => {
-  persistDraft();
+  flushDraft();
   if (snapshot() === lastSavedSnapshot) return;
   ev.preventDefault();
   ev.returnValue = 'You have unsaved schematic changes.';

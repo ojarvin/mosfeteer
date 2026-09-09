@@ -37,7 +37,7 @@ src/
 │   ├── router.js       smartRoute + astar fallback; pin escapes; clearance.
 │   ├── wiring.js       Wire geometry, branch joining, normalizePath.
 │   ├── wireedit.js     Wire drag/edit primitives.
-│   ├── render.js       SVG renderer (svgString).
+│   ├── render.js       SVG renderer (svgString, editorOverlay).
 │   ├── ascii.js        Coarse ASCII preview.
 │   ├── circuitSpec.js  Versioned generator-facing topology contract.
 │   ├── semantic.js     Pure checks for declared analog intent.
@@ -138,6 +138,8 @@ through the server).
 `npm test` runs the Node test runner over `test/**/*.test.js`. Tests use plain
 `node --test`; no Jest or transpilation. JSON fixtures live under
 `fixtures/`. Read one existing `test/<thing>.test.js` before writing a new one.
+The browser rendering benchmark is `test/browser-performance.html`; serve the
+repository over HTTP before opening it.
 
 Add a test for any new behavior, any new command, any new symbol, and any
 edge case in `Circuit` that you touch. If a test would be slow, factor the
