@@ -790,7 +790,8 @@ function netCommand(circuit, pos, result) {
         if (net.terminals.length === 0) circuit.removeNet(net);
         else if (net.terminals.length > 1) routeNet(circuit, net);
         circuit.syncJunctionSolders();
-        return result(`dropped ${pos[2]} from net ${net.id}`, null, true);
+        const remaining = circuit.nets.get(net.id);
+        return result(`dropped ${pos[2]} from net ${net.id}`, remaining?.toJSON() || null, true);
       }
     }
     throw new Error(`terminal ${pos[2]} not in net ${net.id}`);
@@ -805,7 +806,8 @@ function netCommand(circuit, pos, result) {
     const segment = Number(pos[3]);
     if (!Number.isInteger(branch) || !Number.isInteger(segment)) throw new Error('usage: net <id> segment-rm BRANCH SEG');
     circuit.deleteWireSegment(net.id, branch, segment);
-    return result(`deleted segment ${branch}:${segment} from net ${net.id}`, net.toJSON(), true);
+    const remaining = circuit.nets.get(net.id);
+    return result(`deleted segment ${branch}:${segment} from net ${net.id}`, remaining?.toJSON() || null, true);
   }
   if (op === 'vertex' || op === 'vertex-set') {
     const path = Number(pos[2]);

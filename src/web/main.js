@@ -2997,7 +2997,7 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
         return;
       }
       else if (target && target.netId === wireHit.net.id && target.pathIndex === wireHit.branch) {
-        joinWireToNet(wireHit);
+        joinWireToNet(wireHit, target);
         render();
         return;
       }
@@ -3135,12 +3135,19 @@ function connectWireToTerminal(dst) {
 
 /** Join the draft wire into an existing net at the cursor's point on that net's
  *  route. Junction solder dots are derived from the resulting geometry. */
-function joinWireToNet(wireHit) {
+function joinWireToNet(wireHit, selectedTarget = null) {
   const src = wire.source;
-  let targetIdentity = null;
+  let targetIdentity = selectedTarget;
   let P;
   let k;
-  if (wire.routeStyle === 'diagonal') {
+  if (targetIdentity) {
+    if (targetIdentity.netId !== wireHit.net.id || targetIdentity.pathIndex !== wireHit.branch) {
+      logLine('wire target must be on the selected wire');
+      return;
+    }
+    P = targetIdentity.point;
+    k = targetIdentity.segmentIndex - 1;
+  } else if (wire.routeStyle === 'diagonal') {
     targetIdentity = exactWireTargetAt(cursor);
     if (targetIdentity?.ambiguous) {
       logLine('diagonal wire target is ambiguous — select one exact wire target');
@@ -3154,6 +3161,12 @@ function joinWireToNet(wireHit) {
     k = targetIdentity.segmentIndex - 1;
   } else {
     ({ P, k } = projectOnNet(wireHit.net, cursor, wireHit.branch));
+    if (k >= 0) targetIdentity = {
+      netId: wireHit.net.id,
+      pathIndex: wireHit.branch,
+      segmentIndex: k + 1,
+      point: { ...P },
+    };
   }
   if (k < 0) {
     logLine('no junction point on that wire');
@@ -3410,6 +3423,19 @@ function canvasMouseDown(ev) {
     const wireHit = pickWire(startWorld);
     if (wire.source?.fixed && !terminalHit && wireHit) {
       drag = { mode: 'wirepick', startClient, startWorld, rubber: null, fixedTarget: exactWireTargetAt(startWorld) };
+      return;
+    }
+    // With an active managed draft, an interior-wire click is another route
+    // point. Without a draft, leave it to normal picking so wire clicks still
+    // select and drag editable segments.
+    if (wire.source && !terminalHit && wireHit) {
+      drag = { mode: 'wirepick', startClient, startWorld, rubber: null };
+      return;
+    }
+    // Defer a managed interior-wire click until mouseup. A stationary click
+    // starts a draft on that wire; a real drag falls through to segment editing.
+    if (!wire.source && !terminalHit && wireHit && wireHit.net.routingMode === 'managed') {
+      drag = { mode: 'wirepick', startClient, startWorld, rubber: null, wireHit };
       return;
     }
     if (terminalHit || !wireHit) {
@@ -4291,6 +4317,17 @@ function canvasMouseMove(ev) {
   }
 
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
+  if (drag.mode === 'wirepick' && drag.wireHit && movedOut) {
+    const hit = drag.wireHit;
+    if (hit.net.terminals.length === 0 && floatingWireDragAt(hit, drag.startWorld, drag.startClient, ev, new Set([`${hit.net.id}:${hit.branch}:${hit.seg}`]))) {
+      canvasMouseMove(ev);
+    } else if (managedWireDragAt(hit, drag.startWorld, drag.startClient, ev, false)) {
+      canvasMouseMove(ev);
+    } else {
+      drag = null;
+    }
+    return;
+  }
   if (drag.mode === 'annotationlineplace') {
     if (movedOut) drag.moved = true;
     drag.previewEnd = { ...cursor };

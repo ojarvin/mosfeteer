@@ -910,6 +910,50 @@ function inferWireTarget(circuit, P) {
   return hits.values().next().value || null;
 }
 
+/** Return whether two points are already connected by explicit net topology.
+ * Geometric crossings between branches do not count unless the net records a
+ * junction there; otherwise a same-net wirePointTo can accidentally add a
+ * redundant branch or turn a crossing into an implicit join. */
+function wirePointsConnected(net, from, to, circuit, targetPathIndex = null) {
+  const paths = circuit._explicitBranches(net);
+  const fromPaths = [];
+  const toPaths = [];
+  for (let i = 0; i < paths.length; i++) {
+    if (pointOnPath(from, paths[i])) fromPaths.push(i);
+    if (pointOnPath(to, paths[i]) && (targetPathIndex == null || i === targetPathIndex)) toPaths.push(i);
+  }
+  if (!fromPaths.length || !toPaths.length) return false;
+
+  const links = paths.map(() => new Set());
+  const samePoint = (a, b) => a.x === b.x && a.y === b.y;
+  const explicitJunctions = net.junctions || [];
+  for (let i = 0; i < paths.length; i++) {
+    for (let j = i + 1; j < paths.length; j++) {
+      const sharedEndpoint = [paths[i][0], paths[i].at(-1)].some((a) =>
+        [paths[j][0], paths[j].at(-1)].some((b) => samePoint(a, b)));
+      const sharedJunction = explicitJunctions.some((p) => pointOnPath(p, paths[i]) && pointOnPath(p, paths[j]));
+      if (sharedEndpoint || sharedJunction) {
+        links[i].add(j);
+        links[j].add(i);
+      }
+    }
+  }
+
+  const seen = new Set(fromPaths);
+  const queue = [...fromPaths];
+  while (queue.length) {
+    const pathIndex = queue.shift();
+    if (toPaths.includes(pathIndex)) return true;
+    for (const next of links[pathIndex]) {
+      if (!seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  return false;
+}
+
 export class Circuit {
   constructor() {
     this.components = new Map();
@@ -2871,7 +2915,7 @@ export class Circuit {
     // being treated as an obstacle and turning a harmless duplicate request
     // into an apparent routing failure.
     if (points.length === 0 && srcNet && srcNet === targetNet &&
-        this._explicitBranches(srcNet).some((path) => pointOnPath(P, path))) return srcNet;
+        wirePointsConnected(srcNet, srcPos, P, this, identity?.pathIndex)) return srcNet;
 
     const waypoints = points.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
 
@@ -3010,6 +3054,10 @@ export class Circuit {
       net && this._explicitBranches(net).length > 0);
     if (originNet?.routingMode === 'fixed' || targetNet?.routingMode === 'fixed') {
       throw new Error('fixed net geometry is protected; use wireDirectTo');
+    }
+    if (originNet && originNet === targetNet && !points.length &&
+        wirePointsConnected(originNet, P0, P, this, identity?.pathIndex)) {
+      return originNet;
     }
     if (P0.x === P.x && originNet && targetNet && originNet !== targetNet) {
       // Re-attaching a detached island at an existing terminal is a topology

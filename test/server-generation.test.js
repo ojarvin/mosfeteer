@@ -160,6 +160,27 @@ test('manual command endpoint remains unchanged alongside generation', async (t)
   assert.equal(data.state.components[0].refdes, 'R1');
 });
 
+test('command API reports post-delete net state in each result', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const seed = await fetch(`${app.base}/api/circuits/delete-result/cmd`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd: 'add resistor R1 --at 0 0\nadd resistor R2 --at 400 0\nconnect R1.b R2.a' }),
+  });
+  const seeded = await seed.json();
+  assert.equal(seed.status, 200);
+  const netId = seeded.state.nets[0].id;
+  const response = await fetch(`${app.base}/api/circuits/delete-result/cmd`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd: `net ${netId} segment-rm 0 1` }),
+  });
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(data.results[0].mutated, true);
+  assert.equal(data.results[0].json, null);
+  assert.equal(data.state.nets.length, 0);
+});
+
 test('CLI sends a spec file without shell-quoting JSON', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());

@@ -794,6 +794,19 @@ test('reattaching a diagonal island at a touched terminal preserves geometry', (
   assert.ok(merged.terminals.some((t) => t.comp === r3.refdes && t.term === 'a'));
 });
 
+test('wire target identity selects the intended orthogonal net at a coincident target', () => {
+  const c = new Circuit();
+  const a = c.createWireNet({ branches: [[{ x: 0, y: 0 }, { x: 400, y: 0 }]] });
+  const b = c.createWireNet({ branches: [[{ x: 0, y: 0 }, { x: 400, y: 0 }]] });
+  const selected = c.wirePointTo(
+    { x: 0, y: 400 }, { x: 200, y: 0 }, [], null,
+    { routeStyle: 'orthogonal', target: { netId: b.id, pathIndex: 0, segmentIndex: 1, point: { x: 200, y: 0 } } },
+  );
+  assert.equal(selected, b);
+  assert.equal(a.branches.length, 1);
+  assert.ok(b.branches.some((path) => path.some((p) => p.x === 0 && p.y === 400)));
+});
+
 test('wire target identity selects the intended diagonal net and rejects ambiguity', () => {
   const c = new Circuit();
   const a = c.createWireNet({ allowDiagonal: true, branches: [[{ x: 0, y: 0 }, { x: 400, y: 400 }]] });
@@ -2158,6 +2171,64 @@ test('batched terminal membership cleanup leaves each terminal in one net', () =
   b.terminals.push({ comp: r.refdes, term: 'a' });
   c.ensureUniqueTerminals([r.refdes]);
   assert.equal([...c.nets.values()].filter((n) => n.terminals.some((t) => t.comp === r.refdes && t.term === 'a')).length, 1);
+});
+
+test('wirePointTo does not add a redundant branch within one connected net', () => {
+  const c = new Circuit();
+  const net = c.createWireNet({ preserveEmpty: true, branches: [[{ x: 0, y: 0 }, { x: 160, y: 0 }]] });
+  const before = net.toJSON();
+  assert.strictEqual(c.wirePointTo({ x: 0, y: 0 }, { x: 160, y: 0 }, [], net.id), net);
+  assert.deepEqual(net.toJSON(), before);
+});
+
+test('wirePointTo can intentionally connect disconnected branches of one net', () => {
+  const c = new Circuit();
+  const net = c.createWireNet({
+    preserveEmpty: true,
+    branches: [
+      [{ x: 0, y: 0 }, { x: 80, y: 0 }],
+      [{ x: 200, y: 0 }, { x: 280, y: 0 }],
+    ],
+  });
+  c.wirePointTo({ x: 80, y: 0 }, { x: 200, y: 0 }, [], net.id);
+  assert.equal(net.branches.length, 3);
+  assert.ok(net.branches.some((path) => path[0].x === 80 && path.at(-1).x === 200));
+});
+
+test('wirePointTo preserves an explicit target path at a same-net crossing', () => {
+  const c = new Circuit();
+  const net = c.createWireNet({
+    preserveEmpty: true,
+    branches: [
+      [{ x: 0, y: 0 }, { x: 160, y: 0 }],
+      [{ x: 80, y: -80 }, { x: 80, y: 80 }],
+    ],
+  });
+  c.wirePointTo(
+    { x: 0, y: 0 }, { x: 80, y: 0 }, [], net.id,
+    { target: { netId: net.id, pathIndex: 1, segmentIndex: 1, point: { x: 80, y: 0 } } },
+  );
+  assert.ok(net.branches.length > 2, 'explicit join materializes the crossing topology');
+  assert.deepEqual(net.junctions, [{ x: 80, y: 0 }]);
+});
+
+test('wireTo materializes an explicit same-net crossing join', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: -160 });
+  const net = c.createWireNet({
+    preserveEmpty: true,
+    branches: [
+      [{ x: 0, y: 0 }, { x: 160, y: 0 }],
+      [{ x: 80, y: -80 }, { x: 80, y: 80 }],
+    ],
+  });
+  net.terminals.push({ comp: 'R1', term: 'a' });
+  c.wireTo(
+    'R1.a', { x: 80, y: 0 }, [],
+    { target: { netId: net.id, pathIndex: 1, segmentIndex: 1, point: { x: 80, y: 0 } } },
+  );
+  assert.ok(net.branches.length > 2, 'the target crossing is split into an explicit join');
+  assert.deepEqual(net.junctions, [{ x: 80, y: 0 }]);
 });
 
 test('wiring the same two terminals repeatedly keeps exactly one wire', () => {

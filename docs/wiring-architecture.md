@@ -15,9 +15,9 @@ Each `Net` owns:
 - `terminals`: component terminal references, the electrical endpoints.
 - `branches`: explicit orthogonal polylines. Every branch is an editable wire
   path; a branch endpoint is either a terminal or a junction.
-- `junctions`: grid points where two or more branches meet. These are derived
-  from branch endpoints and geometric intersections, then serialized for stable
-  agent output.
+- `junctions`: explicit grid points where two or more branches are joined.
+  Branch endpoints can imply junctions, but geometric crossings alone never
+  create connectivity; explicit joins are serialized for stable agent output.
 - `name` and `id`: user-facing identity only; neither affects geometry.
 
 `route` remains a compatibility alias for the primary branch in JSON and the
@@ -27,10 +27,12 @@ between `route`, `branches`, or `points()`.
 An unmaterialized two-terminal net has no branches and receives a route
 suggestion on demand. Fresh multi-terminal layouts may use Steiner optimization,
 but topology growth never replaces explicit managed paths: `wireTo`,
-`wirePointTo`, and `connect` commit only the newly suggested branch. Existing
-geometry changes only through an explicit wire edit, transform, reroute, or
-another operation whose purpose is to repair geometry; fixed legacy paths
-remain protected.
+`wirePointTo`, and `connect` normally commit only the newly suggested branch. A
+no-waypoint request already connected by explicit topology is a no-op; an
+explicit target path can instead split that path and record a deliberate
+same-net join at a crossing. Existing geometry otherwise changes only through
+an explicit wire edit, transform, reroute, or another operation whose purpose
+is to repair geometry; fixed legacy paths remain protected.
 
 ## Automatic routing
 
@@ -61,16 +63,21 @@ approximation.
 
 During wire drawing, `smartRoute` is a live suggestion for the current draft.
 Committing that draft appends the chosen branch and preserves all prior
-managed paths. Existing geometry changes only through an explicit wire edit,
-transform, reroute, or another operation whose purpose is to repair geometry.
+managed paths. A wire interior is a valid endpoint; when multiple coincident
+paths are possible, the selected branch identity is required and preserved
+through the join. Existing geometry otherwise changes only through an explicit
+wire edit, transform, reroute, or another operation whose purpose is to repair
+geometry.
 Existing hand-drawn branches are treated as fixed obstacles when another net
 is routed, and a fresh managed layout excludes other nets' wire spans.
 
 ## Editing and selection
 
-Hit testing returns `{netId, branch, segment}`. A plain click selects that wire
-segment; **shift+click toggles more segments into the multi-selection** (a set
-of `"netId:branch:segment"` keys). Dragging any selected segment moves every
+Hit testing returns `{netId, branch, segment}`. A stationary managed-wire click
+can begin a wire draft at an interior point; a drag remains segment selection
+and editing. Otherwise, a plain click selects that wire segment; **shift+click
+toggles more segments into the multi-selection** (a set of
+`"netId:branch:segment"` keys). Dragging any selected segment moves every
 selected run of the same orientation together; `dd`/Delete removes all selected
 segments at once (cuts are applied against one branch snapshot so indices never
 shift under one another). A double click selects the complete net, including

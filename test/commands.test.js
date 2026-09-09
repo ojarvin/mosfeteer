@@ -240,6 +240,26 @@ test('net segment-rm deletes wire geometry through the agent command', () => {
   const out = runCommand(c, 'net N1 segment-rm 0 2');
   assert.equal(out.mutated, true);
   assert.equal(c.nets.size, 2);
+  assert.deepEqual(out.json, c.nets.get(net.id).toJSON());
+});
+
+test('net segment-rm reports a removed net as post-operation state', () => {
+  const c = smallCircuit();
+  const out = runCommand(c, 'net N1 segment-rm 0 1');
+  assert.equal(out.mutated, true);
+  assert.equal(c.nets.size, 0);
+  assert.equal(out.json, null);
+});
+
+test('net drop reports the remaining net after removing one terminal', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 320 0');
+  runCommand(c, 'add resistor R2 --at 720 0');
+  const connected = runCommand(c, 'connect R1.b R2.a');
+  const out = runCommand(c, `net ${connected.json.netId} drop R1.b`);
+  assert.equal(out.mutated, true);
+  assert.deepEqual(out.json, c.nets.get(connected.json.netId).toJSON());
+  assert.deepEqual(out.json.terminals, [{ comp: 'R2', term: 'a' }]);
 });
 
 test('connect with too few refs throws', () => {
