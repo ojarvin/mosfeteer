@@ -44,6 +44,8 @@ src/
 │   ├── generator.js    Topology compiler and placement facades.
 │   ├── placement.js    Phase 2 deterministic analog placer.
 │   ├── routing.js      Phase 3 deterministic batch router.
+│   ├── block-model.js  Independent BlockDiagram model and persistence seam.
+│   ├── block-router.js Orthogonal block-arrow routing and arrowhead geometry.
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning

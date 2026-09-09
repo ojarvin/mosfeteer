@@ -35,12 +35,8 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
 - `guidelines/` — role-specific docs and the style guide (this directory).
 - `circuits/<name>/` — saved circuits (`circuit.json` + `circuit.svg` +
   optional `learnings.md`); the circuit author's source of truth.
-- `src/core/` — pure model: `model.js` (Circuit, Component, Net, Label),
-  `commands.js` (command language), `router.js` (smartRoute + A*),
-  `wiring.js` (wire geometry), `render.js` (SVG), `circuitSpec.js`
-  (generator-facing topology contract), `generator.js` (generation facades),
-  `components/` (symbols), `grid.js`,
-  `geometry.js`, `ascii.js`, `semantic.js`, `placement.js`, `routing.js`.
+- `src/core/` — pure model and routing modules; see the detailed inventory in
+  [DEVELOPER.md](./DEVELOPER.md#architecture).
 - `src/web/` — HTTP server (`serve.js`), persistence adapter, and the
   in-browser editor (`index.html`, `main.js`, `style.css`).
 - `src/desktop/` — Electron main/preload boundary and native workspace storage.
