@@ -33,7 +33,9 @@ test('packaged desktop app launches its entry point', {
 
   const profile = await mkdtemp(join(tmpdir(), 'schematic-spawner-electron-'));
   const child = spawn(packagedApp, [
-    '--headless', '--no-sandbox', '--disable-gpu', `--user-data-dir=${profile}`,
+    '--headless', '--no-sandbox', '--disable-gpu',
+    ...(process.platform === 'linux' ? ['--ozone-platform=headless'] : []),
+    `--user-data-dir=${profile}`,
   ], {
     cwd: ROOT,
     env: { ...process.env, SCHEMATIC_SPAWNER_SMOKE: '1' },

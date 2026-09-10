@@ -6,10 +6,10 @@ import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, render
 
 function diagram() {
   const d = new BlockDiagram();
-  d.addBlock({ id: 'B1', text: 'In', rect: { x: 0, y: 0, w: 160, h: 80 }, style: { color: '#d00', width: 'thick', lineStyle: 'dashed' } });
-  d.addBlock({ id: 'B2', text: 'Out', rect: { x: 400, y: 0, w: 160, h: 80 } });
-  d.addTerminal('B1', { id: 'out', side: 'right', offset: 40 });
-  d.addTerminal('B2', { id: 'in', side: 'left', offset: 40 });
+  d.addBlock({ id: 'B1', text: 'In', rect: { x: 0, y: 0, w: 160, h: 80 }, terminals: [{ id: 'out', side: 'right', offset: 40 }], style: { color: '#d00', width: 'thick', lineStyle: 'dashed' } });
+  d.addBlock({ id: 'B2', text: 'Out', rect: { x: 400, y: 0, w: 160, h: 80 }, terminals: [{ id: 'in', side: 'left', offset: 40 }] });
+  d.getBlock('B1').ensurePerimeterTerminals();
+  d.getBlock('B2').ensurePerimeterTerminals();
   d.addArrow({ id: 'A1', from: 'B1.out', to: 'B2.in', style: { color: '#00f', width: 'thin', lineStyle: 'dotted' } });
   return d;
 }
@@ -37,6 +37,15 @@ test('selected blocks and connectors expose isolated editor hit targets', () => 
   assert.doesNotMatch(svg, /<g data-block-id="B2"><rect class="block-node selected"/);
 });
 
+test('connector labels render as block-local non-electrical labels', () => {
+  const d = diagram();
+  d.addNetLabel('A1', { id: 'L1', text: 'signal', anchor: { x: 280, y: 40 } });
+  const svg = renderDocument(d);
+  assert.match(svg, /data-label-id="L1"/);
+  assert.match(svg, /class="block-net-label"/);
+  assert.doesNotMatch(svg, /data-net-id/);
+});
+
 test('block editor rendering gates terminals and exposes resize/annotation hit targets', () => {
   const d = new BlockDiagram();
   d.addBlock({ id: 'B1', text: 'One', rect: { x: 0, y: 0, w: 160, h: 80 } });
@@ -47,6 +56,14 @@ test('block editor rendering gates terminals and exposes resize/annotation hit t
   assert.match(hidden, /data-label-id="L1"/);
   const shown = renderDocument(d, { terminals: true });
   assert.match(shown, /data-block-terminal="B1\.T1"/);
+});
+
+test('block placement ghost is not hidden by an empty ghost list', () => {
+  const svg = renderDocument(new BlockDiagram(), {
+    ghostBlock: { rect: { x: 0, y: 0, w: 160, h: 80 }, text: 'Block' },
+    ghostBlocks: [],
+  });
+  assert.match(svg, /class="block-ghost"/);
 });
 
 test('block commands create and edit only block-domain objects', () => {
@@ -60,6 +77,10 @@ test('block commands create and edit only block-domain objects', () => {
   assert.equal(added.mutated, true);
   assert.match(runCommand(d, 'list').text, /A1 B1\.out -> B2\.in/);
   assert.throws(() => runCommand(d, 'connect B1.out B2.in'), /unknown command/);
+  const label = runCommand(d, 'netlabel add A1 SIG signal 120 40');
+  assert.equal(label.mutated, true);
+  assert.equal(d.labels.get('SIG').connectorId, 'A1');
   runCommand(d, 'rm-connector A1');
+  assert.equal(d.labels.size, 0);
   assert.equal(d.arrows.size, 0);
 });

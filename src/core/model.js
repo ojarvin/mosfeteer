@@ -337,11 +337,14 @@ export class LabelInstance {
     this.id = opts.id || uid();
     this.kind = ['label', 'arrow', 'box', 'line'].includes(opts.kind) ? opts.kind : 'label';
     this.netId = opts.netId !== undefined && opts.netId !== null && opts.netId !== '' ? String(opts.netId) : null;
+    this.connectorId = opts.connectorId !== undefined && opts.connectorId !== null && opts.connectorId !== '' ? String(opts.connectorId) : null;
+    this.connectorT = Number.isFinite(opts.connectorT) ? opts.connectorT : null;
     this.parent = opts.parent || null;
     this.roleError = null;
     if (this.netId && opts.owner) this.roleError = 'label cannot have both netId and owner';
-    if (this.kind !== 'label' && (this.netId || opts.owner || this.parent)) throw new Error('annotations cannot have owners or nets');
-    if (this.parent && (this.netId || opts.owner)) throw new Error('child labels cannot have owners or nets');
+    if (this.kind !== 'label' && (this.netId || opts.owner || this.parent || this.connectorId)) throw new Error('annotations cannot have owners, nets, or connectors');
+    if (this.parent && (this.netId || opts.owner || this.connectorId)) throw new Error('child labels cannot have owners, nets, or connectors');
+    if (this.connectorId && this.netId) throw new Error('label cannot have both connectorId and netId');
     this._text = opts.text !== undefined ? String(opts.text) : 'label';
     this.align = ['center', 'left', 'right'].includes(opts.align) ? opts.align : 'center';
     this.style = {
@@ -546,6 +549,10 @@ export class LabelInstance {
     if (this.netId && !this.circuit._netLabelAnchorOnPath(this.netId, { x: wx, y: wy })) {
       throw new Error('net label anchor must lie on a drawable net path');
     }
+    if (this.connectorId && typeof this.circuit.moveConnectorLabel === 'function') {
+      this.circuit.moveConnectorLabel(this, wx, wy);
+      return;
+    }
     if (this.owner) {
       const c = this.circuit.components.get(this.owner);
       if (c) {
@@ -588,6 +595,7 @@ export class LabelInstance {
       parent: this.parent,
       netId: this.netId,
       netSide: this.netSide,
+      ...(this.connectorId ? { connectorId: this.connectorId, connectorT: this.connectorT } : {}),
       offset: this.offset ? { ...this.offset } : null,
       anchor: this.owner ? null : { ...this.anchor },
       end: this.kind === 'label' ? null : { ...this.end },

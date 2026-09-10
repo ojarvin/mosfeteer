@@ -11,7 +11,8 @@ const same = (a, b) => a.x === b.x && a.y === b.y;
 function labelText(label, selected = false) {
   const p = label.textPos ? label.textPos() : { x: label.anchor.x, y: label.anchor.y, anchor: 'middle' };
   const style = label.style || {};
-  const cls = selected ? ' class="block-label selected"' : ' class="block-label"';
+  const clsName = label.connectorId ? 'block-net-label' : 'block-label';
+  const cls = selected ? ` class="${clsName} selected"` : ` class="${clsName}"`;
   const runs = parseLabelRuns(label.text);
   const body = runs.map((run) => run.sub || run.super
     ? `<tspan ${run.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"'} font-size="0.62em">${esc(run.text)}</tspan>`
@@ -120,9 +121,15 @@ export function blockSvgString(diagram, options = {}) {
     }
   }
   for (const label of labels.filter((item) => item.kind === 'label' && !item.parent)) out.push(labelText(label, selectedLabels.has(label.id)));
-  const ghost = options.ghostBlock;
-  if (ghost) {
-    const r = ghost.rect; out.push(`<g class="block-ghost" opacity="0.38"><rect x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/><text x="${n(r.x + r.w / 2)}" y="${n(r.y + r.h / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="bold">${esc(ghost.text || 'Block')}</text></g>`);
+  const ghostLabels = options.ghostLabels || [];
+  for (const label of ghostLabels) out.push(`<g class="block-ghost block-label-ghost" opacity="0.38">${labelText(label, false)}</g>`);
+  const ghostArrows = options.ghostArrows || [];
+  for (const arrow of ghostArrows) {
+    if (arrow.points?.length >= 2) out.push(`<g class="block-ghost block-connector-ghost" opacity="0.38">${arrowSvg({ ...arrow, id: `ghost-${arrow.id || 'connector'}` }, false).replace(/ data-arrow-id="[^"]*"/, '')}</g>`);
+  }
+  const ghosts = options.ghostBlocks?.length ? options.ghostBlocks : options.ghostBlock ? [options.ghostBlock] : [];
+  for (const ghost of ghosts) {
+    const r = ghost.rect; out.push(`<g class="block-ghost"><rect x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/><text x="${n(r.x + r.w / 2)}" y="${n(r.y + r.h / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="bold">${esc(ghost.text || 'Block')}</text></g>`);
   }
   out.push('</svg>'); return out.join('\n');
 }

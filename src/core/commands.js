@@ -666,6 +666,7 @@ export function blockCommandHelp() {
     '  move-block ID X Y | resize-block ID W H | rename-block ID TEXT',
     '  add-terminal BLOCK ID SIDE OFFSET | move-terminal BLOCK.ID SIDE OFFSET | rm-terminal BLOCK.ID',
     '  add-connector ID FROM TO | rm-connector ID',
+    '  netlabel add CONNECTOR [ID] TEXT X Y | netlabel rename ID TEXT | netlabel rm ID',
     '  annotation add [label|arrow|box|line] ID TEXT X Y [ENDX ENDY] | annotation rename ID TEXT | annotation move ID X Y | annotation rm ID',
     '  list | state | bounds | svg [file] | save <file>',
   ].join('\n');
@@ -726,6 +727,32 @@ function runBlockCommand(diagram, line, io) {
   if (cmd === 'rm-arrow' || cmd === 'remove-arrow' || cmd === 'rm-connector' || cmd === 'remove-connector') {
     const arrow = diagram.removeArrow(pos[0]);
     return result(`removed connector ${arrow.id}`, arrow.toJSON(), true);
+  }
+  if (cmd === 'netlabel' || cmd === 'net-label') {
+    const op = pos.shift();
+    if (op === 'list') return result([...diagram.labels.values()].filter((label) => label.connectorId).map((label) => `${label.id} connector=${label.connectorId} "${label.text}"`).join('\\n') || '(no connector labels)');
+    if (op === 'add') {
+      const connector = pos.shift();
+      const tail = pos.slice();
+      if (!connector || tail.length < 3) throw new Error('usage: netlabel add CONNECTOR [ID] TEXT X Y');
+      const x = Number(tail.at(-2)); const y = Number(tail.at(-1));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('usage: netlabel add CONNECTOR [ID] TEXT X Y');
+      tail.splice(-2);
+      const id = tail.length > 1 ? tail.shift() : undefined;
+      const label = diagram.addNetLabel(connector, { id, text: tail.join(' '), anchor: { x, y } });
+      return result(`added connector label ${label.id}`, label.toJSON(), true);
+    }
+    if (op === 'rename') {
+      const label = diagram.labels.get(pos[0]);
+      if (!label?.connectorId || !pos[1]) throw new Error(`unknown connector label "${pos[0]}"`);
+      label.setText(pos.slice(1).join(' '));
+      return result(`renamed connector label ${label.id}`, label.toJSON(), true);
+    }
+    if (op === 'rm' || op === 'remove') {
+      if (!diagram.labels.get(pos[0])?.connectorId || !diagram.removeLabel(pos[0])) throw new Error(`unknown connector label "${pos[0]}"`);
+      return result(`removed connector label ${pos[0]}`, null, true);
+    }
+    throw new Error('usage: netlabel add|rename|rm|list ...');
   }
   if (cmd === 'annotation' || cmd === 'annotate') {
     const op = pos.shift();

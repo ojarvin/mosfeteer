@@ -3,7 +3,7 @@
 Block diagrams are a separate document kind. The core model lives in
 `src/core/block-model.js`; its router is `src/core/block-router.js`. It does not
 import `Circuit`, `Net`, electrical routing, or the evaluator. It reuses the
-standalone `LabelInstance` geometry for block-local annotations only.
+standalone `LabelInstance` geometry for block-local annotations and connector-attached labels. Connector labels are visual only and never electrical nets.
 
 ## Persisted state
 
@@ -39,7 +39,8 @@ A version-one block document has this shape:
     }
   ],
   "labels": [
-    { "id": "L1", "kind": "label", "text": "feedback", "anchor": { "x": 160, "y": -80 } }
+    { "id": "L1", "kind": "label", "text": "feedback", "anchor": { "x": 160, "y": -80 } },
+    { "id": "L2", "kind": "label", "text": "signal", "connectorId": "A1", "connectorT": 0.5, "anchor": { "x": 360, "y": 80 } }
   ],
   "arrows": [
     {
@@ -61,8 +62,8 @@ maps, while terminals are maps scoped to their block. IDs are stable and
 scoped (`block.terminal`); geometry never infers an arrow relationship.
 
 Block rectangles and terminal offsets are snapped to the 40-unit grid. New
-blocks receive stable generic `T<n>` terminals at non-corner perimeter grid
-points, with one unused grid square at each corner; legacy `in`/`out` terminals
+blocks receive stable generic `T<n>` terminals at every non-corner perimeter
+grid point, with one unused grid square at each corner; legacy `in`/`out` terminals
 remain loadable. A terminal stores only its side and offset along that side, so
 moving or resizing a block recomputes its exact perimeter point. Resizing rejects
 shapes too small to preserve generated terminals and clamps explicit terminals
@@ -104,14 +105,18 @@ browser exposes separate New schematic and New block diagram actions, labels
 the active type, and hides tools from the other domain. Click blocks to select
 them (Shift/Ctrl-click adds or toggles selection), then use Move, Copy, or
 arrow-key nudging; Delete removes them, and Enter/F2 or double-click edits
-block text inline. Connected Move promotes a selected connector to its endpoint
-blocks; Shift+Move detaches selected blocks or connectors while preserving their
-visual geometry, while connectors internal to a detached block set remain
-attached. Copying blocks preserves connectors wholly inside the copied set; copied
-connectors are fixed visual arrows. Block-local labels, arrows, boxes, and lines
-are independent annotations and never become electrical nets. In the browser,
+block text inline, including names in the Blocks panel. Move, Copy, and
+Shift+Move use a modal click-source then click/Enter-destination workflow; when a set is selected, the source click must hit a member of that set.
+Connected Move promotes a selected connector to its endpoint blocks; Shift+Move
+detaches selected blocks or connectors while preserving their visual geometry,
+while connectors internal to a detached block set remain attached. Copying a
+block never copies attached connectors; copying a connector
+creates a detached visual arrow that can reattach only at an unambiguous terminal
+on commit. Block-local labels, connector labels, arrows, boxes, and lines are
+visual objects and never become electrical nets; connector labels follow their
+connectors. In the browser,
 `i` searches blocks, `w` exposes generic perimeter terminals, `m` moves with
 connectors, and dragging a selected resize handle edits the rectangle. The
 shared style controls, crosshair, dark mode, marquee, nudge, undo/redo, copy,
-Delete, and annotation tools apply without invoking electrical pickers or
-routing.
+Delete, annotation tools, and Shift+L connector-label placement apply without
+invoking electrical pickers or routing.

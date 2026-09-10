@@ -91,8 +91,9 @@ const BLOCK_EDITOR_KEYMAP = Object.freeze([
   ['block', [
     ['i', 'place a block'],
     ['w', 'draw a Connector between block terminals; connectors use arrowheads'],
-    ['m', 'move selected blocks; connectors follow'],
-    ['c / y', 'repeated copy of selected blocks and internal connectors'],
+    ['Shift+L', 'attach a label to a connector; it follows connector moves'],
+    ['m', 'click a block to arm, then click/Enter to commit the move; connectors follow'],
+    ['c / y', 'click a source, then click/Enter to commit a repeated copy (blocks do not copy attached connectors)'],
     ['Shift+N / a / b / l', 'place text, arrow, box, or line annotations'],
     ['Delete / dd', 'delete selected blocks, connectors, or annotations'],
     ['Enter / F2 / double-click', 'edit the selected block or annotation text'],
@@ -106,7 +107,9 @@ const BLOCK_EDITOR_KEYMAP = Object.freeze([
     ['style buttons', 'color, line style, and width apply to selected objects'],
   ]],
   ['mouse', [
-    ['left', 'click/select blocks or connectors; drag blocks to move'],
+    ['left', 'click/select; Move/Copy use source click then destination click'],
+    ['double-click', 'edit a block name on canvas or in the Blocks toolbar'],
+    ['connector label', 'Shift+L, click a connector; labels are visual and non-electrical'],
     ['connector', 'w, click a terminal, click guide points, click a target terminal'],
     ['middle / wheel', 'pan / zoom'],
   ]],

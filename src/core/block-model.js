@@ -90,10 +90,13 @@ function terminalPoint(rect, side, offset) {
 /** Unique, clockwise grid points around a block, excluding corners. */
 function perimeterTerminalSpecs(rect) {
   const specs = [];
-  for (let offset = GRID; offset < rect.w - GRID; offset += GRID) specs.push({ side: 'top', offset });
-  for (let offset = GRID; offset < rect.h - GRID; offset += GRID) specs.push({ side: 'right', offset });
-  for (let offset = rect.w - 2 * GRID; offset > 0; offset -= GRID) specs.push({ side: 'bottom', offset });
-  for (let offset = rect.h - 2 * GRID; offset > 0; offset -= GRID) specs.push({ side: 'left', offset });
+  // Keep one grid square of corner clearance, but include both end points of
+  // every valid side run.  The old strict upper bounds dropped the rightmost
+  // and bottommost attachment positions (and all positions on two-cell sides).
+  for (let offset = GRID; offset <= rect.w - GRID; offset += GRID) specs.push({ side: 'top', offset });
+  for (let offset = GRID; offset <= rect.h - GRID; offset += GRID) specs.push({ side: 'right', offset });
+  for (let offset = rect.w - GRID; offset >= GRID; offset -= GRID) specs.push({ side: 'bottom', offset });
+  for (let offset = rect.h - GRID; offset >= GRID; offset -= GRID) specs.push({ side: 'left', offset });
   return specs;
 }
 
@@ -278,8 +281,13 @@ export class BlockArrow {
     this.id = String(options.id ?? '');
     if (!this.id) throw new Error('arrow id is required');
     this.detached = options.detached === true;
-    this.from = this.detached ? null : normalizeRef(options.from ?? options.source);
-    this.to = this.detached ? null : normalizeRef(options.to ?? options.target);
+    // A detached connector may retain either endpoint when it lands on a
+    // terminal. The missing endpoint stays a free visual endpoint.
+    this.from = options.from == null && options.source == null
+      ? null : normalizeRef(options.from ?? options.source);
+    this.to = options.to == null && options.target == null
+      ? null : normalizeRef(options.to ?? options.target);
+    if (!this.detached && (!this.from || !this.to)) throw new Error('attached arrow requires two endpoints');
     this.routingMode = options.routingMode ?? 'auto';
     if (!['auto', 'fixed'].includes(this.routingMode)) throw new Error(`invalid arrow routing mode "${this.routingMode}"`);
     this.points = clone(options.points || []);
@@ -317,6 +325,43 @@ function normalizeRef(ref) {
   }
   if (!ref || !ref.block || !ref.terminal) throw new Error('arrow endpoint requires block and terminal');
   return { block: String(ref.block), terminal: String(ref.terminal) };
+}
+
+function pathLength(points) {
+  let length = 0;
+  for (let i = 1; i < points.length; i++) length += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  return length;
+}
+
+function pathPointAt(points, ratio) {
+  const total = pathLength(points);
+  if (!total) return points[0] ? { ...points[0] } : null;
+  let remaining = total * Math.max(0, Math.min(1, ratio));
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]; const b = points[i];
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (remaining <= length) {
+      const t = length ? remaining / length : 0;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+    remaining -= length;
+  }
+  return { ...points.at(-1) };
+}
+
+function pathRatioAt(points, point) {
+  let total = pathLength(points); let travelled = 0; let best = 0; let distance = Infinity;
+  if (!total) return 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]; const b = points[i];
+    const dx = b.x - a.x; const dy = b.y - a.y; const length2 = dx * dx + dy * dy;
+    const t = length2 ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / length2)) : 0;
+    const candidate = { x: a.x + dx * t, y: a.y + dy * t };
+    const d = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+    if (d < distance) { distance = d; best = (travelled + Math.sqrt(length2) * t) / total; }
+    travelled += Math.sqrt(length2);
+  }
+  return best;
 }
 
 function blockData(options, text, rect) {
@@ -368,6 +413,7 @@ export class BlockDiagram {
       if (this.labels.has(label.id)) throw new Error(`duplicate label id "${label.id}"`);
       this.labels.set(label.id, label);
     }
+    for (const arrow of this.arrows.values()) this._syncConnectorLabels(arrow);
     if (data.validate !== false) this.validate();
   }
 
@@ -395,10 +441,100 @@ export class BlockDiagram {
   }
 
   addLabel(options = {}) {
-    const label = new LabelInstance(this, { ...options, id: options.id || this.nextLabelId(), owner: null, netId: null });
+    const connectorId = options.connectorId ?? options.arrowId ?? null;
+    if (connectorId && !this.arrows.has(String(connectorId))) throw new Error(`unknown connector "${connectorId}"`);
+    const label = new LabelInstance(this, {
+      ...options,
+      id: options.id || this.nextLabelId(),
+      owner: null,
+      netId: null,
+      ...(connectorId ? { connectorId: String(connectorId) } : {}),
+    });
     if (this.labels.has(label.id)) throw new Error(`label id "${label.id}" already in use`);
     this.labels.set(label.id, label);
+    if (connectorId) this._syncConnectorLabel(label, this.arrows.get(String(connectorId)));
+    this.validate();
     return label;
+  }
+
+  /** Add a text label attached to a visual connector, without creating an
+   * electrical net. `addNetLabel` is the muscle-memory-compatible alias used
+   * by the block editor. */
+  addConnectorLabel(arrowOrId, options = {}) {
+    const arrowId = typeof arrowOrId === 'string' ? arrowOrId : arrowOrId?.id;
+    const arrow = arrowId && this.arrows.get(String(arrowId));
+    if (!arrow) throw new Error(`unknown connector "${arrowId}"`);
+    const point = options.anchor || options.point || arrow.points[Math.floor(arrow.points.length / 2)];
+    return this.addLabel({ ...options, connectorId: arrow.id, x: point.x, y: point.y, text: options.text ?? 'label' });
+  }
+
+  addNetLabel(arrowOrId, options = {}) { return this.addConnectorLabel(arrowOrId, options); }
+
+  _syncConnectorLabel(label, arrow) {
+    if (!label?.connectorId || !arrow?.points?.length) return;
+    const ratio = Number.isFinite(label.connectorT) ? label.connectorT : pathRatioAt(arrow.points, label.anchor);
+    label.connectorT = Math.max(0, Math.min(1, ratio));
+    const point = pathPointAt(arrow.points, label.connectorT);
+    if (point) label.anchor = { x: snap(point.x), y: snap(point.y) };
+  }
+
+  _syncConnectorLabels(arrow) {
+    for (const label of this.labels.values()) if (label.connectorId === arrow.id) this._syncConnectorLabel(label, arrow);
+  }
+
+  moveConnectorLabel(label, x, y) {
+    const arrow = this.arrows.get(label?.connectorId);
+    if (!arrow) throw new Error('label connector no longer exists');
+    label.connectorT = pathRatioAt(arrow.points, { x, y });
+    this._syncConnectorLabel(label, arrow);
+    this.invalidateRoutingCache();
+    return label;
+  }
+
+  _terminalAtPoint(point, excludeArrow = null) {
+    const candidates = [];
+    for (const block of this.blocks.values()) for (const terminal of block.terminals.values()) {
+      const max = sideLength(block.rect, terminal.side);
+      if (terminal.offset <= 0 || terminal.offset >= max) continue;
+      if (samePoint(terminal.point(block.rect), point)) candidates.push({ block: block.id, terminal: terminal.id });
+    }
+    if (candidates.length !== 1) return null;
+    const ref = candidates[0];
+    for (const arrow of this.arrows.values()) {
+      if (arrow === excludeArrow) continue;
+      if (refsEqual(arrow.from, ref) || refsEqual(arrow.to, ref)) return null;
+    }
+    return ref;
+  }
+
+  /** Reattach only unambiguous detached endpoints at valid, unoccupied
+   * terminals. This is intentionally called at commit boundaries, never by
+   * preview/drag code. A connector may become half-attached when only one
+   * endpoint lands on a terminal. */
+  reattachDetachedArrows(ids = null) {
+    const wanted = ids ? new Set(ids) : null;
+    const attached = [];
+    for (const arrow of this.arrows.values()) {
+      if (!arrow.detached || (wanted && !wanted.has(arrow.id)) || arrow.points.length < 2) continue;
+      const from = arrow.from || this._terminalAtPoint(arrow.points[0], arrow);
+      const to = arrow.to || this._terminalAtPoint(arrow.points.at(-1), arrow);
+      if (from && to && refsEqual(from, to)) continue;
+      const changed = !refsEqual(from, arrow.from) || !refsEqual(to, arrow.to);
+      if (!changed) continue;
+      const before = arrow.toJSON();
+      arrow.from = from;
+      arrow.to = to;
+      arrow.detached = !(from && to);
+      arrow.routingMode = 'fixed';
+      try {
+        this._anchorFixedArrow(arrow);
+        this.validate();
+        attached.push(arrow.id);
+      } catch {
+        Object.assign(arrow, new BlockArrow(before));
+      }
+    }
+    return attached;
   }
 
   addAnnotation(kind, options = {}) {
@@ -473,9 +609,15 @@ export class BlockDiagram {
     const terminal = new BlockTerminal(blockId, { ...data, generated: false });
     terminal.offset = normalizeOffset(block.rect, terminal.side, terminal.offset);
     if (block.terminals.has(terminal.id)) throw new Error(`duplicate block terminal id "${terminal.id}"`);
-    if (occupiedTerminal(block, terminal.side, terminal.offset)) throw new Error(`terminal location ${terminal.side}:${terminal.offset} is already occupied`);
+    const occupied = [...block.terminals.values()].find((item) => item.point(block.rect).x === terminal.point(block.rect).x && item.point(block.rect).y === terminal.point(block.rect).y);
+    if (occupied && !occupied.generated) throw new Error(`terminal location ${terminal.side}:${terminal.offset} is already occupied`);
+    if (occupied) block.terminals.delete(occupied.id);
     block.terminals.set(terminal.id, terminal);
-    try { this.validate(); } catch (error) { block.terminals.delete(terminal.id); throw error; }
+    try { this.validate(); } catch (error) {
+      block.terminals.delete(terminal.id);
+      if (occupied) block.terminals.set(occupied.id, occupied);
+      throw error;
+    }
     return terminal;
   }
 
@@ -573,6 +715,7 @@ export class BlockDiagram {
         arrow.points = clone(points || []);
         this._anchorFixedArrow(arrow);
       }
+      this._syncConnectorLabels(arrow);
       this.validate();
     } catch (error) { Object.assign(arrow, new BlockArrow(before)); throw error; }
     return arrow;
@@ -581,13 +724,14 @@ export class BlockDiagram {
   removeArrow(id) {
     const arrow = this.getArrow(id);
     this.arrows.delete(id);
+    for (const [labelId, label] of this.labels) if (label.connectorId === arrow.id) this.labels.delete(labelId);
     return arrow;
   }
 
   removeBlock(id) {
     const block = this.getBlock(id);
     for (const [arrowId, arrow] of this.arrows) {
-      if (!arrow.detached && (arrow.from.block === id || arrow.to.block === id)) this.arrows.delete(arrowId);
+      if (arrow.from?.block === id || arrow.to?.block === id) this.removeArrow(arrowId);
     }
     this.blocks.delete(id);
     return block;
@@ -606,26 +750,36 @@ export class BlockDiagram {
 
   detachBoundaryArrows(blockIds) {
     const selected = new Set(blockIds);
+    const detached = [];
     for (const arrow of [...this.arrows.values()]) {
       if (arrow.detached) continue;
       const fromSelected = selected.has(arrow.from.block);
       const toSelected = selected.has(arrow.to.block);
-      if (fromSelected !== toSelected) this.detachArrow(arrow.id);
+      if (fromSelected !== toSelected) { this.detachArrow(arrow.id); detached.push(arrow.id); }
     }
+    return detached;
   }
 
   _anchorFixedArrow(arrow) {
-    const from = this.terminalPoint(arrow.from);
-    const to = this.terminalPoint(arrow.to);
     if (!arrow.points?.length) throw new Error(`fixed arrow "${arrow.id}" requires points`);
+    const from = arrow.from ? this.terminalPoint(arrow.from) : arrow.points[0];
+    const to = arrow.to ? this.terminalPoint(arrow.to) : arrow.points.at(-1);
     arrow.points = [from, ...arrow.points.slice(1, -1), to].map((point) => ({ x: point.x, y: point.y }));
+    if (!routeIsOrthogonal(arrow.points) && arrow.detached && (!arrow.from || !arrow.to)) {
+      const candidates = [
+        [from, { x: to.x, y: from.y }, to],
+        [from, { x: from.x, y: to.y }, to],
+      ].map((path) => path.filter((point, index) => !index || !samePoint(point, path[index - 1])));
+      const safe = candidates.find((path) => routeClearOfBlocks(path, this));
+      if (safe) arrow.points = safe;
+    }
     if (!routeIsOrthogonal(arrow.points)) throw new Error(`arrow "${arrow.id}" route must be orthogonal`);
     if (!routeClearOfBlocks(arrow.points, this)) throw new Error(`arrow "${arrow.id}" route enters a block`);
   }
 
   _incidentSnapshot(blockId) {
     return [...this.arrows.values()]
-      .filter((arrow) => !arrow.detached && (arrow.from.block === blockId || arrow.to.block === blockId))
+      .filter((arrow) => arrow.from?.block === blockId || arrow.to?.block === blockId)
       .map((arrow) => arrow.toJSON());
   }
 
@@ -637,11 +791,13 @@ export class BlockDiagram {
     const old = snapshot || this._incidentSnapshot(blockId);
     try {
       for (const arrow of this.arrows.values()) {
-        if (arrow.detached || (arrow.from.block !== blockId && arrow.to.block !== blockId)) continue;
-        if (arrow.routingMode === 'auto') {
+        if (arrow.detached && !arrow.from?.block && !arrow.to?.block) continue;
+        if (arrow.from?.block !== blockId && arrow.to?.block !== blockId) continue;
+        if (!arrow.detached && arrow.routingMode === 'auto') {
           arrow.points = routeBlockArrow(this, arrow);
           if (!arrow.points) throw new Error(`no safe route for arrow "${arrow.id}"`);
         } else this._anchorFixedArrow(arrow);
+        this._syncConnectorLabels(arrow);
       }
     } catch (error) {
       this._restoreArrows(old);
@@ -725,6 +881,15 @@ export class BlockDiagram {
     for (const [id, label] of this.labels) {
       if (id !== label.id || !label.id) errors.push('label ids must be non-empty and match their map keys');
       if (label.netId || label.owner) errors.push(`block label "${id}" cannot be electrical or owned`);
+      if (label.connectorId && (!this.arrows.has(label.connectorId) || label.kind !== 'label')) errors.push(`block label "${id}" references an invalid connector`);
+      if (label.connectorId) {
+        const arrow = this.arrows.get(label.connectorId);
+        if (arrow?.points?.length && !arrow.points.some((point, i) => i > 0 &&
+          ((point.x === arrow.points[i - 1].x && label.anchor.x === point.x && label.anchor.y >= Math.min(arrow.points[i - 1].y, point.y) && label.anchor.y <= Math.max(arrow.points[i - 1].y, point.y)) ||
+           (point.y === arrow.points[i - 1].y && label.anchor.y === point.y && label.anchor.x >= Math.min(arrow.points[i - 1].x, point.x) && label.anchor.x <= Math.max(arrow.points[i - 1].x, point.x))))) {
+          errors.push(`block label "${id}" anchor is not on connector ${label.connectorId}`);
+        }
+      }
       if (!['label', 'arrow', 'box', 'line'].includes(label.kind)) errors.push(`invalid block label kind "${id}"`);
       if (label.kind === 'line' && (!Array.isArray(label.points) || label.points.length < 2)) errors.push(`line annotation "${id}" needs points`);
       const points = label.kind === 'line' ? label.points : [label.anchor, label.end];
@@ -737,6 +902,14 @@ export class BlockDiagram {
         if (!Array.isArray(arrow.points) || arrow.points.length < 2) errors.push(`detached arrow "${id}" needs at least two route points`);
         else if (arrow.points.some((point) => !point || !finite(point.x) || !finite(point.y) || !onGrid(point.x) || !onGrid(point.y))) errors.push(`arrow "${id}" points must be finite and grid-aligned`);
         else if (!routeIsOrthogonal(arrow.points)) errors.push(`arrow "${id}" route must be orthogonal`);
+        for (const [endpoint, point] of [['from', arrow.points?.[0]], ['to', arrow.points?.at(-1)]]) {
+          const ref = arrow[endpoint];
+          if (!ref) continue;
+          const block = this.blocks.get(ref.block);
+          const terminal = block?.terminals.get(ref.terminal);
+          if (!block || !terminal) errors.push(`arrow "${id}" references a missing terminal`);
+          else if (!samePoint(terminal.point(block.rect), point)) errors.push(`arrow "${id}" does not start/end at its ${endpoint} terminal`);
+        }
         continue;
       }
       for (const ref of [arrow.from, arrow.to]) {
