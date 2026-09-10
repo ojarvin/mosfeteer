@@ -3,6 +3,9 @@ export function componentPaletteItems(components) {
   return [...components].filter((component) => component.type !== 'solder');
 }
 
+// Human ordering: S1, S2, S10 rather than lexicographic S1, S10, S2.
+export const naturalCompare = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare;
+
 // The editor's keyboard reference is data, not a second hand-written list in
 // the dialog. Keep this registry alongside the keyboard-facing toolbar.
 export const EDITOR_KEYMAP = Object.freeze([

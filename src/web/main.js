@@ -23,7 +23,7 @@ import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.j
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
-import { componentPaletteItems, editorKeymapText, layerActionForKey } from './toolbar.js';
+import { componentPaletteItems, editorKeymapText, layerActionForKey, naturalCompare } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
 
 // ----- boot failure surface --------------------------------------
@@ -459,7 +459,8 @@ async function loadCircuit(name = circuitSelectEl.value, quiet = false, options 
 }
 
 function hasUnsavedChanges() {
-  return snapshot() !== lastSavedSnapshot;
+  return snapshot() !== lastSavedSnapshot ||
+    (!currentCircuitName && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(circuitNameEl.value.trim()));
 }
 
 function requestCircuitLoad(name = circuitSelectEl.value || circuitNameEl.value.trim()) {
@@ -483,6 +484,8 @@ function renderSaveState() {
     saveStateEl.classList.toggle('unsaved', dirty);
   }
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentCircuitName || deleteInFlight;
+  const saveButton = document.getElementById('btn-save');
+  if (saveButton) saveButton.disabled = !dirty || saveInFlight > 0;
 }
 
 
@@ -738,7 +741,7 @@ function redo() {
 
 function sortedComps() {
   if (!sortedCompsCache || sortedCompsCache.revision !== modelRevision) {
-    sortedCompsCache = { revision: modelRevision, value: [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes)) };
+    sortedCompsCache = { revision: modelRevision, value: [...circuit.components.values()].sort((a, b) => naturalCompare(a.refdes, b.refdes)) };
   }
   return sortedCompsCache.value;
 }
@@ -749,7 +752,7 @@ function visibleNets() {
       revision: modelRevision,
       value: [...circuit.nets.values()]
         .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2))
-        .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id)),
+        .sort((a, b) => naturalCompare(a.name || a.id, b.name || b.id) || naturalCompare(a.id, b.id)),
     };
   }
   return visibleNetsCache.value;
