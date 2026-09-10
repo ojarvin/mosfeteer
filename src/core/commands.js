@@ -666,6 +666,7 @@ export function blockCommandHelp() {
     '  move-block ID X Y | resize-block ID W H | rename-block ID TEXT',
     '  add-terminal BLOCK ID SIDE OFFSET | move-terminal BLOCK.ID SIDE OFFSET | rm-terminal BLOCK.ID',
     '  add-connector ID FROM TO | rm-connector ID',
+    '  annotation add [label|arrow|box|line] ID TEXT X Y [ENDX ENDY] | annotation rename ID TEXT | annotation move ID X Y | annotation rm ID',
     '  list | state | bounds | svg [file] | save <file>',
   ].join('\n');
 }
@@ -725,6 +726,45 @@ function runBlockCommand(diagram, line, io) {
   if (cmd === 'rm-arrow' || cmd === 'remove-arrow' || cmd === 'rm-connector' || cmd === 'remove-connector') {
     const arrow = diagram.removeArrow(pos[0]);
     return result(`removed connector ${arrow.id}`, arrow.toJSON(), true);
+  }
+  if (cmd === 'annotation' || cmd === 'annotate') {
+    const op = pos.shift();
+    if (op === 'list') return result([...diagram.labels.values()].map((label) => `${label.id} ${label.kind} ${label.text}`).join('\\n') || '(no annotations)');
+    if (op === 'add') {
+      let kind; let id; let text; let x; let y; let endX; let endY;
+      if (['label', 'arrow', 'box', 'line'].includes(pos[0])) [kind, id, text, x, y, endX, endY] = pos;
+      else [id, text, x, y] = pos, kind = 'label';
+      const coordinates = [x, y, ...(kind === 'label' ? [] : [endX, endY])].map(Number);
+      if (!id || text === undefined || coordinates.some((value) => !Number.isFinite(value))) throw new Error('usage: annotation add [kind] ID TEXT X Y [ENDX ENDY]');
+      const values = kind === 'label'
+        ? { id, text, x: coordinates[0], y: coordinates[1] }
+        : kind === 'line'
+          ? { id, text, points: [{ x: coordinates[0], y: coordinates[1] }, { x: coordinates[2], y: coordinates[3] }] }
+          : { id, text, x: coordinates[0], y: coordinates[1], end: { x: coordinates[2], y: coordinates[3] } };
+      const label = kind === 'label' ? diagram.addLabel(values) : diagram.addAnnotation(kind, values);
+      return result(`added annotation ${label.id}`, label.toJSON(), true);
+    }
+    if (op === 'rename') {
+      const label = diagram.labels.get(pos[0]);
+      if (!label) throw new Error(`unknown annotation "${pos[0]}"`);
+      const text = pos.slice(1).join(' ');
+      const children = ['arrow', 'box', 'line'].includes(label.kind)
+        ? [...diagram.labels.values()].filter((child) => child.parent === label.id)
+        : [];
+      for (const child of children) child.setText(text);
+      if (!children.length) label.setText(text);
+      return result(`renamed annotation ${label.id}`, label.toJSON(), true);
+    }
+    if (op === 'move') {
+      const label = diagram.labels.get(pos[0]);
+      const x = Number(pos[1]);
+      const y = Number(pos[2]);
+      if (!label || !Number.isFinite(x) || !Number.isFinite(y)) throw new Error(!label ? `unknown annotation "${pos[0]}"` : 'usage: annotation move LABEL X Y');
+      label.moveTo(x, y);
+      return result(`moved annotation ${label.id}`, label.toJSON(), true);
+    }
+    if (op === 'rm' || op === 'remove') { if (!diagram.removeLabel(pos[0])) throw new Error(`unknown annotation "${pos[0]}"`); return result(`removed annotation ${pos[0]}`, null, true); }
+    throw new Error('usage: annotation add|rename|move|rm|list ...');
   }
   if (cmd === 'svg' || cmd === 'export') { const file=pos[0]||'data/preview.svg', svg=blockSvgString(diagram, { background:true }); if (io) { io.writeTextFile(file,svg); return result(`wrote ${file} (${svg.length} bytes)`); } return result('SVG below', {svg}); }
   if (cmd === 'save') { if (!io || !pos[0]) throw new Error('save requires file I/O and a path'); io.writeTextFile(pos[0], JSON.stringify(diagram.toJSON(), null, 2)); return result(`saved state to ${pos[0]}`); }

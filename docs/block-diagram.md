@@ -1,9 +1,9 @@
 # Block-diagram core contract
 
 Block diagrams are a separate document kind. The core model lives in
-`src/core/block-model.js`; its router is `src/core/block-router.js`. Neither
-module imports `Circuit`, `Net`, `LabelInstance`, electrical routing, or the
-evaluator.
+`src/core/block-model.js`; its router is `src/core/block-router.js`. It does not
+import `Circuit`, `Net`, electrical routing, or the evaluator. It reuses the
+standalone `LabelInstance` geometry for block-local annotations only.
 
 ## Persisted state
 
@@ -25,7 +25,21 @@ A version-one block document has this shape:
       ],
       "style": { "color": "#111", "lineStyle": "solid", "width": "normal", "bold": true, "italic": true },
       "drawOrder": 0
+    },
+    {
+      "id": "B2",
+      "text": "Output",
+      "rect": { "x": 400, "y": 0, "w": 160, "h": 160 },
+      "terminals": [
+        { "id": "in", "side": "left", "offset": 80 },
+        { "id": "out", "side": "right", "offset": 80 }
+      ],
+      "style": { "color": "#111", "lineStyle": "solid", "width": "normal", "bold": true, "italic": true },
+      "drawOrder": 0
     }
+  ],
+  "labels": [
+    { "id": "L1", "kind": "label", "text": "feedback", "anchor": { "x": 160, "y": -80 } }
   ],
   "arrows": [
     {
@@ -46,9 +60,13 @@ A version-one block document has this shape:
 maps, while terminals are maps scoped to their block. IDs are stable and
 scoped (`block.terminal`); geometry never infers an arrow relationship.
 
-Block rectangles and terminal offsets are snapped to the 40-unit grid. A
-terminal stores only its side and offset along that side, so moving or resizing
-a block recomputes its exact perimeter point. Block text is centered at the
+Block rectangles and terminal offsets are snapped to the 40-unit grid. New
+blocks receive stable generic `T<n>` terminals at non-corner perimeter grid
+points, with one unused grid square at each corner; legacy `in`/`out` terminals
+remain loadable. A terminal stores only its side and offset along that side, so
+moving or resizing a block recomputes its exact perimeter point. Resizing rejects
+shapes too small to preserve generated terminals and clamps explicit terminals
+to two grid cells. Block text is centered at the
 rectangle center. Arrow endpoints are terminal identities, not free points.
 Deleting a block cascades its incident arrows; deleting a referenced terminal
 is rejected.
@@ -77,8 +95,10 @@ path, and SVG export all use this boundary, so block data never passes through
 
 `runCommand()` dispatches block documents to block-specific verbs: `help`,
 `list`, `state`, `bounds`, block/terminal/connector add, move, resize, rename,
-remove, `svg`/`export`, and `save`. Electrical verbs remain isolated from
-`BlockDiagram`. The existing `/api/circuits/<name>` transport and
+remove, annotation add/rename/move/remove, `svg`/`export`, and `save`.
+Electrical verbs remain isolated from `BlockDiagram`. Annotation commands accept
+labels, arrows, boxes, and multi-point lines; annotation text remains separate
+from block and connector text. The existing `/api/circuits/<name>` transport and
 `circuit.json`/`circuit.svg` filenames are shared by both document kinds. The
 browser exposes separate New schematic and New block diagram actions, labels
 the active type, and hides tools from the other domain. Click blocks to select
@@ -87,6 +107,11 @@ arrow-key nudging; Delete removes them, and Enter/F2 or double-click edits
 block text inline. Connected Move promotes a selected connector to its endpoint
 blocks; Shift+Move detaches selected blocks or connectors while preserving their
 visual geometry, while connectors internal to a detached block set remain
-attached. Copying blocks copies no connectors; copying a connector creates a
-detached visual arrow with its arrowhead. Block selection and editing never invoke electrical pickers,
-labels, or routing.
+attached. Copying blocks preserves connectors wholly inside the copied set; copied
+connectors are fixed visual arrows. Block-local labels, arrows, boxes, and lines
+are independent annotations and never become electrical nets. In the browser,
+`i` searches blocks, `w` exposes generic perimeter terminals, `m` moves with
+connectors, and dragging a selected resize handle edits the rectangle. The
+shared style controls, crosshair, dark mode, marquee, nudge, undo/redo, copy,
+Delete, and annotation tools apply without invoking electrical pickers or
+routing.

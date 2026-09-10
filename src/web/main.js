@@ -984,11 +984,51 @@ function selectedLabels() {
 function selectedLabel() {
   return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
 }
+function moveLabelOriginsOnce(origins, dx, dy) {
+  const pending = new Map(origins);
+  while (pending.size) {
+    const entry = [...pending].find(([id]) => {
+      const label = circuit.labels.get(id);
+      return !label?.parent || !pending.has(label.parent);
+    });
+    if (!entry) break;
+    const [id, origin] = entry;
+    const label = circuit.labels.get(id);
+    if (label) {
+      moveLabelSafely(label, origin.x + dx, origin.y + dy);
+      for (const [childId] of pending) {
+        let parent = circuit.labels.get(childId)?.parent;
+        while (parent) {
+          if (parent === id) { pending.delete(childId); break; }
+          parent = circuit.labels.get(parent)?.parent;
+        }
+      }
+    }
+    pending.delete(id);
+  }
+}
 function toggleSelectedLabelFont(field) {
+  if (isBlockDiagram(circuit)) {
+    if (!selectedBlocks.size && !selLabels.size) return;
+    commit(() => {
+      for (const id of selectedBlocks) {
+        const block = circuit.blocks.get(id);
+        if (block) block.style[field] = block.style[field] === false;
+      }
+      for (const label of selectedLabels()) {
+        label.style[field] = label.style[field] === false;
+        if (['arrow', 'box', 'line'].includes(label.kind)) for (const child of circuit.labels.values()) {
+          if (child.parent === label.id) child.style[field] = label.style[field];
+        }
+      }
+    });
+    render();
+    return;
+  }
   const targets = new Map();
   for (const label of selectedLabels()) {
     targets.set(label.id, label);
-    if (label.kind === 'arrow' || label.kind === 'box') {
+    if (['arrow', 'box', 'line'].includes(label.kind)) {
       for (const child of circuit.labels.values()) {
         if (child.parent === label.id) targets.set(child.id, child);
       }
@@ -1036,6 +1076,14 @@ function selectedWireTargetKeys() {
 }
 
 function selectedStyleSource() {
+  if (isBlockDiagram(circuit)) {
+    const objects = [
+      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
+      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
+      ...selectedLabels(),
+    ];
+    return objects.length === 1 ? { kind: 'object', style: { ...(objects[0].style || {}) } } : null;
+  }
   const comps = selectedComps();
   const labels = selectedLabels();
   const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
@@ -1055,6 +1103,22 @@ function selectedStyleSource() {
 }
 
 function applyStyleToSelected(style) {
+  if (isBlockDiagram(circuit)) {
+    const objects = [
+      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
+      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
+      ...selectedLabels(),
+    ];
+    if (!objects.length) { logLine('nothing selected for style paste'); return false; }
+    commit(() => {
+      for (const object of objects) {
+        if (style.color !== undefined && typeof object.setColor === 'function') object.setColor(style.color);
+        object.style = { ...(object.style || {}), ...Object.fromEntries(['color', 'lineStyle', 'width'].filter((field) => style[field] !== undefined).map((field) => [field, style[field]])) };
+      }
+    });
+    render();
+    return true;
+  }
   const comps = selectedComps();
   const labels = selectedLabels();
   const wireTargets = selectedWireTargets();
@@ -1097,6 +1161,23 @@ function pasteStyle() {
 }
 
 function applySelectedStyle(field, value) {
+  if (isBlockDiagram(circuit)) {
+    const objects = [
+      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
+      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
+      ...selectedLabels(),
+    ];
+    if (!objects.length) return;
+    const next = value || styleDefaults(field);
+    commit(() => {
+      for (const object of objects) {
+        if (field === 'color' && typeof object.setColor === 'function') object.setColor(next);
+        else object.style = { ...(object.style || {}), [field]: next };
+      }
+    });
+    render();
+    return;
+  }
   const comps = selectedComps();
   const labels = selectedLabels();
   const wireTargets = selectedWireTargets();
@@ -1125,6 +1206,24 @@ function updateStyleControls() {
   const color = document.getElementById('style-color');
   const width = document.getElementById('style-width');
   if (!line || !color || !width) return;
+  if (isBlockDiagram(circuit)) {
+    const objects = [
+      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
+      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
+      ...selectedLabels(),
+    ];
+    line.disabled = color.disabled = width.disabled = !objects.length;
+    if (!objects.length) {
+      color.value = '#111'; line.value = 'solid'; width.value = 'normal'; color.style.backgroundColor = '#111';
+      return;
+    }
+    for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
+      const values = objects.map((object) => object.style?.[field] || styleDefaults(field));
+      el.value = values.every((value) => value === values[0]) ? values[0] : '';
+    }
+    color.style.backgroundColor = color.value || '';
+    return;
+  }
   const wireTargets = selectedWireTargets();
   if (selectedWire) {
     const net = circuit.nets.get(selectedWire.netId);
@@ -1251,6 +1350,14 @@ function selectedComps() {
 }
 
 function selectedDrawTargets() {
+  if (isBlockDiagram(circuit)) {
+    const objects = [
+      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
+      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
+      ...selectedLabels(),
+    ];
+    return objects.length ? { groups: [{ objects, peers: [...circuit.blocks.values(), ...circuit.arrows.values(), ...circuit.labels.values()] }] } : null;
+  }
   const groups = [];
   const netIds = new Set(selectedNets);
   if (selectedWire) netIds.add(selectedWire.netId);
@@ -1961,6 +2068,8 @@ function commitLineAnnotation() {
 
 function placeShapeAnnotation(world, endOverride = null) {
   const point = { x: snap(world.x), y: snap(world.y) };
+  let annotation;
+  let annotationLabel;
   if (!annotationStart) {
     annotationStart = point;
     logLine(`${labelMode.toUpperCase()}: choose the end point`);
@@ -2032,6 +2141,14 @@ function placeNetLabelAt(world) {
  */
 function placePending() {
   if (!pendingPlace) return;
+  if (pendingPlace.kind === 'block') {
+    const block = circuit.addBlock({ text: 'Block', x: cursor.x - 80, y: cursor.y - 40, w: 160, h: 80 });
+    selectedBlocks = new Set([block.id]);
+    selectedArrows.clear();
+    setLabelSelection([]);
+    logLine(`placed ${block.id} @ (${cursor.x},${cursor.y})`);
+    return;
+  }
   if (pendingPlace.kind === 'label') {
     const label = circuit.addLabel({ text: 'label', x: cursor.x, y: cursor.y, align: 'center' });
     setSelection([]);
@@ -2089,7 +2206,7 @@ function renderBlockPanels() {
     row.addEventListener('click', (ev) => {
       if (ev.shiftKey) {
         if (selectedBlocks.has(block.id)) selectedBlocks.delete(block.id); else selectedBlocks.add(block.id);
-      } else selectedBlocks = new Set([block.id]);
+      } else { selectedBlocks = new Set([block.id]); setLabelSelection([], undefined, true); }
       selectedArrows.clear();
       render();
     });
@@ -2106,7 +2223,7 @@ function renderBlockPanels() {
     row.addEventListener('click', (ev) => {
       if (ev.shiftKey) {
         if (selectedArrows.has(arrow.id)) selectedArrows.delete(arrow.id); else selectedArrows.add(arrow.id);
-      } else selectedArrows = new Set([arrow.id]);
+      } else { selectedArrows = new Set([arrow.id]); setLabelSelection([], undefined, true); }
       selectedBlocks.clear();
       render();
     });
@@ -2127,6 +2244,7 @@ function render() {
   syncDocumentSurface();
   if (isBlockDiagram(circuit)) {
     persistDraft();
+    updateStyleControls();
     renderCanvas();
     componentsListEl.replaceChildren();
     netsListEl.replaceChildren();
@@ -2217,11 +2335,26 @@ function renderCanvas(modelKey) {
     for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
   }
   if (isBlockDiagram(circuit)) {
+    const ghostBlock = mode === 'insert' && pendingPlace?.kind === 'block'
+      ? { rect: { x: cursor.x - 80, y: cursor.y - 40, w: 160, h: 80 }, text: 'Block' }
+      : null;
     canvasEl.innerHTML = renderDocument(circuit, {
       background: true,
       grid: showGrid,
+      terminals: !!blockConnector,
       selectedBlocks,
       selectedArrows,
+      selectedLabels: new Set(selLabels),
+      resizeHandles: true,
+      ghostBlock,
+      cursor,
+      cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
+      annotationPreview: drag?.mode === 'blockannotationlineplace'
+        ? { kind: 'line', points: [...annotationPoints, drag.previewEnd || cursor] }
+        : drag?.mode === 'blockannotationplace' && (annotationStart || drag.previewEnd)
+          ? { kind: labelMode, a: annotationStart || drag.startWorld, b: drag.previewEnd || cursor }
+          : null,
+      rubber: drag?.mode === 'blockmarquee' ? drag.rubber : null,
       connectorPreview: blockConnector?.source ? {
         source: circuit.terminalPoint(blockConnector.source),
         points: orthogonalBlockRoute(circuit.terminalPoint(blockConnector.source), cursor, blockConnector.points).slice(1, -1),
@@ -4722,10 +4855,7 @@ function canvasMouseMove(ev) {
         drag.committed = true;
       }
       const delta = snappedDragDelta(drag.startWorld, w);
-      for (const [id, sa] of drag.startAnchors) {
-        const label = circuit.labels.get(id);
-        if (label) moveLabelSafely(label, sa.x + delta.dx, sa.y + delta.dy);
-      }
+      moveLabelOriginsOnce(drag.startAnchors, delta.dx, delta.dy);
       const primary = circuit.labels.get(drag.labelId);
       if (primary) {
         const a = primary.anchorWorld();
@@ -4803,10 +4933,10 @@ function canvasMouseMove(ev) {
       // Owned labels follow their component; net labels wait until their net
       // has been re-anchored below so the new attachment remains valid.
       if (drag.labelOrigins) {
-        for (const [id, o] of drag.labelOrigins) {
-          const l = circuit.labels.get(id);
-          if (l && !l.owner && !l.netId) moveLabelSafely(l, o.x + delta.dx, o.y + delta.dy);
-        }
+        moveLabelOriginsOnce(new Map([...drag.labelOrigins].filter(([id]) => {
+          const label = circuit.labels.get(id);
+          return label && !label.owner && !label.netId;
+        })), delta.dx, delta.dy);
       }
       // Restore the pre-drag wire geometry and re-anchor from it with the total
       // delta, so wires follow the component without accumulating or detaching.
@@ -5397,7 +5527,7 @@ function recordBlockHistory(before) {
 }
 
 function blockSelectionExists() {
-  return selectedBlocks.size > 0 || selectedArrows.size > 0;
+  return selectedBlocks.size > 0 || selectedArrows.size > 0 || selLabels.size > 0;
 }
 
 function deleteBlockSelection() {
@@ -5406,9 +5536,11 @@ function deleteBlockSelection() {
   commit(() => {
     for (const id of selectedArrows) if (circuit.arrows.has(id)) circuit.removeArrow(id);
     for (const id of selectedBlocks) if (circuit.blocks.has(id)) circuit.removeBlock(id);
+    for (const id of selLabels) if (circuit.labels.has(id)) circuit.removeLabel(id);
   });
   selectedBlocks.clear();
   selectedArrows.clear();
+  setLabelSelection([]);
   logLine('deleted selected block objects');
   return before !== snapshot();
 }
@@ -5420,7 +5552,103 @@ function blockBoxSelectionContents(x0, y0, x1, y1) {
   const arrows = [...circuit.arrows.values()]
     .filter((arrow) => arrow.points.length && arrow.points.every((point) => point.x >= box.x0 && point.x <= box.x1 && point.y >= box.y0 && point.y <= box.y1))
     .map((arrow) => arrow.id);
-  return { blocks, arrows };
+  const labels = [...(circuit.labels?.values?.() || [])]
+    .filter((label) => inside(label.bbox())).map((label) => label.id);
+  return { blocks, arrows, labels };
+}
+
+function blockArrowSegmentAt(world) {
+  const pane = paneSize();
+  const tolerance = Math.max(GRID / 2, 12 / (pane ? view.w / pane.w : 1));
+  let best = null; let distance = Infinity;
+  for (const arrow of circuit.arrows.values()) {
+    const points = arrow.points || [];
+    for (let segment = 1; segment < points.length; segment++) {
+      const a = points[segment - 1]; const b = points[segment];
+      const d = distToSegment(world.x, world.y, a, b);
+      if (d <= tolerance && d < distance) {
+        distance = d;
+        best = { arrow, segment, a, b };
+      }
+    }
+  }
+  return best;
+}
+
+function blockArrowRun(points, segment) {
+  const horizontal = (a, b) => a.y === b.y;
+  const isHorizontal = horizontal(points[segment - 1], points[segment]);
+  let lo = segment - 1; let hi = segment;
+  while (lo > 0 && horizontal(points[lo - 1], points[lo]) === isHorizontal) lo--;
+  while (hi < points.length - 1 && horizontal(points[hi], points[hi + 1]) === isHorizontal) hi++;
+  return { lo, hi, orient: isHorizontal ? 'h' : 'v' };
+}
+
+function blockResizeRect(rect, handle, world) {
+  const p = { x: snap(world.x), y: snap(world.y) };
+  let x0 = rect.x; let y0 = rect.y; let x1 = rect.x + rect.w; let y1 = rect.y + rect.h;
+  if (handle.includes('w')) x0 = Math.min(p.x, x1 - 2 * GRID);
+  if (handle.includes('e')) x1 = Math.max(p.x, x0 + 2 * GRID);
+  if (handle.includes('n')) y0 = Math.min(p.y, y1 - 2 * GRID);
+  if (handle.includes('s')) y1 = Math.max(p.y, y0 + 2 * GRID);
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+function blockAnnotationHit(world) {
+  return pickLabel(world) || annotationTextAt(world) || annotationGeometryAt(world);
+}
+
+function beginBlockLabelDrag(label, startWorld, startClient, additive = false) {
+  const live = new Set([...selLabels].filter((id) => circuit.labels.has(id)));
+  const ids = additive
+    ? [...new Set([...live, label.id])]
+    : [label.id];
+  if (!additive) { selectedBlocks.clear(); selectedArrows.clear(); }
+  setSelection([], undefined, true);
+  setLabelSelection(ids, label.id, true);
+  drag = {
+    mode: 'blocklabelmove', labelId: label.id, labels: new Map(ids.map((id) => {
+      const item = circuit.labels.get(id); return [id, { anchor: item.anchorWorld(), textAnchor: item.textAnchor ? { ...item.textAnchor } : null }];
+    })), startWorld, startClient, startSnapshot: snapshot(), moved: false, committed: false,
+  };
+  return true;
+}
+
+function copyBlockLabel(label, dx, dy) {
+  if (['arrow', 'box', 'line'].includes(label.kind)) {
+    const child = [...(circuit.labels?.values?.() || [])].find((item) => item.parent === label.id);
+    return circuit.addAnnotation(label.kind, {
+      x: label.anchor.x + dx, y: label.anchor.y + dy,
+      end: label.end && { x: label.end.x + dx, y: label.end.y + dy },
+      points: label.points?.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+      text: child?.text || '', style: { ...(label.style || {}) },
+    });
+  }
+  return circuit.addLabel({ text: label.text, align: label.align, x: label.anchor.x + dx, y: label.anchor.y + dy, style: { ...(label.style || {}) } });
+}
+
+function copyBlockLabels(ids, offset = { x: 0, y: 0 }) {
+  const source = new Set(ids);
+  const copies = new Map();
+  const labels = [...circuit.labels.values()]
+    .filter((label) => source.has(label.id))
+    .sort((a, b) => Number(!!a.parent) - Number(!!b.parent) || a.id.localeCompare(b.id));
+  for (const label of labels) {
+    const raw = label.toJSON();
+    raw.id = undefined;
+    raw.owner = null;
+    raw.netId = null;
+    raw.parent = copies.get(label.parent) || null;
+    raw.x = label.anchor.x + offset.x;
+    raw.y = label.anchor.y + offset.y;
+    raw.anchor = { x: label.anchor.x + offset.x, y: label.anchor.y + offset.y };
+    raw.end = label.end && { x: label.end.x + offset.x, y: label.end.y + offset.y };
+    raw.points = label.points?.map((point) => ({ x: point.x + offset.x, y: point.y + offset.y }));
+    raw.textAnchor = label.textAnchor && { x: label.textAnchor.x + offset.x, y: label.textAnchor.y + offset.y };
+    const copy = circuit.addLabel(raw);
+    copies.set(label.id, copy.id);
+  }
+  return [...copies.values()];
 }
 
 function copyBlocks(ids, offset = { x: 0, y: 0 }) {
@@ -5431,6 +5659,18 @@ function copyBlocks(ids, offset = { x: 0, y: 0 }) {
     const rect = { ...block.rect, x: block.rect.x + offset.x, y: block.rect.y + offset.y };
     const copy = circuit.addBlock({ ...block.toJSON(), id: undefined, rect });
     copies.set(id, copy.id);
+  }
+  // Preserve connectors wholly inside the copied set. They become fixed so
+  // the authored arrow shape is kept, just as a copied schematic net is.
+  for (const arrow of circuit.arrows.values()) {
+    if (arrow.detached || !source.has(arrow.from.block) || !source.has(arrow.to.block)) continue;
+    circuit.addArrow({
+      ...arrow.toJSON(), id: undefined,
+      from: { block: copies.get(arrow.from.block), terminal: arrow.from.terminal },
+      to: { block: copies.get(arrow.to.block), terminal: arrow.to.terminal },
+      routingMode: 'fixed',
+      points: arrow.points.map((point) => ({ x: point.x + offset.x, y: point.y + offset.y })),
+    });
   }
   return [...copies.values()];
 }
@@ -5467,12 +5707,14 @@ function activateBlockPlace() {
   if (!isBlockDiagram(circuit)) return;
   blockConnector = null;
   blockPlacement = true;
-  mode = 'normal';
+  mode = 'insert';
+  pendingPlace = null;
+  insertQuery = '';
   moveMode = null;
   copyMode = false;
   deleteMode = false;
   visual = null;
-  logLine('PLACE BLOCK: click to place a block; Esc cancels');
+  logLine('PLACE BLOCK: type to filter, then Enter/Tab to choose; click/Enter places the ghost; Esc cancels');
   render();
 }
 
@@ -5524,8 +5766,6 @@ function addPlacedBlock(world) {
   let block;
   commit(() => {
     block = circuit.addBlock({ text: 'Block', x: point.x - 80, y: point.y - 40, w: 160, h: 80 });
-    circuit.addTerminal(block.id, { id: 'in', side: 'left', offset: 40 });
-    circuit.addTerminal(block.id, { id: 'out', side: 'right', offset: 40 });
   });
   selectedBlocks = new Set([block.id]);
   selectedArrows.clear();
@@ -5537,6 +5777,36 @@ function addPlacedBlock(world) {
   }, 0);
 }
 
+function selectedBlockLabelOrigins() {
+  return new Map([...selLabels].map((id) => [id, circuit.labels.get(id)]).filter(([, label]) => label).map(([id, label]) => [id, {
+    anchor: { ...label.anchor },
+  }]));
+}
+
+function moveBlockLabelOrigins(origins, dx, dy) {
+  const pending = new Map(origins);
+  while (pending.size) {
+    const entry = [...pending].find(([id]) => {
+      const label = circuit.labels.get(id);
+      return !label?.parent || !pending.has(label.parent);
+    });
+    if (!entry) break;
+    const [id, origin] = entry;
+    const label = circuit.labels.get(id);
+    if (label) {
+      label.moveTo(origin.anchor.x + dx, origin.anchor.y + dy);
+      for (const [childId] of pending) {
+        let parent = circuit.labels.get(childId)?.parent;
+        while (parent) {
+          if (parent === id) { pending.delete(childId); break; }
+          parent = circuit.labels.get(parent)?.parent;
+        }
+      }
+    }
+    pending.delete(id);
+  }
+}
+
 function beginBlockDrag(w, copy, before = snapshot()) {
   const source = [...selectedBlocks];
   if (!source.length) return false;
@@ -5545,6 +5815,7 @@ function beginBlockDrag(w, copy, before = snapshot()) {
     source,
     start: w,
     origins: new Map(source.map((key) => [key, { ...circuit.getBlock(key).rect }])),
+    labels: selectedBlockLabelOrigins(),
     startSnapshot: before,
     delta: { x: 0, y: 0 },
   };
@@ -5555,6 +5826,7 @@ function selectBlockOrArrow(ev, node, arrowNode) {
   const toggle = ev.shiftKey || ev.ctrlKey || ev.metaKey;
   if (arrowNode) {
     const id = arrowNode.dataset.arrowId;
+    if (!toggle) setLabelSelection([], undefined, true);
     if (toggle) {
       if (selectedArrows.has(id)) selectedArrows.delete(id); else selectedArrows.add(id);
     } else selectedArrows = new Set([id]);
@@ -5563,6 +5835,7 @@ function selectBlockOrArrow(ev, node, arrowNode) {
   }
   if (!node) return;
   const id = node.dataset.blockId;
+  if (!toggle) setLabelSelection([], undefined, true);
   if (toggle) {
     if (selectedBlocks.has(id)) selectedBlocks.delete(id); else selectedBlocks.add(id);
   } else selectedBlocks = new Set([id]);
@@ -5601,9 +5874,38 @@ canvasEl.addEventListener('pointerdown', (ev) => {
   if (!isBlockDiagram(circuit) || ev.button !== 0) return;
   const node = ev.target.closest?.('[data-block-id]');
   const arrowNode = ev.target.closest?.('[data-arrow-id]');
+  const handle = ev.target.closest?.('[data-block-handle]');
   const w = clientToWorld(ev.clientX, ev.clientY);
-  const terminal = blockTerminalAt(w);
+  const terminal = blockConnector ? blockTerminalAt(w) : null;
+  const annotation = blockAnnotationHit(w);
+  const arrowSegment = !arrowNode || ev.target.closest?.('[data-arrow-segment]') ? blockArrowSegmentAt(w) : null;
   ev.stopPropagation();
+
+  if (mode === 'insert' && pendingPlace) {
+    cursor = { x: snap(w.x), y: snap(w.y) };
+    commit(() => placePending());
+    render();
+    return;
+  }
+  if (mode === 'insert') {
+    cursor = { x: snap(w.x), y: snap(w.y) };
+    render();
+    return;
+  }
+  if (labelMode === 'annotation') {
+    drag = { mode: 'blocklabelplace', startClient: { x: ev.clientX, y: ev.clientY }, startWorld: w, moved: false };
+    return;
+  }
+  if (labelMode === 'arrow' || labelMode === 'box') {
+    cursor = { x: snap(w.x), y: snap(w.y) };
+    drag = { mode: 'blockannotationplace', startClient: { x: ev.clientX, y: ev.clientY }, startWorld: w, moved: false, previewEnd: annotationStart ? { ...cursor } : null };
+    return;
+  }
+  if (labelMode === 'line') {
+    cursor = { x: snap(w.x), y: snap(w.y) };
+    drag = { mode: 'blockannotationlineplace', startClient: { x: ev.clientX, y: ev.clientY }, startWorld: w, moved: false, previewEnd: { ...cursor } };
+    return;
+  }
 
   if (blockPlacement) {
     addPlacedBlock(w);
@@ -5625,15 +5927,72 @@ canvasEl.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
+  if (annotation && !deleteMode && !arrowSegment) {
+    const additive = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+    if (ev.detail >= 2) {
+      if (!additive) { selectedBlocks.clear(); selectedArrows.clear(); }
+      setLabelSelection(additive ? [...new Set([...selLabels, annotation.id])] : [annotation.id], annotation.id, true);
+      setTimeout(() => inlineEditLabel(annotation), 0);
+      return;
+    }
+    if (copyMode) {
+      if (selectedBlocks.size && selLabels.has(annotation.id)) {
+        const before = snapshot();
+        if (beginBlockDrag(w, true, before)) blockDrag.labelSource = [...selLabels];
+      } else {
+        if (!additive) { selectedBlocks.clear(); selectedArrows.clear(); }
+        setLabelSelection(additive ? [...new Set([...selLabels, annotation.id])] : [annotation.id], annotation.id, true);
+        blockDrag = { mode: 'blocklabelcopy', source: annotation.id, start: w, startClient: { x: ev.clientX, y: ev.clientY }, startSnapshot: snapshot(), moved: false };
+      }
+      try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
+    } else if (moveMode && selectedBlocks.size && selLabels.has(annotation.id)) {
+      const before = snapshot();
+      if (moveMode === 'detached') circuit.detachBoundaryArrows(selectedBlocks);
+      if (beginBlockDrag(w, false, before)) {
+        blockDrag.startClient = { x: ev.clientX, y: ev.clientY };
+        try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
+      }
+    } else beginBlockLabelDrag(annotation, w, { x: ev.clientX, y: ev.clientY }, additive);
+    return;
+  }
   if (deleteMode) {
     if (arrowNode) {
       selectedArrows = new Set([arrowNode.dataset.arrowId]);
       selectedBlocks.clear();
+      setLabelSelection([], undefined, true);
     } else if (node) {
       selectedBlocks = new Set([node.dataset.blockId]);
       selectedArrows.clear();
+      setLabelSelection([], undefined, true);
+    } else if (annotation) {
+      selectedBlocks.clear(); selectedArrows.clear(); setLabelSelection([annotation.id]);
     }
     if (blockSelectionExists()) deleteBlockSelection();
+    render();
+    return;
+  }
+  if (handle) {
+    const id = handle.closest('[data-block-resize-id]')?.dataset.blockResizeId;
+    const block = id && circuit.blocks.get(id);
+    if (block) {
+      selectedBlocks = new Set([id]); selectedArrows.clear(); setLabelSelection([]);
+      blockDrag = { mode: 'blockresize', id, handle: handle.dataset.blockHandle, start: w, origin: { ...block.rect }, startSnapshot: snapshot(), moved: false };
+      try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
+      render();
+    }
+    return;
+  }
+  if (arrowSegment && !blockConnector && !copyMode && !moveMode) {
+    const { arrow, segment } = arrowSegment;
+    const additive = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+    if (additive) {
+      if (selectedArrows.has(arrow.id)) selectedArrows.delete(arrow.id); else selectedArrows.add(arrow.id);
+    } else selectedArrows = new Set([arrow.id]);
+    selectedBlocks.clear();
+    if (!additive) setLabelSelection([]);
+    const run = blockArrowRun(arrow.points, segment);
+    blockDrag = { mode: 'blockarrowsegment', id: arrow.id, segment, run, start: w, origin: arrow.points.map((p) => ({ ...p })), startSnapshot: snapshot(), moved: false };
+    try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
     render();
     return;
   }
@@ -5648,11 +6007,13 @@ canvasEl.addEventListener('pointerdown', (ev) => {
       const before = snapshot();
       for (const id of selectedArrows) circuit.detachArrow(id);
       if (beginBlockArrowMove(w, before)) {
+        blockDrag.startClient = { x: ev.clientX, y: ev.clientY };
         try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
       }
     } else if (copyMode && !selectedBlocks.size) {
       selectBlockOrArrow(ev, node, arrowNode);
       if (beginBlockArrowCopy(w)) {
+        blockDrag.startClient = { x: ev.clientX, y: ev.clientY };
         try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
       }
     } else {
@@ -5672,9 +6033,10 @@ canvasEl.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
-  if (!node && !(selectedBlocks.size && (copyMode || moveMode))) {
-    selectedBlocks.clear();
-    selectedArrows.clear();
+  if (!node && !arrowNode) {
+    const additive = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+    if (!additive) { selectedBlocks.clear(); selectedArrows.clear(); setLabelSelection([]); }
+    drag = { mode: 'blockmarquee', startWorld: w, startClient: { x: ev.clientX, y: ev.clientY }, moved: false, rubber: null, shift: additive };
     render();
     return;
   }
@@ -5683,11 +6045,13 @@ canvasEl.addEventListener('pointerdown', (ev) => {
   if (copyMode) {
     if (!selectedBlocks.size && node) selectBlockOrArrow(ev, node, null);
     if (!beginBlockDrag(w, true, before)) return;
+    if (selLabels.size) blockDrag.labelSource = [...selLabels];
+    blockDrag.startClient = { x: ev.clientX, y: ev.clientY };
   } else {
     if (node && !(selectedBlocks.size && moveMode)) selectBlockOrArrow(ev, node, null);
-    if (!moveMode) { render(); return; }
     if (moveMode === 'detached') circuit.detachBoundaryArrows(selectedBlocks);
-    blockDrag = { id, start: w, origins: new Map([...selectedBlocks].map((key) => [key, { ...circuit.getBlock(key).rect }])), startSnapshot: before };
+    if (!node || (!moveMode && !selectedBlocks.size)) { render(); return; }
+    blockDrag = { mode: 'blockmove', id, start: w, startClient: { x: ev.clientX, y: ev.clientY }, origins: new Map([...selectedBlocks].map((key) => [key, { ...circuit.getBlock(key).rect }])), labels: selectedBlockLabelOrigins(), startSnapshot: before, moved: false };
   }
   try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
   render();
@@ -5696,8 +6060,79 @@ canvasEl.addEventListener('pointermove', (ev) => {
   if (!isBlockDiagram(circuit)) return;
   const w = clientToWorld(ev.clientX, ev.clientY);
   cursor = { x: snap(w.x), y: snap(w.y) };
+  if (drag?.mode === 'pan') {
+    const p = clientToWorld(ev.clientX, ev.clientY, drag.startView);
+    view.x = drag.startView.x - (p.x - drag.startWorld.x);
+    view.y = drag.startView.y - (p.y - drag.startWorld.y);
+    scheduleInteractionRender();
+    return;
+  }
+  if (drag?.mode === 'zoom') {
+    if (dragMoved(drag.startWorld, drag.startClient, w, ev)) drag.moved = true;
+    scheduleInteractionRender();
+    return;
+  }
+  if (drag?.mode === 'blockannotationplace' || drag?.mode === 'blockannotationlineplace') {
+    if (dragMoved(drag.startWorld, drag.startClient, w, ev)) drag.moved = true;
+    drag.previewEnd = { ...cursor };
+    scheduleInteractionRender();
+    return;
+  }
+  if (drag?.mode === 'blockmarquee') {
+    if (dragMoved(drag.startWorld, drag.startClient, w, ev)) drag.moved = true;
+    if (drag.moved) drag.rubber = { ...worldRect(drag.startWorld, w), color: '#4f9cf9' };
+    scheduleInteractionRender();
+    return;
+  }
   if (blockConnector) { scheduleInteractionRender(); return; }
   if (!blockDrag) return;
+  const movedOut = dragMoved(blockDrag.start, blockDrag.startClient || { x: blockDrag.start.x, y: blockDrag.start.y }, w, ev);
+  if (blockDrag.mode === 'blockresize') {
+    if (!movedOut) return;
+    blockDrag.moved = true;
+    try { circuit.resizeBlock(blockDrag.id, blockResizeRect(blockDrag.origin, blockDrag.handle, w)); renderCanvas(); }
+    catch (err) { circuit = loadDocument(JSON.parse(blockDrag.startSnapshot)); blockDrag = null; logLine(`block resize cancelled: ${err.message}`, 'error'); render(); }
+    return;
+  }
+  if (blockDrag.mode === 'blockarrowsegment') {
+    if (!movedOut) return;
+    blockDrag.moved = true;
+    const arrow = circuit.arrows.get(blockDrag.id);
+    if (!arrow) return;
+    const points = blockDrag.origin.map((p) => ({ ...p }));
+    const delta = blockDrag.run.orient === 'h' ? snap(w.y - blockDrag.start.y) : snap(w.x - blockDrag.start.x);
+    const { lo, hi, orient } = blockDrag.run;
+    const first = lo === 0 ? lo + 1 : lo;
+    const last = hi === points.length - 1 ? hi - 1 : hi;
+    for (let i = first; i <= last; i++) {
+      if (orient === 'h') points[i].y = blockDrag.origin[i].y + delta;
+      else points[i].x = blockDrag.origin[i].x + delta;
+    }
+    try { arrow.points = points; circuit.validate(); renderCanvas(); }
+    catch (err) { arrow.points = blockDrag.origin.map((p) => ({ ...p })); logLine(`connector drag cancelled: ${err.message}`, 'error'); renderCanvas(); }
+    return;
+  }
+  if (blockDrag.mode === 'blocklabelmove') {
+    if (!movedOut) return;
+    blockDrag.moved = true;
+    const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
+    moveBlockLabelOrigins(blockDrag.labels, dx, dy);
+    renderCanvas();
+    return;
+  }
+  if (blockDrag.mode === 'blocklabelcopy') {
+    if (!movedOut) return;
+    blockDrag.moved = true;
+    const source = circuit.labels.get(blockDrag.source);
+    if (!source) return;
+    if (!blockDrag.copyId) blockDrag.copyId = copyBlockLabel(source, 0, 0).id;
+    const copy = circuit.labels.get(blockDrag.copyId);
+    const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
+    if (copy) copy.moveTo(source.anchor.x + dx, source.anchor.y + dy);
+    setLabelSelection([blockDrag.copyId]);
+    renderCanvas();
+    return;
+  }
   const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
   if (blockDrag.copy) {
     blockDrag.delta = { x: dx, y: dy };
@@ -5705,6 +6140,7 @@ canvasEl.addEventListener('pointermove', (ev) => {
     return;
   }
   try {
+    if (movedOut) blockDrag.moved = true;
     if (blockDrag.arrowSource) {
       for (const id of blockDrag.arrowSource) {
         const arrow = circuit.getArrow(id);
@@ -5713,6 +6149,7 @@ canvasEl.addEventListener('pointermove', (ev) => {
       circuit.validate();
     } else {
       for (const [id, rect] of blockDrag.origins) circuit.moveBlock(id, rect.x + dx, rect.y + dy);
+      moveBlockLabelOrigins(blockDrag.labels || [], dx, dy);
     }
     renderCanvas();
   } catch (err) {
@@ -5736,6 +6173,28 @@ function endBlockDrag(ev) {
   const before = state.startSnapshot;
   blockDrag = null;
   if (ev?.pointerId !== undefined) { try { canvasEl.releasePointerCapture(ev.pointerId); } catch {} }
+  if (state.mode === 'blockarrowsegment') {
+    try {
+      const arrow = circuit.arrows.get(state.id);
+      if (state.moved && arrow) circuit.setArrowRoute(state.id, arrow.points, 'fixed');
+    } catch (err) {
+      circuit = loadDocument(JSON.parse(before));
+      logLine(`connector drag cancelled: ${err.message}`, 'error');
+    }
+    if (state.moved) recordBlockHistory(before);
+    markModelChanged(); persistDraft(); render();
+    return;
+  }
+  if (state.mode === 'blockresize') {
+    if (state.moved) recordBlockHistory(before);
+    markModelChanged(); persistDraft(); render();
+    return;
+  }
+  if (state.mode === 'blocklabelmove') {
+    if (state.moved) recordBlockHistory(before);
+    markModelChanged(); persistDraft(); render();
+    return;
+  }
   if (state.copy) {
     try {
       if (state.arrowSource) {
@@ -5748,6 +6207,7 @@ function endBlockDrag(ev) {
       } else {
         selectedBlocks = new Set(copyBlocks(state.source, state.delta));
         selectedArrows.clear();
+        if (state.labelSource) setLabelSelection(copyBlockLabels(state.labelSource, state.delta), undefined, true);
       }
     } catch (err) {
       circuit = loadDocument(JSON.parse(before));
@@ -5768,6 +6228,56 @@ function cancelBlockDrag(ev) {
 }
 canvasEl.addEventListener('pointerup', endBlockDrag);
 canvasEl.addEventListener('pointercancel', cancelBlockDrag);
+
+function endBlockPointerInteraction(ev) {
+  if (!isBlockDiagram(circuit) || !drag) return;
+  const state = drag;
+  if (!['blocklabelplace', 'blockannotationplace', 'blockannotationlineplace', 'blocklabelmove', 'blockmarquee'].includes(state.mode)) return;
+  const w = clientToWorld(ev.clientX, ev.clientY);
+  const moved = dragMoved(state.startWorld, state.startClient, w, ev);
+  if (state.mode === 'blocklabelplace' && !moved) placeAnnotationAt(w);
+  else if (state.mode === 'blockannotationplace') {
+    if (moved && !annotationStart) annotationStart = { x: snap(state.startWorld.x), y: snap(state.startWorld.y) };
+    if (!moved || annotationStart) placeShapeAnnotation(w, moved ? { x: snap(w.x), y: snap(w.y) } : null);
+  } else if (state.mode === 'blockannotationlineplace' && !moved) {
+    const p = { x: snap(w.x), y: snap(w.y) };
+    if (!annotationPoints.length || annotationPoints.at(-1).x !== p.x || annotationPoints.at(-1).y !== p.y) annotationPoints.push(p);
+    const now = Date.now();
+    const doubleClick = ev.detail >= 2 || (lastLineClick && now - lastLineClick.at < 500 && lastLineClick.x === p.x && lastLineClick.y === p.y);
+    lastLineClick = { ...p, at: now };
+    if (doubleClick) commitLineAnnotation();
+  } else if (state.mode === 'blocklabelmove') {
+    if (state.moved && snapshot() !== state.startSnapshot) recordBlockHistory(state.startSnapshot);
+  } else if (state.mode === 'blockmarquee') {
+    if (moved) {
+      const box = worldRect(state.startWorld, w);
+      const found = blockBoxSelectionContents(box.x0, box.y0, box.x1, box.y1);
+      if (state.shift) {
+        selectedBlocks = new Set([...selectedBlocks, ...found.blocks]);
+        selectedArrows = new Set([...selectedArrows, ...found.arrows]);
+        setLabelSelection([...new Set([...selLabels, ...(found.labels || [])])], undefined, true);
+      } else {
+        selectedBlocks = new Set(found.blocks);
+        selectedArrows = new Set(found.arrows);
+        setLabelSelection(found.labels || []);
+      }
+    }
+  }
+  drag = null;
+  render();
+}
+canvasEl.addEventListener('pointerup', endBlockPointerInteraction);
+function cancelBlockPointerInteraction(ev) {
+  if (!isBlockDiagram(circuit) || !drag || !['blocklabelplace', 'blockannotationplace', 'blockannotationlineplace', 'blocklabelmove', 'blockmarquee'].includes(drag.mode)) return;
+  const state = drag;
+  drag = null;
+  if (state.mode === 'blocklabelmove') circuit = loadDocument(JSON.parse(state.startSnapshot));
+  annotationStart = null;
+  annotationPoints = [];
+  lastLineClick = null;
+  persistDraft(); render();
+}
+canvasEl.addEventListener('pointercancel', cancelBlockPointerInteraction);
 window.addEventListener('pointerup', endBlockDrag);
 window.addEventListener('pointercancel', cancelBlockDrag);
 
@@ -6402,7 +6912,7 @@ const PLACEMENT_LABELS = {
   and_gate: 'AND gate', nand_gate: 'NAND gate', or_gate: 'OR gate', nor_gate: 'NOR gate',
   xor_gate: 'XOR gate', xnor_gate: 'XNOR gate',
   variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
-  solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation',
+  solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
 };
 
 const PLACEMENT_ALIASES = {
@@ -6415,7 +6925,7 @@ const PLACEMENT_ALIASES = {
   opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
   variable_resistor: ['potentiometer', 'pot'], variable_capacitor: ['var cap'], variable_inductor: ['var coil'],
   switch_open: ['switch', 'open'], switch_closed: ['switch', 'closed'], solder: ['junction', 'dot'],
-  label: ['annotation', 'text'],
+  label: ['annotation', 'text'], block: ['block', 'rectangle', 'node'],
 };
 
 // The registry is the single source of truth for insertable components.
@@ -6479,7 +6989,9 @@ function selectInsertMatch() {
   const type = entries[0];
   pendingPlace = type === 'label'
     ? { kind: 'label' }
-    : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null };
+    : type === 'block'
+      ? { kind: 'block' }
+      : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null };
   insertQuery = '';
   return true;
 }
@@ -6563,6 +7075,7 @@ function onVisualKey(key) {
       const found = blockBoxSelectionContents(visual.x, visual.y, cursor.x, cursor.y);
       selectedBlocks = new Set(found.blocks);
       selectedArrows = new Set(found.arrows);
+      setLabelSelection(found.labels || [], undefined, true);
       visual = null;
       if (deleteMode && blockSelectionExists()) deleteBlockSelection();
     } else {
@@ -6602,10 +7115,6 @@ function onNormalKey(key, shiftKey = false) {
   }
   if (key === 'm' || key === 'M') {
     activateMove(shiftKey ? 'detached' : 'connected');
-    return;
-  }
-  if (isBlockDiagram(circuit) && (key === 'a' || key === 'b' || key === 'l' || key === 'L' || key === 'N' && shiftKey)) {
-    logLine('This tool is available only in a schematic');
     return;
   }
   if (key === 'a') {
@@ -7287,6 +7796,7 @@ function runLine(line) {
     if (isBlockDiagram(circuit)) {
       selectedBlocks = new Set([...selectedBlocks].filter((id) => circuit.blocks.has(id)));
       selectedArrows = new Set([...selectedArrows].filter((id) => circuit.arrows.has(id)));
+      setLabelSelection([...selLabels].filter((id) => circuit.labels.has(id)), undefined, true);
     } else {
       multi = new Set([...multi].filter((r) => circuit.components.has(r)));
       if (!circuit.components.has(selected)) selected = multi.size ? [...multi][0] : null;
@@ -7368,12 +7878,16 @@ function renderStatus() {
   if (isBlockDiagram(circuit)) {
     const blockCount = selectedBlocks.size;
     const connectorCount = selectedArrows.size;
+    const labelCount = selLabels.size;
     const selection = blockCount
       ? `${blockCount} block${blockCount === 1 ? '' : 's'}`
       : connectorCount
         ? `${connectorCount} connector${connectorCount === 1 ? '' : 's'}`
-        : '-';
+        : labelCount
+          ? `${labelCount} annotation${labelCount === 1 ? '' : 's'}`
+          : '-';
     const parts = [documentKindLabel(circuit), interaction.label, `sel ${selection}`, `@${cursor.x},${cursor.y}`];
+    if (mode === 'insert') parts.push(pendingPlace ? `place ${pendingPlace.kind === 'block' ? 'block' : 'label'} @ click/Enter · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type to filter · Esc exit');
     if (blockPlacement) parts.push('click to place a block · Esc cancel');
     if (blockConnector) parts.push(blockConnector.source
       ? `CONNECTOR ${blockConnector.source.block}.${blockConnector.source.terminal} → click a terminal to commit · other clicks guide · Enter cancels`
@@ -7439,11 +7953,13 @@ function insertMenuEntries() {
 }
 
 function insertMenuGroups() {
+  const availableTypes = isBlockDiagram(circuit) ? [] : INSERT_COMPONENT_TYPES;
   const groups = INSERT_CATEGORY_RULES.map(([title, rule]) => ({
     title,
-    entries: INSERT_COMPONENT_TYPES.filter((type) => rule.test(type)),
+    entries: availableTypes.filter((type) => rule.test(type)),
   }));
-  groups.push({ title: 'Annotations', entries: ['solder', 'label'] });
+  if (!isBlockDiagram(circuit)) groups.push({ title: 'Annotations', entries: ['solder', 'label'] });
+  if (isBlockDiagram(circuit)) groups.push({ title: 'Blocks', entries: ['block'] });
   if (!insertQuery) return groups.filter((group) => group.entries.length);
   for (const group of groups) {
     group.entries = group.entries
@@ -7530,6 +8046,7 @@ function activateLabelPlacement(kind) {
   pendingPlace = null;
   insertQuery = '';
   visual = null;
+  if (isBlockDiagram(circuit)) { blockPlacement = false; blockConnector = null; }
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -7547,6 +8064,7 @@ function activateLabelPlacement(kind) {
 }
 
 function activateNetLabel() {
+  if (isBlockDiagram(circuit)) { logLine('net labels are unavailable in block diagrams'); return; }
   activateLabelPlacement('net');
 }
 
@@ -7741,6 +8259,20 @@ function activateCopy() {
 function selectedTransform(action) {
   clearDiagnosticFocus();
   if (hasWireDraft()) { logLine('finish or cancel the active wire before transforming'); return; }
+  if (isBlockDiagram(circuit)) {
+    if (!selectedBlocks.size) { logLine('select a block to rotate or mirror'); return; }
+    if (action === 'rotate') {
+      const before = snapshot();
+      for (const id of selectedBlocks) {
+        const block = circuit.getBlock(id); const { x, y, w, h } = block.rect;
+        circuit.resizeBlock(id, { x: x + (w - h) / 2, y: y + (h - w) / 2, w: h, h: w });
+      }
+      recordBlockHistory(before);
+      markModelChanged(); persistDraft();
+    } else logLine('mirroring block rectangles has no visual effect');
+    render();
+    return;
+  }
   if (!selectedComps().length && !selectedLabels().length && !selectedWires.size && !selectedWire && !selectedNets.size) {
     logLine('nothing selected to transform');
     return;
@@ -8212,12 +8744,29 @@ window.addEventListener('keydown', (ev) => {
       return;
     }
     if (ev.key === 'Escape') {
+      if (mode === 'insert' && pendingPlace) {
+        pendingPlace = null;
+        insertQuery = '';
+        render();
+        ev.preventDefault();
+        return;
+      }
       if (blockDrag && !blockDrag.copy) circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
+      if (drag?.mode?.startsWith('block')) {
+        if (drag.startSnapshot) circuit = loadDocument(JSON.parse(drag.startSnapshot));
+        drag = null;
+      }
       selectedBlocks.clear();
       selectedArrows.clear();
+      setLabelSelection([]);
       blockDrag = null;
       blockPlacement = false;
       blockConnector = null;
+      pendingPlace = null;
+      mode = 'normal';
+      labelMode = null;
+      annotationStart = null;
+      annotationPoints = [];
       moveMode = null;
       copyMode = false;
       movePending = false;
@@ -8233,12 +8782,12 @@ window.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       return;
     }
-    if ((ev.key === 'Delete' || ev.key === 'Backspace') && blockSelectionExists()) {
+    if (mode !== 'insert' && (ev.key === 'Delete' || ev.key === 'Backspace') && blockSelectionExists()) {
       deleteBlockSelection();
       ev.preventDefault();
       return;
     }
-    if (!blockDrag && selectedBlocks.size && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(ev.key)) {
+    if (mode !== 'insert' && !blockDrag && (selectedBlocks.size || selLabels.size) && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(ev.key)) {
       const dx = ev.key === 'ArrowLeft' ? -GRID : ev.key === 'ArrowRight' ? GRID : 0;
       const dy = ev.key === 'ArrowUp' ? -GRID : ev.key === 'ArrowDown' ? GRID : 0;
       const before = snapshot();
@@ -8246,29 +8795,35 @@ window.addEventListener('keydown', (ev) => {
         const block = circuit.getBlock(id);
         circuit.moveBlock(id, block.rect.x + dx, block.rect.y + dy);
       }
+      moveBlockLabelOrigins(new Map(selectedLabels().map((label) => [label.id, { anchor: { ...label.anchor } }])), dx, dy);
       recordBlockHistory(before);
       markModelChanged();
       persistDraft(); render(); ev.preventDefault(); return;
     }
-    if (blockDrag?.copy && ev.key === 'Enter') {
+    if (mode !== 'insert' && blockDrag?.copy && ev.key === 'Enter') {
       blockDrag.delta = { x: snap(cursor.x - blockDrag.start.x), y: snap(cursor.y - blockDrag.start.y) };
       endBlockDrag();
       ev.preventDefault(); return;
     }
-    if (selectedBlocks.size && (ev.key === 'F2' || ev.key === 'Enter')) {
+    if (mode !== 'insert' && ev.key === 'Enter' && labelMode === 'line' && annotationPoints.length >= 2) {
+      commitLineAnnotation();
+      ev.preventDefault();
+      return;
+    }
+    if (mode !== 'insert' && selectedBlocks.size && (ev.key === 'F2' || ev.key === 'Enter')) {
       inlineEditBlock(circuit.getBlock([...selectedBlocks][0]));
       ev.preventDefault(); return;
     }
-    if (blockPlacement && ev.key === 'Enter') {
+    if (blockPlacement && mode !== 'insert' && ev.key === 'Enter') {
       addPlacedBlock(cursor);
       ev.preventDefault(); return;
     }
-    if (blockConnector && ev.key === 'Enter') {
+    if (mode !== 'insert' && blockConnector && ev.key === 'Enter') {
       logLine('CONNECTOR: choose a target terminal before committing');
       ev.preventDefault();
       return;
     }
-    if (ev.key === 'Enter') {
+    if (mode !== 'insert' && ev.key === 'Enter') {
       ev.preventDefault();
       return;
     }
@@ -8294,6 +8849,7 @@ window.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       selectedBlocks = new Set(circuit.blocks.keys());
       selectedArrows = new Set(circuit.arrows.keys());
+      setLabelSelection([...circuit.labels.keys()], undefined, true);
       render();
     } else if (isBlockDiagram(circuit) && k === 'c') {
       ev.preventDefault();
@@ -8458,6 +9014,7 @@ window.__circuit = () => isBlockDiagram(circuit)
       kind: 'block',
       blocks: [...circuit.blocks.values()].map((block) => ({ id: block.id, text: block.text, rect: { ...block.rect }, terminals: [...block.terminals.values()].map((terminal) => terminal.toJSON()) })),
       arrows: [...circuit.arrows.values()].map((arrow) => arrow.toJSON()),
+      labels: [...circuit.labels.values()].map((label) => ({ ...label.toJSON(), world: label.anchorWorld() })),
     }
   : {
       kind: 'circuit',

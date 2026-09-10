@@ -474,6 +474,24 @@ button:disabled {
 .canvas svg .block-connector.selected polygon {
   fill: var(--accent) !important;
 }
+.canvas svg .block-connector path:hover,
+.canvas svg .block-connector:hover path {
+  stroke: var(--accent) !important;
+  stroke-width: 9px !important;
+}
+.canvas svg .block-annotation.selected,
+.canvas svg .block-arrow.selected path { stroke: var(--accent) !important; stroke-width: 7px !important; }
+.canvas svg .block-arrow.selected polygon { fill: var(--accent) !important; }
+.canvas svg .block-label.selected { fill: var(--accent) !important; }
+.canvas svg .block-resize-handles rect { cursor: nwse-resize; pointer-events: all; }
+.canvas svg .block-resize-handles rect[data-block-handle="n"],
+.canvas svg .block-resize-handles rect[data-block-handle="s"] { cursor: ns-resize; }
+.canvas svg .block-resize-handles rect[data-block-handle="e"],
+.canvas svg .block-resize-handles rect[data-block-handle="w"] { cursor: ew-resize; }
+.canvas svg .block-resize-handles rect[data-block-handle="ne"],
+.canvas svg .block-resize-handles rect[data-block-handle="sw"] { cursor: nesw-resize; }
+.canvas svg .block-resize-handles rect[data-block-handle="nw"],
+.canvas svg .block-resize-handles rect[data-block-handle="se"] { cursor: nwse-resize; }
 
 .block-info {
   color: var(--text-dim);

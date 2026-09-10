@@ -37,6 +37,18 @@ test('selected blocks and connectors expose isolated editor hit targets', () => 
   assert.doesNotMatch(svg, /<g data-block-id="B2"><rect class="block-node selected"/);
 });
 
+test('block editor rendering gates terminals and exposes resize/annotation hit targets', () => {
+  const d = new BlockDiagram();
+  d.addBlock({ id: 'B1', text: 'One', rect: { x: 0, y: 0, w: 160, h: 80 } });
+  d.addLabel({ id: 'L1', text: 'note', x: 240, y: 0 });
+  const hidden = renderDocument(d, { terminals: false, selectedBlocks: new Set(['B1']), selectedLabels: new Set(['L1']) });
+  assert.doesNotMatch(hidden, /data-block-terminal=/);
+  assert.match(hidden, /data-block-handle="se"/);
+  assert.match(hidden, /data-label-id="L1"/);
+  const shown = renderDocument(d, { terminals: true });
+  assert.match(shown, /data-block-terminal="B1\.T1"/);
+});
+
 test('block commands create and edit only block-domain objects', () => {
   const d = createDocument('block');
   assert.equal(documentKindLabel(d), 'Block diagram');

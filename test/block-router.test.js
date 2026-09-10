@@ -5,10 +5,8 @@ import { BLOCK_ARROWHEAD_HALF_WIDTH, BLOCK_ARROWHEAD_LENGTH, blockArrowGeometry,
 
 function diagramWithTerminals(sourceSide, targetSide, source = { x: 0, y: 0 }, target = { x: 480, y: 0 }) {
   const diagram = new BlockDiagram();
-  diagram.addBlock({ id: 'S', rect: { ...source, w: 160, h: 160 } });
-  diagram.addBlock({ id: 'T', rect: { ...target, w: 160, h: 160 } });
-  diagram.addTerminal('S', { id: 'out', side: sourceSide, offset: 80 });
-  diagram.addTerminal('T', { id: 'in', side: targetSide, offset: 80 });
+  diagram.addBlock({ id: 'S', rect: { ...source, w: 160, h: 160 }, terminals: [{ id: 'out', side: sourceSide, offset: 80 }] });
+  diagram.addBlock({ id: 'T', rect: { ...target, w: 160, h: 160 }, terminals: [{ id: 'in', side: targetSide, offset: 80 }] });
   return diagram;
 }
 

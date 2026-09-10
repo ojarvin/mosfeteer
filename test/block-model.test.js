@@ -32,13 +32,34 @@ test('block labels are centered and text edits preserve the center', () => {
   assert.deepEqual(blockLabelPosition(block.rect), center);
 });
 
+test('new blocks expose non-corner generic terminals and preserve them across resize', () => {
+  const diagram = new BlockDiagram();
+  const block = diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 80 } });
+  assert.equal(block.terminals.size, 4);
+  assert.deepEqual(block.getTerminal('T1').toJSON(), { id: 'T1', side: 'top', offset: 40, generated: true });
+  diagram.resizeBlock('B1', { w: 240, h: 120 });
+  assert.deepEqual(block.getTerminal('T1').toJSON(), { id: 'T1', side: 'top', offset: 40, generated: true });
+  assert.equal(block.terminals.has('T5'), true);
+});
+
+test('generated terminals reject undersized resizes without collisions or loss', () => {
+  const diagram = new BlockDiagram();
+  const block = diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 200, h: 80 } });
+  assert.equal([...block.terminals.values()].filter((terminal) => terminal.side === 'top').length, 3);
+  assert.throws(() => diagram.resizeBlock('B1', 80, 80), /too small/);
+  assert.deepEqual(block.rect, { x: 0, y: 0, w: 200, h: 80 });
+  const points = [...block.terminals.values()].map((terminal) => `${terminal.side}:${terminal.offset}`);
+  assert.equal(new Set(points).size, points.length);
+});
+
 test('perimeter terminals retain side and offset while block moves', () => {
   const diagram = new BlockDiagram();
-  diagram.addBlock({ id: 'B1', rect: { x: 80, y: 120, w: 160, h: 120 } });
-  diagram.addTerminal('B1', { id: 'top', side: 'top', offset: 40 });
-  diagram.addTerminal('B1', { id: 'right', side: 'right', offset: 80 });
-  diagram.addTerminal('B1', { id: 'bottom', side: 'bottom', offset: 120 });
-  diagram.addTerminal('B1', { id: 'left', side: 'left', offset: 0 });
+  diagram.addBlock({ id: 'B1', rect: { x: 80, y: 120, w: 160, h: 120 }, terminals: [
+    { id: 'top', side: 'top', offset: 40 },
+    { id: 'right', side: 'right', offset: 80 },
+    { id: 'bottom', side: 'bottom', offset: 120 },
+    { id: 'left', side: 'left', offset: 0 },
+  ] });
   assert.deepEqual(diagram.terminalPoint('B1.top'), { x: 120, y: 120 });
   assert.deepEqual(diagram.terminalPoint('B1.right'), { x: 240, y: 200 });
   assert.deepEqual(diagram.terminalPoint('B1.bottom'), { x: 200, y: 240 });
@@ -50,10 +71,19 @@ test('perimeter terminals retain side and offset while block moves', () => {
 
 test('resize clamps terminal offsets without changing terminal identity', () => {
   const diagram = new BlockDiagram();
-  diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 240, h: 160 } });
-  diagram.addTerminal('B1', { id: 'in', side: 'left', offset: 160 });
+  diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 240, h: 160 }, terminals: [{ id: 'in', side: 'left', offset: 160 }] });
   diagram.resizeBlock('B1', 160, 80);
   assert.deepEqual(diagram.getTerminal('B1.in').toJSON(), { id: 'in', side: 'left', offset: 80 });
+});
+
+test('resize rejects clamped terminal collisions atomically', () => {
+  const diagram = new BlockDiagram();
+  const block = diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 240, h: 160 }, terminals: [
+    { id: 'top', side: 'top', offset: 160 },
+    { id: 'right', side: 'right', offset: 0 },
+  ] });
+  assert.throws(() => diagram.resizeBlock('B1', 80, 80), /coincident terminal/);
+  assert.deepEqual(block.rect, { x: 0, y: 0, w: 240, h: 160 });
 });
 
 test('invalid terminal moves leave the terminal unchanged', () => {
@@ -62,6 +92,31 @@ test('invalid terminal moves leave the terminal unchanged', () => {
   diagram.addTerminal('B1', { id: 'out', side: 'right', offset: 40 });
   assert.throws(() => diagram.moveTerminal('B1.out', 'top', 999), /between 0 and 160/);
   assert.deepEqual(diagram.getTerminal('B1.out').toJSON(), { id: 'out', side: 'right', offset: 40 });
+});
+
+test('terminal additions and moves reject generated terminal collisions', () => {
+  const diagram = new BlockDiagram();
+  const block = diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 80 } });
+  assert.throws(() => diagram.addTerminal('B1', { id: 'explicit', side: 'top', offset: 40 }), /already occupied/);
+  diagram.addTerminal('B1', { id: 'explicit', side: 'right', offset: 40 });
+  assert.throws(() => diagram.moveTerminal('B1.explicit', 'top', 40), /already occupied/);
+  assert.deepEqual(block.getTerminal('explicit').toJSON(), { id: 'explicit', side: 'right', offset: 40 });
+  diagram.addBlock({ id: 'B2', rect: { x: 400, y: 0, w: 160, h: 80 }, terminals: [{ id: 'top', side: 'top', offset: 0 }] });
+  assert.throws(() => diagram.addTerminal('B2', { id: 'left', side: 'left', offset: 0 }), /already occupied/);
+});
+
+test('annotation rename updates visible child text', () => {
+  const diagram = new BlockDiagram();
+  diagram.addAnnotation('box', { id: 'A1', text: 'Old', x: 0, y: 0, end: { x: 80, y: 80 } });
+  runCommand(diagram, 'annotation rename A1 New');
+  assert.equal([...diagram.labels.values()].find((label) => label.parent === 'A1').text, 'New');
+});
+
+test('line annotation commands create two-point lines', () => {
+  const diagram = new BlockDiagram();
+  runCommand(diagram, 'annotation add line L1 note 0 0 80 0');
+  const line = diagram.labels.get('L1');
+  assert.deepEqual(line.points, [{ x: 0, y: 0 }, { x: 80, y: 0 }]);
 });
 
 test('arrow identity is terminal-based and block deletion cascades incident arrows', () => {
