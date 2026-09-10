@@ -3,12 +3,14 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createNativeStorage, validCircuitName } from './storage.js';
+import { startDevHotReload } from './hot-reload.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const INDEX = join(ROOT, 'src', 'web', 'index.html');
 const PRELOAD = fileURLToPath(new URL('./preload.cjs', import.meta.url));
 let mainWindow;
 let storage;
+let stopHotReload;
 
 function trusted(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('untrusted renderer');
@@ -66,7 +68,23 @@ async function createWindow() {
     console.log('SCHEMATIC_SPAWNER_READY');
     setTimeout(() => app.quit(), 50);
   }
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    stopHotReload?.();
+    stopHotReload = null;
+    mainWindow = null;
+  });
+  if (!app.isPackaged && process.env.SCHEMATIC_SPAWNER_HOT_RELOAD === '1') {
+    // Reloading keeps the renderer's localStorage draft, which is its crash-safe
+    // unsaved-work boundary; never enable this path for packaged applications.
+    stopHotReload = startDevHotReload({
+      directories: [
+        join(ROOT, 'src', 'web'),
+        join(ROOT, 'src', 'desktop'),
+        join(ROOT, 'src', 'core'),
+      ],
+      reload: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload(); },
+    });
+  }
 }
 
 app.whenReady().then(async () => {
