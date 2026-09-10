@@ -153,6 +153,8 @@ function clearDiagnosticFocus() {
 let pendingPlace = null; // insert-mode ghost: { kind:'component', type, rotation, mirrorX, mirrorY } | { kind:'label' }
 let selected = null; // primary refdes
 let multi = new Set(); // all selected component refdes (always includes selected)
+let selectedBlocks = new Set();
+let blockDrag = null;
 let selLabel = null; // primary id of the selected label object (exclusive with component selection)
 let selLabels = new Set(); // all selected label ids (always includes selLabel if any)
 let selectedNets = new Set(); // ids of highlighted nets
@@ -318,7 +320,7 @@ function logCommand(line) {
 
 function markModelChanged(wires = true) {
   modelRevision += 1;
-  circuit.invalidateRoutingCache();
+  if (!isBlockDiagram(circuit)) circuit.invalidateRoutingCache();
   if (wires) wiresDirty = true;
   persistDraft();
 }
@@ -682,6 +684,8 @@ function applyJson(blob) {
   // stale branch indices, labels, or net highlights across load/undo/redo.
   selected = null;
   multi.clear();
+  selectedBlocks.clear();
+  blockDrag = null;
   selLabel = null;
   selLabels.clear();
   selectedWire = null;
@@ -2033,7 +2037,7 @@ function render() {
     detailEl.replaceChildren();
     checkSummaryBodyEl.replaceChildren();
     renderSaveState();
-    statusEl.textContent = 'BLOCK DIAGRAM (read-only editor view)';
+    statusEl.textContent = 'BLOCK DIAGRAM';
     return;
   }
   // A context menu is independent of canvas repainting. Closing it here made
@@ -2115,7 +2119,11 @@ function renderCanvas(modelKey) {
     for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
   }
   if (isBlockDiagram(circuit)) {
-    canvasEl.innerHTML = renderDocument(circuit, { background: true, viewport: { x: view.x, y: view.y, w: view.w, h: view.h } });
+    canvasEl.innerHTML = renderDocument(circuit, {
+      background: true,
+      selectedBlocks,
+      viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
+    });
     return;
   }
   const editingLabelId = inlineInput?.dataset.labelId || '';
@@ -3383,6 +3391,7 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
 }
 
 function canvasMouseDown(ev) {
+  if (isBlockDiagram(circuit)) return;
   if (document.activeElement === cmdInput) cmdInput.blur();
   const b = ev.button;
   const startWorld = clientToWorld(ev.clientX, ev.clientY);
@@ -5285,6 +5294,182 @@ window.addEventListener('keydown', (ev) => {
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
 
+// Block documents use a deliberately separate, small interaction path. They
+// never enter the electrical picker/drag state above.
+function recordBlockHistory(before) {
+  if (before === snapshot()) return;
+  history.push(before);
+  if (history.length > 200) history.shift();
+  future.length = 0;
+}
+
+function copyBlocks(ids, offset = { x: 0, y: 0 }) {
+  const source = new Set(ids);
+  const arrows = [...circuit.arrows.values()].filter((arrow) => source.has(arrow.from.block) && source.has(arrow.to.block));
+  const copies = new Map();
+  for (const id of source) {
+    const block = circuit.getBlock(id);
+    const rect = { ...block.rect, x: block.rect.x + offset.x, y: block.rect.y + offset.y };
+    const copy = circuit.addBlock({ ...block.toJSON(), id: undefined, rect });
+    copies.set(id, copy.id);
+  }
+  for (const arrow of arrows) {
+    const points = arrow.points.map((point) => ({ x: point.x + offset.x, y: point.y + offset.y }));
+    circuit.addArrow({
+      ...arrow.toJSON(),
+      id: undefined,
+      from: { block: copies.get(arrow.from.block), terminal: arrow.from.terminal },
+      to: { block: copies.get(arrow.to.block), terminal: arrow.to.terminal },
+      points,
+    });
+  }
+  return [...copies.values()];
+}
+
+canvasEl.addEventListener('pointerdown', (ev) => {
+  if (!isBlockDiagram(circuit) || ev.button !== 0) return;
+  const node = ev.target.closest?.('[data-block-id]');
+  const w = clientToWorld(ev.clientX, ev.clientY);
+  if (blockDrag?.copy) {
+    blockDrag.delta = { x: snap(w.x - blockDrag.start.x), y: snap(w.y - blockDrag.start.y) };
+    endBlockDrag(ev);
+    ev.stopPropagation();
+    return;
+  }
+  if (!node && !(selectedBlocks.size && (copyMode || moveMode))) return;
+  ev.stopPropagation();
+  const id = node?.dataset.blockId;
+  const before = snapshot();
+  if (copyMode) {
+    const source = selectedBlocks.size ? [...selectedBlocks] : [id];
+    blockDrag = {
+      copy: true,
+      source,
+      start: w,
+      origins: new Map(source.map((key) => [key, { ...circuit.getBlock(key).rect }])),
+      startSnapshot: before,
+      delta: { x: 0, y: 0 },
+    };
+  } else {
+    if (node && !(selectedBlocks.size && moveMode)) {
+      if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+        if (selectedBlocks.has(id)) selectedBlocks.delete(id); else selectedBlocks.add(id);
+      } else selectedBlocks = new Set([id]);
+    }
+    if (!moveMode) { render(); return; }
+    blockDrag = { id, start: w, origins: new Map([...selectedBlocks].map((key) => [key, { ...circuit.getBlock(key).rect }])), startSnapshot: before };
+  }
+  try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
+  render();
+});
+canvasEl.addEventListener('pointermove', (ev) => {
+  if (!blockDrag || !isBlockDiagram(circuit)) return;
+  const w = clientToWorld(ev.clientX, ev.clientY);
+  const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
+  if (blockDrag.copy) {
+    blockDrag.delta = { x: dx, y: dy };
+    renderCanvas();
+    return;
+  }
+  try {
+    for (const [id, rect] of blockDrag.origins) circuit.moveBlock(id, rect.x + dx, rect.y + dy);
+    renderCanvas();
+  } catch (err) {
+    circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
+    blockDrag = null;
+    selectedBlocks.clear();
+    logLine(`block move cancelled: ${err.message}`, 'error');
+    persistDraft();
+    render();
+  }
+});
+function endBlockDrag(ev) {
+  if (!blockDrag) return;
+  const state = blockDrag;
+  if (state.copy && !state.delta.x && !state.delta.y && ev?.type === 'pointerup') {
+    if (ev.pointerId !== undefined) {
+      try { canvasEl.releasePointerCapture(ev.pointerId); } catch {}
+    }
+    render();
+    return;
+  }
+  const before = state.startSnapshot;
+  blockDrag = null;
+  if (ev?.pointerId !== undefined) {
+    try { canvasEl.releasePointerCapture(ev.pointerId); } catch {}
+  }
+  if (state.copy) {
+    try {
+      selectedBlocks = new Set(copyBlocks(state.source, state.delta));
+    } catch (err) {
+      circuit = loadDocument(JSON.parse(before));
+      logLine(`block copy cancelled: ${err.message}`, 'error');
+    }
+  }
+  recordBlockHistory(before);
+  persistDraft(); render();
+}
+function cancelBlockDrag(ev) {
+  if (!blockDrag) return;
+  const state = blockDrag;
+  blockDrag = null;
+  if (ev?.pointerId !== undefined) {
+    try { canvasEl.releasePointerCapture(ev.pointerId); } catch {}
+  }
+  if (!state.copy) circuit = loadDocument(JSON.parse(state.startSnapshot));
+  persistDraft(); render();
+}
+canvasEl.addEventListener('pointerup', endBlockDrag);
+canvasEl.addEventListener('pointercancel', cancelBlockDrag);
+window.addEventListener('pointerup', endBlockDrag);
+window.addEventListener('pointercancel', cancelBlockDrag);
+
+function inlineEditBlock(block) {
+  if (!block || inlineInput) return;
+  const pane = document.querySelector('.canvas-pane');
+  const r = pane.getBoundingClientRect();
+  const box = block.rect;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = block.text;
+  input.spellcheck = false;
+  input.className = 'label-inline-editor block-inline-editor';
+  input.style.position = 'absolute';
+  input.style.zIndex = '30';
+  input.style.left = `${r.left + ((box.x - view.x) / view.w) * r.width}px`;
+  input.style.top = `${r.top + ((box.y - view.y) / view.h) * r.height}px`;
+  input.style.width = `${(box.w / view.w) * r.width}px`;
+  input.style.height = `${(box.h / view.h) * r.height}px`;
+  input.style.textAlign = 'center';
+  inlineInput = input;
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+  let closed = false;
+  const done = (apply) => {
+    if (closed) return;
+    closed = true;
+    inlineInput = null;
+    const text = input.value.trim();
+    input.remove();
+    if (apply && text && text !== block.text) {
+      try {
+        const before = snapshot();
+        circuit.renameBlock(block.id, text);
+        recordBlockHistory(before);
+        persistDraft();
+      }
+      catch (err) { logLine(`block edit cancelled: ${err.message}`, 'error'); }
+    }
+    render();
+  };
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); done(true); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done(false); }
+  });
+  input.addEventListener('blur', () => done(true));
+}
+
 // Double-click a label to edit its text inline.
 canvasEl.addEventListener('dblclick', (ev) => {
   const w = clientToWorld(ev.clientX, ev.clientY);
@@ -5502,11 +5687,17 @@ function renderComponents() {
       }
       if (ev.shiftKey) {
         const refs = rangeValues(comps, componentRangeAnchor, comp.refdes, (item) => item.refdes);
-        setSelection(refs.length ? refs : [comp.refdes], comp.refdes);
+        const next = ev.ctrlKey || ev.metaKey ? new Set(multi) : new Set();
+        for (const refdes of (refs.length ? refs : [comp.refdes])) next.add(refdes);
+        setSelection([...next], comp.refdes);
+      } else if (ev.ctrlKey || ev.metaKey) {
+        const next = new Set(multi);
+        if (next.has(comp.refdes)) next.delete(comp.refdes); else next.add(comp.refdes);
+        setSelection([...next], next.has(comp.refdes) ? comp.refdes : [...next][0]);
       } else {
         setSelection([comp.refdes]);
       }
-      componentRangeAnchor = comp.refdes;
+      if (!ev.shiftKey) componentRangeAnchor = comp.refdes;
       netRangeAnchor = null;
       render();
     });
@@ -5572,12 +5763,18 @@ function renderNets() {
       }
       if (ev.shiftKey) {
         const ids = rangeValues(visibleNets(), netRangeAnchor, net.id, (item) => item.id);
-        selectedNets = new Set(ids.length ? ids : [net.id]);
+        const next = ev.ctrlKey || ev.metaKey ? new Set(selectedNets) : new Set();
+        for (const id of (ids.length ? ids : [net.id])) next.add(id);
+        selectedNets = next;
+      } else if (ev.ctrlKey || ev.metaKey) {
+        const next = new Set(selectedNets);
+        if (next.has(net.id)) next.delete(net.id); else next.add(net.id);
+        selectedNets = next;
       } else {
         selectedNets = new Set([net.id]);
       }
       componentRangeAnchor = null;
-      netRangeAnchor = net.id;
+      if (!ev.shiftKey) netRangeAnchor = net.id;
       const pt = net.points()[Math.floor(net.points().length / 2)];
       if (pt) cursor = { x: pt.x, y: pt.y };
       render();
@@ -7551,6 +7748,43 @@ window.addEventListener('keydown', (ev) => {
   }
 
   const tag = (ev.target && ev.target.tagName) || '';
+  if (isBlockDiagram(circuit) && !inlineInput) {
+    if (ev.key === 'Escape') {
+      if (blockDrag && !blockDrag.copy) circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
+      selectedBlocks.clear();
+      blockDrag = null;
+      moveMode = null;
+      copyMode = false;
+      movePending = false;
+      copyPending = false;
+      render();
+      ev.preventDefault();
+      return;
+    }
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && selectedBlocks.size) {
+      const before = snapshot();
+      for (const id of selectedBlocks) circuit.removeBlock(id);
+      recordBlockHistory(before);
+      selectedBlocks.clear(); persistDraft(); render(); ev.preventDefault(); return;
+    }
+    if (!blockDrag && selectedBlocks.size && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(ev.key)) {
+      const before = snapshot();
+      const dx = ev.key === 'ArrowLeft' ? -GRID : ev.key === 'ArrowRight' ? GRID : 0;
+      const dy = ev.key === 'ArrowUp' ? -GRID : ev.key === 'ArrowDown' ? GRID : 0;
+      for (const id of selectedBlocks) { const b = circuit.getBlock(id); b.rect.x += dx; b.rect.y += dy; }
+      recordBlockHistory(before);
+      persistDraft(); render(); ev.preventDefault(); return;
+    }
+    if (blockDrag?.copy && ev.key === 'Enter') {
+      blockDrag.delta = { x: snap(cursor.x - blockDrag.start.x), y: snap(cursor.y - blockDrag.start.y) };
+      endBlockDrag();
+      ev.preventDefault(); return;
+    }
+    if (selectedBlocks.size && (ev.key === 'F2' || ev.key === 'Enter')) {
+      inlineEditBlock(circuit.getBlock([...selectedBlocks][0]));
+      ev.preventDefault(); return;
+    }
+  }
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
     if (ev.target === cmdInput && ev.key === 'Escape') {
       cmdInput.value = '';

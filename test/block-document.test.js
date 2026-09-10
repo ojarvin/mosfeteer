@@ -26,6 +26,13 @@ test('document dispatch round-trips and renders block styles', () => {
   assert.match(svg, /stroke-dasharray="2 8"/);
 });
 
+test('selected blocks wrap their complete clickable subtree', () => {
+  const svg = renderDocument(diagram(), { selectedBlocks: new Set(['B1']) });
+  assert.match(svg, /<g data-block-id="B1"><rect class="block-node selected"/);
+  assert.match(svg, /<text[^>]*>In<\/text><\/g>/);
+  assert.doesNotMatch(svg, /<g data-block-id="B2"><rect class="block-node selected"/);
+});
+
 test('block commands list entries on separate lines', () => {
   const d = new BlockDiagram();
   runCommand(d, 'add-block B1 One 0 0 160 80');

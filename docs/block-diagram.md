@@ -79,5 +79,9 @@ path, and SVG export all use this boundary, so block data never passes through
 `list`, `state`, `bounds`, `add-block`, `add-arrow`, `svg`/`export`, and `save`.
 Electrical verbs remain isolated from `BlockDiagram`. The existing
 `/api/circuits/<name>` transport and `circuit.json`/`circuit.svg` filenames are
-shared by both document kinds. The browser loads and renders block documents
-in a read-only view; editing interactions remain electrical-circuit only.
+shared by both document kinds. The browser loads, renders, and edits block
+documents in a separate interaction path from electrical circuits. Click blocks to select them (Shift/Ctrl-click
+adds or toggles selection), then use Move, Copy, or Shift+M; arrow keys nudge
+selected blocks, Delete removes them, and Enter/F2 or double-click edits block
+text inline. Moving and copying a connected block set preserves its internal
+arrows. Block selection and editing never invoke electrical pickers or routing.

@@ -444,6 +444,11 @@ button:disabled {
   touch-action: none;
 }
 
+.canvas svg .block-node.selected {
+  stroke: var(--accent) !important;
+  stroke-width: 6px !important;
+}
+
 /* Placement/move target: intentionally lighter than selection and wire
    overlays, while still using the editor's established blue accent. */
 .editor-cursor-crosshair {
