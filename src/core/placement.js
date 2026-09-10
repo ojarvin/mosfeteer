@@ -33,6 +33,10 @@ function componentGeometry(component, transform) {
 
 function groupsFor(spec) {
   const byId = new Map(spec.components.map((c) => [c.id, c]));
+  const gateNetByComponent = new Map();
+  for (const net of spec.nets) for (const terminal of net.terminals) {
+    if (terminal.terminal === 'g') gateNetByComponent.set(terminal.component, net.id);
+  }
   const groups = [];
   const used = new Set();
   const add = (members, source, symmetric = true) => {
@@ -54,7 +58,7 @@ function groupsFor(spec) {
   for (const net of spec.nets) {
     const members = net.terminals.filter((t) => t.terminal === 's' && byId.get(t.component) && isMos(byId.get(t.component).type)).map((t) => t.component);
     if (members.length < 2) continue;
-    const gateNets = new Set(members.map((id) => spec.nets.find((candidate) => candidate.terminals.some((t) => t.component === id && t.terminal === 'g'))?.id));
+    const gateNets = new Set(members.map((id) => gateNetByComponent.get(id)));
     if (gateNets.size === members.length) add(members.slice(0, 2), `net:${net.id}.s`);
   }
   return groups;
@@ -119,15 +123,15 @@ function isHardCorridor(c) {
   return c?.hard === true || c?.critical === true || c?.kind === 'critical' || c?.kind === 'feedback';
 }
 
-function netForPort(spec, port) {
-  return spec.nets.find((net) => net.id === port.net);
+function netForPort(netById, port) {
+  return netById.get(port.net);
 }
 
-function portPlacement(spec, port, components, bounds, indexBySide) {
+function portPlacement(spec, port, components, bounds, indexBySide, netById) {
   const type = port.type || 'input';
   const right = type === 'output';
   const x = right ? bounds.x + bounds.w + 320 : bounds.x - 320;
-  const net = netForPort(spec, port);
+  const net = netForPort(netById, port);
   const ys = (net?.terminals || []).flatMap((t) => components.get(t.component)?.terminals.filter((p) => p.name === t.terminal).map((p) => p.y) || []);
   const baseY = ys.length ? Math.round(ys.reduce((a, b) => a + b, 0) / ys.length / GRID) * GRID : 0;
   const slot = indexBySide[right ? 'right' : 'left']++;
@@ -138,6 +142,9 @@ function portPlacement(spec, port, components, bounds, indexBySide) {
 
 function buildCandidate(spec, variant) {
   const components = new Map(spec.components.map((c) => [c.id, c]));
+  const netById = new Map(spec.nets.map((net) => [net.id, net]));
+  const columnByMember = new Map();
+  for (const column of spec.constraints.columns || []) for (const member of column.members || []) columnByMember.set(member, column);
   const groups = groupsFor(spec);
   const stacks = stackGroups(spec);
   const inStack = new Set(stacks.flatMap((g) => g.members));
@@ -174,7 +181,7 @@ function buildCandidate(spec, variant) {
   const matchedCenter = [...groupCenters.values()][0];
   for (const component of spec.components) {
     if (transforms.has(component.id)) continue;
-    const column = (spec.constraints.columns || []).find((item) => item.members?.includes(component.id));
+    const column = columnByMember.get(component.id);
     const sharedTail = spec.nets.some((net) => net.terminals.some((t) => t.component === component.id && t.terminal === 'd') &&
       net.terminals.filter((t) => t.terminal === 's').length > 1);
     const x = column ? axisX(column, variant.originX, variant.xStep, block) : sharedTail && matchedCenter !== undefined ? matchedCenter : variant.originX + block * variant.xStep;
@@ -199,9 +206,25 @@ function buildCandidate(spec, variant) {
   }).length, 0);
   const boxes = [...geometry.values()].map((item) => item.bbox);
   const overlaps = [];
-  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
-    if (rectsOverlap(boxes[i], boxes[j])) overlaps.push([spec.components[i].id, spec.components[j].id]);
+  // Sweep by the left edge so the common non-overlapping placement case does
+  // not compare every pair. Sort the final pairs back into input order to keep
+  // reports deterministic and compatible with the old nested scan.
+  const active = [];
+  const byLeft = boxes.map((box, index) => ({ box, index })).sort((a, b) => a.box.x - b.box.x || a.index - b.index);
+  for (const current of byLeft) {
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (active[i].box.x + active[i].box.w <= current.box.x) active.splice(i, 1);
+    }
+    for (const other of active) {
+      if (!rectsOverlap(current.box, other.box)) continue;
+      const i = Math.min(current.index, other.index);
+      const j = Math.max(current.index, other.index);
+      overlaps.push([i, j]);
+    }
+    active.push(current);
   }
+  overlaps.sort(([a, b], [c, d]) => a - c || b - d);
+  const overlapIds = overlaps.map(([i, j]) => [spec.components[i].id, spec.components[j].id]);
   const corridors = (spec.constraints.corridors || []).map((item) => ({ ...item, rect: corridorRect(item) })).filter((item) => item.rect);
   const corridorHits = corridors.filter((corridor) => [...geometry.values()].some((item) => rectsOverlap(item.bbox, corridor.rect)));
   const bounds = boxes.length ? (() => {
@@ -211,13 +234,13 @@ function buildCandidate(spec, variant) {
   })() : { x: 0, y: 0, w: 0, h: 0 };
   const ports = [];
   const indexBySide = { left: 0, right: 0 };
-  for (const port of spec.ports || []) ports.push(portPlacement(spec, port, geometry, bounds, indexBySide));
+  for (const port of spec.ports || []) ports.push(portPlacement(spec, port, geometry, bounds, indexBySide, netById));
   const rails = [];
   const railNetIds = (type) => spec.nets.filter((net) => {
     const named = type === 'supply'
       ? /^(VDD|VCC|AVDD|DVDD)$/i.test(net.name || net.id) || net.kind === 'supply'
       : /^(GND|VSS|AGND|DGND)$/i.test(net.name || net.id) || net.kind === 'ground';
-    const symbol = net.terminals.some((terminal) => spec.components.find((c) => c.id === terminal.component)?.type === type);
+    const symbol = net.terminals.some((terminal) => components.get(terminal.component)?.type === type);
     return named || symbol;
   }).map((net) => net.id);
   const railY = (type, fallback) => {
@@ -229,7 +252,7 @@ function buildCandidate(spec, variant) {
   if (supplyNets.length) rails.push({ side: 'top', y: railY('supply', Math.floor((bounds.y - 80) / GRID) * GRID), nets: supplyNets });
   if (groundNets.length) rails.push({ side: 'bottom', y: railY('ground', Math.ceil((bounds.y + bounds.h + 80) / GRID) * GRID), nets: groundNets });
   const scoreData = {
-    hardViolations: overlaps.length + corridorHits.filter((c) => isHardCorridor(c)).length,
+    hardViolations: overlapIds.length + corridorHits.filter((c) => isHardCorridor(c)).length,
     topologyViolations: stackViolations,
     stackConstraintViolations,
     componentClearance: 0,
@@ -239,7 +262,7 @@ function buildCandidate(spec, variant) {
     length: Math.round(bounds.w + bounds.h),
   };
   const placements = [...geometry.values()].map(({ id, refdes, type, value, transform, bbox, terminals }) => ({ id, refdes, type, ...(value === undefined ? {} : { value }), transform, bbox, terminals }));
-  return { placements, ports, rails, corridors, scoreData, geometry, overlaps, corridorHits, bounds };
+  return { placements, ports, rails, corridors, scoreData, geometry, overlaps: overlapIds, corridorHits, bounds };
 }
 
 function validateCandidate(spec, candidate) {

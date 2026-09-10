@@ -18,7 +18,6 @@ import { isBlockDiagram, loadDocument, renderDocument } from '../core/document.j
 import { snap, GRID } from '../core/grid.js';
 import { applyMarkup } from '../core/model.js';
 import { segThroughInterior, smartRoute } from '../core/router.js';
-import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
@@ -198,8 +197,6 @@ let modelRevision = 0;
 let sortedCompsCache = null;
 let visibleNetsCache = null;
 let labelCache = null;
-let routingEnvCacheRevision = -1;
-const routingEnvCache = new Map();
 let wireHitIndex = null;
 let wireHitIndexRevision = -1;
 let committedCanvasKey = '';
@@ -1329,6 +1326,7 @@ function restoreCopyGhostGeometry(ghost) {
     const net = circuit.nets.get(id);
     if (net) translateNetGeometry(net, origin, 0, 0);
   }
+  circuit.invalidateRoutingCache();
 }
 
 function applySingletonWorldTransform(comp, operation, pivot = null) {
@@ -1617,6 +1615,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
       }
     }
     circuit.syncJunctionSolders();
+    circuit.invalidateRoutingCache();
     if (recordHistory) {
       history.push(before);
       if (history.length > 200) history.shift();
@@ -2076,7 +2075,7 @@ function draftRoutePath(draft, to = cursor) {
   const allowDiagonal = draft.routeStyle === 'diagonal';
   const sourceNetId = draft.source.netId ||
     (draft.source.refdes ? circuit.netOfTerminal(`${draft.source.refdes}.${draft.source.term}`)?.id : null);
-  const env = netEnv(sourceNetId);
+  const env = circuit._netEnv(sourceNetId);
   const path = [endpoints[0]];
   for (let i = 1; i < endpoints.length; i++) {
     const leg = allowDiagonal
@@ -2659,52 +2658,6 @@ function zoomToWorldRect(r) {
 
 // ----- smart net routing ----------------------------------------------------
 
-/** Outward direction from a component body toward a world terminal pin. Uses the
- *  terminal's explicit local direction (honoring the component transform) when
- *  present, otherwise infers it from the terminal's position vs the bbox centre. */
-function pinDir(c, t, wx, wy) {
-  if (t.dir) {
-    const d = applyDir(c.transform, t.dir.x, t.dir.y);
-    if (d.x !== 0 || d.y !== 0) return d;
-  }
-  const r = c.bboxWorld();
-  const cx = r.x + r.w / 2;
-  const cy = r.y + r.h / 2;
-  const ndx = r.w === 0 ? 0 : (wx - cx) / (r.w / 2);
-  const ndy = r.h === 0 ? 0 : (wy - cy) / (r.h / 2);
-  if (Math.abs(ndx) >= Math.abs(ndy)) return { x: Math.sign(ndx), y: 0 };
-  return { x: 0, y: Math.sign(ndy) };
-}
-
-/** Routing environment for smartRoute: component bboxes, pin directions, other wires. */
-function netEnv(excludeNetId = null) {
-  if (routingEnvCacheRevision !== modelRevision) {
-    routingEnvCache.clear();
-    routingEnvCacheRevision = modelRevision;
-  }
-  const excluded = excludeNetId || '';
-  const cached = routingEnvCache.get(excluded);
-  if (cached) return cached;
-  const rects = [];
-  const pins = new Map();
-  for (const c of circuit.components.values()) {
-    if (c.type === 'solder') continue;
-    rects.push(c.bboxWorld());
-    for (const t of c.def.terminals) {
-      const w = c.terminalWorld(t.name);
-      pins.set(`${w.x},${w.y}`, pinDir(c, t, w.x, w.y));
-    }
-  }
-  const wires = [];
-  for (const n of circuit.nets.values()) {
-    if (n.id === excludeNetId) continue;
-    wires.push(...n.paths());
-  }
-  const env = { rects, pins, wires };
-  routingEnvCache.set(excluded, env);
-  return env;
-}
-
 /** Recompute the explicit route of a net (pairwise through its terminals in order). */
 function rerouteNet(net, moved) {
   return circuit.rerouteNet(net, moved);
@@ -2738,7 +2691,7 @@ function managedEndpointMeta(net, point) {
     const def = c?.def.terminals.find((t) => t.name === terminal.term);
     return {
       type: 'terminal', comp: terminal.comp, term: terminal.term, point: { ...point },
-      dir: c && def ? pinDir(c, def, point.x, point.y) : null,
+      dir: c && def ? circuit._pinDir(c, def, point.x, point.y) : null,
     };
   }
   if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) return { type: 'junction', point: { ...point } };
@@ -2833,7 +2786,7 @@ function syncManagedRoute(net) {
  * a junction can make an unselected incident leg diagonal or drill a body. */
 function managedGeometryErrors(net) {
   const errors = [...net.wiringErrors()];
-  const env = netEnv(net.id);
+  const env = circuit._netEnv(net.id);
   const terminalAt = (point) => net.terminals.find((t) => {
     const c = circuit.components.get(t.comp);
     const p = c?.terminalWorld(t.term);
@@ -2842,7 +2795,7 @@ function managedGeometryErrors(net) {
   const pinStep = (terminal, point) => {
     const c = circuit.components.get(terminal.comp);
     const def = c?.def.terminals.find((t) => t.name === terminal.term);
-    return c && def ? pinDir(c, def, point.x, point.y) : null;
+    return c && def ? circuit._pinDir(c, def, point.x, point.y) : null;
   };
   const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
   for (const [bi, path] of net.paths().entries()) {
@@ -6708,6 +6661,7 @@ function translateCopyGhost(ghost, dx, dy) {
     }
     net.junctions = net.junctions.map(move);
   }
+  circuit.invalidateRoutingCache();
   circuit.syncJunctionSolders();
 }
 

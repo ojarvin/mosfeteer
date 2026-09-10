@@ -137,14 +137,51 @@ function pathAnchors(paths) {
   return result;
 }
 
-function labelOverlapScore(circuit, label) {
+const LABEL_INDEX_CELL = GRID;
+const rectIndexKey = (x, y) => `${x},${y}`;
+const rectIndexCell = value => Math.floor(value / LABEL_INDEX_CELL);
+
+function addRectIndex(index, item, rect) {
+  const x0 = rectIndexCell(rect.x);
+  const x1 = rectIndexCell(rect.x + Math.max(0, rect.w - 1));
+  const y0 = rectIndexCell(rect.y);
+  const y1 = rectIndexCell(rect.y + Math.max(0, rect.h - 1));
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+    const key = rectIndexKey(x, y);
+    let bucket = index.get(key);
+    if (!bucket) index.set(key, bucket = []);
+    bucket.push({ item, rect });
+  }
+}
+
+function buildRectIndex(items, getRect) {
+  const index = new Map();
+  for (const item of items) addRectIndex(index, item, getRect(item));
+  return index;
+}
+
+function rectIndexHits(index, rect) {
+  const hits = new Map();
+  const x0 = rectIndexCell(rect.x);
+  const x1 = rectIndexCell(rect.x + Math.max(0, rect.w - 1));
+  const y0 = rectIndexCell(rect.y);
+  const y1 = rectIndexCell(rect.y + Math.max(0, rect.h - 1));
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+    for (const hit of index.get(rectIndexKey(x, y)) || []) {
+      if (!hits.has(hit.item) && overlap(rect, hit.rect)) hits.set(hit.item, hit);
+    }
+  }
+  return hits.values();
+}
+
+function labelOverlapScore(label, componentIndex, labelIndex) {
   const box = label.bbox();
   let component = 0;
   let labels = 0;
-  for (const item of circuit.components.values()) {
-    if (item.type !== 'solder' && !(item.refdes === label.owner) && overlap(box, item.bboxWorld())) component++;
+  for (const { item } of rectIndexHits(componentIndex, box)) {
+    if (item.type !== 'solder' && item.refdes !== label.owner) component++;
   }
-  for (const other of circuit.labels.values()) if (other !== label && overlap(box, other.bbox())) labels++;
+  for (const { item } of rectIndexHits(labelIndex, box)) if (item !== label) labels++;
   return [component, labels];
 }
 
@@ -153,6 +190,11 @@ function overlap(a, b) {
 }
 
 function addNetLabels(circuit, spec) {
+  const componentIndex = buildRectIndex(
+    [...circuit.components.values()].filter((item) => item.type !== 'solder'),
+    (item) => item.bboxWorld(),
+  );
+  const labelIndex = buildRectIndex([...circuit.labels.values()], (label) => label.bbox());
   for (const declared of spec.nets) {
     if (!declared.name) continue;
     const net = circuit.nets.get(declared.id);
@@ -163,11 +205,14 @@ function addNetLabels(circuit, spec) {
     for (let index = 0; index < candidates.length; index++) {
       const anchor = candidates[index];
       const label = circuit.addNetLabel(net, declared.name, { id: `net-label-${net.id}`, anchor });
-      const score = [...labelOverlapScore(circuit, label), index];
+      const score = [...labelOverlapScore(label, componentIndex, labelIndex), index];
       circuit.removeLabel(label.id);
       if (!best || lexLess(score, best.score)) best = { anchor, score };
     }
-    if (best) circuit.addNetLabel(net, declared.name, { id: `net-label-${net.id}`, anchor: best.anchor });
+    if (best) {
+      const label = circuit.addNetLabel(net, declared.name, { id: `net-label-${net.id}`, anchor: best.anchor });
+      addRectIndex(labelIndex, label, label.bbox());
+    }
   }
 }
 

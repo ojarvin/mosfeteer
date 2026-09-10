@@ -463,6 +463,26 @@ test('cancelled Steiner search still returns a connected fallback', () => {
   for (const point of terminals) assert.ok(endpoints.has(`${point.x},${point.y}`));
 });
 
+test('Steiner cancellation is checked during bounded exact work', () => {
+  const terminals = [
+    { x: 0, y: 0 }, { x: 240, y: 80 }, { x: 480, y: 0 },
+    { x: 120, y: 240 }, { x: 360, y: 240 },
+  ];
+  let checks = 0;
+  const paths = steinerBranches(terminals, { ...EMPTY_ENV, cancelled: () => ++checks > 12 });
+  assert.ok(checks > 12, 'cancellation callback was observed inside the search');
+  const endpoints = new Set(paths.flatMap(path => [path[0], path.at(-1)].map(p => `${p.x},${p.y}`)));
+  for (const point of terminals) assert.ok(endpoints.has(`${point.x},${point.y}`));
+});
+
+test('wide Steiner spans reject exact DP before allocating a large grid', () => {
+  const terminals = [{ x: 0, y: 0 }, { x: 1200000, y: 0 }, { x: 2400000, y: 0 }];
+  const paths = steinerBranches(terminals, EMPTY_ENV);
+  assert.ok(paths.length > 0);
+  const endpoints = new Set(paths.flatMap(path => [path[0], path.at(-1)].map(p => `${p.x},${p.y}`)));
+  for (const point of terminals) assert.ok(endpoints.has(`${point.x},${point.y}`));
+});
+
 test('smartRoute falls back to a safe A* route or reports a maze as unroutable', () => {
   // wall from (200,20) up beyond the target row, so the top channel is blocked
   const rects = [

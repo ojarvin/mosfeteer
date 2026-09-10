@@ -160,7 +160,7 @@ class MinHeap {
 /** Multi-source Dijkstra over the grid graph. `initDist[v]` seeds each source
  *  (single source = terminal escape; many sources = one per split vertex of the
  *  Steiner DP). Returns final distances and a predecessor pointer per vertex. */
-function gridDijkstra(initDist, adj, V) {
+function gridDijkstra(initDist, adj, V, cancelled = () => false) {
   const dist = new Float64Array(V);
   const par = new Int32Array(V).fill(-1);
   const heap = new MinHeap();
@@ -168,7 +168,9 @@ function gridDijkstra(initDist, adj, V) {
     dist[v] = initDist[v];
     if (initDist[v] !== Infinity) heap.push(initDist[v], v);
   }
+  let work = 0;
   while (heap.size) {
+    if ((work++ & 255) === 0 && cancelled()) return null;
     const [d, v] = heap.pop();
     if (d > dist[v]) continue;
     for (const e of adj[v]) {
@@ -283,7 +285,7 @@ function edgeWeight(a, b, env) {
 /** Build the coarse-grid graph over cell rows y0..y1 × cols x0..x1 (inclusive).
  *  Terminals are grid points; the graph's vertices are every grid cell in the
  *  rectangle, edges are the legal one-cell steps. */
-function buildGridGraph(x0, y0, x1, y1, terminals, env) {
+function buildGridGraph(x0, y0, x1, y1, terminals, env, cancelled = () => false) {
   const W = x1 - x0 + 1;
   const H = y1 - y0 + 1;
   const V = W * H;
@@ -299,8 +301,10 @@ function buildGridGraph(x0, y0, x1, y1, terminals, env) {
     adj[ia].push({ to: ib, w });
     adj[ib].push({ to: ia, w });
   };
+  let work = 0;
   for (let cy = y0; cy <= y1; cy++) {
     for (let cx = x0; cx <= x1; cx++) {
+      if ((work++ & 255) === 0 && cancelled()) return null;
       if (cx < x1) tryEdge(cx, cy, cx + 1, cy);
       if (cy < y1) tryEdge(cx, cy, cx, cy + 1);
     }
@@ -314,11 +318,13 @@ function buildGridGraph(x0, y0, x1, y1, terminals, env) {
   };
 }
 
-function graphConnected(adj, V, terminalIds) {
+function graphConnected(adj, V, terminalIds, cancelled = () => false) {
   const seen = new Array(V).fill(false);
   const stack = [terminalIds[0]];
   seen[terminalIds[0]] = true;
+  let work = 0;
   while (stack.length) {
+    if ((work++ & 255) === 0 && cancelled()) return false;
     const v = stack.pop();
     for (const e of adj[v]) {
       if (!seen[e.to]) {
@@ -343,20 +349,23 @@ function segKey(a, b) {
  *  masks seed with a plain Dijkstra; larger masks split into two subsets at a
  *  shared vertex, then relax with a multi-source Dijkstra. Parent/split records
  *  are kept so the optimal tree can be reconstructed edge by edge. */
-function steinerDP(graph, terminals) {
+function steinerDP(graph, terminals, cancelled = () => false) {
   const { V, adj, terminalIds } = graph;
   const m = terminals.length;
   const FULL = (1 << m) - 1;
   const g = new Array(1 << m);
   const par = new Array(1 << m);
   for (let i = 0; i < m; i++) {
+    if (cancelled()) return null;
     const init = new Float64Array(V).fill(Infinity);
     init[terminalIds[i]] = 0;
-    const r = gridDijkstra(init, adj, V);
+    const r = gridDijkstra(init, adj, V, cancelled);
+    if (!r) return null;
     g[1 << i] = r.dist;
     par[1 << i] = r.par;
   }
   const splitA = new Array(1 << m);
+  let work = 0;
   for (let mask = 1; mask < (1 << m); mask++) {
     if ((mask & (mask - 1)) === 0) continue; // single-bit masks are seeded above
     const h = new Float64Array(V).fill(Infinity);
@@ -369,6 +378,7 @@ function steinerDP(graph, terminals) {
       const gA = g[sub];
       const gB = g[mask ^ sub];
       for (let v = 0; v < V; v++) {
+        if ((work++ & 255) === 0 && cancelled()) return null;
         const s = gA[v] + gB[v];
         if (s < h[v]) {
           h[v] = s;
@@ -376,7 +386,8 @@ function steinerDP(graph, terminals) {
         }
       }
     }
-    const r = gridDijkstra(h, adj, V);
+    const r = gridDijkstra(h, adj, V, cancelled);
+    if (!r) return null;
     g[mask] = r.dist;
     par[mask] = r.par;
     splitA[mask] = sa;
@@ -385,6 +396,7 @@ function steinerDP(graph, terminals) {
   let bestCost = Infinity;
   const gFull = g[FULL];
   for (let v = 0; v < V; v++) {
+    if ((work++ & 255) === 0 && cancelled()) return null;
     if (gFull[v] < bestCost) {
       bestCost = gFull[v];
       bestRoot = v;
@@ -518,8 +530,20 @@ export function steinerBranches(terminals, env = { rects: [], pins: new Map(), w
     const path = smartRoute(unique[0], unique[1], env);
     return path && path.length >= 2 ? [path] : [];
   }
+  const cancelled = () => env?.signal?.aborted || env?.cancelled?.() === true;
   const tree = steinerTree(unique, env);
   if (!tree) {
+    // Cancellation abandons exact work immediately. A linear chain keeps the
+    // historical safe fallback connected without launching every pairwise
+    // shortest-path search again.
+    if (cancelled()) {
+      const paths = [];
+      for (let i = 1; i < k; i++) {
+        const path = smartRoute(unique[i - 1], unique[i], env);
+        if (path && path.length >= 2) paths.push(path);
+      }
+      return reduceBranches(paths, unique);
+    }
     // Exact DP out of budget or the region never connected: 2-approximation
     // via the MST of all pairwise shortest paths (reduceBranches does Kruskal).
     const paths = [];
@@ -537,6 +561,12 @@ export function steinerBranches(terminals, env = { rects: [], pins: new Map(), w
 /** Compute the Steiner tree's segment set, growing the routing region until all
  *  terminals are connected (a big body next to the net may need several cells of
  *  padding to route around). Returns {segs, graph} or null for the fallback. */
+const MAX_EXACT_VERTICES = 25_000;
+const MAX_EXACT_WORK = 120e6;
+// Bound allocated subset-state cells as well as the relaxation estimate. The
+// latter alone can admit a low-work, high-memory DP at the graph limit.
+const MAX_EXACT_STATE_CELLS = 2_000_000;
+
 function steinerTree(terminals, env) {
   const cancelled = () => env?.signal?.aborted || env?.cancelled?.() === true;
   const k = terminals.length;
@@ -557,21 +587,23 @@ function steinerTree(terminals, env) {
     const y0 = minY - margin;
     const x1 = maxX + margin;
     const y1 = maxY + margin;
-    const graph = buildGridGraph(x0, y0, x1, y1, terminals, env);
-    if (graphConnected(graph.adj, graph.V, graph.terminalIds)) {
-      const V = graph.V;
-      const splitCost = ((Math.pow(3, k) - Math.pow(2, k)) / 2) * V;
-      const relaxCost = Math.pow(2, k) * V;
-      // Keep exact DP bounded: its subset-state work grows exponentially in k
-      // and linearly with the search area. Cancellation is checked between
-      // retries; callers can safely fall back to the bounded approximation.
-      if (k <= 10 && graph.V <= 25000 && splitCost + relaxCost <= 120e6) {
-        if (cancelled()) return null;
-        const segs = steinerDP(graph, terminals);
-        return { segs, graph };
-      }
-      return null;
+    const width = x1 - x0 + 1;
+    const height = y1 - y0 + 1;
+    const V = width * height;
+    const splitCost = ((Math.pow(3, k) - Math.pow(2, k)) / 2) * V;
+    const relaxCost = Math.pow(2, k) * V;
+    // Reject before graph construction: a wide terminal span must not allocate
+    // its padded grid merely to discover that exact DP is over budget.
+    if (k > 10 || V > MAX_EXACT_VERTICES || splitCost + relaxCost > MAX_EXACT_WORK ||
+        Math.pow(2, k) * V > MAX_EXACT_STATE_CELLS) return null;
+    const graph = buildGridGraph(x0, y0, x1, y1, terminals, env, cancelled);
+    if (!graph) return null;
+    if (graphConnected(graph.adj, graph.V, graph.terminalIds, cancelled)) {
+      if (cancelled()) return null;
+      const segs = steinerDP(graph, terminals, cancelled);
+      return segs ? { segs, graph } : null;
     }
+    if (cancelled()) return null;
     margin = Math.min(margin * 2, 40);
   }
   return null;
@@ -905,24 +937,34 @@ function pointAt(a, b, distance) {
  * for tightly packed multi-terminal layouts. Shared MOS gate passages are
  * handled before this generic clearance policy.
  */
-function bodyClearanceSafe(a, b, index, points, rect, env) {
+export function bodyClearanceSafe(a, b, index, points, rect, env, options = {}) {
+  const distance = segRectDist(a, b, rect);
+  // Component moves use pin rectangles rather than pin direction: a retained
+  // authored connector may be re-anchored on either axis, but still only at a
+  // real terminal/body boundary.
+  if (options.pinRects) {
+    if (distance === 0 && index > 1 && index < points.length - 1) return true;
+    if (distance >= STEP) return true;
+    const sameBody = (body) => body && body.x === rect.x && body.y === rect.y &&
+      body.w === rect.w && body.h === rect.h;
+    const reachesPin = (point) => (options.pinRects.get(`${point.x},${point.y}`) || []).some(sameBody);
+    return (index === 1 && reachesPin(points[0])) ||
+      (index === points.length - 1 && reachesPin(points.at(-1))) ||
+      (index === 1 && reachesPin(b)) ||
+      (index === points.length - 1 && reachesPin(a));
+  }
   // A route may follow an obstacle edge only after it has turned away from a
   // terminal leg. Keep this exception limited to edge-touching geometry;
   // clearance violations in open space are still rejected.
-  if (segRectDist(a, b, rect) === 0 &&
-      index > 1 && index < points.length - 1) return true;
+  if (distance === 0 && index > 1 && index < points.length - 1) return true;
   const length = Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
   let clearFrom = 0;
   let clearTo = length;
   const pins = env.pins || new Map();
   const src = pins.get(`${points[0].x},${points[0].y}`);
   const dst = pins.get(`${points[points.length - 1].x},${points[points.length - 1].y}`);
-  if (index === 1 && src && terminalEdgeValid(a, b, env)) {
-    clearFrom = Math.min(STEP, length);
-  }
-  if (index === points.length - 1 && dst && terminalEdgeValid(a, b, env)) {
-    clearTo = Math.max(0, length - STEP);
-  }
+  if (index === 1 && src && terminalEdgeValid(a, b, env)) clearFrom = Math.min(STEP, length);
+  if (index === points.length - 1 && dst && terminalEdgeValid(a, b, env)) clearTo = Math.max(0, length - STEP);
   if (clearFrom >= clearTo) return true;
   return segRectDist(pointAt(a, b, clearFrom), pointAt(a, b, clearTo), rect) >= STEP;
 }
@@ -1069,7 +1111,11 @@ function astar(from, to, env) {
     // Binary heap keeps A* from degenerating to O(n²) selection as the
     // bounded search window grows around large obstacles.
     const open = [];
-    const less = (a, b) => a[0] !== b[0] ? a[0] < b[0] : a[1] < b[1];
+    let sequence = 0;
+    // The sequence tie-break preserves the old linear scan's insertion order
+    // for equal f/g scores, keeping route choice deterministic.
+    const less = (a, b) => a[0] !== b[0] ? a[0] < b[0] :
+      a[1] !== b[1] ? a[1] < b[1] : a[5] < b[5];
     const pushOpen = (item) => {
       let i = open.length;
       open.push(item);
@@ -1097,7 +1143,7 @@ function astar(from, to, env) {
       return first;
     };
     const addOpen = (cost, cx0, cy0, d) => {
-      pushOpen([cost + (Math.abs(cx0 - tx) + Math.abs(cy0 - ty)) * LENGTH_WEIGHT, cost, cx0, cy0, d]);
+      pushOpen([cost + (Math.abs(cx0 - tx) + Math.abs(cy0 - ty)) * LENGTH_WEIGHT, cost, cx0, cy0, d, sequence++]);
     };
     for (let d = 0; d < 4; d++) {
       const nx = sx + D[d][0];

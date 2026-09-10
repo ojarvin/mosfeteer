@@ -590,6 +590,56 @@ test('failed branch routing rolls back connect and wireTo membership', () => {
   }
 });
 
+test('routing environment cache invalidates when connectivity changes', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 320, y: 0 });
+  const net = c.connect('R1.b', 'R2.a');
+  const before = c._netEnv();
+  c.addComponent('resistor', { refdes: 'R3', x: 640, y: 0 });
+  c.connectTo(net.id, 'R3.a');
+  assert.notStrictEqual(c._netEnv(), before);
+  const rollbackBefore = c._netEnv();
+  c.moveComponent('R1', 40, 0);
+  c._rollbackComponentEdit();
+  assert.notStrictEqual(c._netEnv(), rollbackBefore, 'rollback clears the cached environment');
+});
+
+test('label geometry and text edits invalidate routing obstacles', () => {
+  const c = new Circuit();
+  const label = c.addLabel({ text: 'x', x: 0, y: 0 });
+  let env = c._netEnv();
+  label.moveTo(160, 0);
+  assert.notStrictEqual(c._netEnv(), env);
+  assert.equal(c._netEnv().labelRects[0].x, 120);
+
+  env = c._netEnv();
+  label.setText('long label');
+  assert.notStrictEqual(c._netEnv(), env);
+  assert.ok(c._netEnv().labelRects[0].w > 80);
+});
+
+test('fixed geometry edits invalidate routing obstacles', () => {
+  const c = new Circuit();
+  const net = c.createWireNet({ routingMode: 'fixed', fixedPaths: [{ points: [{ x: 0, y: 0 }, { x: 40, y: 0 }], start: null, end: null }] });
+  let env = c._netEnv();
+  c.moveFixedEndpoint(c.fixedOpenEndpointAt({ x: 0, y: 0 }), { x: 80, y: 0 });
+  assert.notStrictEqual(c._netEnv(), env);
+  assert.deepEqual(c._netEnv().wires, [[{ x: 80, y: 0 }, { x: 40, y: 0 }]]);
+
+  env = c._netEnv();
+  c.restoreFixedGeometry(net, [{ points: [{ x: 120, y: 0 }, { x: 160, y: 0 }], start: null, end: null }], [{ x: 160, y: 0 }]);
+  assert.notStrictEqual(c._netEnv(), env);
+  assert.deepEqual(c._netEnv().wires, [[{ x: 120, y: 0 }, { x: 160, y: 0 }]]);
+
+  env = c._netEnv();
+  c.setFixedPathVertex(net, 0, 1, { x: 200, y: 0 });
+  assert.notStrictEqual(c._netEnv(), env);
+  env = c._netEnv();
+  c.setFixedJunction(net, 0, { x: 240, y: 0 });
+  assert.notStrictEqual(c._netEnv(), env);
+});
+
 test('failed movement reroute rolls back the component and keeps old endpoints consistent', () => {
   const c = new Circuit();
   const a = c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
