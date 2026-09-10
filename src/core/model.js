@@ -964,6 +964,11 @@ export class Circuit {
     this.suppressedJunctions = new Set();
     /** Pending warnings from merging separately named physical nets. */
     this.netNameWarnings = [];
+    this._routingEnvCache = new Map();
+  }
+
+  invalidateRoutingCache() {
+    this._routingEnvCache.clear();
   }
 
   // ----- components -------------------------------------------------
@@ -983,6 +988,7 @@ export class Circuit {
   }
 
   addComponent(type, opts = {}) {
+    this.invalidateRoutingCache();
     const inst = new ComponentInstance(this, type, opts);
     if (this.components.has(inst.refdes)) throw new Error(`reference designator ${inst.refdes} already in use`);
     this.components.set(inst.refdes, inst);
@@ -1009,6 +1015,7 @@ export class Circuit {
    * (`REFDES.TERM`) remain unambiguous.
    */
   renameComponent(refdes, newRefdes) {
+    this.invalidateRoutingCache();
     const component = this.getComponent(refdes);
     const next = String(newRefdes ?? '').trim();
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) {
@@ -1077,6 +1084,7 @@ export class Circuit {
   }
 
   moveComponent(refdes, x, y) {
+    this.invalidateRoutingCache();
     const c = this.getComponent(refdes);
     const p = snapPoint(x, y);
     this._beginComponentEdit(refdes, { ...c.transform });
@@ -1087,6 +1095,7 @@ export class Circuit {
   }
 
   setTransform(refdes, { rotation, mirrorX, mirrorY } = {}) {
+    this.invalidateRoutingCache();
     const c = this.getComponent(refdes);
     this._beginComponentEdit(refdes, { ...c.transform });
     this._componentEditApplying = true;
@@ -1157,6 +1166,7 @@ export class Circuit {
   }
 
   removeComponent(refdes) {
+    this.invalidateRoutingCache();
     const c = this.getComponent(refdes);
     if (c.type === 'solder') this.suppressedJunctions.add(`${c.transform.x},${c.transform.y}`);
     for (const net of this.nets.values()) {
@@ -1222,6 +1232,7 @@ export class Circuit {
   // ----- labels -------------------------------------------------
 
   addLabel(opts = {}) {
+    this.invalidateRoutingCache();
     if (opts.owner && opts.netId) throw new Error('label cannot have both owner and netId');
     const inst = new LabelInstance(this, opts);
     if (this.labels.has(inst.id)) throw new Error(`label id "${inst.id}" already in use`);
@@ -1236,6 +1247,7 @@ export class Circuit {
   }
 
   renameNet(netOrId, name) {
+    this.invalidateRoutingCache();
     const net = this._resolveNet(netOrId);
     const canonical = canonicalNetName(name);
     if (!canonical && this.netLabels(net).length > 0) throw new Error(`cannot clear name of net ${net.id} while net labels are attached`);
@@ -1385,6 +1397,7 @@ export class Circuit {
   }
 
   removeLabel(id) {
+    this.invalidateRoutingCache();
     const key = typeof id === 'string' ? id : id?.id;
     const removed = this.labels.delete(key);
     if (removed) {
@@ -1427,6 +1440,9 @@ export class Circuit {
    *  layout never lies collinearly on top of another net's wire (crossing
    *  stays legal). */
   _netEnv(excludeNetId = null) {
+    const key = excludeNetId instanceof Set ? [...excludeNetId].sort().join(',') : excludeNetId || '';
+    const cached = this._routingEnvCache.get(key);
+    if (cached) return cached;
     const excluded = excludeNetId instanceof Set
       ? excludeNetId
       : excludeNetId == null ? new Set() : new Set([excludeNetId]);
@@ -1472,7 +1488,9 @@ export class Circuit {
       if (l.isNetLabel() && excluded.has(l.netId)) continue;
       labelRects.push(l.bbox());
     }
-    return { rects, pins, pinRects, gatePassages, wires, labelRects };
+    const env = { rects, pins, pinRects, gatePassages, wires, labelRects };
+    this._routingEnvCache.set(key, env);
+    return env;
   }
 
   /** Routing environment that also treats every existing wire as an obstacle
@@ -1488,8 +1506,7 @@ export class Circuit {
       if (excluded.has(n.id)) continue;
       wires.push(...this._explicitBranches(n));
     }
-    env.wires = wires;
-    return env;
+    return { ...env, wires };
   }
 
   /** Re-route a net, preserving hand-drawn wire shapes. `moved` (optional) is a
@@ -1501,6 +1518,7 @@ export class Circuit {
    *  no symbol- or net-type special cases. Returns false when no safe route can
    *  be installed; failed component edits are rolled back by the model. */
   rerouteNet(net, moved = null) {
+    this.invalidateRoutingCache();
     if (net.routingMode === 'fixed') {
       this._rerouteFixedNet(net, moved);
       this._repairNetLabels(net);
@@ -1881,6 +1899,7 @@ export class Circuit {
   }
 
   _createNet(name) {
+    this.invalidateRoutingCache();
     const net = new Net(this, { name });
     this._netId += 1;
     net.id = `N${this._netId}`;
@@ -1892,6 +1911,7 @@ export class Circuit {
    * this is the supported way for the UI to create a zero-terminal net; callers
    * must not assign Net internals and thereby bypass serialization invariants. */
   createWireNet(opts = {}) {
+    this.invalidateRoutingCache();
     const net = new Net(this, {
       id: opts.id,
       name: opts.name,
@@ -2229,6 +2249,7 @@ export class Circuit {
    * net; nets are created/merged as needed. Returns the resulting net.
    */
   connect(...refs) {
+    this.invalidateRoutingCache();
     const okRefs = refs.map((r) => this.resolveTerm(r));
     for (let i = 0; i < okRefs.length; i++) {
       for (let j = i + 1; j < okRefs.length; j++) {
@@ -2807,6 +2828,7 @@ export class Circuit {
    * either joined net remain as fixed paths, so crossings never create joins.
    */
   wireDirectTo(startRef, endRef, points = []) {
+    this.invalidateRoutingCache();
     const endpoint = (value) => {
       if (typeof value === 'string' || (value && value.comp && value.term)) {
         const term = this.resolveTerm(value);
@@ -2876,6 +2898,7 @@ export class Circuit {
    * (never placed by hand). Returns the resulting net.
    */
   wireTo(termRef, meet, points = [], options = null) {
+    this.invalidateRoutingCache();
     if (!Array.isArray(points)) { options = points; points = []; }
     const allowDiagonal = diagonalRouteRequested(options);
     const term = this.resolveTerm(termRef);
@@ -3028,6 +3051,7 @@ export class Circuit {
    * geometry.
    */
   wirePointTo(point, meet, points = [], netId = null, options = null) {
+    this.invalidateRoutingCache();
     if (!Array.isArray(points)) { options = points; points = []; }
     if (netId && typeof netId === 'object' && options == null) { options = netId; netId = null; }
     const allowDiagonal = diagonalRouteRequested(options);
@@ -3144,6 +3168,7 @@ export class Circuit {
    *  so indices never shift under one another; the affected nets are then split
    *  into the connected components of the remaining geometry. */
   deleteWireSegments(netId, segments) {
+    this.invalidateRoutingCache();
     const net = this.nets.get(netId);
     if (!net) throw new Error(`unknown net "${netId}"`);
     if (net.routingMode === 'fixed') return this._deleteFixedWireSegments(net, segments);
@@ -3555,6 +3580,7 @@ export class Circuit {
 
   /** Remove a single terminal from its net. Empty nets are dropped (returns null). */
   disconnect(ref) {
+    this.invalidateRoutingCache();
     const r = this.resolveTerm(ref);
     let removed = null;
     for (const net of [...this.nets.values()]) {

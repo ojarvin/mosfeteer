@@ -22,6 +22,7 @@ import { applyDir } from '../core/geometry.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
+import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { componentPaletteItems, editorKeymapText, layerActionForKey } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
 
@@ -166,6 +167,7 @@ let crosshairVisible = true;
 let visual = null; // visual mode: anchor grid point {x,y} the selection box starts from
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
+let wirePreview = null;
 let directWire = null; // protected direct wire: { source:{refdes,term}, points:[] }
 let counts = 0;
 let pendingKey = null; // { key, at } for dd chord
@@ -191,6 +193,13 @@ let draftTimer = null;
 let renderFrame = null;
 let panelStateKey = '';
 let modelRevision = 0;
+let sortedCompsCache = null;
+let visibleNetsCache = null;
+let labelCache = null;
+let routingEnvCacheRevision = -1;
+const routingEnvCache = new Map();
+let wireHitIndex = null;
+let wireHitIndexRevision = -1;
 let committedCanvasKey = '';
 let canvasSvgEl = null;
 let overlayEl = null;
@@ -309,6 +318,7 @@ function logCommand(line) {
 
 function markModelChanged(wires = true) {
   modelRevision += 1;
+  circuit.invalidateRoutingCache();
   if (wires) wiresDirty = true;
   persistDraft();
 }
@@ -337,6 +347,7 @@ function flushDraft() {
   } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
 }
 function scheduleInteractionRender() {
+  wirePreview = wire ? draftWirePreview(wire) : null;
   if (renderFrame !== null) return;
   renderFrame = requestAnimationFrame(() => { renderFrame = null; render(); });
 }
@@ -726,13 +737,29 @@ function redo() {
 // ----- helpers ---------------------------------------------------------
 
 function sortedComps() {
-  return [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes));
+  if (!sortedCompsCache || sortedCompsCache.revision !== modelRevision) {
+    sortedCompsCache = { revision: modelRevision, value: [...circuit.components.values()].sort((a, b) => a.refdes.localeCompare(b.refdes)) };
+  }
+  return sortedCompsCache.value;
 }
 
 function visibleNets() {
-  return [...circuit.nets.values()]
-    .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2))
-    .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id));
+  if (!visibleNetsCache || visibleNetsCache.revision !== modelRevision) {
+    visibleNetsCache = {
+      revision: modelRevision,
+      value: [...circuit.nets.values()]
+        .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2))
+        .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id)),
+    };
+  }
+  return visibleNetsCache.value;
+}
+
+function labels() {
+  if (!labelCache || labelCache.revision !== modelRevision) {
+    labelCache = { revision: modelRevision, value: [...circuit.labels.values()] };
+  }
+  return labelCache.value;
 }
 
 function rangeValues(items, anchor, value, getValue) {
@@ -1094,7 +1121,7 @@ function updateStyleControls() {
 function pickLabel(w) {
   const x = snap(w.x);
   const y = snap(w.y);
-  for (const label of circuit.labels.values()) {
+  for (const label of labels()) {
     if (['arrow', 'box', 'line'].includes(label.kind)) continue;
     const r = label.bbox();
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
@@ -1104,7 +1131,7 @@ function pickLabel(w) {
 
 function annotationTextAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
-  for (const label of circuit.labels.values()) {
+  for (const label of labels()) {
     if (!['arrow', 'box'].includes(label.kind)) continue;
     const w = Math.max(GRID, label.colWidth() * GRID) / 2;
     const h = Math.max(GRID, label.rowHeight() * GRID) / 2;
@@ -1122,7 +1149,7 @@ function annotationGeometryAt(world) {
     const q = { x: a.x + dx * t, y: a.y + dy * t };
     return Math.hypot(p.x - q.x, p.y - q.y) <= GRID / 2;
   };
-  for (const label of circuit.labels.values()) {
+  for (const label of labels()) {
     if (label.kind === 'line' && label.points.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
     if (label.kind === 'arrow' && near(label.anchor, label.end)) return label;
     if (label.kind === 'box') {
@@ -1138,7 +1165,7 @@ function annotationGeometryAt(world) {
 
 function annotationEndpointAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
-  for (const label of circuit.labels.values()) {
+  for (const label of labels()) {
     if (label.kind === 'line') {
       const index = label.points.findIndex((point) => Math.abs(p.x - point.x) <= GRID / 2 && Math.abs(p.y - point.y) <= GRID / 2);
       if (index >= 0) return { label, endpoint: `vertex:${index}` };
@@ -1168,7 +1195,7 @@ function annotationSegmentAt(world) {
     const q = { x: a.x + dx * t, y: a.y + dy * t };
     return Math.hypot(p.x - q.x, p.y - q.y) <= GRID / 2;
   };
-  for (const label of circuit.labels.values()) {
+  for (const label of labels()) {
     if (label.kind !== 'line') continue;
     for (let i = 1; i < label.points.length; i++) {
       if (near(label.points[i - 1], label.points[i])) return { label, segment: i };
@@ -2061,7 +2088,6 @@ function draftWirePreview(draft) {
 }
 
 function renderCanvas(modelKey) {
-  const wirePreview = draftWirePreview(wire);
   // Legacy fixed-net editing deliberately does no routing or orthogonalization.
   const directFrom = directWire?.source ? wireOrigin(directWire.source) : null;
   if (directWire?.source && !directFrom) directWire = null;
@@ -2207,7 +2233,7 @@ function renderCanvas(modelKey) {
       : drag && drag.rubber
         ? drag.rubber
         : undefined,
-    wirePreview,
+    wirePreview: wire ? wirePreview : null,
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
@@ -2434,21 +2460,11 @@ function pickWire(w) {
   const pxPerUnit = p ? view.w / p.w : 1;
   const tol = 12 / pxPerUnit;
   const snapped = { x: snap(w.x), y: snap(w.y) };
-  const candidates = [];
-  for (const net of circuit.nets.values()) {
-    const paths = net.paths();
-    for (let bi = 0; bi < paths.length; bi++) {
-      const pts = paths[bi];
-      for (let i = 1; i < pts.length; i++) {
-        if (pts[i].x === pts[i - 1].x && pts[i].y === pts[i - 1].y) continue;
-        const distance = Math.min(
-          distToSegment(w.x, w.y, pts[i - 1], pts[i]),
-          distToSegment(snapped.x, snapped.y, pts[i - 1], pts[i]),
-        );
-        if (distance < tol) candidates.push({ net, branch: bi, seg: i, pts, distance });
-      }
-    }
+  if (wireHitIndexRevision !== modelRevision) {
+    wireHitIndex = buildWireHitIndex(circuit.nets.values());
+    wireHitIndexRevision = modelRevision;
   }
+  const candidates = queryWireHitIndex(wireHitIndex, w, snapped, tol);
   return chooseWireHitCandidate({
     candidates,
     selectedNets,
@@ -2651,6 +2667,13 @@ function pinDir(c, t, wx, wy) {
 
 /** Routing environment for smartRoute: component bboxes, pin directions, other wires. */
 function netEnv(excludeNetId = null) {
+  if (routingEnvCacheRevision !== modelRevision) {
+    routingEnvCache.clear();
+    routingEnvCacheRevision = modelRevision;
+  }
+  const excluded = excludeNetId || '';
+  const cached = routingEnvCache.get(excluded);
+  if (cached) return cached;
   const rects = [];
   const pins = new Map();
   for (const c of circuit.components.values()) {
@@ -2666,7 +2689,9 @@ function netEnv(excludeNetId = null) {
     if (n.id === excludeNetId) continue;
     wires.push(...n.paths());
   }
-  return { rects, pins, wires };
+  const env = { rects, pins, wires };
+  routingEnvCache.set(excluded, env);
+  return env;
 }
 
 /** Recompute the explicit route of a net (pairwise through its terminals in order). */
@@ -4825,11 +4850,12 @@ function canvasMouseUp(ev) {
         for (const expected of expectedJunctions.get(id) || []) {
           const point = expected.point;
           const moved = point.x !== expected.from.x || point.y !== expected.from.y;
-          if (moved && [...circuit.components.values()].some((c) => c.worldTerminals().some((t) => t.x === point.x && t.y === point.y))) {
+          if (!moved) continue;
+          // moveManagedJunction may insert a conformity elbow, so the edited
+          // endpoint is not necessarily the final junction coordinate. The
+          // helper owns that topology update; only reject a pin collision.
+          if ([...circuit.components.values()].some((c) => c.worldTerminals().some((t) => t.x === point.x && t.y === point.y))) {
             throw new Error(`managed bridge junction landed on a component pin on ${id}`);
-          }
-          if (!net.junctions.some((p) => p.x === point.x && p.y === point.y)) {
-            throw new Error(`managed bridge junction moved unexpectedly on ${id}`);
           }
         }
       }

@@ -538,6 +538,7 @@ export function steinerBranches(terminals, env = { rects: [], pins: new Map(), w
  *  terminals are connected (a big body next to the net may need several cells of
  *  padding to route around). Returns {segs, graph} or null for the fallback. */
 function steinerTree(terminals, env) {
+  const cancelled = () => env?.signal?.aborted || env?.cancelled?.() === true;
   const k = terminals.length;
   let minX = Infinity;
   let minY = Infinity;
@@ -551,6 +552,7 @@ function steinerTree(terminals, env) {
   }
   let margin = 10;
   for (let iter = 0; iter < 6; iter++) {
+    if (cancelled()) return null;
     const x0 = minX - margin;
     const y0 = minY - margin;
     const x1 = maxX + margin;
@@ -560,7 +562,11 @@ function steinerTree(terminals, env) {
       const V = graph.V;
       const splitCost = ((Math.pow(3, k) - Math.pow(2, k)) / 2) * V;
       const relaxCost = Math.pow(2, k) * V;
-      if (k <= 10 && splitCost + relaxCost <= 120e6) {
+      // Keep exact DP bounded: its subset-state work grows exponentially in k
+      // and linearly with the search area. Cancellation is checked between
+      // retries; callers can safely fall back to the bounded approximation.
+      if (k <= 10 && graph.V <= 25000 && splitCost + relaxCost <= 120e6) {
+        if (cancelled()) return null;
         const segs = steinerDP(graph, terminals);
         return { segs, graph };
       }
@@ -735,6 +741,7 @@ export function segThroughInterior(a, b, r) {
 // ---------------------------------------------------------------------------
 
 const STEP = 40;
+const wireOccupancyCache = new WeakMap();
 
 function strictlyInside(p, r) {
   return p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
@@ -769,6 +776,39 @@ function overlapSpan(a, b, c, d) {
     return hi - lo > 0;
   }
   return false;
+}
+
+function wireOccupancy(env) {
+  let index = wireOccupancyCache.get(env);
+  if (index) return index;
+  index = new Map();
+  const key = (x, y) => `${Math.floor(x / STEP)},${Math.floor(y / STEP)}`;
+  let order = 0;
+  for (const wire of env.wires || []) for (let i = 1; i < wire.length; i++) {
+    const a = wire[i - 1], b = wire[i];
+    const record = { a, b, order: order++ };
+    for (let x = Math.floor(Math.min(a.x, b.x) / STEP); x <= Math.floor(Math.max(a.x, b.x) / STEP); x++) {
+      for (let y = Math.floor(Math.min(a.y, b.y) / STEP); y <= Math.floor(Math.max(a.y, b.y) / STEP); y++) {
+        const bucket = key(x * STEP, y * STEP);
+        if (!index.has(bucket)) index.set(bucket, []);
+        index.get(bucket).push(record);
+      }
+    }
+  }
+  wireOccupancyCache.set(env, index);
+  return index;
+}
+
+function occupiedWire(a, b, env) {
+  const index = wireOccupancy(env);
+  const key = (x, y) => `${Math.floor(x / STEP)},${Math.floor(y / STEP)}`;
+  const records = new Set();
+  for (let x = Math.floor(Math.min(a.x, b.x) / STEP); x <= Math.floor(Math.max(a.x, b.x) / STEP); x++) {
+    for (let y = Math.floor(Math.min(a.y, b.y) / STEP); y <= Math.floor(Math.max(a.y, b.y) / STEP); y++) {
+      for (const record of index.get(key(x * STEP, y * STEP)) || []) records.add(record);
+    }
+  }
+  return [...records].sort((a, b) => a.order - b.order).some(record => overlapSpan(a, b, record.a, record.b));
 }
 
 function wireConflicts(pts, env) {
@@ -1020,15 +1060,44 @@ function astar(from, to, env) {
       }
       return false;
     };
-    const occupied = (a, b) => (env.wires || []).some((wire) => wire.some((p, i) => i > 0 && overlapSpan(a, b, wire[i - 1], p)));
+    const occupied = (a, b) => occupiedWire(a, b, env);
     const LENGTH_WEIGHT = 1;
     const BEND_WEIGHT = 20;
     const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     const g = new Map();
     const back = new Map();
+    // Binary heap keeps A* from degenerating to O(n²) selection as the
+    // bounded search window grows around large obstacles.
     const open = [];
+    const less = (a, b) => a[0] !== b[0] ? a[0] < b[0] : a[1] < b[1];
+    const pushOpen = (item) => {
+      let i = open.length;
+      open.push(item);
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (!less(item, open[p])) break;
+        open[i] = open[p]; i = p;
+      }
+      open[i] = item;
+    };
+    const popOpen = () => {
+      const first = open[0];
+      const last = open.pop();
+      if (open.length && last) {
+        let i = 0;
+        while (true) {
+          let child = i * 2 + 1;
+          if (child >= open.length) break;
+          if (child + 1 < open.length && less(open[child + 1], open[child])) child++;
+          if (!less(open[child], last)) break;
+          open[i] = open[child]; i = child;
+        }
+        open[i] = last;
+      }
+      return first;
+    };
     const addOpen = (cost, cx0, cy0, d) => {
-      open.push([cost + (Math.abs(cx0 - tx) + Math.abs(cy0 - ty)) * LENGTH_WEIGHT, cost, cx0, cy0, d]);
+      pushOpen([cost + (Math.abs(cx0 - tx) + Math.abs(cy0 - ty)) * LENGTH_WEIGHT, cost, cx0, cy0, d]);
     };
     for (let d = 0; d < 4; d++) {
       const nx = sx + D[d][0];
@@ -1042,12 +1111,7 @@ function astar(from, to, env) {
     }
     let best = null;
     while (open.length) {
-      let mi = 0;
-      for (let i = 1; i < open.length; i++) {
-        if (open[i][0] < open[mi][0] || (open[i][0] === open[mi][0] && open[i][1] < open[mi][1])) mi = i;
-      }
-      const [, cost, cx0, cy0, d] = open[mi];
-      open.splice(mi, 1);
+      const [, cost, cx0, cy0, d] = popOpen();
       const key = `${cx0},${cy0},${d}`;
       if (cost > (g.get(key) ?? Infinity)) continue;
       if (cx0 === tx && cy0 === ty) {

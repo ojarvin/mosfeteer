@@ -447,6 +447,22 @@ test('smartRoute never returns a diagonal (always axis-aligned)', () => {
   assert.deepEqual(pts[pts.length - 1], { x: 200, y: -160 });
 });
 
+test('smartRoute returns deterministic routes from the heap open set', () => {
+  const env = { rects: [{ x: 40, y: -40, w: 40, h: 120 }], pins: new Map(), wires: [], labelRects: [] };
+  const route = smartRoute({ x: 0, y: 0 }, { x: 160, y: 0 }, env);
+  assert.deepEqual(route, [
+    { x: 0, y: 0 }, { x: 0, y: -80 }, { x: 160, y: -80 }, { x: 160, y: 0 },
+  ]);
+});
+
+test('cancelled Steiner search still returns a connected fallback', () => {
+  const terminals = [{ x: 0, y: 0 }, { x: 160, y: 80 }, { x: 320, y: 0 }];
+  const paths = steinerBranches(terminals, { ...EMPTY_ENV, cancelled: () => true });
+  assert.ok(paths.length > 0);
+  const endpoints = new Set(paths.flatMap(path => [path[0], path.at(-1)].map(p => `${p.x},${p.y}`)));
+  for (const point of terminals) assert.ok(endpoints.has(`${point.x},${point.y}`));
+});
+
 test('smartRoute falls back to a safe A* route or reports a maze as unroutable', () => {
   // wall from (200,20) up beyond the target row, so the top channel is blocked
   const rects = [

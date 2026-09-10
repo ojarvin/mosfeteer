@@ -54,12 +54,13 @@ Crossings are legal and remain visually unambiguous because solder dots are
 created only at electrical junctions, not at a crossing of unrelated nets.
 
 For fresh multi-terminal layouts and explicit full-net reroutes, the router
-computes the exact rectilinear Steiner minimum tree over a coarse-grid graph
-(Dreyfus–Wagner subset DP; see `steinerBranches` in router.js). Total length is
-the primary objective under hard body clearance, with terminal-direction and
-label preferences as tie-breaks; a three-way Y becomes one centered T-junction.
-Nets too large for the exponential DP fall back to the MST-of-shortest-paths
-approximation.
+may compute an exact rectilinear Steiner minimum tree over a coarse-grid graph
+(Dreyfus–Wagner subset DP; see `steinerBranches` in `router.js`). Its admission
+limits and cancellation behavior are maintained in the live routing specification
+in `AGENTS.md`; requests outside those limits fall back to the
+MST-of-shortest-paths approximation. Total length is the primary objective under
+hard body clearance, with terminal-direction and label preferences as tie-breaks;
+a three-way Y becomes one centered T-junction.
 
 During wire drawing, `smartRoute` is a live suggestion for the current draft.
 Committing that draft appends the chosen branch and preserves all prior
