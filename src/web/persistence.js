@@ -46,6 +46,7 @@ export function createPersistenceAdapter({ nativeApi = globalThis.schematicStora
       liveSync: false,
       list: () => nativeApi.list(),
       load: (name) => nativeApi.load(name),
+      create: (name, kind) => nativeApi.create ? nativeApi.create(name, kind) : nativeApi.save(name, kind === 'block' ? { kind: 'block', version: 1, grid: 40, blocks: [], arrows: [] } : { version: 2, grid: 40, components: [], nets: [], labels: [] }),
       save: (name, state) => nativeApi.save(name, state),
       delete: (name) => nativeApi.delete(name),
       export: (options) => nativeApi.export(options),
@@ -57,6 +58,11 @@ export function createPersistenceAdapter({ nativeApi = globalThis.schematicStora
     mode: 'http',
     liveSync: true,
     list: () => httpJson(fetchImpl, '/api/circuits'),
+    create: (name, kind = 'circuit') => httpJson(fetchImpl, `/api/circuits/${encoded(name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind }),
+    }),
     load: (name, { ifNoneMatch } = {}) => httpJson(fetchImpl, `/api/circuits/${encoded(name)}`, {
       ...(ifNoneMatch ? { headers: { 'If-None-Match': ifNoneMatch } } : {}),
     }),

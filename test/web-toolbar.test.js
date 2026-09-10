@@ -25,6 +25,12 @@ test('layer shortcuts dispatch only in an idle normal editor', () => {
   ]) assert.equal(layerActionForKey(state), null);
 });
 
+test('block help exposes only block-domain tools', () => {
+  const help = editorKeymapText('block');
+  assert.match(help, /draw a Connector/);
+  assert.doesNotMatch(help, /electrical wire|net label|component or label/i);
+});
+
 test('keyboard help is generated from current bindings without Vim movement keys', () => {
   const help = editorKeymapText();
   assert.match(help, /Arrow keys/);

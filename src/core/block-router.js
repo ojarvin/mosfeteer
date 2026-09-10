@@ -166,6 +166,9 @@ export function routeBlockArrow(diagram, arrow, options = {}) {
   const escape = add(source, sourceDir, GRID);
   const approach = add(target, targetDir, GRID);
   const rects = blocksOf(diagram).map((block) => expandedRect(block, clearance));
+  // Adjacent facing terminals reserve the same one-cell gap in opposite
+  // directions. Do not emit a backtracking route for that degenerate search.
+  if (samePoint(escape, target) && samePoint(approach, source) && arrow.from.block !== arrow.to.block) return [source, target];
   // The source and target body are still obstacles. Their boundary points are
   // legal, while the reserved one-cell escape puts the search outside.
   const middle = routeGrid(escape, approach, { rects, clearance, diagram });
@@ -181,7 +184,7 @@ export function routeBlockDiagram(diagram, options = {}) {
   const arrows = diagram?.arrows instanceof Map ? [...diagram.arrows.values()] : (diagram?.arrows || []);
   const routes = new Map();
   for (const arrow of arrows) {
-    if (arrow.routingMode === 'fixed') continue;
+    if (arrow.detached || arrow.routingMode === 'fixed') continue;
     const points = routeBlockArrow(diagram, arrow, options);
     if (!points) return null;
     routes.set(arrow.id, points);

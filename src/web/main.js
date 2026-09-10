@@ -12,9 +12,9 @@
 
 import { Circuit, LABEL_FONT_SIZE, containedWireSegments, extractWireFragments, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
-import { runCommand, commandHelp, evaluate } from '../core/commands.js';
+import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
 import { svgString, editorOverlay } from '../core/render.js';
-import { isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
+import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { applyMarkup } from '../core/model.js';
 import { segThroughInterior, smartRoute } from '../core/router.js';
@@ -61,6 +61,10 @@ const switchDialog = document.getElementById('switch-dialog');
 const switchDialogMessage = document.getElementById('switch-dialog-message');
 const checkSummaryBodyEl = document.getElementById('check-summary-body');
 const clearCheckButtonEl = document.getElementById('btn-clear-check');
+const documentKindEl = document.getElementById('document-kind');
+const blocksListEl = document.getElementById('blocks-list');
+const connectorsListEl = document.getElementById('connectors-list');
+const blockDetailEl = document.getElementById('block-detail');
 const helpDialog = document.getElementById('help-dialog');
 const helpDialogContent = document.getElementById('help-dialog-content');
 const helpSearch = document.getElementById('help-search');
@@ -153,7 +157,10 @@ let pendingPlace = null; // insert-mode ghost: { kind:'component', type, rotatio
 let selected = null; // primary refdes
 let multi = new Set(); // all selected component refdes (always includes selected)
 let selectedBlocks = new Set();
+let selectedArrows = new Set();
 let blockDrag = null;
+let blockPlacement = false;
+let blockConnector = null; // { source: { block, terminal }, points: [] }
 let selLabel = null; // primary id of the selected label object (exclusive with component selection)
 let selLabels = new Set(); // all selected label ids (always includes selLabel if any)
 let selectedNets = new Set(); // ids of highlighted nets
@@ -212,7 +219,19 @@ let wiresDirty = true; // set when wire geometry may have changed; recomputes ne
  * by alternate (Virtuoso-style) control surfaces without duplicating mode
  * precedence rules.
  */
-export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
+export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal', blockPlacement = false, blockConnector = null } = {}) {
+  if (blockConnector) return {
+    key: 'connector',
+    canvasClass: 'wire-mode',
+    toolbar: 'connector',
+    label: 'CONNECTOR',
+  };
+  if (blockPlacement) return {
+    key: 'place-block',
+    canvasClass: 'mode-place',
+    toolbar: 'place-block',
+    label: 'PLACE BLOCK',
+  };
   if (directWire) return {
     key: 'wire',
     canvasClass: 'direct-wire-mode',
@@ -373,8 +392,12 @@ function restoreDraft() {
 async function refreshCircuitList() {
   try {
     const data = await persistence.list();
-    circuitSelectEl.replaceChildren(new Option('Open circuit...', ''));
-    for (const name of data.circuits || []) circuitSelectEl.appendChild(new Option(name, name));
+    circuitSelectEl.replaceChildren(new Option('Open document...', ''));
+    const documents = data.documents || (data.circuits || []).map((name) => ({ name, kind: 'circuit' }));
+    for (const document of documents) {
+      const label = document.kind === 'block' ? 'Block diagram' : 'Schematic';
+      circuitSelectEl.appendChild(new Option(`${label} · ${document.name}`, document.name));
+    }
     if (currentCircuitName) circuitSelectEl.value = currentCircuitName;
   } catch (err) {
     logLine(`Could not list circuits: ${err.message}`, 'error');
@@ -399,7 +422,7 @@ async function saveCircuit() {
     persistDraft();
     await refreshCircuitList();
     renderSaveState();
-    logLine(`Saved ${name} (circuit.json and circuit.svg).`);
+    logLine(`Saved ${name} (${documentKindLabel(circuit)}, circuit.json and circuit.svg).`);
   } catch (err) {
     logLine(`Could not save circuit: ${err.message}`, 'error');
   } finally {
@@ -433,8 +456,10 @@ async function loadCircuit(name = circuitSelectEl.value, quiet = false, options 
       if (data.etag) lastCircuitTag = data.etag;
       return true;
     }
-    history.push(snapshot());
-    future.length = 0;
+    // A named document owns its undo history. Navigation must not make Undo
+    // restore a different document kind.
+    history = [];
+    future = [];
     applyJson(JSON.stringify(data.state));
     setSelection([]);
     cursor = { x: 0, y: 0 };
@@ -503,6 +528,8 @@ async function deleteSavedCircuit() {
     resetCheckState();
     directWire = null;
     wire = null;
+    blockConnector = null;
+    blockPlacement = false;
     drag = null;
     moveMode = null;
     copyMode = false;
@@ -514,6 +541,8 @@ async function deleteSavedCircuit() {
     labelMode = null;
     annotationPoints = [];
     setSelection([]);
+    selectedBlocks.clear();
+    selectedArrows.clear();
     selectedNets.clear();
     cursor = { x: 0, y: 0 };
     view = viewFromCenter(0, 0);
@@ -530,7 +559,7 @@ async function deleteSavedCircuit() {
     try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
     render();
     await refreshCircuitList();
-    logLine(`Deleted circuit "${data.name || name}".`);
+    logLine(`Deleted document "${data.name || name}".`);
   } catch (err) {
     logLine(`Could not delete circuit: ${err.message}`, 'error');
   } finally {
@@ -664,6 +693,8 @@ function applyJson(blob) {
   // across loads, undo/redo, or remote replacement.
   directWire = null;
   wire = null;
+  blockConnector = null;
+  blockPlacement = false;
   drag = null;
   moveMode = null;
   copyMode = false;
@@ -682,6 +713,7 @@ function applyJson(blob) {
   selected = null;
   multi.clear();
   selectedBlocks.clear();
+  selectedArrows.clear();
   blockDrag = null;
   selLabel = null;
   selLabels.clear();
@@ -1660,6 +1692,7 @@ function rerouteTouchedNets(refs, moved, fresh = false) {
  *  are removed before segment cuts, so selecting both cannot leave fragments;
  *  touched-but-unselected nets are rerouted afterward. */
 function deleteSelection() {
+  if (isBlockDiagram(circuit)) return deleteBlockSelection();
   const comps = selectedComps();
   const labels = selectedLabels();
   const keys = new Set(selectedWires);
@@ -2027,7 +2060,71 @@ function updateNetWarnings() {
   netWarnings = crossNetOverlaps(nets);
 }
 
+function syncDocumentSurface() {
+  const block = isBlockDiagram(circuit);
+  for (const element of document.querySelectorAll('[data-doc-kind]')) {
+    element.hidden = (element.dataset.docKind === 'block') !== block;
+  }
+  if (documentKindEl) {
+    documentKindEl.textContent = documentKindLabel(circuit);
+    documentKindEl.classList.toggle('block', block);
+  }
+  const heading = document.getElementById('mode-heading');
+  if (heading) heading.textContent = block ? 'Block diagram tools' : 'Schematic tools';
+  if (cmdInput) cmdInput.placeholder = block
+    ? 'Block diagram command (e.g. add-block B1 Filter 0 0 160 80)'
+    : 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
+}
+
+function renderBlockPanels() {
+  if (!blocksListEl || !connectorsListEl || !blockDetailEl) return;
+  blocksListEl.replaceChildren();
+  connectorsListEl.replaceChildren();
+  for (const block of circuit.blocks.values()) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'row block-row';
+    row.textContent = `${block.id} · ${block.text || '(unnamed)'}`;
+    row.classList.toggle('selected', selectedBlocks.has(block.id));
+    row.addEventListener('click', (ev) => {
+      if (ev.shiftKey) {
+        if (selectedBlocks.has(block.id)) selectedBlocks.delete(block.id); else selectedBlocks.add(block.id);
+      } else selectedBlocks = new Set([block.id]);
+      selectedArrows.clear();
+      render();
+    });
+    blocksListEl.appendChild(row);
+  }
+  for (const arrow of circuit.arrows.values()) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'row connector-row';
+    row.textContent = arrow.detached
+      ? `${arrow.id} · detached visual connector`
+      : `${arrow.id} · ${arrow.from.block}.${arrow.from.terminal} → ${arrow.to.block}.${arrow.to.terminal}`;
+    row.classList.toggle('selected', selectedArrows.has(arrow.id));
+    row.addEventListener('click', (ev) => {
+      if (ev.shiftKey) {
+        if (selectedArrows.has(arrow.id)) selectedArrows.delete(arrow.id); else selectedArrows.add(arrow.id);
+      } else selectedArrows = new Set([arrow.id]);
+      selectedBlocks.clear();
+      render();
+    });
+    connectorsListEl.appendChild(row);
+  }
+  const blocks = [...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean);
+  const arrows = [...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean);
+  if (blocks.length) {
+    blockDetailEl.textContent = `${blocks.length} block${blocks.length === 1 ? '' : 's'} selected · ${blocks.reduce((n, b) => n + b.terminals.size, 0)} terminal${blocks.reduce((n, b) => n + b.terminals.size, 0) === 1 ? '' : 's'}`;
+  } else if (arrows.length) {
+    blockDetailEl.textContent = `${arrows.length} connector${arrows.length === 1 ? '' : 's'} selected`;
+  } else {
+    blockDetailEl.textContent = 'Select a block or connector.';
+  }
+}
+
 function render() {
+  syncDocumentSurface();
   if (isBlockDiagram(circuit)) {
     persistDraft();
     renderCanvas();
@@ -2035,8 +2132,10 @@ function render() {
     netsListEl.replaceChildren();
     detailEl.replaceChildren();
     checkSummaryBodyEl.replaceChildren();
+    renderBlockPanels();
     renderSaveState();
-    statusEl.textContent = 'BLOCK DIAGRAM';
+    renderStatus();
+    updateInsertMenu();
     return;
   }
   // A context menu is independent of canvas repainting. Closing it here made
@@ -2120,7 +2219,14 @@ function renderCanvas(modelKey) {
   if (isBlockDiagram(circuit)) {
     canvasEl.innerHTML = renderDocument(circuit, {
       background: true,
+      grid: showGrid,
       selectedBlocks,
+      selectedArrows,
+      connectorPreview: blockConnector?.source ? {
+        source: circuit.terminalPoint(blockConnector.source),
+        points: orthogonalBlockRoute(circuit.terminalPoint(blockConnector.source), cursor, blockConnector.points).slice(1, -1),
+        cursor,
+      } : null,
       viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
     });
     return;
@@ -3344,7 +3450,8 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
 }
 
 function canvasMouseDown(ev) {
-  if (isBlockDiagram(circuit)) return;
+  const blockDocument = isBlockDiagram(circuit);
+  if (blockDocument && ev.button === 0) return;
   if (document.activeElement === cmdInput) cmdInput.blur();
   const b = ev.button;
   const startWorld = clientToWorld(ev.clientX, ev.clientY);
@@ -3363,7 +3470,7 @@ function canvasMouseDown(ev) {
     return;
   }
   if (b === 2) {
-    const hit = matchAt(snap(startWorld.x), snap(startWorld.y));
+    const hit = blockDocument ? null : matchAt(snap(startWorld.x), snap(startWorld.y));
     if (hit?.refdes && circuit.components.has(hit.refdes)) {
       ev.preventDefault();
       drag = null;
@@ -4255,6 +4362,7 @@ function commitModalMove() {
 }
 
 function copySelectionExists() {
+  if (isBlockDiagram(circuit)) return blockSelectionExists();
   return multi.size > 0 || selLabels.size > 0 || selectedWires.size > 0 ||
     !!selectedWire || selectedNets.size > 0;
 }
@@ -4341,10 +4449,24 @@ function deleteAtPoint(world) {
 }
 
 function canvasMouseMove(ev) {
+  const blockDocument = isBlockDiagram(circuit);
   const w = clientToWorld(ev.clientX, ev.clientY);
   const nextCursor = { x: snap(w.x), y: snap(w.y) };
   const cursorChanged = nextCursor.x !== cursor.x || nextCursor.y !== cursor.y;
   cursor = nextCursor;
+  if (blockDocument) {
+    if (drag?.mode === 'pan') {
+      const p = clientToWorld(ev.clientX, ev.clientY, drag.startView);
+      view.x = drag.startView.x - (p.x - drag.startWorld.x);
+      view.y = drag.startView.y - (p.y - drag.startWorld.y);
+      scheduleInteractionRender();
+    } else if (drag?.mode === 'zoom') {
+      if (dragMoved(drag.startWorld, drag.startClient, w, ev)) drag.moved = true;
+      drag.rubber = drag.moved ? { ...worldRect(drag.startWorld, w), color: '#a06b13' } : null;
+      scheduleInteractionRender();
+    } else if (cursorChanged) scheduleInteractionRender();
+    return;
+  }
 
   if (!drag) {
     // The cursor follows the mouse, always snapped to the nearest grid point.
@@ -4717,6 +4839,19 @@ function canvasMouseMove(ev) {
 }
 
 function canvasMouseUp(ev) {
+  if (isBlockDiagram(circuit)) {
+    if (!drag) return;
+    if (drag.mode === 'pan' && ev.button === 1) {
+      drag = drag.resume || null;
+      render();
+    } else if (drag.mode === 'zoom' && ev.button === 2) {
+      const w = clientToWorld(ev.clientX, ev.clientY);
+      if (drag.moved) zoomToWorldRect(worldRect(drag.startWorld, w));
+      drag = null;
+      render();
+    }
+    return;
+  }
   if (!drag) return;
   const movedOut = dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
   const w = clientToWorld(ev.clientX, ev.clientY);
@@ -5209,6 +5344,11 @@ function openComponentContextMenu(target, x, y) {
 }
 
 canvasEl.addEventListener('contextmenu', (ev) => {
+  if (isBlockDiagram(circuit)) {
+    ev.preventDefault();
+    closeComponentContextMenu();
+    return;
+  }
   const world = clientToWorld(ev.clientX, ev.clientY);
   const label = pickLabel(world);
   const annotation = annotationGeometryAt(world);
@@ -5256,9 +5396,35 @@ function recordBlockHistory(before) {
   future.length = 0;
 }
 
+function blockSelectionExists() {
+  return selectedBlocks.size > 0 || selectedArrows.size > 0;
+}
+
+function deleteBlockSelection() {
+  if (!blockSelectionExists()) return false;
+  const before = snapshot();
+  commit(() => {
+    for (const id of selectedArrows) if (circuit.arrows.has(id)) circuit.removeArrow(id);
+    for (const id of selectedBlocks) if (circuit.blocks.has(id)) circuit.removeBlock(id);
+  });
+  selectedBlocks.clear();
+  selectedArrows.clear();
+  logLine('deleted selected block objects');
+  return before !== snapshot();
+}
+
+function blockBoxSelectionContents(x0, y0, x1, y1) {
+  const box = worldRect({ x: x0, y: y0 }, { x: x1, y: y1 });
+  const inside = (rect) => rectContained(rect, box);
+  const blocks = [...circuit.blocks.values()].filter((block) => inside(block.rect)).map((block) => block.id);
+  const arrows = [...circuit.arrows.values()]
+    .filter((arrow) => arrow.points.length && arrow.points.every((point) => point.x >= box.x0 && point.x <= box.x1 && point.y >= box.y0 && point.y <= box.y1))
+    .map((arrow) => arrow.id);
+  return { blocks, arrows };
+}
+
 function copyBlocks(ids, offset = { x: 0, y: 0 }) {
   const source = new Set(ids);
-  const arrows = [...circuit.arrows.values()].filter((arrow) => source.has(arrow.from.block) && source.has(arrow.to.block));
   const copies = new Map();
   for (const id of source) {
     const block = circuit.getBlock(id);
@@ -5266,58 +5432,272 @@ function copyBlocks(ids, offset = { x: 0, y: 0 }) {
     const copy = circuit.addBlock({ ...block.toJSON(), id: undefined, rect });
     copies.set(id, copy.id);
   }
-  for (const arrow of arrows) {
-    const points = arrow.points.map((point) => ({ x: point.x + offset.x, y: point.y + offset.y }));
-    circuit.addArrow({
-      ...arrow.toJSON(),
-      id: undefined,
-      from: { block: copies.get(arrow.from.block), terminal: arrow.from.terminal },
-      to: { block: copies.get(arrow.to.block), terminal: arrow.to.terminal },
-      points,
-    });
-  }
   return [...copies.values()];
+}
+
+function beginBlockArrowCopy(w, before = snapshot()) {
+  const source = [...selectedArrows];
+  if (!source.length) return false;
+  blockDrag = {
+    copy: true,
+    arrowSource: source,
+    start: w,
+    arrowOrigins: new Map(source.map((id) => [id, circuit.getArrow(id).points.map((point) => ({ ...point }))])),
+    startSnapshot: before,
+    delta: { x: 0, y: 0 },
+  };
+  return true;
+}
+
+function beginBlockArrowMove(w, before = snapshot()) {
+  const source = [...selectedArrows];
+  if (!source.length) return false;
+  blockDrag = {
+    copy: false,
+    arrowSource: source,
+    start: w,
+    arrowOrigins: new Map(source.map((id) => [id, circuit.getArrow(id).points.map((point) => ({ ...point }))])),
+    startSnapshot: before,
+    delta: { x: 0, y: 0 },
+  };
+  return true;
+}
+
+function activateBlockPlace() {
+  if (!isBlockDiagram(circuit)) return;
+  blockConnector = null;
+  blockPlacement = true;
+  mode = 'normal';
+  moveMode = null;
+  copyMode = false;
+  deleteMode = false;
+  visual = null;
+  logLine('PLACE BLOCK: click to place a block; Esc cancels');
+  render();
+}
+
+function activateBlockConnector() {
+  if (!isBlockDiagram(circuit)) return;
+  blockPlacement = false;
+  blockConnector = { source: null, points: [] };
+  mode = 'normal';
+  moveMode = null;
+  copyMode = false;
+  deleteMode = false;
+  visual = null;
+  logLine('CONNECTOR: click a block terminal to start');
+  render();
+}
+
+function orthogonalBlockRoute(source, target, guides = []) {
+  const out = [{ ...source }];
+  for (const guide of guides) {
+    const point = { x: snap(guide.x), y: snap(guide.y) };
+    const last = out.at(-1);
+    if (last.x !== point.x && last.y !== point.y) out.push({ x: point.x, y: last.y });
+    if (out.at(-1).x !== point.x || out.at(-1).y !== point.y) out.push(point);
+  }
+  const last = out.at(-1);
+  if (last.x !== target.x && last.y !== target.y) out.push({ x: target.x, y: last.y });
+  if (out.at(-1).x !== target.x || out.at(-1).y !== target.y) out.push({ ...target });
+  return out;
+}
+
+function blockTerminalAt(world) {
+  const point = { x: snap(world.x), y: snap(world.y) };
+  const pane = paneSize();
+  const tolerance = Math.max(GRID / 2, 12 / (pane ? view.w / pane.w : 1));
+  let best = null;
+  let distance = Infinity;
+  for (const block of circuit.blocks.values()) {
+    for (const terminal of block.terminals.values()) {
+      const p = terminal.point(block.rect);
+      const d = Math.hypot(p.x - world.x, p.y - world.y);
+      if (d < distance) { distance = d; best = { block: block.id, terminal: terminal.id, x: p.x, y: p.y }; }
+    }
+  }
+  return distance <= tolerance ? best : null;
+}
+
+function addPlacedBlock(world) {
+  const point = { x: snap(world.x), y: snap(world.y) };
+  let block;
+  commit(() => {
+    block = circuit.addBlock({ text: 'Block', x: point.x - 80, y: point.y - 40, w: 160, h: 80 });
+    circuit.addTerminal(block.id, { id: 'in', side: 'left', offset: 40 });
+    circuit.addTerminal(block.id, { id: 'out', side: 'right', offset: 40 });
+  });
+  selectedBlocks = new Set([block.id]);
+  selectedArrows.clear();
+  blockPlacement = false;
+  logLine(`placed ${block.id}; edit its label`);
+  render();
+  setTimeout(() => {
+    if (isBlockDiagram(circuit) && circuit.blocks.get(block.id) === block) inlineEditBlock(block);
+  }, 0);
+}
+
+function beginBlockDrag(w, copy, before = snapshot()) {
+  const source = [...selectedBlocks];
+  if (!source.length) return false;
+  blockDrag = {
+    copy,
+    source,
+    start: w,
+    origins: new Map(source.map((key) => [key, { ...circuit.getBlock(key).rect }])),
+    startSnapshot: before,
+    delta: { x: 0, y: 0 },
+  };
+  return true;
+}
+
+function selectBlockOrArrow(ev, node, arrowNode) {
+  const toggle = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+  if (arrowNode) {
+    const id = arrowNode.dataset.arrowId;
+    if (toggle) {
+      if (selectedArrows.has(id)) selectedArrows.delete(id); else selectedArrows.add(id);
+    } else selectedArrows = new Set([id]);
+    selectedBlocks.clear();
+    return;
+  }
+  if (!node) return;
+  const id = node.dataset.blockId;
+  if (toggle) {
+    if (selectedBlocks.has(id)) selectedBlocks.delete(id); else selectedBlocks.add(id);
+  } else selectedBlocks = new Set([id]);
+  selectedArrows.clear();
+}
+
+function finishBlockConnector(target) {
+  if (!blockConnector?.source || !target) return false;
+  const source = blockConnector.source;
+  if (source.block === target.block && source.terminal === target.terminal) {
+    logLine('CONNECTOR: choose a different terminal');
+    return false;
+  }
+  const before = snapshot();
+  try {
+    const points = blockConnector.points || [];
+    const arrow = points.length
+      ? circuit.addArrow({ from: source, to: { block: target.block, terminal: target.terminal }, routingMode: 'fixed', points: orthogonalBlockRoute(circuit.terminalPoint(source), { x: target.x, y: target.y }, points) })
+      : circuit.addArrow({ from: source, to: { block: target.block, terminal: target.terminal } });
+    history.push(before);
+    if (history.length > 200) history.shift();
+    future.length = 0;
+    selectedArrows = new Set([arrow.id]);
+    selectedBlocks.clear();
+    blockConnector = { source: null, points: [] };
+    markModelChanged();
+    logLine(`added connector ${arrow.id}`);
+    return true;
+  } catch (err) {
+    logLine(`CONNECTOR: ${err.message}`, 'error');
+    return false;
+  }
 }
 
 canvasEl.addEventListener('pointerdown', (ev) => {
   if (!isBlockDiagram(circuit) || ev.button !== 0) return;
   const node = ev.target.closest?.('[data-block-id]');
+  const arrowNode = ev.target.closest?.('[data-arrow-id]');
   const w = clientToWorld(ev.clientX, ev.clientY);
+  const terminal = blockTerminalAt(w);
+  ev.stopPropagation();
+
+  if (blockPlacement) {
+    addPlacedBlock(w);
+    return;
+  }
+  if (blockConnector) {
+    if (terminal) {
+      if (!blockConnector.source) {
+        blockConnector.source = { block: terminal.block, terminal: terminal.terminal };
+        blockConnector.points = [];
+        logLine(`connector from ${terminal.block}.${terminal.terminal} — click a target terminal`);
+      } else finishBlockConnector(terminal);
+    } else if (blockConnector.source) {
+      const point = { x: snap(w.x), y: snap(w.y) };
+      const last = blockConnector.points.at(-1);
+      if (!last || last.x !== point.x || last.y !== point.y) blockConnector.points.push(point);
+      logLine(`connector guide @ (${point.x},${point.y})`);
+    }
+    render();
+    return;
+  }
+  if (deleteMode) {
+    if (arrowNode) {
+      selectedArrows = new Set([arrowNode.dataset.arrowId]);
+      selectedBlocks.clear();
+    } else if (node) {
+      selectedBlocks = new Set([node.dataset.blockId]);
+      selectedArrows.clear();
+    }
+    if (blockSelectionExists()) deleteBlockSelection();
+    render();
+    return;
+  }
   if (blockDrag?.copy) {
     blockDrag.delta = { x: snap(w.x - blockDrag.start.x), y: snap(w.y - blockDrag.start.y) };
     endBlockDrag(ev);
-    ev.stopPropagation();
     return;
   }
-  if (!node && !(selectedBlocks.size && (copyMode || moveMode))) return;
-  ev.stopPropagation();
+  if (arrowNode) {
+    if (moveMode === 'detached' && !selectedBlocks.size) {
+      selectBlockOrArrow(ev, node, arrowNode);
+      const before = snapshot();
+      for (const id of selectedArrows) circuit.detachArrow(id);
+      if (beginBlockArrowMove(w, before)) {
+        try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
+      }
+    } else if (copyMode && !selectedBlocks.size) {
+      selectBlockOrArrow(ev, node, arrowNode);
+      if (beginBlockArrowCopy(w)) {
+        try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
+      }
+    } else {
+      if (moveMode && !selectedBlocks.size) {
+        selectBlockOrArrow(ev, node, arrowNode);
+        for (const id of selectedArrows) {
+          const arrow = circuit.arrows.get(id);
+          if (arrow?.from && arrow?.to) { selectedBlocks.add(arrow.from.block); selectedBlocks.add(arrow.to.block); }
+        }
+        selectedArrows.clear();
+        if (selectedBlocks.size) logLine('MOVE: promoted connector to endpoint blocks');
+      }
+      if (moveMode && beginBlockDrag(w, false)) {
+        try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
+      } else selectBlockOrArrow(ev, node, arrowNode);
+    }
+    render();
+    return;
+  }
+  if (!node && !(selectedBlocks.size && (copyMode || moveMode))) {
+    selectedBlocks.clear();
+    selectedArrows.clear();
+    render();
+    return;
+  }
   const id = node?.dataset.blockId;
   const before = snapshot();
   if (copyMode) {
-    const source = selectedBlocks.size ? [...selectedBlocks] : [id];
-    blockDrag = {
-      copy: true,
-      source,
-      start: w,
-      origins: new Map(source.map((key) => [key, { ...circuit.getBlock(key).rect }])),
-      startSnapshot: before,
-      delta: { x: 0, y: 0 },
-    };
+    if (!selectedBlocks.size && node) selectBlockOrArrow(ev, node, null);
+    if (!beginBlockDrag(w, true, before)) return;
   } else {
-    if (node && !(selectedBlocks.size && moveMode)) {
-      if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
-        if (selectedBlocks.has(id)) selectedBlocks.delete(id); else selectedBlocks.add(id);
-      } else selectedBlocks = new Set([id]);
-    }
+    if (node && !(selectedBlocks.size && moveMode)) selectBlockOrArrow(ev, node, null);
     if (!moveMode) { render(); return; }
+    if (moveMode === 'detached') circuit.detachBoundaryArrows(selectedBlocks);
     blockDrag = { id, start: w, origins: new Map([...selectedBlocks].map((key) => [key, { ...circuit.getBlock(key).rect }])), startSnapshot: before };
   }
   try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
   render();
 });
 canvasEl.addEventListener('pointermove', (ev) => {
-  if (!blockDrag || !isBlockDiagram(circuit)) return;
+  if (!isBlockDiagram(circuit)) return;
   const w = clientToWorld(ev.clientX, ev.clientY);
+  cursor = { x: snap(w.x), y: snap(w.y) };
+  if (blockConnector) { scheduleInteractionRender(); return; }
+  if (!blockDrag) return;
   const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
   if (blockDrag.copy) {
     blockDrag.delta = { x: dx, y: dy };
@@ -5325,7 +5705,15 @@ canvasEl.addEventListener('pointermove', (ev) => {
     return;
   }
   try {
-    for (const [id, rect] of blockDrag.origins) circuit.moveBlock(id, rect.x + dx, rect.y + dy);
+    if (blockDrag.arrowSource) {
+      for (const id of blockDrag.arrowSource) {
+        const arrow = circuit.getArrow(id);
+        arrow.points = blockDrag.arrowOrigins.get(id).map((point) => ({ x: point.x + dx, y: point.y + dy }));
+      }
+      circuit.validate();
+    } else {
+      for (const [id, rect] of blockDrag.origins) circuit.moveBlock(id, rect.x + dx, rect.y + dy);
+    }
     renderCanvas();
   } catch (err) {
     circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
@@ -5340,35 +5728,41 @@ function endBlockDrag(ev) {
   if (!blockDrag) return;
   const state = blockDrag;
   if (state.copy && !state.delta.x && !state.delta.y && ev?.type === 'pointerup') {
-    if (ev.pointerId !== undefined) {
-      try { canvasEl.releasePointerCapture(ev.pointerId); } catch {}
-    }
+    blockDrag = null;
+    if (ev.pointerId !== undefined) { try { canvasEl.releasePointerCapture(ev.pointerId); } catch {} }
     render();
     return;
   }
   const before = state.startSnapshot;
   blockDrag = null;
-  if (ev?.pointerId !== undefined) {
-    try { canvasEl.releasePointerCapture(ev.pointerId); } catch {}
-  }
+  if (ev?.pointerId !== undefined) { try { canvasEl.releasePointerCapture(ev.pointerId); } catch {} }
   if (state.copy) {
     try {
-      selectedBlocks = new Set(copyBlocks(state.source, state.delta));
+      if (state.arrowSource) {
+        selectedArrows = new Set(state.arrowSource.map((id) => {
+          const arrow = circuit.getArrow(id);
+          const points = state.arrowOrigins.get(id).map((point) => ({ x: point.x + state.delta.x, y: point.y + state.delta.y }));
+          return circuit.addArrow({ ...arrow.toJSON(), id: undefined, detached: true, from: null, to: null, routingMode: 'fixed', points }).id;
+        }));
+        selectedBlocks.clear();
+      } else {
+        selectedBlocks = new Set(copyBlocks(state.source, state.delta));
+        selectedArrows.clear();
+      }
     } catch (err) {
       circuit = loadDocument(JSON.parse(before));
       logLine(`block copy cancelled: ${err.message}`, 'error');
     }
   }
   recordBlockHistory(before);
+  markModelChanged();
   persistDraft(); render();
 }
 function cancelBlockDrag(ev) {
   if (!blockDrag) return;
   const state = blockDrag;
   blockDrag = null;
-  if (ev?.pointerId !== undefined) {
-    try { canvasEl.releasePointerCapture(ev.pointerId); } catch {}
-  }
+  if (ev?.pointerId !== undefined) { try { canvasEl.releasePointerCapture(ev.pointerId); } catch {} }
   if (!state.copy) circuit = loadDocument(JSON.parse(state.startSnapshot));
   persistDraft(); render();
 }
@@ -5423,8 +5817,17 @@ function inlineEditBlock(block) {
   input.addEventListener('blur', () => done(true));
 }
 
-// Double-click a label to edit its text inline.
+// Double-click edits the active document's object, never an electrical label
+// picker in a block diagram.
 canvasEl.addEventListener('dblclick', (ev) => {
+  if (isBlockDiagram(circuit)) {
+    const node = ev.target.closest?.('[data-block-id]');
+    if (node) {
+      const block = circuit.blocks.get(node.dataset.blockId);
+      if (block) { ev.preventDefault(); ev.stopPropagation(); inlineEditBlock(block); }
+    }
+    return;
+  }
   const w = clientToWorld(ev.clientX, ev.clientY);
   const label = pickLabel(w);
   if (label) inlineEditLabel(label);
@@ -6156,9 +6559,17 @@ function onVisualKey(key) {
     return;
   }
   if (key === 'Enter') {
-    applyBoxSelection(visual.x, visual.y, cursor.x, cursor.y, false);
-    visual = null;
-    if (deleteMode && copySelectionExists()) deleteSelection();
+    if (isBlockDiagram(circuit)) {
+      const found = blockBoxSelectionContents(visual.x, visual.y, cursor.x, cursor.y);
+      selectedBlocks = new Set(found.blocks);
+      selectedArrows = new Set(found.arrows);
+      visual = null;
+      if (deleteMode && blockSelectionExists()) deleteBlockSelection();
+    } else {
+      applyBoxSelection(visual.x, visual.y, cursor.x, cursor.y, false);
+      visual = null;
+      if (deleteMode && copySelectionExists()) deleteSelection();
+    }
     render();
     return;
   }
@@ -6193,6 +6604,10 @@ function onNormalKey(key, shiftKey = false) {
     activateMove(shiftKey ? 'detached' : 'connected');
     return;
   }
+  if (isBlockDiagram(circuit) && (key === 'a' || key === 'b' || key === 'l' || key === 'L' || key === 'N' && shiftKey)) {
+    logLine('This tool is available only in a schematic');
+    return;
+  }
   if (key === 'a') {
     activateShapeAnnotation('arrow');
     return;
@@ -6219,6 +6634,7 @@ function onNormalKey(key, shiftKey = false) {
   // intentionally no longer bound to x/X (see r/R below).
   if (key === 'x' || key === 'X') {
     if (key === 'X' || shiftKey) saveCircuit();
+    else if (isBlockDiagram(circuit)) logLine('Check is unavailable for block diagrams; use block validation on save');
     else runCheck();
     return;
   }
@@ -6323,7 +6739,8 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'y') {
-    copySelection();
+    if (isBlockDiagram(circuit)) activateCopy();
+    else copySelection();
     return;
   }
 
@@ -6338,7 +6755,8 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'p') {
-    pasteClipboard();
+    if (isBlockDiagram(circuit)) logLine('paste is unavailable across document types; use Copy in this block diagram');
+    else pasteClipboard();
     return;
   }
 
@@ -6450,7 +6868,7 @@ function onNormalKey(key, shiftKey = false) {
 }
 
 function keymapText() {
-  return editorKeymapText();
+  return editorKeymapText(isBlockDiagram(circuit) ? 'block' : 'schematic');
 }
 
 function logKeymap() {
@@ -6474,7 +6892,7 @@ function showHelp() {
   if (!helpDialog) return;
   helpText = keymapText();
   try {
-    helpText += `\n\n${commandHelp()}`;
+    helpText += `\n\n${isBlockDiagram(circuit) ? blockCommandHelp() : commandHelp()}`;
   } catch (err) {
     helpText += `\n\n${String(err.message || err)}`;
   }
@@ -6865,8 +7283,11 @@ function runLine(line) {
     history.push(before);
     if (history.length > 200) history.shift();
     future.length = 0;
-    if (!isBlockDiagram(circuit)) {
-      markModelChanged(); // commands can re-route / splice nets
+    markModelChanged(); // commands can re-route / splice nets or mutate block geometry
+    if (isBlockDiagram(circuit)) {
+      selectedBlocks = new Set([...selectedBlocks].filter((id) => circuit.blocks.has(id)));
+      selectedArrows = new Set([...selectedArrows].filter((id) => circuit.arrows.has(id)));
+    } else {
       multi = new Set([...multi].filter((r) => circuit.components.has(r)));
       if (!circuit.components.has(selected)) selected = multi.size ? [...multi][0] : null;
     }
@@ -6879,7 +7300,9 @@ function runLine(line) {
 const TOOLBAR_IDS = {
   normal: ['btn-mode-select', 'btn-select', 'mode-select'],
   place: ['btn-place', 'btn-insert', 'btn-mode-place', 'tool-place', 'tool-insert', 'mode-place'],
+  'place-block': ['btn-mode-place-block', 'place-block'],
   wire: ['btn-wire', 'btn-mode-wire', 'tool-wire', 'mode-wire'],
+  connector: ['btn-mode-connector', 'connector'],
   visual: ['btn-mode-visual', 'btn-box-select', 'tool-visual', 'mode-visual'],
   move: ['btn-move', 'btn-mode-move', 'tool-move', 'mode-move'],
   'move-detached': ['btn-move-detached', 'btn-detach-move', 'btn-mode-detach-move', 'btn-detached-move', 'tool-move-detached', 'mode-detached-move'],
@@ -6900,7 +7323,7 @@ const TOOLBAR_IDS = {
 };
 
 function interactionState() {
-  return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, movePending, copyPending, routeMode });
+  return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, movePending, copyPending, routeMode, blockPlacement, blockConnector });
 }
 
 function toolbarElements(action) {
@@ -6942,6 +7365,23 @@ function syncInteractionUI() {
 
 function renderStatus() {
   const interaction = syncInteractionUI();
+  if (isBlockDiagram(circuit)) {
+    const blockCount = selectedBlocks.size;
+    const connectorCount = selectedArrows.size;
+    const selection = blockCount
+      ? `${blockCount} block${blockCount === 1 ? '' : 's'}`
+      : connectorCount
+        ? `${connectorCount} connector${connectorCount === 1 ? '' : 's'}`
+        : '-';
+    const parts = [documentKindLabel(circuit), interaction.label, `sel ${selection}`, `@${cursor.x},${cursor.y}`];
+    if (blockPlacement) parts.push('click to place a block · Esc cancel');
+    if (blockConnector) parts.push(blockConnector.source
+      ? `CONNECTOR ${blockConnector.source.block}.${blockConnector.source.terminal} → click a terminal to commit · other clicks guide · Enter cancels`
+      : 'CONNECTOR: click a block terminal to start · Esc cancel');
+    statusEl.textContent = parts.join('  ·  ');
+    statusEl.className = `status ${interaction.key}`;
+    return;
+  }
   const comp = selectedComp();
   const label = selectedLabel();
   const sel = label
@@ -7119,6 +7559,7 @@ function activateShapeAnnotation(kind) {
 }
 
 function activatePlace() {
+  if (isBlockDiagram(circuit)) { activateBlockPlace(); return; }
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish the active interaction before placing'); return; }
   moveMode = null;
   copyMode = false;
@@ -7135,6 +7576,17 @@ function activatePlace() {
 }
 
 function activateSelect() {
+  if (isBlockDiagram(circuit)) {
+    blockPlacement = false;
+    blockConnector = null;
+    mode = 'normal';
+    moveMode = null;
+    copyMode = false;
+    deleteMode = false;
+    visual = null;
+    render();
+    return;
+  }
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction first'); return; }
   mode = 'normal';
   pendingPlace = null;
@@ -7150,6 +7602,17 @@ function activateSelect() {
   render();
 }
 function activateVisual() {
+  if (isBlockDiagram(circuit)) {
+    blockPlacement = false;
+    blockConnector = null;
+    mode = 'normal';
+    moveMode = null;
+    copyMode = false;
+    deleteMode = false;
+    visual = { x: cursor.x, y: cursor.y };
+    render();
+    return;
+  }
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before box selection'); return; }
   mode = 'normal';
   moveMode = null;
@@ -7166,6 +7629,17 @@ function activateVisual() {
 }
 
 function activateDelete() {
+  if (isBlockDiagram(circuit)) {
+    blockPlacement = false;
+    blockConnector = null;
+    mode = 'normal';
+    moveMode = null;
+    copyMode = false;
+    visual = null;
+    deleteMode = true;
+    render();
+    return;
+  }
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before deleting'); return; }
   if (copySelectionExists()) {
     deleteSelection();
@@ -7186,6 +7660,7 @@ function activateDelete() {
 }
 
 function activateWire() {
+  if (isBlockDiagram(circuit)) { activateBlockConnector(); return; }
   // Re-clicking Wire is intentionally harmless: a toolbar click must not lose
   // a partially drawn path, including its manually entered waypoints.
   if (hasWireDraft() || hasModalPlacement()) { logLine('active interaction retained'); render(); return; }
@@ -7206,6 +7681,25 @@ function activateWire() {
 }
 
 function activateMove(kind = 'connected') {
+  if (isBlockDiagram(circuit)) {
+    blockPlacement = false;
+    blockConnector = null;
+    mode = 'normal';
+    if (kind !== 'detached' && selectedArrows.size) {
+      const promoted = [];
+      for (const id of selectedArrows) {
+        const arrow = circuit.arrows.get(id);
+        if (arrow?.from && arrow?.to) { selectedBlocks.add(arrow.from.block); selectedBlocks.add(arrow.to.block); promoted.push(id); }
+      }
+      selectedArrows.clear();
+      if (promoted.length) logLine(`MOVE: promoted connector${promoted.length === 1 ? '' : 's'} to endpoint blocks`);
+    }
+    moveMode = kind === 'detached' ? 'detached' : 'connected';
+    copyMode = false;
+    deleteMode = false;
+    render();
+    return;
+  }
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before moving'); return; }
   mode = 'normal';
   visual = null;
@@ -7220,6 +7714,16 @@ function activateMove(kind = 'connected') {
 }
 
 function activateCopy() {
+  if (isBlockDiagram(circuit)) {
+    blockPlacement = false;
+    blockConnector = null;
+    moveMode = null;
+    deleteMode = false;
+    copyMode = true;
+    logLine('COPY: click a block, or use the existing selection; move the copy, then click/Enter (Esc exits)');
+    render();
+    return;
+  }
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before copying'); return; }
   mode = 'normal';
   visual = null;
@@ -7493,7 +7997,9 @@ function bindInteractionControls() {
   const actions = {
     normal: activateSelect,
     place: activatePlace,
+    'place-block': activateBlockPlace,
     wire: activateWire,
+    connector: activateBlockConnector,
     visual: activateVisual,
     move: () => activateMove('connected'),
     'move-detached': () => activateMove('detached'),
@@ -7572,30 +8078,27 @@ if (switchDialog) {
   });
 }
 
-document.getElementById('btn-new-circuit').addEventListener('click', () => {
+function startNewDocument(kind) {
   circuitNameEl.value = '';
+  circuitSelectEl.value = '';
   currentCircuitName = '';
-  history.push(snapshot());
-  future.length = 0;
-  circuit = new Circuit();
-  markModelChanged(false);
-  resetCheckState();
-  directWire = null;
-  wire = null;
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  setSelection([]);
-  selectedNets.clear();
+  history = [];
+  future = [];
+  applyJson(JSON.stringify(createDocument(kind).toJSON()));
+  lastSavedSnapshot = snapshot();
+  lastSeenActive = null;
+  lastSeenRevision = null;
+  lastCircuitTag = null;
+  remoteConflictLogged = false;
   cursor = { x: 0, y: 0 };
   view = viewFromCenter(0, 0);
   render();
   circuitNameEl.focus();
-  logLine('Started a new circuit. Enter a name and save to create its files.');
-});
+  logLine(`Started a new ${kind === 'block' ? 'block diagram' : 'schematic'}. Enter a name and save to create its files.`);
+}
+
+document.getElementById('btn-new-circuit').addEventListener('click', () => startNewDocument('circuit'));
+document.getElementById('btn-new-block')?.addEventListener('click', () => startNewDocument('block'));
 
 document.getElementById('btn-load-circuit').addEventListener('click', () => requestCircuitLoad());
 deleteCircuitBtn?.addEventListener('click', askDeleteCircuit);
@@ -7702,11 +8205,19 @@ window.addEventListener('keydown', (ev) => {
   }
 
   const tag = (ev.target && ev.target.tagName) || '';
-  if (isBlockDiagram(circuit) && !inlineInput) {
+  if (isBlockDiagram(circuit) && !inlineInput && !['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) {
+    if (visual) {
+      onVisualKey(ev.key);
+      ev.preventDefault();
+      return;
+    }
     if (ev.key === 'Escape') {
       if (blockDrag && !blockDrag.copy) circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
       selectedBlocks.clear();
+      selectedArrows.clear();
       blockDrag = null;
+      blockPlacement = false;
+      blockConnector = null;
       moveMode = null;
       copyMode = false;
       movePending = false;
@@ -7715,18 +8226,28 @@ window.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       return;
     }
-    if ((ev.key === 'Delete' || ev.key === 'Backspace') && selectedBlocks.size) {
-      const before = snapshot();
-      for (const id of selectedBlocks) circuit.removeBlock(id);
-      recordBlockHistory(before);
-      selectedBlocks.clear(); persistDraft(); render(); ev.preventDefault(); return;
+    if (blockConnector && ev.key === 'Backspace') {
+      if (blockConnector.points.length) blockConnector.points.pop();
+      else blockConnector.source = null;
+      render();
+      ev.preventDefault();
+      return;
+    }
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && blockSelectionExists()) {
+      deleteBlockSelection();
+      ev.preventDefault();
+      return;
     }
     if (!blockDrag && selectedBlocks.size && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(ev.key)) {
-      const before = snapshot();
       const dx = ev.key === 'ArrowLeft' ? -GRID : ev.key === 'ArrowRight' ? GRID : 0;
       const dy = ev.key === 'ArrowUp' ? -GRID : ev.key === 'ArrowDown' ? GRID : 0;
-      for (const id of selectedBlocks) { const b = circuit.getBlock(id); b.rect.x += dx; b.rect.y += dy; }
+      const before = snapshot();
+      for (const id of selectedBlocks) {
+        const block = circuit.getBlock(id);
+        circuit.moveBlock(id, block.rect.x + dx, block.rect.y + dy);
+      }
       recordBlockHistory(before);
+      markModelChanged();
       persistDraft(); render(); ev.preventDefault(); return;
     }
     if (blockDrag?.copy && ev.key === 'Enter') {
@@ -7737,6 +8258,19 @@ window.addEventListener('keydown', (ev) => {
     if (selectedBlocks.size && (ev.key === 'F2' || ev.key === 'Enter')) {
       inlineEditBlock(circuit.getBlock([...selectedBlocks][0]));
       ev.preventDefault(); return;
+    }
+    if (blockPlacement && ev.key === 'Enter') {
+      addPlacedBlock(cursor);
+      ev.preventDefault(); return;
+    }
+    if (blockConnector && ev.key === 'Enter') {
+      logLine('CONNECTOR: choose a target terminal before committing');
+      ev.preventDefault();
+      return;
+    }
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      return;
     }
   }
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
@@ -7756,7 +8290,18 @@ window.addEventListener('keydown', (ev) => {
     && pendingKey?.key === 'd' && Date.now() - pendingKey.at < 800;
   if (ev.metaKey || ev.ctrlKey) {
     const k = ev.key.toLowerCase();
-    if (k === 'i' || k === 'b') {
+    if (isBlockDiagram(circuit) && k === 'a') {
+      ev.preventDefault();
+      selectedBlocks = new Set(circuit.blocks.keys());
+      selectedArrows = new Set(circuit.arrows.keys());
+      render();
+    } else if (isBlockDiagram(circuit) && k === 'c') {
+      ev.preventDefault();
+      activateCopy();
+    } else if (isBlockDiagram(circuit) && k === 'v') {
+      ev.preventDefault();
+      logLine('paste is unavailable across document types; use Copy in this block diagram');
+    } else if (k === 'i' || k === 'b') {
       ev.preventDefault();
       toggleSelectedLabelFont(k === 'i' ? 'italic' : 'bold');
     } else if (k === 'z') {
@@ -7810,7 +8355,8 @@ window.addEventListener('keydown', (ev) => {
   const key = ev.key;
   if (key === 'F3') {
     ev.preventDefault();
-    toggleRouteMode();
+    if (isBlockDiagram(circuit)) logLine('Block connectors are orthogonal and use arrowheads by default');
+    else toggleRouteMode();
     return;
   }
   if (key.startsWith('F') && /^F\d+$/.test(key)) return;
@@ -7907,11 +8453,18 @@ cmdInput.addEventListener('keydown', (ev) => {
 
 window.__run = (line) => { runLine(line); };
 window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); fitView(); };
-window.__circuit = () => ({
-  comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
-  nets: [...circuit.nets.values()].map((net) => ({ id: net.id, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, branches: net.branches, junctions: net.junctions, pts: net.points() })),
-  labels: [...circuit.labels.values()].map((l) => ({ ...l.toJSON(), world: l.anchorWorld() })),
-});
+window.__circuit = () => isBlockDiagram(circuit)
+  ? {
+      kind: 'block',
+      blocks: [...circuit.blocks.values()].map((block) => ({ id: block.id, text: block.text, rect: { ...block.rect }, terminals: [...block.terminals.values()].map((terminal) => terminal.toJSON()) })),
+      arrows: [...circuit.arrows.values()].map((arrow) => arrow.toJSON()),
+    }
+  : {
+      kind: 'circuit',
+      comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
+      nets: [...circuit.nets.values()].map((net) => ({ id: net.id, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, branches: net.branches, junctions: net.junctions, pts: net.points() })),
+      labels: [...circuit.labels.values()].map((l) => ({ ...l.toJSON(), world: l.anchorWorld() })),
+    };
 
 view = viewFromCenter(0, 0);
 window.__app ||= { renders: [] };

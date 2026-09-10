@@ -76,12 +76,17 @@ path, and SVG export all use this boundary, so block data never passes through
 `Circuit.fromJSON()` or electrical `evaluate()`.
 
 `runCommand()` dispatches block documents to block-specific verbs: `help`,
-`list`, `state`, `bounds`, `add-block`, `add-arrow`, `svg`/`export`, and `save`.
-Electrical verbs remain isolated from `BlockDiagram`. The existing
-`/api/circuits/<name>` transport and `circuit.json`/`circuit.svg` filenames are
-shared by both document kinds. The browser loads, renders, and edits block
-documents in a separate interaction path from electrical circuits. Click blocks to select them (Shift/Ctrl-click
-adds or toggles selection), then use Move, Copy, or Shift+M; arrow keys nudge
-selected blocks, Delete removes them, and Enter/F2 or double-click edits block
-text inline. Moving and copying a connected block set preserves its internal
-arrows. Block selection and editing never invoke electrical pickers or routing.
+`list`, `state`, `bounds`, block/terminal/connector add, move, resize, rename,
+remove, `svg`/`export`, and `save`. Electrical verbs remain isolated from
+`BlockDiagram`. The existing `/api/circuits/<name>` transport and
+`circuit.json`/`circuit.svg` filenames are shared by both document kinds. The
+browser exposes separate New schematic and New block diagram actions, labels
+the active type, and hides tools from the other domain. Click blocks to select
+them (Shift/Ctrl-click adds or toggles selection), then use Move, Copy, or
+arrow-key nudging; Delete removes them, and Enter/F2 or double-click edits
+block text inline. Connected Move promotes a selected connector to its endpoint
+blocks; Shift+Move detaches selected blocks or connectors while preserving their
+visual geometry, while connectors internal to a detached block set remain
+attached. Copying blocks copies no connectors; copying a connector creates a
+detached visual arrow with its arrowhead. Block selection and editing never invoke electrical pickers,
+labels, or routing.

@@ -195,8 +195,9 @@ export class BlockArrow {
   constructor(options = {}) {
     this.id = String(options.id ?? '');
     if (!this.id) throw new Error('arrow id is required');
-    this.from = normalizeRef(options.from ?? options.source);
-    this.to = normalizeRef(options.to ?? options.target);
+    this.detached = options.detached === true;
+    this.from = this.detached ? null : normalizeRef(options.from ?? options.source);
+    this.to = this.detached ? null : normalizeRef(options.to ?? options.target);
     this.routingMode = options.routingMode ?? 'auto';
     if (!['auto', 'fixed'].includes(this.routingMode)) throw new Error(`invalid arrow routing mode "${this.routingMode}"`);
     this.points = clone(options.points || []);
@@ -208,6 +209,7 @@ export class BlockArrow {
   toJSON() {
     return {
       id: this.id,
+      detached: this.detached,
       from: clone(this.from),
       to: clone(this.to),
       routingMode: this.routingMode,
@@ -382,7 +384,9 @@ export class BlockDiagram {
     const data = arrowData(options, from, to);
     const arrow = new BlockArrow({ ...data, id: data.id || this.nextArrowId() });
     if (this.arrows.has(arrow.id)) throw new Error(`duplicate arrow id "${arrow.id}"`);
-    if (arrow.routingMode === 'auto') {
+    if (arrow.detached) {
+      if (arrow.points.length < 2) throw new Error(`detached arrow "${arrow.id}" requires points`);
+    } else if (arrow.routingMode === 'auto') {
       arrow.points = routeBlockArrow(this, arrow);
       if (!arrow.points) throw new Error(`no safe route for arrow "${arrow.id}"`);
     } else {
@@ -399,7 +403,10 @@ export class BlockDiagram {
     try {
       if (!['auto', 'fixed'].includes(routingMode)) throw new Error(`invalid arrow routing mode "${routingMode}"`);
       arrow.routingMode = routingMode;
-      if (arrow.routingMode === 'auto') {
+      if (arrow.detached) {
+        if (arrow.routingMode === 'auto') throw new Error(`detached arrow "${id}" requires a fixed route`);
+        arrow.points = clone(points || []);
+      } else if (arrow.routingMode === 'auto') {
         arrow.points = routeBlockArrow(this, arrow);
         if (!arrow.points) throw new Error(`no safe route for arrow "${id}"`);
       } else {
@@ -420,10 +427,31 @@ export class BlockDiagram {
   removeBlock(id) {
     const block = this.getBlock(id);
     for (const [arrowId, arrow] of this.arrows) {
-      if (arrow.from.block === id || arrow.to.block === id) this.arrows.delete(arrowId);
+      if (!arrow.detached && (arrow.from.block === id || arrow.to.block === id)) this.arrows.delete(arrowId);
     }
     this.blocks.delete(id);
     return block;
+  }
+
+  detachArrow(id) {
+    const arrow = this.getArrow(id);
+    if (arrow.detached) return arrow;
+    arrow.detached = true;
+    arrow.from = null;
+    arrow.to = null;
+    arrow.routingMode = 'fixed';
+    this.validate();
+    return arrow;
+  }
+
+  detachBoundaryArrows(blockIds) {
+    const selected = new Set(blockIds);
+    for (const arrow of [...this.arrows.values()]) {
+      if (arrow.detached) continue;
+      const fromSelected = selected.has(arrow.from.block);
+      const toSelected = selected.has(arrow.to.block);
+      if (fromSelected !== toSelected) this.detachArrow(arrow.id);
+    }
   }
 
   _anchorFixedArrow(arrow) {
@@ -437,7 +465,7 @@ export class BlockDiagram {
 
   _incidentSnapshot(blockId) {
     return [...this.arrows.values()]
-      .filter((arrow) => arrow.from.block === blockId || arrow.to.block === blockId)
+      .filter((arrow) => !arrow.detached && (arrow.from.block === blockId || arrow.to.block === blockId))
       .map((arrow) => arrow.toJSON());
   }
 
@@ -449,7 +477,7 @@ export class BlockDiagram {
     const old = snapshot || this._incidentSnapshot(blockId);
     try {
       for (const arrow of this.arrows.values()) {
-        if (arrow.from.block !== blockId && arrow.to.block !== blockId) continue;
+        if (arrow.detached || (arrow.from.block !== blockId && arrow.to.block !== blockId)) continue;
         if (arrow.routingMode === 'auto') {
           arrow.points = routeBlockArrow(this, arrow);
           if (!arrow.points) throw new Error(`no safe route for arrow "${arrow.id}"`);
@@ -524,6 +552,12 @@ export class BlockDiagram {
     }
     for (const [id, arrow] of this.arrows) {
       if (id !== arrow.id || !arrow.id) errors.push('arrow ids must be non-empty and match their map keys');
+      if (arrow.detached) {
+        if (!Array.isArray(arrow.points) || arrow.points.length < 2) errors.push(`detached arrow "${id}" needs at least two route points`);
+        else if (arrow.points.some((point) => !point || !finite(point.x) || !finite(point.y) || !onGrid(point.x) || !onGrid(point.y))) errors.push(`arrow "${id}" points must be finite and grid-aligned`);
+        else if (!routeIsOrthogonal(arrow.points)) errors.push(`arrow "${id}" route must be orthogonal`);
+        continue;
+      }
       for (const ref of [arrow.from, arrow.to]) {
         const block = this.blocks.get(ref?.block);
         if (!block || !block.terminals.has(ref?.terminal)) errors.push(`arrow "${id}" references a missing terminal`);

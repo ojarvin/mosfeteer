@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BlockDiagram, BLOCK_DIAGRAM_KIND, BLOCK_DIAGRAM_VERSION, blockLabelPosition } from '../src/core/block-model.js';
+import { runCommand } from '../src/core/commands.js';
 
 function fixture() {
   const diagram = new BlockDiagram();
@@ -70,6 +71,37 @@ test('arrow identity is terminal-based and block deletion cascades incident arro
   assert.throws(() => diagram.removeTerminal('B1.out'), /arrows reference/);
   diagram.removeBlock('B1');
   assert.equal(diagram.arrows.size, 0);
+});
+
+test('detached visual arrows survive block operations and keep their geometry', () => {
+  const diagram = new BlockDiagram({
+    blocks: [{ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 80 } }],
+    arrows: [{ id: 'A1', detached: true, routingMode: 'fixed', points: [{ x: 0, y: 40 }, { x: 240, y: 40 }] }],
+  });
+  diagram.moveBlock('B1', 160, 160);
+  assert.deepEqual(diagram.getArrow('A1').points, [{ x: 0, y: 40 }, { x: 240, y: 40 }]);
+  assert.match(runCommand(diagram, 'list').text, /A1 \(detached visual connector\)/);
+  diagram.removeBlock('B1');
+  assert.equal(diagram.arrows.size, 1);
+});
+
+test('detaching an attached arrow preserves its route while allowing independent movement', () => {
+  const diagram = fixture();
+  const route = diagram.getArrow('A1').points.map((point) => ({ ...point }));
+  diagram.detachArrow('A1');
+  diagram.moveBlock('B1', 0, 160);
+  assert.equal(diagram.getArrow('A1').detached, true);
+  assert.deepEqual(diagram.getArrow('A1').points, route);
+});
+
+test('detached block moves preserve internal connectors and detach boundary connectors', () => {
+  const diagram = fixture();
+  diagram.addBlock({ id: 'B3', rect: { x: 800, y: 160, w: 160, h: 80 } });
+  diagram.addTerminal('B3', { id: 'in', side: 'left', offset: 40 });
+  diagram.addArrow({ id: 'A2', from: 'B2.in', to: 'B3.in' });
+  diagram.detachBoundaryArrows(['B1', 'B2']);
+  assert.equal(diagram.getArrow('A1').detached, false);
+  assert.equal(diagram.getArrow('A2').detached, true);
 });
 
 test('validation rejects stale endpoint identity and leaves failed mutation atomic', () => {

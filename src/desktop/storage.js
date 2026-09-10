@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readdir, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { loadDocument, renderDocument } from '../core/document.js';
+import { createDocument, documentKind, loadDocument, renderDocument } from '../core/document.js';
 
 export const CIRCUIT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
@@ -65,15 +65,28 @@ export function createNativeStorage(root, { render = renderDocument } = {}) {
       try {
         rootHandle = await openRoot();
         const entries = await readdir(fdPath(rootHandle), { withFileTypes: true });
-        return {
-          circuits: entries
-            .filter((entry) => entry.isDirectory() && CIRCUIT_NAME.test(entry.name))
-            .map((entry) => entry.name)
-            .sort(),
-        };
+        const circuits = entries
+          .filter((entry) => entry.isDirectory() && CIRCUIT_NAME.test(entry.name))
+          .map((entry) => entry.name)
+          .sort();
+        const documents = await Promise.all(circuits.map(async (name) => {
+          try {
+            const directory = await openCircuit(rootHandle, name);
+            try {
+              const state = await withFile(directory, 'circuit.json', constants.O_RDONLY | secureFileFlags,
+                (file) => file.readFile('utf8').then((text) => JSON.parse(text)));
+              return { name, kind: documentKind(state) };
+            } finally {
+              await directory.close();
+            }
+          } catch {
+            return { name, kind: 'circuit' };
+          }
+        }));
+        return { circuits, documents };
       } catch (error) {
         if (error.code !== 'ENOENT') throw error;
-        return { circuits: [] };
+        return { circuits: [], documents: [] };
       } finally {
         await rootHandle?.close();
       }
@@ -100,7 +113,13 @@ export function createNativeStorage(root, { render = renderDocument } = {}) {
       });
     },
 
-    async save(name, state) {
+    async create(name, kind = 'circuit') {
+      const safe = validCircuitName(name);
+      if (!safe) throw new Error('invalid circuit name');
+      return this.save(safe, createDocument(kind).toJSON(), { createOnly: true });
+    },
+
+    async save(name, state, options = {}) {
       const safe = validCircuitName(name);
       if (!safe) throw new Error('invalid circuit name');
       return withCircuitLock(safe, async () => {
@@ -143,6 +162,11 @@ export function createNativeStorage(root, { render = renderDocument } = {}) {
           const backupPath = join(fdPath(rootHandle), backupName);
           let replaced = false;
           try {
+            if (existing && options.createOnly) {
+              const error = new Error('circuit already exists');
+              error.code = 'EEXIST';
+              throw error;
+            }
             if (existing) {
               await rename(targetPath, backupPath);
               replaced = true;

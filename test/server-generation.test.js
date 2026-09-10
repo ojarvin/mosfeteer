@@ -182,6 +182,19 @@ test('command API reports post-delete net state in each result', async (t) => {
   assert.equal(data.state.nets.length, 0);
 });
 
+test('HTTP document creation and listing preserve the document kind', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const created = await fetch(`${app.base}/api/circuits/overview`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'block' }),
+  });
+  assert.equal(created.status, 201);
+  assert.equal((await created.json()).kind, 'block');
+  const list = await (await fetch(`${app.base}/api/circuits`)).json();
+  assert.deepEqual(list.documents, [{ name: 'overview', kind: 'block' }]);
+  assert.equal((await (await fetch(`${app.base}/api/circuits/overview`)).json()).state.kind, 'block');
+});
+
 test('HTTP persistence accepts and renders block documents', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());

@@ -9,8 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Circuit } from '../core/model.js';
-import { loadDocument, renderDocument } from '../core/document.js';
+import { createDocument, documentKind, loadDocument, renderDocument } from '../core/document.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { renderAscii } from '../core/ascii.js';
 import { svgString } from '../core/render.js';
@@ -223,7 +222,15 @@ async function handleCircuitApi(req, res, url) {
       if (err.code !== 'ENOENT') throw err;
     }
     const names = entries.filter((entry) => entry.isDirectory() && circuitName(entry.name)).map((entry) => entry.name).sort();
-    json(res, 200, { circuits: names });
+    const documents = await Promise.all(names.map(async (name) => {
+      try {
+        const state = JSON.parse(await readFile(join(CIRCUITS_ROOT, name, 'circuit.json'), 'utf8'));
+        return { name, kind: documentKind(state) };
+      } catch {
+        return { name, kind: 'circuit' };
+      }
+    }));
+    json(res, 200, { circuits: names, documents });
     return true;
   }
 
@@ -244,7 +251,7 @@ async function handleCircuitApi(req, res, url) {
         ? rawCmd.map((s) => String(s)).filter((s) => s.trim() !== '')
         : String(rawCmd).split('\n').map((s) => s.trim()).filter((s) => s !== '');
       const response = await withCircuitLock(name, async () => {
-        const circuit = await loadOrCreateCircuit(name);
+        const circuit = await loadOrCreateCircuit(name, body.kind);
         const results = [];
         let mutated = false;
         for (const line of lines) {
@@ -304,6 +311,19 @@ async function handleCircuitApi(req, res, url) {
     });
   }
 
+  if (req.method === 'POST') {
+    try {
+      const body = await requestBody(req);
+      const circuit = createDocument(body.kind || 'circuit');
+      const revision = await saveNewCircuit(circuit, name);
+      await setActive(name);
+      json(res, 201, { name, kind: documentKind(circuit), files: ['circuit.json', 'circuit.svg'] }, circuitHeaders(revision));
+    } catch (err) {
+      json(res, err.code === 'EEXIST' ? 409 : 400, { error: `could not create circuit: ${err.message}` });
+    }
+    return true;
+  }
+
   if (req.method === 'GET') {
     return withCircuitLock(name, async () => {
       try {
@@ -339,7 +359,7 @@ async function handleCircuitApi(req, res, url) {
     return true;
   }
 
-  res.writeHead(405, { Allow: 'GET, PUT, DELETE' });
+  res.writeHead(405, { Allow: 'GET, POST, PUT, DELETE' });
   res.end();
   return true;
 }
@@ -402,13 +422,13 @@ async function handleActiveApi(req, res, url) {
   return true;
 }
 
-async function loadOrCreateCircuit(name) {
+async function loadOrCreateCircuit(name, kind = 'circuit') {
   const statePath = join(CIRCUITS_ROOT, name, 'circuit.json');
   try {
     const state = JSON.parse(await readFile(statePath, 'utf8'));
     return loadDocument(state);
   } catch (err) {
-    if (err.code === 'ENOENT') return new Circuit();
+    if (err.code === 'ENOENT') return createDocument(kind);
     throw err;
   }
 }

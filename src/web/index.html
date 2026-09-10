@@ -19,21 +19,23 @@
       <div class="toolbar-group workspace-group" aria-labelledby="workspace-heading">
         <span class="toolbar-group-label" id="workspace-heading">File</span>
         <div class="circuit-picker">
-          <select id="circuit-select" aria-label="Choose a saved circuit" title="Choose a saved circuit to open">
-            <option value="">Choose saved circuit...</option>
+          <select id="circuit-select" aria-label="Choose a saved document" title="Choose a saved document to open">
+            <option value="">Open document...</option>
           </select>
-          <input id="circuit-name" type="text" placeholder="Circuit name" autocomplete="off" spellcheck="false" aria-label="Current circuit name" title="Name for the circuit when saving" />
+          <input id="circuit-name" type="text" placeholder="Document name" autocomplete="off" spellcheck="false" aria-label="Current document name" title="Name for the document when saving" />
+          <span id="document-kind" class="document-kind" aria-live="polite">Schematic</span>
           <span id="save-state" class="save-state" aria-live="polite"></span>
         </div>
-        <button id="btn-load-circuit" data-icon="folder-open" title="Load the circuit named in the field">Load</button>
-        <button id="btn-new-circuit" data-icon="file-plus" title="Start a new, empty circuit">New</button>
-        <button id="btn-delete-circuit" data-icon="trash" class="danger-action" title="Permanently delete the saved current circuit" disabled>Delete circuit</button>
-        <button id="btn-check" data-icon="check" data-action="check" title="Check the current circuit (x)">Check</button>
-        <button id="btn-save" data-icon="save" data-action="save" title="Save the current circuit, including designs with issues (Shift+x)">Save</button>
-        <button id="btn-export" data-icon="download" title="Export the current circuit as SVG">Export</button>
+        <button id="btn-load-circuit" data-icon="folder-open" title="Load the document named in the field">Load</button>
+        <button id="btn-new-circuit" data-icon="file-plus" title="Start a new, empty schematic">New schematic</button>
+        <button id="btn-new-block" data-icon="file-plus" title="Start a new, empty block diagram">New block diagram</button>
+        <button id="btn-delete-circuit" data-icon="trash" class="danger-action" title="Permanently delete the saved current document" disabled>Delete document</button>
+        <button id="btn-check" data-icon="check" data-action="check" data-doc-kind="schematic" title="Check the current schematic (x)">Check</button>
+        <button id="btn-save" data-icon="save" data-action="save" title="Save the current document, including designs with issues (Shift+x)">Save</button>
+        <button id="btn-export" data-icon="download" title="Export the current document as SVG">Export</button>
       </div>
 
-      <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style">
+      <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style" data-doc-kind="schematic">
         <span class="toolbar-group-label" id="style-heading">Design style</span>
         <label for="style-color">Color</label>
         <select id="style-color" title="Apply color to the selected objects; Ctrl+Shift+V pastes a copied object's color (Ctrl+Shift+V)">
@@ -56,7 +58,7 @@
         </select>
       </div>
 
-      <div class="toolbar-group routing-group" aria-labelledby="routing-heading" data-control-group="routing">
+      <div class="toolbar-group routing-group" aria-labelledby="routing-heading" data-control-group="routing" data-doc-kind="schematic">
         <span class="toolbar-group-label" id="routing-heading">Routing</span>
         <label class="routing-label" for="routing-mode">Wire shape <kbd>F3</kbd></label>
         <select id="routing-mode" data-routing-mode="true" title="Choose the shape used for new wires (F3)">
@@ -113,46 +115,61 @@
       <div class="mode-group mode-toolbar" aria-labelledby="mode-heading" data-control-group="mode">
         <span class="toolbar-group-label" id="mode-heading">Edit tools</span>
         <button id="btn-mode-select" class="mode-control" data-icon="cursor" data-mode="select" aria-pressed="true" title="Select and edit objects (Esc)" aria-label="Select and edit objects">Select <kbd>Esc</kbd></button>
-        <button id="btn-mode-place" class="mode-control" data-icon="plus" data-mode="place" aria-pressed="false" title="Place a component or label (i)" aria-label="Place a component or label">Place <kbd>i</kbd></button>
-        <button id="btn-mode-wire" class="mode-control" data-icon="wire" data-mode="wire" aria-pressed="false" title="Draw a wire using the selected shape (w)" aria-label="Draw a wire">Wire <kbd>w</kbd></button>
+        <button id="btn-mode-place" class="mode-control" data-icon="plus" data-mode="place" data-doc-kind="schematic" aria-pressed="false" title="Place a schematic component or label (i)" aria-label="Place a schematic component or label">Place <kbd>i</kbd></button>
+        <button id="btn-mode-place-block" class="mode-control" data-icon="plus" data-action="place-block" data-doc-kind="block" hidden aria-pressed="false" title="Place a block (i)" aria-label="Place a block">Block <kbd>i</kbd></button>
+        <button id="btn-mode-wire" class="mode-control" data-icon="wire" data-mode="wire" data-doc-kind="schematic" aria-pressed="false" title="Draw an electrical wire using the selected shape (w)" aria-label="Draw an electrical wire">Wire <kbd>w</kbd></button>
+        <button id="btn-mode-connector" class="mode-control" data-icon="wire" data-action="connector" data-doc-kind="block" hidden aria-pressed="false" title="Draw a block connector with an arrowhead (w)" aria-label="Draw a block connector">Connector <kbd>w</kbd></button>
         <button id="btn-mode-visual" class="mode-control" data-icon="box-select" data-mode="visual" aria-pressed="false" title="Select everything completely inside a box (v)" aria-label="Box select">Box select <kbd>v</kbd></button>
         <button id="btn-mode-move" class="mode-control" data-icon="move" data-action="move" aria-pressed="false" title="Move the selected object and stay in Move mode until Esc (m)" aria-label="Move selected object">Move <kbd>m</kbd></button>
-        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Move without carrying electrical connectivity; stay active until Esc (Shift+m)" aria-label="Detach move">Detach move <kbd>Shift+m</kbd></button>
+        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" data-doc-kind="schematic" aria-pressed="false" title="Move without carrying electrical connectivity; stay active until Esc (Shift+m)" aria-label="Detach move">Detach move <kbd>Shift+m</kbd></button>
         <button id="btn-mode-copy" class="mode-control" data-icon="copy" data-action="copy" aria-pressed="false" title="Copy the selected object or set; Ctrl+Shift+V pastes one copied object's style onto selected objects (c)" aria-label="Copy selected object">Copy <kbd>c</kbd></button>
         <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc (Delete)" aria-label="Delete selected objects">Delete <kbd>Delete</kbd></button>
-        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a net label to name and connect wires (L)" aria-label="Place net label">Net label <kbd>L</kbd></button>
-        <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-icon="text" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires (Shift+N)" aria-label="Place annotation">Annotation <kbd>Shift+N</kbd></button>
-        <button id="btn-mode-arrow" class="mode-control annotation-control" data-icon="arrow" data-action="arrow" aria-pressed="false" title="Draw a two-point arrow (a)" aria-label="Draw arrow">Arrow <kbd>a</kbd></button>
-        <button id="btn-mode-box" class="mode-control annotation-control" data-icon="rectangle" data-action="box" aria-pressed="false" title="Draw a two-point box (b)" aria-label="Draw box">Box <kbd>b</kbd></button>
-        <button id="btn-mode-line" class="mode-control annotation-control" data-icon="line" data-action="line" aria-pressed="false" title="Draw a non-connectivity line annotation (l)" aria-label="Draw line annotation">Line <kbd>l</kbd></button>
-        <button id="btn-bring-front" class="mode-control layer-control" data-icon="front" data-action="bring-front" aria-pressed="false" aria-keyshortcuts="Shift+ArrowUp" title="Bring the selected object to the front (Shift+Up)" aria-label="Bring selected object to front">Bring to front <kbd>Shift+↑</kbd></button>
-        <button id="btn-send-back" class="mode-control layer-control" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send the selected object to the back (Shift+Down)" aria-label="Send selected object to back">Send to back <kbd>Shift+↓</kbd></button>
+        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" data-doc-kind="schematic" aria-pressed="false" title="Place a net label to name and connect wires (L)" aria-label="Place net label">Net label <kbd>L</kbd></button>
+        <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-icon="text" data-action="annotation" data-label-kind="annotation" data-doc-kind="schematic" aria-pressed="false" title="Place free text that does not name or connect wires (Shift+N)" aria-label="Place annotation">Annotation <kbd>Shift+N</kbd></button>
+        <button id="btn-mode-arrow" class="mode-control annotation-control" data-icon="arrow" data-action="arrow" data-doc-kind="schematic" aria-pressed="false" title="Draw a two-point arrow (a)" aria-label="Draw arrow">Arrow <kbd>a</kbd></button>
+        <button id="btn-mode-box" class="mode-control annotation-control" data-icon="rectangle" data-action="box" data-doc-kind="schematic" aria-pressed="false" title="Draw a two-point box (b)" aria-label="Draw box">Box <kbd>b</kbd></button>
+        <button id="btn-mode-line" class="mode-control annotation-control" data-icon="line" data-action="line" data-doc-kind="schematic" aria-pressed="false" title="Draw a non-connectivity line annotation (l)" aria-label="Draw line annotation">Line <kbd>l</kbd></button>
+        <button id="btn-bring-front" class="mode-control layer-control" data-doc-kind="schematic" data-icon="front" data-action="bring-front" aria-pressed="false" aria-keyshortcuts="Shift+ArrowUp" title="Bring the selected object to the front (Shift+Up)" aria-label="Bring selected object to front">Bring to front <kbd>Shift+↑</kbd></button>
+        <button id="btn-send-back" class="mode-control layer-control" data-doc-kind="schematic" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send the selected object to the back (Shift+Down)" aria-label="Send selected object to back">Send to back <kbd>Shift+↓</kbd></button>
       </div>
       <div class="canvas" id="canvas"></div>
       <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Component actions"></div>
     </section>
 
     <aside class="side-panel">
-      <section class="panel-group">
+      <section class="panel-group" data-doc-kind="schematic">
         <h2 class="panel-heading">Components</h2>
         <div class="list" id="components-list"></div>
       </section>
 
-      <section class="panel-group">
+      <section class="panel-group" data-doc-kind="schematic">
         <h2 class="panel-heading">Nets</h2>
         <div class="list" id="nets-list"></div>
       </section>
 
-      <section class="panel-group">
+      <section class="panel-group" data-doc-kind="schematic">
         <h2 class="panel-heading">Terminals</h2>
         <div class="detail" id="detail"></div>
       </section>
 
-      <section class="panel-group check-summary" id="check-summary" data-panel="check-summary" aria-labelledby="check-summary-heading">
+      <section class="panel-group check-summary" id="check-summary" data-panel="check-summary" data-doc-kind="schematic" aria-labelledby="check-summary-heading">
         <h2 class="panel-heading" id="check-summary-heading">Design check <button id="btn-clear-check" data-icon="x-circle" type="button" class="check-clear" title="Clear the Design check report">Clear</button></h2>
         <div class="check-summary-body" id="check-summary-body" data-role="check-summary" aria-live="polite">
           <div class="check-summary-empty" data-check-state="empty">Run Check to review this circuit.</div>
         </div>
+      </section>
+
+      <section class="panel-group block-panel" data-doc-kind="block" hidden>
+        <h2 class="panel-heading">Blocks</h2>
+        <div class="list" id="blocks-list"></div>
+      </section>
+      <section class="panel-group block-panel" data-doc-kind="block" hidden>
+        <h2 class="panel-heading">Connectors</h2>
+        <div class="list" id="connectors-list"></div>
+      </section>
+      <section class="panel-group block-panel" data-doc-kind="block" hidden>
+        <h2 class="panel-heading">Block details</h2>
+        <div class="detail block-info" id="block-detail">Select a block or connector.</div>
       </section>
     </aside>
   </main>

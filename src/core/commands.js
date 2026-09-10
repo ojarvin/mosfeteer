@@ -659,18 +659,76 @@ function dispatch(circuit, cmd, pos, flags, io) {
   throw new Error(`unknown command "${cmd}" (try: help)`);
 }
 
+export function blockCommandHelp() {
+  return [
+    'Block diagram commands',
+    '  add-block ID TEXT X Y W H',
+    '  move-block ID X Y | resize-block ID W H | rename-block ID TEXT',
+    '  add-terminal BLOCK ID SIDE OFFSET | move-terminal BLOCK.ID SIDE OFFSET | rm-terminal BLOCK.ID',
+    '  add-connector ID FROM TO | rm-connector ID',
+    '  list | state | bounds | svg [file] | save <file>',
+  ].join('\n');
+}
+
 function runBlockCommand(diagram, line, io) {
   const { pos, flags } = parseArgs(splitArgs(line)); const cmd = pos.shift() || 'help';
   const result = (text, json = null, mutated = false) => ({ text, json, mutated });
-  if (cmd === 'help') return result('add-block ID TEXT X Y W H | add-arrow ID FROM TO | list | state | bounds | svg [file] | save <file>');
-  if (cmd === 'list') return result([...diagram.blocks.values()].map(b => `${b.id} ${b.text}`).join('\n') || '(no blocks)');
+  if (cmd === 'help') return result(blockCommandHelp());
+  if (cmd === 'list') return result([
+    ...[...diagram.blocks.values()].map((b) => `${b.id} ${b.text}`),
+    ...[...diagram.arrows.values()].map((a) => a.detached
+      ? `${a.id} (detached visual connector)`
+      : `${a.id} ${a.from.block}.${a.from.terminal} -> ${a.to.block}.${a.to.terminal}`),
+  ].join('\n') || '(no blocks)');
   if (cmd === 'state') return result(JSON.stringify(diagram.toJSON(), null, 2), diagram.toJSON());
   if (cmd === 'bounds') return result(JSON.stringify(diagram.bounds()), diagram.bounds());
-  if (cmd === 'add-block') { const [id,text,x,y,w,h] = pos; diagram.addBlock({ id, text, x:Number(x), y:Number(y), w:Number(w), h:Number(h) }); return result(`added ${id}`, null, true); }
-  if (cmd === 'add-arrow') { const [id,from,to] = pos; diagram.addArrow({ id, from, to }); return result(`added ${id}`, null, true); }
+  if (cmd === 'add-block') {
+    const [id, text, x, y, w, h] = pos;
+    const block = diagram.addBlock({ id, text, x: Number(x), y: Number(y), w: Number(w), h: Number(h) });
+    return result(`added ${block.id}`, block.toJSON(), true);
+  }
+  if (cmd === 'move-block') {
+    const block = diagram.moveBlock(pos[0], Number(pos[1]), Number(pos[2]));
+    return result(`moved ${block.id}`, block.toJSON(), true);
+  }
+  if (cmd === 'resize-block') {
+    const block = diagram.resizeBlock(pos[0], Number(pos[1]), Number(pos[2]));
+    return result(`resized ${block.id}`, block.toJSON(), true);
+  }
+  if (cmd === 'rename-block') {
+    const block = diagram.renameBlock(pos[0], pos.slice(1).join(' '));
+    return result(`renamed ${block.id}`, block.toJSON(), true);
+  }
+  if (cmd === 'rm-block' || cmd === 'remove-block') {
+    const block = diagram.removeBlock(pos[0]);
+    return result(`removed ${block.id}`, block.toJSON(), true);
+  }
+  if (cmd === 'add-terminal') {
+    const [blockId, id, side, offset] = pos;
+    const terminal = diagram.addTerminal(blockId, { id, side, offset: Number(offset) });
+    return result(`added terminal ${blockId}.${terminal.id}`, terminal.toJSON(), true);
+  }
+  if (cmd === 'move-terminal') {
+    const terminal = diagram.moveTerminal(pos[0], pos[1], Number(pos[2]));
+    return result(`moved terminal ${pos[0]}`, terminal.toJSON(), true);
+  }
+  if (cmd === 'rm-terminal' || cmd === 'remove-terminal') {
+    const ref = pos[0];
+    if (!diagram.removeTerminal(ref)) throw new Error(`unknown terminal "${ref}"`);
+    return result(`removed terminal ${ref}`, null, true);
+  }
+  if (cmd === 'add-arrow' || cmd === 'add-connector') {
+    const [id, from, to] = pos;
+    const arrow = diagram.addArrow({ id, from, to });
+    return result(`added connector ${arrow.id}`, arrow.toJSON(), true);
+  }
+  if (cmd === 'rm-arrow' || cmd === 'remove-arrow' || cmd === 'rm-connector' || cmd === 'remove-connector') {
+    const arrow = diagram.removeArrow(pos[0]);
+    return result(`removed connector ${arrow.id}`, arrow.toJSON(), true);
+  }
   if (cmd === 'svg' || cmd === 'export') { const file=pos[0]||'data/preview.svg', svg=blockSvgString(diagram, { background:true }); if (io) { io.writeTextFile(file,svg); return result(`wrote ${file} (${svg.length} bytes)`); } return result('SVG below', {svg}); }
   if (cmd === 'save') { if (!io || !pos[0]) throw new Error('save requires file I/O and a path'); io.writeTextFile(pos[0], JSON.stringify(diagram.toJSON(), null, 2)); return result(`saved state to ${pos[0]}`); }
-  throw new Error(`unknown block command "${cmd}" (try: help)`);
+  throw new Error(`unknown command "${cmd}" (try: help)`);
 }
 
 function netList(circuit, result) {

@@ -17,11 +17,14 @@ test('desktop persistence stores validated circuit files in its workspace', asyn
   const storage = createNativeStorage(root);
   const state = new Circuit().toJSON();
 
-  assert.deepEqual(await storage.list(), { circuits: [] });
+  assert.deepEqual(await storage.list(), { circuits: [], documents: [] });
   assert.deepEqual(await storage.save('bench_1', state), {
     name: 'bench_1', files: ['circuit.json', 'circuit.svg'],
   });
-  assert.deepEqual(await storage.list(), { circuits: ['bench_1'] });
+  assert.deepEqual(await storage.list(), {
+    circuits: ['bench_1'],
+    documents: [{ name: 'bench_1', kind: 'circuit' }],
+  });
   assert.deepEqual((await storage.load('bench_1')).state, state);
   assert.match(await readFile(join(root, 'bench_1', 'circuit.svg'), 'utf8'), /^<svg/);
   await assert.rejects(storage.load('../outside'), /invalid circuit name/);
@@ -45,6 +48,8 @@ test('desktop persistence imports repository circuits without overwriting native
   await source.save('new-circuit', new Circuit().toJSON());
 
   assert.deepEqual(await target.importFrom(sourceRoot), { circuits: ['new-circuit'] });
+  await target.create('block-overview', 'block');
+  assert.deepEqual((await target.list()).documents.find(({ name }) => name === 'block-overview'), { name: 'block-overview', kind: 'block' });
   assert.deepEqual((await target.load('new-circuit')).state, new Circuit().toJSON());
   assert.equal((await target.load('repository-circuit')).state.grid, 40);
   assert.deepEqual(await target.importFrom(sourceRoot), { circuits: [] });

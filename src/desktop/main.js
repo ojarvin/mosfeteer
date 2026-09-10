@@ -29,6 +29,7 @@ async function registerPersistence() {
     await writeFile(importMarker, '1\n', { flag: 'wx' });
   }
   ipcMain.handle('storage:list', (event) => { trusted(event); return storage.list(); });
+  ipcMain.handle('storage:create', (event, name, kind) => { trusted(event); return storage.create(name, kind); });
   ipcMain.handle('storage:load', (event, name) => { trusted(event); return storage.load(name); });
   ipcMain.handle('storage:save', (event, name, state) => { trusted(event); return storage.save(name, state); });
   ipcMain.handle('storage:delete', (event, name) => { trusted(event); return storage.delete(name); });

@@ -1,5 +1,7 @@
 /* Schematic Spawner — light scientific theme */
 
+[hidden] { display: none !important; }
+
 :root {
   --bg: #f4f6fa;
   --bg-panel: #ffffff;
@@ -277,6 +279,21 @@ button:active {
   gap: 6px;
 }
 
+.document-kind {
+  padding: 3px 7px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.document-kind.block {
+  color: #8b5cf6;
+  border-color: color-mix(in srgb, #8b5cf6 45%, var(--border));
+}
+
 .save-state {
   min-width: 4.4rem;
   color: var(--text-dim);
@@ -447,6 +464,21 @@ button:disabled {
 .canvas svg .block-node.selected {
   stroke: var(--accent) !important;
   stroke-width: 6px !important;
+}
+
+.canvas svg .block-connector.selected path {
+  stroke: var(--accent) !important;
+  stroke-width: 9px !important;
+}
+
+.canvas svg .block-connector.selected polygon {
+  fill: var(--accent) !important;
+}
+
+.block-info {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 /* Placement/move target: intentionally lighter than selection and wire

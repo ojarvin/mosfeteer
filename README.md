@@ -1,6 +1,6 @@
 # Schematic Spawner
 
-Schematic Spawner is a programmatic circuit schematic editor. It combines a connectivity-aware circuit model, automatic routing, an interactive web editor, SVG rendering, and a CLI/API command interface.
+Schematic Spawner is a programmatic editor for electrical schematics and block diagrams. It combines separate document models, automatic routing where applicable, an interactive web editor, SVG rendering, and a CLI/API command interface. The shared editor clearly identifies the active document type and keeps electrical and block-diagram tools isolated.
 
 ![Folded-cascode OTA — light mode](docs/images/folded-cascode-ota-light.png)
 
@@ -15,7 +15,7 @@ npm run desktop
 
 The desktop app supports Linux and macOS. On first launch it imports existing
 repository circuits into Electron's per-user application data folder, and saves
-each named circuit with its `circuit.json` and `circuit.svg` files there. It does
+each named document with its `circuit.json` and `circuit.svg` files there. It does
 not start an HTTP server. For opt-in development hot reload, run
 `SCHEMATIC_SPAWNER_HOT_RELOAD=1 npm run desktop`; changes under `src/web/`,
 `src/desktop/`, or `src/core/` reload the window. Reloads preserve the

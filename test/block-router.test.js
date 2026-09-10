@@ -48,6 +48,12 @@ test('source and target sides enforce outward escape and inward approach', () =>
   }
 });
 
+test('adjacent facing terminals collapse to one straight connector', () => {
+  const diagram = diagramWithTerminals('right', 'left', { x: 0, y: 0 }, { x: 200, y: 0 });
+  const arrow = diagram.addArrow({ id: 'A1', from: 'S.out', to: 'T.in' });
+  assert.deepEqual(arrow.points, [{ x: 160, y: 80 }, { x: 200, y: 80 }]);
+});
+
 test('arrowhead geometry has exact cardinal orientation and terminal tip', () => {
   const right = blockArrowGeometry([{ x: 0, y: 0 }, { x: 120, y: 0 }]);
   assert.deepEqual(right.tip, { x: 120, y: 0 });

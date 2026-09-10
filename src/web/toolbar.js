@@ -87,8 +87,29 @@ export const EDITOR_KEYMAP = Object.freeze([
   ]],
 ]);
 
-export function editorKeymapText() {
-  return EDITOR_KEYMAP.flatMap(([section, entries]) => [
+const BLOCK_EDITOR_KEYMAP = Object.freeze([
+  ['block', [
+    ['i', 'place a block'],
+    ['w', 'draw a Connector between block terminals; connectors use arrowheads'],
+    ['m', 'move selected blocks; connectors follow'],
+    ['c / y', 'repeated copy of selected blocks and internal connectors'],
+    ['Delete / dd', 'delete selected blocks or connectors'],
+    ['Enter / F2 / double-click', 'edit the selected block'],
+    ['v', 'visual selection'],
+    ['F / # / C', 'fit / grid / crosshair'],
+    ['u / U', 'undo / redo'],
+    ['Esc', 'cancel the active block tool'],
+  ]],
+  ['mouse', [
+    ['left', 'click/select blocks or connectors; drag blocks to move'],
+    ['connector', 'w, click a terminal, click guide points, click a target terminal'],
+    ['middle / wheel', 'pan / zoom'],
+  ]],
+]);
+
+export function editorKeymapText(kind = 'all') {
+  const keymap = kind === 'block' ? BLOCK_EDITOR_KEYMAP : EDITOR_KEYMAP;
+  return keymap.flatMap(([section, entries]) => [
     `-- ${section} --`,
     ...entries.map(([key, description]) => `${key.padEnd(24)}${description}`),
   ]).join('\n');
