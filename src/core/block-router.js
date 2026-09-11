@@ -95,6 +95,22 @@ function orthogonal(points) {
   return points.every((point, i) => i === 0 || point.x === points[i - 1].x || point.y === points[i - 1].y);
 }
 
+/** Shift one orthogonal run while keeping attached endpoints fixed. */
+export function moveBlockArrowRun(points, run, delta) {
+  if (!Array.isArray(points) || points.length < 2 || !run) return points;
+  const lo = Math.max(0, Math.min(points.length - 1, run.lo));
+  const hi = Math.max(lo, Math.min(points.length - 1, run.hi));
+  const offset = run.orient === 'h' ? { x: 0, y: delta } : { x: delta, y: 0 };
+  const shifted = (point) => ({ x: point.x + offset.x, y: point.y + offset.y });
+  const moved = [];
+  if (lo === 0) moved.push({ ...points[0] });
+  else moved.push(...points.slice(0, lo).map((point) => ({ ...point })));
+  moved.push(...points.slice(lo, hi + 1).map(shifted));
+  if (hi === points.length - 1) moved.push({ ...points.at(-1) });
+  else moved.push(...points.slice(hi + 1).map((point) => ({ ...point })));
+  return compress(moved);
+}
+
 function segmentClear(a, b, rects) {
   for (const rect of rects) {
     if (a.x === b.x && a.x > rect.x && a.x < rect.x + rect.w &&

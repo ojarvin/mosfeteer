@@ -116,13 +116,14 @@ detaches selected blocks or connectors while preserving their visual geometry,
 while connectors internal to a detached block set remain attached. Copying a
 selected block set copies its internal connectors and connector labels; copying
 a connector alone creates a detached visual arrow that can reattach only at an
-unambiguous terminal on commit. Drag a visible terminal along its block edge
-to move it onto a free perimeter terminal. Ctrl+C copies one selected object's
+unambiguous terminal on commit. Ctrl+C copies one selected object's
 style for Ctrl+Shift+V; `c` remains the copy-ghost tool for creating new blocks.
 Block-local labels, connector labels, arrows, boxes, and lines are visual objects
 and never become electrical nets; connector labels follow their connectors. In
 the browser, `i` searches blocks, `w` exposes generic perimeter terminals, `m`
 moves with connectors, and dragging a selected resize handle edits the rectangle.
-The shared style controls, crosshair, dark mode, marquee, nudge, undo/redo,
-copy, Delete, annotation tools, and Shift+L connector-label placement apply
-without invoking electrical pickers or routing.
+Terminals stay hidden outside Connector mode; selected annotation arrows, boxes,
+and lines show draggable endpoints, corners, or vertices. The shared style
+controls, crosshair, dark mode, marquee, nudge, undo/redo, copy, Delete,
+annotation tools, and Shift+L connector-label placement apply without invoking
+electrical pickers or routing.

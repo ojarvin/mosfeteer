@@ -791,13 +791,26 @@ export class BlockDiagram {
     if (!arrow.points?.length) throw new Error(`fixed arrow "${arrow.id}" requires points`);
     const from = arrow.from ? this.terminalPoint(arrow.from) : arrow.points[0];
     const to = arrow.to ? this.terminalPoint(arrow.to) : arrow.points.at(-1);
-    arrow.points = [from, ...arrow.points.slice(1, -1), to].map((point) => ({ x: point.x, y: point.y }));
-    if (!routeIsOrthogonal(arrow.points) && arrow.detached && (!arrow.from || !arrow.to)) {
-      const candidates = [
+    const interior = arrow.points.slice(1, -1).map((point) => ({ x: point.x, y: point.y }));
+    arrow.points = [from, ...interior, to].map((point) => ({ x: point.x, y: point.y }));
+    if (!routeIsOrthogonal(arrow.points)) {
+      const first = interior[0]; const last = interior.at(-1);
+      const starts = first && !samePoint(from, first) ? [
+        [from, { x: first.x, y: from.y }, first],
+        [from, { x: from.x, y: first.y }, first],
+      ] : [[from]];
+      const ends = last && !samePoint(last, to) ? [
+        [last, { x: to.x, y: last.y }, to],
+        [last, { x: last.x, y: to.y }, to],
+      ] : [[to]];
+      const candidates = starts.flatMap((start) => ends.map((end) => [
+        ...start, ...interior.slice(1, -1), ...end,
+      ].filter((point, index, path) => !index || !samePoint(point, path[index - 1]))));
+      if (!first && !last) candidates.push(
         [from, { x: to.x, y: from.y }, to],
         [from, { x: from.x, y: to.y }, to],
-      ].map((path) => path.filter((point, index) => !index || !samePoint(point, path[index - 1])));
-      const safe = candidates.find((path) => routeClearOfBlocks(path, this));
+      );
+      const safe = candidates.find((path) => routeIsOrthogonal(path) && routeClearOfBlocks(path, this));
       if (safe) arrow.points = safe;
     }
     if (!routeIsOrthogonal(arrow.points)) throw new Error(`arrow "${arrow.id}" route must be orthogonal`);

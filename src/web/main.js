@@ -16,6 +16,7 @@ import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/com
 import { svgString, editorOverlay } from '../core/render.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
+import { moveBlockArrowRun } from '../core/block-router.js';
 import { applyMarkup } from '../core/model.js';
 import { segThroughInterior, smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
@@ -24,7 +25,7 @@ import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, comple
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { componentPaletteItems, editorKeymapText, layerActionForKey, naturalCompare } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
-import { worldAndCursorFromClient } from './interaction.js';
+import { isCloseWindowShortcut, moveAnnotationEndpoint, shouldConfirmBeforeUnload, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -2360,7 +2361,7 @@ function renderCanvas(modelKey) {
     canvasEl.innerHTML = renderDocument(circuit, {
       background: true,
       grid: showGrid,
-      terminals: !!blockConnector || selectedBlocks.size > 0 || blockDrag?.mode === 'blockterminal',
+      terminals: !!blockConnector,
       selectedBlocks,
       selectedArrows,
       selectedLabels: new Set(selLabels),
@@ -4648,20 +4649,18 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
   }
   if (blockDrag.mode === 'blockarrowsegment') {
     if (!movedOut) return;
-    blockDrag.moved = true;
     const arrow = circuit.arrows.get(blockDrag.id);
     if (!arrow) return;
-    const points = blockDrag.origin.map((p) => ({ ...p }));
     const delta = blockDrag.run.orient === 'h' ? snap(w.y - blockDrag.start.y) : snap(w.x - blockDrag.start.x);
-    const { lo, hi, orient } = blockDrag.run;
-    const first = lo === 0 ? lo + 1 : lo;
-    const last = hi === points.length - 1 ? hi - 1 : hi;
-    for (let i = first; i <= last; i++) {
-      if (orient === 'h') points[i].y = blockDrag.origin[i].y + delta;
-      else points[i].x = blockDrag.origin[i].x + delta;
-    }
-    try { arrow.points = points; circuit.validate(); renderCanvas(); }
+    const points = moveBlockArrowRun(blockDrag.origin, blockDrag.run, delta);
+    try { arrow.points = points; circuit.validate(); blockDrag.moved = true; renderCanvas(); }
     catch (err) { arrow.points = blockDrag.origin.map((p) => ({ ...p })); logLine(`connector drag cancelled: ${err.message}`, 'error'); renderCanvas(); }
+    return;
+  }
+  if (blockDrag.mode === 'blockannotationendpoint') {
+    if (!movedOut) return;
+    if (moveAnnotationEndpoint(blockDrag.label, blockDrag.endpoint, { x: snap(w.x), y: snap(w.y) })) blockDrag.moved = true;
+    renderCanvas();
     return;
   }
   if (blockDrag.mode === 'blocklabelmove') {
@@ -4683,22 +4682,6 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
     if (copy) copy.moveTo(source.anchor.x + dx, source.anchor.y + dy);
     setLabelSelection([blockDrag.copyId]);
     renderCanvas();
-    return;
-  }
-  if (blockDrag.mode === 'blockterminal') {
-    if (!movedOut) return;
-    const target = blockTerminalAt(w, { blockId: blockDrag.blockId, freeOnly: true, exclude: blockDrag.terminalId });
-    if (!target) return;
-    try {
-      circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
-      circuit.moveTerminal(`${blockDrag.blockId}.${blockDrag.terminalId}`, target.side, target.offset);
-      blockDrag.moved = true;
-      renderCanvas();
-    } catch (err) {
-      circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
-      logLine(`terminal move cancelled: ${err.message}`, 'error');
-      render();
-    }
     return;
   }
   const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
@@ -4731,9 +4714,11 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
         arrow.points = blockDrag.arrowOrigins.get(id).map((point) => ({ x: point.x + dx, y: point.y + dy }));
       }
       circuit.validate();
+      blockDrag.previewed = true;
     } else {
       for (const [id, rect] of blockDrag.origins) circuit.moveBlock(id, rect.x + dx, rect.y + dy);
       moveBlockLabelOrigins(blockDrag.labels || [], dx, dy);
+      blockDrag.previewed = true;
     }
     renderCanvas();
   } catch (err) {
@@ -4821,47 +4806,8 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationendpoint') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
-      const oldAnchor = { ...drag.label.anchor };
-      const oldEnd = { ...drag.label.end };
-      const oldPoints = drag.label.points?.map((point) => ({ ...point }));
-      const p = { x: snap(w.x), y: snap(w.y) };
-      if (drag.label.kind === 'line' && drag.endpoint.startsWith('vertex:')) {
-        const index = Number(drag.endpoint.slice(7));
-        drag.label.moveVertex(index, p.x, p.y);
-      } else if (drag.endpoint.startsWith('corner:')) {
-        const corner = drag.endpoint.slice(7);
-        const x0 = Math.min(drag.label.anchor.x, drag.label.end.x);
-        const x1 = Math.max(drag.label.anchor.x, drag.label.end.x);
-        const y0 = Math.min(drag.label.anchor.y, drag.label.end.y);
-        const y1 = Math.max(drag.label.anchor.y, drag.label.end.y);
-        const fixed = {
-          'top-left': { x: x1, y: y1 },
-          'top-right': { x: x0, y: y1 },
-          'bottom-right': { x: x0, y: y0 },
-          'bottom-left': { x: x1, y: y0 },
-        }[corner];
-        drag.label.anchor = p;
-        drag.label.end = fixed;
-      } else if (drag.endpoint === 'start') drag.label.anchor = p;
-      else if (drag.endpoint === 'end') drag.label.end = p;
-      else if (drag.endpoint === 'left' || drag.endpoint === 'right') {
-        const left = drag.endpoint === 'left';
-        if ((drag.label.anchor.x < drag.label.end.x) === left) drag.label.anchor.x = p.x;
-        else drag.label.end.x = p.x;
-      } else {
-        const top = drag.endpoint === 'top';
-        if ((drag.label.anchor.y < drag.label.end.y) === top) drag.label.anchor.y = p.y;
-        else drag.label.end.y = p.y;
-      }
-      const invalid = drag.label.kind === 'arrow'
-        ? Math.hypot(drag.label.anchor.x - drag.label.end.x, drag.label.anchor.y - drag.label.end.y) < 80
-        : drag.label.kind === 'box' && (drag.label.anchor.x === drag.label.end.x || drag.label.anchor.y === drag.label.end.y);
-      if (invalid) {
-        drag.label.anchor = oldAnchor;
-        drag.label.end = oldEnd;
-        if (oldPoints) drag.label.points = oldPoints;
-      }
-      cursor = p;
+      moveAnnotationEndpoint(drag.label, drag.endpoint, { x: snap(w.x), y: snap(w.y) });
+      cursor = { x: snap(w.x), y: snap(w.y) };
       markModelChanged(false);
       scheduleInteractionRender();
     }
@@ -5952,13 +5898,15 @@ function commitBlockDrag(state) {
       for (const id of state.arrowSource) {
         const arrow = circuit.getArrow(id);
         if (state.detached) { circuit.detachArrow(id); reattach.add(id); }
-        arrow.points = state.arrowOrigins.get(id).map((point) => ({ x: point.x + dx, y: point.y + dy }));
+        if (!state.previewed) arrow.points = state.arrowOrigins.get(id).map((point) => ({ x: point.x + dx, y: point.y + dy }));
       }
     } else {
       if (state.detached) for (const id of circuit.detachBoundaryArrows(state.source)) reattach.add(id);
       // Internal connectors translate with the selected set.
-      circuit.moveBlocks(state.source, dx, dy);
-      moveBlockLabelOrigins(state.labels || [], dx, dy);
+      if (!state.previewed) {
+        circuit.moveBlocks(state.source, dx, dy);
+        moveBlockLabelOrigins(state.labels || [], dx, dy);
+      }
     }
     // A block move can land a pre-existing detached connector endpoint on a
     // terminal, while a connector copy/move supplies the explicit subset.
@@ -6244,9 +6192,13 @@ canvasEl.addEventListener('pointerdown', (ev) => {
   const arrowNode = ev.target.closest?.('[data-arrow-id]');
   const handle = ev.target.closest?.('[data-block-handle]');
   const w = clientToWorld(ev.clientX, ev.clientY);
-  const terminal = blockTerminalAt(w);
-  const annotation = blockAnnotationHit(w);
-  const arrowSegment = annotation || terminal ? null
+  // Match schematic picking: annotation endpoints are editable before the
+  // annotation body, and terminals exist only while wiring is active.
+  const endpoint = annotationEndpointAt(w);
+  const terminal = blockConnector ? blockTerminalAt(w) : null;
+  const annotation = endpoint && (deleteMode || copyMode || moveMode)
+    ? endpoint.label : blockAnnotationHit(w);
+  const arrowSegment = endpoint || annotation || terminal ? null
     : (!arrowNode || ev.target.closest?.('[data-arrow-segment]') ? blockArrowSegmentAt(w) : null);
   ev.stopPropagation();
 
@@ -6315,12 +6267,11 @@ canvasEl.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
-  if (terminal && !copyMode && !moveMode && !deleteMode && !annotation && !arrowSegment) {
-    selectedBlocks = new Set([terminal.block]);
-    selectedArrows.clear();
-    setLabelSelection([]);
+  if (endpoint && !deleteMode && !copyMode && !moveMode && !labelMode) {
+    setSelection([], undefined, true);
+    setLabelSelection([endpoint.label.id]);
     blockDrag = {
-      mode: 'blockterminal', blockId: terminal.block, terminalId: terminal.terminal,
+      mode: 'blockannotationendpoint', label: endpoint.label, endpoint: endpoint.endpoint,
       start: w, startClient: { x: ev.clientX, y: ev.clientY },
       startSnapshot: snapshot(), moved: false,
     };
@@ -6360,6 +6311,7 @@ canvasEl.addEventListener('pointerdown', (ev) => {
         try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
       }
     } else beginBlockLabelDrag(annotation, w, { x: ev.clientX, y: ev.clientY }, additive);
+    render();
     return;
   }
   if (deleteMode) {
@@ -6525,10 +6477,11 @@ function endBlockDrag(ev) {
   const state = blockDrag;
   // A stationary first click arms the modal source. Keep it alive until the
   // destination click, just like schematic Move/Copy.
-  if (state.modal && ev?.type === 'pointerup') {
+  if (state.modal && ev?.type === 'pointerup' && !state.moved) {
     render();
     return;
   }
+  if (state.modal && state.previewed) state.modal = false;
   blockDrag = null;
   if (ev?.pointerId !== undefined) { try { canvasEl.releasePointerCapture(ev.pointerId); } catch {} }
   if (state.mode === 'blockarrowsegment') {
@@ -6542,24 +6495,39 @@ function endBlockDrag(ev) {
       circuit = loadDocument(JSON.parse(state.startSnapshot));
       logLine(`connector drag cancelled: ${err.message}`, 'error');
     }
-    if (state.moved) recordBlockHistory(state.startSnapshot);
-    markModelChanged(); persistDraft(); render();
+    if (state.moved) {
+      recordBlockHistory(state.startSnapshot);
+      markModelChanged();
+    }
+    persistDraft(); render();
     return;
   }
   if (state.mode === 'blockresize') {
-    if (state.moved) recordBlockHistory(state.startSnapshot);
-    markModelChanged(); persistDraft(); render();
+    if (state.moved) {
+      recordBlockHistory(state.startSnapshot);
+      markModelChanged();
+    }
+    persistDraft(); render();
     return;
   }
-  if (state.mode === 'blockterminal' || state.direct) {
+  if (state.mode === 'blockannotationendpoint') {
+    if (state.moved) recordBlockHistory(state.startSnapshot);
+    if (state.moved) markModelChanged();
+    persistDraft(); render();
+    return;
+  }
+  if (state.direct) {
     if (state.moved) recordBlockHistory(state.startSnapshot);
     if (state.moved) markModelChanged();
     persistDraft(); render();
     return;
   }
   if (state.mode === 'blocklabelmove') {
-    if (state.moved) recordBlockHistory(state.startSnapshot);
-    markModelChanged(); persistDraft(); render();
+    if (state.moved) {
+      recordBlockHistory(state.startSnapshot);
+      markModelChanged();
+    }
+    persistDraft(); render();
     return;
   }
   if (state.mode === 'blocklabelcopy') {
@@ -9081,6 +9049,12 @@ if (crosshairBtn) {
 // ----- keyboard -------------------------------------------------------------
 
 window.addEventListener('keydown', (ev) => {
+  if (isCloseWindowShortcut(ev) && window.schematicStorage?.closeWindow) {
+    ev.preventDefault();
+    flushDraft();
+    window.schematicStorage.closeWindow();
+    return;
+  }
   if (helpDialog?.open) {
     if (ev.key === 'Escape') {
       ev.preventDefault();
@@ -9418,7 +9392,7 @@ if (bb) bb.remove();
 
 window.addEventListener('beforeunload', (ev) => {
   flushDraft();
-  if (snapshot() === lastSavedSnapshot) return;
+  if (!shouldConfirmBeforeUnload({ dirty: snapshot() !== lastSavedSnapshot, desktop: window.schematicStorage?.isDesktop })) return;
   ev.preventDefault();
   ev.returnValue = 'You have unsaved schematic changes.';
 });

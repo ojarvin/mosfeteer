@@ -27,7 +27,7 @@ test('document dispatch round-trips and renders block styles', () => {
 });
 
 test('selected blocks and connectors expose isolated editor hit targets', () => {
-  const svg = renderDocument(diagram(), { selectedBlocks: new Set(['B1']), selectedArrows: new Set(['A1']), grid: true });
+  const svg = renderDocument(diagram(), { selectedBlocks: new Set(['B1']), selectedArrows: new Set(['A1']), terminals: true, grid: true });
   assert.match(svg, /<g data-block-id="B1"><rect class="block-node selected"/);
   assert.match(svg, /<g data-arrow-id="A1" class="block-connector selected">/);
   assert.match(svg, /data-block-terminal="B1\.out"/);
@@ -50,12 +50,17 @@ test('block editor rendering gates terminals and exposes resize/annotation hit t
   const d = new BlockDiagram();
   d.addBlock({ id: 'B1', text: 'One', rect: { x: 0, y: 0, w: 160, h: 80 } });
   d.addLabel({ id: 'L1', text: 'note', x: 240, y: 0 });
+  d.addAnnotation('box', { id: 'A1', x: 240, y: 80, end: { x: 400, y: 160 } });
   const hidden = renderDocument(d, { terminals: false, selectedBlocks: new Set(['B1']), selectedLabels: new Set(['L1']) });
   assert.doesNotMatch(hidden, /data-block-terminal=/);
   assert.match(hidden, /data-block-handle="se"/);
   assert.match(hidden, /data-label-id="L1"/);
+  assert.doesNotMatch(hidden, /data-annotation-endpoint=/);
   const shown = renderDocument(d, { terminals: true });
   assert.match(shown, /data-block-terminal="B1\.T1"/);
+  const selectedAnnotation = renderDocument(d, { selectedLabels: new Set(['A1']) });
+  assert.match(selectedAnnotation, /data-annotation-endpoint="A1:corner:top-left"/);
+  assert.match(selectedAnnotation, /data-annotation-endpoint="A1:corner:bottom-right"/);
 });
 
 test('block placement ghost is not hidden by an empty ghost list', () => {

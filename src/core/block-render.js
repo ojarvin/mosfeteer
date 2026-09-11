@@ -20,6 +20,19 @@ function labelText(label, selected = false) {
   return `<text data-label-id="${esc(label.id)}"${cls} x="${n(p.x)}" y="${n(p.y)}" text-anchor="${p.anchor || 'middle'}" dominant-baseline="middle" font-family="sans-serif" font-size="${style.width === 'thin' ? 32 : style.width === 'thick' ? 44 : 38}" font-weight="${style.bold === false ? 'normal' : 'bold'}" font-style="${style.italic === false ? 'normal' : 'italic'}" fill="${esc(resolveColor(style.color || '#111'))}">${body}</text>`;
 }
 
+function annotationHandles(label) {
+  const points = label.kind === 'line'
+    ? label.points.map((p, index) => [`vertex:${index}`, p])
+    : label.kind === 'box'
+      ? (() => {
+          const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
+          const y0 = Math.min(label.anchor.y, label.end.y); const y1 = Math.max(label.anchor.y, label.end.y);
+          return [['corner:top-left', { x: x0, y: y0 }], ['corner:top-right', { x: x1, y: y0 }], ['corner:bottom-right', { x: x1, y: y1 }], ['corner:bottom-left', { x: x0, y: y1 }]];
+        })()
+      : [['start', label.anchor], ['end', label.end]];
+  return `<g class="block-annotation-handles" data-annotation-handle-id="${esc(label.id)}">${points.map(([name, p]) => `<circle data-annotation-endpoint="${esc(`${label.id}:${name}`)}" cx="${n(p.x)}" cy="${n(p.y)}" r="8" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`;
+}
+
 function annotationSvg(label, selected) {
   const style = styleAttrs(label.style, label.kind === 'line' ? 'wire' : 'symbol');
   const cls = selected ? ' selected' : '';
@@ -88,9 +101,11 @@ export function blockSvgString(diagram, options = {}) {
     else out.push(`<path class="annotation-preview block-arrow" d="M ${point(a)} L ${point(b)}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/>`);
   }
   for (const label of labels.filter((item) => ['arrow', 'box', 'line'].includes(item.kind)).sort((a, b) => a.drawOrder - b.drawOrder)) {
-    out.push(annotationSvg(label, selectedLabels.has(label.id)));
-    if (label.kind !== 'line') out.push(labelText(label, selectedLabels.has(label.id)));
-    for (const child of labels.filter((item) => item.parent === label.id)) out.push(labelText(child, selectedLabels.has(child.id) || selectedLabels.has(label.id)));
+    const selected = selectedLabels.has(label.id);
+    out.push(annotationSvg(label, selected));
+    if (label.kind !== 'line') out.push(labelText(label, selected));
+    for (const child of labels.filter((item) => item.parent === label.id)) out.push(labelText(child, selectedLabels.has(child.id) || selected));
+    if (selected) out.push(annotationHandles(label));
   }
   const connectorPreview = options.connectorPreview;
   if (connectorPreview?.source && connectorPreview?.cursor) {

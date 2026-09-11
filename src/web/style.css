@@ -485,6 +485,8 @@ button:disabled {
 .canvas svg .block-label.selected,
 .canvas svg .block-net-label.selected { fill: var(--accent) !important; }
 .canvas svg .block-resize-handles rect { cursor: nwse-resize; pointer-events: all; }
+.canvas svg .block-annotation-handles { pointer-events: none; }
+.canvas svg .block-annotation-handles circle { pointer-events: all; cursor: crosshair; }
 .canvas svg .block-resize-handles rect[data-block-handle="n"],
 .canvas svg .block-resize-handles rect[data-block-handle="s"] { cursor: ns-resize; }
 .canvas svg .block-resize-handles rect[data-block-handle="e"],

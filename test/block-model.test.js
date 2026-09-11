@@ -114,6 +114,19 @@ test('moving a connected terminal can take a free generated perimeter slot', () 
   assert.deepEqual(diagram.getArrow('A1').points[0], diagram.terminalPoint('B1.out'));
 });
 
+test('moving a terminal repairs the endpoint of a fixed orthogonal route', () => {
+  const diagram = new BlockDiagram();
+  diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 80 }, terminals: [{ id: 'out', side: 'right', offset: 40 }] });
+  diagram.addBlock({ id: 'B2', rect: { x: 400, y: 160, w: 160, h: 80 }, terminals: [{ id: 'in', side: 'left', offset: 40 }] });
+  diagram.addArrow({ id: 'A1', from: 'B1.out', to: 'B2.in', routingMode: 'fixed', points: [
+    { x: 160, y: 40 }, { x: 280, y: 40 }, { x: 280, y: 200 }, { x: 400, y: 200 },
+  ] });
+  diagram.moveTerminal('B1.out', 'top', 40);
+  const points = diagram.getArrow('A1').points;
+  assert.deepEqual(points[0], { x: 40, y: 0 });
+  assert.equal(points.every((point, i) => i === 0 || point.x === points[i - 1].x || point.y === points[i - 1].y), true);
+});
+
 test('invalid terminal moves leave the terminal unchanged', () => {
   const diagram = new BlockDiagram();
   diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 80 } });

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BlockDiagram } from '../src/core/block-model.js';
-import { BLOCK_ARROWHEAD_HALF_WIDTH, BLOCK_ARROWHEAD_LENGTH, blockArrowGeometry, routeBlockArrow } from '../src/core/block-router.js';
+import { BLOCK_ARROWHEAD_HALF_WIDTH, BLOCK_ARROWHEAD_LENGTH, blockArrowGeometry, moveBlockArrowRun, routeBlockArrow, routeIsOrthogonal } from '../src/core/block-router.js';
 
 function diagramWithTerminals(sourceSide, targetSide, source = { x: 0, y: 0 }, target = { x: 480, y: 0 }) {
   const diagram = new BlockDiagram();
@@ -58,6 +58,12 @@ test('diagonal layouts prefer a balanced single elbow for fresh routes', () => {
   assert.deepEqual(arrow.points, [
     { x: 160, y: 80 }, { x: 200, y: 80 }, { x: 200, y: 240 }, { x: 480, y: 240 },
   ]);
+});
+
+test('moving a block arrow run keeps both terminal endpoints and orthogonal legs', () => {
+  const moved = moveBlockArrowRun([{ x: 0, y: 0 }, { x: 160, y: 0 }], { lo: 0, hi: 1, orient: 'h' }, 80);
+  assert.deepEqual(moved, [{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 160, y: 80 }, { x: 160, y: 0 }]);
+  assert.equal(routeIsOrthogonal(moved), true);
 });
 
 test('arrowhead geometry has exact cardinal orientation and terminal tip', () => {

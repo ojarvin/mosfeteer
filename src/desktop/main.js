@@ -48,6 +48,10 @@ async function registerPersistence() {
     await writeFile(result.filePath, content, 'utf8');
     return { canceled: false, path: result.filePath };
   });
+  ipcMain.handle('window:close', (event) => {
+    trusted(event);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  });
 }
 
 async function createWindow() {
