@@ -52,6 +52,14 @@ test('adjacent facing terminals collapse to one straight connector', () => {
   assert.deepEqual(arrow.points, [{ x: 160, y: 80 }, { x: 200, y: 80 }]);
 });
 
+test('diagonal layouts prefer a balanced single elbow for fresh routes', () => {
+  const diagram = diagramWithTerminals('right', 'left', { x: 0, y: 0 }, { x: 480, y: 160 });
+  const arrow = diagram.addArrow({ id: 'A1', from: 'S.out', to: 'T.in' });
+  assert.deepEqual(arrow.points, [
+    { x: 160, y: 80 }, { x: 200, y: 80 }, { x: 200, y: 240 }, { x: 480, y: 240 },
+  ]);
+});
+
 test('arrowhead geometry has exact cardinal orientation and terminal tip', () => {
   const right = blockArrowGeometry([{ x: 0, y: 0 }, { x: 120, y: 0 }]);
   assert.deepEqual(right.tip, { x: 120, y: 0 });

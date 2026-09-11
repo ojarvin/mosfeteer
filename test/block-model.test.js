@@ -54,6 +54,21 @@ test('generated terminals reject undersized resizes without collisions or loss',
   assert.equal(new Set(points).size, points.length);
 });
 
+test('moving a block set translates internal connectors and reroutes boundary connectors atomically', () => {
+  const diagram = new BlockDiagram();
+  diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 80 }, terminals: [{ id: 'out', side: 'right', offset: 40 }] });
+  diagram.addBlock({ id: 'B2', rect: { x: 400, y: 160, w: 160, h: 80 }, terminals: [{ id: 'in', side: 'left', offset: 40 }] });
+  diagram.addBlock({ id: 'B3', rect: { x: 800, y: 160, w: 160, h: 80 }, terminals: [{ id: 'in', side: 'left', offset: 40 }] });
+  const internal = diagram.addArrow({ id: 'A1', from: 'B1.out', to: 'B2.in', routingMode: 'fixed', points: [{ x: 160, y: 40 }, { x: 280, y: 40 }, { x: 280, y: 200 }, { x: 400, y: 200 }] });
+  const boundary = diagram.addArrow({ id: 'A2', from: 'B2.in', to: 'B3.in' });
+  const before = internal.points.map((point) => ({ ...point }));
+  diagram.moveBlocks(['B1', 'B2'], 80, -80);
+  assert.deepEqual(internal.points, before.map((point) => ({ x: point.x + 80, y: point.y - 80 })));
+  assert.deepEqual(internal.points[0], diagram.terminalPoint('B1.out'));
+  assert.deepEqual(internal.points.at(-1), diagram.terminalPoint('B2.in'));
+  assert.deepEqual(boundary.points[0], diagram.terminalPoint('B2.in'));
+});
+
 test('perimeter terminals retain side and offset while block moves', () => {
   const diagram = new BlockDiagram();
   diagram.addBlock({ id: 'B1', rect: { x: 80, y: 120, w: 160, h: 120 }, terminals: [
@@ -86,6 +101,17 @@ test('resize rejects clamped terminal collisions atomically', () => {
   ] });
   assert.throws(() => diagram.resizeBlock('B1', 80, 80), /coincident terminal/);
   assert.deepEqual(block.rect, { x: 0, y: 0, w: 240, h: 160 });
+});
+
+test('moving a connected terminal can take a free generated perimeter slot', () => {
+  const diagram = new BlockDiagram();
+  diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 80 }, terminals: [{ id: 'out', side: 'right', offset: 40 }] });
+  diagram.addBlock({ id: 'B2', rect: { x: 400, y: 0, w: 160, h: 80 }, terminals: [{ id: 'in', side: 'left', offset: 40 }] });
+  diagram.addArrow({ id: 'A1', from: 'B1.out', to: 'B2.in' });
+  diagram.moveTerminal('B1.out', 'top', 40);
+  assert.deepEqual(diagram.getTerminal('B1.out').toJSON(), { id: 'out', side: 'top', offset: 40 });
+  assert.equal(diagram.getBlock('B1').terminals.has('T1'), false);
+  assert.deepEqual(diagram.getArrow('A1').points[0], diagram.terminalPoint('B1.out'));
 });
 
 test('invalid terminal moves leave the terminal unchanged', () => {

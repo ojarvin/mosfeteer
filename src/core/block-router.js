@@ -95,6 +95,16 @@ function orthogonal(points) {
   return points.every((point, i) => i === 0 || point.x === points[i - 1].x || point.y === points[i - 1].y);
 }
 
+function segmentClear(a, b, rects) {
+  for (const rect of rects) {
+    if (a.x === b.x && a.x > rect.x && a.x < rect.x + rect.w &&
+        Math.max(a.y, b.y) > rect.y && Math.min(a.y, b.y) < rect.y + rect.h) return false;
+    if (a.y === b.y && a.y > rect.y && a.y < rect.y + rect.h &&
+        Math.max(a.x, b.x) > rect.x && Math.min(a.x, b.x) < rect.x + rect.w) return false;
+  }
+  return true;
+}
+
 function routeGrid(start, goal, obstacles) {
   if (samePoint(start, goal)) return [start];
   const coords = [start, goal];
@@ -169,6 +179,24 @@ export function routeBlockArrow(diagram, arrow, options = {}) {
   // Adjacent facing terminals reserve the same one-cell gap in opposite
   // directions. Do not emit a backtracking route for that degenerate search.
   if (samePoint(escape, target) && samePoint(approach, source) && arrow.from.block !== arrow.to.block) return [source, target];
+  // Prefer a simple L route when it is safe. For diagonal layouts, compare
+  // both elbows by how evenly they split the route length; this is only a
+  // fresh-layout preference, not a fixed-route constraint.
+  const elbows = [
+    { x: approach.x, y: escape.y },
+    { x: escape.x, y: approach.y },
+  ];
+  const simple = elbows.map((elbow) => compress([escape, elbow, approach]))
+    .filter((path) => path.length >= 2 && path.every((point, i) => i === 0 || segmentClear(path[i - 1], point, rects)));
+  if (simple.length) {
+    const length = (a, b) => Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+    simple.sort((a, b) => {
+      const balance = (path) => path.length < 3 ? 0 : Math.abs(length(path[0], path[1]) - length(path[1], path[2]));
+      return balance(a) - balance(b) || pointKey(a[1]).localeCompare(pointKey(b[1]));
+    });
+    const route = compress([source, ...simple[0], target]);
+    if (route.length >= 2 && orthogonal(route)) return route;
+  }
   // The source and target body are still obstacles. Their boundary points are
   // legal, while the reserved one-cell escape puts the search outside.
   const middle = routeGrid(escape, approach, { rects, clearance, diagram });

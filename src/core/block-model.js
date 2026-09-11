@@ -104,15 +104,6 @@ function terminalLocation(terminal) {
   return `${terminal.side}:${terminal.offset}`;
 }
 
-function occupiedTerminal(block, side, offset, excluded = null) {
-  const point = terminalPoint(block.rect, side, offset);
-  return [...block.terminals.values()].some((terminal) => {
-    if (terminal === excluded) return false;
-    const other = terminal.point(block.rect);
-    return other.x === point.x && other.y === point.y;
-  });
-}
-
 function terminalPointsUnique(block) {
   const points = new Set();
   for (const terminal of block.terminals.values()) {
@@ -628,11 +619,14 @@ export class BlockDiagram {
     const before = { side: terminal.side, offset: terminal.offset, arrows: this._incidentSnapshot(endpoint) };
     const nextSide = normalizeSide(side);
     const nextOffset = normalizeOffset(block.rect, nextSide, offset);
-    if (occupiedTerminal(block, nextSide, nextOffset, terminal)) throw new Error(`terminal location ${nextSide}:${nextOffset} is already occupied`);
+    const occupied = [...block.terminals.values()].find((item) => item !== terminal &&
+      samePoint(item.point(block.rect), terminalPoint(block.rect, nextSide, nextOffset)));
+    if (occupied && !occupied.generated) throw new Error(`terminal location ${nextSide}:${nextOffset} is already occupied`);
+    if (occupied) block.terminals.delete(occupied.id);
     terminal.side = nextSide;
     terminal.offset = nextOffset;
     try { this._rerouteIncident(endpoint.block, before.arrows); this.validate(); }
-    catch (error) { terminal.side = before.side; terminal.offset = before.offset; this._restoreArrows(before.arrows); throw error; }
+    catch (error) { terminal.side = before.side; terminal.offset = before.offset; if (occupied) block.terminals.set(occupied.id, occupied); this._restoreArrows(before.arrows); throw error; }
     return terminal;
   }
 
@@ -654,6 +648,39 @@ export class BlockDiagram {
     try { this._rerouteIncident(id); this.validate(); }
     catch (error) { this._restoreJSON(before); throw error; }
     return block;
+  }
+
+  /** Move a connected block set atomically. Internal arrows translate with the
+   * set; arrows crossing its boundary are re-routed after all blocks land. */
+  moveBlocks(ids, dx, dy) {
+    const selected = new Set(ids);
+    const before = this.toJSON();
+    const x = snap(Number(dx)); const y = snap(Number(dy));
+    const internal = new Set([...this.arrows.values()]
+      .filter((arrow) => !arrow.detached && selected.has(arrow.from?.block) && selected.has(arrow.to?.block))
+      .map((arrow) => arrow.id));
+    try {
+      for (const id of selected) {
+        const block = this.getBlock(id);
+        const next = normalizeRect({ ...block.rect, x: block.rect.x + x, y: block.rect.y + y });
+        block.rect.x = next.x; block.rect.y = next.y;
+      }
+      for (const id of internal) {
+        const arrow = this.getArrow(id);
+        arrow.points = arrow.points.map((point) => ({ x: point.x + x, y: point.y + y }));
+        this._syncConnectorLabels(arrow);
+      }
+      for (const arrow of this.arrows.values()) {
+        if (arrow.detached || internal.has(arrow.id) ||
+            (!selected.has(arrow.from?.block) && !selected.has(arrow.to?.block))) continue;
+        if (arrow.routingMode === 'auto') arrow.points = routeBlockArrow(this, arrow);
+        else this._anchorFixedArrow(arrow);
+        if (!arrow.points) throw new Error(`no safe route for arrow "${arrow.id}"`);
+        this._syncConnectorLabels(arrow);
+      }
+      this.validate();
+    } catch (error) { this._restoreJSON(before); throw error; }
+    return [...selected].map((id) => this.getBlock(id));
   }
 
   resizeBlock(id, w, h) {

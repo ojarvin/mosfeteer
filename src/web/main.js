@@ -2360,7 +2360,7 @@ function renderCanvas(modelKey) {
     canvasEl.innerHTML = renderDocument(circuit, {
       background: true,
       grid: showGrid,
-      terminals: !!blockConnector,
+      terminals: !!blockConnector || selectedBlocks.size > 0 || blockDrag?.mode === 'blockterminal',
       selectedBlocks,
       selectedArrows,
       selectedLabels: new Set(selLabels),
@@ -4685,10 +4685,42 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
     renderCanvas();
     return;
   }
+  if (blockDrag.mode === 'blockterminal') {
+    if (!movedOut) return;
+    const target = blockTerminalAt(w, { blockId: blockDrag.blockId, freeOnly: true, exclude: blockDrag.terminalId });
+    if (!target) return;
+    try {
+      circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
+      circuit.moveTerminal(`${blockDrag.blockId}.${blockDrag.terminalId}`, target.side, target.offset);
+      blockDrag.moved = true;
+      renderCanvas();
+    } catch (err) {
+      circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
+      logLine(`terminal move cancelled: ${err.message}`, 'error');
+      render();
+    }
+    return;
+  }
   const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
   if (blockDrag.copy) {
     blockDrag.delta = { x: dx, y: dy };
     renderCanvas();
+    return;
+  }
+  if (blockDrag.direct) {
+    if (!movedOut) return;
+    try {
+      circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
+      circuit.moveBlocks(blockDrag.source, dx, dy);
+      moveBlockLabelOrigins(blockDrag.labels || [], dx, dy);
+      blockDrag.moved = true;
+      renderCanvas();
+    } catch (err) {
+      circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
+      blockDrag = null;
+      logLine(`block move cancelled: ${err.message}`, 'error');
+      render();
+    }
     return;
   }
   try {
@@ -5766,6 +5798,12 @@ function copyBlockLabels(ids, offset = { x: 0, y: 0 }) {
   return [...copies.values()];
 }
 
+function blockArrowsForSelection(ids) {
+  const source = new Set(ids);
+  return [...circuit.arrows.values()].filter((arrow) => !arrow.detached &&
+    source.has(arrow.from?.block) && source.has(arrow.to?.block));
+}
+
 function copyBlocks(ids, offset = { x: 0, y: 0 }) {
   const source = new Set(ids);
   const copies = new Map();
@@ -5775,7 +5813,27 @@ function copyBlocks(ids, offset = { x: 0, y: 0 }) {
     const copy = circuit.addBlock({ ...block.toJSON(), id: undefined, rect });
     copies.set(id, copy.id);
   }
-  return [...copies.values()];
+  const arrows = new Map();
+  for (const arrow of blockArrowsForSelection(source)) {
+    const copy = circuit.addArrow({
+      ...arrow.toJSON(), id: undefined,
+      from: { block: copies.get(arrow.from.block), terminal: arrow.from.terminal },
+      to: { block: copies.get(arrow.to.block), terminal: arrow.to.terminal },
+      routingMode: 'fixed',
+      points: arrow.points.map((point) => ({ x: point.x + offset.x, y: point.y + offset.y })),
+    });
+    copy.routingMode = arrow.routingMode;
+    arrows.set(arrow.id, copy.id);
+    for (const label of circuit.labels.values()) {
+      if (label.connectorId !== arrow.id) continue;
+      circuit.addLabel({
+        ...label.toJSON(), id: undefined, connectorId: copy.id,
+        x: label.anchor.x + offset.x, y: label.anchor.y + offset.y,
+        anchor: { x: label.anchor.x + offset.x, y: label.anchor.y + offset.y },
+      });
+    }
+  }
+  return { blocks: [...copies.values()], arrows: [...arrows.values()] };
 }
 
 function beginBlockArrowCopy(w, before = snapshot()) {
@@ -5830,24 +5888,24 @@ function blockDragPreview(state) {
     const label = circuit.labels.get(id);
     return label && { ...label.toJSON(), text: label.text, anchor: { x: label.anchor.x + dx, y: label.anchor.y + dy } };
   }).filter(Boolean);
-  if (state.copy || state.detached) return { blocks, arrows: [], labels };
+  const internalArrows = (state.internalArrowSource || []).map((id) => ({
+    id,
+    points: state.arrowOrigins.get(id).map((point) => ({ x: point.x + dx, y: point.y + dy })),
+  }));
+  if (state.copy || state.detached) return { blocks, arrows: internalArrows, labels };
 
   // Route a detached clone for the preview. The live document is untouched,
   // so cancelling can never fail just because a temporary route is invalid.
   try {
     const preview = loadDocument(JSON.parse(state.startSnapshot));
     const source = new Set(state.source);
-    for (const id of source) {
-      const block = preview.blocks.get(id);
-      if (block) { block.rect.x += dx; block.rect.y += dy; }
-    }
-    for (const id of source) preview._rerouteIncident(id);
+    preview.moveBlocks(state.source, dx, dy);
     const arrows = [...preview.arrows.values()]
-      .filter((arrow) => !arrow.detached && (source.has(arrow.from.block) || source.has(arrow.to.block)))
+      .filter((arrow) => !arrow.detached && (source.has(arrow.from?.block) || source.has(arrow.to?.block)))
       .map((arrow) => ({ id: arrow.id, points: arrow.points.map((point) => ({ ...point })) }));
     return { blocks, arrows, labels };
   } catch {
-    return { blocks, arrows: [], labels };
+    return { blocks, arrows: internalArrows, labels };
   }
 }
 
@@ -5881,11 +5939,14 @@ function commitBlockDrag(state) {
         }));
         selectedBlocks.clear();
       } else {
-        // Block copies are deliberately independent visual nodes; attached
-        // connectors are not copied with them.
-        selectedBlocks = new Set(copyBlocks(state.source, state.delta));
-        selectedArrows.clear();
-        if (state.labelSource) setLabelSelection(copyBlockLabels(state.labelSource, state.delta), undefined, true);
+        const copies = copyBlocks(state.source, state.delta);
+        selectedBlocks = new Set(copies.blocks);
+        selectedArrows = new Set(copies.arrows);
+        if (state.labelSource) {
+          const copiedArrowIds = new Set(state.internalArrowSource || []);
+          const labels = state.labelSource.filter((id) => !copiedArrowIds.has(circuit.labels.get(id)?.connectorId));
+          setLabelSelection(copyBlockLabels(labels, state.delta), undefined, true);
+        }
       }
     } else if (state.arrowSource) {
       for (const id of state.arrowSource) {
@@ -5895,10 +5956,8 @@ function commitBlockDrag(state) {
       }
     } else {
       if (state.detached) for (const id of circuit.detachBoundaryArrows(state.source)) reattach.add(id);
-      for (const id of state.source) {
-        const block = circuit.getBlock(id);
-        circuit.moveBlock(id, block.rect.x + dx, block.rect.y + dy);
-      }
+      // Internal connectors translate with the selected set.
+      circuit.moveBlocks(state.source, dx, dy);
       moveBlockLabelOrigins(state.labels || [], dx, dy);
     }
     // A block move can land a pre-existing detached connector endpoint on a
@@ -5961,25 +6020,33 @@ function orthogonalBlockRoute(source, target, guides = []) {
   return out;
 }
 
-function blockTerminalAt(world) {
+function blockTerminalAt(world, options = {}) {
   const pane = paneSize();
   const tolerance = Math.max(GRID / 2, 12 / (pane ? view.w / pane.w : 1));
   let best = null;
   let distance = Infinity;
   let tied = false;
   for (const block of circuit.blocks.values()) {
+    if (options.blockId && block.id !== options.blockId) continue;
     for (const terminal of block.terminals.values()) {
+      if (options.exclude === terminal.id) continue;
       const max = terminal.side === 'top' || terminal.side === 'bottom' ? block.rect.w : block.rect.h;
       // Explicit legacy terminals may be at corners, but corners are not valid
       // attachment sites for the generic block lattice.
       if (terminal.offset <= 0 || terminal.offset >= max) continue;
+      if (options.freeOnly && [...circuit.arrows.values()].some((arrow) =>
+        refsEqualBlock(arrow.from, block.id, terminal.id) || refsEqualBlock(arrow.to, block.id, terminal.id))) continue;
       const p = terminal.point(block.rect);
       const d = Math.hypot(p.x - world.x, p.y - world.y);
-      if (d < distance - 1e-9) { distance = d; best = { block: block.id, terminal: terminal.id, x: p.x, y: p.y }; tied = false; }
+      if (d < distance - 1e-9) { distance = d; best = { block: block.id, terminal: terminal.id, side: terminal.side, offset: terminal.offset, x: p.x, y: p.y }; tied = false; }
       else if (Math.abs(d - distance) <= 1e-9) tied = true;
     }
   }
   return !tied && distance <= tolerance ? best : null;
+}
+
+function refsEqualBlock(ref, block, terminal) {
+  return ref?.block === block && ref?.terminal === terminal;
 }
 
 function blockArrowInSelection(arrow) {
@@ -6053,7 +6120,7 @@ function addPlacedBlock(world) {
 }
 
 function selectedBlockLabelOrigins() {
-  return new Map([...selLabels].map((id) => [id, circuit.labels.get(id)]).filter(([, label]) => label).map(([id, label]) => [id, {
+  return new Map([...selLabels].map((id) => [id, circuit.labels.get(id)]).filter(([, label]) => label && !label.connectorId).map(([id, label]) => [id, {
     anchor: { ...label.anchor },
   }]));
 }
@@ -6082,16 +6149,19 @@ function moveBlockLabelOrigins(origins, dx, dy) {
   }
 }
 
-function beginBlockDrag(w, copy, before = snapshot()) {
+function beginBlockDrag(w, copy, before = snapshot(), modal = true) {
   const source = [...selectedBlocks];
   if (!source.length) return false;
+  const internalArrows = blockArrowsForSelection(source);
   blockDrag = {
     copy,
-    modal: true,
+    modal,
     source,
     start: w,
     startClient: null,
     origins: new Map(source.map((key) => [key, { ...circuit.getBlock(key).rect }])),
+    internalArrowSource: internalArrows.map((arrow) => arrow.id),
+    arrowOrigins: new Map(internalArrows.map((arrow) => [arrow.id, arrow.points.map((point) => ({ ...point }))])),
     labels: selectedBlockLabelOrigins(),
     detached: !copy && moveMode === 'detached',
     startSnapshot: before,
@@ -6174,9 +6244,9 @@ canvasEl.addEventListener('pointerdown', (ev) => {
   const arrowNode = ev.target.closest?.('[data-arrow-id]');
   const handle = ev.target.closest?.('[data-block-handle]');
   const w = clientToWorld(ev.clientX, ev.clientY);
-  const terminal = blockConnector ? blockTerminalAt(w) : null;
+  const terminal = blockTerminalAt(w);
   const annotation = blockAnnotationHit(w);
-  const arrowSegment = annotation ? null
+  const arrowSegment = annotation || terminal ? null
     : (!arrowNode || ev.target.closest?.('[data-arrow-segment]') ? blockArrowSegmentAt(w) : null);
   ev.stopPropagation();
 
@@ -6242,6 +6312,19 @@ canvasEl.addEventListener('pointerdown', (ev) => {
       if (!last || last.x !== point.x || last.y !== point.y) blockConnector.points.push(point);
       logLine(`connector guide @ (${point.x},${point.y})`);
     }
+    render();
+    return;
+  }
+  if (terminal && !copyMode && !moveMode && !deleteMode && !annotation && !arrowSegment) {
+    selectedBlocks = new Set([terminal.block]);
+    selectedArrows.clear();
+    setLabelSelection([]);
+    blockDrag = {
+      mode: 'blockterminal', blockId: terminal.block, terminalId: terminal.terminal,
+      start: w, startClient: { x: ev.clientX, y: ev.clientY },
+      startSnapshot: snapshot(), moved: false,
+    };
+    try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
     render();
     return;
   }
@@ -6423,14 +6506,15 @@ canvasEl.addEventListener('pointerdown', (ev) => {
     blockDrag.startClient = { x: ev.clientX, y: ev.clientY };
   } else {
     if (selectedBlocks.size && node && !selectedBlocks.has(id)) { render(); return; }
-    if (node && !(selectedBlocks.size && moveMode)) selectBlockOrArrow(ev, node, null);
+    if (node && !(selectedBlocks.size && selectedBlocks.has(id))) selectBlockOrArrow(ev, node, null);
     if (!node || (!moveMode && !selectedBlocks.size)) { render(); return; }
     if (moveMode) {
       if (!beginBlockDrag(w, false, before)) return;
       blockDrag.startClient = { x: ev.clientX, y: ev.clientY };
     } else {
-      render();
-      return;
+      if (!beginBlockDrag(w, false, before, false)) return;
+      blockDrag.direct = true;
+      blockDrag.startClient = { x: ev.clientX, y: ev.clientY };
     }
   }
   try { canvasEl.setPointerCapture(ev.pointerId); } catch {}
@@ -6465,6 +6549,12 @@ function endBlockDrag(ev) {
   if (state.mode === 'blockresize') {
     if (state.moved) recordBlockHistory(state.startSnapshot);
     markModelChanged(); persistDraft(); render();
+    return;
+  }
+  if (state.mode === 'blockterminal' || state.direct) {
+    if (state.moved) recordBlockHistory(state.startSnapshot);
+    if (state.moved) markModelChanged();
+    persistDraft(); render();
     return;
   }
   if (state.mode === 'blocklabelmove') {
@@ -7692,6 +7782,13 @@ helpSearch?.addEventListener('keydown', (ev) => {
 let clipboard = null;
 
 function copySelection() {
+  if (isBlockDiagram(circuit)) {
+    const source = selectedStyleSource();
+    if (!source) { logLine('copy style requires one selected block, connector, or annotation'); return false; }
+    clipboard = { style: source.style };
+    logLine('copied selected block style');
+    return true;
+  }
   // Owned labels bring their component; a net label alone is copied as a
   // floating annotation rather than expanding its physical net.
   const labels = selectedLabels();
@@ -9062,11 +9159,9 @@ window.addEventListener('keydown', (ev) => {
       const dx = ev.key === 'ArrowLeft' ? -GRID : ev.key === 'ArrowRight' ? GRID : 0;
       const dy = ev.key === 'ArrowUp' ? -GRID : ev.key === 'ArrowDown' ? GRID : 0;
       const before = snapshot();
-      for (const id of selectedBlocks) {
-        const block = circuit.getBlock(id);
-        circuit.moveBlock(id, block.rect.x + dx, block.rect.y + dy);
-      }
-      moveBlockLabelOrigins(new Map(selectedLabels().map((label) => [label.id, { anchor: { ...label.anchor } }])), dx, dy);
+      const labelOrigins = new Map(selectedLabels().filter((label) => !label.connectorId).map((label) => [label.id, { anchor: { ...label.anchor } }]));
+      circuit.moveBlocks([...selectedBlocks], dx, dy);
+      moveBlockLabelOrigins(labelOrigins, dx, dy);
       recordBlockHistory(before);
       markModelChanged();
       persistDraft(); render(); ev.preventDefault(); return;
@@ -9125,10 +9220,11 @@ window.addEventListener('keydown', (ev) => {
       render();
     } else if (isBlockDiagram(circuit) && k === 'c') {
       ev.preventDefault();
-      activateCopy();
+      copySelection();
     } else if (isBlockDiagram(circuit) && k === 'v') {
       ev.preventDefault();
-      logLine('paste is unavailable across document types; use Copy in this block diagram');
+      if (ev.shiftKey) pasteStyle();
+      else logLine('paste is unavailable across document types; use Copy in this block diagram');
     } else if (k === 'i' || k === 'b') {
       ev.preventDefault();
       toggleSelectedLabelFont(k === 'i' ? 'italic' : 'bold');
