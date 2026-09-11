@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { isCloseWindowShortcut, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -22,6 +22,22 @@ test('selection extension uses one cross-platform modifier policy', () => {
   assert.equal(isSelectionModifier({ ctrlKey: true }), true);
   assert.equal(isSelectionModifier({ metaKey: true }), true);
   assert.equal(isSelectionModifier({ altKey: true }), false);
+});
+
+test('pointer policy accepts pen/touch primary presses and pans blank touch space', () => {
+  assert.equal(isPrimaryPointerEvent({ pointerType: 'mouse', button: 0 }), true);
+  assert.equal(isPrimaryPointerEvent({ pointerType: 'pen', button: 0 }), true);
+  assert.equal(isPrimaryPointerEvent({ pointerType: 'touch', button: 0 }), true);
+  assert.equal(isPrimaryPointerEvent({ pointerType: 'touch', button: 1 }), false);
+  assert.equal(shouldPanTouch({ pointerType: 'touch', hasHit: false }), true);
+  assert.equal(shouldPanTouch({ pointerType: 'touch', hasHit: true }), false);
+  assert.equal(shouldPanTouch({ pointerType: 'pen', hasHit: false }), false);
+});
+
+test('global shortcuts yield to interactive controls', () => {
+  assert.equal(isKeyboardSurfaceTarget({ tagName: 'BUTTON' }), true);
+  assert.equal(isKeyboardSurfaceTarget({ tagName: 'div', closest: (selector) => selector.includes('option') }), true);
+  assert.equal(isKeyboardSurfaceTarget({ tagName: 'div' }), false);
 });
 
 test('annotation endpoints move, resize, and reject invalid shapes', () => {
@@ -56,6 +72,13 @@ test('desktop preload exposes a close command through IPC', async () => {
   assert.equal(exposed.isDesktop, true);
   await exposed.closeWindow();
   assert.deepEqual(calls, [{ channel: 'window:close', args: [] }]);
+});
+
+test('editor shell exposes keyboard canvas and live status surfaces', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="canvas"[^>]+tabindex="0"[^>]+role="application"/);
+  assert.match(html, /id="status"[^>]+role="status"[^>]+aria-live="polite"/);
+  assert.match(html, /id="accessibility-announcement"[^>]+aria-live="polite"/);
 });
 
 test('schematic and block pointer paths share snapped cursor conversion', () => {

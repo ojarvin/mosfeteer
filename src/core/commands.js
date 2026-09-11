@@ -2,7 +2,7 @@ import { Circuit, canonicalNetName, transformComponentWorld } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
-import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior } from './router.js';
+import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
@@ -70,6 +70,7 @@ const FLAG_ARITY = {
   mirrorX: 0,
   mirrorY: 0,
   json: 0,
+  explain: 0,
   grid: 0,
 };
 
@@ -115,6 +116,70 @@ function termInfo(circuit, comp, term) {
   return `${comp}.${term}${pp(p.x, p.y)}`;
 }
 
+const ISSUE_HINTS = {
+  'unconnected-terminal': 'Connect this terminal with Wire/connect, or deliberately remove the unused component.',
+  'component-overlap': 'Move one component at least one grid cell clear of the other component body.',
+  'label-component-overlap': 'Move the label into open space; keep its anchor attached if it is an electrical net label.',
+  'label-overlap': 'Separate the labels or adjust their alignment so their boxes do not overlap.',
+  'wire-through-body': 'Reroute the net around the component body; only a shared MOS gate bus may use the documented exception.',
+  'managed-diagonal': 'Use F3/orthogonal routing or convert this legacy path to an intentional fixed route.',
+  'grid-violation': 'Move or edit the object onto the 40-unit grid.',
+  'cross-net-overlap': 'Choose one physical net and move the other collinear span; crossings may cross transversely but must not overlap.',
+  'malformed-net-label': 'Retarget the label to a drawable point on a named physical net, or convert it to a free annotation.',
+};
+
+function routeExplanation(circuit, refs) {
+  if (refs.length !== 2) throw new Error('usage: explain connect REF.TERM REF.TERM');
+  const endpoints = refs.map((ref) => circuit.resolveTerm(ref));
+  const points = endpoints.map(({ comp, term }) => circuit.getComponent(comp).terminalWorld(term));
+  const existing = circuit.netOfTerminal(endpoints[0]);
+  const env = circuit._netEnv(existing?.id || null);
+  const path = smartRoute(points[0], points[1], env);
+  const segments = path ? path.slice(1).map((point, i) => ({ from: path[i], to: point })) : [];
+  const length = segments.reduce((sum, segment) => sum + Math.abs(segment.to.x - segment.from.x) + Math.abs(segment.to.y - segment.from.y), 0);
+  const turns = path ? Math.max(0, path.length - 2) : null;
+  const first = segments[0];
+  const last = segments.at(-1);
+  const pinEscape = {
+    source: first ? { x: Math.sign(first.to.x - first.from.x), y: Math.sign(first.to.y - first.from.y) } : null,
+    target: last ? { x: Math.sign(last.from.x - last.to.x), y: Math.sign(last.from.y - last.to.y) } : null,
+  };
+  const result = {
+    source: refs[0],
+    target: refs[1],
+    points,
+    path,
+    length,
+    turns,
+    pinEscape,
+    existingNetId: existing?.id || null,
+    routeable: !!path,
+    reason: path
+      ? `Found a ${length}-unit route with ${turns} bend${turns === 1 ? '' : 's'}; the first and last legs leave the pins before entering open routing space.`
+      : 'No safe route was found. The router rejected candidates that cross component bodies, violate pin direction, or overlap another net.',
+  };
+  return result;
+}
+
+function diagnosticExplanation(report) {
+  const byKind = new Map();
+  for (const issue of report.issues || []) {
+    if (!byKind.has(issue.kind)) byKind.set(issue.kind, []);
+    byKind.get(issue.kind).push(issue);
+  }
+  const groups = [...byKind].map(([kind, issues]) => ({
+    kind,
+    count: issues.length,
+    hint: ISSUE_HINTS[kind] || 'Inspect the referenced objects and make the smallest safe edit.',
+    issues: issues.map(({ kind: ignored, severity: ignoredSeverity, ...issue }) => issue),
+  }));
+  return {
+    ok: report.ok,
+    summary: report.ok ? 'No design-check issues were found.' : `${report.issues.length} design-check issue${report.issues.length === 1 ? '' : 's'} need attention.`,
+    groups,
+  };
+}
+
 /** Evaluation report used to judge whether the diagram "looks good". */
 export function evaluate(circuit) {
   const comps = [...circuit.components.values()];
@@ -124,7 +189,7 @@ export function evaluate(circuit) {
   const issues = [];
   const terminalRefsByPoint = new Map();
   const addIssue = (kind, message, details = {}) => {
-    issues.push({ kind, severity: 'error', message, ...details });
+    issues.push({ kind, severity: 'error', message, hint: ISSUE_HINTS[kind] || 'Inspect the referenced objects and make the smallest safe edit.', ...details });
   };
   const pointCopy = (p) => ({ x: p.x, y: p.y });
   const refsAt = (p) => terminalRefsByPoint.get(`${p.x},${p.y}`) || [];
@@ -363,7 +428,7 @@ export function commandHelp() {
     '  value <refdes> <V>             - set value/label text',
     '  rename <refdes> <new>          - rename a component',
     '  rm <refdes>                    - remove a component',
-    '  connect REF.TERM REF.TERM ... [--name N]  (alias wire)',
+    '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
     '  cross A1 A2 B1 B2             - protected matched diagonal cross-coupling',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  nets                           - list nets with terminals and length',
@@ -381,6 +446,8 @@ export function commandHelp() {
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
     '  eval                           - quality report (unconnected/overlaps/off-grid)',
+    '  explain eval                   - grouped diagnostics with plain-language repair hints',
+    '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
     '  ascii                          - coarse ASCII layout preview',
     '  svg [file] [--grid]            - export SVG (default data/preview.svg)',
     '  png [file] [--grid]            - rasterize SVG to PNG (default data/preview.png)',
@@ -445,6 +512,25 @@ function dispatch(circuit, cmd, pos, flags, io) {
       lines.push('no dangling terminals, no bbox overlaps, all on grid');
     }
     return result(lines.join('\n'), rep, false);
+  }
+  if (cmd === 'explain' || cmd === 'diagnose') {
+    const subject = pos.shift() || 'eval';
+    if (subject === 'eval' || subject === 'check') {
+      const explanation = diagnosticExplanation(evaluate(circuit));
+      const lines = [explanation.summary];
+      for (const group of explanation.groups) {
+        lines.push(`${group.kind} (${group.count}): ${group.hint}`);
+        for (const issue of group.issues) lines.push(`  ${issue.message}`);
+      }
+      return result(lines.join('\n'), explanation, false);
+    }
+    if (subject === 'connect' || subject === 'route') {
+      const explanation = routeExplanation(circuit, pos);
+      const lines = [explanation.reason, `  ${explanation.source} -> ${explanation.target}`];
+      if (explanation.path) lines.push(`  path: ${explanation.path.map((point) => pp(point.x, point.y)).join(' -> ')}`);
+      return result(lines.join('\n'), explanation, false);
+    }
+    throw new Error('usage: explain eval | explain connect REF.TERM REF.TERM');
   }
   if (cmd === 'ascii') return result(renderAscii(circuit), null);
 
@@ -556,6 +642,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   // ---------- connectivity ----------
   if (cmd === 'connect' || cmd === 'wire') {
     if (pos.length < 2) throw new Error('usage: connect REF.TERM REF.TERM [...]');
+    const explanation = flags.explain ? routeExplanation(circuit, pos.slice(0, 2)) : null;
     const net = circuit.connect(...pos);
     if (flags.name && flags.name[0]) circuit.renameNet(net, flags.name[0]);
     // circuit.connect now re-routes fresh internally when it adds any new
@@ -565,7 +652,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     // `net.branches` from the prior save — making the new terminal
     // "connected by reference" with no wire to it after reload.
     const terms = net.terminals.map((t) => termInfo(circuit, t.comp, t.term));
-    return result(`net ${net.id}${net.name ? ` "${net.name}"` : ''}: ${terms.join('  ')}; len=${net.length()}`, { netId: net.id, name: net.name, terminals: net.terminals.map((t) => ({ ...t })), length: net.length() }, true);
+    return result(`net ${net.id}${net.name ? ` "${net.name}"` : ''}: ${terms.join('  ')}; len=${net.length()}${explanation ? `; ${explanation.reason}` : ''}`, { netId: net.id, name: net.name, terminals: net.terminals.map((t) => ({ ...t })), length: net.length(), ...(explanation ? { explanation } : {}) }, true);
   }
   if (cmd === 'cross') {
     if (pos.length !== 4) throw new Error('usage: cross A1 A2 B1 B2');

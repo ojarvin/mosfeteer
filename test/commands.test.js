@@ -35,6 +35,41 @@ test('help returns help text', () => {
   assert.ok(res.text.includes('add <type>'));
   assert.ok(res.text.includes('move <refdes>'));
   assert.ok(commandHelp().includes('eval'));
+  assert.ok(commandHelp().includes('explain connect'));
+});
+
+test('explain eval groups issues and provides repair hints', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 0 0');
+  const result = runCommand(c, 'explain eval');
+  assert.equal(result.mutated, false);
+  assert.equal(result.json.ok, false);
+  const dangling = result.json.groups.find((group) => group.kind === 'unconnected-terminal');
+  assert.ok(dangling);
+  assert.match(dangling.hint, /Connect/);
+  assert.match(result.text, /unconnected-terminal/);
+});
+
+test('explain connect returns a non-mutating dry-run route', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 0 0');
+  runCommand(c, 'add resistor R2 --at 400 0');
+  const before = JSON.stringify(c.toJSON());
+  const result = runCommand(c, 'explain connect R1.b R2.a');
+  assert.equal(result.mutated, false);
+  assert.equal(result.json.routeable, true);
+  assert.ok(result.json.path.length >= 2);
+  assert.equal(JSON.stringify(c.toJSON()), before);
+});
+
+test('connect --explain attaches a route trace to the mutation result', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 0 0');
+  runCommand(c, 'add resistor R2 --at 400 0');
+  const result = runCommand(c, 'connect R1.b R2.a --explain');
+  assert.equal(result.mutated, true);
+  assert.equal(result.json.explanation.routeable, true);
+  assert.match(result.text, /Found a/);
 });
 
 test('add component with --at snaps to grid', () => {

@@ -25,7 +25,7 @@ import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, comple
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { componentPaletteItems, editorKeymapText, layerActionForKey, naturalCompare } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
-import { isCloseWindowShortcut, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, worldAndCursorFromClient } from './interaction.js';
+import { isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -48,6 +48,7 @@ const componentsListEl = document.getElementById('components-list');
 const netsListEl = document.getElementById('nets-list');
 const detailEl = document.getElementById('detail');
 const statusEl = document.getElementById('status');
+const accessibilityAnnouncementEl = document.getElementById('accessibility-announcement');
 const logEl = document.getElementById('log');
 const cmdInput = document.getElementById('cmd-input');
 const consoleEl = document.getElementById('console-panel');
@@ -329,6 +330,13 @@ function logLine(text, cls) {
   line.textContent = text;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
+  if (cls === 'error' || cls === 'status') announce(text);
+}
+
+function announce(text) {
+  if (!accessibilityAnnouncementEl) return;
+  accessibilityAnnouncementEl.textContent = '';
+  requestAnimationFrame(() => { accessibilityAnnouncementEl.textContent = text; });
 }
 
 function logCommand(line) {
@@ -5121,7 +5129,7 @@ function canvasMouseMove(ev) {
 function canvasMouseUp(ev) {
   if (isBlockDiagram(circuit)) {
     if (!drag) return;
-    if (drag.mode === 'pan' && ev.button === 1) {
+    if (drag.mode === 'pan' && (ev.button === 1 || drag.pointerId === ev.pointerId || ev.pointerType !== 'mouse')) {
       drag = drag.resume || null;
       render();
     } else if (drag.mode === 'zoom' && ev.button === 2) {
@@ -5136,7 +5144,7 @@ function canvasMouseUp(ev) {
   const movedOut = dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
   const w = clientToWorld(ev.clientX, ev.clientY);
   if (drag.mode === 'pan') {
-    if (ev.button !== 1) return;
+    if (ev.button !== 1 && drag.pointerId !== ev.pointerId && ev.pointerType === 'mouse') return;
     drag = drag.resume || null;
     render();
     return;
@@ -5449,6 +5457,67 @@ function canvasMouseUp(ev) {
 canvasEl.addEventListener('mousedown', canvasMouseDown);
 canvasEl.addEventListener('mousemove', canvasMouseMove);
 canvasEl.addEventListener('pointermove', canvasMouseMove);
+
+// SVG objects are keyboard-addressable even though the committed scene is
+// regenerated during edits.  The semantic hit is resolved from data-* attrs,
+// then routed through the same role-aware selection state as pointer clicks.
+canvasEl.addEventListener('keydown', (ev) => {
+  if (!['Enter', ' '].includes(ev.key)) return;
+  const target = ev.target?.closest?.('[data-ref],[data-label-id],[data-net-id]');
+  if (!target) return;
+  const refdes = target.dataset.ref;
+  const labelId = target.dataset.labelId;
+  const netId = target.dataset.netId;
+  if (refdes && circuit.components.has(refdes)) {
+    setSelection([refdes]);
+    setLabelSelection([]);
+    const component = circuit.components.get(refdes);
+    cursor = { x: component.transform.x, y: component.transform.y };
+    announce(`Selected component ${refdes}, ${component.type}`);
+  } else if (labelId && circuit.labels.has(labelId)) {
+    setSelection([]);
+    setLabelSelection([labelId]);
+    const label = circuit.labels.get(labelId);
+    cursor = label.anchorWorld();
+    announce(`Selected ${label.owner ? 'instance label' : label.netId ? 'net label' : 'annotation'} ${label.text}`);
+  } else if (netId && circuit.nets.has(netId)) {
+    setSelection([]);
+    setLabelSelection([]);
+    selectedNets = new Set([netId]);
+    const net = circuit.nets.get(netId);
+    const point = net.points()[0];
+    if (point) cursor = { ...point };
+    announce(`Selected net ${net.name || netId}`);
+  }
+  render();
+  ev.preventDefault();
+  ev.stopPropagation();
+});
+
+// Pointer Events provide capture and cancellation for pen/touch.  Mouse
+// compatibility events continue to support existing automation and browsers.
+canvasEl.addEventListener('pointerdown', (ev) => {
+  if (isBlockDiagram(circuit) || ev.pointerType === 'mouse' || !isPrimaryPointerEvent(ev)) return;
+  if (shouldPanTouch({ pointerType: ev.pointerType, hasHit: hasSelectableObjectAt(clientToWorld(ev.clientX, ev.clientY)), mode })) {
+    const startClient = { x: ev.clientX, y: ev.clientY };
+    drag = { mode: 'pan', pointerId: ev.pointerId, startClient, startWorld: clientToWorld(ev.clientX, ev.clientY), startView: { ...view }, rubber: null, resume: drag };
+    canvasEl.setPointerCapture?.(ev.pointerId);
+    ev.preventDefault();
+    return;
+  }
+  canvasMouseDown(ev);
+  canvasEl.setPointerCapture?.(ev.pointerId);
+});
+window.addEventListener('pointerup', (ev) => {
+  if (ev.pointerType === 'mouse') return;
+  canvasMouseUp(ev);
+  if (ev.pointerId !== undefined) canvasEl.releasePointerCapture?.(ev.pointerId);
+});
+window.addEventListener('pointercancel', (ev) => {
+  if (ev.pointerType === 'mouse') return;
+  cancelDrag();
+  if (ev.pointerId !== undefined) canvasEl.releasePointerCapture?.(ev.pointerId);
+});
 // Replacing the SVG during a repaint can move the pointer off the old target
 // before the bubbling event reaches the canvas. Feed that event through the
 // same cursor/preview path used by both document kinds.
@@ -7123,6 +7192,8 @@ canvasEl.addEventListener(
 function renderComponents() {
   componentsListEl.innerHTML = '';
   componentsListEl.setAttribute('role', 'listbox');
+  componentsListEl.setAttribute('aria-label', 'Components');
+  componentsListEl.setAttribute('aria-multiselectable', 'true');
   const comps = componentPaletteItems(sortedComps());
   if (comps.length === 0) {
     componentsListEl.innerHTML = '<div class="no-items">No components</div>';
@@ -7135,7 +7206,8 @@ function renderComponents() {
     row.dataset.refdes = comp.refdes;
     row.dataset.type = comp.type;
     row.setAttribute('role', 'option');
-    row.tabIndex = 0;
+    row.tabIndex = multi.has(comp.refdes) || (!multi.size && comp.refdes === comps[0]?.refdes) ? 0 : -1;
+    row.id = `component-option-${CSS.escape(comp.refdes)}`;
     row.setAttribute('aria-selected', String(multi.has(comp.refdes)));
 
     const ref = document.createElement('span');
@@ -7209,6 +7281,14 @@ function renderComponents() {
       startComponentRename(comp, ref);
     });
     row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' || ev.key === 'ArrowUp' || ev.key === 'ArrowLeft') {
+        const rows = [...componentsListEl.querySelectorAll('[role="option"]')];
+        const index = rows.indexOf(row);
+        const next = rows[(index + (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1 : -1) + rows.length) % rows.length];
+        next?.focus();
+        ev.preventDefault();
+        return;
+      }
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
       ev.preventDefault();
       row.click();
@@ -7221,6 +7301,8 @@ function renderComponents() {
 function renderNets() {
   netsListEl.innerHTML = '';
   netsListEl.setAttribute('role', 'listbox');
+  netsListEl.setAttribute('aria-label', 'Electrical nets');
+  netsListEl.setAttribute('aria-multiselectable', 'true');
   if (circuit.nets.size === 0) {
     netsListEl.innerHTML = '<div class="no-items">No nets</div>';
     return;
@@ -7229,7 +7311,8 @@ function renderNets() {
     const row = document.createElement('div');
     row.className = 'row' + (selectedNets.has(net.id) ? ' selected' : '');
     row.setAttribute('role', 'option');
-    row.tabIndex = 0;
+    row.tabIndex = selectedNets.has(net.id) || (!selectedNets.size && net.id === visibleNets()[0]?.id) ? 0 : -1;
+    row.id = `net-option-${CSS.escape(net.id)}`;
     row.setAttribute('aria-selected', String(selectedNets.has(net.id)));
 
     const ref = document.createElement('span');
@@ -7288,6 +7371,14 @@ function renderNets() {
       startNetRename(net, ref);
     });
     row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' || ev.key === 'ArrowUp' || ev.key === 'ArrowLeft') {
+        const rows = [...netsListEl.querySelectorAll('[role="option"]')];
+        const index = rows.indexOf(row);
+        const next = rows[(index + (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1 : -1) + rows.length) % rows.length];
+        next?.focus();
+        ev.preventDefault();
+        return;
+      }
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
       ev.preventDefault();
       row.click();
@@ -8949,6 +9040,16 @@ const CHECK_CATEGORIES = [
   ['labelComponentOverlaps', 'Label/component overlaps'],
   ['labelOverlaps', 'Label overlaps'],
 ];
+const CHECK_ISSUE_KINDS = {
+  unconnectedTerminals: 'unconnected-terminal',
+  overlappingBBoxes: 'component-overlap',
+  wireThroughBBoxes: 'wire-through-body',
+  diagonalWireSegments: 'managed-diagonal',
+  gridViolations: 'grid-violation',
+  crossNetOverlaps: 'cross-net-overlap',
+  labelComponentOverlaps: 'label-component-overlap',
+  labelOverlaps: 'label-overlap',
+};
 
 function checkIssueTargets(category, value, structuredIssue) {
   const text = String(value);
@@ -8988,12 +9089,12 @@ function checkIssues(report) {
   const out = [];
   for (const [key, label] of CHECK_CATEGORIES) {
     const values = report[key] || [];
-    const kind = key === 'labelComponentOverlaps' ? 'label-component-overlap' : key === 'labelOverlaps' ? 'label-overlap' : null;
+    const kind = CHECK_ISSUE_KINDS[key];
     const structured = kind ? (report.issues || []).filter((issue) => issue.kind === kind) : [];
     for (let index = 0; index < values.length; index++) {
       const value = values[index];
       const targets = checkIssueTargets(key, value, structured[index]);
-      out.push({ category: key, label, value, ...targets });
+      out.push({ category: key, label, value, detail: structured[index] || (report.issues || []).find((issue) => issue.kind === kind && issue.message === value), ...targets });
     }
   }
   return out;
@@ -9083,6 +9184,10 @@ function renderCheckSummary() {
     button.type = 'button';
     button.className = 'check-issue';
     button.textContent = `${issue.label}: ${typeof issue.value === 'string' ? issue.value : `${issue.value.x0},${issue.value.y0}–${issue.value.x1},${issue.value.y1}`}`;
+    if (issue.detail?.hint) {
+      button.title = issue.detail.hint;
+      button.setAttribute('aria-label', `${button.textContent}. ${issue.detail.hint}`);
+    }
     button.addEventListener('click', () => focusCheckIssue(issue));
     checkSummaryBodyEl.appendChild(button);
   }
@@ -9386,6 +9491,18 @@ window.addEventListener('keydown', (ev) => {
   }
 
   const tag = (ev.target && ev.target.tagName) || '';
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) {
+    if (ev.target === cmdInput && ev.key === 'Escape') {
+      cmdInput.value = '';
+      cmdInput.blur();
+    }
+    return;
+  }
+  // Toolbar buttons, listbox options, menus, and inline editors own their
+  // keystrokes.  Without this guard a focused control could also trigger a
+  // canvas command such as Delete, Wire, or a transform.
+  if (isKeyboardSurfaceTarget(ev.target)) return;
+
   if (isBlockDiagram(circuit) && !inlineInput && !['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) {
     if (visual) {
       onVisualKey(ev.key);
@@ -9486,14 +9603,6 @@ window.addEventListener('keydown', (ev) => {
       return;
     }
   }
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-    if (ev.target === cmdInput && ev.key === 'Escape') {
-      cmdInput.value = '';
-      cmdInput.blur();
-    }
-    return;
-  }
-
   // `dd` is a consecutive-key chord. Any intervening key or handled command
   // cancels the first d, except for an unmodified second d within the normal
   // mode timeout window. This also covers global commands such as Ctrl+A,

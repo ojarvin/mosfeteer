@@ -271,6 +271,9 @@ list                           list components with world terminals
 state                          full JSON state
 bounds                         drawing extents
 eval                           quality report (unconnected/overlaps/off-grid/managed-wire diagonals)
+explain eval                   grouped diagnostics with plain-language repair hints
+explain connect REF.TERM REF.TERM
+                               dry-run route with path, bends, and pin-escape details
 ascii                          coarse ASCII layout preview
 help                           full command list
 ```
@@ -339,6 +342,12 @@ out are in `style-guide.md`.
   managed routing does not convert a fixed net into a managed one.
 - Moving a component re-anchors legacy fixed-path endpoints without
   autorouting; moving a complete selected set translates fixed paths with it.
+- `explain eval` is read-only and groups evaluator issues with repair hints for
+  agent workflows. `explain connect A.t B.t` is a non-mutating dry run of the
+  two-terminal router and reports its path, length, bends, and pin escapes.
+- The canvas exposes keyboard-focusable component, wire, and label targets.
+  Enter/Space selects a focused target; blank touch space pans with pointer
+  capture, while pen/touch cancellation restores the in-progress gesture.
 
 
 ## General authoring rules

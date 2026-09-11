@@ -132,7 +132,7 @@
         <button id="btn-bring-front" class="mode-control layer-control" data-icon="front" data-action="bring-front" aria-pressed="false" aria-keyshortcuts="Shift+ArrowUp" title="Bring the selected object to the front (Shift+Up)" aria-label="Bring selected object to front">Bring to front <kbd>Shift+↑</kbd></button>
         <button id="btn-send-back" class="mode-control layer-control" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send the selected object to the back (Shift+Down)" aria-label="Send selected object to back">Send to back <kbd>Shift+↓</kbd></button>
       </div>
-      <div class="canvas" id="canvas"></div>
+      <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Schematic canvas. Tab to focus objects; Enter selects the focused object; arrow keys nudge selection."></div>
       <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Component actions"></div>
     </section>
 
@@ -187,7 +187,8 @@
       aria-valuenow="140"
       tabindex="0"
     ></div>
-    <div class="status" id="status"></div>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+    <div id="accessibility-announcement" class="visually-hidden" role="status" aria-live="polite"></div>
     <div class="console-row">
       <button id="btn-help" data-icon="help" title="Show keyboard and command help (?)">Help</button>
       <input id="cmd-input" type="text" placeholder="Enter a command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)" autocomplete="off" spellcheck="false" />
@@ -195,6 +196,6 @@
     <pre class="log" id="log"></pre>
   </footer>
 
-  <script type="module" src="main.js?v=18"></script>
+  <script type="module" src="main.js?v=19"></script>
 </body>
 </html>

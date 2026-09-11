@@ -74,6 +74,17 @@ test('svgString starts with <svg and contains xmlns', () => {
   assert.ok(svg.match(/<svg\s[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/));
 });
 
+test('rendered objects expose semantic keyboard targets', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  c.connect('R1.b', 'R2.a');
+  const svg = svgString(c, { viewport: { x: -400, y: -200, w: 800, h: 400 } });
+  assert.match(svg, /data-ref="R1"[^>]+role="button"[^>]+tabindex="0"/);
+  assert.match(svg, /data-net-id="[^"]+"[^>]+role="button"[^>]+tabindex="0"/);
+  assert.match(svg, /aria-label="Component R1, resistor"/);
+});
+
 test('svgString includes each refdes as a label with subscript numeral', () => {
   const c = new Circuit();
   c.addComponent('resistor', { x: 480, y: 0 });

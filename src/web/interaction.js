@@ -55,6 +55,25 @@ export function isSelectionModifier({ shiftKey = false, ctrlKey = false, metaKey
   return !!(shiftKey || ctrlKey || metaKey);
 }
 
+/** Pointer events are the canonical canvas gesture source.  Mouse events are
+ * retained as a compatibility fallback for older automation and browsers. */
+export function isPrimaryPointerEvent({ pointerType = '', button = 0 } = {}) {
+  return button === 0 && (pointerType === 'mouse' || pointerType === 'pen' || pointerType === 'touch');
+}
+
+/** A blank touch press pans the canvas; a press on an object remains an edit
+ * gesture.  Keeping this policy pure makes touch behavior testable without a
+ * browser surface. */
+export function shouldPanTouch({ pointerType = '', hasHit = false, mode = 'normal' } = {}) {
+  return pointerType === 'touch' && mode === 'normal' && !hasHit;
+}
+
+export function isKeyboardSurfaceTarget(target) {
+  const tag = String(target?.tagName || '').toUpperCase();
+  return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'OPTION'].includes(tag) ||
+    !!target?.isContentEditable || !!target?.closest?.('[role="menuitem"],[role="option"],[role="separator"]');
+}
+
 export function worldAndCursorFromClient(clientX, clientY, rect, view) {
   const world = {
     x: view.x + ((clientX - rect.left) / rect.width) * view.w,

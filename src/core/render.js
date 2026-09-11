@@ -210,7 +210,7 @@ export function svgString(circuit, opts = {}) {
   for (const label of annotationShapes) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
-    parts.push(shapeAnnotationSvg(label, opacity));
+    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`${label.kind} annotation ${label.text || label.id}`)}">${shapeAnnotationSvg(label, '')}</g>`);
     if (label.kind !== 'line') {
       const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
       parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
@@ -219,7 +219,7 @@ export function svgString(circuit, opts = {}) {
       if (child.id === o.editingLabel) continue;
       const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
       const t = child.textPos();
-      parts.push(`<g${childOpacity}>${labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style)}</g>`);
+      parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style)}</g>`);
     }
   }
 
@@ -247,14 +247,14 @@ export function svgString(circuit, opts = {}) {
       const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(net.style, 'wire')}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}><title>${escapeSvg(wireHelp)}</title></path>`);
         continue;
       }
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]; const b = pts[i];
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = net.wireStyles[`${branch}:${i}`] || net.style;
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} ${styleAttrs(segmentStyle, 'wire')}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}><title>${escapeSvg(wireHelp)}</title></path>`);
       }
     }
   }
@@ -265,7 +265,7 @@ export function svgString(circuit, opts = {}) {
     const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
     const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
     const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
-    parts.push(`<g transform="${transformToSvg(t)}"${opacity}><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
+    parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
     parts.push('</g></g>');
     for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
@@ -331,7 +331,8 @@ export function svgString(circuit, opts = {}) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
     const t = label.textPos();
-    parts.push(`<g${opacity}>${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style)}</g>`);
+    const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
+    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style)}</g>`);
   }
 
   parts.push('</svg>');
