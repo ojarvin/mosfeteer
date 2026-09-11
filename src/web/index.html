@@ -27,8 +27,13 @@
           <span id="save-state" class="save-state" aria-live="polite"></span>
         </div>
         <button id="btn-load-circuit" data-icon="folder-open" title="Load the document named in the field">Load</button>
-        <button id="btn-new-circuit" data-icon="file-plus" title="Start a new, empty schematic">New schematic</button>
-        <button id="btn-new-block" data-icon="file-plus" title="Start a new, empty block diagram">New block diagram</button>
+        <div class="new-document-picker">
+          <button id="btn-new-document" data-icon="file-plus" aria-haspopup="menu" aria-expanded="false" aria-controls="new-document-menu" title="Start a new document">New&hellip;</button>
+          <div id="new-document-menu" class="new-document-menu" role="menu" aria-label="New document type" hidden>
+            <button type="button" role="menuitem" data-new-document="circuit">Schematic</button>
+            <button type="button" role="menuitem" data-new-document="block">Block diagram</button>
+          </div>
+        </div>
         <button id="btn-delete-circuit" data-icon="trash" class="danger-action" title="Permanently delete the saved current document" disabled>Delete document</button>
         <button id="btn-check" data-icon="check" data-action="check" data-doc-kind="schematic" title="Check the current schematic (x)">Check</button>
         <button id="btn-save" data-icon="save" data-action="save" title="Save the current document, including designs with issues (Shift+x)">Save</button>

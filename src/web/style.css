@@ -170,6 +170,42 @@ button:active {
   white-space: nowrap;
 }
 
+.new-document-picker {
+  position: relative;
+}
+
+.new-document-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 500;
+  min-width: 160px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(20, 24, 34, 0.22);
+}
+
+.new-document-menu button {
+  width: 100%;
+  padding: 6px 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  text-align: left;
+}
+
+.new-document-menu button:hover,
+.new-document-menu button:focus-visible {
+  background: var(--accent-dim);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 /* ----- interaction controls ------------------------------------- */
 
 .mode-group,

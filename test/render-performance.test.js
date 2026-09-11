@@ -30,6 +30,18 @@ test('cursor crosshair belongs to the interaction overlay', () => {
   assert.match(overlay, /editor-cursor-crosshair/);
 });
 
+test('selection center guides are distinct from the cursor crosshair', () => {
+  const overlay = editorOverlay(sampleCircuit(), {
+    centerGuides: { x: -80, y: -40, w: 160, h: 80 },
+    cursor: { x: 0, y: 40 },
+    cursorCrosshair: { x: -100, y: -100, w: 200, h: 200 },
+  });
+  assert.match(overlay, /selection-center-guides/);
+  assert.match(overlay, /stroke="#d946ef"/);
+  assert.match(overlay, /stroke-dasharray="9 6"/);
+  assert.match(overlay, /M 0 -80 L 0 -40 M 0 40 L 0 80 M -120 0 L -80 0 M 80 0 L 120 0/);
+});
+
 test('overlay benchmark completes for a typical interaction burst', () => {
   const circuit = sampleCircuit();
   const start = performance.now();

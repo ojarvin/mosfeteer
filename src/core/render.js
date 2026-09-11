@@ -344,6 +344,8 @@ export function svgString(circuit, opts = {}) {
  * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
  * halos around each selected component's bbox. opts.nets [net]: highlight
  * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
+ * opts.centerGuides {x,y,w,h}: magenta dashed centerlines for the combined
+ * selection bounds, with small edge ticks and a center marker.
  * opts.wireMode: show all component terminals, colored by net membership.
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
  */
@@ -360,6 +362,24 @@ export function editorOverlay(circuit, opts = {}) {
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
     if (c) parts.push(halo(c.bboxWorld()));
+  }
+
+  // Selection centerlines are deliberately magenta and dashed so they read
+  // as measurement guides rather than cursor crosshairs or circuit geometry.
+  // Keep each guide outside the selected bounds: one grid cell of guide at
+  // each edge is enough to expose the center without crossing the artwork.
+  if (opts.centerGuides) {
+    const r = opts.centerGuides;
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    const pad = GRID;
+    const tick = 10;
+    const color = '#d946ef';
+    parts.push(`<g class="selection-center-guides" pointer-events="none" opacity="0.9">` +
+      `<path d="M ${fmt(cx)} ${fmt(r.y - pad)} L ${fmt(cx)} ${fmt(r.y)} M ${fmt(cx)} ${fmt(r.y + r.h)} L ${fmt(cx)} ${fmt(r.y + r.h + pad)} M ${fmt(r.x - pad)} ${fmt(cy)} L ${fmt(r.x)} ${fmt(cy)} M ${fmt(r.x + r.w)} ${fmt(cy)} L ${fmt(r.x + r.w + pad)} ${fmt(cy)}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="9 6"/>` +
+      `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
+      `<rect x="${fmt(cx - 4)}" y="${fmt(cy - 4)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="2" transform="rotate(45 ${fmt(cx)} ${fmt(cy)})"/>` +
+      `</g>`);
   }
 
   // A marquee/visual selection is only a preview until its gesture commits.

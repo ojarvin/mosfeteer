@@ -55,6 +55,8 @@ const consoleEl = document.getElementById('console-panel');
 const consoleResizerEl = document.getElementById('console-resizer');
 const circuitSelectEl = document.getElementById('circuit-select');
 const circuitNameEl = document.getElementById('circuit-name');
+const newDocumentButton = document.getElementById('btn-new-document');
+const newDocumentMenu = document.getElementById('new-document-menu');
 const saveStateEl = document.getElementById('save-state');
 const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
 const exportCircuitBtn = document.getElementById('btn-export');
@@ -2358,6 +2360,51 @@ function renderBlockPanels() {
   }
 }
 
+function selectionCenterBounds() {
+  let bounds = null;
+  const includeRect = (rect) => {
+    if (!rect || ![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite)) return;
+    const x0 = rect.x;
+    const y0 = rect.y;
+    const x1 = rect.x + rect.w;
+    const y1 = rect.y + rect.h;
+    if (!bounds) bounds = { x: x0, y: y0, w: rect.w, h: rect.h };
+    else {
+      const bx1 = bounds.x + bounds.w;
+      const by1 = bounds.y + bounds.h;
+      bounds.x = Math.min(bounds.x, x0);
+      bounds.y = Math.min(bounds.y, y0);
+      bounds.w = Math.max(bx1, x1) - bounds.x;
+      bounds.h = Math.max(by1, y1) - bounds.y;
+    }
+  };
+  const includePoint = (point) => point && includeRect({ x: point.x, y: point.y, w: 0, h: 0 });
+
+  const refs = new Set([...multi, ...(selected ? [selected] : [])]);
+  for (const ref of refs) includeRect(circuit.components.get(ref)?.bboxWorld());
+  for (const id of selLabels) includeRect(circuit.labels.get(id)?.bbox());
+
+  for (const id of selectedNets) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    const paths = net.paths();
+    for (const path of paths) for (const point of path || []) includePoint(point);
+    if (!paths.length) for (const point of net.terminalWorlds?.() || []) includePoint(point);
+  }
+
+  const wireKeys = new Set(selectedWires);
+  if (selectedWire) wireKeys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
+  for (const key of wireKeys) {
+    const wire = keyToWire(key);
+    const path = circuit.nets.get(wire.netId)?.paths()?.[wire.branch];
+    const a = path?.[wire.segment - 1];
+    const b = path?.[wire.segment];
+    if (!a || !b) continue;
+    includeRect({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) });
+  }
+  return bounds;
+}
+
 function render() {
   syncDocumentSurface();
   if (isBlockDiagram(circuit)) {
@@ -2571,6 +2618,7 @@ function renderCanvas(modelKey) {
   const overlay = editorOverlay(circuit, {
     cursor,
     selection: [...new Set([...multi, ...diagnosticSelection.components])],
+    centerGuides: selectionCenterBounds(),
     wireSegments: (() => {
       if (!selectedWires.size && !selectedWire) return [];
       const keys = selectedWires.size ? [...selectedWires] : [`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`];
@@ -9544,8 +9592,44 @@ function startNewDocument(kind) {
   logLine(`Started a new ${kind === 'block' ? 'block diagram' : 'schematic'}. Enter a name and save to create its files.`);
 }
 
-document.getElementById('btn-new-circuit').addEventListener('click', () => startNewDocument('circuit'));
-document.getElementById('btn-new-block')?.addEventListener('click', () => startNewDocument('block'));
+function closeNewDocumentMenu(focusButton = false) {
+  if (!newDocumentMenu || newDocumentMenu.hidden) return;
+  newDocumentMenu.hidden = true;
+  newDocumentButton?.setAttribute('aria-expanded', 'false');
+  if (focusButton) newDocumentButton?.focus();
+}
+
+function openNewDocumentMenu() {
+  if (!newDocumentMenu) return;
+  newDocumentMenu.hidden = false;
+  newDocumentButton?.setAttribute('aria-expanded', 'true');
+  newDocumentMenu.querySelector('[role="menuitem"]')?.focus();
+}
+
+newDocumentButton?.addEventListener('click', (ev) => {
+  ev.preventDefault();
+  if (newDocumentMenu?.hidden) openNewDocumentMenu();
+  else closeNewDocumentMenu();
+});
+newDocumentMenu?.addEventListener('click', (ev) => {
+  const option = ev.target.closest?.('[data-new-document]');
+  if (!option) return;
+  closeNewDocumentMenu();
+  startNewDocument(option.dataset.newDocument);
+});
+function dismissNewDocumentMenuOutside(ev) {
+  if (newDocumentMenu?.hidden || newDocumentMenu.contains(ev.target) || newDocumentButton?.contains(ev.target)) return;
+  closeNewDocumentMenu();
+}
+window.addEventListener('pointerdown', dismissNewDocumentMenuOutside, true);
+window.addEventListener('click', dismissNewDocumentMenuOutside, true);
+window.addEventListener('keydown', (ev) => {
+  if (newDocumentMenu?.hidden) return;
+  if (ev.key === 'Escape') {
+    ev.preventDefault();
+    closeNewDocumentMenu(true);
+  }
+});
 
 document.getElementById('btn-load-circuit').addEventListener('click', () => requestCircuitLoad());
 deleteCircuitBtn?.addEventListener('click', askDeleteCircuit);

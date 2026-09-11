@@ -81,6 +81,15 @@ test('editor shell exposes keyboard canvas and live status surfaces', () => {
   assert.match(html, /id="accessibility-announcement"[^>]+aria-live="polite"/);
 });
 
+test('new document control exposes one popup with schematic and block choices', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="btn-new-document"[^>]+aria-haspopup="menu"/);
+  assert.match(html, /id="new-document-menu"[^>]+role="menu"/);
+  assert.match(html, /data-new-document="circuit"/);
+  assert.match(html, /data-new-document="block"/);
+  assert.doesNotMatch(html, /id="btn-new-circuit"|id="btn-new-block"/);
+});
+
 test('schematic and block pointer paths share snapped cursor conversion', () => {
   for (const documentKind of ['circuit', 'block']) {
     assert.deepEqual(worldAndCursorFromClient(50, 70, rect, view), {
