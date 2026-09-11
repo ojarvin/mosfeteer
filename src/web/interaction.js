@@ -50,6 +50,11 @@ export function shouldConfirmBeforeUnload({ dirty, desktop } = {}) {
   return !!dirty && !desktop;
 }
 
+/** Platform-neutral modifier policy shared by every selectable editor role. */
+export function isSelectionModifier({ shiftKey = false, ctrlKey = false, metaKey = false } = {}) {
+  return !!(shiftKey || ctrlKey || metaKey);
+}
+
 export function worldAndCursorFromClient(clientX, clientY, rect, view) {
   const world = {
     x: view.x + ((clientX - rect.left) / rect.width) * view.w,

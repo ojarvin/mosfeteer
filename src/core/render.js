@@ -2,7 +2,7 @@ import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
 import { fontAttrs, resolveColor, strokeAttrs, styleAttrs } from './style.js';
-import { LabelInstance, parseLabelRuns } from './model.js';
+import { LABEL_FONT_SIZE, LabelInstance, parseLabelRuns } from './model.js';
 
 function escapeSvg(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -64,17 +64,26 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
     .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
   if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
   const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
-  if (runs.length === 1 && !runs[0].sub && !runs[0].super) {
+  if (runs.length === 1 && !runs[0].sub && !runs[0].super && !runs[0].text.includes('\n')) {
     return `<text ${attrs}>${escapeSvg(runs[0].text)}</text>`;
   }
-  const body = runs
-    .map((r) => {
+  const lineRuns = [[]];
+  for (const run of runs) {
+    const parts = String(run.text).split('\n');
+    parts.forEach((part, index) => {
+      if (part) lineRuns.at(-1).push({ ...run, text: part });
+      if (index < parts.length - 1) lineRuns.push([]);
+    });
+  }
+  const renderRuns = (line) => line.map((r) => {
       if (!r.sub && !r.super) return escapeSvg(r.text);
       const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
       const size = r.sub || r.super ? ' font-size="0.62em"' : '';
       return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
-    })
-    .join('');
+    }).join('');
+  const body = lineRuns.length === 1
+    ? renderRuns(lineRuns[0])
+    : lineRuns.map((line, lineIndex) => `<tspan x="${fmt(x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
   return `<text ${attrs}>${body}</text>`;
 }
 

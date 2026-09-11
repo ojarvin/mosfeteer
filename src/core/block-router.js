@@ -1,4 +1,4 @@
-import { GRID, onGrid } from './grid.js';
+import { GRID, onGrid, snap } from './grid.js';
 
 export const BLOCK_ARROWHEAD_LENGTH = 32;
 export const BLOCK_ARROWHEAD_HALF_WIDTH = 18;
@@ -22,6 +22,7 @@ function blockOf(diagram, id) {
 }
 
 function terminalOf(diagram, ref) {
+  if (!ref || !ref.block || !ref.terminal) return null;
   const block = blockOf(diagram, ref.block);
   if (!block) return null;
   if (typeof block.getTerminal === 'function') return block.getTerminal(ref.terminal);
@@ -68,31 +69,155 @@ function strictlyInside(point, rect) {
   return point.x > rect.x && point.x < rect.x + rect.w && point.y > rect.y && point.y < rect.y + rect.h;
 }
 
-function compress(points) {
-  const out = [];
-  for (const point of points) {
-    const p = { x: point.x, y: point.y };
-    if (out.length && samePoint(out[out.length - 1], p)) continue;
-    out.push(p);
-  }
-  for (let i = out.length - 2; i > 0; i--) {
-    const a = out[i - 1];
-    const b = out[i];
-    const c = out[i + 1];
-    const horizontal = a.y === b.y && b.y === c.y;
-    const vertical = a.x === b.x && b.x === c.x;
-    const between = (value, left, right) => value >= Math.min(left, right) && value <= Math.max(left, right);
-    if ((horizontal && between(b.x, a.x, c.x)) || (vertical && between(b.y, a.y, c.y))) out.splice(i, 1);
-  }
-  return out;
-}
-
 function segmentDirection(a, b) {
   return { x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) };
 }
 
 function orthogonal(points) {
   return points.every((point, i) => i === 0 || point.x === points[i - 1].x || point.y === points[i - 1].y);
+}
+
+/** Compact a block-arrow path without importing electrical wire geometry.
+ * Collinear middles are removed in either direction: block connectors never
+ * retain a 180-degree fold or the dangling stick it creates. */
+function compactPath(path = []) {
+  const out = [];
+  for (const raw of path) {
+    const point = { x: raw.x, y: raw.y };
+    if (out.length && samePoint(out.at(-1), point)) continue;
+    out.push(point);
+    while (out.length >= 3) {
+      const a = out.at(-3); const b = out.at(-2); const c = out.at(-1);
+      if (!((a.y === b.y && b.y === c.y) || (a.x === b.x && b.x === c.x))) break;
+      out.splice(out.length - 2, 1);
+      if (out.length >= 2 && samePoint(out.at(-1), out.at(-2))) out.pop();
+    }
+  }
+  return out;
+}
+
+function pruneStartEscapeLoop(points) {
+  if (points.length < 6) return points;
+  const [pin, escape, sideA, sideB, returned, continuation] = points;
+  const horizontal = pin.y === escape.y;
+  const outward = horizontal ? escape.x !== pin.x : escape.y !== pin.y;
+  const rectangle = outward &&
+    (horizontal
+      ? escape.x === sideA.x && sideA.y === sideB.y && sideB.x === returned.x && returned.y === pin.y && continuation.x === returned.x
+      : escape.y === sideA.y && sideA.x === sideB.x && sideB.y === returned.y && returned.x === pin.x && continuation.y === returned.y);
+  if (!rectangle) return points;
+  const shiftedContinuation = horizontal
+    ? { x: escape.x, y: continuation.y }
+    : { x: continuation.x, y: escape.y };
+  return compactPath([pin, escape, shiftedContinuation, ...points.slice(6)]);
+}
+
+/** Remove the rectangular one-cell escape-and-return artifact at either end
+ * while retaining every bend beyond the adjacent perpendicular run. */
+export function pruneBlockArrowEndpointLoops(points = []) {
+  let route = pruneStartEscapeLoop(points.map((point) => ({ ...point })));
+  route = compactPath(route);
+  route = pruneStartEscapeLoop([...route].reverse()).reverse();
+  return compactPath(route);
+}
+
+/** Junction dots appear only where connectors share a trunk and then branch.
+ * Ordinary geometric crossings have no repeated incident direction and stay
+ * visually unconnected. */
+export function blockConnectorJunctions(diagram) {
+  const arrows = diagram?.arrows instanceof Map ? [...diagram.arrows.values()] : diagram?.arrows || [];
+  const vertices = new Map();
+  for (const arrow of arrows) for (const p of arrow.points || []) {
+    const key = pointKey(p);
+    if (!vertices.has(key)) vertices.set(key, { point: { ...p }, arrows: new Set() });
+    vertices.get(key).arrows.add(arrow.id);
+  }
+  const result = [];
+  for (const { point: p } of vertices.values()) {
+    const directions = new Map();
+    const touchingArrows = new Set();
+    for (const arrow of arrows) {
+      for (let i = 1; i < (arrow.points || []).length; i++) {
+        const a = arrow.points[i - 1]; const b = arrow.points[i];
+        if (samePoint(a, b)) continue;
+        const onSegment = (a.x === b.x && p.x === a.x && p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y)) ||
+          (a.y === b.y && p.y === a.y && p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x));
+        if (!onSegment) continue;
+        touchingArrows.add(arrow.id);
+        for (const end of [a, b]) {
+          if (samePoint(p, end)) continue;
+          const d = segmentDirection(p, end); const key = `${d.x},${d.y}`;
+          directions.set(key, (directions.get(key) || 0) + 1);
+        }
+      }
+    }
+    if (touchingArrows.size >= 2 && directions.size >= 3 && Math.max(...directions.values()) >= 2) result.push(p);
+  }
+  return result;
+}
+
+/** Preserve fixed route bodies while restoring the mandatory outward source
+ * leg and inward target leg after a segment drag or endpoint mutation. */
+export function conformBlockArrowEndpoints(diagram, arrow, points = arrow?.points || []) {
+  let route = pruneBlockArrowEndpointLoops(points);
+  if (route.length < 2) return route;
+  const source = arrow.from ? terminalPoint(diagram, arrow.from) : null;
+  const target = arrow.to ? terminalPoint(diagram, arrow.to) : null;
+  const sourceDir = arrow.from ? terminalDirection(terminalOf(diagram, arrow.from)) : null;
+  const targetDir = arrow.to ? terminalDirection(terminalOf(diagram, arrow.to)) : null;
+  const directionMatches = (a, b, dir) => {
+    const actual = segmentDirection(a, b);
+    return actual.x === dir.x && actual.y === dir.y;
+  };
+  const outwardBridge = (pin, escape, next, dir) => {
+    // When a moved block overtakes the authored route body, returning directly
+    // from the escape point would create a 180-degree fold. Leave the pin,
+    // step sideways, and only then travel back toward the retained body.
+    const forward = (next.x - pin.x) * dir.x + (next.y - pin.y) * dir.y;
+    if (forward <= 0) {
+      const normal = { x: -dir.y, y: dir.x };
+      const channel = add(escape, normal, GRID);
+      const besideNext = dir.x ? { x: next.x, y: channel.y } : { x: channel.x, y: next.y };
+      return [escape, channel, besideNext, next];
+    }
+    if (escape.x === next.x || escape.y === next.y) return [escape];
+    // The first turn after the mandatory escape must be perpendicular to it.
+    return [escape, dir.x ? { x: escape.x, y: next.y } : { x: next.x, y: escape.y }];
+  };
+  if (source && sourceDir && !directionMatches(source, route[1], sourceDir)) {
+    const escape = add(source, sourceDir, GRID);
+    const next = route[1];
+    const following = route[2];
+    const overtaken = (next.x - source.x) * sourceDir.x + (next.y - source.y) * sourceDir.y <= 0;
+    if (overtaken && following && (sourceDir.x ? following.x === next.x : following.y === next.y)) {
+      // Push only the first bend and its perpendicular run. Every later bend
+      // keeps its authored coordinate, so moving a block does not redraw the
+      // rest of a valid connector.
+      const shiftedFollowing = sourceDir.x
+        ? { x: escape.x, y: following.y }
+        : { x: following.x, y: escape.y };
+      route = compactPath([source, escape, shiftedFollowing, ...route.slice(3)]);
+    } else {
+      const bridge = outwardBridge(source, escape, next, sourceDir);
+      route = compactPath([source, ...bridge, ...route.slice(1)]);
+    }
+  }
+  if (target && targetDir && !directionMatches(target, route.at(-2), targetDir)) {
+    const approach = add(target, targetDir, GRID);
+    const previous = route.at(-2);
+    const preceding = route.at(-3);
+    const overtaken = (previous.x - target.x) * targetDir.x + (previous.y - target.y) * targetDir.y <= 0;
+    if (overtaken && preceding && (targetDir.x ? preceding.x === previous.x : preceding.y === previous.y)) {
+      const shiftedPreceding = targetDir.x
+        ? { x: approach.x, y: preceding.y }
+        : { x: preceding.x, y: approach.y };
+      route = compactPath([...route.slice(0, -3), shiftedPreceding, approach, target]);
+    } else {
+      const bridge = outwardBridge(target, approach, previous, targetDir).reverse();
+      route = compactPath([...route.slice(0, -1), ...bridge, target]);
+    }
+  }
+  return route;
 }
 
 /** Shift one orthogonal run while keeping attached endpoints fixed. */
@@ -108,7 +233,7 @@ export function moveBlockArrowRun(points, run, delta) {
   moved.push(...points.slice(lo, hi + 1).map(shifted));
   if (hi === points.length - 1) moved.push({ ...points.at(-1) });
   else moved.push(...points.slice(hi + 1).map((point) => ({ ...point })));
-  return compress(moved);
+  return compactPath(moved);
 }
 
 function segmentClear(a, b, rects) {
@@ -119,6 +244,36 @@ function segmentClear(a, b, rects) {
         Math.max(a.x, b.x) > rect.x && Math.min(a.x, b.x) < rect.x + rect.w) return false;
   }
   return true;
+}
+
+// Two connector runs may cross, but they must not occupy the same positive
+// length collinear span.  Keeping this check in the block router (instead of
+// electrical wiring) is intentional: block connectors are visual arrows.
+function segmentOverlaps(a, b, c, d) {
+  if (a.y === b.y && c.y === d.y && a.y === c.y) {
+    return Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) >
+      Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
+  }
+  if (a.x === b.x && c.x === d.x && a.x === c.x) {
+    return Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) >
+      Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
+  }
+  return false;
+}
+
+const occupiedPoints = (entry) => Array.isArray(entry) ? entry : entry?.points || [];
+const sameRef = (a, b) => a?.block === b?.block && a?.terminal === b?.terminal;
+
+function pathOverlaps(path, occupied = []) {
+  for (let i = 1; i < path.length; i++) {
+    for (const entry of occupied) {
+      const other = occupiedPoints(entry);
+      for (let j = 1; j < other.length; j++) {
+        if (segmentOverlaps(path[i - 1], path[i], other[j - 1], other[j])) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function routeGrid(start, goal, obstacles) {
@@ -158,7 +313,8 @@ function routeGrid(start, goal, obstacles) {
     }
     for (let dir = 0; dir < DIRECTIONS.length; dir++) {
       const next = add(current.point, DIRECTIONS[dir], GRID);
-      if (next.x < minX || next.x > maxX || next.y < minY || next.y > maxY || blocked(next)) continue;
+      if (next.x < minX || next.x > maxX || next.y < minY || next.y > maxY || blocked(next) ||
+          obstacles.occupied?.some((entry) => occupiedPoints(entry).some((point, i, path) => i > 0 && segmentOverlaps(current.point, next, path[i - 1], point)))) continue;
       const turns = current.turns + (current.dir !== -1 && current.dir !== dir ? 1 : 0);
       const steps = current.steps + 1;
       const key = `${pointKey(next)}|${dir}`;
@@ -189,36 +345,56 @@ export function routeBlockArrow(diagram, arrow, options = {}) {
   if (![source, target].every((p) => onGrid(p.x) && onGrid(p.y))) return null;
 
   const clearance = options.clearance ?? GRID;
-  const escape = add(source, sourceDir, GRID);
-  const approach = add(target, targetDir, GRID);
+  const escape = add(source, sourceDir, clearance);
+  const approach = add(target, targetDir, clearance);
   const rects = blocksOf(diagram).map((block) => expandedRect(block, clearance));
+  // Fan-out connectors from the same source terminal may share their trunk
+  // before branching. Other connectors remain overlap obstacles.
+  const occupied = (options.occupied || []).filter((entry) =>
+    ![entry?.from, entry?.to].some((ref) => [arrow.from, arrow.to].some((endpoint) => sameRef(ref, endpoint))));
   // Adjacent facing terminals reserve the same one-cell gap in opposite
   // directions. Do not emit a backtracking route for that degenerate search.
   if (samePoint(escape, target) && samePoint(approach, source) && arrow.from.block !== arrow.to.block) return [source, target];
-  // Prefer a simple L route when it is safe. For diagonal layouts, compare
-  // both elbows by how evenly they split the route length; this is only a
-  // fresh-layout preference, not a fixed-route constraint.
+  // Compare every unobstructed simple candidate lexicographically by bend
+  // count and only then by length. A longer outside L is clearer than a
+  // shorter staircase; the centered dogleg is only preferred among routes
+  // with the same number of bends.
+  const midpoint = sourceDir.x
+    ? snap((escape.x + approach.x) / 2)
+    : snap((escape.y + approach.y) / 2);
+  const midpointPath = compactPath(sourceDir.x
+    ? [escape, { x: midpoint, y: escape.y }, { x: midpoint, y: approach.y }, approach]
+    : [escape, { x: escape.x, y: midpoint }, { x: approach.x, y: midpoint }, approach]);
   const elbows = [
     { x: approach.x, y: escape.y },
     { x: escape.x, y: approach.y },
   ];
-  const simple = elbows.map((elbow) => compress([escape, elbow, approach]))
-    .filter((path) => path.length >= 2 && path.every((point, i) => i === 0 || segmentClear(path[i - 1], point, rects)));
+  const simple = [midpointPath, ...elbows.map((elbow) => compactPath([escape, elbow, approach]))]
+    .filter((path) => path.length >= 2 &&
+      path.every((point, i) => i === 0 || segmentClear(path[i - 1], point, rects)) &&
+      !pathOverlaps(path, occupied))
+    .map((path) => compactPath([source, ...path, target]))
+    .filter((path) => path.length >= 2 && orthogonal(path));
   if (simple.length) {
-    const length = (a, b) => Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
-    simple.sort((a, b) => {
-      const balance = (path) => path.length < 3 ? 0 : Math.abs(length(path[0], path[1]) - length(path[1], path[2]));
-      return balance(a) - balance(b) || pointKey(a[1]).localeCompare(pointKey(b[1]));
-    });
-    const route = compress([source, ...simple[0], target]);
-    if (route.length >= 2 && orthogonal(route)) return route;
+    const turns = (path) => path.slice(2).reduce((count, point, index) => {
+      const a = path[index]; const b = path[index + 1];
+      return count + ((a.x === b.x) !== (b.x === point.x) ? 1 : 0);
+    }, 0);
+    const length = (path) => path.slice(1).reduce((sum, point, index) =>
+      sum + Math.abs(point.x - path[index].x) + Math.abs(point.y - path[index].y), 0);
+    const balance = (path) => path.length < 4 ? 0 :
+      Math.abs((Math.abs(path[1].x - path[0].x) + Math.abs(path[1].y - path[0].y)) -
+        (Math.abs(path.at(-1).x - path.at(-2).x) + Math.abs(path.at(-1).y - path.at(-2).y)));
+    simple.sort((a, b) => turns(a) - turns(b) || balance(a) - balance(b) || length(a) - length(b) ||
+      a.map(pointKey).join('|').localeCompare(b.map(pointKey).join('|')));
+    return simple[0];
   }
   // The source and target body are still obstacles. Their boundary points are
   // legal, while the reserved one-cell escape puts the search outside.
-  const middle = routeGrid(escape, approach, { rects, clearance, diagram });
+  const middle = routeGrid(escape, approach, { rects, clearance, diagram, occupied });
   if (!middle) return null;
-  const route = compress([source, escape, ...middle.slice(1, -1), approach, target]);
-  if (route.length < 2 || !orthogonal(route)) return null;
+  const route = compactPath([source, escape, ...middle.slice(1, -1), approach, target]);
+  if (route.length < 2 || !orthogonal(route) || pathOverlaps(route, occupied)) return null;
   if (!samePoint(route[0], source) || !samePoint(route[route.length - 1], target)) return null;
   return route;
 }
@@ -227,11 +403,13 @@ export function routeBlockArrow(diagram, arrow, options = {}) {
 export function routeBlockDiagram(diagram, options = {}) {
   const arrows = diagram?.arrows instanceof Map ? [...diagram.arrows.values()] : (diagram?.arrows || []);
   const routes = new Map();
+  const occupied = [...(options.occupied || [])];
   for (const arrow of arrows) {
     if (arrow.detached || arrow.routingMode === 'fixed') continue;
-    const points = routeBlockArrow(diagram, arrow, options);
+    const points = routeBlockArrow(diagram, arrow, { ...options, occupied });
     if (!points) return null;
     routes.set(arrow.id, points);
+    occupied.push({ points, from: arrow.from, to: arrow.to });
   }
   return routes;
 }
@@ -270,7 +448,7 @@ export function blockArrowGeometry(points, options = {}) {
   const shaftPoints = route.slice(0, i + 1).map((point) => ({ ...point }));
   shaftPoints.push(base);
   return {
-    shaftPoints: compress(shaftPoints),
+    shaftPoints: compactPath(shaftPoints),
     tip: { ...tip },
     left,
     right,
@@ -280,4 +458,3 @@ export function blockArrowGeometry(points, options = {}) {
 export function routeIsOrthogonal(points) {
   return Array.isArray(points) && points.length >= 2 && orthogonal(points);
 }
-

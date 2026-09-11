@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { isCloseWindowShortcut, moveAnnotationEndpoint, shouldConfirmBeforeUnload, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { isCloseWindowShortcut, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -15,6 +15,13 @@ test('close-window shortcuts are available to the Electron renderer', () => {
   assert.equal(shouldConfirmBeforeUnload({ dirty: true, desktop: false }), true);
   assert.equal(shouldConfirmBeforeUnload({ dirty: true, desktop: true }), false);
   assert.equal(shouldConfirmBeforeUnload({ dirty: false, desktop: false }), false);
+});
+
+test('selection extension uses one cross-platform modifier policy', () => {
+  assert.equal(isSelectionModifier({ shiftKey: true }), true);
+  assert.equal(isSelectionModifier({ ctrlKey: true }), true);
+  assert.equal(isSelectionModifier({ metaKey: true }), true);
+  assert.equal(isSelectionModifier({ altKey: true }), false);
 });
 
 test('annotation endpoints move, resize, and reject invalid shapes', () => {

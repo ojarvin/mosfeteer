@@ -1,10 +1,11 @@
 import { GRID, onGrid, snap } from './grid.js';
 import { LabelInstance } from './model.js';
-import { blockArrowGeometry, routeBlockArrow, routeIsOrthogonal } from './block-router.js';
+import { blockArrowGeometry, conformBlockArrowEndpoints, routeBlockArrow, routeBlockDiagram, routeIsOrthogonal } from './block-router.js';
 
 export const BLOCK_DIAGRAM_KIND = 'block';
 export const BLOCK_DIAGRAM_VERSION = 1;
 export const BLOCK_MIN_SIZE = GRID * 2;
+export const BLOCK_DEFAULT_SIZE = GRID * 4;
 export const BLOCK_SIDES = Object.freeze(['top', 'right', 'bottom', 'left']);
 
 const DEFAULT_STYLE = Object.freeze({
@@ -35,17 +36,15 @@ function normalizeStyle(style = {}, fallback = DEFAULT_STYLE) {
 }
 
 function normalizeText(text) {
-  const value = String(text ?? '');
-  if (/[\r\n]/.test(value)) throw new Error('block text must be a single line');
-  return value;
+  return String(text ?? '');
 }
 
 function normalizeRect(input = {}) {
   const source = input.rect || input;
   let x = Number(source.x ?? 0);
   let y = Number(source.y ?? 0);
-  let w = Number(source.w ?? source.width ?? BLOCK_MIN_SIZE);
-  let h = Number(source.h ?? source.height ?? BLOCK_MIN_SIZE);
+  let w = Number(source.w ?? source.width ?? BLOCK_DEFAULT_SIZE);
+  let h = Number(source.h ?? source.height ?? BLOCK_DEFAULT_SIZE);
   if (![x, y, w, h].every(finite)) throw new Error('block rectangle must contain finite coordinates');
   if (w < 0) { x += w; w = -w; }
   if (h < 0) { y += h; h = -h; }
@@ -123,9 +122,11 @@ function availableGeneratedSlots(rect, terminals) {
 function textWidth(text) {
   // This is deliberately a small, DOM-free estimate. The browser renderer can
   // use the same label font without making the core model depend on the DOM.
-  let width = 0;
-  for (const c of text) width += c === ' ' ? 12 : /[ilI.,:;!'|]/.test(c) ? 12 : /[MW@#%&]/.test(c) ? 30 : 23;
-  return width;
+  return Math.max(...String(text).split('\n').map((line) => {
+    let width = 0;
+    for (const c of line) width += c === ' ' ? 12 : /[ilI.,:;!'|]/.test(c) ? 12 : /[MW@#%&]/.test(c) ? 30 : 23;
+    return width;
+  }), 0);
 }
 
 function routeClearOfBlocks(points, diagram, ignored = new Set()) {
@@ -490,12 +491,7 @@ export class BlockDiagram {
       if (samePoint(terminal.point(block.rect), point)) candidates.push({ block: block.id, terminal: terminal.id });
     }
     if (candidates.length !== 1) return null;
-    const ref = candidates[0];
-    for (const arrow of this.arrows.values()) {
-      if (arrow === excludeArrow) continue;
-      if (refsEqual(arrow.from, ref) || refsEqual(arrow.to, ref)) return null;
-    }
-    return ref;
+    return candidates[0];
   }
 
   /** Reattach only unambiguous detached endpoints at valid, unoccupied
@@ -575,8 +571,41 @@ export class BlockDiagram {
     const block = new BlockNode({ ...data, id: data.id || this.nextBlockId() });
     if (this.blocks.has(block.id)) throw new Error(`duplicate block id "${block.id}"`);
     this.blocks.set(block.id, block);
-    try { this.validate(); } catch (error) { this.blocks.delete(block.id); throw error; }
+    try {
+      this.validate();
+      // Placement and movement share the same commit-boundary attachment
+      // rule: a free connector endpoint exactly on a unique terminal connects.
+      this.reattachDetachedArrows();
+    } catch (error) { this.blocks.delete(block.id); throw error; }
     return block;
+  }
+
+  attachArrowEndpoint(id, endpoint, ref) {
+    if (!['from', 'to'].includes(endpoint)) throw new Error(`invalid connector endpoint "${endpoint}"`);
+    const arrow = this.getArrow(id);
+    const before = arrow.toJSON();
+    try {
+      const target = normalizeRef(ref);
+      this.getTerminal(target);
+      const other = endpoint === 'from' ? arrow.to : arrow.from;
+      if (other && refsEqual(other, target)) throw new Error('connector endpoints must use different terminals');
+      arrow[endpoint] = target;
+      arrow.detached = !(arrow.from && arrow.to);
+      if (arrow.detached) {
+        arrow.routingMode = 'fixed';
+        this._anchorFixedArrow(arrow);
+      } else {
+        arrow.routingMode = 'auto';
+        arrow.points = routeBlockArrow(this, arrow);
+        if (!arrow.points) throw new Error(`no safe route for arrow "${id}"`);
+      }
+      this._syncConnectorLabels(arrow);
+      this.validate();
+      return arrow;
+    } catch (error) {
+      Object.assign(arrow, new BlockArrow(before));
+      throw error;
+    }
   }
 
   renameBlock(id, text) {
@@ -645,7 +674,7 @@ export class BlockDiagram {
     const next = normalizeRect({ ...block.rect, x: point.x, y: point.y });
     block.rect.x = next.x;
     block.rect.y = next.y;
-    try { this._rerouteIncident(id); this.validate(); }
+    try { this._rerouteIncident(id, null, { fresh: true, clearance: GRID * 2 }); this.validate(); }
     catch (error) { this._restoreJSON(before); throw error; }
     return block;
   }
@@ -667,15 +696,40 @@ export class BlockDiagram {
       }
       for (const id of internal) {
         const arrow = this.getArrow(id);
-        arrow.points = arrow.points.map((point) => ({ x: point.x + x, y: point.y + y }));
-        this._syncConnectorLabels(arrow);
+        if (arrow.routingMode !== 'auto') {
+          arrow.points = arrow.points.map((point) => ({ x: point.x + x, y: point.y + y }));
+          this._syncConnectorLabels(arrow);
+        }
       }
       for (const arrow of this.arrows.values()) {
-        if (arrow.detached || internal.has(arrow.id) ||
+        if (arrow.detached) {
+          if (selected.has(arrow.from?.block) || selected.has(arrow.to?.block)) {
+            this._anchorFixedArrow(arrow);
+            this._syncConnectorLabels(arrow);
+          }
+          continue;
+        }
+        if (internal.has(arrow.id) || arrow.routingMode === 'auto' ||
             (!selected.has(arrow.from?.block) && !selected.has(arrow.to?.block))) continue;
-        if (arrow.routingMode === 'auto') arrow.points = routeBlockArrow(this, arrow);
-        else this._anchorFixedArrow(arrow);
+        const occupied = [...this.arrows.values()]
+          .filter((other) => other !== arrow && !other.detached)
+          .map((other) => ({ points: other.points, from: other.from, to: other.to }));
+        arrow.points = routeBlockArrow(this, arrow, { clearance: GRID * 2, occupied });
         if (!arrow.points) throw new Error(`no safe route for arrow "${arrow.id}"`);
+        this._syncConnectorLabels(arrow);
+      }
+      // Route every automatic connector in one deterministic pass. Existing
+      // fixed connectors reserve their exact runs; newly planned automatic
+      // connectors reserve each previous route, preventing positive-length
+      // collinear overlap after a connected block drag.
+      const occupied = [...this.arrows.values()]
+        .filter((arrow) => !arrow.detached && arrow.routingMode === 'fixed')
+        .map((arrow) => ({ points: arrow.points, from: arrow.from, to: arrow.to }));
+      const routes = routeBlockDiagram(this, { occupied, clearance: GRID * 2 });
+      if (!routes) throw new Error('no safe route for automatic block connector');
+      for (const [arrowId, points] of routes) {
+        const arrow = this.getArrow(arrowId);
+        arrow.points = points.map((point) => ({ ...point }));
         this._syncConnectorLabels(arrow);
       }
       this.validate();
@@ -688,20 +742,52 @@ export class BlockDiagram {
     const before = this.toJSON();
     const size = typeof w === 'object' ? w : { w, h };
     const next = normalizeRect({ ...block.rect, ...size });
-    if (block.terminals && [...block.terminals.values()].filter((terminal) => terminal.generated).length > availableGeneratedSlots(next, block.terminals.values())) {
-      throw new Error(`block ${id} is too small for generated terminals`);
+    // A connected pin must retain one clear grid cell between itself and a
+    // side that is being pulled inward.  Unconnected pins may be clamped to
+    // the new perimeter below; connected pins are the resize guardrail.
+    const old = block.rect;
+    const reduced = {
+      left: next.x > old.x,
+      right: next.x + next.w < old.x + old.w,
+      top: next.y > old.y,
+      bottom: next.y + next.h < old.y + old.h,
+    };
+    const incident = new Set();
+    for (const arrow of this.arrows.values()) {
+      if (arrow.from?.block === id) incident.add(`${arrow.from.block}.${arrow.from.terminal}`);
+      if (arrow.to?.block === id) incident.add(`${arrow.to.block}.${arrow.to.terminal}`);
+    }
+    for (const key of incident) {
+      const terminal = block.getTerminal(key.slice(key.indexOf('.') + 1));
+      const oldPoint = terminal.point(old);
+      if (reduced.left && ['top', 'bottom'].includes(terminal.side) && next.x > oldPoint.x - GRID) {
+        throw new Error(`block ${id} left edge cannot pass connected terminal ${terminal.id} plus one grid cell`);
+      }
+      if (reduced.right && ['top', 'bottom'].includes(terminal.side) && next.x + next.w < oldPoint.x + GRID) {
+        throw new Error(`block ${id} right edge cannot pass connected terminal ${terminal.id} plus one grid cell`);
+      }
+      if (reduced.top && ['left', 'right'].includes(terminal.side) && next.y > oldPoint.y - GRID) {
+        throw new Error(`block ${id} top edge cannot pass connected terminal ${terminal.id} plus one grid cell`);
+      }
+      if (reduced.bottom && ['left', 'right'].includes(terminal.side) && next.y + next.h < oldPoint.y + GRID) {
+        throw new Error(`block ${id} bottom edge cannot pass connected terminal ${terminal.id} plus one grid cell`);
+      }
     }
     const resizedData = block.toJSON();
     resizedData.rect = next;
-    resizedData.terminals = resizedData.terminals.map((terminal) => ({ ...terminal, offset: normalizeOffset(next, terminal.side, terminal.offset, true) }));
+    // Generated perimeter points are an editing affordance, not permanent
+    // content. Keep generated terminals that carry connectors, discard the
+    // rest, and refill the resized perimeter with stable available IDs.
+    resizedData.terminals = resizedData.terminals
+      .filter((terminal) => !/^T\d+$/.test(terminal.id) || incident.has(`${id}.${terminal.id}`))
+      .map((terminal) => ({ ...terminal, offset: normalizeOffset(next, terminal.side, terminal.offset, true) }));
     const resized = new BlockNode(resizedData);
     resized.ensurePerimeterTerminals();
     for (const terminal of resized.terminals.values()) terminal.offset = normalizeOffset(resized.rect, terminal.side, terminal.offset, true);
     if (!terminalPointsUnique(resized)) throw new Error(`block ${id} resize creates coincident terminal points`);
     block.rect = next;
     try {
-      block.ensurePerimeterTerminals();
-      for (const terminal of block.terminals.values()) terminal.offset = normalizeOffset(block.rect, terminal.side, terminal.offset, true);
+      block.terminals = resized.terminals;
       this._rerouteIncident(id); this.validate();
     } catch (error) { this._restoreJSON(before); throw error; }
     return block;
@@ -758,9 +844,17 @@ export class BlockDiagram {
   removeBlock(id) {
     const block = this.getBlock(id);
     for (const [arrowId, arrow] of this.arrows) {
-      if (arrow.from?.block === id || arrow.to?.block === id) this.removeArrow(arrowId);
+      if (arrow.from?.block !== id && arrow.to?.block !== id) continue;
+      // Keep visual connectors when their block disappears.  Preserve the
+      // surviving endpoint (if any), its route, and connector labels; this is
+      // the same half-attached representation used by detached moves.
+      if (arrow.from?.block === id) arrow.from = null;
+      if (arrow.to?.block === id) arrow.to = null;
+      arrow.detached = true;
+      arrow.routingMode = 'fixed';
     }
     this.blocks.delete(id);
+    this.validate();
     return block;
   }
 
@@ -813,6 +907,7 @@ export class BlockDiagram {
       const safe = candidates.find((path) => routeIsOrthogonal(path) && routeClearOfBlocks(path, this));
       if (safe) arrow.points = safe;
     }
+    arrow.points = conformBlockArrowEndpoints(this, arrow, arrow.points);
     if (!routeIsOrthogonal(arrow.points)) throw new Error(`arrow "${arrow.id}" route must be orthogonal`);
     if (!routeClearOfBlocks(arrow.points, this)) throw new Error(`arrow "${arrow.id}" route enters a block`);
   }
@@ -827,14 +922,17 @@ export class BlockDiagram {
     for (const raw of snapshot) this.arrows.set(raw.id, new BlockArrow(raw));
   }
 
-  _rerouteIncident(blockId, snapshot = null) {
+  _rerouteIncident(blockId, snapshot = null, options = {}) {
     const old = snapshot || this._incidentSnapshot(blockId);
     try {
       for (const arrow of this.arrows.values()) {
         if (arrow.detached && !arrow.from?.block && !arrow.to?.block) continue;
         if (arrow.from?.block !== blockId && arrow.to?.block !== blockId) continue;
-        if (!arrow.detached && arrow.routingMode === 'auto') {
-          arrow.points = routeBlockArrow(this, arrow);
+        if (!arrow.detached && (arrow.routingMode === 'auto' || options.fresh)) {
+          const occupied = [...this.arrows.values()]
+            .filter((other) => other !== arrow && !other.detached)
+            .map((other) => ({ points: other.points, from: other.from, to: other.to }));
+          arrow.points = routeBlockArrow(this, arrow, { clearance: options.clearance, occupied });
           if (!arrow.points) throw new Error(`no safe route for arrow "${arrow.id}"`);
         } else this._anchorFixedArrow(arrow);
         this._syncConnectorLabels(arrow);
@@ -902,7 +1000,7 @@ export class BlockDiagram {
       const r = block.rect;
       if (!r || ![r.x, r.y, r.w, r.h].every(finite) || r.w < BLOCK_MIN_SIZE || r.h < BLOCK_MIN_SIZE) errors.push(`invalid rectangle for block "${id}"`);
       else if (![r.x, r.y, r.w, r.h].every((value) => onGrid(value))) errors.push(`block "${id}" rectangle must be grid-aligned`);
-      if (typeof block.text !== 'string' || /[\r\n]/.test(block.text)) errors.push(`block "${id}" text must be one line`);
+      if (typeof block.text !== 'string') errors.push(`block "${id}" text must be text`);
       const seen = new Set();
       const points = new Set();
       for (const [terminalId, terminal] of block.terminals) {

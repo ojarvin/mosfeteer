@@ -80,7 +80,7 @@ export function styleAttrs(style = {}, base = 'symbol') {
     attrs = attrs.replace(/stroke-width="[^"]+"/, `stroke-width="${style.width === 'thin' ? 3 : 9}"`);
   }
   const dash = style.lineStyle && style.lineStyle !== 'solid'
-    ? { dashed: '12 8', 'dash-dot': '14 7 3 7', dotted: '2 8' }[style.lineStyle]
+    ? { dashed: '12 12', 'dash-dot': '14 10 3 10', dotted: '2 10' }[style.lineStyle]
     : null;
   return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
 }

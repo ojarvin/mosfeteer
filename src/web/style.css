@@ -470,6 +470,10 @@ button:disabled {
   stroke: var(--accent) !important;
   stroke-width: 9px !important;
 }
+.canvas svg .block-connector path.selected {
+  stroke: var(--accent) !important;
+  stroke-width: 7px !important;
+}
 
 .canvas svg .block-connector.selected polygon {
   fill: var(--accent) !important;

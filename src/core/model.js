@@ -102,6 +102,20 @@ export function parseLabelRuns(text, opts = {}) {
   return runs;
 }
 
+/** Split rich-text runs into visual lines without losing sub/superscript
+ * metadata. Newlines remain part of the persisted label text. */
+export function labelRunLines(text, opts = {}) {
+  const lines = [[]];
+  for (const run of parseLabelRuns(text, opts)) {
+    const parts = String(run.text).split('\n');
+    parts.forEach((part, index) => {
+      if (part) lines.at(-1).push({ ...run, text: part });
+      if (index < parts.length - 1) lines.push([]);
+    });
+  }
+  return lines;
+}
+
 /** Tight height (world units) of a rendered label line (cap height). */
 export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
@@ -424,13 +438,10 @@ export class LabelInstance {
   /** Tight width (world units) of the rendered text line. Sub/superscript runs
    *  render smaller (0.62 em) so they contribute less width to the box. */
   textWidth() {
-    const runs = this.runs();
-    let w = 0;
-    for (const r of runs) {
+    return Math.max(...labelRunLines(this.text, { autoSubscript: !!this.owner }).map((line) => line.reduce((width, r) => {
       const scale = r.sub || r.super ? 0.62 : 1;
-      for (const ch of r.text) w += charWidth(ch) * scale;
-    }
-    return w;
+      return width + [...r.text].reduce((sum, ch) => sum + charWidth(ch) * scale, 0);
+    }, 0)), 0);
   }
 
   /** Rich-text runs of this label's text (subscripts for owned instance ids). */
@@ -440,7 +451,7 @@ export class LabelInstance {
 
   /** Tight height (world units) of the rendered text line. */
   textHeight() {
-    return LABEL_CAP_H;
+    return Math.max(1, this.text.split('\n').length) * LABEL_CAP_H;
   }
 
   /** Even number of grid cells >= 2 needed to hold the text horizontally. */
@@ -504,7 +515,8 @@ export class LabelInstance {
     }
     // Baseline sits below the box center so the cap height is vertically
     // centered on the label box, including side-attached net labels.
-    const y = centerY + LABEL_CAP_H / 2;
+    const lineCount = Math.max(1, this.text.split('\n').length);
+    const y = centerY - ((lineCount - 1) * LABEL_FONT_SIZE) / 2 + LABEL_CAP_H / 2;
     return { x, y, anchor };
   }
 

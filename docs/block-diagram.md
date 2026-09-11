@@ -1,9 +1,42 @@
 # Block-diagram core contract
 
+The planned convergence with the schematic editor is described in
+[One editor, two component palettes](plans/unified-block-editor.md). The
+contract below describes the current implementation, not that future design.
+
 Block diagrams are a separate document kind. The core model lives in
 `src/core/block-model.js`; its router is `src/core/block-router.js`. It does not
 import `Circuit`, `Net`, electrical routing, or the evaluator. It reuses the
 standalone `LabelInstance` geometry for block-local annotations and connector-attached labels. Connector labels are visual only and never electrical nets.
+
+New ordinary blocks are four grid squares by four grid squares.
+
+Right-clicking a block, connector, or label opens the same **Select same** menu
+as schematic mode, with matching by object type, color, or line style.
+Selection gestures are editor-wide: a plain click replaces the mixed selection,
+while Shift-click, Ctrl-click, or Command-click toggles only the clicked object
+and preserves selected objects of every other kind.
+
+At commit time, a floating connector endpoint that coincides with exactly one
+block terminal attaches to it. This applies both when placing or moving a block
+onto an endpoint and when dragging the hanging endpoint onto a terminal.
+
+Moving a connected block is a connector-repair boundary. Every affected
+connected connector is routed afresh around a two-grid-square block clearance
+envelope. This intentionally favors consistently loop-free geometry over
+retaining fixed bend points after a block move; manual segment edits remain
+fixed until another connected block move requires repair.
+
+Box selection includes every connector segment whose two endpoints are inside
+the marquee. Dragging one selected segment moves all selected runs with the same
+orientation; selected runs of the other orientation remain selected and still.
+
+Arrow and box annotations move by dragging their geometry. Move/copy previews
+include the complete shape and its child label. Block-move previews may pass
+through temporarily invalid positions; routing resumes when the pointer reaches
+a valid position, while an invalid destination cannot be committed. At shared
+connector trunks, an explicitly selected connector endpoint wins, with stable
+connector order as the fallback.
 
 ## Persisted state
 
@@ -65,22 +98,37 @@ Block rectangles and terminal offsets are snapped to the 40-unit grid. New
 blocks receive stable generic `T<n>` terminals at every non-corner perimeter
 grid point, with one unused grid square at each corner; legacy `in`/`out` terminals
 remain loadable. A terminal stores only its side and offset along that side, so
-moving or resizing a block recomputes its exact perimeter point. Resizing rejects
-shapes too small to preserve generated terminals and clamps explicit terminals
-to two grid cells. Block text is centered at the
+moving or resizing a block recomputes its exact perimeter point. A side being
+pulled inward stops one grid square beyond the last connected terminal it
+would pass; otherwise the rectangle may shrink to the ordinary minimum size.
+Unused generated terminals may be repositioned or discarded, while explicit
+terminals are clamped to the resized perimeter. Block text is centered at the
 rectangle center. Arrow endpoints are terminal identities, not free points.
-Deleting a block cascades its incident arrows; deleting a referenced terminal
-is rejected.
+Deleting a block preserves its incident connectors as detached fixed visuals,
+including the surviving endpoint and connector labels. Deleting a referenced
+terminal is rejected.
 
 ## Routing and arrowheads
 
 Automatic arrows use `routeBlockArrow()` and avoid block interiors with a
 one-grid-cell clearance. The first segment leaves the source terminal in its
 outward direction, and the final segment approaches the target from outside
-its block. Arrow crossings are visual crossings and never make junctions.
+its block. No connector runs parallel along a block edge: the adjacent route
+lane stays at least one grid square away so the arrowhead points into the
+block. Fan-out connectors may share the same terminal and common starting
+trunk before branching. A solder-style dot marks the true branch point of a
+shared trunk; ordinary geometric crossings remain unconnected and receive no
+dot. Junction dots derive from current connector geometry, so segment and
+endpoint edits reposition or remove them automatically. Connector
+simplification removes every 180-degree reversal so moving a block cannot
+leave folded-back sticks in the route. Fixed-route edits also restore the
+mandatory terminal-facing source and target legs; dragging the arrow-end run
+cannot leave the arrow tangent to the block edge.
 Fixed routes keep their interior waypoints while model mutations re-anchor
-only their endpoint points. Fresh diagonal layouts prefer a single bend near
-mid-route when the simple path is clear; obstacle routing remains the fallback.
+only their endpoint points. Automatic routing minimizes bend count before
+route length, so a longer safe outside L wins over a shorter staircase. Among
+routes with the same bend count, diagonal layouts prefer a balanced midpoint
+dogleg; obstacle routing remains the fallback.
 
 `blockArrowGeometry(points)` returns `{ shaftPoints, tip, left, right }`.
 The tip is exactly the last route point; the default filled head is 32 units
@@ -127,3 +175,15 @@ and lines show draggable endpoints, corners, or vertices. The shared style
 controls, crosshair, dark mode, marquee, nudge, undo/redo, copy, Delete,
 annotation tools, and Shift+L connector-label placement apply without invoking
 electrical pickers or routing.
+
+Double-clicking a block opens its inline text editor even though selection
+redraws replace the underlying SVG node. Selected or actively edited labels
+show their calculated bounding boxes and anchors, matching schematic labels.
+
+Connector endpoints are draggable and may be reattached to any unambiguous
+terminal on the same or another block; all block terminals are visible during
+that drag. Connector-path picking uses the snapped grid cursor rather than the
+raw pointer position. The preview uses the same automatic route as commit. Moving a block
+with a half-attached connector keeps its attached endpoint connected while the
+free endpoint remains fixed. Inline text editors commit with Enter;
+Shift+Enter inserts a persisted line break in block text and all label roles.

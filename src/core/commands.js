@@ -7,7 +7,7 @@ import { crossNetOverlaps } from './wiring.js';
 import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
 import { BlockDiagram } from './block-model.js';
-import { blockSvgString } from './block-render.js';
+import { renderDocument, saveDocument } from './document.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -662,18 +662,34 @@ function dispatch(circuit, cmd, pos, flags, io) {
 export function blockCommandHelp() {
   return [
     'Block diagram commands',
-    '  add-block ID TEXT X Y W H',
-    '  move-block ID X Y | resize-block ID W H | rename-block ID TEXT',
-    '  add-terminal BLOCK ID SIDE OFFSET | move-terminal BLOCK.ID SIDE OFFSET | rm-terminal BLOCK.ID',
-    '  add-connector ID FROM TO | rm-connector ID',
+    '  block add ID TEXT X Y W H | add-block ID TEXT X Y W H',
+    '  block move|resize|rename|remove ... (or move-block etc.)',
+    '  terminal add BLOCK ID SIDE OFFSET | move-terminal BLOCK.ID SIDE OFFSET | rm-terminal BLOCK.ID',
+    '  connector add ID FROM TO | rm-connector ID',
     '  netlabel add CONNECTOR [ID] TEXT X Y | netlabel rename ID TEXT | netlabel rm ID',
-    '  annotation add [label|arrow|box|line] ID TEXT X Y [ENDX ENDY] | annotation rename ID TEXT | annotation move ID X Y | annotation rm ID',
-    '  list | state | bounds | svg [file] | save <file>',
+    '  annotation add [label|arrow|box|line] ID TEXT X Y [X Y ...] | annotation rename ID TEXT | annotation move ID X Y | annotation rm ID',
+    '  list | state | bounds | svg/export [file] | save <file>',
   ].join('\n');
 }
 
 function runBlockCommand(diagram, line, io) {
-  const { pos, flags } = parseArgs(splitArgs(line)); const cmd = pos.shift() || 'help';
+  const { pos, flags } = parseArgs(splitArgs(line)); let cmd = pos.shift() || 'help';
+
+  // Keep the explicit command names used by existing scripts, while also
+  // accepting the namespaced vocabulary in the block-document contract. This
+  // normalization is local to BlockDiagram and can never affect electrical
+  // `add`, `move`, `connect`, or `net` commands.
+  const families = {
+    block: { add: 'add-block', move: 'move-block', resize: 'resize-block', rename: 'rename-block', remove: 'remove-block', rm: 'remove-block', help: 'help' },
+    terminal: { add: 'add-terminal', move: 'move-terminal', remove: 'remove-terminal', rm: 'remove-terminal', help: 'help' },
+    connector: { add: 'add-connector', remove: 'remove-connector', rm: 'remove-connector', help: 'help' },
+  };
+  if (families[cmd]) {
+    const familyName = cmd;
+    const operation = pos.shift() || 'help';
+    cmd = families[familyName][operation];
+    if (!cmd) throw new Error(`unknown ${familyName} operation "${operation}"`);
+  }
   const result = (text, json = null, mutated = false) => ({ text, json, mutated });
   if (cmd === 'help') return result(blockCommandHelp());
   if (cmd === 'list') return result([
@@ -686,6 +702,9 @@ function runBlockCommand(diagram, line, io) {
   if (cmd === 'bounds') return result(JSON.stringify(diagram.bounds()), diagram.bounds());
   if (cmd === 'add-block') {
     const [id, text, x, y, w, h] = pos;
+    if (!id || text === undefined || [x, y, w, h].some((value) => value === undefined || !Number.isFinite(Number(value)))) {
+      throw new Error('usage: add-block ID TEXT X Y W H');
+    }
     const block = diagram.addBlock({ id, text, x: Number(x), y: Number(y), w: Number(w), h: Number(h) });
     return result(`added ${block.id}`, block.toJSON(), true);
   }
@@ -707,6 +726,9 @@ function runBlockCommand(diagram, line, io) {
   }
   if (cmd === 'add-terminal') {
     const [blockId, id, side, offset] = pos;
+    if (!blockId || !id || !side || offset === undefined || !Number.isFinite(Number(offset))) {
+      throw new Error('usage: add-terminal BLOCK ID SIDE OFFSET');
+    }
     const terminal = diagram.addTerminal(blockId, { id, side, offset: Number(offset) });
     return result(`added terminal ${blockId}.${terminal.id}`, terminal.toJSON(), true);
   }
@@ -721,6 +743,7 @@ function runBlockCommand(diagram, line, io) {
   }
   if (cmd === 'add-arrow' || cmd === 'add-connector') {
     const [id, from, to] = pos;
+    if (!id || !from || !to) throw new Error('usage: add-connector ID FROM TO');
     const arrow = diagram.addArrow({ id, from, to });
     return result(`added connector ${arrow.id}`, arrow.toJSON(), true);
   }
@@ -730,7 +753,7 @@ function runBlockCommand(diagram, line, io) {
   }
   if (cmd === 'netlabel' || cmd === 'net-label') {
     const op = pos.shift();
-    if (op === 'list') return result([...diagram.labels.values()].filter((label) => label.connectorId).map((label) => `${label.id} connector=${label.connectorId} "${label.text}"`).join('\\n') || '(no connector labels)');
+    if (op === 'list') return result([...diagram.labels.values()].filter((label) => label.connectorId).map((label) => `${label.id} connector=${label.connectorId} "${label.text}"`).join('\n') || '(no connector labels)');
     if (op === 'add') {
       const connector = pos.shift();
       const tail = pos.slice();
@@ -756,18 +779,34 @@ function runBlockCommand(diagram, line, io) {
   }
   if (cmd === 'annotation' || cmd === 'annotate') {
     const op = pos.shift();
-    if (op === 'list') return result([...diagram.labels.values()].map((label) => `${label.id} ${label.kind} ${label.text}`).join('\\n') || '(no annotations)');
+    if (op === 'list') return result([...diagram.labels.values()].map((label) => `${label.id} ${label.kind} ${label.text}`).join('\n') || '(no annotations)');
     if (op === 'add') {
-      let kind; let id; let text; let x; let y; let endX; let endY;
-      if (['label', 'arrow', 'box', 'line'].includes(pos[0])) [kind, id, text, x, y, endX, endY] = pos;
-      else [id, text, x, y] = pos, kind = 'label';
-      const coordinates = [x, y, ...(kind === 'label' ? [] : [endX, endY])].map(Number);
-      if (!id || text === undefined || coordinates.some((value) => !Number.isFinite(value))) throw new Error('usage: annotation add [kind] ID TEXT X Y [ENDX ENDY]');
+      let kind = 'label';
+      let id;
+      let text;
+      let coordinateArgs;
+      if (['label', 'arrow', 'box', 'line'].includes(pos[0])) {
+        [kind, id, text] = pos;
+        coordinateArgs = pos.slice(3);
+      } else {
+        [id, text] = pos;
+        coordinateArgs = pos.slice(2);
+      }
+      const coordinates = coordinateArgs.map(Number);
+      const needed = kind === 'label' ? 2 : 4;
+      const coordinateCountOkay = kind === 'line'
+        ? coordinates.length >= needed && coordinates.length % 2 === 0
+        : coordinates.length === needed;
+      if (!id || text === undefined || !coordinateCountOkay || coordinates.some((value) => !Number.isFinite(value))) {
+        throw new Error('usage: annotation add [kind] ID TEXT X Y [X Y ...]');
+      }
+      const points = [];
+      for (let index = 0; index < coordinates.length; index += 2) points.push({ x: coordinates[index], y: coordinates[index + 1] });
       const values = kind === 'label'
-        ? { id, text, x: coordinates[0], y: coordinates[1] }
+        ? { id, text, x: points[0].x, y: points[0].y }
         : kind === 'line'
-          ? { id, text, points: [{ x: coordinates[0], y: coordinates[1] }, { x: coordinates[2], y: coordinates[3] }] }
-          : { id, text, x: coordinates[0], y: coordinates[1], end: { x: coordinates[2], y: coordinates[3] } };
+          ? { id, text, points }
+          : { id, text, x: points[0].x, y: points[0].y, end: points[1] };
       const label = kind === 'label' ? diagram.addLabel(values) : diagram.addAnnotation(kind, values);
       return result(`added annotation ${label.id}`, label.toJSON(), true);
     }
@@ -793,8 +832,18 @@ function runBlockCommand(diagram, line, io) {
     if (op === 'rm' || op === 'remove') { if (!diagram.removeLabel(pos[0])) throw new Error(`unknown annotation "${pos[0]}"`); return result(`removed annotation ${pos[0]}`, null, true); }
     throw new Error('usage: annotation add|rename|move|rm|list ...');
   }
-  if (cmd === 'svg' || cmd === 'export') { const file=pos[0]||'data/preview.svg', svg=blockSvgString(diagram, { background:true }); if (io) { io.writeTextFile(file,svg); return result(`wrote ${file} (${svg.length} bytes)`); } return result('SVG below', {svg}); }
-  if (cmd === 'save') { if (!io || !pos[0]) throw new Error('save requires file I/O and a path'); io.writeTextFile(pos[0], JSON.stringify(diagram.toJSON(), null, 2)); return result(`saved state to ${pos[0]}`); }
+  if (cmd === 'svg' || cmd === 'export') {
+    const file = flags.file?.[0] || pos[0] || 'data/preview.svg';
+    const svg = renderDocument(diagram, { background: true });
+    if (io) { io.writeTextFile(file, svg); return result(`wrote ${file} (${svg.length} bytes)`); }
+    return result('SVG below', { svg });
+  }
+  if (cmd === 'save') {
+    const file = flags.file?.[0] || pos[0];
+    if (!io || !file) throw new Error('save requires file I/O and a path');
+    io.writeTextFile(file, JSON.stringify(saveDocument(diagram), null, 2));
+    return result(`saved state to ${file}`);
+  }
   throw new Error(`unknown command "${cmd}" (try: help)`);
 }
 

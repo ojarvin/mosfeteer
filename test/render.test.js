@@ -42,7 +42,7 @@ test('line annotations render as rounded non-connectivity paths', () => {
   const svg = svgString(c);
   assert.match(svg, /<path d="M 0 0 L 80 40 L 160 0"/);
   assert.match(svg, /stroke-linecap="round"/);
-  assert.match(svg, /stroke-dasharray="12 8"/);
+  assert.match(svg, /stroke-dasharray="12 12"/);
   assert.doesNotMatch(svg, /class="wire-managed"/);
 });
 

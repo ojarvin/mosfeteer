@@ -1,6 +1,6 @@
-import { blockArrowGeometry } from './block-router.js';
+import { blockArrowGeometry, blockConnectorJunctions } from './block-router.js';
 import { GRID } from './grid.js';
-import { parseLabelRuns } from './model.js';
+import { LABEL_FONT_SIZE, parseLabelRuns } from './model.js';
 import { resolveColor, styleAttrs } from './style.js';
 
 const esc = (s) => String(s).replace(/[&<>\"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
@@ -14,9 +14,20 @@ function labelText(label, selected = false) {
   const clsName = label.connectorId ? 'block-net-label' : 'block-label';
   const cls = selected ? ` class="${clsName} selected"` : ` class="${clsName}"`;
   const runs = parseLabelRuns(label.text);
-  const body = runs.map((run) => run.sub || run.super
+  const lines = [[]];
+  for (const run of runs) {
+    const parts = String(run.text).split('\n');
+    parts.forEach((part, index) => {
+      if (part) lines.at(-1).push({ ...run, text: part });
+      if (index < parts.length - 1) lines.push([]);
+    });
+  }
+  const renderRuns = (line) => line.map((run) => run.sub || run.super
     ? `<tspan ${run.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"'} font-size="0.62em">${esc(run.text)}</tspan>`
     : esc(run.text)).join('');
+  const body = lines.length === 1
+    ? renderRuns(lines[0])
+    : lines.map((line, lineIndex) => `<tspan x="${n(p.x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
   return `<text data-label-id="${esc(label.id)}"${cls} x="${n(p.x)}" y="${n(p.y)}" text-anchor="${p.anchor || 'middle'}" dominant-baseline="middle" font-family="sans-serif" font-size="${style.width === 'thin' ? 32 : style.width === 'thick' ? 44 : 38}" font-weight="${style.bold === false ? 'normal' : 'bold'}" font-style="${style.italic === false ? 'normal' : 'italic'}" fill="${esc(resolveColor(style.color || '#111'))}">${body}</text>`;
 }
 
@@ -53,7 +64,7 @@ function annotationSvg(label, selected) {
   return `<g data-label-id="${esc(label.id)}" class="block-annotation block-arrow${cls}"><path d="M ${point(a)} L ${point(shaft)}" fill="none" ${style}/><polygon points="${point(b)} ${point(left)} ${point(right)}" fill="${color}" stroke="none"/></g>`;
 }
 
-function arrowSvg(arrow, selected) {
+function arrowSvg(arrow, selected, omitHead = false, selectedSegments = new Set()) {
   const g = blockArrowGeometry(arrow.points);
   const attrs = styleAttrs(arrow.style, 'wire');
   const cls = selected ? ' selected' : '';
@@ -61,10 +72,16 @@ function arrowSvg(arrow, selected) {
   for (let i = 1; i < g.shaftPoints.length; i++) {
     const a = g.shaftPoints[i - 1]; const b = g.shaftPoints[i];
     if (same(a, b)) continue;
-    paths.push(`<path data-arrow-segment="${esc(`${arrow.id}:${i}`)}" d="M ${point(a)} L ${point(b)}" fill="none" ${attrs}/>`);
+    const key = `${arrow.id}:${i}`;
+    paths.push(`<path data-arrow-segment="${esc(key)}"${selectedSegments.has(key) ? ' class="selected"' : ''} d="M ${point(a)} L ${point(b)}" fill="none" ${attrs}/>`);
   }
   const color = esc(resolveColor(arrow.style?.color || '#111'));
-  return `<g data-arrow-id="${esc(arrow.id)}" class="block-connector${cls}">${paths.join('')}<polygon points="${point(g.tip)} ${point(g.left)} ${point(g.right)}" fill="${color}" stroke="none"/></g>`;
+  return `<g data-arrow-id="${esc(arrow.id)}" class="block-connector${cls}">${paths.join('')}${omitHead ? '' : `<polygon points="${point(g.tip)} ${point(g.left)} ${point(g.right)}" fill="${color}" stroke="none"/>`}</g>`;
+}
+
+function blockShape(block) {
+  const r = block.rect;
+  return `<rect class="block-node" x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" ${styleAttrs(block.style)}/>`;
 }
 
 /** Render a block document. Browser interaction options intentionally control
@@ -91,14 +108,19 @@ export function blockSvgString(diagram, options = {}) {
   const selectedArrows = options.selectedArrows instanceof Set ? options.selectedArrows : new Set(options.selectedArrows || []);
   const selectedBlocks = options.selectedBlocks instanceof Set ? options.selectedBlocks : new Set(options.selectedBlocks || []);
   const selectedLabels = options.selectedLabels instanceof Set ? options.selectedLabels : new Set(options.selectedLabels || []);
+  const selectedArrowSegments = options.selectedArrowSegments instanceof Set ? options.selectedArrowSegments : new Set(options.selectedArrowSegments || []);
   const labels = [...(diagram.labels?.values?.() || [])];
   const preview = options.annotationPreview;
   if (preview?.kind === 'line' && preview.points?.length > 1) {
     out.push(`<path class="annotation-preview block-line" d="${preview.points.map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ')}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/>`);
   } else if (preview?.a && preview?.b) {
     const a = preview.a; const b = preview.b;
-    if (preview.kind === 'box') out.push(`<rect class="annotation-preview block-box" x="${n(Math.min(a.x, b.x))}" y="${n(Math.min(a.y, b.y))}" width="${n(Math.abs(b.x - a.x))}" height="${n(Math.abs(b.y - a.y))}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/>`);
-    else out.push(`<path class="annotation-preview block-arrow" d="M ${point(a)} L ${point(b)}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/>`);
+    if (preview.kind === 'box') out.push(`<rect class="annotation-preview block-box" x="${n(Math.min(a.x, b.x))}" y="${n(Math.min(a.y, b.y))}" width="${n(Math.abs(b.x - a.x))}" height="${n(Math.abs(b.y - a.y))}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 8"/>`);
+    else {
+      const angle = Math.atan2(b.y - a.y, b.x - a.x); const base = { x: b.x - 32 * Math.cos(angle), y: b.y - 32 * Math.sin(angle) };
+      const left = { x: base.x + 18 * Math.sin(angle), y: base.y - 18 * Math.cos(angle) }; const right = { x: base.x - 18 * Math.sin(angle), y: base.y + 18 * Math.cos(angle) };
+      out.push(`<g class="annotation-preview block-arrow"><path d="M ${point(a)} L ${point(base)}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 8"/><polygon points="${point(b)} ${point(left)} ${point(right)}" fill="var(--accent, #4f9cf9)"/></g>`);
+    }
   }
   for (const label of labels.filter((item) => ['arrow', 'box', 'line'].includes(item.kind)).sort((a, b) => a.drawOrder - b.drawOrder)) {
     const selected = selectedLabels.has(label.id);
@@ -113,19 +135,28 @@ export function blockSvgString(diagram, options = {}) {
     if (points.length > 1) out.push(`<path class="connector-preview" d="${points.map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ')}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6" stroke-linecap="round"/>`);
   }
   for (const arrow of [...diagram.arrows.values()].sort((a, b) => a.drawOrder - b.drawOrder)) {
-    if (arrow.points?.length >= 2) out.push(arrowSvg(arrow, selectedArrows.has(arrow.id)));
+    if (arrow.points?.length >= 2) out.push(arrowSvg(arrow, selectedArrows.has(arrow.id), false, selectedArrowSegments));
+  }
+  for (const junction of blockConnectorJunctions(diagram)) {
+    out.push(`<circle class="block-connector-junction" cx="${n(junction.x)}" cy="${n(junction.y)}" r="12" fill="var(--text, #111)"/>`);
   }
   const showTerminals = options.terminals !== false;
   for (const block of [...diagram.blocks.values()].sort((a, b) => a.drawOrder - b.drawOrder)) {
     const r = block.rect; const color = esc(resolveColor(block.style?.color || '#111'));
     const selected = selectedBlocks.has(block.id);
-    out.push(`<g data-block-id="${esc(block.id)}"><rect class="block-node${selected ? ' selected' : ''}" x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" ${styleAttrs(block.style)}/>`);
+    out.push(`<g data-block-id="${esc(block.id)}">${blockShape(block).replace('class="block-node', `class="block-node${selected ? ' selected' : ''}`)}`);
     if (showTerminals) for (const terminal of block.terminals.values()) {
       const p = terminal.point(r);
       out.push(`<circle data-block-terminal="${esc(`${block.id}.${terminal.id}`)}" cx="${n(p.x)}" cy="${n(p.y)}" r="6" fill="${color}"/>`);
     }
     const p = block.labelPosition(); const style = block.style || {};
-    out.push(`<text x="${n(p.x)}" y="${n(p.y)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="${style.bold === false ? 'normal' : 'bold'}" font-style="${style.italic === false ? 'normal' : 'italic'}" fill="${color}">${esc(block.text)}</text></g>`);
+    const lines = String(block.text).split('\n');
+    const firstY = p.y - ((lines.length - 1) * 38) / 2;
+    const textBody = lines.length === 1
+      ? esc(lines[0])
+      : lines.map((line, index) => `<tspan x="${n(p.x)}" dy="${index ? 38 : 0}">${esc(line)}</tspan>`).join('');
+    out.push(`<text x="${n(p.x)}" y="${n(firstY)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="${style.bold === false ? 'normal' : 'bold'}" font-style="${style.italic === false ? 'normal' : 'italic'}" fill="${color}">${textBody}</text>`);
+    out.push('</g>');
     if (selected && options.resizeHandles !== false) {
       const handles = [
         ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
@@ -136,15 +167,27 @@ export function blockSvgString(diagram, options = {}) {
     }
   }
   for (const label of labels.filter((item) => item.kind === 'label' && !item.parent)) out.push(labelText(label, selectedLabels.has(label.id)));
+  for (const label of labels) {
+    if (label.kind !== 'label' || (!selectedLabels.has(label.id) && options.editingLabel !== label.id)) continue;
+    const box = label.bbox();
+    const anchor = label.anchorWorld ? label.anchorWorld() : label.anchor;
+    out.push(`<g class="block-label-bbox"><rect x="${n(box.x)}" y="${n(box.y)}" width="${n(box.w)}" height="${n(box.h)}" rx="2" fill="none" stroke="#e3970b" stroke-width="2"/><circle cx="${n(anchor.x)}" cy="${n(anchor.y)}" r="3.5" fill="#e3970b"/></g>`);
+  }
   const ghostLabels = options.ghostLabels || [];
-  for (const label of ghostLabels) out.push(`<g class="block-ghost block-label-ghost" opacity="0.38">${labelText(label, false)}</g>`);
+  for (const label of ghostLabels) {
+    const body = ['arrow', 'box', 'line'].includes(label.kind)
+      ? annotationSvg(label, false)
+      : labelText(label, false);
+    out.push(`<g class="block-ghost block-label-ghost" opacity="0.38">${body}</g>`);
+  }
   const ghostArrows = options.ghostArrows || [];
   for (const arrow of ghostArrows) {
     if (arrow.points?.length >= 2) out.push(`<g class="block-ghost block-connector-ghost" opacity="0.38">${arrowSvg({ ...arrow, id: `ghost-${arrow.id || 'connector'}` }, false).replace(/ data-arrow-id="[^"]*"/, '')}</g>`);
   }
   const ghosts = options.ghostBlocks?.length ? options.ghostBlocks : options.ghostBlock ? [options.ghostBlock] : [];
   for (const ghost of ghosts) {
-    const r = ghost.rect; out.push(`<g class="block-ghost"><rect x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/><text x="${n(r.x + r.w / 2)}" y="${n(r.y + r.h / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="bold">${esc(ghost.text || 'Block')}</text></g>`);
+    const r = ghost.rect;
+    out.push(`<g class="block-ghost"><rect x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/><text x="${n(r.x + r.w / 2)}" y="${n(r.y + r.h / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="bold">${esc(ghost.text || 'Block')}</text></g>`);
   }
   out.push('</svg>'); return out.join('\n');
 }

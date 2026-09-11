@@ -21,9 +21,9 @@ test('document dispatch round-trips and renders block styles', () => {
   assert.equal(isBlockDiagram(loaded), true);
   const svg = renderDocument(loaded);
   assert.match(svg, /stroke="#d00" stroke-width="9"/);
-  assert.match(svg, /stroke-dasharray="12 8"/);
+  assert.match(svg, /stroke-dasharray="12 12"/);
   assert.match(svg, /stroke="#00f" stroke-width="3"/);
-  assert.match(svg, /stroke-dasharray="2 8"/);
+  assert.match(svg, /stroke-dasharray="2 10"/);
 });
 
 test('selected blocks and connectors expose isolated editor hit targets', () => {
@@ -33,8 +33,13 @@ test('selected blocks and connectors expose isolated editor hit targets', () => 
   assert.match(svg, /data-block-terminal="B1\.out"/);
   assert.match(svg, /<polygon points=/);
   assert.match(svg, /<pattern id="block-grid-/);
-  assert.match(svg, /<text[^>]*>In<\/text><\/g>/);
+  assert.match(svg, /<text[^>]*>In<\/text>\s*<\/g>/);
   assert.doesNotMatch(svg, /<g data-block-id="B2"><rect class="block-node selected"/);
+});
+
+test('individual block connector segments expose selection highlighting', () => {
+  const svg = renderDocument(diagram(), { selectedArrowSegments: new Set(['A1:1']) });
+  assert.match(svg, /data-arrow-segment="A1:1" class="selected"/);
 });
 
 test('connector labels render as block-local non-electrical labels', () => {
@@ -55,6 +60,7 @@ test('block editor rendering gates terminals and exposes resize/annotation hit t
   assert.doesNotMatch(hidden, /data-block-terminal=/);
   assert.match(hidden, /data-block-handle="se"/);
   assert.match(hidden, /data-label-id="L1"/);
+  assert.match(hidden, /class="block-label-bbox"/);
   assert.doesNotMatch(hidden, /data-annotation-endpoint=/);
   const shown = renderDocument(d, { terminals: true });
   assert.match(shown, /data-block-terminal="B1\.T1"/);
@@ -69,6 +75,24 @@ test('block placement ghost is not hidden by an empty ghost list', () => {
     ghostBlocks: [],
   });
   assert.match(svg, /class="block-ghost"/);
+});
+
+test('box and arrow placement previews render complete ghost shapes', () => {
+  const diagram = new BlockDiagram();
+  const box = renderDocument(diagram, { annotationPreview: { kind: 'box', a: { x: 0, y: 0 }, b: { x: 160, y: 80 } } });
+  const arrow = renderDocument(diagram, { annotationPreview: { kind: 'arrow', a: { x: 0, y: 0 }, b: { x: 160, y: 80 } } });
+  assert.match(box, /class="annotation-preview block-box"/);
+  assert.match(arrow, /class="annotation-preview block-arrow"/);
+  assert.match(arrow, /<polygon points=/);
+});
+
+test('move and copy ghosts render arrow and box geometry, not text placeholders', () => {
+  const diagram = new BlockDiagram();
+  const box = diagram.addAnnotation('box', { id: 'B', x: 0, y: 0, end: { x: 160, y: 80 } });
+  const arrow = diagram.addAnnotation('arrow', { id: 'A', x: 240, y: 0, end: { x: 400, y: 80 } });
+  const svg = renderDocument(diagram, { ghostLabels: [box, arrow] });
+  assert.match(svg, /block-ghost block-label-ghost[^>]*>[\s\S]*block-box/);
+  assert.match(svg, /block-ghost block-label-ghost[^>]*>[\s\S]*block-arrow/);
 });
 
 test('block commands create and edit only block-domain objects', () => {
@@ -88,4 +112,22 @@ test('block commands create and edit only block-domain objects', () => {
   runCommand(d, 'rm-connector A1');
   assert.equal(d.labels.size, 0);
   assert.equal(d.arrows.size, 0);
+});
+
+test('block command families and multiline annotations stay in the block domain', () => {
+  const d = createDocument('block');
+  runCommand(d, 'block add B1 One 0 0 160 80');
+  runCommand(d, 'block add B2 Two 400 0 160 80');
+  runCommand(d, 'terminal add B1 out right 40');
+  runCommand(d, 'terminal add B2 in left 40');
+  runCommand(d, 'connector add A1 B1.out B2.in');
+  runCommand(d, 'annotation add line trace note 0 160 80 160 80 240 160 240');
+
+  assert.deepEqual(d.labels.get('trace').points, [
+    { x: 0, y: 160 }, { x: 80, y: 160 }, { x: 80, y: 240 }, { x: 160, y: 240 },
+  ]);
+  assert.match(runCommand(d, 'connector add A2 B1.out B2.in').text, /added connector A2/);
+  assert.match(runCommand(d, 'annotation list').text, /trace line/);
+  assert.match(runCommand(d, 'netlabel list').text, /no connector labels/);
+  assert.throws(() => runCommand(d, 'connect B1.out B2.in'), /unknown command/);
 });

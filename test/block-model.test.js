@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BlockDiagram, BLOCK_DIAGRAM_KIND, BLOCK_DIAGRAM_VERSION, blockLabelPosition } from '../src/core/block-model.js';
+import { BlockDiagram, BLOCK_DEFAULT_SIZE, BLOCK_DIAGRAM_KIND, BLOCK_DIAGRAM_VERSION, blockLabelPosition } from '../src/core/block-model.js';
 import { runCommand } from '../src/core/commands.js';
 
 function fixture() {
@@ -20,6 +20,11 @@ test('block diagram is a separate discriminated, serializable document', () => {
   assert.equal(state.version, BLOCK_DIAGRAM_VERSION);
   assert.ok(!('components' in state) && !('nets' in state) && !('labels' in state));
   assert.deepEqual(BlockDiagram.fromJSON(state).toJSON(), state);
+});
+
+test('default blocks are four grid squares wide and high', () => {
+  const block = new BlockDiagram().addBlock({ id: 'B1' });
+  assert.deepEqual(block.rect, { x: 0, y: 0, w: BLOCK_DEFAULT_SIZE, h: BLOCK_DEFAULT_SIZE });
 });
 
 test('block labels are centered and text edits preserve the center', () => {
@@ -44,12 +49,12 @@ test('new blocks expose non-corner generic terminals and preserve them across re
   assert.equal(block.terminals.has('T5'), true);
 });
 
-test('generated terminals reject undersized resizes without collisions or loss', () => {
+test('undersized resizes replace unused generated terminals without collisions', () => {
   const diagram = new BlockDiagram();
   const block = diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 200, h: 80 } });
   assert.equal([...block.terminals.values()].filter((terminal) => terminal.side === 'top').length, 4);
-  assert.throws(() => diagram.resizeBlock('B1', 80, 80), /too small/);
-  assert.deepEqual(block.rect, { x: 0, y: 0, w: 200, h: 80 });
+  diagram.resizeBlock('B1', 80, 80);
+  assert.deepEqual(block.rect, { x: 0, y: 0, w: 80, h: 80 });
   const points = [...block.terminals.values()].map((terminal) => `${terminal.side}:${terminal.offset}`);
   assert.equal(new Set(points).size, points.length);
 });
@@ -91,6 +96,24 @@ test('resize clamps terminal offsets without changing terminal identity', () => 
   diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 240, h: 160 }, terminals: [{ id: 'in', side: 'left', offset: 160 }] });
   diagram.resizeBlock('B1', 160, 80);
   assert.deepEqual(diagram.getTerminal('B1.in').toJSON(), { id: 'in', side: 'left', offset: 80 });
+});
+
+test('connected terminals leave one grid cell when a block side is reduced', () => {
+  const diagram = new BlockDiagram();
+  diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 240, h: 160 }, terminals: [{ id: 'out', side: 'top', offset: 120 }] });
+  diagram.addBlock({ id: 'B2', rect: { x: 400, y: -160, w: 160, h: 80 }, terminals: [{ id: 'in', side: 'bottom', offset: 40 }] });
+  diagram.addArrow({ id: 'A1', from: 'B1.out', to: 'B2.in' });
+  diagram.resizeBlock('B1', { w: 160, h: 160 });
+  assert.equal(diagram.getBlock('B1').rect.w, 160);
+  assert.throws(() => diagram.resizeBlock('B1', { w: 120, h: 160 }), /connected terminal/);
+});
+
+test('unused generated terminals do not prevent shrinking a block', () => {
+  const diagram = new BlockDiagram();
+  diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 320, h: 240 } });
+  diagram.resizeBlock('B1', { w: 80, h: 80 });
+  assert.deepEqual(diagram.getBlock('B1').rect, { x: 0, y: 0, w: 80, h: 80 });
+  assert.equal(diagram.getBlock('B1').terminals.size, 4);
 });
 
 test('resize rejects clamped terminal collisions atomically', () => {
@@ -167,7 +190,10 @@ test('arrow identity is terminal-based and block deletion cascades incident arro
   assert.deepEqual(diagram.getArrow('A1').to, { block: 'B2', terminal: 'in' });
   assert.throws(() => diagram.removeTerminal('B1.out'), /arrows reference/);
   diagram.removeBlock('B1');
-  assert.equal(diagram.arrows.size, 0);
+  assert.equal(diagram.arrows.size, 1);
+  assert.equal(diagram.getArrow('A1').detached, true);
+  assert.equal(diagram.getArrow('A1').from, null);
+  assert.deepEqual(diagram.getArrow('A1').to, { block: 'B2', terminal: 'in' });
 });
 
 test('detached visual arrows survive block operations and keep their geometry', () => {
@@ -245,6 +271,75 @@ test('detached connectors may reattach one endpoint and follow that block only',
   diagram.moveBlock('B1', 40, 80);
   assert.deepEqual(arrow.points, [{ x: 200, y: 120 }, { x: 280, y: 120 }, { x: 280, y: 40 }]);
   assert.deepEqual(BlockDiagram.fromJSON(diagram.toJSON()).getArrow('D1').from, arrow.from);
+});
+
+test('placing a block terminal on a free connector endpoint attaches it', () => {
+  const diagram = new BlockDiagram({
+    arrows: [{ id: 'D1', detached: true, routingMode: 'fixed', points: [{ x: 0, y: 80 }, { x: 320, y: 80 }] }],
+  });
+  diagram.addBlock({ id: 'B1', rect: { x: 320, y: 0, w: 160, h: 160 } });
+  assert.deepEqual(diagram.getArrow('D1').to, { block: 'B1', terminal: 'T11' });
+  assert.equal(diagram.getArrow('D1').detached, true);
+});
+
+test('a dragged hanging connector endpoint reattaches and restores connectivity', () => {
+  const diagram = new BlockDiagram({
+    blocks: [
+      { id: 'B1', rect: { x: 0, y: 0, w: 160, h: 160 }, terminals: [{ id: 'out', side: 'right', offset: 80 }] },
+      { id: 'B2', rect: { x: 400, y: 0, w: 160, h: 160 }, terminals: [{ id: 'in', side: 'left', offset: 80 }] },
+    ],
+    arrows: [{ id: 'D1', detached: true, from: 'B1.out', routingMode: 'fixed', points: [{ x: 160, y: 80 }, { x: 320, y: 80 }] }],
+  });
+  diagram.attachArrowEndpoint('D1', 'to', 'B2.in');
+  assert.equal(diagram.getArrow('D1').detached, false);
+  assert.deepEqual(diagram.getArrow('D1').to, { block: 'B2', terminal: 'in' });
+  assert.deepEqual(diagram.getArrow('D1').points.at(-1), { x: 400, y: 80 });
+});
+
+test('moving a block set reanchors a half-attached connector and leaves its free end fixed', () => {
+  const diagram = new BlockDiagram({
+    blocks: [{ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 80 } }],
+    arrows: [{ id: 'D1', detached: true, from: 'B1.T4', to: null, routingMode: 'fixed',
+      points: [{ x: 160, y: 40 }, { x: 280, y: 40 }] }],
+  });
+  diagram.moveBlocks(['B1'], 80, 40);
+  const arrow = diagram.getArrow('D1');
+  assert.deepEqual(arrow.points[0], diagram.terminalPoint(arrow.from));
+  assert.deepEqual(arrow.points.at(-1), { x: 280, y: 40 });
+});
+
+test('moving a block past a fixed connector body prunes the resulting loop', () => {
+  const diagram = new BlockDiagram({
+    blocks: [
+      { id: 'B1', rect: { x: 0, y: 0, w: 160, h: 160 }, terminals: [{ id: 'out', side: 'right', offset: 80 }] },
+      { id: 'B2', rect: { x: 640, y: 160, w: 160, h: 160 }, terminals: [{ id: 'in', side: 'left', offset: 80 }] },
+    ],
+    arrows: [{ id: 'A1', from: 'B1.out', to: 'B2.in', routingMode: 'fixed', points: [
+      { x: 160, y: 80 }, { x: 240, y: 80 }, { x: 240, y: 240 }, { x: 640, y: 240 },
+    ] }],
+  });
+  diagram.moveBlock('B1', 160, 0);
+  const points = diagram.getArrow('A1').points;
+  assert.deepEqual(points, [
+    { x: 320, y: 80 }, { x: 480, y: 80 }, { x: 480, y: 240 }, { x: 640, y: 240 },
+  ]);
+});
+
+test('moving the receiving block also prunes an existing loop at the source end', () => {
+  const diagram = new BlockDiagram({
+    blocks: [
+      { id: 'B1', rect: { x: 0, y: 0, w: 160, h: 160 }, terminals: [{ id: 'out', side: 'right', offset: 80 }] },
+      { id: 'B2', rect: { x: 640, y: 160, w: 160, h: 160 }, terminals: [{ id: 'in', side: 'left', offset: 80 }] },
+    ],
+    arrows: [{ id: 'A1', from: 'B1.out', to: 'B2.in', routingMode: 'fixed', points: [
+      { x: 160, y: 80 }, { x: 200, y: 80 }, { x: 200, y: 120 },
+      { x: 160, y: 120 }, { x: 160, y: 80 }, { x: 160, y: 240 }, { x: 640, y: 240 },
+    ] }],
+  });
+  diagram.moveBlock('B2', 600, 160);
+  assert.deepEqual(diagram.getArrow('A1').points.slice(0, 3), [
+    { x: 160, y: 80 }, { x: 400, y: 80 }, { x: 400, y: 240 },
+  ]);
 });
 
 test('detached block moves preserve internal connectors and detach boundary connectors', () => {

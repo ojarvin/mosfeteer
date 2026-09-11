@@ -42,19 +42,16 @@ export function pathSegments(path = []) {
   return out;
 }
 
-export function normalizePath(path = [], allowDiagonal = false) {
+/** Compact without snapping; arrowhead graphics also use off-grid coordinates.
+ * Preserve reversals: an out-and-back can visit a real terminal or junction. */
+export function compactPath(path = [], allowDiagonal = false) {
   const out = [];
   for (const raw of path) {
-    const p = { x: snap(raw.x), y: snap(raw.y) };
+    const p = { x: raw.x, y: raw.y };
     const last = out[out.length - 1];
     if (last && last.x === p.x && last.y === p.y) continue;
     if (last && out.length > 1) {
       const prev = out[out.length - 2];
-      // Merge a collinear middle point ONLY when the run is monotonic. A point
-      // where the polyline reverses direction (an out-and-back such as the
-      // balanced route's visit to a terminal: (120,120)->(120,80)->(120,120))
-      // is a real vertex and must be preserved, otherwise the terminal's wire
-      // leg silently disappears.
       const cross = (last.x - prev.x) * (p.y - last.y) - (last.y - prev.y) * (p.x - last.x);
       const horiz = prev.y === last.y && last.y === p.y;
       const vert = prev.x === last.x && last.x === p.x;
@@ -72,6 +69,10 @@ export function normalizePath(path = [], allowDiagonal = false) {
     out.push(p);
   }
   return out;
+}
+
+export function normalizePath(path = [], allowDiagonal = false) {
+  return compactPath(path.map((raw) => ({ x: snap(raw.x), y: snap(raw.y) })), allowDiagonal);
 }
 
 export function wireSegments(path = [], allowDiagonal = false) {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wireRunAt, collapseCollinear, moveJunctionEndpoint, moveWireRun } from '../src/core/wireedit.js';
-import { deleteWireSegment, hasPositiveBranchOverlap, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
+import { compactPath, deleteWireSegment, hasPositiveBranchOverlap, junctionPoints, normalizePath, reduceBranches } from '../src/core/wiring.js';
 import { onGrid } from '../src/core/grid.js';
 import { Circuit } from '../src/core/model.js';
 
@@ -188,6 +188,21 @@ test('normalizePath keeps a terminal out-and-back (route reversal is a real vert
     { x: 360, y: 160 }, { x: 360, y: 120 }, { x: 120, y: 120 }, { x: 120, y: 80 },
     { x: 120, y: 120 }, { x: 600, y: 120 }, { x: 600, y: 80 },
   ]);
+});
+
+test('compactPath preserves off-grid coordinates and reversal vertices', () => {
+  const input = [
+    { x: 0, y: 0 }, { x: 13, y: 0 }, { x: 26, y: 0 },
+    { x: 26, y: 18 }, { x: 26, y: 0 }, { x: 58, y: 0 },
+  ];
+  const original = input.map((point) => ({ ...point }));
+  const compacted = compactPath(input);
+  assert.deepEqual(compacted, [
+    { x: 0, y: 0 }, { x: 26, y: 0 }, { x: 26, y: 18 },
+    { x: 26, y: 0 }, { x: 58, y: 0 },
+  ]);
+  assert.deepEqual(input, original);
+  assert.deepEqual(compactPath(compacted), compacted);
 });
 
 test('junction arm directions distinguish same-quadrant diagonal slopes', () => {
