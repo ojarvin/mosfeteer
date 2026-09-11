@@ -205,6 +205,11 @@ let draftTimer = null;
 let renderFrame = null;
 let panelStateKey = '';
 let modelRevision = 0;
+// Drag previews run against a disposable document clone. Keeping the
+// committed instance here means a cancelled/no-op gesture never persists a
+// half-edited model or pollutes undo history.
+let previewTransaction = null; // { baseCircuit, startSnapshot, startWiresDirty }
+let previewRevision = 0;
 let sortedCompsCache = null;
 let visibleNetsCache = null;
 let labelCache = null;
@@ -346,6 +351,12 @@ function logCommand(line) {
 // ----- history --------------------------------------------------------
 
 function markModelChanged(wires = true) {
+  if (previewTransaction) {
+    previewRevision += 1;
+    if (!isBlockDiagram(circuit)) circuit.invalidateRoutingCache();
+    if (wires) wiresDirty = true;
+    return;
+  }
   modelRevision += 1;
   if (!isBlockDiagram(circuit)) circuit.invalidateRoutingCache();
   if (wires) wiresDirty = true;
@@ -364,15 +375,62 @@ function snapshot() {
   return JSON.stringify(circuit.toJSON());
 }
 
+function beginPreviewTransaction(startSnapshot = snapshot()) {
+  if (previewTransaction || isBlockDiagram(circuit)) return false;
+  previewTransaction = {
+    baseCircuit: circuit,
+    startSnapshot,
+    startWiresDirty: wiresDirty,
+  };
+  circuit = loadDocument(JSON.parse(startSnapshot));
+  previewRevision += 1;
+  circuit.invalidateRoutingCache();
+  return true;
+}
+
+function commitPreviewTransaction() {
+  if (!previewTransaction) return false;
+  previewTransaction = null;
+  modelRevision += 1;
+  previewRevision += 1;
+  if (!isBlockDiagram(circuit)) circuit.invalidateRoutingCache();
+  wiresDirty = true;
+  persistDraft();
+  return true;
+}
+
+function cancelPreviewTransaction() {
+  if (!previewTransaction) return false;
+  const tx = previewTransaction;
+  circuit = tx.baseCircuit;
+  // Preview diagnostics are computed against the clone. Recompute them for
+  // the restored document even when the committed document was previously
+  // clean, otherwise a cancelled drag could leave stale overlap warnings.
+  wiresDirty = true;
+  previewTransaction = null;
+  previewRevision += 1;
+  return true;
+}
+
+function recordHistoryBefore(startSnapshot) {
+  if (!startSnapshot) return;
+  history.push(startSnapshot);
+  if (history.length > 200) history.shift();
+  future.length = 0;
+}
+
 function persistDraft() {
-  if (!draftReady || draftTimer) return;
+  if (!draftReady || draftTimer || previewTransaction) return;
   draftTimer = setTimeout(flushDraft, 150);
 }
 function flushDraft() {
   if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
   if (!draftReady) return;
   try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({ name: currentCircuitName, state: circuit.toJSON(), savedSnapshot: lastSavedSnapshot }));
+    // A tab can close during a pointer gesture. Persist only the committed
+    // document, never the disposable preview clone.
+    const committed = previewTransaction?.baseCircuit || circuit;
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ name: currentCircuitName, state: committed.toJSON(), savedSnapshot: lastSavedSnapshot }));
   } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
 }
 function scheduleInteractionRender() {
@@ -534,6 +592,7 @@ async function deleteSavedCircuit() {
 
     history = [];
     future = [];
+    cancelPreviewTransaction();
     circuit = new Circuit();
     markModelChanged(false);
     resetCheckState();
@@ -700,6 +759,7 @@ async function syncActiveCircuit() {
 }
 
 function applyJson(blob) {
+  if (previewTransaction) cancelPreviewTransaction();
   // A draft endpoint belongs to the currently visible circuit. Never carry it
   // across loads, undo/redo, or remote replacement.
   directWire = null;
@@ -2324,7 +2384,8 @@ function render() {
     wiresDirty = false;
   }
   const modelKey = modelRevision;
-  renderCanvas(modelKey);
+  const canvasModelKey = previewTransaction ? `${modelKey}:preview:${previewRevision}` : modelKey;
+  renderCanvas(canvasModelKey);
   const nextPanelStateKey = `${modelKey}|${selected || ''}|${selLabel || ''}|${[...multi].join(',')}|${[...selLabels].join(',')}|${[...selectedNets].join(',')}`;
   if (nextPanelStateKey !== panelStateKey) {
     panelStateKey = nextPanelStateKey;
@@ -2606,6 +2667,14 @@ function cancelDrag() {
     render();
     return;
   }
+  if (previewTransaction) {
+    cancelPreviewTransaction();
+    drag = null;
+    movePending = false;
+    copyPending = false;
+    render();
+    return;
+  }
   if (drag?.modal) {
     if (drag.startSnapshot) applyJson(drag.startSnapshot);
     drag = null;
@@ -2792,8 +2861,16 @@ function pickWire(w) {
 }
 
 function fixedWireDragAt(hit, w, startClient, ev) {
+  const startSnapshot = snapshot();
   const points = hit.net.fixedPaths?.[hit.branch]?.points || hit.pts || [];
   if (points.length < 2) return false;
+  beginPreviewTransaction(startSnapshot);
+  const previewNet = circuit.nets.get(hit.net.id);
+  if (!previewNet) {
+    cancelPreviewTransaction();
+    return false;
+  }
+  hit = { ...hit, net: previewNet, pts: previewNet.fixedPaths?.[hit.branch]?.points || hit.pts || [] };
   const p = paneSize();
   const tol = 12 / (p ? view.w / p.w : 1);
   let vertex = -1;
@@ -2823,7 +2900,7 @@ function fixedWireDragAt(hit, w, startClient, ev) {
   drag = {
     mode: 'fixedwire', net: hit.net, branch: hit.branch, seg: hit.seg,
     vertex, junction, startWorld: w, startClient, moved: false, committed: false,
-    fixedSnapshots, startSnapshot: snapshot(), rubber: null,
+    fixedSnapshots, startSnapshot, rubber: null,
   };
   cursor = { x: snap(w.x), y: snap(w.y) };
   logLine(junction >= 0 ? 'legacy fixed junction — drag to move its dot' : vertex >= 0 ? 'legacy fixed vertex — drag to move it' : 'legacy fixed path — drag to move its segment');
@@ -2832,19 +2909,28 @@ function fixedWireDragAt(hit, w, startClient, ev) {
 }
 
 function fixedEndpointDragAt(endpoint, startWorld, startClient) {
+  const startSnapshot = snapshot();
   const net = circuit.nets.get(endpoint.netId);
   if (!net) return false;
+  beginPreviewTransaction(startSnapshot);
+  const previewNet = circuit.nets.get(endpoint.netId);
+  if (!previewNet) {
+    cancelPreviewTransaction();
+    return false;
+  }
+  endpoint = { ...endpoint, netId: previewNet.id };
+  const activeNet = previewNet;
   const saved = {
-    fixedPaths: net.fixedPaths.map((entry) => ({
+    fixedPaths: activeNet.fixedPaths.map((entry) => ({
       points: entry.points.map((p) => ({ ...p })),
       start: entry.start ? { ...entry.start } : null,
       end: entry.end ? { ...entry.end } : null,
     })),
-    junctions: net.junctions.map((p) => ({ ...p })),
+    junctions: activeNet.junctions.map((p) => ({ ...p })),
   };
   drag = {
-    mode: 'fixedendpoint', endpoint, net, startWorld, startClient,
-    moved: false, committed: false, startSnapshot: snapshot(), saved,
+    mode: 'fixedendpoint', endpoint, net: activeNet, startWorld, startClient,
+    moved: false, committed: false, startSnapshot, saved,
   };
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
   logLine('legacy fixed open endpoint — drag to move, or use Wire to extend');
@@ -2906,6 +2992,14 @@ function commitFixedEndpointDraft(source, target, points, mode) {
  * Detached moves split selected islands from attached nets first, then use
  * this path so every selected orthogonal or diagonal segment retains shape. */
 function floatingWireDragAt(hit, startWorld, startClient, ev, moveKeys) {
+  const startSnapshot = snapshot();
+  beginPreviewTransaction(startSnapshot);
+  const previewNet = circuit.nets.get(hit.net.id);
+  if (!previewNet) {
+    cancelPreviewTransaction();
+    return false;
+  }
+  hit = { ...hit, net: previewNet };
   const fragments = [];
   for (const key of moveKeys) {
     const w = keyToWire(key);
@@ -2917,15 +3011,21 @@ function floatingWireDragAt(hit, startWorld, startClient, ev, moveKeys) {
       const q = keyToWire(k); return q.netId === net.id && q.branch === w.branch;
     });
     const count = new Set(selected.map((k) => keyToWire(k).segment)).size;
-    if (count !== live.length - 1) return false; // partial: use safe old behavior
+    if (count !== live.length - 1) {
+      cancelPreviewTransaction();
+      return false; // partial: use safe old behavior
+    }
     if (!fragments.some((f) => f.net === net && f.branch === w.branch)) {
       fragments.push({ net, branch: w.branch, orig: live.map((p) => ({ ...p })), fixed: net.routingMode === 'fixed' });
     }
   }
-  if (!fragments.length) return false;
+  if (!fragments.length) {
+    cancelPreviewTransaction();
+    return false;
+  }
   drag = {
     mode: 'floatingwire', fragments, startWorld, startClient, moved: false,
-    committed: false, startSnapshot: snapshot(), shift: ev.shiftKey,
+    committed: false, startSnapshot, shift: ev.shiftKey,
     key: `${hit.net.id}:${hit.branch}:${hit.seg}`,
   };
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
@@ -3543,8 +3643,9 @@ function joinWireToNet(wireHit, selectedTarget = null) {
 
 
 function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) {
-  const net = wireHit.net;
-  const key = `${net.id}:${wireHit.branch}:${wireHit.seg}`;
+  const startSnapshot = snapshot();
+  const sourceNetId = wireHit.net.id;
+  const key = `${sourceNetId}:${wireHit.branch}:${wireHit.seg}`;
   const moveKeys = ev.shiftKey || selectedWires.has(key)
     ? new Set([...selectedWires, key])
     : new Set([key]);
@@ -3565,6 +3666,14 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
       return false;
     }
   }
+  beginPreviewTransaction(startSnapshot);
+  const net = circuit.nets.get(sourceNetId);
+  if (!net) {
+    cancelPreviewTransaction();
+    return false;
+  }
+  const previewPath = net.paths()[wireHit.branch] || net.paths()[0];
+  wireHit = { ...wireHit, net, pts: previewPath };
   const seenRun = new Set();
   for (const k of moveKeys) {
     const selected = keyToWire(k);
@@ -3611,7 +3720,10 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
     });
   }
   const primary = runs.find((r) => r.net === net && r.branch === wireHit.branch && r.seg === wireHit.seg) || runs[0];
-  if (!primary) return false;
+  if (!primary) {
+    cancelPreviewTransaction();
+    return false;
+  }
   const dragRuns = runs.filter((r) => r.orient === primary.orient);
   const netSnapshots = new Map();
   for (const r of dragRuns) {
@@ -3645,7 +3757,7 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
     moved: false,
     committed: false,
     rubber: null,
-    startSnapshot: snapshot(),
+    startSnapshot,
     netSnapshots,
   };
   render();
@@ -3822,6 +3934,13 @@ function canvasMouseDown(ev) {
     }
     if (moveMode === 'detached' && moveWireHit) {
       const before = snapshot();
+      beginPreviewTransaction(before);
+      const previewHitNet = circuit.nets.get(moveWireHit.net.id);
+      if (!previewHitNet) {
+        cancelPreviewTransaction();
+        return;
+      }
+      const previewHit = { ...moveWireHit, net: previewHitNet };
       const key = `${moveWireHit.net.id}:${moveWireHit.branch}:${moveWireHit.seg}`;
       const selected = ev.shiftKey || selectedWires.has(key)
         ? new Set([...selectedWires, key])
@@ -3848,12 +3967,13 @@ function canvasMouseDown(ev) {
           }
         }
       }
-      if (detachedKeys.size && floatingWireDragAt(moveWireHit, startWorld, startClient, ev, detachedKeys)) {
+      if (detachedKeys.size && floatingWireDragAt(previewHit, startWorld, startClient, ev, detachedKeys)) {
         drag.startSnapshot = before;
         drag.modal = true;
         movePending = true;
         return;
       }
+      cancelPreviewTransaction();
     }
     if (moveWireHit && moveWireHit.net.routingMode === 'fixed') {
       fixedWireDragAt(moveWireHit, startWorld, startClient, ev);
@@ -4216,6 +4336,10 @@ function canvasMouseDown(ev) {
  * this collection in one place makes component, label, and mixed drags share
  * the same relative-anchor and wire behavior. */
 function beginObjectMove(refs, labelIds, startWorld, startClient, options = {}) {
+  const startSnapshot = snapshot();
+  // Copy mode owns its own paste transaction. Normal connected/detached moves
+  // get an isolated preview document from the first pointer down instead.
+  if (!options.duplicate) beginPreviewTransaction(startSnapshot);
   const componentRefs = [...new Set(refs)].filter((refdes) => circuit.components.has(refdes));
   const labels = [...new Set(labelIds)].filter((id) => circuit.labels.has(id));
   setSelection(componentRefs, componentRefs[0], true);
@@ -4234,7 +4358,7 @@ function beginObjectMove(refs, labelIds, startWorld, startClient, options = {}) 
     netRoutes: null, detachedWireRoutes: null, touchedNetIds: null, selectedNetIds: null,
     moved: false, committed: false, rubber: null,
     duplicate: !!options.duplicate, detached: !!options.detached,
-    startSnapshot: options.modal ? snapshot() : undefined,
+    startSnapshot,
   };
   movePending = !!options.modal;
   render();
@@ -4420,6 +4544,9 @@ function translateNetGeometry(net, saved, dx, dy) {
 }
 
 function armModalLabelMove(label, startWorld, startClient) {
+  const startSnapshot = snapshot();
+  beginPreviewTransaction(startSnapshot);
+  label = circuit.labels.get(label.id) || label;
   const ids = selLabels.has(label.id) ? [...selLabels] : [label.id];
   setSelection([], undefined, true);
   setLabelSelection(ids, label.id, true);
@@ -4439,7 +4566,7 @@ function armModalLabelMove(label, startWorld, startClient) {
     committed: false,
     rubber: null,
     duplicate: false,
-    startSnapshot: snapshot(),
+    startSnapshot,
   };
   movePending = true;
   render();
@@ -4494,10 +4621,11 @@ function finishMoveMutation(moveDrag) {
 function commitModalMove() {
   if (!drag?.modal) return false;
   if (drag.mode === 'labelmove') {
-    if (drag.moved && snapshot() !== drag.startSnapshot) {
-      history.push(drag.startSnapshot);
-      if (history.length > 200) history.shift();
-      future.length = 0;
+    if (drag.moved && previewTransaction && snapshot() !== drag.startSnapshot) {
+      recordHistoryBefore(drag.startSnapshot);
+      commitPreviewTransaction();
+    } else if (previewTransaction) {
+      cancelPreviewTransaction();
     }
     drag = null;
     movePending = false;
@@ -4528,7 +4656,15 @@ function commitModalMove() {
     clientY: point.client.y,
     shiftKey: drag.shift,
   });
-  finishMoveMutation(drag);
+  if (drag.moved) {
+    finishMoveMutation(drag);
+    if (previewTransaction) {
+      if (snapshot() !== drag.startSnapshot) recordHistoryBefore(drag.startSnapshot);
+      commitPreviewTransaction();
+    }
+  } else {
+    cancelPreviewTransaction();
+  }
   drag = null;
   movePending = false;
   copyPending = false;
@@ -5043,10 +5179,6 @@ function canvasMouseMove(ev) {
           drag.origins = new Map(selectedComps().map((c) => [c.refdes, { x: c.transform.x, y: c.transform.y }]));
           drag.labelOrigins = new Map(selectedLabels().map((l) => [l.id, { x: l.anchorWorld().x, y: l.anchorWorld().y }]));
           logLine('duplicated selection — dragging the copy');
-        } else {
-          history.push(snapshot());
-          if (history.length > 200) history.shift();
-          future.length = 0;
         }
         if (drag.detached) {
           const selectedNetIds = detachMoveComponents(drag);
@@ -5163,6 +5295,7 @@ function canvasMouseUp(ev) {
     }
     const anyMoved = drag.runs.some((r) => JSON.stringify(r.pts) !== JSON.stringify(r.orig));
     if (!drag.moved || !anyMoved) {
+      cancelPreviewTransaction();
       // A plain click (or a jittery gesture that never actually moved a run):
       selectedNets.clear();
       if (drag.shift) {
@@ -5248,14 +5381,15 @@ function canvasMouseUp(ev) {
         }
       }
       circuit.syncJunctionSolders();
-      markModelChanged(); // committed wire drag changed net geometry
-      history.push(drag.startSnapshot);
-      if (history.length > 200) history.shift();
-      future.length = 0;
+      if (snapshot() !== drag.startSnapshot) {
+        markModelChanged(); // committed wire drag changed net geometry
+        recordHistoryBefore(drag.startSnapshot);
+        commitPreviewTransaction();
+      } else {
+        cancelPreviewTransaction();
+      }
     } catch (err) {
-      restoreManagedNetSnapshots(drag.netSnapshots);
-      circuit.syncJunctionSolders();
-      markModelChanged();
+      cancelPreviewTransaction();
       logLine(`wire drag cancelled: ${err.message}`, 'error');
       drag = null;
       render();
@@ -5267,6 +5401,7 @@ function canvasMouseUp(ev) {
       return;
     }
     if (!drag.moved) {
+      cancelPreviewTransaction();
       if (!drag.shift) setSelection([]);
       selectedNets.clear();
       if (drag.shift) {
@@ -5318,11 +5453,14 @@ function canvasMouseUp(ev) {
         }
       }
       circuit.syncJunctionSolders();
-      markModelChanged();
       if (snapshot() !== drag.startSnapshot) {
+        markModelChanged();
         history.push(drag.startSnapshot);
         if (history.length > 200) history.shift();
         future.length = 0;
+        commitPreviewTransaction();
+      } else {
+        cancelPreviewTransaction();
       }
     }
   } else if (drag.mode === 'fixedwire') {
@@ -5331,6 +5469,7 @@ function canvasMouseUp(ev) {
       return;
     }
     if (!drag.moved) {
+      cancelPreviewTransaction();
       if (drag.fixedShift) {
         if (selectedWires.has(drag.fixedKey)) selectedWires.delete(drag.fixedKey);
         else selectedWires.add(drag.fixedKey);
@@ -5349,12 +5488,15 @@ function canvasMouseUp(ev) {
         future.length = 0;
         markModelChanged();
         logLine(drag.junction >= 0 ? 'moved fixed junction dot' : 'moved fixed wire geometry');
+        commitPreviewTransaction();
       } else {
+        cancelPreviewTransaction();
         logLine('fixed endpoint has no movable geometry');
       }
     }
   } else if (drag.mode === 'fixedendpoint') {
     if (!drag.moved) {
+      cancelPreviewTransaction();
       const path = drag.net.paths()[drag.endpoint.pathIndex];
       const segment = drag.endpoint.endpointIndex === 0 ? 1 : path.length - 1;
       setSelection([]);
@@ -5388,7 +5530,24 @@ function canvasMouseUp(ev) {
         future.length = 0;
         markModelChanged();
         logLine(target ? 'attached fixed endpoint' : 'moved fixed endpoint');
+        commitPreviewTransaction();
+      } else {
+        cancelPreviewTransaction();
       }
+    }
+  } else if (drag.mode === 'labelmove') {
+    if (drag.modal) {
+      if (!drag.moved) {
+        render();
+        return;
+      }
+      drag.modal = false;
+    }
+    if (drag.moved && previewTransaction && snapshot() !== drag.startSnapshot) {
+      recordHistoryBefore(drag.startSnapshot);
+      commitPreviewTransaction();
+    } else if (previewTransaction) {
+      cancelPreviewTransaction();
     }
   } else if (drag.mode === 'annotationlineplace') {
     if (!movedOut) {
@@ -5449,7 +5608,15 @@ function canvasMouseUp(ev) {
       }
       drag.modal = false;
     }
-    if (drag.moved) finishMoveMutation(drag);
+    if (drag.moved) {
+      finishMoveMutation(drag);
+      if (previewTransaction) {
+        if (snapshot() !== drag.startSnapshot) recordHistoryBefore(drag.startSnapshot);
+        commitPreviewTransaction();
+      }
+    } else {
+      cancelPreviewTransaction();
+    }
   }
   drag = null;
   render();
