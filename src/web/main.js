@@ -10,9 +10,10 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, LABEL_FONT_SIZE, containedWireSegments, extractWireFragments, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, LABEL_FONT_SIZE, containedWireSegments, extractWireFragments, isReferenceMarker, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
+import { analyzeInputImpedance, analyzeOutputImpedance, analyzeTransferFunction } from '../core/analysis/index.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -25,6 +26,7 @@ import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, comple
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { componentPaletteItems, editorKeymapText, layerActionForKey, naturalCompare } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
+import { analysisFormDefaults, analysisFormStorageKey, pruneAnalysisModelValues, pruneAnalysisNetValues } from './analysis-state.js';
 import { isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
@@ -60,6 +62,7 @@ const newDocumentMenu = document.getElementById('new-document-menu');
 const saveStateEl = document.getElementById('save-state');
 const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
 const exportCircuitBtn = document.getElementById('btn-export');
+const analysisButton = document.getElementById('btn-analysis');
 const deleteDialog = document.getElementById('delete-dialog');
 const deleteDialogMessage = document.getElementById('delete-dialog-message');
 const switchDialog = document.getElementById('switch-dialog');
@@ -73,6 +76,29 @@ const blockDetailEl = document.getElementById('block-detail');
 const helpDialog = document.getElementById('help-dialog');
 const helpDialogContent = document.getElementById('help-dialog-content');
 const helpSearch = document.getElementById('help-search');
+const analysisDialog = document.getElementById('analysis-dialog');
+const analysisForm = document.getElementById('analysis-form');
+const analysisTarget = document.getElementById('analysis-target');
+const analysisKind = document.getElementById('analysis-kind');
+const analysisReference = document.getElementById('analysis-reference');
+const analysisMode = document.getElementById('analysis-mode');
+const analysisInput = document.getElementById('analysis-input');
+const analysisInputField = document.getElementById('analysis-input-field');
+const analysisComplementary = document.getElementById('analysis-complementary');
+const analysisComplementaryField = document.getElementById('analysis-complementary-field');
+const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
+const analysisModels = document.getElementById('analysis-models');
+const analysisContext = document.getElementById('analysis-context');
+const analysisApproxRo = document.getElementById('analysis-approx-ro');
+const analysisApproxBody = document.getElementById('analysis-approx-body');
+const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
+const analysisResult = document.getElementById('analysis-result');
+const analysisEquation = document.getElementById('analysis-equation');
+const analysisDetails = document.getElementById('analysis-details');
+const analysisNetlistPanel = document.getElementById('analysis-netlist-panel');
+const analysisNetlist = document.getElementById('analysis-netlist');
+const analysisCancel = document.getElementById('analysis-cancel');
+const analysisAnnotate = document.getElementById('analysis-annotate');
 
 // Small line icons keep the compact tool rail scannable without a dependency.
 // Button text and existing aria labels remain the accessible names.
@@ -81,6 +107,7 @@ const ICON_PATHS = {
   'file-plus': '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M12 11v6M9 14h6"/>',
   trash: '<path d="M5 7h14M10 11v6M14 11v6M8 7l1-3h6l1 3m-11 0 1 14h10l1-14"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
+  analysis: '<path d="M4 19h16M6 16l4-5 3 3 5-7"/><path d="M6 19V5m6 14V9m6 10V4"/>',
   save: '<path d="M5 4h12l3 3v13H4V4zM8 4v6h8V4M8 20v-6h8v6"/>',
   download: '<path d="M12 3v12m0 0 5-5m-5 5-5-5M4 20h16"/>',
   grid: '<path d="M4 4h16v16H4zM4 10h16M4 16h16M10 4v16M16 4v16"/>',
@@ -131,7 +158,7 @@ const persistence = createPersistenceAdapter();
 
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
-let labelMode = null; // null | 'net' | 'annotation' | 'arrow' | 'box' | 'line'
+let labelMode = null; // null | 'net' | 'annotation' | 'equation' | 'arrow' | 'box' | 'line'
 let annotationStart = null;
 let annotationPoints = [];
 let moveMode = null; // null | 'connected' | 'detached' (armed one-shot move)
@@ -258,6 +285,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (visual) return { key: 'visual', canvasClass: 'mode-visual', toolbar: 'visual', label: 'VISUAL' };
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION' };
+  if (labelMode === 'equation') return { key: 'equation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'EQUATION' };
   if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE' };
   if (labelMode === 'arrow') return { key: 'arrow', canvasClass: 'mode-annotation', toolbar: 'arrow', label: 'ARROW' };
   if (labelMode === 'box') return { key: 'box', canvasClass: 'mode-annotation', toolbar: 'box', label: 'BOX' };
@@ -484,8 +512,10 @@ async function saveCircuit() {
   }
   syncGeneration += 1;
   saveInFlight += 1;
+  const previousCircuitName = currentCircuitName;
   try {
     const data = await persistence.save(name, circuit.toJSON());
+    migrateAnalysisFormStorage(previousCircuitName, name);
     currentCircuitName = name;
     lastSeenRevision = data.revision || null;
     lastCircuitTag = data.etag || null;
@@ -532,6 +562,7 @@ async function loadCircuit(name = circuitSelectEl.value, quiet = false, options 
     history = [];
     future = [];
     applyJson(JSON.stringify(data.state));
+    clearLatestAnalysisResult();
     setSelection([]);
     cursor = { x: 0, y: 0 };
     currentCircuitName = data.name;
@@ -596,6 +627,7 @@ async function deleteSavedCircuit() {
     future = [];
     cancelPreviewTransaction();
     circuit = new Circuit();
+    clearLatestAnalysisResult();
     markModelChanged(false);
     resetCheckState();
     directWire = null;
@@ -2156,6 +2188,21 @@ function placeAnnotationAt(world) {
   inlineEditLabel(label);
 }
 
+/** Place a math-capable ordinary label and open its editor with the caret
+ * between the two dollar delimiters. The persisted object remains a normal
+ * LabelInstance, with only `math:true` changing its renderer. */
+function placeEquationAt(world) {
+  const point = { x: snap(world.x), y: snap(world.y) };
+  let label;
+  commit(() => { label = circuit.addLabel({ text: '$$', x: point.x, y: point.y, align: 'center', math: true }); });
+  setSelection([]);
+  setLabelSelection([label.id]);
+  labelMode = null;
+  logLine(`placed equation @ (${point.x},${point.y})`);
+  render();
+  inlineEditLabel(label, { equationDraft: true });
+}
+
 function commitLineAnnotation() {
   if (annotationPoints.length < 2) return false;
   let annotation;
@@ -2266,6 +2313,14 @@ function placePending() {
       mirrorY: pendingPlace.mirrorY === null ? undefined : pendingPlace.mirrorY,
       noLabel: false,
     });
+    // Treat a committed insertion exactly like a component move/copy that
+    // lands on existing connectivity. `addComponent` joins coincident pins,
+    // while the follow-up pass also attaches a new terminal to a wire endpoint
+    // and repairs any split net pieces at the landing point.
+    circuit.connectCoincident(comp.refdes);
+    circuit.reconnectCoincidentNets();
+    circuit.ensureUniqueTerminals([comp.refdes]);
+    circuit.syncJunctionSolders();
     setSelection([comp.refdes]);
     logLine(`placed ${comp.refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
   }
@@ -5644,6 +5699,7 @@ function canvasMouseUp(ev) {
     if (!movedOut) {
       if (labelMode === 'net') placeNetLabelAt(w);
       else if (labelMode === 'annotation') placeAnnotationAt(w);
+      else if (labelMode === 'equation') placeEquationAt(w);
     }
   } else if (drag.mode === 'move') {
     if (drag.modal) {
@@ -5790,6 +5846,7 @@ function closeComponentContextMenu() {
   componentContextSubmenu = null;
   if (componentContextMenuEl) {
     componentContextMenuEl.hidden = true;
+    componentContextMenuEl.classList.remove('analysis-attribute-menu', 'opens-left');
     componentContextMenuEl.replaceChildren();
   }
 }
@@ -5858,12 +5915,578 @@ function selectSameTarget(criterion) {
   render();
 }
 
+function analysisNetText(net) {
+  return `${net.name || '(unnamed)'} — ${net.id}`;
+}
+
+function fillAnalysisDialog(targetNetId) {
+  if (!analysisTarget || !analysisReference) return;
+  const nets = visibleNets();
+  const componentInputNetIds = nets
+    .filter((net) => net.terminals?.some((terminal) => {
+      const component = circuit.components.get(terminal.comp);
+      return component?.type === 'input' || component?.analysis?.role === 'input';
+    }))
+    .map((net) => net.id);
+  const defaults = analysisFormDefaults(nets, { targetNetId, componentInputNetIds });
+  analysisTarget.replaceChildren();
+  for (const net of nets) {
+    const option = document.createElement('option');
+    option.value = net.id;
+    option.textContent = analysisNetText(net);
+    analysisTarget.appendChild(option);
+  }
+  if (defaults.target) analysisTarget.value = defaults.target;
+
+  analysisReference.replaceChildren();
+  const automatic = document.createElement('option');
+  automatic.value = '';
+  automatic.textContent = 'Automatic AC reference (marker group)';
+  analysisReference.appendChild(automatic);
+  for (const net of nets) {
+    const option = document.createElement('option');
+    option.value = net.id;
+    option.textContent = analysisNetText(net);
+    analysisReference.appendChild(option);
+  }
+
+  if (analysisInput) {
+    analysisInput.replaceChildren();
+    for (const net of nets) {
+      const option = document.createElement('option');
+      option.value = net.id;
+      option.textContent = analysisNetText(net);
+      analysisInput.appendChild(option);
+    }
+    if (defaults.input) analysisInput.value = defaults.input;
+  }
+  if (analysisComplementary) {
+    analysisComplementary.replaceChildren();
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Choose a quiet-side net (optional)';
+    analysisComplementary.appendChild(none);
+    for (const net of nets) {
+      const option = document.createElement('option');
+      option.value = net.id;
+      option.textContent = analysisNetText(net);
+      analysisComplementary.appendChild(option);
+    }
+  }
+  return defaults;
+}
+
+function parseAnalysisList(value) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+let latestAnalysisReport = null;
+
+function clearLatestAnalysisResult() {
+  latestAnalysisReport = null;
+  if (analysisResult) {
+    analysisResult.hidden = true;
+    if (analysisEquation) analysisEquation.replaceChildren();
+    if (analysisDetails) analysisDetails.textContent = '';
+    if (analysisNetlist) analysisNetlist.textContent = '';
+    if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
+  }
+  if (analysisAnnotate) analysisAnnotate.hidden = true;
+}
+
+function analysisFormValues() {
+  return {
+    kind: analysisKind?.value || 'output-impedance',
+    target: analysisTarget?.value || '',
+    reference: analysisReference?.value || '',
+    mode: analysisMode?.value || 'single-ended',
+    input: analysisInput?.value || '',
+    differentialSide: analysisComplementary?.value || '',
+    acGrounds: analysisAcGrounds?.value || '',
+    models: analysisModels?.value || '',
+    context: analysisContext?.value || '',
+    approximationOptions: {
+      ignoreChannelLengthModulation: !!analysisApproxRo?.checked,
+      ignoreBodyEffect: !!analysisApproxBody?.checked,
+      gmroLarge: !!analysisApproxGmRo?.checked,
+    },
+  };
+}
+
+function migrateAnalysisFormStorage(previousName, nextName) {
+  if (previousName === nextName) return;
+  try {
+    const fromKey = analysisFormStorageKey(previousName);
+    const toKey = analysisFormStorageKey(nextName);
+    const saved = localStorage.getItem(fromKey);
+    if (saved && !localStorage.getItem(toKey)) localStorage.setItem(toKey, saved);
+    if (saved) localStorage.removeItem(fromKey);
+  } catch { /* storage unavailable */ }
+}
+
+function persistAnalysisForm() {
+  try { localStorage.setItem(analysisFormStorageKey(currentCircuitName), JSON.stringify(analysisFormValues())); } catch { /* storage unavailable */ }
+}
+
+function restoreAnalysisForm(defaults = {}) {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(currentCircuitName)) || 'null'); } catch { /* storage unavailable */ }
+  if (!saved) return false;
+  const setSelect = (el, value, force = false) => {
+    if (!el || !value || ![...el.options].some((option) => option.value === value)) return;
+    if (!force && value === '') return;
+    el.value = value;
+  };
+  setSelect(analysisKind, saved.kind);
+  // An explicit net role is schematic metadata and must win over a stale or
+  // previously chosen target from this document's older topology.
+  setSelect(analysisTarget, defaults.targetMarked ? defaults.target : saved.target);
+  setSelect(analysisReference, saved.reference);
+  setSelect(analysisMode, saved.mode);
+  setSelect(analysisInput, defaults.inputMarked ? defaults.input : saved.input);
+  setSelect(analysisComplementary, saved.differentialSide);
+  if (analysisAcGrounds && typeof saved.acGrounds === 'string') analysisAcGrounds.value = pruneAnalysisNetValues(saved.acGrounds, visibleNets());
+  if (analysisModels && typeof saved.models === 'string') analysisModels.value = pruneAnalysisModelValues(saved.models, sortedComps().map((component) => component.refdes));
+  if (analysisContext && typeof saved.context === 'string') analysisContext.value = saved.context;
+  const savedApproximations = saved.approximationOptions || {};
+  const approximationList = new Set(Array.isArray(saved.approximations) ? saved.approximations : []);
+  if (analysisApproxRo) analysisApproxRo.checked = !!(savedApproximations.ignoreChannelLengthModulation || savedApproximations.ignoreRo || approximationList.has('ignore-channel-length-modulation'));
+  if (analysisApproxBody) analysisApproxBody.checked = !!(savedApproximations.ignoreBodyEffect || savedApproximations.ignoreGmb || approximationList.has('ignore-body-effect'));
+  if (analysisApproxGmRo) analysisApproxGmRo.checked = !!(savedApproximations.gmroLarge || savedApproximations.assumeGmRoLarge || approximationList.has('gmro-large'));
+  // The dialog now derives all three results from the same input/output pair.
+  // Keep the legacy kind selector persisted (and hidden in the markup), but
+  // never hide the input node when restoring an older saved form.
+  if (analysisInputField) analysisInputField.hidden = false;
+  if (analysisComplementaryField) analysisComplementaryField.hidden = analysisMode?.value !== 'differential';
+  return true;
+}
+
+function prefillAnalysisAttributes() {
+  const markedGrounds = visibleNets()
+    .filter((net) => net.analysis?.acGround || net.analysis?.role === 'dc-bias')
+    .map((net) => net.name || net.id);
+  const groundValues = parseAnalysisList(analysisAcGrounds?.value);
+  for (const value of markedGrounds) if (!groundValues.includes(value)) groundValues.push(value);
+  if (analysisAcGrounds && groundValues.length) analysisAcGrounds.value = groundValues.join(', ');
+  const markedModels = sortedComps()
+    .filter((component) => component.analysis?.model)
+    .map((component) => `${component.refdes}=${component.analysis.model}`);
+  const modelValues = parseAnalysisList(analysisModels?.value);
+  for (const value of markedModels) if (!modelValues.includes(value)) modelValues.push(value);
+  if (analysisModels && modelValues.length) analysisModels.value = modelValues.join(', ');
+}
+
+function analysisReportText(report) {
+  if (report?.query === 'combined') {
+    const lines = [report.complete ? 'all requested equations derived' : 'one or more requested equations unavailable'];
+    for (const [key, child] of Object.entries(report.reports || {})) {
+      const title = key === 'input' ? 'input impedance' : key === 'output' ? 'output impedance' : 'voltage transfer';
+      lines.push(`${title}: ${child.ok ? child.equation : `unsupported: ${child.error || 'analysis unavailable'}`}`);
+      if (child.exactEquation && child.exactEquation !== child.equation) lines.push(`${title} before selected approximations: ${child.exactEquation}`);
+      if (child.target?.name) lines.push(`${title} target: ${child.target.name}`);
+      if (child.input?.name && key !== 'input') lines.push(`${title} input: ${child.input.name}`);
+      for (const assumption of child.assumptions || []) lines.push(`${title} assumption: ${assumption}`);
+      for (const approximation of child.approximations || []) lines.push(`${title} approximation: ${approximation}`);
+    }
+    return lines.join('\n');
+  }
+  const lines = [report.ok ? report.equation : `unsupported: ${report.error}`];
+  if (report.exactEquation && report.exactEquation !== report.equation) lines.push(`before selected approximations: ${report.exactEquation}`);
+  if (report.systematicEquation && report.systematicEquation !== report.equation) lines.push(`systematic: ${report.systematicEquation}`);
+  if (report.target?.name) lines.push(`target: ${report.target.name}`);
+  if (report.input?.name) lines.push(`input: ${report.input.name}`);
+  if (report.reference?.name) lines.push(`reference: ${report.reference.name}${report.reference.inferred ? ' (inferred)' : ''}`);
+  if (report.dependencies?.length) lines.push(`depends on: ${report.dependencies.join(', ')}`);
+  if (Number.isFinite(report.equationCount)) lines.push(`node system: ${report.equationCount} equations, ${report.unknownCount} unknowns`);
+  for (const equation of report.nodeEquations || report.equations || []) lines.push(`node: ${equation}`);
+  for (const assumption of report.assumptions || []) lines.push(`assumption: ${assumption}`);
+  for (const approximation of report.approximations || []) lines.push(`approximation: ${approximation}`);
+  return lines.join('\n');
+}
+
+function renderEquationMath(container, equation) {
+  if (!container) return;
+  container.replaceChildren();
+  const normalized = equationForDiagram(equation);
+  container.setAttribute('aria-label', normalized);
+  for (const run of parseLabelRuns(normalized)) {
+    const span = document.createElement('span');
+    span.textContent = run.text;
+    if (run.sub) span.className = 'math-sub';
+    else if (run.super) span.className = 'math-super';
+    container.appendChild(span);
+  }
+}
+
+function renderAnalysisResult(report) {
+  if (!analysisResult) return;
+  analysisResult.hidden = !report;
+  if (!report) {
+    if (analysisEquation) analysisEquation.replaceChildren();
+    if (analysisDetails) analysisDetails.textContent = '';
+    if (analysisNetlist) analysisNetlist.textContent = '';
+    if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
+    return;
+  }
+  const text = analysisReportText(report);
+  if (analysisEquation) {
+    analysisEquation.replaceChildren();
+    if (report.query === 'combined') {
+      const entries = [
+        ['Input impedance', report.reports?.input],
+        ['Output impedance', report.reports?.output],
+        ['Voltage transfer', report.reports?.transfer],
+      ];
+      for (const [title, child] of entries) {
+        const row = document.createElement('div');
+        row.className = 'analysis-equation-row';
+        const heading = document.createElement('div');
+        heading.className = 'analysis-equation-label';
+        heading.textContent = title;
+        row.appendChild(heading);
+        if (child?.ok && child.equation) {
+          const equation = document.createElement('div');
+          equation.className = 'analysis-equation-value';
+          renderEquationMath(equation, child.equation);
+          row.appendChild(equation);
+        } else {
+          const unavailable = document.createElement('div');
+          unavailable.className = 'analysis-equation-unavailable';
+          unavailable.textContent = `Unsupported: ${child?.error || 'analysis unavailable'}`;
+          row.appendChild(unavailable);
+        }
+        analysisEquation.appendChild(row);
+      }
+      analysisEquation.setAttribute('aria-label', text);
+    } else if (report.ok && report.equation) renderEquationMath(analysisEquation, report.equation);
+    else {
+      analysisEquation.textContent = `Unsupported: ${report.error || 'analysis unavailable'}`;
+      analysisEquation.removeAttribute('aria-label');
+    }
+  }
+  if (analysisDetails) analysisDetails.textContent = report.query === 'combined' ? text : text.split('\n').slice(1).join('\n');
+  const netlist = report.smallSignalNetlist
+    || report.reports?.output?.smallSignalNetlist
+    || report.reports?.transfer?.smallSignalNetlist
+    || report.reports?.input?.smallSignalNetlist;
+  if (analysisNetlistPanel) analysisNetlistPanel.hidden = !netlist;
+  if (analysisNetlist) analysisNetlist.textContent = netlist || '';
+}
+
+function openAnalysisDialog(targetNetId) {
+  if (!analysisDialog) return;
+  const defaults = fillAnalysisDialog(targetNetId);
+  const restored = restoreAnalysisForm(defaults);
+  prefillAnalysisAttributes();
+  if (!restored && targetNetId && analysisTarget && [...analysisTarget.options].some((option) => option.value === targetNetId)) analysisTarget.value = targetNetId;
+  persistAnalysisForm();
+  renderAnalysisResult(latestAnalysisReport);
+  if (analysisAnnotate) analysisAnnotate.hidden = !latestAnalysisReport?.ok;
+  if (!analysisDialog.open) analysisDialog.showModal();
+  analysisInput?.focus();
+}
+
+analysisForm?.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const output = analysisTarget?.value;
+  const input = analysisInput?.value;
+  if (!output || !input) return;
+  persistAnalysisForm();
+  const options = {
+    reference: analysisReference?.value || undefined,
+    mode: analysisMode?.value || 'single-ended',
+    input: input || undefined,
+    acGrounds: parseAnalysisList(analysisAcGrounds?.value),
+    models: parseAnalysisList(analysisModels?.value),
+    context: analysisContext?.value || '',
+    differentialSide: analysisComplementary?.value || undefined,
+    ignoreChannelLengthModulation: !!analysisApproxRo?.checked,
+    ignoreBodyEffect: !!analysisApproxBody?.checked,
+    gmroLarge: !!analysisApproxGmRo?.checked,
+  };
+  const reports = {
+    input: analyzeInputImpedance(circuit, input, options),
+    output: analyzeOutputImpedance(circuit, output, { ...options, input }),
+    transfer: analyzeTransferFunction(circuit, output, { ...options, input }),
+  };
+  const children = Object.values(reports);
+  const successful = children.filter((child) => child.ok);
+  const report = {
+    query: 'combined',
+    ok: successful.length > 0,
+    complete: successful.length === children.length,
+    reports,
+    input: reports.input.input,
+    target: reports.output.target || reports.transfer.target,
+    smallSignalNetlist: reports.output.smallSignalNetlist || reports.transfer.smallSignalNetlist || reports.input.smallSignalNetlist,
+  };
+  latestAnalysisReport = report;
+  renderAnalysisResult(report);
+  if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
+  logLine(report.complete ? 'derived input impedance, output impedance, and voltage transfer' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
+  for (const [key, child] of Object.entries(reports)) {
+    const title = key === 'input' ? 'Input impedance' : key === 'output' ? 'Output impedance' : 'Voltage transfer';
+    logLine(child.ok ? `${title}: ${child.equation}` : `${title} analysis unavailable: ${child.error}`, child.ok ? 'status' : 'error');
+    for (const assumption of child.assumptions || []) logLine(`${title} assumption: ${assumption}`);
+    for (const approximation of child.approximations || []) logLine(`${title} approximation: ${approximation}`);
+  }
+});
+
+for (const control of [analysisKind, analysisTarget, analysisReference, analysisMode, analysisInput, analysisComplementary, analysisAcGrounds, analysisModels, analysisContext, analysisApproxRo, analysisApproxBody, analysisApproxGmRo]) {
+  control?.addEventListener('input', persistAnalysisForm);
+  control?.addEventListener('change', persistAnalysisForm);
+}
+
+analysisKind?.addEventListener('change', () => {
+  if (analysisInputField) analysisInputField.hidden = false;
+});
+
+analysisMode?.addEventListener('change', () => {
+  if (analysisComplementaryField) analysisComplementaryField.hidden = analysisMode.value !== 'differential';
+});
+
+function equationForDiagram(equation) {
+  return String(equation || '')
+    .replace(/\\left|\\right/g, '')
+    .replace(/\\\|\\\|/g, '||')
+    .replace(/\\parallel/g, '||')
+    .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1/$2)')
+    .replace(/\bA_v\b/g, 'A_{v}')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function equationForLabel(equation) {
+  return String(equation || '')
+    .replace(/\\parallel/g, '\\|\\|')
+    // Keep labels editable as valid TeX even if a legacy report or manually
+    // entered equation still contains the plain `||` spelling.
+    .replace(/(?<!\\)\|\|/g, '\\|\\|')
+    .replace(/\bA_v\b/g, 'A_{v}')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function annotateAnalysisResult() {
+  const report = latestAnalysisReport;
+  if (!report?.ok) return;
+  const bounds = selectionCenterBounds();
+  const anchor = bounds
+    ? { x: snap(bounds.x + bounds.w / 2), y: snap(bounds.y - 80) }
+    : { ...cursor };
+  const entries = report.query === 'combined'
+    ? [report.reports?.input, report.reports?.output, report.reports?.transfer].filter((child) => child?.ok && child.equation)
+    : [report].filter((child) => child.equation);
+  if (!entries.length) return;
+  const labels = [];
+  commit(() => {
+    for (const [index, child] of entries.entries()) {
+      labels.push(circuit.addLabel({
+        text: equationForLabel(child.equation),
+        x: anchor.x,
+        // Leave a full grid-cell gap between equations; fraction labels use
+        // a taller box than ordinary one-line math.
+        y: anchor.y - index * 200,
+        align: 'center',
+        math: true,
+      }));
+    }
+  });
+  setLabelSelection(labels.map((label) => label.id), labels[0]?.id);
+  logLine(`annotated schematic with ${labels.length} equation${labels.length === 1 ? '' : 's'}`, 'status');
+  render();
+}
+
+analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
+
+function suggestedAnalysisTarget() {
+  const selectedNet = [...selectedNets][0];
+  if (selectedNet && circuit.nets.has(selectedNet)) return selectedNet;
+  const markedOutput = visibleNets().find((net) => net.analysis?.role === 'output');
+  if (markedOutput) return markedOutput.id;
+  const component = selected && circuit.components.get(selected);
+  if (component) {
+    for (const term of ['d', 'o', 'y', 'a', 'b']) {
+      const net = circuit.netOfTerminal({ comp: component.refdes, term });
+      if (net) return net.id;
+    }
+  }
+  return visibleNets()[0]?.id || '';
+}
+
+analysisButton?.addEventListener('click', () => openAnalysisDialog(suggestedAnalysisTarget()));
+
+const SMALL_SIGNAL_TRANSISTOR_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
+const SMALL_SIGNAL_PORT_TYPES = new Set(['input', 'output', 'inputoutput', 'port', 'port_filled']);
+
+/**
+ * Resolve the component scope for a side-panel analysis menu. A context menu
+ * opened on a selected component applies to every selected component of the
+ * requested kind; opening it on an unselected row intentionally scopes the
+ * action to that row so an old multi-selection cannot be changed by accident.
+ */
+function analysisComponentTargets(target, predicate = () => true) {
+  const selectedRefs = new Set(selectedComps().map((comp) => comp.refdes));
+  const refs = selectedRefs.has(target.refdes) ? selectedRefs : new Set([target.refdes]);
+  return [...refs]
+    .map((refdes) => circuit.components.get(refdes))
+    .filter((component) => component && predicate(component));
+}
+
+/** Resolve the analogous scope for a side-panel net analysis menu. */
+function analysisNetTargets(target) {
+  const selectedIds = new Set(selectedNets);
+  const ids = selectedIds.has(target.id) ? selectedIds : new Set([target.id]);
+  return [...ids].map((id) => circuit.nets.get(id)).filter(Boolean);
+}
+
+function applyComponentAnalysis(target, attrs, predicate = () => true) {
+  const components = analysisComponentTargets(target, predicate);
+  if (!components.length) return;
+  commit(() => {
+    for (const component of components) circuit.setComponentAnalysis(component.refdes, attrs);
+  });
+  logLine(`applied small-signal attributes to ${components.length} component${components.length === 1 ? '' : 's'}`, 'status');
+}
+
+function applyNetAnalysis(target, attrs) {
+  const nets = analysisNetTargets(target);
+  if (!nets.length) return;
+  commit(() => {
+    for (const net of nets) circuit.setNetAnalysis(net, attrs);
+  });
+  logLine(`applied analysis attributes to ${nets.length} net${nets.length === 1 ? '' : 's'}`, 'status');
+}
+
+function openAnalysisAttributeMenu(target, x, y) {
+  if (!componentContextMenuEl || !target) return;
+  closeComponentContextMenu();
+  componentContextTarget = null;
+  const menu = componentContextMenuEl;
+  menu.replaceChildren();
+  menu.classList.add('analysis-attribute-menu', 'opens-left');
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 180))}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  const scope = target.kind === 'component'
+    ? analysisComponentTargets(target.value)
+    : analysisNetTargets(target.value);
+  const scopeSuffix = scope.length > 1 ? ` (${scope.length} selected)` : '';
+  heading.textContent = target.kind === 'component'
+    ? `${target.value.refdes} small-signal attributes${scopeSuffix}`
+    : `${target.value.name || target.value.id} analysis attributes${scopeSuffix}`;
+  menu.appendChild(heading);
+  const addSubmenu = (text, entries) => {
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.textContent = text;
+    trigger.setAttribute('aria-haspopup', 'true');
+    trigger.setAttribute('aria-expanded', 'false');
+    const arrow = document.createElement('span');
+    arrow.textContent = '›';
+    arrow.setAttribute('aria-hidden', 'true');
+    trigger.appendChild(arrow);
+    const submenu = document.createElement('div');
+    submenu.className = 'context-submenu';
+    submenu.setAttribute('role', 'menu');
+    submenu.setAttribute('aria-label', text);
+    for (const entry of entries) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.textContent = entry.label;
+      item.setAttribute('role', 'menuitem');
+      item.disabled = !!entry.disabled;
+      item.addEventListener('click', () => {
+        if (entry.disabled) return;
+        entry.action();
+        closeComponentContextMenu();
+        render();
+      });
+      submenu.appendChild(item);
+    }
+    const open = () => {
+      submenu.classList.add('open');
+      componentContextSubmenu = submenu;
+      trigger.setAttribute('aria-expanded', 'true');
+    };
+    trigger.addEventListener('mouseenter', open);
+    trigger.addEventListener('focus', open);
+    trigger.addEventListener('click', open);
+    trigger.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowLeft') {
+        ev.preventDefault();
+        closeComponentContextMenu();
+      } else if (ev.key === 'ArrowRight' || ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        open();
+        submenu.querySelector('button:not(:disabled)')?.focus();
+      }
+    });
+    menu.append(trigger, submenu);
+  };
+  if (target.kind === 'component') {
+    const component = target.value;
+    const transistor = SMALL_SIGNAL_TRANSISTOR_TYPES.has(component.type);
+    if (transistor) {
+      addSubmenu('Small-signal attributes', [
+        { label: 'Current source (ideal small-signal open)', action: () => applyComponentAnalysis(component, { model: 'current-source' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)) },
+        { label: 'Triode device (r_ds resistor)', action: () => applyComponentAnalysis(component, { model: 'triode' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)) },
+        {
+          label: 'Clear device model',
+          action: () => applyComponentAnalysis(component, { model: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
+          disabled: !analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)).some((candidate) => candidate.analysis?.model),
+        },
+      ]);
+    }
+    const port = SMALL_SIGNAL_PORT_TYPES.has(component.type);
+    if (port) {
+      addSubmenu('Port analysis role', [
+        { label: 'DC bias / AC ground', action: () => applyComponentAnalysis(component, { role: 'dc-bias' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)) },
+        { label: 'Input', action: () => applyComponentAnalysis(component, { role: 'input' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)) },
+        { label: 'Output', action: () => applyComponentAnalysis(component, { role: 'output' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)) },
+        {
+          label: 'Clear port analysis role',
+          action: () => applyComponentAnalysis(component, { role: null }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)),
+          disabled: !analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)).some((candidate) => candidate.analysis?.role),
+        },
+      ]);
+    }
+    if (!transistor && !port) {
+      const note = document.createElement('div');
+      note.className = 'context-menu-note';
+      note.textContent = 'No device-specific small-signal attributes.';
+      menu.appendChild(note);
+    }
+  } else {
+    const net = target.value;
+    addSubmenu('Net analysis role', [
+      { label: 'DC bias / AC ground', action: () => applyNetAnalysis(net, { role: 'dc-bias', acGround: true }) },
+      { label: 'Input', action: () => applyNetAnalysis(net, { role: 'input', acGround: false }) },
+      { label: 'Output', action: () => applyNetAnalysis(net, { role: 'output', acGround: false }) },
+      {
+        label: 'Clear net analysis role',
+        action: () => applyNetAnalysis(net, { role: null, acGround: false }),
+        disabled: !analysisNetTargets(net).some((candidate) => candidate.analysis?.role || candidate.analysis?.acGround),
+      },
+    ]);
+  }
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+analysisCancel?.addEventListener('click', () => analysisDialog?.close());
+analysisDialog?.addEventListener('click', (ev) => {
+  if (ev.target === analysisDialog) analysisDialog.close();
+});
+
 function openComponentContextMenu(target, x, y) {
   if (!componentContextMenuEl || !target) return;
   closeComponentContextMenu();
   componentContextTarget = target;
   const menu = componentContextMenuEl;
   menu.hidden = false;
+  if (x > window.innerWidth - 420) menu.classList.add('opens-left');
   menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 220))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 90))}px`;
 
@@ -7257,20 +7880,44 @@ canvasEl.addEventListener('dblclick', (ev) => {
   const label = pickLabel(w);
   if (label) inlineEditLabel(label);
   else {
-    const hit = pickWire(w);
-    if (hit) {
+    const hit = matchAt(snap(w.x), snap(w.y));
+    const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
+    const wire = pickWire(w);
+    if (component && isReferenceMarker(component)) openReferenceMarkerEditor(component);
+    else if (wire) {
       selectedWire = null;
       selectedWires.clear();
-      selectedNets = new Set([hit.net.id]);
+      selectedNets = new Set([wire.net.id]);
       render();
     }
   }
 });
 
+function openReferenceMarkerEditor(component) {
+  if (!component || inlineInput) return;
+  const existing = circuit.labelOf(component.refdes);
+  if (existing) {
+    inlineEditLabel(existing, { removeOnEmpty: true });
+    return;
+  }
+  const info = referenceMarkerInfo(component.type);
+  if (!info) return;
+  const before = snapshot();
+  const label = circuit.addLabel({
+    text: component.value || '',
+    owner: component.refdes,
+    offset: info.labelOffset,
+    align: 'center',
+    style: { color: component.style.color },
+  });
+  inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
+}
+
 /** Overlay an <input> on the label's anchor; Enter/blur commits, Escape cancels. */
 function inlineEditLabel(label, options = {}) {
   if (!label || inlineInput) return;
   const provisional = !!options.provisional;
+  const equationDraft = !!options.equationDraft;
   const initialSnapshot = options.initialSnapshot || null;
   const initialName = options.initialName || '';
   lastLabelClick = null; // starting an edit clears any pending double-click state
@@ -7321,7 +7968,8 @@ function inlineEditLabel(label, options = {}) {
   inlineInput = input;
   render();
   input.focus();
-  input.select();
+  if (equationDraft) input.setSelectionRange(Math.min(1, input.value.length), Math.min(1, input.value.length));
+  else input.select();
   let closed = false;
   const done = (applyText) => {
     if (closed) return;
@@ -7345,8 +7993,33 @@ function inlineEditLabel(label, options = {}) {
         restoreProvisionalLabel(label, initialName);
       }
       markModelChanged(false);
+    } else if (options.markerDraft) {
+      if (applyText) {
+        try {
+          label.setText(v);
+          if (!v) circuit.removeLabel(label.id);
+          history.push(initialSnapshot || snapshot());
+          if (history.length > 200) history.shift();
+          future.length = 0;
+        } catch (err) {
+          logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
+          circuit.removeLabel(label.id);
+        }
+      } else {
+        circuit.removeLabel(label.id);
+      }
+      markModelChanged(false);
+    } else if (equationDraft) {
+      // A fresh equation starts as `$$`; Escape, blur without content, or an
+      // untouched draft should not leave a literal delimiter label behind.
+      if (applyText && stripMathDelimiters(v)) {
+        if (v !== label.text) commit(() => renameLabelThroughModel(label, v));
+      } else if (circuit.labels.has(label.id)) commit(() => circuit.removeLabel(label.id));
     } else if (applyText && v && v !== label.text) commit(() => renameLabelThroughModel(label, v));
-    else if (options.removeOnEmpty && !v) commit(() => circuit.removeLabel(label.id));
+    else if (options.removeOnEmpty && !v) commit(() => {
+      if (label.owner && isReferenceMarker(circuit.components.get(label.owner))) label.setText('');
+      circuit.removeLabel(label.id);
+    });
     render();
   };
   // Ctrl+, (comma) / Ctrl+. (period) wrap the selected text in subscript /
@@ -7431,7 +8104,8 @@ function renderComponents() {
 
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = comp.type;
+    const analysisTag = comp.analysis?.model ? ` · ${comp.analysis.model}` : comp.analysis?.role ? ` · ${comp.analysis.role}` : '';
+    meta.textContent = `${comp.type}${analysisTag}`;
 
     const remove = document.createElement('button');
     remove.className = 'remove';
@@ -7457,6 +8131,12 @@ function renderComponents() {
     row.appendChild(ref);
     row.appendChild(meta);
     row.appendChild(remove);
+
+    row.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openAnalysisAttributeMenu({ kind: 'component', value: comp }, ev.clientX, ev.clientY);
+    });
 
     row.addEventListener('click', (ev) => {
       cursor = { x: comp.transform.x, y: comp.transform.y };
@@ -7537,10 +8217,17 @@ function renderNets() {
 
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = `${net.terminals.length} term  ${net.length()}u  ${net.id}`;
+    const analysisTag = net.analysis?.acGround ? ' · DC bias / AC ground' : net.analysis?.role ? ` · ${net.analysis.role}` : '';
+    meta.textContent = `${net.terminals.length} term  ${net.length()}u  ${net.id}${analysisTag}`;
 
     row.appendChild(ref);
     row.appendChild(meta);
+
+    row.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openAnalysisAttributeMenu({ kind: 'net', value: net }, ev.clientX, ev.clientY);
+    });
 
     row.addEventListener('click', (ev) => {
       clearDiagnosticFocus();
@@ -7622,7 +8309,7 @@ function startComponentRename(comp, ref) {
     if (closed) return;
     closed = true;
     inlineInput = null;
-    const next = input.value.trim();
+    const next = normalizeComponentRefdes(input.value);
     input.replaceWith(ref);
     if (applyText && next && next !== comp.refdes &&
         /^[A-Za-z][A-Za-z0-9_]*$/.test(next) &&
@@ -8099,6 +8786,11 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'N' && shiftKey) {
     activateAnnotation();
+    return;
+  }
+
+  if (key === 'e') {
+    activateEquation();
     return;
   }
 
@@ -8862,6 +9554,7 @@ function renderStatus() {
   }
   if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
   if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
+  if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
   if (wire) {
     parts.push(
       wire.source
@@ -9019,6 +9712,14 @@ function activateNetLabel() {
 
 function activateAnnotation() {
   activateLabelPlacement('annotation');
+}
+
+function activateEquation() {
+  if (isBlockDiagram(circuit)) {
+    logLine('equation labels are available only in schematic documents');
+    return;
+  }
+  activateLabelPlacement('equation');
 }
 
 function activateShapeAnnotation(kind) {
@@ -9574,12 +10275,17 @@ if (switchDialog) {
 }
 
 function startNewDocument(kind) {
+  // A blank document is a new analysis session. Do not reuse free-text
+  // references from an earlier unnamed schematic; named documents keep their
+  // own scoped preferences and are restored when reopened.
+  try { localStorage.removeItem(analysisFormStorageKey('new')); } catch { /* storage unavailable */ }
   circuitNameEl.value = '';
   circuitSelectEl.value = '';
   currentCircuitName = '';
   history = [];
   future = [];
   applyJson(JSON.stringify(createDocument(kind).toJSON()));
+  clearLatestAnalysisResult();
   lastSavedSnapshot = snapshot();
   lastSeenActive = null;
   lastSeenRevision = null;
@@ -9739,6 +10445,13 @@ window.addEventListener('keydown', (ev) => {
       }
       return;
     }
+  }
+  if (analysisDialog?.open) {
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      analysisDialog.close();
+    }
+    return;
   }
 
   const tag = (ev.target && ev.target.tagName) || '';
@@ -9972,12 +10685,17 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
 
-  // Shift+Left/Right set a selected label's alignment (cycle through center).
+  // Shift+Left/Right set every selected label's alignment (cycle through
+  // center).  The primary label determines the next target when the set is
+  // mixed, while an already-uniform set cycles back to center.
   if (ev.shiftKey && !wire && mode === 'normal' && (key === 'ArrowLeft' || key === 'ArrowRight')) {
-    const lab = selectedLabel();
-    if (lab) {
-      const want = key === 'ArrowRight' ? (lab.align === 'right' ? 'center' : 'right') : lab.align === 'left' ? 'center' : 'left';
-      commit(() => lab.setAlign(want));
+    const labels = selectedLabels();
+    const primary = selectedLabel() || labels[0];
+    if (primary && labels.length) {
+      const align = key === 'ArrowRight' ? 'right' : 'left';
+      const allAtTarget = labels.every((label) => label.align === align);
+      const want = allAtTarget ? 'center' : align;
+      commit(() => labels.forEach((label) => label.setAlign(want)));
       render();
       ev.preventDefault();
       return;

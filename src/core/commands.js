@@ -8,6 +8,7 @@ import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
 import { BlockDiagram } from './block-model.js';
 import { renderDocument, saveDocument } from './document.js';
+import { analyzeInputImpedance, analyzeOutputImpedance, analyzeTransferFunction } from './analysis/index.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -65,6 +66,16 @@ const FLAG_ARITY = {
   rot: 1,
   value: 1,
   name: 1,
+  reference: 1,
+  model: 1,
+  'ac-ground': 1,
+  mode: 1,
+  'differential-side': 1,
+  'ignore-channel-length-modulation': 0,
+  'ignore-body-effect': 0,
+  'gmro-large': 0,
+  context: 1,
+  input: 1,
   net: 1,
   file: 1,
   mirrorX: 0,
@@ -446,6 +457,9 @@ export function commandHelp() {
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
     '  eval                           - quality report (unconnected/overlaps/off-grid)',
+    '  analyze output-impedance NET [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] - derive a symbolic textbook equation (input is zeroed)',
+    '  analyze input-impedance NET [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] - derive symbolic Z_in',
+    '  analyze transfer-function OUT [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] - derive a symbolic voltage transfer',
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
     '  ascii                          - coarse ASCII layout preview',
@@ -512,6 +526,45 @@ function dispatch(circuit, cmd, pos, flags, io) {
       lines.push('no dangling terminals, no bbox overlaps, all on grid');
     }
     return result(lines.join('\n'), rep, false);
+  }
+  if (cmd === 'analyze' || cmd === 'analysis') {
+    const subject = pos.shift();
+    if (subject !== 'output-impedance' && subject !== 'rout' && subject !== 'zout' && subject !== 'input-impedance' && subject !== 'rin' && subject !== 'zin' && subject !== 'transfer-function' && subject !== 'transfer' && subject !== 'gain') {
+      throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large]');
+    }
+    const target = pos.shift();
+    if (!target || pos.length) throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large]');
+    const analysisOptions = {
+      reference: flags.reference?.[0],
+      acGrounds: flags['ac-ground'],
+      mode: flags.mode?.[0],
+      differentialSide: flags['differential-side']?.[0],
+      models: flags.model,
+      context: flags.context?.[0],
+      input: flags.input?.[0],
+      ignoreChannelLengthModulation: !!flags['ignore-channel-length-modulation'],
+      ignoreBodyEffect: !!flags['ignore-body-effect'],
+      gmroLarge: !!flags['gmro-large'],
+    };
+    const report = subject === 'output-impedance' || subject === 'rout' || subject === 'zout'
+      ? analyzeOutputImpedance(circuit, target, analysisOptions)
+      : subject === 'input-impedance' || subject === 'rin' || subject === 'zin'
+        ? analyzeInputImpedance(circuit, target, analysisOptions)
+        : analyzeTransferFunction(circuit, target, analysisOptions);
+    const lines = [report.ok ? report.equation : `unsupported: ${report.error}`];
+    if (report.systematicEquation && report.systematicEquation !== report.equation) lines.push(`systematic: ${report.systematicEquation}`);
+    if (report.ok) {
+      lines.push(`target: ${report.target.name || report.target.netId}`);
+      lines.push(`reference: ${report.reference.name || report.reference.netId}${report.reference.inferred ? ' (inferred from ground)' : ''}`);
+      if (report.input) lines.push(`input: ${report.input.name || report.input.netId}`);
+      if (report.dependencies?.length) lines.push(`depends on: ${report.dependencies.join(', ')}`);
+    }
+    if (Number.isFinite(report.equationCount)) lines.push(`node system: ${report.equationCount} equations, ${report.unknownCount} unknowns`);
+    for (const equation of report.nodeEquations || report.equations || []) lines.push(`node: ${equation}`);
+    if (report.smallSignalNetlist) lines.push(`small-signal netlist:\n${report.smallSignalNetlist}`);
+    for (const assumption of report.assumptions || []) lines.push(`assumption: ${assumption}`);
+    for (const approximation of report.approximations || []) lines.push(`approximation: ${approximation}`);
+    return result(lines.join('\n'), report, false);
   }
   if (cmd === 'explain' || cmd === 'diagnose') {
     const subject = pos.shift() || 'eval';

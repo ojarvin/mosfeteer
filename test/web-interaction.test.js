@@ -90,6 +90,55 @@ test('new document control exposes one popup with schematic and block choices', 
   assert.doesNotMatch(html, /id="btn-new-circuit"|id="btn-new-block"/);
 });
 
+test('small-signal analysis exposes a model/context popup', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="btn-analysis"/);
+  assert.match(html, /class="toolbar-group analysis-group"[^>]+data-doc-kind="schematic"/);
+  assert.match(html, /id="view-heading"[\s\S]*id="analysis-heading"/);
+  assert.match(html, /id="analysis-dialog"/);
+  assert.match(html, /id="analysis-input-field"[^>]*>Input node/);
+  assert.match(html, /for="analysis-target">Output node/);
+  assert.match(html, /id="analysis-submit"[^>]*>Derive all equations/);
+  assert.match(html, /value="single-ended"/);
+  assert.match(html, /value="input-impedance"/);
+  assert.match(html, /id="analysis-ac-grounds"/);
+  assert.match(html, /id="analysis-models"/);
+  assert.match(html, /value="voltage-transfer"/);
+  assert.match(html, /id="analysis-complementary"/);
+  assert.match(html, /id="analysis-annotate"/);
+  assert.match(html, /id="analysis-equation"/);
+  assert.match(html, /id="analysis-details"/);
+  assert.match(html, /id="analysis-netlist-panel"/);
+  assert.match(html, /id="analysis-netlist"/);
+  assert.match(html, /id="analysis-approx-ro"[^>]+type="checkbox"/);
+  assert.match(html, /id="analysis-approx-body"[^>]+type="checkbox"/);
+  assert.match(html, /id="analysis-approx-gmro"[^>]+type="checkbox"/);
+});
+
+test('analysis form state is scoped and role metadata is restored from the active schematic', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /analysisFormStorageKey\(currentCircuitName\)/);
+  assert.match(main, /pruneAnalysisNetValues\(saved\.acGrounds, visibleNets\(\)\)/);
+  assert.match(main, /pruneAnalysisModelValues\(saved\.models, sortedComps\(\)\.map/);
+  assert.match(main, /defaults\.targetMarked \? defaults\.target : saved\.target/);
+  assert.match(main, /defaults\.inputMarked \? defaults\.input : saved\.input/);
+  assert.match(main, /ignoreChannelLengthModulation: !!analysisApproxRo\?\.checked/);
+  assert.match(main, /ignoreBodyEffect: !!analysisApproxBody\?\.checked/);
+  assert.match(main, /gmroLarge: !!analysisApproxGmRo\?\.checked/);
+});
+
+test('committed inserts repair coincident connectivity and analysis menus support multi-selection', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /const comp = circuit\.addComponent\(pendingPlace\.type/);
+  assert.match(main, /circuit\.connectCoincident\(comp\.refdes\);/);
+  assert.match(main, /circuit\.reconnectCoincidentNets\(\);/);
+  assert.match(main, /circuit\.ensureUniqueTerminals\(\[comp\.refdes\]\);/);
+  assert.match(main, /function analysisComponentTargets\(target/);
+  assert.match(main, /function analysisNetTargets\(target/);
+  assert.match(main, /for \(const component of components\) circuit\.setComponentAnalysis/);
+  assert.match(main, /for \(const net of nets\) circuit\.setNetAnalysis/);
+});
+
 test('schematic and block pointer paths share snapped cursor conversion', () => {
   for (const documentKind of ['circuit', 'block']) {
     assert.deepEqual(worldAndCursorFromClient(50, 70, rect, view), {

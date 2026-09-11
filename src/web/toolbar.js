@@ -14,6 +14,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['u / C-z', 'undo; insert search keeps u as text'],
     ['U / C-y', 'redo'],
     ['Shift+N', 'place one free annotation, then return to selection'],
+    ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place one two-point arrow, then return to selection'],
     ['b', 'place one two-point box, then return to selection'],
     ['l', 'persistent multi-point line annotation placement'],

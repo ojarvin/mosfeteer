@@ -11,6 +11,29 @@ export function canonicalNetName(name) {
   return String(name ?? '').trim();
 }
 
+/** Shared reference markers.  Unnamed markers are global AC references;
+ * entering a marker value (or child label) makes that instance local. */
+export const REFERENCE_MARKER_TYPES = Object.freeze(['ground', 'supply', 'vcm']);
+const REFERENCE_MARKER_INFO = Object.freeze({
+  ground: Object.freeze({ terminal: 'gnd', globalName: 'GND', labelOffset: { x: 0, y: 120 } }),
+  supply: Object.freeze({ terminal: 'p', globalName: 'VDD', labelOffset: { x: 0, y: -120 } }),
+  vcm: Object.freeze({ terminal: 'vcm', globalName: 'VCM', labelOffset: { x: 0, y: 120 } }),
+});
+
+export function referenceMarkerInfo(type) {
+  return REFERENCE_MARKER_INFO[type] || null;
+}
+
+export function isReferenceMarker(component) {
+  return !!component && REFERENCE_MARKER_TYPES.includes(component.type);
+}
+
+export function referenceMarkerName(component) {
+  if (!isReferenceMarker(component)) return '';
+  const label = component.circuit?.labelOf?.(component.refdes);
+  return canonicalNetName(label?._text || '');
+}
+
 // Component moves are automatic edits: unlike an explicit authored waypoint
 // path, every candidate produced while re-anchoring or translating a moved net
 // must satisfy the router's one-cell body-clearance policy. Endpoint re-anchors
@@ -335,6 +358,73 @@ export function parseTermRef(s) {
   return { comp: s.slice(0, idx), term: s.slice(idx + 1) };
 }
 
+/** Strip the common inline/display math delimiters from an equation label.
+ * The delimiters are retained in the editable source so users can see and
+ * continue editing ordinary TeX, but never become visible glyphs. */
+export function stripMathDelimiters(value) {
+  let source = String(value ?? '').trim();
+  if (source.length >= 4 && source.startsWith('$$') && source.endsWith('$$')) return source.slice(2, -2).trim();
+  if (source.length >= 2 && source.startsWith('$') && source.endsWith('$')) return source.slice(1, -1).trim();
+  return source;
+}
+
+/** A compact source approximation used for grid-snapped math label bounds.
+ * TeX command names should not make an equation's box wider than the glyphs
+ * they produce in MathML. This is deliberately a metric helper, not a TeX
+ * evaluator; rendering remains the authoritative MathML representation. */
+export function mathTextForMetrics(value) {
+  let source = stripMathDelimiters(value);
+  const symbols = {
+    parallel: '||', vert: '|', Vert: '||', cdot: '·', times: '×', pm: '±', mp: '∓',
+    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→',
+  };
+  let previous;
+  do {
+    previous = source;
+    source = source
+      .replace(/\\frac\{((?:[^{}]|\{[^{}]*\})*)\}\{((?:[^{}]|\{[^{}]*\})*)\}/g, '($1/$2)')
+      .replace(/\\sqrt\{((?:[^{}]|\{[^{}]*\})*)\}/g, '√($1)')
+      .replace(/\\(?:mathrm|text|operatorname)\{([^{}]*)\}/g, '$1');
+  } while (source !== previous);
+  source = source
+    .replace(/\\(?:left|right|middle)\s*/g, '')
+    .replace(/\\[,;!]\s*/g, '')
+    .replace(/\\([|])/g, '$1')
+    .replace(/\\([A-Za-z]+)/g, (_, name) => symbols[name] || name);
+  return source;
+}
+
+/** Keep parallel-resistance bars unambiguous in persisted math-label source.
+ * A bare `||` is convenient to type, but TeX parses it as two independent
+ * delimiters (and browsers may add operator spacing).  Store the escaped
+ * spelling so editing, JSON, and SVG export all agree on `\|\|`. */
+export function normalizeMathSource(value) {
+  return String(value ?? '')
+    .replace(/\\parallel/g, '\\|\\|')
+    .replace(/(^|[^\\])\|\|/g, '$1\\|\\|');
+}
+
+/**
+ * Component identifiers remain compact and unambiguous in connectivity refs
+ * (`M1.g`), but the editor also accepts textbook-style numeric subscripts in
+ * rename fields (`M_{1}`). Keep the identifier canonical while letting the
+ * label renderer provide the subscript typography.
+ */
+export function normalizeComponentRefdes(value) {
+  const raw = String(value ?? '').trim();
+  const explicit = raw.match(/^([A-Za-z]+)_\{(\d+)\}$/);
+  return explicit ? `${explicit[1]}${explicit[2]}` : raw;
+}
+
+/** Compare a label's source text with a raw component refdes.  This treats
+ * `M1` and `M_{1}` as the same instance label, but does not mistake a
+ * superscript or a custom marker label for the refdes. */
+function labelMatchesRefdes(text, refdes) {
+  if (String(text) === refdes) return true;
+  const runs = parseLabelRuns(text, { autoSubscript: false });
+  return runs.length > 0 && runs.every((run) => !run.super) && runs.map((run) => run.text).join('') === refdes;
+}
+
 /**
  * A free-floating or component-owned text label. The label's ANCHOR is always
  * a grid point. The rendered box is derived from the tight text bounds, then
@@ -359,7 +449,10 @@ export class LabelInstance {
     if (this.kind !== 'label' && (this.netId || opts.owner || this.parent || this.connectorId)) throw new Error('annotations cannot have owners, nets, or connectors');
     if (this.parent && (this.netId || opts.owner || this.connectorId)) throw new Error('child labels cannot have owners, nets, or connectors');
     if (this.connectorId && this.netId) throw new Error('label cannot have both connectorId and netId');
-    this._text = opts.text !== undefined ? String(opts.text) : 'label';
+    this.math = !!opts.math;
+    this._text = opts.text !== undefined
+      ? (this.math ? normalizeMathSource(opts.text) : String(opts.text))
+      : 'label';
     this.align = ['center', 'left', 'right'].includes(opts.align) ? opts.align : 'center';
     this.style = {
       color: opts.style?.color || '#111',
@@ -394,7 +487,10 @@ export class LabelInstance {
   set text(value) {
     if (this.netId && this.circuit?.nets.has(this.netId)) this.circuit.renameNet(this.netId, value);
     else {
-      this._text = String(value);
+      const next = this.math ? normalizeMathSource(value) : String(value);
+      if (this.owner && this.circuit._syncInterfacePinLabel(this.owner, next)) return;
+      if (this.owner && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
+      this._text = next;
       this.circuit.invalidateRoutingCache();
     }
   }
@@ -438,7 +534,8 @@ export class LabelInstance {
   /** Tight width (world units) of the rendered text line. Sub/superscript runs
    *  render smaller (0.62 em) so they contribute less width to the box. */
   textWidth() {
-    return Math.max(...labelRunLines(this.text, { autoSubscript: !!this.owner }).map((line) => line.reduce((width, r) => {
+    const source = this.math ? mathTextForMetrics(this.text) : this.text;
+    return Math.max(...labelRunLines(source, { autoSubscript: !this.math && !!this.owner }).map((line) => line.reduce((width, r) => {
       const scale = r.sub || r.super ? 0.62 : 1;
       return width + [...r.text].reduce((sum, ch) => sum + charWidth(ch) * scale, 0);
     }, 0)), 0);
@@ -451,12 +548,31 @@ export class LabelInstance {
 
   /** Tight height (world units) of the rendered text line. */
   textHeight() {
+    if (this.math) {
+      const source = stripMathDelimiters(this.text);
+      // MathML scripts and fractions need more ascent/descent than ordinary
+      // label tspans. The renderer adds a small internal inset as well.
+      // A simple fraction needs a four-cell content box before the outer
+      // two-cell math margin. Nodal-analysis equations can contain several
+      // nested fractions; reserve additional rows based on the fraction count
+      // so the foreignObject never clips a denominator.
+      const fractions = (source.match(/\\frac/g) || []).length;
+      if (fractions >= 9) return LABEL_CAP_H * 9.2;
+      if (fractions >= 4) return LABEL_CAP_H * 6.2;
+      if (fractions > 0) return LABEL_CAP_H * 3.2;
+      if (/\\(?:sqrt|sum|int)|[_^]/.test(source)) return LABEL_CAP_H * 2.2;
+      return LABEL_CAP_H * 1.7;
+    }
     return Math.max(1, this.text.split('\n').length) * LABEL_CAP_H;
   }
 
   /** Even number of grid cells >= 2 needed to hold the text horizontally. */
   colWidth() {
     let n = Math.ceil(this.textWidth() / GRID);
+    // MathML font metrics are not available in the model layer.  Reserve one
+    // grid cell on each side of math labels so wide glyphs, stretchy
+    // delimiters, and browser-specific font shaping do not hit the box edge.
+    if (this.math) n += 2;
     n += n % 2; // even so the centered box's center stays on a grid point
     return Math.max(2, n);
   }
@@ -464,6 +580,7 @@ export class LabelInstance {
   /** Even number of grid cells >= 2 needed to hold the text vertically. */
   rowHeight() {
     let n = Math.ceil(this.textHeight() / GRID);
+    if (this.math) n += 2;
     n += n % 2;
     return Math.max(2, n);
   }
@@ -524,7 +641,10 @@ export class LabelInstance {
     if (this.netId) {
       this.circuit.renameNet(this.netId, text);
     } else {
-      this._text = String(text);
+      const next = this.math ? normalizeMathSource(text) : String(text);
+      if (this.owner && this.circuit._syncInterfacePinLabel(this.owner, next)) return;
+      if (this.owner && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
+      this._text = next;
       this.circuit.invalidateRoutingCache();
     }
   }
@@ -602,6 +722,7 @@ export class LabelInstance {
       id: this.id,
       kind: this.kind,
       text: this.netId ? this.text : this._text,
+      ...(this.math ? { math: true } : {}),
       align: this.align,
       owner: this.owner,
       parent: this.parent,
@@ -626,6 +747,10 @@ export class ComponentInstance {
     this.def = getSymbol(type);
     this.refdes = opts.refdes || circuit.nextRefdes(this.def.refPrefix || type.toUpperCase());
     this.value = opts.value !== undefined ? String(opts.value) : this.def.defaultValue;
+    this.analysis = {
+      model: opts.analysis?.model || opts.analysis?.smallSignalModel || null,
+      role: opts.analysis?.role || null,
+    };
     this.transform = {
       x: snapPoint(opts.x || 0, opts.y || 0).x,
       y: snapPoint(opts.x || 0, opts.y || 0).y,
@@ -670,6 +795,7 @@ export class ComponentInstance {
       refdes: this.refdes,
       type: this.type,
       value: this.value,
+      ...(this.analysis.model || this.analysis.role ? { analysis: { ...this.analysis } } : {}),
       transform: { ...this.transform },
       style: { ...this.style },
       drawOrder: this.drawOrder,
@@ -689,6 +815,10 @@ export class Net {
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
     this.wireStyles = { ...(opts.wireStyles || {}) };
     this.preserveEmpty = !!opts.preserveEmpty;
+    this.analysis = {
+      role: opts.analysis?.role || null,
+      acGround: !!opts.analysis?.acGround,
+    };
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
     /** Net policy: managed retains the historic autorouting behavior; fixed
@@ -823,6 +953,7 @@ export class Net {
       drawOrder: this.drawOrder,
       wireStyles: Object.fromEntries(Object.entries(this.wireStyles).map(([key, style]) => [key, { ...style }])),
       preserveEmpty: this.preserveEmpty,
+      ...(this.analysis.role || this.analysis.acGround ? { analysis: { ...this.analysis } } : {}),
       terminals: this.terminals.map((t) => ({ ...t })),
       routingMode: this.routingMode,
       allowDiagonal: this.allowDiagonal,
@@ -986,10 +1117,10 @@ export class Circuit {
     const inst = new ComponentInstance(this, type, opts);
     if (this.components.has(inst.refdes)) throw new Error(`reference designator ${inst.refdes} already in use`);
     this.components.set(inst.refdes, inst);
-    // Transistor-style symbols carry a dedicated instance label from the start.
-    if (inst.def.labelOffset && !opts.noLabel) {
-      this.addLabel({ text: inst.refdes, owner: inst.refdes, offset: inst.def.labelOffset, align: 'center', style: { color: inst.style.color } });
-    }
+    // Every symbol with a label offset carries its instance label from the
+    // start.  The label stores the compact refdes (M1) and the renderer
+    // presents its trailing number as a textbook subscript (M₁).
+    if (!opts.noLabel) this._ensureComponentInstanceLabel(inst);
     // Touching pins connect: a newly placed component whose terminal lands on
     // another component's terminal joins that net immediately. Skipped while a
     // state is being loaded (fromJSON) so explicit nets are not pre-empted.
@@ -1011,13 +1142,16 @@ export class Circuit {
   renameComponent(refdes, newRefdes) {
     this.invalidateRoutingCache();
     const component = this.getComponent(refdes);
-    const next = String(newRefdes ?? '').trim();
+    const next = normalizeComponentRefdes(newRefdes);
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) {
       throw new Error(`invalid refdes "${next}"`);
     }
     if (next === refdes) return component;
     if (this.components.has(next)) throw new Error(`refdes ${next} taken`);
 
+    const ownedLabels = [...this.labels.values()].filter((label) => label.owner === refdes);
+    const interfacePin = ['input', 'output', 'inputoutput'].includes(component.type);
+    const referenceMarker = isReferenceMarker(component);
     this.components.delete(refdes);
     component.refdes = next;
     this.components.set(next, component);
@@ -1032,12 +1166,44 @@ export class Circuit {
         }
       }
     }
-    const label = this.labelOf(refdes);
-    if (label) {
+    for (const label of ownedLabels) {
       label.owner = next;
-      if (label.text === refdes) label.text = next;
+      // Interface labels can be physical net names, and reference-marker
+      // labels can be local rail names. Preserve those custom values while
+      // still updating labels that actually represented the old refdes.
+      const isRefdesLabel = labelMatchesRefdes(label._text, refdes);
+      if (referenceMarker || interfacePin) {
+        if (isRefdesLabel) {
+          if (interfacePin) label.setText(next);
+          else label._text = next;
+        }
+      } else {
+        // Normal component-owned labels are instance labels by default. Keep
+        // the refdes-derived occurrences synchronized, including explicit
+        // `_{...}` source text, while preserving a deliberately customized
+        // child label (owned-label edits are otherwise independent).
+        if (isRefdesLabel) label._text = next;
+      }
     }
+    this._ensureComponentInstanceLabel(component);
     return component;
+  }
+
+  /** Ensure a component that supports instance labels has one.  This also
+   * repairs legacy documents whose labels predate the owned-label model. */
+  _ensureComponentInstanceLabel(component) {
+    if (!component?.def?.labelOffset) return null;
+    const existing = this.labelOf(component.refdes);
+    if (existing) return existing;
+    const isInterfacePin = ['input', 'output', 'inputoutput'].includes(component.type);
+    const net = isInterfacePin ? this.netOfTerminal({ comp: component.refdes, term: 'p' }) : null;
+    return this.addLabel({
+      text: net?.name || component.refdes,
+      owner: component.refdes,
+      offset: component.def.labelOffset,
+      align: 'center',
+      style: { color: component.style.color },
+    });
   }
 
 
@@ -1157,7 +1323,48 @@ export class Circuit {
   setValue(refdes, value) {
     const c = this.getComponent(refdes);
     c.value = String(value);
+    if (isReferenceMarker(c) && this.labelOf(refdes)) this._syncReferenceMarkerLabel(refdes, c.value);
     return c;
+  }
+
+  /** Persist optional textbook small-signal metadata on a device.  These
+   * attributes are descriptive model hints, not electrical connectivity. */
+  setComponentAnalysis(refdes, attrs = {}) {
+    const component = this.getComponent(refdes);
+    const model = attrs.model ?? attrs.smallSignalModel;
+    const role = attrs.role;
+    if (model !== undefined && model !== null && model !== '' && !['current-source', 'triode', 'ro'].includes(String(model))) {
+      throw new Error(`unknown small-signal device model "${model}"`);
+    }
+    if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
+      throw new Error(`unknown small-signal device role "${role}"`);
+    }
+    component.analysis = {
+      model: model === undefined ? component.analysis?.model || null : (model ? String(model) : null),
+      role: role === undefined ? component.analysis?.role || null : (role ? String(role) : null),
+    };
+    if (component.analysis.role === 'dc-bias') {
+      for (const terminal of component.def.terminals) {
+        const net = this.netOfTerminal({ comp: component.refdes, term: terminal.name });
+        if (net) this.setNetAnalysis(net, { role: 'dc-bias', acGround: true });
+      }
+    }
+    return component;
+  }
+
+  /** Persist optional analysis metadata on a physical net. */
+  setNetAnalysis(netOrId, attrs = {}) {
+    const net = this._resolveNet(netOrId);
+    const role = attrs.role;
+    if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
+      throw new Error(`unknown small-signal net role "${role}"`);
+    }
+    net.analysis = {
+      role: role === undefined ? net.analysis?.role || null : (role ? String(role) : null),
+      acGround: attrs.acGround === undefined ? !!net.analysis?.acGround : !!attrs.acGround,
+    };
+    if (net.analysis.role === 'dc-bias') net.analysis.acGround = true;
+    return net;
   }
 
   removeComponent(refdes) {
@@ -1247,8 +1454,105 @@ export class Circuit {
     const canonical = canonicalNetName(name);
     if (!canonical && this.netLabels(net).length > 0) throw new Error(`cannot clear name of net ${net.id} while net labels are attached`);
     net.name = canonical;
+    this._syncInterfacePinLabels(net);
+    this._syncReferenceMarkerLabels(net);
     this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     return net;
+  }
+
+  /** Interface symbols use their owned label as the physical net name.  The
+   * first pin on a net is the deterministic authority when several pins share
+   * one net; all other pin labels follow that name. */
+  _syncInterfacePinLabels(netOrId, { enforceName = false } = {}) {
+    const net = this._resolveNet(netOrId);
+    const pins = net.terminals
+      .map(({ comp }) => this.components.get(comp))
+      .filter((component) => component && ['input', 'output', 'inputoutput'].includes(component.type));
+    if (!pins.length) return net;
+    if (enforceName) {
+      const firstLabel = this.labelOf(pins[0].refdes);
+      const preferred = canonicalNetName(firstLabel?.text || pins[0].refdes);
+      if (preferred && net.name !== preferred) net.name = preferred;
+    }
+    const name = net.name;
+    for (const pin of pins) {
+      const label = this.labelOf(pin.refdes);
+      if (label && label._text !== name) label._text = name;
+    }
+    return net;
+  }
+
+  _syncInterfacePinLabel(refdes, text) {
+    const component = this.components.get(refdes);
+    if (!component || !['input', 'output', 'inputoutput'].includes(component.type)) return false;
+    const net = this.netOfTerminal({ comp: refdes, term: 'p' });
+    if (!net) return false;
+    const name = canonicalNetName(text);
+    if (name !== net.name) this.renameNet(net, name);
+    else this._syncInterfacePinLabels(net);
+    return true;
+  }
+
+  _syncReferenceMarkerLabel(refdes, text) {
+    const component = this.components.get(refdes);
+    if (!isReferenceMarker(component)) return false;
+    const previous = referenceMarkerName(component);
+    const next = canonicalNetName(text);
+    component.value = next;
+    for (const label of this.labels.values()) {
+      if (label.owner === refdes && label._text !== next) label._text = next;
+    }
+    const info = referenceMarkerInfo(component.type);
+    const net = this.netOfTerminal({ comp: refdes, term: info.terminal });
+    if (net && next && net.name !== next) this.renameNet(net, next);
+    else if (net && !next && previous && net.name === previous) this.renameNet(net, info.globalName);
+    this.invalidateRoutingCache();
+    return true;
+  }
+
+  _syncReferenceMarkerLabels(netOrId) {
+    const net = this._resolveNet(netOrId);
+    for (const terminal of net.terminals) {
+      const component = this.components.get(terminal.comp);
+      if (!isReferenceMarker(component) || !referenceMarkerName(component)) continue;
+      const info = referenceMarkerInfo(component.type);
+      if (terminal.term !== info.terminal) continue;
+      component.value = net.name;
+      for (const label of this.labels.values()) {
+        if (label.owner === component.refdes) label._text = net.name;
+      }
+    }
+    return net;
+  }
+
+  /** Name a marker-attached net only when it is currently unnamed.  The
+   * marker's value is intentionally not used as a global reference when it is
+   * non-empty: that is the explicit local-label escape hatch. */
+  _syncReferenceMarkerNetName(netOrId) {
+    const net = this._resolveNet(netOrId);
+    if (net.name) return net;
+    for (const terminal of net.terminals) {
+      const component = this.components.get(terminal.comp);
+      if (!isReferenceMarker(component)) continue;
+      const info = referenceMarkerInfo(component.type);
+      if (terminal.term !== info.terminal) continue;
+      const name = referenceMarkerName(component) || info.globalName;
+      if (name) {
+        net.name = name;
+        break;
+      }
+    }
+    return net;
+  }
+
+  _isAutoReferenceName(net, name) {
+    if (!net || !name) return false;
+    return net.terminals.some((terminal) => {
+      const component = this.components.get(terminal.comp);
+      if (!isReferenceMarker(component) || referenceMarkerName(component)) return false;
+      const info = referenceMarkerInfo(component.type);
+      return terminal.term === info.terminal && info.globalName === name;
+    });
   }
 
   _defaultNetLabelSide(net, anchor) {
@@ -2028,6 +2332,7 @@ export class Circuit {
       if (!terminal && targetIsInterior && !net.junctions.some((p) => p.x === targetPoint.x && p.y === targetPoint.y)) {
         net.junctions.push({ ...targetPoint });
       }
+      this._syncInterfacePinLabels(net, { enforceName: true });
       this.syncJunctionSolders();
       return net;
     }
@@ -2036,6 +2341,7 @@ export class Circuit {
     if (!targetNet && terminal) {
       if (!net.terminals.some((t) => t.comp === terminal.comp && t.term === terminal.term)) net.terminals.push({ ...terminal });
       this._replaceWireEndpoint(net, pathIndex, endpointIndex, targetPoint, terminal);
+      this._syncInterfacePinLabels(net, { enforceName: true });
       return net;
     }
     const sourceEntries = this._fixedPathEntries(net);
@@ -2074,6 +2380,7 @@ export class Circuit {
         keep.junctions.push({ ...targetPoint });
       }
     }
+    this._syncInterfacePinLabels(keep, { enforceName: true });
     this.syncJunctionSolders();
     return keep;
   }
@@ -2113,6 +2420,7 @@ export class Circuit {
         id,
         net,
         name: net.name,
+        analysis: { ...(net.analysis || {}) },
         preserveEmpty: net.preserveEmpty,
         allowDiagonal: net.allowDiagonal,
         terminals: net.terminals.map((t) => ({ ...t })),
@@ -2140,6 +2448,7 @@ export class Circuit {
     for (const saved of snapshot.nets) {
       const net = saved.net;
       net.name = saved.name;
+      net.analysis = { ...(saved.analysis || {}) };
       net.preserveEmpty = saved.preserveEmpty;
       net.allowDiagonal = saved.routingMode === 'managed' && saved.allowDiagonal === true;
       net.terminals = saved.terminals.map((t) => ({ ...t }));
@@ -2195,6 +2504,18 @@ export class Circuit {
     return [...new Set(nets.map((net) => canonicalNetName(net.name)).filter(Boolean))];
   }
 
+  _syncAnalysisAttributes(net) {
+    if (!net) return net;
+    for (const terminal of net.terminals) {
+      const component = this.components.get(terminal.comp);
+      if (component?.analysis?.role === 'dc-bias') {
+        net.analysis = { ...(net.analysis || {}), role: 'dc-bias', acGround: true };
+        break;
+      }
+    }
+    return net;
+  }
+
   _recordNetNameWarning(primary, sources) {
     const sourceIds = new Set(sources.map((net) => net.id));
     const names = new Set(this._namedNetNames(sources));
@@ -2227,9 +2548,18 @@ export class Circuit {
   _mergeNets(primary, others = [], terminals = null, options = {}) {
     const sources = [primary, ...others].filter(Boolean).filter((net, i, all) => all.indexOf(net) === i);
     if (!sources.length) throw new Error('cannot merge empty net set');
-    const name = this._mergeNameConflict(sources, { allowConflict: options.allowNameConflict });
+    let name = this._mergeNameConflict(sources, { allowConflict: options.allowNameConflict });
+    if (options.allowNameConflict) {
+      const explicit = sources
+        .map((source) => source.name)
+        .filter((candidate) => candidate && !sources.some((source) => this._isAutoReferenceName(source, candidate)));
+      if (explicit.length) name = explicit[0];
+    }
     if (options.allowNameConflict) this._recordNetNameWarning(primary, sources);
     primary.name = name;
+    if (sources.some((source) => source.analysis?.acGround || source.analysis?.role === 'dc-bias')) {
+      primary.analysis = { ...(primary.analysis || {}), role: 'dc-bias', acGround: true };
+    }
     const members = terminals || sources.flatMap((net) => net.terminals);
     primary.terminals = [];
     for (const t of members) {
@@ -2266,6 +2596,9 @@ export class Circuit {
     this._mergeNameConflict(involvedNets, { allowConflict: true });
     if (involvedNets.length === 1 &&
         okRefs.every((r) => involved.has(`${r.comp}.${r.term}`))) {
+      this._syncReferenceMarkerNetName(involvedNets[0]);
+      this._syncAnalysisAttributes(involvedNets[0]);
+      this._syncInterfacePinLabels(involvedNets[0], { enforceName: true });
       return involvedNets[0];
     }
     const growsFixed = involvedNets.some((n) => n.routingMode === 'fixed') &&
@@ -2297,6 +2630,9 @@ export class Circuit {
       primary.junctions = [...junctions, ...primary.junctions].filter((point, index, all) =>
         all.findIndex((other) => other.x === point.x && other.y === point.y) === index);
       this._reduceNet(primary);
+      this._syncReferenceMarkerNetName(primary);
+      this._syncAnalysisAttributes(primary);
+      this._syncInterfacePinLabels(primary, { enforceName: true });
       this._inferCrossCoupling(new Set([primary]));
       this.syncJunctionSolders();
       return primary;
@@ -2318,7 +2654,12 @@ export class Circuit {
           const sourceRef = source();
           this.wireTo(`${sourceRef.comp}.${sourceRef.term}`, this.getComponent(r.comp).terminalWorld(r.term), [], routeOptions());
         }
-        if (net) return net;
+        if (net) {
+          this._syncReferenceMarkerNetName(net);
+          this._syncAnalysisAttributes(net);
+          this._syncInterfacePinLabels(net, { enforceName: true });
+          return net;
+        }
       } catch (err) {
         this._restoreNetTopology(topology);
         throw err;
@@ -2368,6 +2709,9 @@ export class Circuit {
       }
     }
     this._reduceNet(net);
+    this._syncReferenceMarkerNetName(net);
+    this._syncAnalysisAttributes(net);
+    this._syncInterfacePinLabels(net, { enforceName: true });
     this._inferCrossCoupling(new Set([net]));
     this.syncJunctionSolders();
     return net;
@@ -2890,6 +3234,8 @@ export class Circuit {
       start: start.term,
       end: end.term,
     }, true)], junctions);
+    this._syncReferenceMarkerNetName(net);
+    this._syncInterfacePinLabels(net, { enforceName: true });
     this.syncJunctionSolders();
     return net;
   }
@@ -2944,7 +3290,11 @@ export class Circuit {
     // being treated as an obstacle and turning a harmless duplicate request
     // into an apparent routing failure.
     if (points.length === 0 && srcNet && srcNet === targetNet &&
-        wirePointsConnected(srcNet, srcPos, P, this, identity?.pathIndex)) return srcNet;
+        wirePointsConnected(srcNet, srcPos, P, this, identity?.pathIndex)) {
+      this._syncReferenceMarkerNetName(srcNet);
+      this._syncInterfacePinLabels(srcNet, { enforceName: true });
+      return srcNet;
+    }
 
     const waypoints = points.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
 
@@ -3043,6 +3393,8 @@ export class Circuit {
       this._restoreNetTopology(topology);
       throw new Error('unable to route wire safely');
     }
+    this._syncReferenceMarkerNetName(net);
+    this._syncInterfacePinLabels(net, { enforceName: true });
     this._inferCrossCoupling(new Set([net]));
     this.syncJunctionSolders();
     return net;
@@ -3087,6 +3439,8 @@ export class Circuit {
     }
     if (originNet && originNet === targetNet && !points.length &&
         wirePointsConnected(originNet, P0, P, this, identity?.pathIndex)) {
+      this._syncReferenceMarkerNetName(originNet);
+      this._syncInterfacePinLabels(originNet, { enforceName: true });
       return originNet;
     }
     if (P0.x === P.x && originNet && targetNet && originNet !== targetNet) {
@@ -3104,6 +3458,7 @@ export class Circuit {
       for (const point of junctions) {
         if (!originNet.junctions.some((p) => p.x === point.x && p.y === point.y)) originNet.junctions.push({ ...point });
       }
+      this._syncInterfacePinLabels(originNet, { enforceName: true });
       this.syncJunctionSolders();
       return originNet;
     }
@@ -3159,6 +3514,8 @@ export class Circuit {
     net.route = branches.length ? clonePath(branches[0], net.allowDiagonal) : null;
     net.junctions = this._netJunctions(net, branches);
     if (!preserveExistingGeometry) this._reduceNet(net);
+    this._syncReferenceMarkerNetName(net);
+    this._syncInterfacePinLabels(net, { enforceName: true });
     this._inferCrossCoupling(new Set([net]));
     this.syncJunctionSolders();
     return net;
@@ -3580,6 +3937,8 @@ export class Circuit {
     if (net.terminals.some((t) => t.comp === r.comp && t.term === r.term)) return net;
     if (net.routingMode === 'fixed') throw new Error('cannot grow a fixed net with managed connect; use wireDirectTo');
     net.terminals.push(r);
+    this._syncReferenceMarkerNetName(net);
+    this._syncInterfacePinLabels(net, { enforceName: true });
     this._inferCrossCoupling(new Set([net]));
     this.syncJunctionSolders();
     return net;
@@ -3745,6 +4104,7 @@ export class Circuit {
         mirrorX: c.transform.mirrorX,
         mirrorY: c.transform.mirrorY,
         style: c.style,
+        analysis: c.analysis,
         drawOrder: c.drawOrder,
         noLabel: true,
       });
@@ -3755,6 +4115,7 @@ export class Circuit {
       const net = new Net(circuit, {
         name: n.name,
         style: n.style,
+        analysis: n.analysis,
         drawOrder: n.drawOrder,
         wireStyles: n.wireStyles,
         routingMode: fixed ? 'fixed' : 'managed',
@@ -3814,6 +4175,7 @@ export class Circuit {
           owner: l.owner || null,
           parent: l.parent || null,
           netId: l.netId || null,
+          math: !!l.math,
           netSide: l.netSide,
           offset: l.offset || null,
           x: l.anchor ? l.anchor.x : 0,
@@ -3829,6 +4191,11 @@ export class Circuit {
       }
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
       if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld())) circuit.labels.delete(label.id);
+    }
+    for (const net of circuit.nets.values()) {
+      circuit._syncReferenceMarkerNetName(net);
+      circuit._syncAnalysisAttributes(net);
+      circuit._syncInterfacePinLabels(net, { enforceName: !net.name });
     }
     // every junction is a real vertex, drop duplicate branches, and reduce each
     // net to a minimal connected structure (no parallel wires, no loops).

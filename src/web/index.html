@@ -77,6 +77,10 @@
         <button id="btn-crosshair" data-icon="crosshair" title="Hide the crosshair (C)">Crosshair</button>
         <button id="btn-theme" data-icon="moon" title="Switch to dark theme (D)">Dark</button>
       </div>
+      <div class="toolbar-group analysis-group" aria-labelledby="analysis-heading" data-doc-kind="schematic">
+        <span class="toolbar-group-label" id="analysis-heading">Analysis</span>
+        <button id="btn-analysis" data-icon="analysis" title="Open small-signal analysis (persistent context)">Analyze</button>
+      </div>
     </div>
 
   </header>
@@ -111,6 +115,71 @@
       <pre id="help-dialog-content"></pre>
       <div class="dialog-actions">
         <button value="cancel" data-icon="x-circle">Close <kbd>Esc</kbd></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="analysis-dialog" class="analysis-dialog" aria-labelledby="analysis-dialog-title">
+    <form id="analysis-form">
+      <h2 id="analysis-dialog-title">Small-signal analysis</h2>
+      <p class="analysis-intro">Choose the input and output nodes first. One derivation produces symbolic input impedance, output impedance, and voltage-transfer equations; no numerical values are evaluated.</p>
+      <div class="analysis-grid">
+        <label for="analysis-kind" hidden>Analysis
+          <select id="analysis-kind" name="kind">
+            <option value="output-impedance">Output impedance</option>
+            <option value="input-impedance">Input impedance</option>
+            <option value="voltage-transfer">Voltage transfer</option>
+          </select>
+        </label>
+        <label id="analysis-input-field" for="analysis-input">Input node
+          <select id="analysis-input" name="input"></select>
+        </label>
+        <label for="analysis-target">Output node
+          <select id="analysis-target" name="target" required></select>
+        </label>
+        <label for="analysis-reference">Reference (optional)
+          <select id="analysis-reference" name="reference"></select>
+        </label>
+        <label for="analysis-mode">Equivalent circuit
+          <select id="analysis-mode" name="mode">
+            <option value="single-ended">Single-ended equivalent</option>
+            <option value="differential">Differential input, single-ended output</option>
+          </select>
+        </label>
+        <label id="analysis-complementary-field" for="analysis-complementary" hidden>Complementary side (AC ground)
+          <select id="analysis-complementary" name="differentialSide"></select>
+        </label>
+      </div>
+      <fieldset>
+        <legend>Small-signal context</legend>
+        <label for="analysis-ac-grounds">Additional AC-ground ports/nets</label>
+        <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" />
+        <p class="field-hint">Use named nets, physical net IDs, or terminal references. These DC bias ports are treated as AC ground.</p>
+        <label for="analysis-models">Device model overrides</label>
+        <input id="analysis-models" name="models" type="text" placeholder="M1=current-source, M2=r_o" autocomplete="off" spellcheck="false" />
+        <p class="field-hint">For example, mark a transistor used as a bias current source as an ideal small-signal current source.</p>
+        <label for="analysis-context">Additional context</label>
+        <textarea id="analysis-context" name="context" rows="3" placeholder="Describe bias assumptions or which side of a differential pair is held quiet."></textarea>
+      </fieldset>
+      <fieldset class="analysis-approximations">
+        <legend>Textbook approximations</legend>
+        <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> Ignore channel-length modulation (<span class="math-inline">r<sub>o</sub> → ∞</span>)</label>
+        <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" /> Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</label>
+        <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" /> Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></label>
+        <p class="field-hint">These are explicit Razavi-style simplifications. Exact symbolic equations remain in the details, and every selected approximation is listed as an assumption.</p>
+      </fieldset>
+      <div id="analysis-result" class="analysis-result" aria-live="polite" hidden>
+        <div id="analysis-equation" class="analysis-equation"></div>
+        <pre id="analysis-details" class="analysis-details"></pre>
+        <details id="analysis-netlist-panel" class="analysis-netlist">
+          <summary>Small-signal netlist</summary>
+          <pre id="analysis-netlist"></pre>
+        </details>
+      </div>
+      <div class="dialog-actions">
+        <button id="analysis-cancel" type="button" data-icon="x-circle">Close <kbd>Esc</kbd></button>
+        <button id="analysis-annotate" type="button" data-icon="text" hidden>Annotate schematic</button>
+        <button id="analysis-submit" type="submit" data-icon="check" class="confirm-action">Derive all equations</button>
       </div>
     </form>
   </dialog>

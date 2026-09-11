@@ -117,6 +117,56 @@ test('svgString renders VCM outline without a VCM instance label', () => {
   assert.doesNotMatch(svg, /<text\b/, 'VCM has no instance label');
 });
 
+test('svgString renders named reference marker values without adding a refdes', () => {
+  const c = new Circuit();
+  c.addComponent('ground', { refdes: 'GND1', x: 400, y: 120, value: 'LOCAL_GND' });
+  c.addComponent('vcm', { refdes: 'VCM1', x: 600, y: 120, value: 'VCM_A' });
+  const svg = svgString(c);
+  assert.match(svg, />LOCAL_GND</);
+  assert.match(svg, />VCM_A</);
+  assert.doesNotMatch(svg, />GND1</);
+  assert.doesNotMatch(svg, />VCM1</);
+});
+
+test('svgString renders math labels as live MathML instead of literal TeX', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$Z_{out} = r_{o1}$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  assert.match(svg, /<foreignObject\b/);
+  assert.match(svg, /<math xmlns="http:\/\/www\.w3\.org\/1998\/Math\/MathML"/);
+  assert.match(svg, /<msub><mi>Z<\/mi><mrow><mi>o<\/mi><mi>u<\/mi><mi>t<\/mi><\/mrow><\/msub>/);
+  assert.doesNotMatch(svg, /<text[^>]*>Z_\{out\}/);
+  assert.doesNotMatch(svg, /<mrow>[^<]*\$\$Z/);
+});
+
+test('math labels use scalable textbook parallel bars and fraction space', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$\\left(R_{1} \\|\\| R_{2}\\right)$$', x: 400, y: 120, math: true });
+  const fraction = c.addLabel({ text: '$$\\frac{1}{R_{1}}$$', x: 400, y: 320, math: true });
+  const svg = svgString(c);
+  assert.match(svg, /<mo fence="true" stretchy="true" minsize="1\.2em">\(<\/mo>/);
+  assert.equal((svg.match(/<mo fence="false" stretchy="true" minsize="1\.2em" lspace="0em" rspace="0em">\|<\/mo>/g) || []).length, 2);
+  assert.match(svg, /aria-label="Math label [^"]*\\\|\\\|/);
+  assert.match(svg, /font-family:'Latin Modern Math','Computer Modern'/);
+  assert.equal(fraction.bbox().h, 240, 'fraction labels reserve extra vertical margin');
+});
+
+test('complex math labels reserve extra rows for nested fractions', () => {
+  const c = new Circuit();
+  const label = c.addLabel({ text: '$$Z = \\frac{1}{R_{1}} + \\frac{1}{\\frac{1}{R_{2}} + \\frac{1}{R_{3}}}$$', x: 400, y: 120, math: true });
+  assert.ok(label.bbox().h >= 240, 'nested fractions get a taller box');
+  assert.ok(label.bbox().w > 0, 'nested fractions reserve horizontal margin');
+});
+
+test('math label default ink follows the theme while explicit colors remain literal', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$Z_{out}$$', x: 400, y: 120, math: true });
+  c.addLabel({ text: '$$I_{D}$$', x: 400, y: 200, math: true, style: { color: '#d00' } });
+  const svg = svgString(c);
+  assert.match(svg, /class="schematic-math-label"[^>]+color:var\(--svg-ink, #111\)/);
+  assert.match(svg, /class="schematic-math-label"[^>]+color:#d00/);
+});
+
 test('svgString draws value text when present', () => {
   const c = new Circuit();
   c.addComponent('resistor', { x: 480, y: 0, value: '1k' });

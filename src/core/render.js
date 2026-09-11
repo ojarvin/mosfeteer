@@ -2,7 +2,7 @@ import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
 import { fontAttrs, resolveColor, strokeAttrs, styleAttrs } from './style.js';
-import { LABEL_FONT_SIZE, LabelInstance, parseLabelRuns } from './model.js';
+import { LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 
 function escapeSvg(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -85,6 +85,136 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
     ? renderRuns(lineRuns[0])
     : lineRuns.map((line, lineIndex) => `<tspan x="${fmt(x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
   return `<text ${attrs}>${body}</text>`;
+}
+
+const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
+
+function mathMlAtom(value, kind = 'mi', attrs = '') {
+  return `<${kind}${attrs ? ` ${attrs}` : ''}>${escapeSvg(value)}</${kind}>`;
+}
+
+function mathMlDelimiter(value) {
+  return mathMlAtom(value, 'mo', 'fence="true" stretchy="true" minsize="1.2em"');
+}
+
+function mathMlParallel() {
+  // MathML treats `mo` elements as operators and normally inserts invisible
+  // l/r spacing around each one.  That makes the two bars in `\|\|` look
+  // like a wide gap instead of the compact textbook parallel-resistance
+  // operator.  Keep the bars scalable, but explicitly remove that operator
+  // spacing for this paired token.
+  const attrs = 'fence="false" stretchy="true" minsize="1.2em" lspace="0em" rspace="0em"';
+  return `${mathMlAtom('|', 'mo', attrs)}${mathMlAtom('|', 'mo', attrs)}`;
+}
+
+function mathMlBar() {
+  return mathMlAtom('|', 'mo', 'fence="false" stretchy="true" minsize="1.2em"');
+}
+
+/** Convert the small TeX subset emitted by symbolic analysis into MathML.
+ * MathML is rendered by the browser inside the live SVG through a
+ * foreignObject; keeping this parser local avoids a runtime CDN dependency. */
+function texToMathML(source) {
+  const text = stripMathDelimiters(source).replace(/\s+/g, ' ').trim();
+  let index = 0;
+  const commandSymbols = {
+    parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
+    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→',
+  };
+  const skipSpaces = () => { while (text[index] === ' ') index += 1; };
+  const parseSequence = (stop = null) => {
+    const atoms = [];
+    while (index < text.length) {
+      if (stop && text[index] === stop) { index += 1; break; }
+      const token = text[index];
+      if (token === '_' || token === '^') {
+        index += 1;
+        const script = parseArgument();
+        const base = atoms.pop() || mathMlAtom('', 'mi');
+        atoms.push(token === '_' ? `<msub>${base}${script}</msub>` : `<msup>${base}${script}</msup>`);
+        continue;
+      }
+      atoms.push(parseAtom());
+    }
+    return atoms.join('');
+  };
+  const parseArgument = () => {
+    skipSpaces();
+    if (text[index] === '{') {
+      index += 1;
+      return `<mrow>${parseSequence('}')}</mrow>`;
+    }
+    return parseAtom();
+  };
+  const parseCommand = () => {
+    index += 1; // backslash
+    const match = text.slice(index).match(/^[A-Za-z]+|^./);
+    if (!match) return mathMlAtom('\\', 'mo');
+    const name = match[0];
+    index += name.length;
+    if (name === 'frac') {
+      const numerator = parseArgument();
+      const denominator = parseArgument();
+      return `<mfrac>${numerator}${denominator}</mfrac>`;
+    }
+    if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
+    if (name === 'left' || name === 'right' || name === 'middle') return parseAtom();
+    if (name === '|') {
+      // The analysis engine emits the TeX-safe parallel spelling `\|\|`.
+      // Consume both escaped bars as one compact operator so the second bar
+      // is not parsed as an independent stretchy delimiter.
+      if (text[index] === '\\' && text[index + 1] === '|') index += 2;
+      return mathMlParallel();
+    }
+    if (name === 'vert') return mathMlDelimiter('|');
+    if (name === 'Vert') return mathMlParallel();
+    if (name === 'mathrm' || name === 'text' || name === 'operatorname') {
+      const argument = parseArgument().replace(/<\/?mrow>/g, '');
+      return `<mtext>${argument.replace(/<mi>/g, '').replace(/<\/mi>/g, '')}</mtext>`;
+    }
+    if (name === 'parallel') return mathMlParallel();
+    if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
+    if (name === ',' || name === ';' || name === '!') return '';
+    return mathMlAtom(name, 'mi');
+  };
+  const parseAtom = () => {
+    skipSpaces();
+    if (index >= text.length) return '';
+    // Be forgiving for hand-authored labels that use plain `||` rather than
+    // the TeX-safe `\|\|` spelling.  Both forms render identically, while
+    // the stored label source remains untouched for editing.
+    if (text[index] === '|' && text[index + 1] === '|') {
+      index += 2;
+      return mathMlParallel();
+    }
+    if (text[index] === '\\') return parseCommand();
+    if (text[index] === '{') {
+      index += 1;
+      return `<mrow>${parseSequence('}')}</mrow>`;
+    }
+    const char = text[index++];
+    if (/[A-Za-z]/.test(char)) return mathMlAtom(char, 'mi');
+    if (/[0-9]/.test(char)) return mathMlAtom(char, 'mn');
+    if ('()[]|'.includes(char)) return mathMlDelimiter(char);
+    if (char === ' ' && text[index] === ' ') return '<mspace width="0.25em"/>';
+    return mathMlAtom(char, 'mo');
+  };
+  return `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" style="font-family:${MATH_FONT_FAMILY};color:inherit"><mrow>${parseSequence()}</mrow></math>`;
+}
+
+function mathLabelSvg(label, opacity = '') {
+  const box = label.bbox();
+  const color = resolveColor(label.style?.color || '#111');
+  // Keep the default ink theme-aware.  Math labels live in an XHTML
+  // foreignObject, so the SVG attribute recoloring rules used by ordinary
+  // <text> labels do not reach their inline `color` declaration.  Explicit
+  // user colors remain literal and therefore are not changed by dark mode.
+  const colorCss = color.toLowerCase() === '#111' ? 'var(--svg-ink, #111)' : color;
+  const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
+  const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
+  const aria = escapeSvg(`Math label ${label.text}`);
+  const style = `width:100%;height:100%;display:flex;align-items:center;justify-content:${justify};box-sizing:border-box;padding:6px;overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:400;pointer-events:none;`;
+  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${texToMathML(label.text)}</div></foreignObject>`;
 }
 
 const ANNOTATION_ARROW_LENGTH = 32;
@@ -219,7 +349,10 @@ export function svgString(circuit, opts = {}) {
       if (child.id === o.editingLabel) continue;
       const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
       const t = child.textPos();
-      parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style)}</g>`);
+      const childVisual = child.math
+        ? mathLabelSvg(child)
+        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
+      parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${childVisual}</g>`);
     }
   }
 
@@ -316,9 +449,15 @@ export function svgString(circuit, opts = {}) {
         `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${escapeSvg(c.refdes)}</text>`,
       );
     }
-    if (def.textPos && c.value !== undefined && c.value !== '') {
+    const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
+    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
       parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333')}</g>`);
+    }
+    if (isReferenceMarker(c) && !def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
+      const marker = referenceMarkerInfo(c.type);
+      const p = applyTransform(c.transform, marker.labelOffset.x, marker.labelOffset.y);
+      parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, 'middle', 12, '#333')}</g>`);
     }
   }
 
@@ -332,7 +471,10 @@ export function svgString(circuit, opts = {}) {
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
     const t = label.textPos();
     const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
-    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style)}</g>`);
+    const labelVisual = label.math
+      ? mathLabelSvg(label)
+      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
+    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
   }
 
   parts.push('</svg>');

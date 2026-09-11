@@ -38,5 +38,6 @@ test('keyboard help is generated from current bindings without Vim movement keys
   assert.match(help, /normal --\n/);
   assert.doesNotMatch(help, /\\n/);
   assert.match(help, /l\s+.*line annotation/);
+  assert.match(help, /e\s+.*LaTeX equation label/);
   assert.doesNotMatch(help, /h j k|h j k l|hjkl/i);
 });
