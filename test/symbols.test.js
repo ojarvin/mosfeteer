@@ -245,9 +245,9 @@ test('refdes prefixes by component type', () => {
     pnp: 'Q',
     ground: '',
     supply: '',
-    input: 'I',
-    output: 'O',
-    inputoutput: 'IO',
+    input: 'VI',
+    output: 'VO',
+    inputoutput: 'VIO',
     adc: 'U',
     dac: 'U',
   };
@@ -281,9 +281,9 @@ test('refdes prefixes by component type', () => {
     pnp: 'Q',
     ground: '',
     supply: '',
-    input: 'I',
-    output: 'O',
-    inputoutput: 'IO',
+    input: 'VI',
+    output: 'VO',
+    inputoutput: 'VIO',
   };
   for (const [type, prefix] of Object.entries(expected)) {
     assert.equal(getSymbol(type).refPrefix, prefix, `${type} refPrefix`);

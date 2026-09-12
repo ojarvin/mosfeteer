@@ -165,9 +165,11 @@
         </fieldset>
         <fieldset class="analysis-approximations">
           <legend>Textbook approximations</legend>
+          <label><input id="analysis-approx-dc" name="approxDc" type="checkbox" /> Analyze DC topology only (<span class="math-inline">C → open, L → 0</span>)</label>
+          <label><input id="analysis-approx-cascode" name="approxCascode" type="checkbox" checked /> Apply cascode dominant-term reduction only when <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span> is also selected</label>
           <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</label>
-          <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" /> Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</label>
-          <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" /> Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></label>
+          <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</label>
+          <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></label>
           <label><input id="analysis-approx-miller" name="approxMiller" type="checkbox" checked /> Apply Miller approximation to eligible feedback impedances</label>
           <p class="field-hint">These are explicit textbook simplifications. Miller's theorem can split any linear impedance between a stage input and output, but this tool applies it only when the device is marked <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span> and a safe DC stage gain can be derived. Exact symbolic equations remain in the details, and every selected approximation is listed as an assumption.</p>
       </fieldset>

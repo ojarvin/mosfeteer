@@ -119,10 +119,15 @@ test('small-signal analysis exposes a model/context popup', () => {
   assert.match(html, /id="analysis-panel-log"[^>]+role="tabpanel"/);
   assert.match(html, /id="analysis-panel-netlist"[^>]+role="tabpanel"/);
   assert.match(html, /id="analysis-approx-ro"[^>]+type="checkbox"/);
+  assert.match(html, /id="analysis-approx-dc"[^>]+type="checkbox"/);
+  assert.match(html, /id="analysis-approx-cascode"[^>]+type="checkbox"/);
+  assert.match(html, /id="analysis-approx-cascode"[^>]+checked/);
   assert.match(html, /id="analysis-approx-body"[^>]+type="checkbox"/);
   assert.match(html, /id="analysis-approx-gmro"[^>]+type="checkbox"/);
   assert.match(html, /id="analysis-approx-miller"[^>]+type="checkbox"/);
   assert.match(html, /id="analysis-approx-miller"[^>]+checked/);
+  assert.match(html, /id="analysis-approx-body"[^>]+checked/);
+  assert.match(html, /id="analysis-approx-gmro"[^>]+checked/);
   assert.match(html, /<div class="analysis-scroll">[\s\S]*id="analysis-result"[\s\S]*<\/div>\s*<div class="dialog-actions">/);
   const style = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
   assert.match(style, /\.analysis-dialog\s*\{[\s\S]*width: min\(64rem/);
@@ -136,13 +141,21 @@ test('small-signal analysis exposes a model/context popup', () => {
 test('analysis form state is scoped and role metadata is restored from the active schematic', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /analysisFormStorageKey\(currentCircuitName\)/);
+  assert.match(main, /Select an input node before deriving equations/);
+  assert.match(main, /analysis failed: \$\{message\}/);
   assert.match(main, /pruneAnalysisNetValues\(saved\.acGrounds, visibleNets\(\)\)/);
   assert.match(main, /pruneAnalysisModelValues\(saved\.models, sortedComps\(\)\.map/);
   assert.match(main, /defaults\.targetMarked \? defaults\.target : saved\.target/);
   assert.match(main, /defaults\.inputMarked \? defaults\.input : saved\.input/);
   assert.match(main, /ignoreChannelLengthModulation: !!analysisApproxRo\?\.checked/);
+  assert.match(main, /const hasSavedRo = Object\.prototype\.hasOwnProperty\.call\(savedApproximations, 'ignoreChannelLengthModulation'\)/);
+  assert.match(main, /dcOnly: !!analysisApproxDc\?\.checked/);
+  assert.match(main, /cascodeApproximation: !!analysisApproxCascode\?\.checked/);
   assert.match(main, /ignoreBodyEffect: !!analysisApproxBody\?\.checked/);
   assert.match(main, /gmroLarge: !!analysisApproxGmRo\?\.checked/);
+  assert.match(main, /resistance: 'infinite'/);
+  assert.match(main, /analysisApproxBody\.checked = true/);
+  assert.match(main, /analysisApproxGmRo\.checked = true/);
   assert.match(main, /millerApproximation: !!analysisApproxMiller\?\.checked/);
   assert.match(main, /smallSignalNetlist: reports\.transfer\.smallSignalNetlist \|\| reports\.output\.smallSignalNetlist/);
   assert.match(main, /setAnalysisResultTab\(netlist && selectedTab === 'netlist' \? 'netlist' : selectedTab\)/);
@@ -150,6 +163,7 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /align: 'left'/);
   assert.match(main, /effective transconductance/);
   assert.match(main, /analysisAnnotationAssumptions/);
+  assert.match(main, /Cascode dominant term/);
   assert.match(main, /text: \['\\\\text\{Assumptions\\\\:\}', \.\.\.assumptions\]/);
   assert.match(main, /syncRenderedLabelMetrics/);
   assert.match(main, /function reflowEquationAnnotations/);
@@ -237,6 +251,9 @@ test('committed inserts repair coincident connectivity and analysis menus suppor
   assert.match(main, /Clear output-resistance override/);
   assert.match(main, /gmroLarge: true/);
   assert.match(main, /ignoreBodyEffect: true/);
+  assert.match(main, /resistance: 'infinite'/);
+  assert.match(main, /Treat as R = ∞/);
+  assert.match(main, /Clear resistance override/);
   assert.match(main, /Clear g_m r_o override/);
   assert.match(main, /Clear body-effect override/);
 });

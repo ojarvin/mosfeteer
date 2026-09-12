@@ -19,7 +19,9 @@ voltage-transfer results together. The form stays populated across
 close/reopen and browser reloads. Right-click a device
 or net in the right-hand lists to persist optional small-signal attributes:
 transistors can be marked as ideal current sources or triode resistors, while
-ports/nets can be marked as DC-bias (AC-ground), input, or output. Those
+resistors can be marked **R = ∞** when they are large enough to be negligible
+relative to the other resistive paths on the same nets. Ports/nets can be
+marked as DC-bias (AC-ground), input, or output. Those
 attributes pre-fill the form and are also consumed automatically by analysis.
 When the context row is part of a multi-selection, choosing an attribute applies
 one undoable update to every selected compatible component or physical net;
@@ -36,8 +38,21 @@ removes only the output conductance, while an ideal current-source model also
 removes the transistor's controlled `g_m`/`g_{mb}` sources and leaves an open
 small-signal branch.
 
+New analysis forms default to the practical symbolic approximations (body
+effect ignored, `g_m r_o \\gg 1`, cascode reduction enabled, and Miller enabled).
+The global MOS `r_o \\to \\infty` control remains off by default, as does the
+topology-changing DC-only mode.
+
 The analysis pipeline is deliberately nodal rather than a growing collection
 of topology cases:
+
+For single-stage presentation, the permitted compact recognizers are the three
+textbook forms—common-source, common-gate, and common-drain. They consume the same
+stamped model and solved equations as every other request; they only replace a
+large equivalent expression with a familiar form when the topology and
+assumptions prove that rewrite valid. Feedback loops, cascoded networks, and
+other multi-device arrangements stay in the generic graph/KCL path unless the
+user explicitly enables the separate cascode dominant-term approximation.
 
 1. The selected output/input nets and AC references are resolved to physical
    nodes. A differential request is represented as a single-ended equivalent;
@@ -63,10 +78,14 @@ attached to every successful report and is the foundation for future transfer
 functions. Singular or unsupported models are reported explicitly rather than
 silently guessed.
 
-The form and command line expose four explicit textbook approximations:
-ignore channel-length modulation for MOS devices by default (`r_o \to \infty`), ignore body effect
-(`g_{mb}=0`), assume `g_m r_o \gg 1`, and apply the Miller approximation to
-eligible feedback impedances. Miller is enabled by default, but splitting is used
+The form exposes six explicit textbook controls: analyze the DC topology only
+(capacitors open and inductors short), ignore channel-length modulation for MOS
+devices (`r_o \to \infty`), ignore body effect (`g_{mb}=0`), assume
+`g_m r_o \gg 1`, apply the cascode dominant-term reduction, and apply the
+Miller approximation to eligible feedback impedances. The cascode reduction is
+opt-in and is applied only to recognized branches whose cascode device also has
+the explicit `g_m r_o \gg 1` assumption; selecting the generic intrinsic-gain
+condition alone never silently discards the additive `r_o` terms. Miller is enabled by default, but splitting is used
 only when the specific MOS forward-gain device has an explicit `g_m r_o \gg 1`
 assumption and the stage is a conservative inverting, AC-grounded-source
 topology with a visible DC load. For an impedance `Z` between input and output,
@@ -81,10 +100,12 @@ and every selected assumption is listed. For example, with body effect enabled
 a cascoded output resistance reduces from
 `r_{o2}+r_{o1}+(g_{m2}+g_{mb2})r_{o2}r_{o1}` to
 `(g_{m2}+g_{mb2})r_{o2}r_{o1}` under the large-`g_m r_o` assumption.
-When both form-wide options are checked, the recognized cascode reduction
-retains finite symbolic `r_o` for its branch devices so the `g_m r_o` factor
-does not collapse to `\infty`; an explicit per-device `r_o` omission still
-produces an open branch.
+When the cascode control and both form-wide `g_m r_o \gg 1`/finite-`r_o`
+conditions are checked, the recognized cascode reduction retains finite
+symbolic `r_o` for its branch devices so the `g_m r_o` factor does not collapse
+to `\infty`; an explicit per-device `r_o` omission still produces an open
+branch. DC-only mode is structural: the inductor union-find aliases its
+terminals before KCL stamping, while capacitor branches are omitted entirely.
 The same assumption simplifies loaded cascoded common-source gains through
 the recurring loaded-common-gate identity, so a deep stack with a resistive
 load is displayed as `A_v \approx -g_{m1}R_D` when the load limits the gain,
@@ -92,7 +113,21 @@ instead of exposing repeated nested parallel groups. The exact nodal result
 remains available in the details. Likewise, an unambiguous source-degenerated
 common source and a two-device cascode with a direct drain load use compact
 finite-`r_o` output-resistance forms while retaining the complete nodal
-derivation in the details.
+derivation in the details. Feedback-loop devices are handled by the same
+graph-based model: if a finite `r_o` lies on a controlled-source feedback edge,
+it is retained until the symbolic approximation pass, even when the global
+`r_o → ∞` option is selected. With `g_m r_o \gg 1`, the resulting loop-gain
+terms reduce algebraically (for example to
+`Z_{out} \approx 1/(g_{m,out} g_{m,fb} r_{o,out})`) without naming a particular
+topology.
+Multiplicative factors are rendered in a stable textbook order:
+frequency, transconductance, resistance, inductance, then capacitance.
+The cascode dominant-term step is explicit: it drops ro1 + ro2 only when
+(gm,c + gmb,c)(ro1 || ro2) >> 1, equivalently when
+(gm,c + gmb,c)ro1ro2 >> ro1 + ro2. The usual gm ro >> 1 assumption is
+sufficient when the two output resistances are of comparable scale, but one
+device-level condition alone is not sufficient if the other resistance is
+much smaller.
 Per-device `r_o` overrides participate in the same nodal model and are listed
 in the assumptions. If an algebraic singularity would otherwise render as a
 reciprocal zero, the display uses the explicit limiting symbol `\infty` rather
@@ -158,15 +193,14 @@ The measurements remain runtime-only and do not alter the saved file.
 
 The result is organized into **Equations**, **Log**, and **Small-signal
 netlist** tabs. The latter contains a read-only, SPICE-like
-description of the same symbolic model: the combined analysis view prefers the
-driven-input transfer model, so `V_{in}` remains visible; the standalone
-output-impedance report still uses a zeroed input. Resistors appear
+description of the same symbolic model: both combined and standalone views
+show the reusable full small-signal model, so `V_{in}` remains visible. The
+output-impedance KCL details separately record the zero-input test condition.
+Resistors appear
 as `R_<refdes>`, MOS output resistance as `R_<refdes> ... r_{oN}`, and each
 controlled transistor current as `G_<refdes> drain source gate source g_{mN}`
 (with `g_{mbN}` when bulk is active). Ideal current-source overrides are shown
-as `OPEN` comments. For output impedance, the zeroed input is still shown as
-`V_{IN}` and the netlist explicitly records `V_{IN}=0`, so the first transistor's
-control node remains visible. Miller-split feedback impedances appear as
+as `OPEN` comments. Miller-split feedback impedances appear as
 separate input and output shunts with `Z/(1-A_v)` and `Z/(1-1/A_v)` symbolic
 values; capacitors are one common instance, but feedback resistors and other
 modeled passive impedances use the same theorem.
@@ -193,7 +227,10 @@ When a MOS source is not at AC ground, the compact reducer hands the request to
 the nodal solver; the source node, `g_m` feedback, and source impedance remain
 explicit in the KCL equations instead of producing an unsupported error.
 `current-source` and `triode` attributes explicitly select the corresponding
-small-signal primitive. Unmodelled devices or singular systems return an
+small-signal primitive. Independent DC current sources are open circuits and
+independent DC voltage sources are shorts; the latter force the report through
+the aliased nodal model so their zero-impedance connection is preserved.
+Unmodelled devices or singular systems return an
 explanation rather than silently changing the meaning of an equation.
 
 No numerical calculation is performed. An unused MOS bulk is assumed tied to

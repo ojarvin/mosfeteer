@@ -456,6 +456,11 @@ export function componentLabelText(refdes, source = null) {
   const canonical = normalizeComponentRefdes(refdes);
   const supplied = source === null || source === undefined ? '' : String(source).trim();
   if (supplied && normalizeComponentRefdes(supplied) === canonical && /[_^]\{/.test(supplied)) return supplied;
+  // Interface voltage ports use a two-part textbook name: the voltage
+  // marker stays on the baseline while the direction/index is subscripted
+  // (VI1 -> V_{I1}, VO2 -> V_{O2}, VIO3 -> V_{IO3}).
+  const voltagePort = canonical.match(/^V(IO|I|O)(\d+)$/);
+  if (voltagePort) return `V_{${voltagePort[1]}${voltagePort[2]}}`;
   const numeric = canonical.match(/^([A-Za-z]+)(\d+)$/);
   return numeric ? `${numeric[1]}_{${numeric[2]}}` : canonical;
 }
@@ -832,13 +837,18 @@ export class ComponentInstance {
     const suppliedRefdes = opts.refdes !== undefined && opts.refdes !== null
       ? normalizeComponentRefdes(opts.refdes)
       : '';
-    this.refdes = suppliedRefdes || circuit.nextRefdes(this.def.refPrefix || type.toUpperCase());
+    this.refdes = suppliedRefdes || circuit.nextRefdes(this.def.refPrefix || type.toUpperCase(), {
+      reserveLabels: !!this.def.labelOffset,
+    });
     this.value = opts.value !== undefined ? String(opts.value) : this.def.defaultValue;
     this.analysis = {
       model: opts.analysis?.model || opts.analysis?.smallSignalModel || null,
       role: opts.analysis?.role || null,
       channelLengthModulation: opts.analysis?.channelLengthModulation
         || opts.analysis?.clm
+        || null,
+      resistance: opts.analysis?.resistance
+        || opts.analysis?.resistancePolicy
         || null,
       gmroLarge: opts.analysis?.gmroLarge ?? opts.analysis?.gmro ?? null,
       ignoreBodyEffect: opts.analysis?.ignoreBodyEffect
@@ -889,6 +899,7 @@ export class ComponentInstance {
       type: this.type,
       value: this.value,
       ...(this.analysis.model || this.analysis.role || this.analysis.channelLengthModulation
+        || this.analysis.resistance
         || this.analysis.gmroLarge !== null || this.analysis.ignoreBodyEffect !== null
         ? { analysis: { ...this.analysis } }
         : {}),
@@ -1194,12 +1205,21 @@ export class Circuit {
 
   // ----- components -------------------------------------------------
 
-  /** Smallest unused refdes index for a prefix ("R" -> R1, R2, R4 if R3 exists...). */
-  nextRefdes(prefix) {
+  /** Smallest unused refdes index for a prefix ("R" -> R1, R2, R4 if R3
+   * exists...).  Owned instance labels use the refdes as their id, so label
+   * ids reserve the same namespace when choosing an automatic name. */
+  nextRefdes(prefix, { reserveLabels = true } = {}) {
     const used = new Set();
     for (const c of this.components.values()) {
       if (c.refdes.startsWith(prefix)) {
         const n = Number(c.refdes.slice(prefix.length));
+        if (Number.isInteger(n) && n > 0) used.add(n);
+      }
+    }
+    if (reserveLabels) {
+      for (const id of this.labels.keys()) {
+        if (!String(id).startsWith(prefix)) continue;
+        const n = Number(String(id).slice(prefix.length));
         if (Number.isInteger(n) && n > 0) used.add(n);
       }
     }
@@ -1212,6 +1232,13 @@ export class Circuit {
     this.invalidateRoutingCache();
     const inst = new ComponentInstance(this, type, opts);
     if (this.components.has(inst.refdes)) throw new Error(`reference designator ${inst.refdes} already in use`);
+    // Do this before inserting the component.  Otherwise an explicit
+    // refdes can leave a half-added component behind when its owned label id
+    // collides with an existing free/annotation label.  Automatically chosen
+    // refdes values already avoid this through nextRefdes().
+    if (!opts.noLabel && inst.def?.labelOffset && this.labels.has(inst.refdes)) {
+      throw new Error(`label id "${inst.refdes}" already in use`);
+    }
     this.components.set(inst.refdes, inst);
     // Every symbol with a label offset carries its instance label from the
     // start. Default numeric names persist explicit textbook markup (M_{1}),
@@ -1481,6 +1508,13 @@ export class Circuit {
           ? attrs.bodyEffect
           : String(attrs.bodyEffect).toLowerCase() === 'ignore')
         : undefined;
+    const resistanceValue = hasOwn('resistance')
+      ? attrs.resistance
+      : hasOwn('resistancePolicy')
+        ? attrs.resistancePolicy
+        : hasOwn('infiniteResistance')
+          ? (attrs.infiniteResistance ? 'infinite' : 'finite')
+          : undefined;
     const normalizeOptionalBoolean = (value, label) => {
       if (value === undefined || value === null || value === '') return value;
       if (value === true || value === false) return value;
@@ -1491,11 +1525,25 @@ export class Circuit {
     };
     const normalizedGmro = normalizeOptionalBoolean(gmroValue, 'g_m r_o');
     const normalizedBodyEffect = normalizeOptionalBoolean(bodyEffectValue, 'body-effect');
+    const normalizeResistance = (value) => {
+      if (value === undefined || value === null || value === '') return value;
+      if (value === true) return 'infinite';
+      if (value === false) return 'finite';
+      const normalized = String(value).trim().toLowerCase().replace(/_/g, '-');
+      if (['infinite', 'inf', 'ignore', 'open', 'large'].includes(normalized)) return 'infinite';
+      if (['finite', 'exact', 'retain', 'include'].includes(normalized)) return 'finite';
+      throw new Error(`unknown resistance override "${value}"`);
+    };
+    const normalizedResistance = normalizeResistance(resistanceValue);
     if (model !== undefined && model !== null && model !== '' && !['current-source', 'triode', 'ro'].includes(String(model))) {
       throw new Error(`unknown small-signal device model "${model}"`);
     }
     if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
       throw new Error(`unknown small-signal device role "${role}"`);
+    }
+    if (normalizedResistance !== undefined && normalizedResistance !== null
+      && !['resistor', 'variable_resistor'].includes(component.type)) {
+      throw new Error(`resistance overrides apply only to resistor components, not ${component.type}`);
     }
     if (clmValue !== undefined && clmValue !== null && clmValue !== ''
       && !['ignore', 'finite'].includes(String(clmValue).toLowerCase())) {
@@ -1507,6 +1555,9 @@ export class Circuit {
       channelLengthModulation: clmValue === undefined
         ? component.analysis?.channelLengthModulation || null
         : (clmValue ? String(clmValue).toLowerCase() : null),
+      resistance: normalizedResistance === undefined
+        ? component.analysis?.resistance || null
+        : (normalizedResistance ? String(normalizedResistance).toLowerCase() : null),
       gmroLarge: normalizedGmro === undefined
         ? component.analysis?.gmroLarge ?? null
         : normalizedGmro,
@@ -1657,8 +1708,8 @@ export class Circuit {
   /** Interface symbols use their owned label as the physical net name.  The
    * first pin on a net is the deterministic authority when several pins share
    * one net; all other pin labels follow that name. Numeric identity names are
-   * stored canonically (I1) while their owned labels retain textbook display
-   * markup (I_{1}). */
+   * stored canonically (VI1/VO1/VIO1) while their owned labels retain
+   * textbook display markup (V_{I1}/V_{O1}/V_{IO1}). */
   _syncInterfacePinLabels(netOrId, { enforceName = false } = {}) {
     const net = this._resolveNet(netOrId);
     const pins = net.terminals

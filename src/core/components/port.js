@@ -3,7 +3,9 @@ import { defineSymbol } from './defineSymbol.js';
 export const portInput = defineSymbol({
     type: 'input',
     description: 'Input Port',
-    refPrefix: 'I',
+    // Keep the voltage nature of an interface explicit in the default name.
+    // The owned label renderer presents VI1 as V_{I1}.
+    refPrefix: 'VI',
     terminals: [{ name: 'p', x: 0, y: 0, direction: 'port' }],
     bbox: { x: -80, y: -40, w: 80, h: 80 },
     graphics: [
@@ -19,7 +21,7 @@ export const portInput = defineSymbol({
 export const portOutput = defineSymbol({
     type: 'output',
     description: 'Output Port',
-    refPrefix: 'O',
+    refPrefix: 'VO',
     defaultMirrorX: true,
     terminals: [{ name: 'p', x: 0, y: 0, direction: 'port' }],
     bbox: { x: -80, y: -40, w: 80, h: 80 },
@@ -36,7 +38,7 @@ export const portOutput = defineSymbol({
 export const portInputOutput = defineSymbol({
     type: 'inputoutput',
     description: 'Input/Output Port',
-    refPrefix: 'IO',
+    refPrefix: 'VIO',
     terminals: [{ name: 'p', x: 0, y: 0, direction: 'port' }],
     bbox: { x: -80, y: -40, w: 80, h: 80 },
     graphics: [

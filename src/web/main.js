@@ -93,6 +93,8 @@ const analysisApproxRo = document.getElementById('analysis-approx-ro');
 const analysisApproxBody = document.getElementById('analysis-approx-body');
 const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
 const analysisApproxMiller = document.getElementById('analysis-approx-miller');
+const analysisApproxDc = document.getElementById('analysis-approx-dc');
+const analysisApproxCascode = document.getElementById('analysis-approx-cascode');
 const analysisResult = document.getElementById('analysis-result');
 const analysisEquation = document.getElementById('analysis-equation');
 const analysisDetails = document.getElementById('analysis-details');
@@ -6249,6 +6251,8 @@ function analysisFormValues() {
     models: analysisModels?.value || '',
     context: analysisContext?.value || '',
     approximationOptions: {
+      dcOnly: !!analysisApproxDc?.checked,
+      cascodeApproximation: !!analysisApproxCascode?.checked,
       ignoreChannelLengthModulation: !!analysisApproxRo?.checked,
       ignoreBodyEffect: !!analysisApproxBody?.checked,
       gmroLarge: !!analysisApproxGmRo?.checked,
@@ -6276,9 +6280,8 @@ function restoreAnalysisForm(defaults = {}) {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(currentCircuitName)) || 'null'); } catch { /* storage unavailable */ }
   if (!saved) {
-    // A new schematic starts with a clean analysis form. Miller's theorem is
-    // the default textbook reduction even when the previous document had it
-    // disabled.
+    // A new schematic starts with the useful textbook simplifications enabled;
+    // r_o → ∞ and the topology-changing DC-only mode remain opt-in.
     if (analysisReference) analysisReference.value = '';
     if (analysisMode) analysisMode.value = 'single-ended';
     if (analysisComplementary) analysisComplementary.value = '';
@@ -6286,9 +6289,11 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisModels) analysisModels.value = '';
     if (analysisContext) analysisContext.value = '';
     if (analysisApproxRo) analysisApproxRo.checked = false;
-    if (analysisApproxBody) analysisApproxBody.checked = false;
-    if (analysisApproxGmRo) analysisApproxGmRo.checked = false;
+    if (analysisApproxBody) analysisApproxBody.checked = true;
+    if (analysisApproxGmRo) analysisApproxGmRo.checked = true;
     if (analysisApproxMiller) analysisApproxMiller.checked = true;
+    if (analysisApproxDc) analysisApproxDc.checked = false;
+    if (analysisApproxCascode) analysisApproxCascode.checked = true;
     return false;
   }
   const setSelect = (el, value, force = false) => {
@@ -6309,9 +6314,42 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisContext && typeof saved.context === 'string') analysisContext.value = saved.context;
   const savedApproximations = saved.approximationOptions || {};
   const approximationList = new Set(Array.isArray(saved.approximations) ? saved.approximations : []);
-  if (analysisApproxRo) analysisApproxRo.checked = !!(savedApproximations.ignoreChannelLengthModulation || savedApproximations.ignoreRo || approximationList.has('ignore-channel-length-modulation'));
-  if (analysisApproxBody) analysisApproxBody.checked = !!(savedApproximations.ignoreBodyEffect || savedApproximations.ignoreGmb || approximationList.has('ignore-body-effect'));
-  if (analysisApproxGmRo) analysisApproxGmRo.checked = !!(savedApproximations.gmroLarge || savedApproximations.assumeGmRoLarge || approximationList.has('gmro-large'));
+  if (analysisApproxDc) analysisApproxDc.checked = !!(savedApproximations.dcOnly || savedApproximations.dcOperatingPoint || approximationList.has('dc') || approximationList.has('dc-only') || approximationList.has('dc-operating-point'));
+  if (analysisApproxCascode) {
+    const hasSavedCascode = Object.prototype.hasOwnProperty.call(savedApproximations, 'cascodeApproximation')
+      || Object.prototype.hasOwnProperty.call(savedApproximations, 'cascodeReduction')
+      || approximationList.has('cascode') || approximationList.has('cascode-approximation') || approximationList.has('cascode-reduction');
+    analysisApproxCascode.checked = hasSavedCascode
+      ? !!(savedApproximations.cascodeApproximation || savedApproximations.cascodeReduction || approximationList.has('cascode') || approximationList.has('cascode-approximation') || approximationList.has('cascode-reduction'))
+      : true;
+  }
+  if (analysisApproxRo) {
+    const hasSavedRo = Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreChannelLengthModulation')
+      || Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreRo');
+    // A modern explicit false must win over legacy `approximations` arrays.
+    // Without this guard, a document saved by an older build could retain an
+    // `ignore-channel-length-modulation` token forever after the checkbox was
+    // unticked.
+    analysisApproxRo.checked = hasSavedRo
+      ? !!(savedApproximations.ignoreChannelLengthModulation || savedApproximations.ignoreRo)
+      : approximationList.has('ignore-channel-length-modulation');
+  }
+  if (analysisApproxBody) {
+    const hasSavedBody = Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreBodyEffect')
+      || Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreGmb')
+      || approximationList.has('ignore-body-effect');
+    analysisApproxBody.checked = hasSavedBody
+      ? !!(savedApproximations.ignoreBodyEffect || savedApproximations.ignoreGmb || approximationList.has('ignore-body-effect'))
+      : true;
+  }
+  if (analysisApproxGmRo) {
+    const hasSavedGmRo = Object.prototype.hasOwnProperty.call(savedApproximations, 'gmroLarge')
+      || Object.prototype.hasOwnProperty.call(savedApproximations, 'assumeGmRoLarge')
+      || approximationList.has('gmro-large');
+    analysisApproxGmRo.checked = hasSavedGmRo
+      ? !!(savedApproximations.gmroLarge || savedApproximations.assumeGmRoLarge || approximationList.has('gmro-large'))
+      : true;
+  }
   if (analysisApproxMiller) {
     const hasSavedMiller = Object.prototype.hasOwnProperty.call(savedApproximations, 'millerApproximation')
       || Object.prototype.hasOwnProperty.call(savedApproximations, 'miller')
@@ -6477,6 +6515,7 @@ function analysisAnnotationAssumptions(report) {
   let gmroLarge = false;
   let roInfinity = false;
   let bodyEffectIgnored = false;
+  let dcOnly = false;
   let cascodeReduction = false;
   const millerComponents = new Set();
   const roInfinityPattern = /r(?:_|\s)*\{?o\}?\s*(?:is\s+(?:(?:treated\s+as\s+)?(?:infinite|∞|\\infty)|ignored|omitted)|(?:=|→|->|\\to)\s*(?:infinite|∞|\\infty))/i;
@@ -6539,8 +6578,9 @@ function analysisAnnotationAssumptions(report) {
       // These are genuine extra reductions performed after the small-signal
       // model is built. Keep only a compact marker, not the implementation
       // prose that describes every internal algebraic step.
-      if (/^Cascode branch approximation:/i.test(text)) cascodeReduction = true;
+      if (/^Cascode (?:branch approximation|dominant-term approximation):/i.test(text)) cascodeReduction = true;
       if (/^Large-g_m r_o approximation:/i.test(text)) cascodeReduction = true;
+      if (/DC-only reduction|DC operating-point topology|capacitors? are open|inductors? are short/i.test(text)) dcOnly = true;
     }
   }
   // If every analyzed MOS device has the same explicit r_o→∞ override,
@@ -6599,7 +6639,10 @@ function analysisAnnotationAssumptions(report) {
       add(`r_{o${ref}} \\text{ finite} \\; (M_{${ref}})`);
     }
   }
-  if (cascodeReduction) add('\\text{Cascode reduction applied}');
+  if (cascodeReduction) {
+    add('\\text{Cascode dominant term\\: }(g_{m,c}+g_{mb,c})r_{o,out}r_{o,c} \\gg r_{o,out}+r_{o,c}');
+  }
+  if (dcOnly) add('\\text{DC only\\: }Z_C\\to\\infty,\\; Z_L\\to0');
   if (millerComponents.size) {
     add(`\\text{Miller approximation used for }${[...millerComponents].sort().join(', ')}`);
   }
@@ -6623,7 +6666,16 @@ analysisForm?.addEventListener('submit', (ev) => {
   ev.preventDefault();
   const output = analysisTarget?.value;
   const input = analysisInput?.value;
-  if (!output || !input) return;
+  if (!output || !input) {
+    const error = !output
+      ? 'Select an output node before deriving equations.'
+      : 'Select an input node before deriving equations.';
+    latestAnalysisReport = { query: 'combined', ok: false, complete: false, error, reports: {} };
+    renderAnalysisResult(latestAnalysisReport);
+    if (analysisAnnotate) analysisAnnotate.hidden = true;
+    logLine(error, 'error');
+    return;
+  }
   persistAnalysisForm();
   const options = {
     reference: analysisReference?.value || undefined,
@@ -6633,15 +6685,34 @@ analysisForm?.addEventListener('submit', (ev) => {
     models: parseAnalysisList(analysisModels?.value),
     context: analysisContext?.value || '',
     differentialSide: analysisComplementary?.value || undefined,
+    dcOnly: !!analysisApproxDc?.checked,
+    cascodeApproximation: !!analysisApproxCascode?.checked,
     ignoreChannelLengthModulation: !!analysisApproxRo?.checked,
     ignoreBodyEffect: !!analysisApproxBody?.checked,
     gmroLarge: !!analysisApproxGmRo?.checked,
     millerApproximation: !!analysisApproxMiller?.checked,
   };
+  // Run each requested derivation independently. A topology edge case in one
+  // report must not erase useful results from the other two; the failed card
+  // still carries the original exception text for diagnosis.
+  const safeAnalysis = (query, derive) => {
+    try {
+      return derive();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        query,
+        error: `analysis failed: ${message}`,
+        assumptions: [],
+        approximations: [],
+      };
+    }
+  };
   const reports = {
-    input: analyzeInputImpedance(circuit, input, options),
-    output: analyzeOutputImpedance(circuit, output, { ...options, input }),
-    transfer: analyzeTransferFunction(circuit, output, { ...options, input }),
+    input: safeAnalysis('input-impedance', () => analyzeInputImpedance(circuit, input, options)),
+    output: safeAnalysis('output-impedance', () => analyzeOutputImpedance(circuit, output, { ...options, input })),
+    transfer: safeAnalysis('voltage-transfer', () => analyzeTransferFunction(circuit, output, { ...options, input })),
   };
   const children = Object.values(reports);
   const successful = children.filter((child) => child.ok);
@@ -6669,7 +6740,7 @@ analysisForm?.addEventListener('submit', (ev) => {
   }
 });
 
-for (const control of [analysisKind, analysisTarget, analysisReference, analysisMode, analysisInput, analysisComplementary, analysisAcGrounds, analysisModels, analysisContext, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxMiller]) {
+for (const control of [analysisKind, analysisTarget, analysisReference, analysisMode, analysisInput, analysisComplementary, analysisAcGrounds, analysisModels, analysisContext, analysisApproxDc, analysisApproxCascode, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxMiller]) {
   control?.addEventListener('input', persistAnalysisForm);
   control?.addEventListener('change', persistAnalysisForm);
 }
@@ -6807,6 +6878,7 @@ function suggestedAnalysisTarget() {
 analysisButton?.addEventListener('click', () => openAnalysisDialog(suggestedAnalysisTarget()));
 
 const SMALL_SIGNAL_TRANSISTOR_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
+const SMALL_SIGNAL_RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
 const SMALL_SIGNAL_PORT_TYPES = new Set(['input', 'output', 'inputoutput', 'port', 'port_filled']);
 
 /**
@@ -6919,6 +6991,7 @@ function openAnalysisAttributeMenu(target, x, y) {
   if (target.kind === 'component') {
     const component = target.value;
     const transistor = SMALL_SIGNAL_TRANSISTOR_TYPES.has(component.type);
+    const resistor = SMALL_SIGNAL_RESISTOR_TYPES.has(component.type);
     if (transistor) {
       addSubmenu('Small-signal attributes', [
         { label: 'Current source (ideal small-signal open)', action: () => applyComponentAnalysis(component, { model: 'current-source' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)) },
@@ -6972,6 +7045,25 @@ function openAnalysisAttributeMenu(target, x, y) {
         },
       ]);
     }
+    if (resistor) {
+      const resistorTargets = (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type);
+      addSubmenu('Small-signal attributes', [
+        {
+          label: 'Treat as R = ∞ (large relative to parallel paths)',
+          action: () => applyComponentAnalysis(component, { resistance: 'infinite' }, resistorTargets),
+        },
+        {
+          label: 'Retain finite R',
+          action: () => applyComponentAnalysis(component, { resistance: 'finite' }, resistorTargets),
+        },
+        {
+          label: 'Clear resistance override',
+          action: () => applyComponentAnalysis(component, { resistance: null }, resistorTargets),
+          disabled: !analysisComponentTargets(component, resistorTargets)
+            .some((candidate) => candidate.analysis?.resistance !== null && candidate.analysis?.resistance !== undefined),
+        },
+      ]);
+    }
     const port = SMALL_SIGNAL_PORT_TYPES.has(component.type);
     if (port) {
       addSubmenu('Port analysis role', [
@@ -6985,7 +7077,7 @@ function openAnalysisAttributeMenu(target, x, y) {
         },
       ]);
     }
-    if (!transistor && !port) {
+    if (!transistor && !resistor && !port) {
       const note = document.createElement('div');
       note.className = 'context-menu-note';
       note.textContent = 'No device-specific small-signal attributes.';
@@ -8680,6 +8772,8 @@ function renderComponents() {
     const analysisTags = [];
     if (comp.analysis?.model) analysisTags.push(comp.analysis.model);
     if (comp.analysis?.role) analysisTags.push(comp.analysis.role);
+    if (comp.analysis?.resistance === 'infinite' || comp.analysis?.resistance === true) analysisTags.push('R=∞');
+    if (comp.analysis?.resistance === 'finite') analysisTags.push('finite R');
     if (comp.analysis?.channelLengthModulation === 'ignore') analysisTags.push('r_o→∞');
     if (comp.analysis?.channelLengthModulation === 'finite') analysisTags.push('finite r_o');
     if (comp.analysis?.gmroLarge === true) analysisTags.push('g_mr_o≫1');

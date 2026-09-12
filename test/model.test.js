@@ -28,9 +28,29 @@ test('addComponent assigns refdes from prefix', () => {
   assert.equal(c.addComponent('npn').refdes, 'Q1');
   assert.equal(c.addComponent('ground').refdes, 'GROUND1');
   assert.equal(c.addComponent('supply').refdes, 'SUPPLY1');
-  assert.equal(c.addComponent('input').refdes, 'I1');
-  assert.equal(c.addComponent('output').refdes, 'O1');
-  assert.equal(c.addComponent('inputoutput').refdes, 'IO1');
+  assert.equal(c.addComponent('input').refdes, 'VI1');
+  assert.equal(c.addComponent('output').refdes, 'VO1');
+  assert.equal(c.addComponent('inputoutput').refdes, 'VIO1');
+});
+
+test('automatic component names reserve owned-label ids', () => {
+  const c = new Circuit();
+  c.addLabel({ id: 'R1', text: 'annotation', anchor: { x: 0, y: 0 } });
+  assert.equal(c.addComponent('resistor').refdes, 'R2');
+
+  const ports = new Circuit();
+  ports.addLabel({ id: 'VI1', text: 'annotation', anchor: { x: 0, y: 0 } });
+  assert.equal(ports.addComponent('input').refdes, 'VI2');
+  assert.equal(ports.addComponent('input').refdes, 'VI3');
+  assert.equal(ports.addComponent('output').refdes, 'VO1');
+  assert.equal(ports.addComponent('inputoutput').refdes, 'VIO1');
+});
+
+test('explicit component names reject an occupied owned-label id before mutation', () => {
+  const c = new Circuit();
+  c.addLabel({ id: 'R1', text: 'annotation', anchor: { x: 0, y: 0 } });
+  assert.throws(() => c.addComponent('resistor', { refdes: 'R1' }), /label id "R1" already in use/);
+  assert.equal(c.components.size, 0);
 });
 
 test('component renames keep owned instance labels synchronized across symbols', () => {
@@ -142,6 +162,17 @@ test('small-signal attributes persist on devices and nets', () => {
   assert.equal(c.getComponent('M1').analysis.channelLengthModulation, null);
   assert.equal(c.getComponent('M1').analysis.gmroLarge, null);
   assert.equal(c.getComponent('M1').analysis.ignoreBodyEffect, null);
+});
+
+test('resistor infinity attributes persist and can be cleared', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.setComponentAnalysis('R1', { resistance: 'infinite' });
+  assert.equal(c.getComponent('R1').analysis.resistance, 'infinite');
+  const loaded = Circuit.fromJSON(c.toJSON());
+  assert.equal(loaded.getComponent('R1').analysis.resistance, 'infinite');
+  c.setComponentAnalysis('R1', { resistance: null });
+  assert.equal(c.getComponent('R1').analysis.resistance, null);
 });
 
 test('math labels persist their TeX source marker', () => {
@@ -297,7 +328,7 @@ test('interface pins name their physical net and follow later renames', () => {
   const pinLabel = c.labelOf(pin.refdes);
 
   assert.equal(net.name, pin.refdes);
-  assert.equal(pinLabel.text, 'I_{1}');
+  assert.equal(pinLabel.text, 'V_{I1}');
 
   c.renameNet(net, 'VIN');
   assert.equal(net.name, 'VIN');
@@ -318,7 +349,7 @@ test('all interface pin directions participate in net naming', () => {
     const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
     assert.equal(net.name, pin.refdes, type);
     const displayPrefix = type === 'output' ? 'O' : type === 'inputoutput' ? 'IO' : 'I';
-    assert.equal(c.labelOf(pin.refdes).text, `${displayPrefix}_{1}`, type);
+    assert.equal(c.labelOf(pin.refdes).text, `V_{${displayPrefix}1}`, type);
     c.renameNet(net, 'RENAMED');
     assert.equal(c.labelOf(pin.refdes).text, 'RENAMED', type);
   }

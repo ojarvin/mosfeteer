@@ -93,6 +93,28 @@ function commonGate() {
   return circuit;
 }
 
+function flippedVoltageFollower() {
+  const circuit = new Circuit();
+  // M5 is the source follower whose source is the output. M6 senses the
+  // intermediate drain node and feeds the output through its drain.
+  circuit.addComponent('pmos', { refdes: 'M5', x: 0, y: 160 });
+  circuit.addComponent('pmos', { refdes: 'M6', x: 0, y: -160 });
+  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 160 });
+  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -240 });
+  circuit.addComponent('current_source', { refdes: 'I1', x: 160, y: 240 });
+  circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 400 });
+  circuit.connect('M5.g', 'IN.p');
+  circuit.connect('M5.s', 'M6.d', 'OUT.p');
+  circuit.connect('M5.d', 'M6.g', 'I1.a');
+  circuit.connect('M6.s', 'VDD.p');
+  circuit.connect('I1.b', 'GND.gnd');
+  namedNet(circuit, 'IN.p', 'VIN');
+  namedNet(circuit, 'OUT.p', 'VOUT');
+  namedNet(circuit, 'M5.d', 'VFB');
+  return circuit;
+}
+
 function cascodedCommonSource(depth = 2) {
   const circuit = new Circuit();
   for (let index = 1; index <= depth; index++) {
@@ -194,6 +216,43 @@ test('preserves a letter-suffix resistor refdes as one subscript token', () => {
   assert.match(report.smallSignalNetlist, /R_RD .* R_\{D\}/);
 });
 
+test('reduces a flipped-voltage follower output resistance through its feedback loop', () => {
+  const options = {
+    input: 'VIN',
+    acGrounds: ['VDD', 'VSS'],
+    gmroLarge: true,
+    ignoreBodyEffect: true,
+    ignoreChannelLengthModulation: true,
+  };
+  const report = analyzeOutputImpedance(flippedVoltageFollower(), 'VOUT', options);
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'Z_{out} \\approx \\frac{1}{g_{m5} \\, g_{m6} \\, r_{o5}}');
+  assert.match(report.exactEquation, /g_\{m5\}/);
+  assert.match(report.exactEquation, /g_\{m6\}/);
+  assert.match(report.exactEquation, /r_\{o5\}/);
+  assert.match(report.smallSignalNetlist, /R_M5 .*r_\{o5\}/);
+  assert.doesNotMatch(report.smallSignalNetlist, /R_M6 .*r_\{o6\}/);
+  assert.match(report.smallSignalNetlist, /OPEN I1/);
+  assert.match(report.nodeEquations.join('\n'), /V_\{IN\} = 0/);
+  assert.doesNotMatch(report.assumptions.join('\n'), /FVF|flipped-voltage/i);
+  const transfer = analyzeTransferFunction(flippedVoltageFollower(), 'VOUT', options);
+  assert.equal(transfer.ok, true);
+  assert.equal(transfer.equation, 'A_v \\approx 1');
+});
+
+test('uses the direct Vout/Vin solve when the Norton shortcut sees a floating feedback node', () => {
+  const report = analyzeTransferFunction(flippedVoltageFollower(), 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+    ignoreBodyEffect: true,
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'A_v \\approx 1');
+  assert.equal(report.directExpression.kind, 'number');
+  assert.equal(report.directExpression.value, 1);
+  assert.doesNotMatch(report.equation, /\\infty|0/);
+});
+
 test('reduces parallel and series passive paths symbolically', () => {
   const parallel = new Circuit();
   parallel.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
@@ -288,6 +347,31 @@ test('allows an explicit current-source model override to remove a transistor br
   const command = runCommand(circuit, 'analyze output-impedance VOUT --reference GND1.gnd --model M1=current-source');
   assert.equal(command.mutated, false);
   assert.equal(command.json.equation, 'Z_{out} = R_{1}');
+});
+
+test('independent DC sources use open/short small-signal equivalents', () => {
+  const current = singleResistor();
+  current.addComponent('current_source', { refdes: 'I1', x: 0, y: 240 });
+  current.addComponent('ground', { refdes: 'GND2', x: 0, y: 400 });
+  current.connect('I1.a', 'R1.b');
+  current.connect('I1.b', 'GND2.gnd');
+  const currentReport = analyzeOutputImpedance(current, 'VOUT');
+  assert.equal(currentReport.ok, true);
+  assert.equal(currentReport.equation, 'Z_{out} = R_{1}');
+  assert.match(currentReport.smallSignalNetlist, /OPEN I1: independent DC current source/);
+
+  const voltage = new Circuit();
+  voltage.addComponent('voltage_source', { refdes: 'V1', x: 0, y: 0 });
+  voltage.addComponent('ground', { refdes: 'GND1', x: 0, y: 160 });
+  voltage.addComponent('port', { refdes: 'P1', x: 0, y: -80 });
+  voltage.connect('V1.a', 'P1.p');
+  voltage.connect('V1.b', 'GND1.gnd');
+  namedNet(voltage, 'P1.p', 'VOUT');
+  const voltageReport = analyzeOutputImpedance(voltage, 'VOUT');
+  assert.equal(voltageReport.ok, true);
+  assert.equal(voltageReport.equation, 'Z_{out} = 0');
+  assert.match(voltageReport.smallSignalNetlist, /SHORT V1: independent DC voltage source/);
+  assert.ok(voltageReport.assumptions.some((text) => /V1.*shorted/.test(text)));
 });
 
 test('supports an electrically relevant capacitor in the symbolic model', () => {
@@ -480,10 +564,24 @@ test('includes implicit MOS body effect in a common-drain source follower', () =
   assert.ok(ignored.approximations.some((text) => /g_\{mb\} = 0/.test(text)));
 });
 
+test('cancels reciprocal factors in the Norton gain product', () => {
+  const circuit = commonDrain();
+  circuit.setComponentAnalysis('RS', { resistance: 'infinite' });
+  const report = analyzeTransferFunction(circuit, 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+    ignoreBodyEffect: true,
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'A_v \\approx 1');
+  assert.doesNotMatch(report.equation, /g_\{m1\}.*\\frac\{1\}\{g_\{m1\}\}/);
+});
+
 test('large-gmro approximation collapses a cascoded common-source gain', () => {
   const report = analyzeTransferFunction(cascodedCommonSource(), 'VOUT', {
     input: 'VIN',
     gmroLarge: true,
+    cascodeApproximation: true,
   });
   assert.equal(report.ok, true);
   assert.equal(report.equation, 'A_v \\approx -g_{m1} \\, R_{D}');
@@ -495,11 +593,36 @@ test('keeps an exact cascoded output load compact and parallel in the gain', () 
   const circuit = cascodedCommonSource();
   const output = analyzeOutputImpedance(circuit, 'VOUT', { input: 'VIN' });
   assert.equal(output.ok, true);
-  assert.equal(output.equation, 'Z_{out} = R_{D} \\|\\| \\left(r_{o1} + r_{o2} + \\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right)\\right)');
+  assert.equal(output.equation, 'Z_{out} = R_{D} \\|\\| \\left(r_{o1} + r_{o2} + \\left(\\left(g_{m2} + g_{mb2}\\right) \\, r_{o1} \\, r_{o2}\\right)\\right)');
   const gain = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN' });
   assert.equal(gain.ok, true);
   assert.match(gain.equation, /R_{D} \\|\\|/);
   assert.doesNotMatch(gain.equation, /\\frac\{1\}\{R_{D}\}/);
+});
+
+test('global r_o infinity leaves the cascoded branch open while retaining its exact reference', () => {
+  const report = analyzeOutputImpedance(cascodedCommonSource(), 'VOUT', {
+    input: 'VIN',
+    ignoreChannelLengthModulation: true,
+  });
+  assert.equal(report.equation, 'Z_{out} \\approx R_{D}');
+  assert.match(report.exactEquation, /r_\{o1\}/);
+  assert.match(report.approximations.join('\\n'), /Cascode branch kept compact/);
+});
+
+test('clearing the global r_o infinity option restores finite output resistance', () => {
+  const circuit = commonSource();
+  const infinite = analyzeTransferFunction(circuit, 'VOUT', {
+    input: 'VIN',
+    ignoreChannelLengthModulation: true,
+  });
+  const finite = analyzeTransferFunction(circuit, 'VOUT', {
+    input: 'VIN',
+    ignoreChannelLengthModulation: false,
+  });
+  assert.equal(infinite.equation, 'A_v \\approx -g_{m1} \\, R_{D}');
+  assert.equal(finite.equation, 'A_v = -g_{m1} \\, \\left(r_{o1} \\|\\| R_{D}\\right)');
+  assert.doesNotMatch(finite.approximations.join('\\n'), /r_o.*∞/);
 });
 
 test('per-device gmro and body-effect overrides affect the symbolic model', () => {
@@ -528,6 +651,7 @@ test('large-gmro simplification reaches the load through a deeper cascode stack'
   const report = analyzeTransferFunction(cascodedCommonSource(4), 'VOUT', {
     input: 'VIN',
     gmroLarge: true,
+    cascodeApproximation: true,
   });
   assert.equal(report.ok, true);
   assert.equal(report.equation, 'A_v \\approx -g_{m1} \\, R_{D}');
@@ -593,37 +717,52 @@ test('applies explicit textbook approximations and preserves the exact equation'
 
 test('shortens a cascode output resistance when g_m r_o is assumed large', () => {
   const exact = analyzeOutputImpedance(cascodeOutput(), 'VOUT', { acGrounds: ['VBIAS1', 'VBIAS2'] });
-  assert.equal(exact.equation, 'Z_{out} = r_{o2} + r_{o1} + \\left(r_{o2} \\, r_{o1} \\, g_{m2}\\right) + \\left(r_{o2} \\, r_{o1} \\, g_{mb2}\\right)');
+  assert.equal(exact.equation, 'Z_{out} = r_{o2} + r_{o1} + \\left(g_{m2} \\, r_{o2} \\, r_{o1}\\right) + \\left(g_{mb2} \\, r_{o2} \\, r_{o1}\\right)');
   const approximate = analyzeOutputImpedance(cascodeOutput(), 'VOUT', {
     acGrounds: ['VBIAS1', 'VBIAS2'],
     gmroLarge: true,
+    cascodeApproximation: true,
   });
-  assert.equal(approximate.equation, 'Z_{out} \\approx \\left(r_{o2} \\, r_{o1} \\, g_{m2}\\right) + \\left(r_{o2} \\, r_{o1} \\, g_{mb2}\\right)');
+  assert.equal(approximate.equation, 'Z_{out} \\approx \\left(g_{m2} \\, r_{o2} \\, r_{o1}\\right) + \\left(g_{mb2} \\, r_{o2} \\, r_{o1}\\right)');
   assert.equal(approximate.exactEquation, exact.equation);
   assert.ok(approximate.approximations.some((text) => /g_m r_o.*1/.test(text)));
+});
+
+test('does not apply the cascode dominant-term reduction unless explicitly enabled', () => {
+  const report = analyzeOutputImpedance(cascodeOutput(), 'VOUT', {
+    acGrounds: ['VBIAS1', 'VBIAS2'],
+    gmroLarge: true,
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'Z_{out} = r_{o2} + r_{o1} + \\left(g_{m2} \\, r_{o2} \\, r_{o1}\\right) + \\left(g_{mb2} \\, r_{o2} \\, r_{o1}\\right)');
+  assert.doesNotMatch(report.approximations.join('\\n'), /Cascode dominant-term approximation/);
 });
 
 test('renders complementary cascode output branches in parallel', () => {
   const report = analyzeOutputImpedance(complementaryCascodeOutput(), 'VOUT', {
     gmroLarge: true,
+    cascodeApproximation: true,
     acGrounds: ['VBIAS3.p', 'VBIAS4.p'],
   });
   assert.equal(report.ok, true);
-  assert.equal(report.equation, 'Z_{out} \\approx \\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right) \\|\\| \\left(r_{o3} \\, \\left(g_{m4} + g_{mb4}\\right) \\, r_{o4}\\right)');
+  assert.equal(report.equation, 'Z_{out} \\approx \\left(\\left(g_{m2} + g_{mb2}\\right) \\, r_{o1} \\, r_{o2}\\right) \\|\\| \\left(\\left(g_{m4} + g_{mb4}\\right) \\, r_{o3} \\, r_{o4}\\right)');
+  assert.match(report.approximations.join('\\n'), /Cascode dominant-term approximation:.*equivalently/);
   assert.match(report.smallSignalNetlist, /G_M1 .* V_\{IN\} 0 g_\{m1\}/);
-  assert.match(report.smallSignalNetlist, /V_\{IN\} = 0/);
+  assert.doesNotMatch(report.smallSignalNetlist, /V_\{IN\} = 0/);
+  assert.match(report.nodeEquations.join('\\n'), /V_\{IN\} = 0/);
 });
 
 test('forms complementary cascode voltage gain from effective Gm and Rout', () => {
   const report = analyzeTransferFunction(complementaryCascodeOutput(), 'VOUT', {
     input: 'VIN',
     gmroLarge: true,
+    cascodeApproximation: true,
     acGrounds: ['VBIAS3.p', 'VBIAS4.p'],
   });
   assert.equal(report.ok, true);
-  assert.equal(report.equation, 'A_v \\approx -g_{m1} \\, \\left(\\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right) \\|\\| \\left(r_{o3} \\, \\left(g_{m4} + g_{mb4}\\right) \\, r_{o4}\\right)\\right)');
+  assert.equal(report.equation, 'A_v \\approx -g_{m1} \\, \\left(\\left(\\left(g_{m2} + g_{mb2}\\right) \\, r_{o1} \\, r_{o2}\\right) \\|\\| \\left(\\left(g_{m4} + g_{mb4}\\right) \\, r_{o3} \\, r_{o4}\\right)\\right)');
   assert.equal(report.effectiveTransconductance.equation, 'G_{m,eff} \\approx -g_{m1}');
-  assert.equal(report.outputImpedance.equation, 'Z_{out} \\approx \\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right) \\|\\| \\left(r_{o3} \\, \\left(g_{m4} + g_{mb4}\\right) \\, r_{o4}\\right)');
+  assert.equal(report.outputImpedance.equation, 'Z_{out} \\approx \\left(\\left(g_{m2} + g_{mb2}\\right) \\, r_{o1} \\, r_{o2}\\right) \\|\\| \\left(\\left(g_{m4} + g_{mb4}\\right) \\, r_{o3} \\, r_{o4}\\right)');
   assert.doesNotMatch(report.smallSignalNetlist, /V_\{IN\} = 0/);
   assert.match(report.smallSignalNetlist, /G_M1 .* V_\{IN\} 0 g_\{m1\}/);
 });
@@ -632,11 +771,12 @@ test('keeps finite cascode r_o when large-gmro and global ro omission are both s
   const report = analyzeOutputImpedance(complementaryCascodeOutput(), 'VOUT', {
     gmroLarge: true,
     ignoreChannelLengthModulation: true,
+    cascodeApproximation: true,
     acGrounds: ['VBIAS3.p', 'VBIAS4.p'],
     input: 'VIN',
   });
   assert.equal(report.ok, true);
-  assert.equal(report.equation, 'Z_{out} \\approx \\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right) \\|\\| \\left(r_{o3} \\, \\left(g_{m4} + g_{mb4}\\right) \\, r_{o4}\\right)');
+  assert.equal(report.equation, 'Z_{out} \\approx \\left(\\left(g_{m2} + g_{mb2}\\right) \\, r_{o1} \\, r_{o2}\\right) \\|\\| \\left(\\left(g_{m4} + g_{mb4}\\right) \\, r_{o3} \\, r_{o4}\\right)');
   assert.doesNotMatch(report.equation, /\\infty/);
   assert.match(report.smallSignalNetlist, /R_M1 .* r_\{o1\}/);
   assert.match(report.smallSignalNetlist, /G_M1 .* V_\{IN\} 0 g_\{m1\}/);
@@ -675,6 +815,49 @@ test('supports capacitor impedance in output analysis', () => {
   assert.match(report.smallSignalNetlist, /C_C1 .* \\frac\{1\}\{s \\, C_\{1\}\}/);
 });
 
+test('DC-only reduction opens capacitors and shorts inductors before stamping KCL', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('capacitor', { refdes: 'C1', x: 0, y: 160 });
+  circuit.addComponent('inductor', { refdes: 'L1', x: 0, y: -160 });
+  circuit.addComponent('ground', { refdes: 'GND1', x: -80, y: 0 });
+  circuit.addComponent('port', { refdes: 'P1', x: 80, y: 0 });
+  circuit.connect('R1.a', 'GND1.gnd');
+  circuit.connect('R1.b', 'P1.p');
+  circuit.connect('C1.a', 'P1.p');
+  circuit.connect('C1.b', 'GND1.gnd');
+  circuit.connect('L1.a', 'P1.p');
+  circuit.connect('L1.b', 'GND1.gnd');
+  namedNet(circuit, 'P1.p', 'VOUT');
+
+  const model = deriveSmallSignalModel(circuit, 'VOUT', { dcOnly: true });
+  assert.equal(model.ok, true);
+  assert.deepEqual(model.model.elements, []);
+  assert.equal(model.model.nodeAliases.get(circuit.netOfTerminal({ comp: 'P1', term: 'p' }).id), '@AC_GROUND');
+  assert.match(model.approximations.join('\n'), /DC operating-point topology/);
+  assert.match(model.assumptions.join('\n'), /C1 is open at DC/);
+  assert.match(model.assumptions.join('\n'), /L1 is shorted at DC/);
+
+  const report = analyzeOutputImpedance(circuit, 'VOUT', { dcOnly: true });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'Z_{out} = 0');
+  assert.doesNotMatch(report.smallSignalNetlist, /[CL]_C?1/);
+});
+
+test('DC-only input impedance exact pass does not recurse', () => {
+  const circuit = singleResistor();
+  const report = analyzeInputImpedance(circuit, 'VOUT', { dcOnly: true });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'Z_{in} \\approx R_{1}');
+});
+
+test('DC-only transfer exact pass does not recurse', () => {
+  const circuit = commonSource();
+  const report = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN', dcOnly: true });
+  assert.equal(report.ok, true);
+  assert.match(report.equation, /^A_v/);
+});
+
 test('derives input impedance with capacitive parallel loading', () => {
   const circuit = new Circuit();
   circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
@@ -711,4 +894,18 @@ test('uses a persisted triode device attribute as a resistor model', () => {
   assert.equal(report.ok, true);
   assert.match(report.equation, /r_\{ds1\}/);
   assert.ok(report.assumptions.some((text) => /triode device/.test(text)));
+});
+
+test('treats an explicitly infinite resistor as an open branch', () => {
+  const circuit = singleResistor();
+  circuit.addComponent('resistor', { refdes: 'R2', x: 0, y: 160 });
+  circuit.connect('R2.a', 'GND1.gnd');
+  circuit.connect('R2.b', 'P1.p');
+  circuit.setComponentAnalysis('R1', { resistance: 'infinite' });
+  const report = analyzeOutputImpedance(circuit, 'VOUT');
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'Z_{out} \\approx R_{2}');
+  assert.match(report.smallSignalNetlist, /OPEN R1/);
+  assert.ok(report.approximations.some((text) => /R1 R \\to \\infty/.test(text)));
+  assert.match(report.exactEquation, /R_{1}/);
 });
