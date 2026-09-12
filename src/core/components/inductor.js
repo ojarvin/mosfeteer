@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Inductor (Razavi style): a horizontal coil of C-curve humps between a (left)
+ * Inductor (textbook style): a horizontal coil of C-curve humps between a (left)
  * and b (right). Four squares wide (160) with the coil centered on the midpoint.
  */
 export const inductor = defineSymbol({

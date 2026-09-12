@@ -465,11 +465,12 @@ button:disabled {
 }
 
 .analysis-dialog {
-  width: min(44rem, calc(100vw - 32px));
-  max-height: min(88vh, 46rem);
+  width: min(64rem, calc(100vw - 32px));
+  height: min(92vh, 64rem);
+  max-height: calc(100vh - 32px);
   padding: 20px;
   box-sizing: border-box;
-  overflow: auto;
+  overflow: hidden;
   color: var(--text);
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -484,12 +485,28 @@ button:disabled {
 .analysis-dialog form {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.analysis-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .analysis-dialog h2 {
   margin: 0;
   font-size: 17px;
+}
+
+.analysis-dialog .dialog-actions {
+  flex: 0 0 auto;
+  margin-top: 12px;
 }
 
 .analysis-intro,
@@ -581,10 +598,11 @@ button:disabled {
 }
 
 .analysis-result {
-  max-height: 11rem;
+  max-height: 24rem;
+  min-height: 12rem;
   margin: 0;
   padding: 10px;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: color-mix(in srgb, var(--bg) 80%, var(--accent));
@@ -592,6 +610,54 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.analysis-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.analysis-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 4px 4px 0 0;
+  padding: 6px 9px;
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
+  font: 700 11px/1.2 ui-sans-serif, system-ui, sans-serif;
+}
+
+.analysis-tabs button:hover,
+.analysis-tabs button:focus-visible {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.analysis-tabs button.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.analysis-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.analysis-tab-panels {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.analysis-tab-panel {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .analysis-equation {
@@ -651,30 +717,17 @@ button:disabled {
 }
 
 .analysis-details {
-  max-height: 8rem;
   margin: 0;
   padding: 0;
-  overflow: auto;
   color: var(--text);
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
 }
 
 .analysis-netlist {
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
+  margin: 0;
+  padding: 0;
   font-size: 12px;
-}
-
-.analysis-netlist summary {
-  color: var(--text-dim);
-  cursor: pointer;
-  font-weight: 700;
-}
-
-.analysis-netlist pre {
-  margin: 7px 0 0;
-  max-height: 9rem;
   overflow: auto;
   color: var(--text);
   font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

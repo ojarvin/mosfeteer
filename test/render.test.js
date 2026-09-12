@@ -145,10 +145,37 @@ test('math labels use scalable textbook parallel bars and fraction space', () =>
   const fraction = c.addLabel({ text: '$$\\frac{1}{R_{1}}$$', x: 400, y: 320, math: true });
   const svg = svgString(c);
   assert.match(svg, /<mo fence="true" stretchy="true" minsize="1\.2em">\(<\/mo>/);
-  assert.equal((svg.match(/<mo fence="false" stretchy="true" minsize="1\.2em" lspace="0em" rspace="0em">\|<\/mo>/g) || []).length, 2);
+  assert.equal((svg.match(/<mo fence="false" stretchy="true" minsize="1\.2em" lspace="0\.15em" rspace="0\.15em">∥<\/mo>/g) || []).length, 1);
   assert.match(svg, /aria-label="Math label [^"]*\\\|\\\|/);
   assert.match(svg, /font-family:'Latin Modern Math','Computer Modern'/);
+  assert.match(svg, /font-weight:500/);
   assert.equal(fraction.bbox().h, 240, 'fraction labels reserve extra vertical margin');
+});
+
+test('parallel bars stretch to fraction height and prose in math text keeps spaces', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$\\frac{1}{R_{1}} \\|\\| \\frac{1}{R_{2}}$$', x: 400, y: 120, math: true });
+  c.addLabel({ text: '$$\\text{Miller approximation used for } C_{gd}$$', x: 400, y: 320, math: true });
+  const svg = svgString(c);
+  assert.equal((svg.match(/minsize="2\.2em" maxsize="2\.8em"/g) || []).length, 1);
+  assert.match(svg, /<mtext>Miller&#160;approximation&#160;used&#160;for&#160;<\/mtext>/);
+});
+
+test('math labels support LaTeX Vert and Big sizing', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$R_{1} \\Vert R_{2}$$', x: 400, y: 120, math: true });
+  c.addLabel({ text: '$$\\frac{1}{R_{1}} \\Big\\Vert \\frac{1}{R_{2}}$$', x: 400, y: 320, math: true });
+  const svg = svgString(c);
+  assert.match(svg, /<mo fence="false" stretchy="true" minsize="1\.2em" lspace="0\.15em" rspace="0\.15em">∥<\/mo>/);
+  assert.match(svg, /<mo fence="false" stretchy="true" minsize="2\.0em" maxsize="2\.5em" lspace="0\.15em" rspace="0\.15em">∥<\/mo>/);
+});
+
+test('math labels support LaTeX quad spacing', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$Z_{in} \\approx R_{1},\\quad A_{v1} \\approx -g_{m1}R_{1}$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  assert.match(svg, /<mspace width="1em"\/>/);
+  assert.doesNotMatch(svg, /<mi>quad<\/mi>/);
 });
 
 test('complex math labels reserve extra rows for nested fractions', () => {
@@ -165,6 +192,22 @@ test('math label default ink follows the theme while explicit colors remain lite
   const svg = svgString(c);
   assert.match(svg, /class="schematic-math-label"[^>]+color:var\(--svg-ink, #111\)/);
   assert.match(svg, /class="schematic-math-label"[^>]+color:#d00/);
+});
+
+test('math labels support measured multi-line annotations', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$\\text{Assumptions\\:}\ng_{m}r_{o} \\gg 1$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  assert.match(svg, /schematic-math-line/);
+  assert.match(svg, /<mtext>Assumptions:<\/mtext>/);
+  assert.equal((svg.match(/<math /g) || []).length, 2);
+});
+
+test('math labels render the compact \u226b relation', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$g_{m}r_{o} \\gg 1$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  assert.equal((svg.match(/<mo>≫<\/mo>/g) || []).length, 1);
 });
 
 test('svgString draws value text when present', () => {
@@ -300,12 +343,12 @@ test('transistor instance label renders as a dedicated label object (no duplicat
   assert.ok(svg.includes('>1</tspan>'));
 });
 
-test('label subscripts: explicit _{...} markup and owned trailing digits', () => {
+test('label subscripts: explicit _{...} markup and default component source', () => {
   const c = new Circuit();
   const owned = c.addComponent('resistor', { x: 480, y: 0 });
   c.addLabel({ text: 'C_{GS}', x: 400, y: 200, align: 'left' });
   const svg = svgString(c);
-  // owned R1 -> R + subscript 1
+  // default R1 is persisted as explicit R_{1}
   assert.ok(svg.includes('>R<tspan'));
   assert.ok(svg.includes('>1</tspan>'));
   // explicit markup C_GS -> C + subscript GS
@@ -315,7 +358,7 @@ test('label subscripts: explicit _{...} markup and owned trailing digits', () =>
   assert.ok(svg.includes('text-anchor="start"'));
 });
 
-test('svgString renders filled polygon bodies (Razavi gate bars)', () => {
+test('svgString renders filled polygon bodies (textbook gate bars)', () => {
   const c = new Circuit();
   c.addComponent('nmos', { x: 520, y: 0 });
   const svg = svgString(c);
@@ -353,7 +396,7 @@ test('svgString renders bulk MOS terminal and channel connection', () => {
   assert.match(svg, /M -54\.65 0 L 0 0/, 'bulk graphic joins the channel at its terminal');
   assert.match(svg, /<text[^>]*>M/, 'bulk MOS owned label renders');
 });
-test('Razavi symbols render (sources, opamp, gates, ports)', () => {
+test('textbook symbols render (sources, opamp, gates, ports)', () => {
   const c = new Circuit();
   c.addComponent('current_source', { x: 400, y: 0 });
   c.addComponent('voltage_source', { x: 400, y: 160 });

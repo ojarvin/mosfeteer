@@ -74,6 +74,7 @@ const FLAG_ARITY = {
   'ignore-channel-length-modulation': 0,
   'ignore-body-effect': 0,
   'gmro-large': 0,
+  miller: 0,
   context: 1,
   input: 1,
   net: 1,
@@ -457,9 +458,9 @@ export function commandHelp() {
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
     '  eval                           - quality report (unconnected/overlaps/off-grid)',
-    '  analyze output-impedance NET [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] - derive a symbolic textbook equation (input is zeroed)',
-    '  analyze input-impedance NET [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] - derive symbolic Z_in',
-    '  analyze transfer-function OUT [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] - derive a symbolic voltage transfer',
+    '  analyze output-impedance NET [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive a symbolic textbook equation (input is zeroed)',
+    '  analyze input-impedance NET [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive symbolic Z_in',
+    '  analyze transfer-function OUT [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive a symbolic voltage transfer',
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
     '  ascii                          - coarse ASCII layout preview',
@@ -530,10 +531,10 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'analyze' || cmd === 'analysis') {
     const subject = pos.shift();
     if (subject !== 'output-impedance' && subject !== 'rout' && subject !== 'zout' && subject !== 'input-impedance' && subject !== 'rin' && subject !== 'zin' && subject !== 'transfer-function' && subject !== 'transfer' && subject !== 'gain') {
-      throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large]');
+      throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller]');
     }
     const target = pos.shift();
-    if (!target || pos.length) throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large]');
+    if (!target || pos.length) throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller]');
     const analysisOptions = {
       reference: flags.reference?.[0],
       acGrounds: flags['ac-ground'],
@@ -545,6 +546,10 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ignoreChannelLengthModulation: !!flags['ignore-channel-length-modulation'],
       ignoreBodyEffect: !!flags['ignore-body-effect'],
       gmroLarge: !!flags['gmro-large'],
+      // The core analysis defaults Miller on; only pass the flag when the
+      // caller explicitly requested it so an omitted CLI option does not
+      // accidentally disable the default.
+      ...(flags.miller ? { millerApproximation: true } : {}),
     };
     const report = subject === 'output-impedance' || subject === 'rout' || subject === 'zout'
       ? analyzeOutputImpedance(circuit, target, analysisOptions)

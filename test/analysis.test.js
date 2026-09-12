@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
-import { analyzeInputImpedance, analyzeOutputImpedance, analyzeTransferFunction } from '../src/core/analysis/index.js';
+import { analyzeInputImpedance, analyzeOutputImpedance, analyzeTransferFunction, deriveSmallSignalModel } from '../src/core/analysis/index.js';
 import { commandHelp, runCommand } from '../src/core/commands.js';
 
 function namedNet(circuit, ref, name) {
@@ -39,6 +39,42 @@ function commonSource() {
   return circuit;
 }
 
+function sourceDegeneratedCommonSource() {
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'RS', x: 160, y: 80 });
+  circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
+  circuit.addComponent('ground', { refdes: 'GND1', x: 240, y: 160 });
+  circuit.addComponent('ground', { refdes: 'GND2', x: 80, y: -160 });
+  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'OUT', x: 0, y: -240 });
+  circuit.connect('M1.g', 'IN.p');
+  circuit.connect('M1.s', 'RS.a');
+  circuit.connect('RS.b', 'GND1.gnd');
+  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('RD.b', 'GND2.gnd');
+  namedNet(circuit, 'IN.p', 'VIN');
+  namedNet(circuit, 'OUT.p', 'VOUT');
+  return circuit;
+}
+
+function commonDrain() {
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('supply', { refdes: 'VDD1', x: 0, y: -160 });
+  circuit.addComponent('resistor', { refdes: 'RS', x: -80, y: 80 });
+  circuit.addComponent('ground', { refdes: 'GND1', x: -160, y: 80 });
+  circuit.addComponent('input', { refdes: 'IN', x: -120, y: 0 });
+  circuit.addComponent('output', { refdes: 'OUT', x: 120, y: 80 });
+  circuit.connect('M1.d', 'VDD1.p');
+  circuit.connect('M1.s', 'RS.b', 'OUT.p');
+  circuit.connect('RS.a', 'GND1.gnd');
+  circuit.connect('M1.g', 'IN.p');
+  namedNet(circuit, 'IN.p', 'VIN');
+  namedNet(circuit, 'OUT.p', 'VOUT');
+  return circuit;
+}
+
 function commonGate() {
   const circuit = new Circuit();
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
@@ -57,6 +93,36 @@ function commonGate() {
   return circuit;
 }
 
+function cascodedCommonSource(depth = 2) {
+  const circuit = new Circuit();
+  for (let index = 1; index <= depth; index++) {
+    circuit.addComponent('nmos', { refdes: `M${index}`, x: 0, y: -(index - 1) * 160 });
+  }
+  circuit.addComponent('resistor', { refdes: 'RD', x: 80, y: -depth * 160 });
+  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
+  circuit.addComponent('ground', { refdes: 'GND1', x: 0, y: 200 });
+  circuit.addComponent('ground', { refdes: 'GNDLOAD', x: 160, y: -depth * 160 });
+  for (let index = 2; index <= depth; index++) {
+    circuit.addComponent('ground', { refdes: `GB${index}`, x: -120, y: -(index - 1) * 160 });
+  }
+  circuit.connect('M1.g', 'IN.p');
+  circuit.connect('M1.s', 'GND1.gnd');
+  circuit.connect('RD.b', 'GNDLOAD.gnd');
+  for (let index = 2; index <= depth; index++) {
+    circuit.connect(`M${index}.g`, `GB${index}.gnd`);
+  }
+  for (let index = 1; index < depth; index++) {
+    circuit.connect(`M${index}.d`, `M${index + 1}.s`);
+  }
+  circuit.connect(`M${depth}.d`, 'RD.a');
+  namedNet(circuit, 'IN.p', 'VIN');
+  namedNet(circuit, `M${depth}.d`, 'VOUT');
+  namedNet(circuit, 'M1.d', 'VX');
+  namedNet(circuit, 'M1.s', 'GND');
+  namedNet(circuit, 'M2.g', 'VBIAS');
+  return circuit;
+}
+
 function cascodeOutput() {
   const circuit = new Circuit();
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
@@ -72,6 +138,34 @@ function cascodeOutput() {
   circuit.connect('M2.d', 'VOUT.p');
   namedNet(circuit, 'VBIAS1.p', 'VBIAS1');
   namedNet(circuit, 'VBIAS2.p', 'VBIAS2');
+  namedNet(circuit, 'VOUT.p', 'VOUT');
+  return circuit;
+}
+
+function complementaryCascodeOutput() {
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 160 });
+  circuit.addComponent('nmos', { refdes: 'M2', x: 0, y: 0 });
+  circuit.addComponent('pmos', { refdes: 'M3', x: 400, y: -160 });
+  circuit.addComponent('pmos', { refdes: 'M4', x: 400, y: 0 });
+  circuit.addComponent('ground', { refdes: 'GND', x: -240, y: 240 });
+  circuit.addComponent('supply', { refdes: 'VDD', x: 640, y: -240 });
+  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 160 });
+  circuit.addComponent('port', { refdes: 'VBIAS2', x: -240, y: 0 });
+  circuit.addComponent('port', { refdes: 'VBIAS3', x: 640, y: -160 });
+  circuit.addComponent('port', { refdes: 'VBIAS4', x: 640, y: 0 });
+  circuit.addComponent('port', { refdes: 'VOUT', x: 200, y: -80 });
+  circuit.connect('M1.s', 'GND.gnd');
+  circuit.connect('M1.d', 'M2.s');
+  circuit.connect('M2.d', 'VOUT.p');
+  circuit.connect('M3.s', 'VDD.p');
+  circuit.connect('M3.d', 'M4.s');
+  circuit.connect('M4.d', 'VOUT.p');
+  circuit.connect('M1.g', 'IN.p');
+  circuit.connect('M2.g', 'VBIAS2.p', 'GND.gnd');
+  circuit.connect('M4.g', 'VBIAS4.p');
+  circuit.connect('M3.g', 'VBIAS3.p');
+  namedNet(circuit, 'IN.p', 'VIN');
   namedNet(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
@@ -157,7 +251,7 @@ test('assumes an unused NMOS bulk is tied to GND', () => {
   assert.ok(report.assumptions.some((text) => /bulk is unused and is assumed tied to GND/.test(text)));
 });
 
-test('does not guess unsupported source degeneration or ambiguous names', () => {
+test('does not mutate the circuit while rejecting ambiguous names', () => {
   const circuit = singleResistor();
   const before = JSON.stringify(circuit.toJSON());
   const command = runCommand(circuit, 'analyze output-impedance VOUT');
@@ -204,6 +298,69 @@ test('supports an electrically relevant capacitor in the symbolic model', () => 
   const report = analyzeOutputImpedance(circuit, 'VOUT');
   assert.equal(report.ok, true);
   assert.equal(report.equation, 'Z_{out} = R_{1} \\|\\| \\frac{1}{s \\, C_{1}}');
+});
+
+test('Miller approximation splits a high-gain MOS gate-drain capacitor', () => {
+  const circuit = commonSource();
+  circuit.addComponent('capacitor', { refdes: 'CGD', x: -40, y: 0 });
+  circuit.connect('CGD.a', 'M1.g');
+  circuit.connect('CGD.b', 'M1.d');
+
+  const exact = deriveSmallSignalModel(circuit, 'VOUT', { input: 'VIN', millerApproximation: true });
+  const exactCap = exact.model.elements.find((element) => element.component === 'CGD');
+  assert.ok(exactCap);
+  assert.equal(exactCap.millerRole, undefined);
+
+  const miller = deriveSmallSignalModel(circuit, 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+    millerApproximation: true,
+  });
+  const caps = miller.model.elements.filter((element) => element.component === 'CGD');
+  assert.deepEqual(caps.map((element) => element.millerRole).sort(), ['input', 'output']);
+  assert.ok(caps.every((element) => element.b === '@AC_GROUND'));
+  assert.match(miller.netlist, /C_CGD_input/);
+  assert.match(miller.netlist, /C_CGD_output/);
+  assert.match(miller.approximations.join('\n'), /Miller approximation/);
+
+  const transfer = analyzeTransferFunction(circuit, 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+    millerApproximation: true,
+  });
+  assert.equal(transfer.ok, true);
+  assert.match(transfer.equation, /g_\{m1\}/);
+});
+
+test('Miller approximation also splits a feedback resistor using the derived DC gain', () => {
+  const circuit = commonSource();
+  circuit.addComponent('resistor', { refdes: 'RF', x: -40, y: 0 });
+  circuit.connect('RF.a', 'M1.g');
+  circuit.connect('RF.b', 'M1.d');
+  const model = deriveSmallSignalModel(circuit, circuit.netOfTerminal('POUT.p').id, {
+    input: circuit.netOfTerminal('PIN.p').id,
+    gmroLarge: true,
+  });
+  const branches = model.model.elements.filter((element) => element.component === 'RF');
+  assert.deepEqual(branches.map((element) => element.millerRole).sort(), ['input', 'output']);
+  assert.match(model.netlist, /R_RF_input/);
+  assert.match(model.netlist, /R_RF_output/);
+  assert.match(model.approximations.join('\n'), /derived DC stage gain/);
+  assert.match(model.assumptions.join('\n'), /A_\{v1\}\\approx-g_\{m1\}/);
+  assert.match(model.assumptions.join('\n'), /Z_\{in\}=.*1 - A_\{v1\}/);
+  assert.match(model.assumptions.join('\n'), /Z_\{out\}=.*1 - \\frac\{1\}\{A_\{v1\}\}/);
+
+  const input = analyzeInputImpedance(circuit, 'VIN', {
+    gmroLarge: true,
+    millerApproximation: true,
+  });
+  const output = analyzeOutputImpedance(circuit, 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+    millerApproximation: true,
+  });
+  assert.match(input.equation, /,\\quad A_\{v1\}\\approx-g_\{m1\}/);
+  assert.match(output.equation, /,\\quad A_\{v1\}\\approx-g_\{m1\}/);
 });
 
 test('treats unnamed ground, supply, and VCM markers as one AC reference group', () => {
@@ -287,15 +444,128 @@ test('common-source gain presents the output loading as parallel resistance', ()
   assert.equal(report.equation, 'A_v = -g_{m1} \\, \\left(r_{o1} \\|\\| R_{D}\\right)');
 });
 
+test('source degeneration is solved by the systematic nodal model', () => {
+  const circuit = sourceDegeneratedCommonSource();
+  const transfer = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN' });
+  assert.equal(transfer.ok, true);
+  assert.doesNotMatch(transfer.error || '', /source degeneration/);
+  assert.ok(transfer.equation.includes('r_{o1}'));
+  const output = analyzeOutputImpedance(circuit, 'VOUT', { input: 'VIN' });
+  assert.equal(output.ok, true);
+  assert.doesNotMatch(output.error || '', /source degeneration/);
+  assert.ok(output.assumptions.some((text) => /source degeneration.*nodal/.test(text)));
+  assert.equal(output.equation, 'Z_{out} = R_{D} \\|\\| \\left(r_{o1} + R_{S} + \\left(\\left(g_{m1} + g_{mb1}\\right) \\, r_{o1} \\, R_{S}\\right)\\right)');
+  // The Norton gain reuses the same output-impedance expression.  A
+  // reciprocal sum may be rendered as a parallel group, but must not turn
+  // into the underlying `1/R_1 + 1/R_2` admittance when it is multiplied into
+  // A_v.
+  assert.match(output.equation, /\\|\\|/);
+  assert.match(transfer.equation, /\\|\\|/);
+  assert.doesNotMatch(transfer.equation, /\\frac\{1\}\{r_\{o1\}\} \+ \\frac\{1\}\{R_D\}/);
+});
+
+test('includes implicit MOS body effect in a common-drain source follower', () => {
+  const report = analyzeTransferFunction(commonDrain(), 'VOUT', { input: 'VIN' });
+  assert.equal(report.ok, true);
+  assert.match(report.equation, /g_\{mb1\}/);
+  assert.match(report.smallSignalNetlist, /G_M1 0 V_\{OUT\} 0 V_\{OUT\} g_\{mb1\}/);
+  assert.ok(report.assumptions.some((text) => /M1 bulk is unused and is assumed tied to GND/.test(text)));
+
+  const ignored = analyzeTransferFunction(commonDrain(), 'VOUT', {
+    input: 'VIN',
+    ignoreBodyEffect: true,
+  });
+  assert.equal(ignored.ok, true);
+  assert.doesNotMatch(ignored.equation, /g_\{mb1\}/);
+  assert.ok(ignored.approximations.some((text) => /g_\{mb\} = 0/.test(text)));
+});
+
+test('large-gmro approximation collapses a cascoded common-source gain', () => {
+  const report = analyzeTransferFunction(cascodedCommonSource(), 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'A_v \\approx -g_{m1} \\, R_{D}');
+  assert.match(report.exactEquation, /r_\{o2\}/);
+  assert.ok(report.approximations.some((text) => /g_m r_o.*1/.test(text)));
+});
+
+test('keeps an exact cascoded output load compact and parallel in the gain', () => {
+  const circuit = cascodedCommonSource();
+  const output = analyzeOutputImpedance(circuit, 'VOUT', { input: 'VIN' });
+  assert.equal(output.ok, true);
+  assert.equal(output.equation, 'Z_{out} = R_{D} \\|\\| \\left(r_{o1} + r_{o2} + \\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right)\\right)');
+  const gain = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN' });
+  assert.equal(gain.ok, true);
+  assert.match(gain.equation, /R_{D} \\|\\|/);
+  assert.doesNotMatch(gain.equation, /\\frac\{1\}\{R_{D}\}/);
+});
+
+test('per-device gmro and body-effect overrides affect the symbolic model', () => {
+  const gainCircuit = commonSource();
+  gainCircuit.setComponentAnalysis('M1', { gmroLarge: true });
+  const gain = analyzeTransferFunction(gainCircuit, 'VOUT', { input: 'VIN' });
+  assert.equal(gain.ok, true);
+  assert.equal(gain.equation, 'A_v \\approx -g_{m1} \\, \\left(r_{o1} \\|\\| R_{D}\\right)');
+  assert.ok(gain.approximations.some((text) => /Per-device approximation: M1 g_m r_o/.test(text)));
+
+  const selectiveCircuit = cascodedCommonSource();
+  selectiveCircuit.setComponentAnalysis('M2', { gmroLarge: true });
+  const selective = analyzeOutputImpedance(selectiveCircuit, 'VOUT');
+  assert.equal(selective.ok, true);
+  assert.ok(selective.approximations.some((text) => /Per-device approximation: M2 g_m r_o/.test(text)));
+
+  const bodyCircuit = commonDrain();
+  bodyCircuit.setComponentAnalysis('M1', { ignoreBodyEffect: true });
+  const body = analyzeTransferFunction(bodyCircuit, 'VOUT', { input: 'VIN' });
+  assert.equal(body.ok, true);
+  assert.doesNotMatch(body.equation, /g_\{mb1\}/);
+  assert.ok(body.approximations.some((text) => /Per-device approximation: M1 g_\{mb\} = 0/.test(text)));
+});
+
+test('large-gmro simplification reaches the load through a deeper cascode stack', () => {
+  const report = analyzeTransferFunction(cascodedCommonSource(4), 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'A_v \\approx -g_{m1} \\, R_{D}');
+  assert.doesNotMatch(report.equation, /\\frac\{1\}\{0\}/);
+});
+
+test('per-device r_o policy overrides the form-wide channel-length approximation', () => {
+  const circuit = cascodedCommonSource();
+  circuit.setComponentAnalysis('M1', { channelLengthModulation: 'ignore' });
+  circuit.setComponentAnalysis('M2', { channelLengthModulation: 'finite' });
+  const report = analyzeTransferFunction(circuit, 'VOUT', {
+    input: 'VIN',
+    ignoreChannelLengthModulation: true,
+  });
+  assert.equal(report.ok, true);
+  assert.match(report.equation, /r_\{o2\}/);
+  assert.match(report.exactEquation, /r_\{o1\}/);
+  assert.ok(report.assumptions.some((text) => /M2.*finite r_o/.test(text)));
+});
+
+test('a device-level r_o omission is applied without enabling it globally', () => {
+  const circuit = commonSource();
+  circuit.setComponentAnalysis('M1', { channelLengthModulation: 'ignore' });
+  const report = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN' });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'A_v \\approx -g_{m1} \\, R_{D}');
+  assert.ok(report.approximations.some((text) => /M1.*r_o.*∞/.test(text)));
+});
+
 test('common-gate gain and input impedance use the source-input half-circuit form', () => {
   const circuit = commonGate();
   const options = { input: 'VIN', acGrounds: ['VBIAS'] };
   const gain = analyzeTransferFunction(circuit, 'VOUT', options);
   assert.equal(gain.ok, true);
-  assert.equal(gain.equation, 'A_v = \\left(\\frac{1}{r_{o1}} + g_{m1}\\right) \\, \\left(r_{o1} \\|\\| R_{D}\\right)');
+  assert.equal(gain.equation, 'A_v = \\left(\\frac{1}{r_{o1}} + g_{m1} + g_{mb1}\\right) \\, \\left(r_{o1} \\|\\| R_{D}\\right)');
   const input = analyzeInputImpedance(circuit, 'VIN', options);
   assert.equal(input.ok, true);
-  assert.equal(input.equation, 'Z_{in} = \\left(r_{o1} + R_{D}\\right) \\, \\frac{1}{1 + \\left(g_{m1} \\, r_{o1}\\right)}');
+  assert.equal(input.equation, 'Z_{in} = \\frac{r_{o1} + R_{D}}{1 + \\left(\\left(g_{m1} + g_{mb1}\\right) \\, r_{o1}\\right)}');
   assert.ok(input.assumptions.some((text) => /common-gate device/.test(text)));
 });
 
@@ -316,21 +586,61 @@ test('applies explicit textbook approximations and preserves the exact equation'
     gmroLarge: true,
     ignoreChannelLengthModulation: true,
   });
-  assert.equal(commonGateInput.equation, 'Z_{in} \\approx \\frac{1}{g_{m1}}');
-  assert.equal(commonGateInput.exactEquation, 'Z_{in} = \\left(r_{o1} + R_{D}\\right) \\, \\frac{1}{1 + \\left(g_{m1} \\, r_{o1}\\right)}');
+  assert.equal(commonGateInput.equation, 'Z_{in} \\approx \\frac{1}{g_{m1} + g_{mb1}}');
+  assert.equal(commonGateInput.exactEquation, 'Z_{in} = \\frac{r_{o1} + R_{D}}{1 + \\left(\\left(g_{m1} + g_{mb1}\\right) \\, r_{o1}\\right)}');
   assert.ok(commonGateInput.approximations.some((text) => /g_m r_o.*1/.test(text)));
 });
 
 test('shortens a cascode output resistance when g_m r_o is assumed large', () => {
   const exact = analyzeOutputImpedance(cascodeOutput(), 'VOUT', { acGrounds: ['VBIAS1', 'VBIAS2'] });
-  assert.equal(exact.equation, 'Z_{out} = r_{o2} + r_{o1} + \\left(r_{o2} \\, r_{o1} \\, g_{m2}\\right)');
+  assert.equal(exact.equation, 'Z_{out} = r_{o2} + r_{o1} + \\left(r_{o2} \\, r_{o1} \\, g_{m2}\\right) + \\left(r_{o2} \\, r_{o1} \\, g_{mb2}\\right)');
   const approximate = analyzeOutputImpedance(cascodeOutput(), 'VOUT', {
     acGrounds: ['VBIAS1', 'VBIAS2'],
     gmroLarge: true,
   });
-  assert.equal(approximate.equation, 'Z_{out} \\approx r_{o2} \\, r_{o1} \\, g_{m2}');
+  assert.equal(approximate.equation, 'Z_{out} \\approx \\left(r_{o2} \\, r_{o1} \\, g_{m2}\\right) + \\left(r_{o2} \\, r_{o1} \\, g_{mb2}\\right)');
   assert.equal(approximate.exactEquation, exact.equation);
   assert.ok(approximate.approximations.some((text) => /g_m r_o.*1/.test(text)));
+});
+
+test('renders complementary cascode output branches in parallel', () => {
+  const report = analyzeOutputImpedance(complementaryCascodeOutput(), 'VOUT', {
+    gmroLarge: true,
+    acGrounds: ['VBIAS3.p', 'VBIAS4.p'],
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'Z_{out} \\approx \\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right) \\|\\| \\left(r_{o3} \\, \\left(g_{m4} + g_{mb4}\\right) \\, r_{o4}\\right)');
+  assert.match(report.smallSignalNetlist, /G_M1 .* V_\{IN\} 0 g_\{m1\}/);
+  assert.match(report.smallSignalNetlist, /V_\{IN\} = 0/);
+});
+
+test('forms complementary cascode voltage gain from effective Gm and Rout', () => {
+  const report = analyzeTransferFunction(complementaryCascodeOutput(), 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+    acGrounds: ['VBIAS3.p', 'VBIAS4.p'],
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'A_v \\approx -g_{m1} \\, \\left(\\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right) \\|\\| \\left(r_{o3} \\, \\left(g_{m4} + g_{mb4}\\right) \\, r_{o4}\\right)\\right)');
+  assert.equal(report.effectiveTransconductance.equation, 'G_{m,eff} \\approx -g_{m1}');
+  assert.equal(report.outputImpedance.equation, 'Z_{out} \\approx \\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right) \\|\\| \\left(r_{o3} \\, \\left(g_{m4} + g_{mb4}\\right) \\, r_{o4}\\right)');
+  assert.doesNotMatch(report.smallSignalNetlist, /V_\{IN\} = 0/);
+  assert.match(report.smallSignalNetlist, /G_M1 .* V_\{IN\} 0 g_\{m1\}/);
+});
+
+test('keeps finite cascode r_o when large-gmro and global ro omission are both selected', () => {
+  const report = analyzeOutputImpedance(complementaryCascodeOutput(), 'VOUT', {
+    gmroLarge: true,
+    ignoreChannelLengthModulation: true,
+    acGrounds: ['VBIAS3.p', 'VBIAS4.p'],
+    input: 'VIN',
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'Z_{out} \\approx \\left(r_{o1} \\, \\left(g_{m2} + g_{mb2}\\right) \\, r_{o2}\\right) \\|\\| \\left(r_{o3} \\, \\left(g_{m4} + g_{mb4}\\right) \\, r_{o4}\\right)');
+  assert.doesNotMatch(report.equation, /\\infty/);
+  assert.match(report.smallSignalNetlist, /R_M1 .* r_\{o1\}/);
+  assert.match(report.smallSignalNetlist, /G_M1 .* V_\{IN\} 0 g_\{m1\}/);
+  assert.ok(report.assumptions.some((text) => /Finite symbolic r_o is retained for cascode devices/.test(text)));
 });
 
 test('reports the ideal MOS gate input as infinite impedance', () => {

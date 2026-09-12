@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Resistor (Razavi style): a horizontal five-tooth zigzag between a (left) and
+ * Resistor (textbook style): a horizontal five-tooth zigzag between a (left) and
  * b (right). The component origin is at the electrical midpoint so transforms
  * and placement keep the symbol centered.
  */

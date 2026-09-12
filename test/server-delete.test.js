@@ -14,11 +14,28 @@ const SERVER = join(ROOT, 'src/web/serve.js');
 
 async function unusedPort() {
   const probe = createServer();
-  await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      probe.removeListener('error', onError);
+      reject(error);
+    };
+    probe.once('error', onError);
+    probe.listen(0, '127.0.0.1', () => {
+      probe.removeListener('error', onError);
+      resolve();
+    });
+  });
   const port = probe.address().port;
   await new Promise((resolve, reject) => probe.close((err) => err ? reject(err) : resolve()));
   return port;
 }
+
+// Restricted runners may disallow loopback listeners.  Skip these HTTP tests
+// in that environment rather than surfacing an unhandled Node native error.
+const LOOPBACK_ERROR = await unusedPort().then(() => null, (error) => error);
+const serverTest = LOOPBACK_ERROR
+  ? (name, fn) => test(name, { skip: `loopback unavailable${LOOPBACK_ERROR.code ? ` (${LOOPBACK_ERROR.code})` : ''}` }, fn)
+  : test;
 
 async function startServer() {
   const root = await mkdtemp(join(tmpdir(), 'schematic-spawner-delete-'));
@@ -73,7 +90,7 @@ async function createCircuit(base, name) {
   assert.equal(response.status, 200);
 }
 
-test('PUT accepts registered symbols and explains an outdated server registry', async (t) => {
+serverTest('PUT accepts registered symbols and explains an outdated server registry', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
 
@@ -103,7 +120,7 @@ test('PUT accepts registered symbols and explains an outdated server registry', 
   assert.match(error, /restart the server after changing the symbol registry/);
 });
 
-test('saves a circuit with check issues without changing it', async (t) => {
+serverTest('saves a circuit with check issues without changing it', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
 
@@ -121,7 +138,7 @@ test('saves a circuit with check issues without changing it', async (t) => {
   assert.deepEqual(loaded.state, state);
 });
 
-test('active revisions avoid unchanged circuit responses and support conditional GETs', async (t) => {
+serverTest('active revisions avoid unchanged circuit responses and support conditional GETs', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
 
@@ -152,7 +169,7 @@ test('active revisions avoid unchanged circuit responses and support conditional
   assert.equal((await readdir(app.circuits)).some((name) => name.includes('.tmp') || name.includes('.old')), false);
 });
 
-test('DELETE circuit removes only the circuit and manages active state', async (t) => {
+serverTest('DELETE circuit removes only the circuit and manages active state', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
 

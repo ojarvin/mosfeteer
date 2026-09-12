@@ -24,6 +24,17 @@ attributes pre-fill the form and are also consumed automatically by analysis.
 When the context row is part of a multi-selection, choosing an attribute applies
 one undoable update to every selected compatible component or physical net;
 right-clicking an unselected row leaves the action scoped to that row.
+Transistors also expose an **Output resistance (`r_o`)** submenu. **Ignore
+channel-length modulation** omits `r_o` for that device; **Retain finite `r_o`**
+keeps it even when the form-wide approximation is enabled; and **Clear override**
+returns to the form setting. This makes a cascode/bias-device approximation
+explicit instead of silently idealizing every MOS device in the schematic.
+The same menu can assume `g_m r_o \\gg 1` or retain finite intrinsic gain for
+one device, and can ignore or retain that device's body effect (`V_{BS}=0` when
+ignored). A current-source override remains distinct: `r_o \\to \\infty`
+removes only the output conductance, while an ideal current-source model also
+removes the transistor's controlled `g_m`/`g_{mb}` sources and leaves an open
+small-signal branch.
 
 The analysis pipeline is deliberately nodal rather than a growing collection
 of topology cases:
@@ -41,19 +52,51 @@ of topology cases:
    current gives `Z_{out} = V_{out}/I_{test}`, while an ideal input-node drive
    gives a voltage transfer `A_v = V_{out}/V_{in}`.
 
+Voltage-transfer reports also expose the equivalent two-port shortcut
+`A_v = G_{m,eff} R_{out}`. `G_{m,eff}` is stamped by shorting the output and
+measuring the resulting input-controlled current, so cascodes and internal
+feedback are included rather than guessed from one transistor's `g_m`.
+
 The current compact resistor reducer remains as a compatibility display for
 simple output-impedance networks, while the generic node-equation result is
 attached to every successful report and is the foundation for future transfer
 functions. Singular or unsupported models are reported explicitly rather than
 silently guessed.
 
-The form and command line expose three explicit textbook approximations:
-ignore channel-length modulation (`r_o \to \infty`), ignore body effect
-(`g_{mb}=0`), and assume `g_m r_o \gg 1`. Approximate equations are shown with
+The form and command line expose four explicit textbook approximations:
+ignore channel-length modulation for MOS devices by default (`r_o \to \infty`), ignore body effect
+(`g_{mb}=0`), assume `g_m r_o \gg 1`, and apply the Miller approximation to
+eligible feedback impedances. Miller is enabled by default, but splitting is used
+only when the specific MOS forward-gain device has an explicit `g_m r_o \gg 1`
+assumption and the stage is a conservative inverting, AC-grounded-source
+topology with a visible DC load. For an impedance `Z` between input and output,
+the equivalent shunts are `Z/(1-A_v)` and `Z/(1-1/A_v)`, where `A_v` is written
+out as the derived DC stage estimate (for example
+`-g_{m1}(r_{o1} \|\| R_D)`). Otherwise the original two-terminal impedance
+remains in the model. The displayed Miller shunts retain a shared stage-gain
+token such as `A_{v1}` in both forms, while the assumption log defines it with
+the expanded DC approximation. Approximate equations are shown with
 `\approx`; the unapproximated symbolic result remains in the report details
-and every selected assumption is listed. For example, a cascoded output
-resistance reduces from `r_{o2}+r_{o1}+g_{m2}r_{o2}r_{o1}` to
-`g_{m2}r_{o2}r_{o1}` under the large-`g_m r_o` assumption.
+and every selected assumption is listed. For example, with body effect enabled
+a cascoded output resistance reduces from
+`r_{o2}+r_{o1}+(g_{m2}+g_{mb2})r_{o2}r_{o1}` to
+`(g_{m2}+g_{mb2})r_{o2}r_{o1}` under the large-`g_m r_o` assumption.
+When both form-wide options are checked, the recognized cascode reduction
+retains finite symbolic `r_o` for its branch devices so the `g_m r_o` factor
+does not collapse to `\infty`; an explicit per-device `r_o` omission still
+produces an open branch.
+The same assumption simplifies loaded cascoded common-source gains through
+the recurring loaded-common-gate identity, so a deep stack with a resistive
+load is displayed as `A_v \approx -g_{m1}R_D` when the load limits the gain,
+instead of exposing repeated nested parallel groups. The exact nodal result
+remains available in the details. Likewise, an unambiguous source-degenerated
+common source and a two-device cascode with a direct drain load use compact
+finite-`r_o` output-resistance forms while retaining the complete nodal
+derivation in the details.
+Per-device `r_o` overrides participate in the same nodal model and are listed
+in the assumptions. If an algebraic singularity would otherwise render as a
+reciprocal zero, the display uses the explicit limiting symbol `\infty` rather
+than the misleading literal `1/0`.
 
 For output impedance, the analysis form exposes the input/source net and
 sets it to zero (AC ground) before forming the small-signal model. An
@@ -71,26 +114,63 @@ voltage-transfer result retains the finite-`r_o` term, giving the corresponding
 positive common-gate gain.
 
 After a successful derivation, **Annotate schematic** places each successful
-symbolic equation as a free diagram label. Basic LaTeX-style subscripts are preserved
+symbolic equation as a free diagram label in a left-aligned column to the
+right of the circuit bounds, with a two-cell clearance. After the browser has
+measured the rendered equation boxes, their horizontal centerlines use one
+shared pitch based on the largest adjacent half-sum of bbox heights; at least
+one neighboring pair can therefore touch while narrower pairs have more
+whitespace. A separate multiline
+MathML-backed **Assumptions:** label is added only when a `g_m r_o \gg 1`,
+`r_o = \infty`, body-effect omission, or additional cascode-reduction
+approximation was actually used. Global `r_o` omission is qualified with any
+finite device overrides; same-direction per-device omissions are suppressed.
+When only per-device omissions are selected, they are listed individually,
+unless every device in a multi-device analyzed model has that override, in
+which case the equivalent global statement is used. A single-device override
+remains visibly device-specific. It is excluded from the equation-column
+pitch. Basic LaTeX-style subscripts are preserved
 using the editor's existing `_{...}` label markup. Parallel resistor groups
-are stored with the TeX-safe `\|\|` source spelling and rendered in textbook
-form, `(R_{1} || R_{2})`, with compact scalable vertical bars; fractions reserve
-extra vertical space so their
+use the TeX-safe `\|\|` source spelling in symbolic reports; diagram
+annotations normalize it to the LaTeX `\Vert` double-bar operator in textbook
+form, `(R_{1} || R_{2})`, with small side spacing. The renderer uses the
+larger `\Big\Vert` sizing when a parallel term contains a fraction; adjacent
+fraction products receive an explicit `\cdot`, and only a complete top-level
+`A \, 1/B` product is written as `A/B`; nested nodal factors stay multiplied
+so the equation does not turn into a stack of fractions. Reciprocal admittance
+groups retain their `\Vert` form when they are reused by the gain equation.
+Fractions reserve extra vertical space so their
 denominators are not clipped. The renderer prefers the Latin Modern/Computer
 Modern math font stack used by LaTeX, with local serif fallbacks when those
-fonts are unavailable.
+fonts are unavailable, and uses a medium weight so equations remain legible on
+light and dark canvases.
 
 For handwritten formulas, press `e` in a schematic. The equation-label tool
 creates an ordinary free label with `$` delimiters and opens the inline editor
 between them; committing the text renders it with the same live MathML-backed
 math label renderer.
 
-The result also contains a collapsible **Small-signal netlist**. It is a
-read-only, SPICE-like description of the same symbolic model: resistors appear
+The View toolbar's **Label boxes** toggle overlays both rectangles for every
+label: the blue dashed interaction box rounded to an even number of grid cells,
+and the green tight bounds measured from the actual rendered SVG text/MathML.
+Each label is resized once from the live browser measurement for its current
+text; editing the text clears that runtime metric for one fresh measurement.
+The measurements remain runtime-only and do not alter the saved file.
+
+The result is organized into **Equations**, **Log**, and **Small-signal
+netlist** tabs. The latter contains a read-only, SPICE-like
+description of the same symbolic model: the combined analysis view prefers the
+driven-input transfer model, so `V_{in}` remains visible; the standalone
+output-impedance report still uses a zeroed input. Resistors appear
 as `R_<refdes>`, MOS output resistance as `R_<refdes> ... r_{oN}`, and each
 controlled transistor current as `G_<refdes> drain source gate source g_{mN}`
 (with `g_{mbN}` when bulk is active). Ideal current-source overrides are shown
-as `OPEN` comments. This is a visualization aid, not a numerical simulator.
+as `OPEN` comments. For output impedance, the zeroed input is still shown as
+`V_{IN}` and the netlist explicitly records `V_{IN}=0`, so the first transistor's
+control node remains visible. Miller-split feedback impedances appear as
+separate input and output shunts with `Z/(1-A_v)` and `Z/(1-1/A_v)` symbolic
+values; capacitors are one common instance, but feedback resistors and other
+modeled passive impedances use the same theorem.
+This is a visualization aid, not a numerical simulator.
 
 The target can be a physical net id, a unique net name, or a terminal
 reference such as `R1.b`. If `--reference` is omitted, a single connected
@@ -100,7 +180,7 @@ labels (for example `AVDD`) stay local. Ambiguous names and missing references
 are reported rather than guessed.
 
 Connecting an unnamed marker automatically names an otherwise unnamed net
-`GND`, `VDD`, or `VCM`. An existing net name is preserved. Double-clicking a
+`VSS`, `VDD`, or `VCM`. An existing net name is preserved. Double-clicking a
 ground, supply, or VCM marker creates an editable owned label; entering a name
 turns that marker into a local rail and keeps the label synchronized with later
 net renames. A component value such as `5V` remains display text unless it is
@@ -109,9 +189,16 @@ committed as an owned marker label.
 Every report includes assumptions and approximations. The compact reducer
 keeps familiar series/parallel equations for simple networks, while the
 generic nodal solver handles modelable feedback and source degeneration.
+When a MOS source is not at AC ground, the compact reducer hands the request to
+the nodal solver; the source node, `g_m` feedback, and source impedance remain
+explicit in the KCL equations instead of producing an unsupported error.
 `current-source` and `triode` attributes explicitly select the corresponding
 small-signal primitive. Unmodelled devices or singular systems return an
 explanation rather than silently changing the meaning of an equation.
 
 No numerical calculation is performed. An unused MOS bulk is assumed tied to
-GND for NMOS or VDD for PMOS; that assumption is included in the report.
+GND for NMOS or VDD for PMOS; that assumption is included in the report. The
+implicit bulk is still stamped as an AC-ground control for `g_{mb}`, so a
+moving source (for example, in a common-drain stage) includes the body-effect
+term automatically. Select **ignore body effect** when that contribution is
+intentionally omitted.

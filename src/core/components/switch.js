@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * SPST switch (Razavi style). Two terminals a (left) / b (right), 4 grid
+ * SPST switch (textbook style). Two terminals a (left) / b (right), 4 grid
  * squares wide (same footprint as the resistor). The origin is at the symbol
  * midpoint. Open blade angles up clear of the contact; closed blade rests on
  * the contact.

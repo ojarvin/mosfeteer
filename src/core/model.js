@@ -15,13 +15,29 @@ export function canonicalNetName(name) {
  * entering a marker value (or child label) makes that instance local. */
 export const REFERENCE_MARKER_TYPES = Object.freeze(['ground', 'supply', 'vcm']);
 const REFERENCE_MARKER_INFO = Object.freeze({
-  ground: Object.freeze({ terminal: 'gnd', globalName: 'GND', labelOffset: { x: 0, y: 120 } }),
+  ground: Object.freeze({ terminal: 'gnd', globalName: 'VSS', labelOffset: { x: 0, y: 120 } }),
   supply: Object.freeze({ terminal: 'p', globalName: 'VDD', labelOffset: { x: 0, y: -120 } }),
   vcm: Object.freeze({ terminal: 'vcm', globalName: 'VCM', labelOffset: { x: 0, y: 120 } }),
 });
 
+// `GND` was the historical default for ground markers. Keep it as a
+// global-name alias when loading/editing older schematics, while all new
+// unnamed ground markers use the textbook `VSS` name above.
+const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.freeze(['GND']) });
+
 export function referenceMarkerInfo(type) {
   return REFERENCE_MARKER_INFO[type] || null;
+}
+
+export function referenceMarkerGlobalNames(typeOrInfo) {
+  const info = typeof typeOrInfo === 'string' ? referenceMarkerInfo(typeOrInfo) : typeOrInfo;
+  if (!info) return [];
+  const type = Object.entries(REFERENCE_MARKER_INFO).find(([, value]) => value === info)?.[0];
+  return [info.globalName, ...(REFERENCE_MARKER_LEGACY_GLOBAL_NAMES[type] || [])];
+}
+
+export function isReferenceMarkerGlobalName(typeOrInfo, name) {
+  return referenceMarkerGlobalNames(typeOrInfo).includes(canonicalNetName(name));
 }
 
 export function isReferenceMarker(component) {
@@ -32,6 +48,15 @@ export function referenceMarkerName(component) {
   if (!isReferenceMarker(component)) return '';
   const label = component.circuit?.labelOf?.(component.refdes);
   return canonicalNetName(label?._text || '');
+}
+
+/** Whether a marker's owned label is an intentional local-rail label. Labels
+ * synthesized only to preserve legacy net renames opt out of this flag until
+ * the user edits/commits the marker label explicitly. */
+export function referenceMarkerIsLocal(component) {
+  if (!isReferenceMarker(component)) return false;
+  const label = component.circuit?.labelOf?.(component.refdes);
+  return !!label && label.referenceLocal !== false;
 }
 
 // Component moves are automatic edits: unlike an explicit authored waypoint
@@ -82,27 +107,19 @@ function charWidth(c) {
 
 /**
  * Parse label text into rich-text runs. `_{...}` and `^{...}` mark subscript /
- * superscript runs (e.g. "C_{GS}", "V^{DD}"). Owned instance labels
- * (autoSubscript) additionally subscript a trailing numeric suffix so a refdes
- * like "M1" renders as M with a subscript 1. Returns [{text, sub, super}].
+ * superscript runs (e.g. "C_{GS}", "V^{DD}"). The optional
+ * `autoSubscript` option is retained for compatibility with old callers, but
+ * is intentionally ignored: component labels now persist explicit `_{...}`
+ * markup, so plain `M1` stays plain text and only `M_{1}` renders with a
+ * subscript. Returns [{text, sub, super}].
  */
 export function parseLabelRuns(text, opts = {}) {
-  const auto = opts.autoSubscript;
   const str = String(text);
   const runs = [];
   let normal = '';
   let i = 0;
   const flush = () => {
     if (!normal) return;
-    if (auto && !normal.includes('_') && !normal.includes('^')) {
-      const m = normal.match(/^([^\d]+)(\d+)$/);
-      if (m) {
-        runs.push({ text: m[1] });
-        runs.push({ text: m[2], sub: true });
-        normal = '';
-        return;
-      }
-    }
     runs.push({ text: normal });
     normal = '';
   };
@@ -112,7 +129,10 @@ export function parseLabelRuns(text, opts = {}) {
       const end = str.indexOf('}', i + 2);
       if (end !== -1) {
         flush();
-        runs.push({ text: str.slice(i + 2, end), sub: c === '_', super: c === '^' });
+        const run = { text: str.slice(i + 2, end) };
+        if (c === '_') run.sub = true;
+        else run.super = true;
+        runs.push(run);
         i = end + 1;
         continue;
       }
@@ -376,7 +396,10 @@ export function mathTextForMetrics(value) {
   let source = stripMathDelimiters(value);
   const symbols = {
     parallel: '||', vert: '|', Vert: '||', cdot: '·', times: '×', pm: '±', mp: '∓',
-    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→',
+    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→', gg: '≫',
+    // A LaTeX quad is approximately one em. The metric uses half-width
+    // spaces, so two spaces reserve the right amount of label width.
+    quad: '  ', qquad: '    ',
   };
   let previous;
   do {
@@ -412,17 +435,36 @@ export function normalizeMathSource(value) {
  */
 export function normalizeComponentRefdes(value) {
   const raw = String(value ?? '').trim();
-  const explicit = raw.match(/^([A-Za-z]+)_\{(\d+)\}$/);
-  return explicit ? `${explicit[1]}${explicit[2]}` : raw;
+  if (!raw) return '';
+  // Component identity is stored without TeX punctuation. Flattening the
+  // explicit script runs means `M_{2}` and `M2` address the same connectivity
+  // id, while still allowing a label such as `R_{D}` to be used as the
+  // presentation source for the canonical id `RD`.
+  const runs = parseLabelRuns(raw);
+  // Superscript is presentation-only and must not silently become part of a
+  // component identity. Explicit subscript markup is the supported textbook
+  // spelling for names.
+  if (runs.some((run) => run.super)) return raw;
+  return runs.map((run) => run.text).join('');
+}
+
+/** Return the persisted display source for a component name. Numeric default
+ * names use textbook subscript notation (`M_{1}`), while an explicitly
+ * formatted source such as `R_{D}` is preserved when it denotes the same
+ * canonical component id. */
+export function componentLabelText(refdes, source = null) {
+  const canonical = normalizeComponentRefdes(refdes);
+  const supplied = source === null || source === undefined ? '' : String(source).trim();
+  if (supplied && normalizeComponentRefdes(supplied) === canonical && /[_^]\{/.test(supplied)) return supplied;
+  const numeric = canonical.match(/^([A-Za-z]+)(\d+)$/);
+  return numeric ? `${numeric[1]}_{${numeric[2]}}` : canonical;
 }
 
 /** Compare a label's source text with a raw component refdes.  This treats
  * `M1` and `M_{1}` as the same instance label, but does not mistake a
  * superscript or a custom marker label for the refdes. */
 function labelMatchesRefdes(text, refdes) {
-  if (String(text) === refdes) return true;
-  const runs = parseLabelRuns(text, { autoSubscript: false });
-  return runs.length > 0 && runs.every((run) => !run.super) && runs.map((run) => run.text).join('') === refdes;
+  return normalizeComponentRefdes(text) === normalizeComponentRefdes(refdes);
 }
 
 /**
@@ -450,6 +492,10 @@ export class LabelInstance {
     if (this.parent && (this.netId || opts.owner || this.connectorId)) throw new Error('child labels cannot have owners, nets, or connectors');
     if (this.connectorId && this.netId) throw new Error('label cannot have both connectorId and netId');
     this.math = !!opts.math;
+    // Browser-rendered text metrics are runtime-only. The deterministic
+    // character-width estimate remains the fallback for headless/CLI use,
+    // while the web renderer can replace it with actual SVG/MathML bounds.
+    this._renderedTextBounds = null;
     this._text = opts.text !== undefined
       ? (this.math ? normalizeMathSource(opts.text) : String(opts.text))
       : 'label';
@@ -463,6 +509,10 @@ export class LabelInstance {
     };
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
     this.owner = this.netId ? null : (opts.owner || null);
+    const ownerComponent = this.owner ? circuit.components.get(this.owner) : null;
+    this.referenceLocal = isReferenceMarker(ownerComponent)
+      ? opts.referenceLocal !== false
+      : null;
     this.offset = this.owner && opts.offset ? { x: snap(opts.offset.x), y: snap(opts.offset.y) } : null;
     const rawPoints = this.kind === 'line' && Array.isArray(opts.points) ? opts.points : null;
     const points = rawPoints?.map((point) => snapPoint(point?.x || 0, point?.y || 0)) || [];
@@ -485,9 +535,13 @@ export class LabelInstance {
   }
 
   set text(value) {
-    if (this.netId && this.circuit?.nets.has(this.netId)) this.circuit.renameNet(this.netId, value);
+    if (this.netId && this.circuit?.nets.has(this.netId)) {
+      const net = this.circuit.renameNet(this.netId, value);
+      this.circuit._markReferenceLabelsLocal?.(net);
+    }
     else {
       const next = this.math ? normalizeMathSource(value) : String(value);
+      if (this.owner && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && this.circuit._syncInterfacePinLabel(this.owner, next)) return;
       if (this.owner && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
@@ -534,20 +588,22 @@ export class LabelInstance {
   /** Tight width (world units) of the rendered text line. Sub/superscript runs
    *  render smaller (0.62 em) so they contribute less width to the box. */
   textWidth() {
+    if (this._renderedTextBounds?.w > 0) return this._renderedTextBounds.w;
     const source = this.math ? mathTextForMetrics(this.text) : this.text;
-    return Math.max(...labelRunLines(source, { autoSubscript: !this.math && !!this.owner }).map((line) => line.reduce((width, r) => {
+    return Math.max(...labelRunLines(source).map((line) => line.reduce((width, r) => {
       const scale = r.sub || r.super ? 0.62 : 1;
       return width + [...r.text].reduce((sum, ch) => sum + charWidth(ch) * scale, 0);
     }, 0)), 0);
   }
 
-  /** Rich-text runs of this label's text (subscripts for owned instance ids). */
+  /** Rich-text runs of this label's explicit source text. */
   runs() {
-    return parseLabelRuns(this.text, { autoSubscript: !!this.owner });
+    return parseLabelRuns(this.text);
   }
 
   /** Tight height (world units) of the rendered text line. */
   textHeight() {
+    if (this._renderedTextBounds?.h > 0) return this._renderedTextBounds.h;
     if (this.math) {
       const source = stripMathDelimiters(this.text);
       // MathML scripts and fractions need more ascent/descent than ordinary
@@ -555,13 +611,17 @@ export class LabelInstance {
       // A simple fraction needs a four-cell content box before the outer
       // two-cell math margin. Nodal-analysis equations can contain several
       // nested fractions; reserve additional rows based on the fraction count
-      // so the foreignObject never clips a denominator.
-      const fractions = (source.match(/\\frac/g) || []).length;
-      if (fractions >= 9) return LABEL_CAP_H * 9.2;
-      if (fractions >= 4) return LABEL_CAP_H * 6.2;
-      if (fractions > 0) return LABEL_CAP_H * 3.2;
-      if (/\\(?:sqrt|sum|int)|[_^]/.test(source)) return LABEL_CAP_H * 2.2;
-      return LABEL_CAP_H * 1.7;
+      // so the foreignObject never clips a denominator. Math labels may also
+      // contain explicit newlines (used by the compact assumptions annotation).
+      const lineHeight = (line) => {
+        const fractions = (line.match(/\\frac/g) || []).length;
+        if (fractions >= 9) return LABEL_CAP_H * 9.2;
+        if (fractions >= 4) return LABEL_CAP_H * 6.2;
+        if (fractions > 0) return LABEL_CAP_H * 3.2;
+        if (/\\(?:sqrt|sum|int)|[_^]/.test(line)) return LABEL_CAP_H * 2.2;
+        return LABEL_CAP_H * 1.7;
+      };
+      return source.split(/\r?\n/).reduce((height, line) => height + lineHeight(line), 0);
     }
     return Math.max(1, this.text.split('\n').length) * LABEL_CAP_H;
   }
@@ -572,17 +632,37 @@ export class LabelInstance {
     // MathML font metrics are not available in the model layer.  Reserve one
     // grid cell on each side of math labels so wide glyphs, stretchy
     // delimiters, and browser-specific font shaping do not hit the box edge.
-    if (this.math) n += 2;
-    n += n % 2; // even so the centered box's center stays on a grid point
-    return Math.max(2, n);
+    if (this.math && !this._renderedTextBounds) n += 2;
+    // Round outward to the nearest even number of grid cells. This keeps the
+    // anchor centered while allowing measured browser glyphs to define the
+    // tight content size instead of relying on a font heuristic.
+    return Math.max(2, Math.ceil(n / 2) * 2);
   }
 
   /** Even number of grid cells >= 2 needed to hold the text vertically. */
   rowHeight() {
     let n = Math.ceil(this.textHeight() / GRID);
-    if (this.math) n += 2;
-    n += n % 2;
-    return Math.max(2, n);
+    if (this.math && !this._renderedTextBounds) n += 2;
+    return Math.max(2, Math.ceil(n / 2) * 2);
+  }
+
+  /** Install a tight browser-measured text rectangle in world units. */
+  setRenderedTextBounds(width, height) {
+    const w = Number(width);
+    const h = Number(height);
+    if (!(w > 0) || !(h > 0) || !Number.isFinite(w) || !Number.isFinite(h)) return false;
+    const previous = this._renderedTextBounds;
+    if (previous && Math.abs(previous.w - w) < 0.01 && Math.abs(previous.h - h) < 0.01) return false;
+    this._renderedTextBounds = { w, h };
+    this.circuit.invalidateRoutingCache();
+    return true;
+  }
+
+  clearRenderedTextBounds() {
+    if (!this._renderedTextBounds) return false;
+    this._renderedTextBounds = null;
+    this.circuit.invalidateRoutingCache();
+    return true;
   }
 
   bbox() {
@@ -639,12 +719,15 @@ export class LabelInstance {
 
   setText(text) {
     if (this.netId) {
-      this.circuit.renameNet(this.netId, text);
+      const net = this.circuit.renameNet(this.netId, text);
+      this.circuit._markReferenceLabelsLocal?.(net);
     } else {
       const next = this.math ? normalizeMathSource(text) : String(text);
+      if (this.owner && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && this.circuit._syncInterfacePinLabel(this.owner, next)) return;
       if (this.owner && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
+      this.clearRenderedTextBounds();
       this.circuit.invalidateRoutingCache();
     }
   }
@@ -725,6 +808,7 @@ export class LabelInstance {
       ...(this.math ? { math: true } : {}),
       align: this.align,
       owner: this.owner,
+      ...(this.referenceLocal === false ? { referenceLocal: false } : {}),
       parent: this.parent,
       netId: this.netId,
       netSide: this.netSide,
@@ -745,11 +829,20 @@ export class ComponentInstance {
     this.circuit = circuit;
     this.type = type;
     this.def = getSymbol(type);
-    this.refdes = opts.refdes || circuit.nextRefdes(this.def.refPrefix || type.toUpperCase());
+    const suppliedRefdes = opts.refdes !== undefined && opts.refdes !== null
+      ? normalizeComponentRefdes(opts.refdes)
+      : '';
+    this.refdes = suppliedRefdes || circuit.nextRefdes(this.def.refPrefix || type.toUpperCase());
     this.value = opts.value !== undefined ? String(opts.value) : this.def.defaultValue;
     this.analysis = {
       model: opts.analysis?.model || opts.analysis?.smallSignalModel || null,
       role: opts.analysis?.role || null,
+      channelLengthModulation: opts.analysis?.channelLengthModulation
+        || opts.analysis?.clm
+        || null,
+      gmroLarge: opts.analysis?.gmroLarge ?? opts.analysis?.gmro ?? null,
+      ignoreBodyEffect: opts.analysis?.ignoreBodyEffect
+        ?? (String(opts.analysis?.bodyEffect || '').toLowerCase() === 'ignore' ? true : null),
     };
     this.transform = {
       x: snapPoint(opts.x || 0, opts.y || 0).x,
@@ -795,7 +888,10 @@ export class ComponentInstance {
       refdes: this.refdes,
       type: this.type,
       value: this.value,
-      ...(this.analysis.model || this.analysis.role ? { analysis: { ...this.analysis } } : {}),
+      ...(this.analysis.model || this.analysis.role || this.analysis.channelLengthModulation
+        || this.analysis.gmroLarge !== null || this.analysis.ignoreBodyEffect !== null
+        ? { analysis: { ...this.analysis } }
+        : {}),
       transform: { ...this.transform },
       style: { ...this.style },
       drawOrder: this.drawOrder,
@@ -1118,8 +1214,8 @@ export class Circuit {
     if (this.components.has(inst.refdes)) throw new Error(`reference designator ${inst.refdes} already in use`);
     this.components.set(inst.refdes, inst);
     // Every symbol with a label offset carries its instance label from the
-    // start.  The label stores the compact refdes (M1) and the renderer
-    // presents its trailing number as a textbook subscript (M₁).
+    // start. Default numeric names persist explicit textbook markup (M_{1}),
+    // while the connectivity id remains compact (M1).
     if (!opts.noLabel) this._ensureComponentInstanceLabel(inst);
     // Touching pins connect: a newly placed component whose terminal lands on
     // another component's terminal joins that net immediately. Skipped while a
@@ -1139,50 +1235,77 @@ export class Circuit {
    * letter and contain only letters, digits, or underscores so terminal refs
    * (`REFDES.TERM`) remain unambiguous.
    */
-  renameComponent(refdes, newRefdes) {
+  renameComponent(refdes, newRefdes, { displayLabel = null } = {}) {
     this.invalidateRoutingCache();
-    const component = this.getComponent(refdes);
+    const current = normalizeComponentRefdes(refdes);
+    const component = this.getComponent(current);
     const next = normalizeComponentRefdes(newRefdes);
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) {
       throw new Error(`invalid refdes "${next}"`);
     }
-    if (next === refdes) return component;
-    if (this.components.has(next)) throw new Error(`refdes ${next} taken`);
+    if (next === current) {
+      if (!isReferenceMarker(component)) {
+        const label = this.labelOf(current);
+        if (label && (displayLabel !== null || labelMatchesRefdes(label._text, current))) {
+          label._text = componentLabelText(next, displayLabel ?? label._text);
+          label.clearRenderedTextBounds();
+        }
+      }
+      return component;
+    }
+    if (this.components.has(next)) throw new Error(`component name "${next}" is already in use`);
 
-    const ownedLabels = [...this.labels.values()].filter((label) => label.owner === refdes);
+    const ownedLabels = [...this.labels.values()].filter((label) => label.owner === current);
     const interfacePin = ['input', 'output', 'inputoutput'].includes(component.type);
+    const interfaceNet = interfacePin ? this.netOfTerminal({ comp: current, term: 'p' }) : null;
+    const interfacePinCount = interfaceNet
+      ? interfaceNet.terminals.filter(({ comp }) => ['input', 'output', 'inputoutput'].includes(this.components.get(comp)?.type)).length
+      : 0;
     const referenceMarker = isReferenceMarker(component);
-    this.components.delete(refdes);
+    this.components.delete(current);
     component.refdes = next;
     this.components.set(next, component);
     for (const net of this.nets.values()) {
       for (const terminal of net.terminals) {
-        if (terminal.comp === refdes) terminal.comp = next;
+        if (terminal.comp === current) terminal.comp = next;
       }
       if (net.routingMode === 'fixed') {
         for (const path of net.fixedPaths) {
-          if (path.start?.comp === refdes) path.start.comp = next;
-          if (path.end?.comp === refdes) path.end.comp = next;
+          if (path.start?.comp === current) path.start.comp = next;
+          if (path.end?.comp === current) path.end.comp = next;
         }
       }
     }
     for (const label of ownedLabels) {
       label.owner = next;
-      // Interface labels can be physical net names, and reference-marker
-      // labels can be local rail names. Preserve those custom values while
-      // still updating labels that actually represented the old refdes.
-      const isRefdesLabel = labelMatchesRefdes(label._text, refdes);
-      if (referenceMarker || interfacePin) {
+      // Reference-marker labels can be local rail names, so preserve those
+      // custom values. Interface pins participate in the same component
+      // name/label contract as every other symbol; their connected net is
+      // renamed below when it has a single interface owner.
+      const isRefdesLabel = labelMatchesRefdes(label._text, current);
+      if (referenceMarker) {
         if (isRefdesLabel) {
-          if (interfacePin) label.setText(next);
-          else label._text = next;
+          label._text = next;
+          label.clearRenderedTextBounds();
         }
       } else {
         // Normal component-owned labels are instance labels by default. Keep
         // the refdes-derived occurrences synchronized, including explicit
         // `_{...}` source text, while preserving a deliberately customized
         // child label (owned-label edits are otherwise independent).
-        if (isRefdesLabel) label._text = next;
+        if (isRefdesLabel || interfacePin) {
+          label._text = componentLabelText(next, displayLabel ?? label._text);
+          label.clearRenderedTextBounds();
+        }
+      }
+    }
+    if (interfacePin && interfaceNet && interfacePinCount <= 1) {
+      const renamedNet = this.netOfTerminal({ comp: next, term: 'p' });
+      if (renamedNet && renamedNet.name !== next) this.renameNet(renamedNet, next);
+      const label = this.labelOf(next);
+      if (label) {
+        label._text = componentLabelText(next, displayLabel ?? label._text);
+        label.clearRenderedTextBounds();
       }
     }
     this._ensureComponentInstanceLabel(component);
@@ -1194,11 +1317,16 @@ export class Circuit {
   _ensureComponentInstanceLabel(component) {
     if (!component?.def?.labelOffset) return null;
     const existing = this.labelOf(component.refdes);
-    if (existing) return existing;
-    const isInterfacePin = ['input', 'output', 'inputoutput'].includes(component.type);
-    const net = isInterfacePin ? this.netOfTerminal({ comp: component.refdes, term: 'p' }) : null;
+    if (existing) {
+      const isSpecial = isReferenceMarker(component);
+      if (!isSpecial && labelMatchesRefdes(existing._text, component.refdes)) {
+        existing._text = componentLabelText(component.refdes, existing._text);
+        existing.clearRenderedTextBounds();
+      }
+      return existing;
+    }
     return this.addLabel({
-      text: net?.name || component.refdes,
+      text: componentLabelText(component.refdes),
       owner: component.refdes,
       offset: component.def.labelOffset,
       align: 'center',
@@ -1331,17 +1459,60 @@ export class Circuit {
    * attributes are descriptive model hints, not electrical connectivity. */
   setComponentAnalysis(refdes, attrs = {}) {
     const component = this.getComponent(refdes);
-    const model = attrs.model ?? attrs.smallSignalModel;
+    const hasOwn = (key) => Object.prototype.hasOwnProperty.call(attrs, key);
+    const model = hasOwn('model') ? attrs.model : attrs.smallSignalModel;
     const role = attrs.role;
+    const clmValue = hasOwn('channelLengthModulation')
+      ? attrs.channelLengthModulation
+      : hasOwn('clm')
+        ? attrs.clm
+        : (attrs.ignoreChannelLengthModulation === undefined
+          ? undefined
+          : (attrs.ignoreChannelLengthModulation ? 'ignore' : 'finite'));
+    const gmroValue = hasOwn('gmroLarge')
+      ? attrs.gmroLarge
+      : hasOwn('gmro')
+        ? attrs.gmro
+        : undefined;
+    const bodyEffectValue = hasOwn('ignoreBodyEffect')
+      ? attrs.ignoreBodyEffect
+      : hasOwn('bodyEffect')
+        ? (attrs.bodyEffect === null || attrs.bodyEffect === undefined || attrs.bodyEffect === ''
+          ? attrs.bodyEffect
+          : String(attrs.bodyEffect).toLowerCase() === 'ignore')
+        : undefined;
+    const normalizeOptionalBoolean = (value, label) => {
+      if (value === undefined || value === null || value === '') return value;
+      if (value === true || value === false) return value;
+      const normalized = String(value).trim().toLowerCase();
+      if (['true', 'yes', 'large', 'ignore', 'ignored'].includes(normalized)) return true;
+      if (['false', 'no', 'exact', 'finite', 'include', 'included', 'retain'].includes(normalized)) return false;
+      throw new Error(`unknown ${label} override "${value}"`);
+    };
+    const normalizedGmro = normalizeOptionalBoolean(gmroValue, 'g_m r_o');
+    const normalizedBodyEffect = normalizeOptionalBoolean(bodyEffectValue, 'body-effect');
     if (model !== undefined && model !== null && model !== '' && !['current-source', 'triode', 'ro'].includes(String(model))) {
       throw new Error(`unknown small-signal device model "${model}"`);
     }
     if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
       throw new Error(`unknown small-signal device role "${role}"`);
     }
+    if (clmValue !== undefined && clmValue !== null && clmValue !== ''
+      && !['ignore', 'finite'].includes(String(clmValue).toLowerCase())) {
+      throw new Error(`unknown channel-length modulation policy "${clmValue}"`);
+    }
     component.analysis = {
       model: model === undefined ? component.analysis?.model || null : (model ? String(model) : null),
       role: role === undefined ? component.analysis?.role || null : (role ? String(role) : null),
+      channelLengthModulation: clmValue === undefined
+        ? component.analysis?.channelLengthModulation || null
+        : (clmValue ? String(clmValue).toLowerCase() : null),
+      gmroLarge: normalizedGmro === undefined
+        ? component.analysis?.gmroLarge ?? null
+        : normalizedGmro,
+      ignoreBodyEffect: normalizedBodyEffect === undefined
+        ? component.analysis?.ignoreBodyEffect ?? null
+        : normalizedBodyEffect,
     };
     if (component.analysis.role === 'dc-bias') {
       for (const terminal of component.def.terminals) {
@@ -1454,6 +1625,29 @@ export class Circuit {
     const canonical = canonicalNetName(name);
     if (!canonical && this.netLabels(net).length > 0) throw new Error(`cannot clear name of net ${net.id} while net labels are attached`);
     net.name = canonical;
+    // Renaming an unnamed reference-attached net away from its global rail
+    // name makes that marker local.  Persist the same child label used by the
+    // inline reference editor so analysis and the net list agree about the
+    // new rail scope.
+    if (canonical) {
+      for (const terminal of net.terminals) {
+        const component = this.components.get(terminal.comp);
+        if (!isReferenceMarker(component)) continue;
+        const info = referenceMarkerInfo(component.type);
+        if (terminal.term !== info?.terminal || referenceMarkerName(component) || isReferenceMarkerGlobalName(info, canonical)) continue;
+        this.addLabel({
+          text: canonical,
+          owner: component.refdes,
+          referenceLocal: false,
+          offset: info.labelOffset,
+          align: 'center',
+          style: { color: component.style.color },
+        });
+      }
+    }
+    for (const label of this.labels.values()) {
+      if (label.netId === net.id) label.clearRenderedTextBounds();
+    }
     this._syncInterfacePinLabels(net);
     this._syncReferenceMarkerLabels(net);
     this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
@@ -1462,7 +1656,9 @@ export class Circuit {
 
   /** Interface symbols use their owned label as the physical net name.  The
    * first pin on a net is the deterministic authority when several pins share
-   * one net; all other pin labels follow that name. */
+   * one net; all other pin labels follow that name. Numeric identity names are
+   * stored canonically (I1) while their owned labels retain textbook display
+   * markup (I_{1}). */
   _syncInterfacePinLabels(netOrId, { enforceName = false } = {}) {
     const net = this._resolveNet(netOrId);
     const pins = net.terminals
@@ -1471,13 +1667,25 @@ export class Circuit {
     if (!pins.length) return net;
     if (enforceName) {
       const firstLabel = this.labelOf(pins[0].refdes);
-      const preferred = canonicalNetName(firstLabel?.text || pins[0].refdes);
+      const raw = firstLabel?._text || pins[0].refdes;
+      // Explicit textbook markup is a display convention, not a physical
+      // net identifier. Flatten it only when the label still represents the
+      // pin's own refdes; deliberately named nets retain their source text.
+      const preferred = labelMatchesRefdes(raw, pins[0].refdes)
+        ? normalizeComponentRefdes(raw)
+        : canonicalNetName(raw);
       if (preferred && net.name !== preferred) net.name = preferred;
     }
     const name = net.name;
     for (const pin of pins) {
       const label = this.labelOf(pin.refdes);
-      if (label && label._text !== name) label._text = name;
+      const display = normalizeComponentRefdes(name) === normalizeComponentRefdes(pin.refdes)
+        ? componentLabelText(pin.refdes, name)
+        : name;
+      if (label && label._text !== display) {
+        label._text = display;
+        label.clearRenderedTextBounds();
+      }
     }
     return net;
   }
@@ -1493,14 +1701,32 @@ export class Circuit {
     return true;
   }
 
+  /** Ordinary component instance labels are the presentation of the
+ * component's canonical name, not independent child annotations. Editing
+ * one therefore validates and renames the component atomically. Interface
+ * pins use the same path; their single-owner net follows the new name. */
+  _syncComponentLabel(refdes, text) {
+    const component = this.components.get(refdes);
+    if (!component || isReferenceMarker(component)) return false;
+    const next = normalizeComponentRefdes(text);
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) throw new Error(`invalid component name "${String(text).trim()}"`);
+    this.renameComponent(refdes, next, { displayLabel: text });
+    return true;
+  }
+
   _syncReferenceMarkerLabel(refdes, text) {
     const component = this.components.get(refdes);
     if (!isReferenceMarker(component)) return false;
     const previous = referenceMarkerName(component);
     const next = canonicalNetName(text);
+    const owned = this.labelOf(refdes);
+    if (owned) owned.referenceLocal = true;
     component.value = next;
     for (const label of this.labels.values()) {
-      if (label.owner === refdes && label._text !== next) label._text = next;
+      if (label.owner === refdes && label._text !== next) {
+        label._text = next;
+        label.clearRenderedTextBounds();
+      }
     }
     const info = referenceMarkerInfo(component.type);
     const net = this.netOfTerminal({ comp: refdes, term: info.terminal });
@@ -1508,6 +1734,17 @@ export class Circuit {
     else if (net && !next && previous && net.name === previous) this.renameNet(net, info.globalName);
     this.invalidateRoutingCache();
     return true;
+  }
+
+  _markReferenceLabelsLocal(netOrId) {
+    const net = this._resolveNet(netOrId);
+    for (const terminal of net.terminals) {
+      const component = this.components.get(terminal.comp);
+      if (!isReferenceMarker(component)) continue;
+      const label = this.labelOf(component.refdes);
+      if (label) label.referenceLocal = true;
+    }
+    return net;
   }
 
   _syncReferenceMarkerLabels(netOrId) {
@@ -1551,7 +1788,7 @@ export class Circuit {
       const component = this.components.get(terminal.comp);
       if (!isReferenceMarker(component) || referenceMarkerName(component)) return false;
       const info = referenceMarkerInfo(component.type);
-      return terminal.term === info.terminal && info.globalName === name;
+      return terminal.term === info.terminal && isReferenceMarkerGlobalName(info, name);
     });
   }
 
@@ -4173,6 +4410,7 @@ export class Circuit {
           text: l.text,
           align: l.align,
           owner: l.owner || null,
+          referenceLocal: l.referenceLocal,
           parent: l.parent || null,
           netId: l.netId || null,
           math: !!l.math,
@@ -4191,6 +4429,17 @@ export class Circuit {
       }
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
       if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld())) circuit.labels.delete(label.id);
+    }
+    // Migrate legacy owned instance labels that persisted a compact trailing
+    // number (for example `M1`) to the explicit source used by the current
+    // renderer (`M_{1}`). Custom markup such as `R_{D}` is preserved.
+    for (const component of circuit.components.values()) {
+      const label = circuit.labelOf(component.refdes);
+      if (!label || isReferenceMarker(component)) continue;
+      if (labelMatchesRefdes(label._text, component.refdes)) {
+        label._text = componentLabelText(component.refdes, label._text);
+        label.clearRenderedTextBounds();
+      }
     }
     for (const net of circuit.nets.values()) {
       circuit._syncReferenceMarkerNetName(net);

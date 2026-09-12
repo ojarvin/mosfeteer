@@ -16,11 +16,29 @@ const fixture = (name) => JSON.parse(readFileSync(join(ROOT, 'fixtures/circuit-s
 
 async function unusedPort() {
   const probe = createServer();
-  await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      probe.removeListener('error', onError);
+      reject(error);
+    };
+    probe.once('error', onError);
+    probe.listen(0, '127.0.0.1', () => {
+      probe.removeListener('error', onError);
+      resolve();
+    });
+  });
   const port = probe.address().port;
   await new Promise((resolve, reject) => probe.close((err) => err ? reject(err) : resolve()));
   return port;
 }
+
+// Some restricted runners disallow loopback listeners entirely.  Report that
+// capability boundary as skipped tests instead of letting an unhandled server
+// error trip Node's native async-scope assertion.
+const LOOPBACK_ERROR = await unusedPort().then(() => null, (error) => error);
+const serverTest = LOOPBACK_ERROR
+  ? (name, fn) => test(name, { skip: `loopback unavailable${LOOPBACK_ERROR.code ? ` (${LOOPBACK_ERROR.code})` : ''}` }, fn)
+  : test;
 
 async function startServer() {
   const root = await mkdtemp(join(tmpdir(), 'schematic-spawner-generation-'));
@@ -67,7 +85,7 @@ async function generate(base, name, mode, spec) {
 
 const spec = fixture('resistor-divider');
 
-test('the browser and server expose only deterministic generation', async (t) => {
+serverTest('the browser and server expose only deterministic generation', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const agents = await fetch(`${app.base}/api/generate/agents`);
@@ -78,7 +96,7 @@ test('the browser and server expose only deterministic generation', async (t) =>
   assert.equal(legacy.status, 404);
 });
 
-test('generation preview is non-mutating and returns consistent SVG/ASCII artifacts', async (t) => {
+serverTest('generation preview is non-mutating and returns consistent SVG/ASCII artifacts', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const seed = await fetch(`${app.base}/api/circuits/manual/cmd`, {
@@ -96,7 +114,7 @@ test('generation preview is non-mutating and returns consistent SVG/ASCII artifa
   assert.deepEqual((await (await fetch(`${app.base}/api/circuits/manual`)).json()).state, before);
 });
 
-test('generation preview includes semantic results without turning them into geometry failures', async (t) => {
+serverTest('generation preview includes semantic results without turning them into geometry failures', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const semanticSpec = { ...spec, semantics: { requiredRails: ['missing-rail'], clarifications: [{ question: 'choose the intended supply' }] } };
@@ -109,7 +127,7 @@ test('generation preview includes semantic results without turning them into geo
   assert.equal((await fetch(`${app.base}/api/circuits/semantic-preview`)).status, 404);
 });
 
-test('generation commit persists a passing candidate under a new name', async (t) => {
+serverTest('generation commit persists a passing candidate under a new name', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const { response, data } = await generate(app.base, 'generated', 'commit', spec);
@@ -122,7 +140,7 @@ test('generation commit persists a passing candidate under a new name', async (t
   assert.deepEqual(await (await fetch(`${app.base}/api/active`)).json(), { active: 'generated' });
 });
 
-test('generation reports malformed input and bounded candidate failures clearly', async (t) => {
+serverTest('generation reports malformed input and bounded candidate failures clearly', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const invalid = await generate(app.base, 'bad', 'preview', { version: 1, motif: 'rc-filter', components: [] });
@@ -149,7 +167,7 @@ test('generation reports malformed input and bounded candidate failures clearly'
   assert.deepEqual((await fetch(`${app.base}/api/circuits/guarded-new`)).status, 404);
 });
 
-test('manual command endpoint remains unchanged alongside generation', async (t) => {
+serverTest('manual command endpoint remains unchanged alongside generation', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const response = await fetch(`${app.base}/api/circuits/manual/cmd`, {
@@ -161,7 +179,7 @@ test('manual command endpoint remains unchanged alongside generation', async (t)
   assert.equal(data.state.components[0].refdes, 'R1');
 });
 
-test('command API reports post-delete net state in each result', async (t) => {
+serverTest('command API reports post-delete net state in each result', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const seed = await fetch(`${app.base}/api/circuits/delete-result/cmd`, {
@@ -182,7 +200,7 @@ test('command API reports post-delete net state in each result', async (t) => {
   assert.equal(data.state.nets.length, 0);
 });
 
-test('HTTP document creation and listing preserve the document kind', async (t) => {
+serverTest('HTTP document creation and listing preserve the document kind', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const created = await fetch(`${app.base}/api/circuits/overview`, {
@@ -195,7 +213,7 @@ test('HTTP document creation and listing preserve the document kind', async (t) 
   assert.equal((await (await fetch(`${app.base}/api/circuits/overview`)).json()).state.kind, 'block');
 });
 
-test('HTTP persistence accepts and renders block documents', async (t) => {
+serverTest('HTTP persistence accepts and renders block documents', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const state = new BlockDiagram().toJSON();
@@ -212,7 +230,7 @@ test('HTTP persistence accepts and renders block documents', async (t) => {
   assert.match(svg, /<rect[^>]+width="160"/);
 });
 
-test('CLI sends a spec file without shell-quoting JSON', async (t) => {
+serverTest('CLI sends a spec file without shell-quoting JSON', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const root = await mkdtemp(join(tmpdir(), 'schematic-spawner-cli-'));

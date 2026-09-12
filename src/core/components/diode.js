@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Diode (Razavi style): open triangle (anode a, left) with a thick cathode bar
+ * Diode (textbook style): open triangle (anode a, left) with a thick cathode bar
  * (cathode b, right).
  */
 export const diode = defineSymbol({

@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Capacitor (Razavi style): two thick parallel plates between a (left) and
+ * Capacitor (textbook style): two thick parallel plates between a (left) and
  * b (right). Four squares wide (160) with the plates centered on the midpoint.
  */
 export const capacitor = defineSymbol({

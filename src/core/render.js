@@ -97,14 +97,22 @@ function mathMlDelimiter(value) {
   return mathMlAtom(value, 'mo', 'fence="true" stretchy="true" minsize="1.2em"');
 }
 
-function mathMlParallel() {
-  // MathML treats `mo` elements as operators and normally inserts invisible
-  // l/r spacing around each one.  That makes the two bars in `\|\|` look
-  // like a wide gap instead of the compact textbook parallel-resistance
-  // operator.  Keep the bars scalable, but explicitly remove that operator
-  // spacing for this paired token.
-  const attrs = 'fence="false" stretchy="true" minsize="1.2em" lspace="0em" rspace="0em"';
-  return `${mathMlAtom('|', 'mo', attrs)}${mathMlAtom('|', 'mo', attrs)}`;
+function mathMlParallel(tall = false, requestedSize = null) {
+  // Use the same single double-bar operator as LaTeX `\Vert`, rather than
+  // two independent bars whose MathML operator spacing creates a large gap.
+  // Explicit Big/Bigg commands win; a fraction on the line gets the compact
+  // `\Big\Vert` treatment automatically.
+  const size = requestedSize === 'Bigg'
+    ? 'minsize="2.8em" maxsize="3.4em"'
+    : requestedSize === 'bigg'
+      ? 'minsize="2.4em" maxsize="3.0em"'
+      : requestedSize === 'Big'
+        ? 'minsize="2.0em" maxsize="2.5em"'
+        : requestedSize === 'big'
+          ? 'minsize="1.6em" maxsize="2.0em"'
+          : tall ? 'minsize="2.2em" maxsize="2.8em"' : 'minsize="1.2em"';
+  const attrs = `fence="false" stretchy="true" ${size} lspace="0.15em" rspace="0.15em"`;
+  return mathMlAtom('∥', 'mo', attrs);
 }
 
 function mathMlBar() {
@@ -116,11 +124,13 @@ function mathMlBar() {
  * foreignObject; keeping this parser local avoids a runtime CDN dependency. */
 function texToMathML(source) {
   const text = stripMathDelimiters(source).replace(/\s+/g, ' ').trim();
+  const hasFraction = /\\frac\b/.test(text);
   let index = 0;
   const commandSymbols = {
     parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
-    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→',
+    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→', gg: '≫',
   };
+  let requestedParallelSize = null;
   const skipSpaces = () => { while (text[index] === ' ') index += 1; };
   const parseSequence = (stop = null) => {
     const atoms = [];
@@ -146,6 +156,36 @@ function texToMathML(source) {
     }
     return parseAtom();
   };
+  const parseTextArgument = () => {
+    skipSpaces();
+    if (text[index] !== '{') return parseArgument();
+    index += 1;
+    let depth = 1;
+    let raw = '';
+    while (index < text.length && depth > 0) {
+      const ch = text[index++];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+      if (depth > 0) raw += ch;
+    }
+    // TeX/editor spacing commands have no literal glyph to emit. Preserve
+    // them as visible word spaces in <mtext> so prose such as "Miller
+    // approximation used for" does not collapse together.
+    const prose = raw
+      // The editor historically used `\:` as the escaped colon in the
+      // assumptions heading. Keep that authored spelling readable while the
+      // remaining spacing commands become ordinary word spaces.
+      .replace(/\\:/g, ':')
+      .replace(/\\qquad/g, '  ')
+      .replace(/\\quad/g, ' ')
+      .replace(/\\[;,!]/g, ' ')
+      .replace(/\\ /g, ' ')
+      .replace(/\s+/g, ' ');
+    return `<mtext>${escapeSvg(prose).replace(/ /g, '&#160;')}</mtext>`;
+  };
   const parseCommand = () => {
     index += 1; // backslash
     const match = text.slice(index).match(/^[A-Za-z]+|^./);
@@ -164,15 +204,29 @@ function texToMathML(source) {
       // Consume both escaped bars as one compact operator so the second bar
       // is not parsed as an independent stretchy delimiter.
       if (text[index] === '\\' && text[index + 1] === '|') index += 2;
-      return mathMlParallel();
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
     }
     if (name === 'vert') return mathMlDelimiter('|');
-    if (name === 'Vert') return mathMlParallel();
-    if (name === 'mathrm' || name === 'text' || name === 'operatorname') {
-      const argument = parseArgument().replace(/<\/?mrow>/g, '');
-      return `<mtext>${argument.replace(/<mi>/g, '').replace(/<\/mi>/g, '')}</mtext>`;
+    if (name === 'Vert') {
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
     }
-    if (name === 'parallel') return mathMlParallel();
+    if (name === 'mathrm' || name === 'text' || name === 'operatorname') return parseTextArgument();
+    if (name === 'parallel') {
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (['big', 'Big', 'bigg', 'Bigg'].includes(name)) {
+      requestedParallelSize = name;
+      return '';
+    }
+    if (name === 'quad') return '<mspace width="1em"/>';
+    if (name === 'qquad') return '<mspace width="2em"/>';
+    if (name === '>') return mathMlAtom('>', 'mo');
     if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
     if (name === ',' || name === ';' || name === '!') return '';
     return mathMlAtom(name, 'mi');
@@ -185,7 +239,9 @@ function texToMathML(source) {
     // the stored label source remains untouched for editing.
     if (text[index] === '|' && text[index + 1] === '|') {
       index += 2;
-      return mathMlParallel();
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
     }
     if (text[index] === '\\') return parseCommand();
     if (text[index] === '{') {
@@ -213,8 +269,12 @@ function mathLabelSvg(label, opacity = '') {
   const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
   const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
   const aria = escapeSvg(`Math label ${label.text}`);
-  const style = `width:100%;height:100%;display:flex;align-items:center;justify-content:${justify};box-sizing:border-box;padding:6px;overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:400;pointer-events:none;`;
-  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${texToMathML(label.text)}</div></foreignObject>`;
+  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:6px;overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:500;pointer-events:none;`;
+  const lineStyle = `display:flex;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
+  const lines = stripMathDelimiters(label.text).split(/\r?\n/)
+    .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
+    .join('');
+  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
 }
 
 const ANNOTATION_ARROW_LENGTH = 32;
@@ -504,6 +564,17 @@ export function editorOverlay(circuit, opts = {}) {
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
     if (c) parts.push(halo(c.bboxWorld()));
+  }
+
+  // Optional global label-box inspection. The dashed rectangle is the
+  // grid-rounded interaction/routing box; the web renderer adds a green
+  // rectangle for the tight browser-measured glyph bounds on top of it.
+  if (opts.labelBBoxes) {
+    for (const label of circuit.labels.values()) {
+      if (label.kind !== 'label') continue;
+      const b = label.bbox();
+      parts.push(`<rect class="label-bbox-rounded" x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#0ea5e9" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"><title>Rounded label box ${fmt(b.w)} × ${fmt(b.h)} units</title></rect>`);
+    }
   }
 
   // Selection centerlines are deliberately magenta and dashed so they read

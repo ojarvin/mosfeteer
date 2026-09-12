@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Ground symbol (Razavi style): vertical stub down to three tiered bars of
+ * Ground symbol (textbook style): vertical stub down to three tiered bars of
  * decreasing width, drawn with the heavy "ground" stroke.
  */
 export const ground = defineSymbol({

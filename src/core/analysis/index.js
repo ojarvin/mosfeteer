@@ -1,4 +1,4 @@
-import { isReferenceMarker, referenceMarkerInfo, referenceMarkerName } from '../model.js';
+import { isReferenceMarker, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerName } from '../model.js';
 
 /**
  * Small-signal, textbook-style analysis helpers.
@@ -21,15 +21,23 @@ function combine(kind, terms) {
 
 function sum(...terms) { return combine('sum', terms); }
 function parallel(...terms) { return combine('parallel', terms); }
+function product(...terms) { return combine('product', terms); }
 
 function expressionText(expr, parentKind = null) {
   if (!expr) return '';
   if (expr.kind === 'symbol') return expr.name;
-  const join = expr.kind === 'parallel' ? ' \\|\\| ' : ' + ';
-  const body = expr.terms.map((term) => expressionText(term, expr.kind)).join(join);
+  const rendered = expr.terms.map((term) => expressionText(term, expr.kind));
+  let body = rendered[0] || '';
+  for (let i = 1; i < rendered.length; i++) {
+    const join = expr.kind === 'parallel'
+      ? ' \\|\\| '
+      : expr.kind === 'product' ? ' \\, ' : ' + ';
+    body += join + rendered[i];
+  }
   // Keep parallel groups visually textbook-like: the renderer turns the
-  // escaped `\\|\\|` operator into two scalable vertical bars, while the
-  // delimiters grow with fractions/scripts inside the group.
+  // TeX-safe `\\|\\|` source spelling is converted by the editor label path
+  // to the LaTeX-style `\\Vert` glyph, while the renderer keeps the operator
+  // scalable when fractions/scripts are present.
   const needsParens = parentKind && parentKind !== expr.kind;
   return needsParens ? `\\left(${body}\\right)` : body;
 }
@@ -98,13 +106,23 @@ function likelyInputNet(circuit, net) {
   });
 }
 
+// Older schematics commonly named a ground-attached bias net `VBIAS` (or a
+// `VCAS*` variant) after placing the marker. The model marks those synthesized
+// compatibility labels as non-local, so keep them as AC references; an owned
+// label committed through the editor is explicitly local and bypasses this.
+function isBiasReferenceAlias(component, net) {
+  if (!component || component.type !== 'ground' || !net) return false;
+  if (referenceMarkerIsLocal(component)) return false;
+  return /^V(?:BIAS|B[NP]|CAS(?:C|CODE)?[NP]?|CM|REF)/i.test(String(net.name || '').trim());
+}
+
 function findReferenceNet(circuit, requested) {
   const globalNets = new Map();
   for (const component of circuit.components.values()) {
-    if (!isReferenceMarker(component) || referenceMarkerName(component)) continue;
+    if (!isReferenceMarker(component)) continue;
     const info = referenceMarkerInfo(component.type);
     const net = circuit.netOfTerminal({ comp: component.refdes, term: info.terminal });
-    if (net) globalNets.set(net.id, net);
+    if (net && (!referenceMarkerName(component) || isBiasReferenceAlias(component, net))) globalNets.set(net.id, net);
   }
   const group = (net, inferred = false) => net
     ? { ok: true, net, netIds: new Set(globalNets.keys()).has(net.id) ? new Set(globalNets.keys()) : new Set([net.id]), global: new Set(globalNets.keys()).has(net.id), inferred }
@@ -180,6 +198,203 @@ function circuitModelOverrides(circuit, value) {
   return overrides;
 }
 
+function normalizeChannelLengthModulationPolicy(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const normalized = String(value).trim().toLowerCase().replace(/_/g, '-');
+  if (['ignore', 'ignore-ro', 'ro-infinity', 'infinite', 'infinity'].includes(normalized)) return 'ignore';
+  if (['finite', 'keep-ro', 'retain-ro', 'ro-finite'].includes(normalized)) return 'finite';
+  return null;
+}
+
+/** Resolve the effective r_o policy for one MOS device.  A persisted finite
+ * override deliberately wins over the form-wide approximation, allowing a
+ * user to simplify only the bias/cascode devices they intend to idealize. */
+function componentIgnoresRo(component, options = {}) {
+  if (options.ignoreDeviceRoOverrides) return false;
+  const policy = normalizeChannelLengthModulationPolicy(component?.analysis?.channelLengthModulation);
+  if (policy === 'finite') return false;
+  if (policy === 'ignore') return true;
+  const selected = splitContextValues(options.ignoreRoDevices ?? options.ignoreChannelLengthModulationDevices);
+  if (selected.includes(component?.refdes)) return true;
+  // A large-g_m r_o cascode reduction needs a finite symbolic r_o in order
+  // to expose the intrinsic-gain factor.  Keep that factor for devices that
+  // have no explicit per-device ignore override; the form-wide r_o→∞ option
+  // still applies to all other devices in the same analysis.
+  const retainFinite = splitContextValues(options.retainFiniteRoDevices);
+  if (retainFinite.includes(component?.refdes)) return false;
+  return normalizeAnalysisApproximations(options).ignoreChannelLengthModulation;
+}
+
+function optionalBooleanOverride(value) {
+  if (value === true || value === false) return value;
+  if (value === undefined || value === null || value === '') return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', 'yes', 'large', 'ignore', 'ignored'].includes(normalized)) return true;
+  if (['false', 'no', 'exact', 'finite', 'include', 'included', 'retain'].includes(normalized)) return false;
+  return null;
+}
+
+function componentIgnoresBodyEffect(component, options = {}) {
+  const global = normalizeAnalysisApproximations(options).ignoreBodyEffect;
+  if (options.ignoreDeviceApproximationOverrides) return global;
+  const override = optionalBooleanOverride(component?.analysis?.ignoreBodyEffect);
+  return override === null ? global : override;
+}
+
+function componentAssumesGmRoLarge(component, options = {}) {
+  const global = normalizeAnalysisApproximations(options).gmroLarge;
+  if (options.ignoreDeviceApproximationOverrides) return global;
+  const override = optionalBooleanOverride(component?.analysis?.gmroLarge);
+  return override === null ? global : override;
+}
+
+const MILLER_IMPEDANCE_TYPES = new Set([
+  'resistor', 'variable_resistor',
+  'capacitor', 'variable_capacitor',
+  'inductor', 'variable_inductor',
+]);
+const MILLER_MOS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
+
+function millerImpedanceValue(component) {
+  const refdes = component?.refdes;
+  if (!refdes) return null;
+  if (component.type === 'resistor' || component.type === 'variable_resistor') {
+    return sxSymbol(systemRefdes(refdes, 'R'), refdes);
+  }
+  if (component.type === 'capacitor' || component.type === 'variable_capacitor') {
+    return sxInv(sxMul(sxSymbol('s'), sxSymbol(systemCapName(refdes), refdes)));
+  }
+  if (component.type === 'inductor' || component.type === 'variable_inductor') {
+    return sxMul(sxSymbol('s'), sxSymbol(indexedName(refdes, 'L'), refdes));
+  }
+  return null;
+}
+
+function millerReferenceIds(circuit) {
+  const ids = new Set(markedAcGrounds(circuit));
+  try {
+    const reference = findReferenceNet(circuit);
+    if (reference.ok) for (const id of reference.netIds || [reference.net.id]) ids.add(id);
+  } catch { /* an explicit reference is not required for candidate discovery */ }
+  return ids;
+}
+
+/** Derive a conservative low-frequency forward gain for one inverting MOS
+ * stage. Miller's theorem is exact for a linear two-node relation when the
+ * voltage ratio A=v_out/v_in is known; this helper supplies the usual
+ * textbook DC estimate only when the source is an AC reference and the drain
+ * has a directly visible passive load. It deliberately declines source
+ * degeneration, cascoding, or ambiguous feedback rather than inventing A. */
+function millerForwardGain(circuit, device, candidate, options = {}) {
+  const source = circuit.netOfTerminal({ comp: device.refdes, term: 's' });
+  const drain = candidate.drain;
+  if (!source || !drain) return null;
+  const referenceIds = millerReferenceIds(circuit);
+  if (!referenceIds.has(source.id)) return null;
+  const loads = [];
+  const deviceRo = componentIgnoresRo(device, options) ? null : sxSymbol(systemMosName(device.refdes, 'ro'), device.refdes);
+  if (deviceRo) loads.push(deviceRo);
+  for (const load of circuit.components.values()) {
+    if (load.refdes === candidate.impedance.refdes) continue;
+    if (load.type !== 'resistor' && load.type !== 'variable_resistor') continue;
+    const a = circuit.netOfTerminal({ comp: load.refdes, term: 'a' });
+    const b = circuit.netOfTerminal({ comp: load.refdes, term: 'b' });
+    if (!a || !b) continue;
+    const other = a.id === drain.id && referenceIds.has(b.id) ? a
+      : b.id === drain.id && referenceIds.has(a.id) ? b
+      : null;
+    if (other) loads.push(sxSymbol(systemRefdes(load.refdes, 'R'), load.refdes));
+  }
+  if (!loads.length) return null;
+  const load = loads.length === 1
+    ? loads[0]
+    : sxInv(sxAdd(...loads.map((term) => sxInv(term))));
+  const sign = device.type.startsWith('pmos') ? 1 : -1;
+  const gain = sxMul(sxNumber(sign), sxSymbol(systemMosName(device.refdes, 'gm'), device.refdes), load);
+  return {
+    expression: gain,
+    load,
+    conditions: 'source at AC ground with a directly visible resistive drain load; DC capacitive/inductive branches are omitted',
+  };
+}
+
+/** Find feedback impedances that can use a Miller split. Any modeled passive
+ * impedance may bridge one MOS gate net and that device's drain net. The split
+ * is admitted only when the particular forward stage has the explicit
+ * high-gain assumption and a safe DC gain estimate can be derived. */
+export function millerApproximationCandidates(circuit, options = {}) {
+  if (!normalizeAnalysisApproximations(options).miller) return [];
+  const mos = [...(circuit?.components?.values?.() || [])]
+    .filter((component) => MILLER_MOS_TYPES.has(component.type))
+    .filter((component) => componentAssumesGmRoLarge(component, options));
+  if (!mos.length) return [];
+  const impedances = [...(circuit?.components?.values?.() || [])]
+    .filter((component) => MILLER_IMPEDANCE_TYPES.has(component.type));
+  const candidates = [];
+  for (const impedance of impedances) {
+    const a = circuit.netOfTerminal({ comp: impedance.refdes, term: 'a' });
+    const b = circuit.netOfTerminal({ comp: impedance.refdes, term: 'b' });
+    if (!a || !b || a.id === b.id) continue;
+    for (const device of mos) {
+      const gate = circuit.netOfTerminal({ comp: device.refdes, term: 'g' });
+      const drain = circuit.netOfTerminal({ comp: device.refdes, term: 'd' });
+      if (!gate || !drain || gate.id === drain.id) continue;
+      if (!((a.id === gate.id && b.id === drain.id) || (a.id === drain.id && b.id === gate.id))) continue;
+      const gain = millerForwardGain(circuit, device, { impedance, gate, drain }, options);
+      if (gain) candidates.push({ impedance, device, gate, drain, gain });
+      break;
+    }
+  }
+  return candidates;
+}
+
+function gmRoApproximationRefs(circuit, options = {}) {
+  const flags = normalizeAnalysisApproximations(options);
+  const mos = [...(circuit?.components?.values?.() || [])]
+    .filter((component) => ['nmos', 'pmos', 'nmosb', 'pmosb'].includes(component.type));
+  if (!mos.length) return flags.gmroLarge ? null : new Set();
+  const refs = new Set(mos
+    .filter((component) => componentAssumesGmRoLarge(component, options))
+    .map((component) => component.refdes));
+  // A fully global approximation can use the existing unrestricted rewrite;
+  // partial overrides are carried as a reference set for selective rewriting.
+  return refs.size === mos.length ? null : refs;
+}
+
+function gmRoApproximationSelected(circuit, options = {}) {
+  const refs = gmRoApproximationRefs(circuit, options);
+  return refs === null || refs.size > 0;
+}
+
+function deviceRoApproximationSelected(circuit, options = {}) {
+  if (normalizeAnalysisApproximations(options).ignoreChannelLengthModulation) {
+    const mos = [...(circuit?.components?.values?.() || [])]
+      .filter((component) => ['nmos', 'pmos', 'nmosb', 'pmosb'].includes(component.type));
+    // Preserve the form's explicit approximation marker even for a passive
+    // or otherwise MOS-free target; there is simply no device policy to apply.
+    return !mos.length || mos.some((component) => componentIgnoresRo(component, options));
+  }
+  return [...(circuit?.components?.values?.() || [])].some((component) =>
+    ['nmos', 'pmos', 'nmosb', 'pmosb'].includes(component.type)
+    && componentIgnoresRo(component, options)
+    && normalizeChannelLengthModulationPolicy(component.analysis?.channelLengthModulation) === 'ignore');
+}
+
+function analysisApproximationSelected(circuit, options = {}) {
+  const flags = normalizeAnalysisApproximations(options);
+  const mos = [...(circuit?.components?.values?.() || [])]
+    .filter((component) => ['nmos', 'pmos', 'nmosb', 'pmosb'].includes(component.type));
+  return flags.ignoreBodyEffect || flags.gmroLarge || deviceRoApproximationSelected(circuit, options)
+    || millerApproximationCandidates(circuit, options).length > 0
+    || mos.some((component) => componentAssumesGmRoLarge(component, options) || componentIgnoresBodyEffect(component, options));
+}
+
+function finiteRoOverrideRefs(circuit) {
+  return [...(circuit?.components?.values?.() || [])]
+    .filter((component) => normalizeChannelLengthModulationPolicy(component.analysis?.channelLengthModulation) === 'finite')
+    .map((component) => component.refdes);
+}
+
 function markedAcGrounds(circuit) {
   return [...circuit.nets.values()]
     .filter((net) => net.analysis?.acGround || net.analysis?.role === 'dc-bias')
@@ -232,7 +447,7 @@ function sxMul(...values) {
   return { kind: 'mul', terms: kept };
 }
 function sxInv(value) {
-  if (value.kind === 'number') return value.value === 0 ? { kind: 'inv', value } : sxNumber(1 / value.value);
+  if (value.kind === 'number') return value.value === 0 ? sxSymbol('\\infty') : sxNumber(1 / value.value);
   if (value.kind === 'inv') return value.value;
   return { kind: 'inv', value };
 }
@@ -256,6 +471,119 @@ function sxKey(value) {
   return JSON.stringify(value);
 }
 
+function millerGainName(device) {
+  const suffix = String(device?.refdes || '').match(/[0-9]+$/)?.[0] || String(device?.refdes || '1');
+  return `A_{v${suffix}}`;
+}
+
+/** Replace only for presentation.  The solver keeps the expanded gain in
+ * `expression`; equations can still show a stable `A_{v1}` token so the two
+ * Miller shunts visibly share the same stage gain.  The positive counterpart
+ * of an inverting gain is rendered as `-A_{v1}`, preserving `1-A_{v1}` rather
+ * than displaying the algebraically expanded `1+g_m R_L`.
+ */
+function displaySx(value, aliases = []) {
+  if (!value || !aliases?.length) return value;
+  for (const alias of aliases) {
+    if (sxKey(value) === alias.key) return sxSymbol(alias.name);
+    if (sxKey(value) === alias.negativeKey) return sxNeg(sxSymbol(alias.name));
+  }
+  if (value.kind === 'neg') return sxNeg(displaySx(value.value, aliases));
+  if (value.kind === 'inv') return sxInv(displaySx(value.value, aliases));
+  if (value.kind === 'mul') return sxMul(...value.terms.map((term) => displaySx(term, aliases)));
+  if (value.kind === 'add') return sxAdd(...value.terms.map((term) => displaySx(term, aliases)));
+  return value;
+}
+
+/** Keep the compact Miller gain token readable while exposing its definition
+ * on the same equation line.  The alias is presentation-only; the solver
+ * still uses the expanded expression. */
+function appendMillerDefinitions(equation, aliases = []) {
+  if (!equation || !aliases?.length) return equation;
+  const used = aliases.filter((alias) => equation.includes(alias.name));
+  if (!used.length) return equation;
+  const definitions = used.map((alias) => `${alias.name}\\approx${sxText(alias.expression)}`);
+  return `${equation},\\quad ${definitions.join(',\\quad ')}`;
+}
+
+/** Return the load term from a two-element parallel group represented as an
+ * inverse conductance sum.  This stays internal to the symbolic reducer; the
+ * renderer continues to spell the value as `R_a \|\| R_b`. */
+function parallelPair(value) {
+  if (value?.kind !== 'inv' || value.value?.kind !== 'add' || value.value.terms.length !== 2) return null;
+  const terms = value.value.terms;
+  if (!terms.every((term) => term?.kind === 'inv')) return null;
+  return { first: terms[0].value, second: terms[1].value };
+}
+
+function productTerms(value) {
+  const unwrapped = unwrapSxNeg(value);
+  const terms = unwrapped.value?.kind === 'mul' ? [...unwrapped.value.terms] : [unwrapped.value];
+  return { sign: unwrapped.sign * (terms[0]?.kind === 'number' && terms[0].value < 0 ? -1 : 1), terms: terms.filter((term) => !(term.kind === 'number' && Math.abs(term.value) === 1)) };
+}
+
+function hasExactProductFactors(value, factors) {
+  const product = productTerms(value);
+  if (product.sign !== -1) return false;
+  const remaining = product.terms.map(sxKey);
+  for (const factor of factors) {
+    const index = remaining.indexOf(sxKey(factor));
+    if (index < 0) return false;
+    remaining.splice(index, 1);
+  }
+  return remaining.length === 0;
+}
+
+/**
+ * Collapse the recurring loaded-common-gate identity exposed by Gaussian
+ * elimination after g_m r_o >> 1:
+ *
+ *   -g_m (r_o || R_L) / [g_m - g_m (r_o || R_L)/r_o] = -R_L.
+ *
+ * Keeping this as a structural rewrite avoids expanding a whole cascode into
+ * a large rational polynomial while remaining exact for the already-selected
+ * approximation.  The strict two-term shape prevents it from changing exact
+ * finite-r_o equations.
+ */
+function collapseLoadedCommonGate(terms) {
+  for (let denominatorIndex = 0; denominatorIndex < terms.length; denominatorIndex++) {
+    const denominatorFactor = terms[denominatorIndex];
+    if (denominatorFactor?.kind !== 'inv' || denominatorFactor.value?.kind !== 'add' || denominatorFactor.value.terms.length !== 2) continue;
+    const denominator = denominatorFactor.value.terms;
+    for (let parallelIndex = 0; parallelIndex < terms.length; parallelIndex++) {
+      if (parallelIndex === denominatorIndex) continue;
+      const pair = parallelPair(terms[parallelIndex]);
+      if (!pair) continue;
+      for (let gmIndex = 0; gmIndex < terms.length; gmIndex++) {
+        if (gmIndex === denominatorIndex || gmIndex === parallelIndex) continue;
+        const gm = unwrapSxNeg(terms[gmIndex]).value;
+        if (!isGmSymbol(gm)) continue;
+        const feedback = denominator.find((term) => hasExactProductFactors(term, [gm, terms[parallelIndex], sxInv(pair.first)]));
+        if (!feedback) continue;
+        const directGm = denominator.find((term) => sxKey(unwrapSxNeg(term).value) === sxKey(gm));
+        if (!directGm) continue;
+        const rest = terms.filter((_, index) => ![denominatorIndex, parallelIndex, gmIndex].includes(index));
+        // Preserve the conventional gain ordering (`-g_m R_L`) even when
+        // elimination encountered the load parallel group first.
+        return sxMul(sxNumber(-1), ...rest, pair.second);
+      }
+    }
+  }
+  return null;
+}
+
+function isNegatedSxEquivalent(value, target) {
+  if (value?.kind !== 'add' || target?.kind !== 'add' || value.terms.length !== target.terms.length) return false;
+  const remaining = target.terms.map((term) => sxKey(term));
+  for (const term of value.terms) {
+    if (term?.kind !== 'neg') return false;
+    const index = remaining.indexOf(sxKey(term.value));
+    if (index < 0) return false;
+    remaining.splice(index, 1);
+  }
+  return remaining.length === 0;
+}
+
 /**
  * Apply conservative algebraic cleanup to symbolic expressions produced by
  * Gaussian elimination.  This is identity-preserving: it only removes exact
@@ -268,7 +596,22 @@ function simplifySx(value) {
   if (value.kind === 'inv') {
     const inner = simplifySx(value.value);
     if (inner?.kind === 'inv') return simplifySx(inner.value);
+    if (inner?.kind === 'number' && inner.value === 0) return sxSymbol('\\infty');
     if (inner?.kind === 'number' && inner.value !== 0) return sxNumber(1 / inner.value);
+    // Pull exact reciprocal factors out of a product before rendering it.
+    // Gaussian elimination frequently emits `1/(A · 1/B · C)`; keeping that
+    // shape produces several nested fractions even though the identity is
+    // simply `B/(A · C)`. This is an algebraic rewrite only—no asymptotic
+    // approximation or commutation across sums is involved.
+    if (inner?.kind === 'mul') {
+      const numerators = inner.terms.filter((term) => term?.kind === 'inv').map((term) => term.value);
+      if (numerators.length) {
+        const denominators = inner.terms
+          .filter((term) => term?.kind !== 'inv')
+          .map((term) => sxInv(term));
+        return simplifySx(sxMul(...numerators, ...denominators));
+      }
+    }
     return { kind: 'inv', value: inner };
   }
   if (value.kind === 'mul') {
@@ -280,9 +623,15 @@ function simplifySx(value) {
     const kept = [];
     for (const term of terms) {
       if (term.kind === 'number') numeric *= term.value;
+      else if (term.kind === 'neg') {
+        numeric *= -1;
+        kept.push(term.value);
+      }
       else kept.push(term);
     }
     if (numeric === 0) return sxNumber(0);
+    const loadedCommonGate = collapseLoadedCommonGate(terms);
+    if (loadedCommonGate) return simplifySx(loadedCommonGate);
     // Move a leading sign into an additive factor so identities such as
     // `-(1/r_o + g_m) r_o = 1 + g_m r_o` can be recognized below.
     if (numeric === -1) {
@@ -313,6 +662,14 @@ function simplifySx(value) {
       if (direct >= 0) {
         kept.splice(Math.max(index, direct), 1);
         kept.splice(Math.min(index, direct), 1);
+        continue;
+      }
+      const negated = kept.findIndex((candidate, candidateIndex) => candidateIndex !== index
+        && isNegatedSxEquivalent(candidate, term.value));
+      if (negated >= 0) {
+        kept.splice(Math.max(index, negated), 1);
+        kept.splice(Math.min(index, negated), 1);
+        numeric *= -1;
       }
     }
     if (numeric !== 1) kept.unshift(sxNumber(numeric));
@@ -392,6 +749,12 @@ function reciprocalParallelTerms(value) {
   if (!value.terms.some((term) => term?.kind === 'inv')) return null;
   return value.terms.map((term) => term?.kind === 'inv' ? term.value : { kind: 'inv', value: term });
 }
+function isReciprocalParallel(value) {
+  return !!reciprocalParallelTerms(value);
+}
+function parallelSeparator(rendered) {
+  return ' \\|\\| ';
+}
 function sxIsZero(value) { return !value || (value.kind === 'number' && value.value === 0); }
 function sxDependencies(value, out = new Set()) {
   if (!value) return out;
@@ -411,10 +774,39 @@ function sxText(value, parent = null) {
   if (value.kind === 'inv') {
     const parallelTerms = reciprocalParallelTerms(value.value);
     if (parallelTerms) {
-      const body = parallelTerms.map((term) => sxText(term, 'parallel')).join(' \\|\\| ');
+      const rendered = parallelTerms.map((term) => sxText(term, 'parallel'));
+      const body = rendered.join(parallelSeparator(rendered));
       return parent && parent !== 'parallel' ? `\\left(${body}\\right)` : body;
     }
     return `\\frac{1}{${sxText(value.value)}}`;
+  }
+  // Compact impedance reducers use the same lightweight expression tree as
+  // the nodal solver but keep parallel groups as `parallel` nodes.  Accept
+  // those nodes here so a Norton gain can multiply G_m by the compact R_out
+  // expression without dropping the load from the rendered equation.
+  if (value.kind === 'parallel' || value.kind === 'product' || value.kind === 'sum') {
+    if (value.kind === 'product' && value.terms.length === 2) {
+      const inverseIndex = value.terms.findIndex((term) => term?.kind === 'inv');
+      const numerator = value.terms[1 - inverseIndex];
+      const denominator = inverseIndex >= 0 ? value.terms[inverseIndex]?.value : null;
+      if (inverseIndex >= 0 && numerator && denominator && numerator.kind !== 'inv'
+        && parent === null && !isReciprocalParallel(denominator)) {
+        const fraction = `\\frac{${sxText(numerator)}}{${sxText(denominator)}}`;
+        return parent === 'sum' ? `\\left(${fraction}\\right)` : fraction;
+      }
+    }
+    const rendered = value.terms.map((term) => sxText(term, value.kind));
+    let body = rendered[0] || '';
+    for (let i = 1; i < rendered.length; i++) {
+      const previous = value.terms[i - 1];
+      const current = value.terms[i];
+      const join = value.kind === 'parallel' ? parallelSeparator(rendered)
+        : value.kind === 'product'
+          ? (previous?.kind === 'inv' && current?.kind === 'inv' ? ' \\, \\cdot \\, ' : ' \\, ')
+          : ' + ';
+      body += join + rendered[i];
+    }
+    return parent && parent !== value.kind ? `\\left(${body}\\right)` : body;
   }
   if (value.kind === 'mul') {
     // Keep polarity readable in textbook form: `-g_{m1}`, never the noisy
@@ -424,16 +816,48 @@ function sxText(value, parent = null) {
       const rest = value.terms.filter((_, index) => index !== negativeOne);
       if (rest.length) return `-${sxText(sxMul(...rest), parent)}`;
     }
-    const body = value.terms.map((term) => {
-      const text = sxText(term, 'mul');
-      return term.kind === 'add' || term.kind === 'neg' ? `\\left(${text}\\right)` : text;
-    }).join(' \\, ');
+    // A reciprocal used as the complete top-level second factor reads much
+    // more clearly as one fraction: `A \\, 1/B` becomes `\\frac{A}{B}`. Keep
+    // nested products in multiplicative form; rewriting every inner factor
+    // creates a stack of fractions in a nodal impedance. Also leave an
+    // inverse admittance group alone so its `R_1 \\|\\| R_2` rendering is not
+    // replaced by the underlying `1/R_1 + 1/R_2` when it is used in A_v.
+    if (value.terms.length === 2) {
+      const inverseIndex = value.terms.findIndex((term) => term?.kind === 'inv');
+      const numerator = value.terms[1 - inverseIndex];
+      const denominator = inverseIndex >= 0 ? value.terms[inverseIndex]?.value : null;
+      if (inverseIndex >= 0 && numerator && denominator && numerator.kind !== 'inv'
+        && parent === null && !isReciprocalParallel(denominator)) {
+        const numeratorText = sxText(numerator);
+        const denominatorText = sxText(denominator);
+        const fraction = `\\frac{${numeratorText}}{${denominatorText}}`;
+        return parent === 'add' ? `\\left(${fraction}\\right)` : fraction;
+      }
+    }
+    const rendered = value.terms.map((term) => sxText(term, 'mul'));
+    // Back-to-back reciprocal terms are visually ambiguous once rendered as
+    // stacked fractions.  Use an explicit multiplication dot between them;
+    // ordinary products keep the lighter textbook spacing.
+    let body = rendered[0] || '';
+    for (let i = 1; i < rendered.length; i++) {
+      const previous = value.terms[i - 1];
+      const current = value.terms[i];
+      const separator = previous?.kind === 'inv' && current?.kind === 'inv'
+        ? ' \\, \\cdot \\, '
+        : ' \\, ';
+      body += separator + rendered[i];
+    }
     return parent === 'add' ? `\\left(${body}\\right)` : body;
   }
-  if (value.kind === 'add') return value.terms.map((term) => {
-    if (term.kind === 'neg') return `- ${sxText(term.value, 'add')}`;
-    return sxText(term, 'add');
-  }).join(' + ');
+  if (value.kind === 'add') {
+    const body = value.terms.map((term, index) => {
+      const signed = signedSxTerm(term);
+      const body = sxText(signed.value, 'add');
+      if (index === 0) return signed.sign < 0 ? `-${body}` : body;
+      return signed.sign < 0 ? `- ${body}` : `+ ${body}`;
+    }).join(' ');
+    return parent && parent !== 'add' ? `\\left(${body}\\right)` : body;
+  }
   return '';
 }
 
@@ -473,20 +897,33 @@ export function normalizeAnalysisApproximations(options = {}) {
     .filter(Boolean)
     .map((value) => String(value).trim().toLowerCase().replace(/_/g, '-')));
   const has = (...names) => names.some((name) => values.has(name));
+  const explicitMiller = options.millerApproximation ?? options.miller;
   return {
     ignoreChannelLengthModulation: !!options.ignoreChannelLengthModulation || has('ignore-channel-length-modulation', 'ignore-clm', 'ro-infinity', 'neglect-ro'),
     ignoreBodyEffect: !!options.ignoreBodyEffect || has('ignore-body-effect', 'ignore-gmb', 'gmb-zero'),
     gmroLarge: !!options.gmroLarge || !!options.assumeGmRoLarge || has('gmro-large', 'gmro>>1', 'gm-ro-large', 'large-gmro'),
+    // Miller is the normal textbook reduction. Callers can opt out with an
+    // explicit false (the exact/reference pass does this); legacy option
+    // objects that omit the field therefore get the useful default-on path.
+    miller: explicitMiller === undefined ? true : !!explicitMiller,
   };
 }
 
-function textbookApproximationNotes(options = {}) {
+function textbookApproximationNotes(options = {}, circuit = null) {
   const flags = normalizeAnalysisApproximations(options);
   const assumptions = [];
   const approximations = [];
   if (flags.ignoreChannelLengthModulation) {
-    assumptions.push('Channel-length modulation is ignored, so each MOS output resistance r_o is treated as infinite.');
-    approximations.push('Textbook approximation: r_o \u2192 \u221e (MOS output conductance g_o = 0).');
+    const finite = [...new Set([
+      ...finiteRoOverrideRefs(circuit),
+      ...splitContextValues(options.retainFiniteRoDevices),
+    ])];
+    assumptions.push(finite.length
+      ? `Channel-length modulation is ignored for MOS devices by default; ${finite.join(', ')} explicitly retain finite r_o.`
+      : 'Channel-length modulation is ignored, so each MOS output resistance r_o is treated as infinite.');
+    approximations.push(finite.length
+      ? `Textbook approximation: r_o \u2192 \u221e except for ${finite.join(', ')} (finite r_o override).`
+      : 'Textbook approximation: r_o \u2192 \u221e (MOS output conductance g_o = 0).');
   }
   if (flags.ignoreBodyEffect) {
     assumptions.push('Body effect is ignored, so g_{mb} is set to zero for the small-signal model.');
@@ -496,12 +933,12 @@ function textbookApproximationNotes(options = {}) {
     assumptions.push('The strong intrinsic-gain condition g_m r_o \u226b 1 is assumed wherever a lower-order term is discarded.');
     approximations.push('Textbook approximation: g_m r_o \\gg 1.');
   }
+  const miller = millerApproximationCandidates(circuit, options);
+  if (flags.miller && miller.length) {
+    assumptions.push(`Miller approximation is applied to feedback impedances with an explicitly high forward gain (${miller.map(({ impedance, device }) => `${impedance.refdes}/${device.refdes}`).join(', ')}).`);
+    approximations.push('Miller approximation: each eligible feedback impedance is split into input and output shunt impedances using the derived DC stage gain.');
+  }
   return { flags, assumptions, approximations };
-}
-
-function hasTextbookApproximation(options = {}) {
-  const flags = normalizeAnalysisApproximations(options);
-  return flags.ignoreChannelLengthModulation || flags.ignoreBodyEffect || flags.gmroLarge;
 }
 
 function exactAnalysisOptions(options = {}) {
@@ -512,6 +949,12 @@ function exactAnalysisOptions(options = {}) {
     ignoreBodyEffect: false,
     gmroLarge: false,
     assumeGmRoLarge: false,
+    millerApproximation: false,
+    miller: false,
+    ignoreRoDevices: [],
+    ignoreChannelLengthModulationDevices: [],
+    ignoreDeviceRoOverrides: true,
+    ignoreDeviceApproximationOverrides: true,
   };
 }
 
@@ -523,44 +966,188 @@ function isGmSymbol(value) {
   return value?.kind === 'symbol' && /^g_\{m/.test(value.name || '');
 }
 
+function symbolRefdes(value) {
+  const base = unwrapSxNeg(value).value;
+  if (base?.source) return String(base.source);
+  const match = String(base?.name || '').match(/^[gr]_\{(?:m|mb|o)([^}]*)\}/);
+  return match?.[1] ? `M${match[1]}` : null;
+}
+
+function approximationAppliesToSymbol(value, refs) {
+  if (!refs) return true;
+  const refdes = symbolRefdes(value);
+  return !!refdes && refs.has(refdes);
+}
+
+function unwrapSxNeg(value) {
+  let current = value;
+  let sign = 1;
+  while (current?.kind === 'neg') {
+    sign *= -1;
+    current = current.value;
+  }
+  return { sign, value: current };
+}
+
+function signedSxTerm(value) {
+  const unwrapped = unwrapSxNeg(value);
+  let current = unwrapped.value;
+  let sign = unwrapped.sign;
+  if (current?.kind === 'mul') {
+    const negativeOne = current.terms.findIndex((term) => term.kind === 'number' && term.value === -1);
+    if (negativeOne >= 0) {
+      sign *= -1;
+      current = sxMul(...current.terms.filter((_, index) => index !== negativeOne));
+    }
+  }
+  return { sign, value: current };
+}
+
+function isStandaloneRo(value) {
+  const base = unwrapSxNeg(value).value;
+  return isRoSymbol(base);
+}
+
+function isInverseRo(value) {
+  const base = unwrapSxNeg(value).value;
+  return base?.kind === 'inv' && isRoSymbol(base.value);
+}
+
+function isInverseGm(value) {
+  const base = unwrapSxNeg(value).value;
+  return base?.kind === 'inv' && isGmSymbol(base.value);
+}
+
+function hasLowerOrderGmRoCorrection(value, refs = null) {
+  const terms = value?.kind === 'mul' ? value.terms : [value];
+  // Output-short solutions commonly expose the cascode correction as
+  // g_m1/(g_m2 r_o2).  Under g_m2 r_o2 >> 1 it is lower order than the direct
+  // input-device transconductance, even though it is not syntactically a
+  // g_m·r_o product yet.
+  return terms.some((term) => isInverseRo(term) && approximationAppliesToSymbol(term.value, refs))
+    && terms.some((term) => isInverseGm(term) && approximationAppliesToSymbol(term.value, refs));
+}
+
+function isStandaloneOne(value) {
+  const base = unwrapSxNeg(value);
+  return base.value?.kind === 'number' && Math.abs(base.value.value) === 1;
+}
+
+function isStandaloneGm(value) {
+  return isGmSymbol(unwrapSxNeg(value).value);
+}
+
 function gmRoProduct(value) {
-  if (value?.kind !== 'mul') return null;
-  const ros = value.terms.filter((term) => isRoSymbol(term));
-  const gm = value.terms.find((term) => isGmSymbol(term));
+  const base = unwrapSxNeg(value).value;
+  if (base?.kind !== 'mul') return null;
+  const ros = base.terms.filter((term) => isRoSymbol(unwrapSxNeg(term).value));
+  const gm = base.terms.find((term) => isGmSymbol(unwrapSxNeg(term).value));
   return ros.length && gm ? { ros, gm } : null;
 }
 
+/**
+ * Factor an exact symbolic product shared by every branch of an additive
+ * expression.  Gaussian elimination commonly emits a cascode term as
+ *
+ *   -g_m1/(g_m2+g_mb2) * (1/r_o2 + g_m2 + g_mb2)
+ *
+ * but leaves the common factors duplicated on each addend.  Factoring that
+ * shape lets the large-g_m r_o pass discard 1/r_o2 and cancel the remaining
+ * `(g_m2 + g_mb2)` pair without changing the exact symbolic value.
+ */
+function factorCommonSxAdd(terms) {
+  if (!Array.isArray(terms) || terms.length < 2) return null;
+  const factorsOf = (term) => {
+    const unwrapped = unwrapSxNeg(term);
+    const factors = unwrapped.value?.kind === 'mul' ? [...unwrapped.value.terms] : [unwrapped.value];
+    return unwrapped.sign < 0 ? [sxNumber(-1), ...factors] : factors;
+  };
+  const first = factorsOf(terms[0]);
+  if (!first.length) return null;
+  const common = first.filter((candidate) => terms.every((term) => {
+    const factors = factorsOf(term);
+    return factors.some((factor) => sxKey(factor) === sxKey(candidate));
+  }));
+  // Only factor a denominator/symbolic factor.  Factoring a lone numeric sign
+  // or a bare transconductance can make ordinary textbook sums less readable.
+  if (!common.some((factor) => factor?.kind === 'inv')) return null;
+  const reduced = terms.map((term) => {
+    const factors = factorsOf(term);
+    for (const candidate of common) {
+      const index = factors.findIndex((factor) => sxKey(factor) === sxKey(candidate));
+      if (index >= 0) factors.splice(index, 1);
+    }
+    return sxMul(...factors);
+  });
+  return sxMul(...common, sxAdd(...reduced));
+}
+
 /** Keep only the dominant term in familiar `1 + g_m r_o` / cascode sums. */
-function applyGmRoApproximation(value) {
+function applyGmRoApproximation(value, refs = null) {
   if (!value) return value;
-  if (value.kind === 'neg') return sxNeg(applyGmRoApproximation(value.value));
-  if (value.kind === 'inv') return { kind: 'inv', value: applyGmRoApproximation(value.value) };
-  if (value.kind === 'mul') return simplifySx({ kind: 'mul', terms: value.terms.map((term) => applyGmRoApproximation(term)) });
+  if (value.kind === 'neg') return sxNeg(applyGmRoApproximation(value.value, refs));
+  if (value.kind === 'inv') return { kind: 'inv', value: applyGmRoApproximation(value.value, refs) };
+  if (value.kind === 'mul') return simplifySx({ kind: 'mul', terms: value.terms.map((term) => applyGmRoApproximation(term, refs)) });
   if (value.kind !== 'add') return value;
-  const terms = value.terms.map((term) => applyGmRoApproximation(term));
-  const dominant = terms.filter((term) => gmRoProduct(term));
-  if (!dominant.length) return simplifySx({ kind: 'add', terms });
+  let terms = value.terms.map((term) => applyGmRoApproximation(term, refs));
+  const dominant = terms.filter((term) => {
+    const pair = gmRoProduct(term);
+    return pair && approximationAppliesToSymbol(pair.gm, refs);
+  });
+  // A transconductance dominates the output conductance of the same
+  // small-signal device when g_m r_o >> 1.  The old reducer only recognized
+  // an already-expanded `g_m r_o` product, so it left common-gate factors such
+  // as `(g_m + 1/r_o)` and nested conductance sums untouched.  Remove the
+  // lower-order output-conductance terms before simplifying the surrounding
+  // products; this lets exact inverse pairs cancel through a cascode chain.
+  const hasGm = terms.some((term) => isStandaloneGm(term) && approximationAppliesToSymbol(term, refs));
+  if (hasGm || dominant.length) {
+    terms = terms.filter((term) => {
+      if (isStandaloneOne(term)) return false;
+      if (isStandaloneRo(term) || isInverseRo(term)) {
+        return !approximationAppliesToSymbol(term.kind === 'inv' ? term.value : term, refs);
+      }
+      if (hasGm && hasLowerOrderGmRoCorrection(term, refs)) return false;
+      return true;
+    });
+  }
+  const factored = factorCommonSxAdd(terms);
+  if (factored) return applyGmRoApproximation(simplifySx(factored), refs);
+  if (!dominant.length && !hasGm) return simplifySx({ kind: 'add', terms });
   const dominantRos = new Set(dominant.flatMap((term) => {
     const pair = gmRoProduct(term);
-    return pair ? pair.ros.map((ro) => ro.name) : [];
+    return pair
+      ? pair.ros.filter((ro) => approximationAppliesToSymbol(ro, refs)).map((ro) => unwrapSxNeg(ro).value.name)
+      : [];
   }));
   const kept = terms.filter((term) => {
     if (term.kind === 'number' && term.value === 1) return false;
-    if (isRoSymbol(term) && dominantRos.has(term.name)) return false;
+    const base = unwrapSxNeg(term).value;
+    if (isRoSymbol(base) && dominantRos.has(base.name)) return false;
     return true;
   });
   return simplifySx(kept.length ? { kind: 'add', terms: kept } : sxNumber(0));
 }
 
-function applyAnalysisApproximations(value, options = {}) {
-  const simplified = simplifySx(value);
-  return normalizeAnalysisApproximations(options).gmroLarge
-    ? simplifySx(applyGmRoApproximation(simplified))
-    : simplified;
+function applyAnalysisApproximations(value, options = {}, circuit = null) {
+  let simplified = simplifySx(value);
+  const refs = gmRoApproximationRefs(circuit, options);
+  if (refs && refs.size === 0) return simplified;
+  if (!normalizeAnalysisApproximations(options).gmroLarge && refs === null && !circuit) return simplified;
+  // One asymptotic rewrite can expose a new inverse pair in the surrounding
+  // node equation (especially through a cascoded stack). Repeat to a small
+  // fixed point so newly exposed `g_m/g_m` and additive cancellations are not
+  // left in the displayed equation.
+  for (let pass = 0; pass < 8; pass++) {
+    const next = simplifySx(applyGmRoApproximation(simplified, refs));
+    if (sxKey(next) === sxKey(simplified)) break;
+    simplified = next;
+  }
+  return simplified;
 }
 
-function equationOperator(exact, simplified, options = {}) {
-  return !hasTextbookApproximation(options) && sxKey(exact) === sxKey(simplified) ? '=' : '\\approx';
+function equationOperator(exact, simplified, options = {}, circuit = null) {
+  return !analysisApproximationSelected(circuit, options) && sxKey(exact) === sxKey(simplified) ? '=' : '\\approx';
 }
 
 function systemTerminalNet(circuit, component, term) {
@@ -569,7 +1156,7 @@ function systemTerminalNet(circuit, component, term) {
 
 function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
   const overrides = circuitModelOverrides(circuit, options.models);
-  const textbook = textbookApproximationNotes(options);
+  const textbook = textbookApproximationNotes(options, circuit);
   const elements = [];
   const nodes = new Set(['@AC_GROUND', target.id]);
   const assumptions = [...textbook.assumptions];
@@ -586,18 +1173,70 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
     if (!na || !nb || na === nb) return;
     elements.push({ kind, component: component.refdes, a: na, b: nb, value, ...extra });
   };
+  const addShuntBranch = (kind, component, net, value, extra = {}) => {
+    const node = addNode(net);
+    if (!node || node === '@AC_GROUND') return;
+    elements.push({ kind, component: component.refdes, a: node, b: '@AC_GROUND', value, ...extra });
+  };
+  const millerByImpedance = new Map(millerApproximationCandidates(circuit, options)
+    .map((candidate) => [candidate.impedance.refdes, candidate]));
+  const millerAliases = [...millerByImpedance.values()].map((candidate) => ({
+    name: millerGainName(candidate.device),
+    expression: candidate.gain.expression,
+    key: sxKey(candidate.gain.expression),
+    negativeKey: sxKey(sxNeg(candidate.gain.expression)),
+  }));
+
+  const addMillerSplit = (component, candidate, kind) => {
+    const impedance = millerImpedanceValue(component);
+    const gain = candidate.gain.expression;
+    const inputImpedance = sxDiv(impedance, sxSub(sxNumber(1), gain));
+    const outputImpedance = sxDiv(impedance, sxSub(sxNumber(1), sxInv(gain)));
+    const displayGain = sxSymbol(millerGainName(candidate.device));
+    const inputDisplayImpedance = sxDiv(impedance, sxSub(sxNumber(1), displayGain));
+    const outputDisplayImpedance = sxDiv(impedance, sxSub(sxNumber(1), sxInv(displayGain)));
+    addShuntBranch(kind, component, candidate.gate, inputImpedance, {
+      millerRole: 'input', millerDevice: candidate.device.refdes, millerGain: gain,
+      displayValue: inputDisplayImpedance,
+    });
+    addShuntBranch(kind, component, candidate.drain, outputImpedance, {
+      millerRole: 'output', millerDevice: candidate.device.refdes, millerGain: gain,
+      displayValue: outputDisplayImpedance,
+    });
+    const impedanceName = sxText(impedance);
+    const gainName = millerGainName(candidate.device);
+    assumptions.push(`${component.refdes} is split by Miller's theorem around ${candidate.device.refdes}: Z_{in}=${sxText(displaySx(inputImpedance, millerAliases))}, Z_{out}=${sxText(displaySx(outputImpedance, millerAliases))} using ${gainName}\\approx${sxText(gain)}.`);
+    approximations.push(`Miller approximation: ${component.refdes} is split around ${candidate.device.refdes} using ${gainName}\\approx${sxText(gain)}; ${impedanceName} is otherwise unchanged.`);
+  };
 
   for (const component of circuit.components.values()) {
     const type = component.type;
     if (type === 'resistor' || type === 'variable_resistor') {
-      addBranch('resistor', component, systemTerminalNet(circuit, component, 'a'), systemTerminalNet(circuit, component, 'b'), sxSymbol(systemRefdes(component.refdes, 'R'), component.refdes));
+      const miller = millerByImpedance.get(component.refdes);
+      if (miller) addMillerSplit(component, miller, 'resistor');
+      else addBranch('resistor', component, systemTerminalNet(circuit, component, 'a'), systemTerminalNet(circuit, component, 'b'), sxSymbol(systemRefdes(component.refdes, 'R'), component.refdes));
       continue;
     }
     if (type === 'capacitor' || type === 'variable_capacitor') {
-      const capacitance = sxMul(sxSymbol('s'), sxSymbol(systemCapName(component.refdes), component.refdes));
-      addBranch('capacitor', component, systemTerminalNet(circuit, component, 'a'), systemTerminalNet(circuit, component, 'b'), sxInv(capacitance));
-      assumptions.push(`${component.refdes} is represented by the small-signal impedance \\frac{1}{s ${systemCapName(component.refdes)}}.`);
+      const miller = millerByImpedance.get(component.refdes);
+      if (miller) addMillerSplit(component, miller, 'capacitor');
+      else {
+        const capacitance = sxMul(sxSymbol('s'), sxSymbol(systemCapName(component.refdes), component.refdes));
+        addBranch('capacitor', component, systemTerminalNet(circuit, component, 'a'), systemTerminalNet(circuit, component, 'b'), sxInv(capacitance));
+        assumptions.push(`${component.refdes} is represented by the small-signal impedance \\frac{1}{s ${systemCapName(component.refdes)}}.`);
+      }
       approximations.push(`Small-signal approximation: ${component.refdes} is treated as an ideal capacitor in the frequency domain.`);
+      continue;
+    }
+    if (type === 'inductor' || type === 'variable_inductor') {
+      const miller = millerByImpedance.get(component.refdes);
+      if (miller) addMillerSplit(component, miller, 'inductor');
+      else {
+        const impedance = millerImpedanceValue(component);
+        addBranch('inductor', component, systemTerminalNet(circuit, component, 'a'), systemTerminalNet(circuit, component, 'b'), impedance);
+        assumptions.push(`${component.refdes} is represented by the small-signal impedance s ${indexedName(component.refdes, 'L')}.`);
+      }
+      approximations.push(`Small-signal approximation: ${component.refdes} is treated as an ideal inductor in the frequency domain.`);
       continue;
     }
     const isMos = ['nmos', 'pmos', 'nmosb', 'pmosb'].includes(type);
@@ -636,20 +1275,56 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
       const d = addNode(drain);
       const s = addNode(source);
       const g = addNode(gate);
+      // Plain MOS symbols do not expose a bulk pin, but their bulk is still
+      // implicitly tied to the device's global body reference (GND for NMOS,
+      // VDD for PMOS).  Both are AC grounds in this model.  Keep that implicit
+      // bulk as an actual control node so a moving source produces the usual
+      // -g_mb*v_s body-effect contribution in source-followers and other
+      // source-degenerated stages.
       const b = addNode(bulk) || '@AC_GROUND';
       const polarity = type.startsWith('pmos') ? -1 : 1;
-      if (!textbook.flags.ignoreChannelLengthModulation) {
+      const ignoreRo = componentIgnoresRo(component, options);
+      if (!ignoreRo) {
         addBranch('output-resistance', component, drain, source, sxSymbol(systemMosName(component.refdes, 'ro'), component.refdes));
       }
-      elements.push({ kind: 'vccs', component: component.refdes, a: d, b: s, controlPlus: g, controlMinus: s, value: sxSymbol(systemMosName(component.refdes, 'gm'), component.refdes), polarity });
-      if (!textbook.flags.ignoreBodyEffect && bulk && b !== s) {
-        elements.push({ kind: 'vccs', component: component.refdes, a: d, b: s, controlPlus: b, controlMinus: s, value: sxSymbol(systemMosName(component.refdes, 'gmb'), component.refdes), polarity });
+      elements.push({
+        kind: 'vccs', component: component.refdes, a: d, b: s,
+        controlPlus: g, controlMinus: s,
+        controlPlusNetId: gate.id, controlMinusNetId: source.id,
+        value: sxSymbol(systemMosName(component.refdes, 'gm'), component.refdes), polarity,
+      });
+      const bodyEffectActive = !componentIgnoresBodyEffect(component, options) && b !== s;
+      if (bodyEffectActive) {
+        elements.push({
+          kind: 'vccs', component: component.refdes, a: d, b: s,
+          controlPlus: b, controlMinus: s,
+          controlPlusNetId: bulk?.id || null, controlMinusNetId: source.id,
+          value: sxSymbol(systemMosName(component.refdes, 'gmb'), component.refdes), polarity,
+        });
       }
       if (!hasBulk || !bulk) {
         assumptions.push(`${component.refdes} bulk is unused and is assumed tied to ${polarity > 0 ? 'GND' : 'VDD'}; in the small-signal model this is an AC-ground assumption.`);
       }
-      const deviceTerms = [!textbook.flags.ignoreChannelLengthModulation ? 'r_o' : null, 'g_m', !textbook.flags.ignoreBodyEffect && bulk && b !== s ? 'g_{mb}' : null].filter(Boolean);
+      if (component.analysis?.ignoreBodyEffect === true && !options.ignoreDeviceApproximationOverrides) {
+        assumptions.push(`${component.refdes} has an explicit per-device override: body effect is ignored, so g_{mb} = 0.`);
+        approximations.push(`Per-device approximation: ${component.refdes} g_{mb} = 0.`);
+      } else if (component.analysis?.ignoreBodyEffect === false && textbook.flags.ignoreBodyEffect && !options.ignoreDeviceApproximationOverrides) {
+        assumptions.push(`${component.refdes} has an explicit per-device override: body effect is retained despite the form-wide approximation.`);
+      }
+      if (component.analysis?.gmroLarge === true && !options.ignoreDeviceApproximationOverrides) {
+        assumptions.push(`${component.refdes} has an explicit per-device override: g_m r_o \\gg 1 is assumed.`);
+        approximations.push(`Per-device approximation: ${component.refdes} g_m r_o \\gg 1.`);
+      } else if (component.analysis?.gmroLarge === false && textbook.flags.gmroLarge && !options.ignoreDeviceApproximationOverrides) {
+        assumptions.push(`${component.refdes} has an explicit per-device override: finite g_m r_o is retained despite the form-wide approximation.`);
+      }
+      const deviceTerms = [!ignoreRo ? 'r_o' : null, 'g_m', bodyEffectActive ? 'g_{mb}' : null].filter(Boolean);
       assumptions.push(`${component.refdes} is represented by ${deviceTerms.join(', ')} in the small-signal model.`);
+      if (normalizeChannelLengthModulationPolicy(component.analysis?.channelLengthModulation) === 'ignore') {
+        assumptions.push(`${component.refdes} has an explicit per-device override: channel-length modulation is ignored and r_o is treated as infinite.`);
+        approximations.push(`Per-device approximation: ${component.refdes} r_o \u2192 \u221e.`);
+      } else if (normalizeChannelLengthModulationPolicy(component.analysis?.channelLengthModulation) === 'finite' && textbook.flags.ignoreChannelLengthModulation) {
+        assumptions.push(`${component.refdes} has an explicit per-device override: finite r_o is retained despite the form-wide channel-length modulation approximation.`);
+      }
       approximations.push(`Small-signal approximation: ${component.refdes} parasitic capacitances are omitted.`);
       continue;
     }
@@ -662,44 +1337,61 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
     const nets = component.def.terminals.map((term) => systemTerminalNet(circuit, component, term.name)).filter(Boolean);
     if (nets.length) unsupportedDevices.push({ refdes: component.refdes, type, netIds: nets.map((net) => net.id), reason: 'no small-signal element model is registered' });
   }
-  return { elements, nodes: [...nodes].sort(), assumptions, approximations, unsupportedDevices, openCircuits };
+  return { elements, nodes: [...nodes].sort(), assumptions, approximations, unsupportedDevices, openCircuits, millerAliases };
 }
 
 /** Render the stamped symbolic primitives in a compact SPICE-like form.  The
  * netlist is descriptive only: it is not fed to a numerical simulator. */
-export function formatSmallSignalNetlist(circuit, model, { referenceIds = new Set() } = {}) {
+export function formatSmallSignalNetlist(circuit, model, { referenceIds = new Set(), inputId = null, inputZeroed = false } = {}) {
   const references = referenceIds instanceof Set ? referenceIds : new Set(referenceIds || []);
+  const netlistNetName = (net) => {
+    const raw = netLabel(net);
+    return /^V[A-Za-z]+(?:[0-9]+)?$/.test(raw) ? indexedName(raw, 'V') : raw;
+  };
   const nodeName = (node) => node === '@AC_GROUND' || references.has(node)
-    ? '0'
-    : netLabel(circuit.nets.get(node)) || node;
+    ? (inputId && node === inputId ? netlistNetName(circuit.nets.get(node)) || 'V_{in}' : '0')
+    : netlistNetName(circuit.nets.get(node)) || node;
   const lines = ['* Small-signal equivalent (symbolic; no numerical values)'];
   for (const open of model?.openCircuits || []) lines.push(`* OPEN ${open.component}: ${open.reason}`);
   for (const element of model?.elements || []) {
     const a = nodeName(element.a);
     const b = nodeName(element.b);
+    if (element.millerRole === 'input' && element.millerDevice) {
+      lines.push(`* MILLER ${element.component} split around ${element.millerDevice} (input/output shunts)`);
+    }
     if (element.kind === 'vccs') {
-      const controlPlus = nodeName(element.controlPlus);
-      const controlMinus = nodeName(element.controlMinus);
+      const controlPlus = nodeName(inputId && element.controlPlusNetId === inputId ? inputId : element.controlPlus);
+      const controlMinus = nodeName(inputId && element.controlMinusNetId === inputId ? inputId : element.controlMinus);
       const value = sxText(element.polarity === -1 ? sxNeg(element.value) : element.value);
       lines.push(`G_${element.component} ${a} ${b} ${controlPlus} ${controlMinus} ${value}`);
     } else if (element.kind === 'resistor' || element.kind === 'output-resistance' || element.kind === 'triode-resistance') {
-      lines.push(`R_${element.component} ${a} ${b} ${sxText(element.value)}`);
+      const suffix = element.millerRole ? `_${element.millerRole}` : '';
+      lines.push(`R_${element.component}${suffix} ${a} ${b} ${sxText(element.value)}`);
     } else if (element.kind === 'capacitor') {
-      lines.push(`C_${element.component} ${a} ${b} ${sxText(element.value)}`);
+      const suffix = element.millerRole ? `_${element.millerRole}` : '';
+      lines.push(`C_${element.component}${suffix} ${a} ${b} ${sxText(element.value)}`);
+    } else if (element.kind === 'inductor') {
+      const suffix = element.millerRole ? `_${element.millerRole}` : '';
+      lines.push(`L_${element.component}${suffix} ${a} ${b} ${sxText(element.value)}`);
     }
   }
   for (const device of model?.unsupportedDevices || []) {
     lines.push(`* UNSUPPORTED ${device.refdes}: ${device.reason || 'no small-signal model'}`);
   }
-  if (lines.length === 1) lines.push('* (no small-signal primitives were stamped)');
+  if (inputId && inputZeroed) {
+    const inputName = netlistNetName(circuit.nets.get(inputId)) || 'V_{in}';
+    lines.splice(1, 0, `* ${inputName} = 0 (input source zeroed for output impedance)`);
+  }
+  if (lines.length === 1 + (inputId && inputZeroed ? 1 : 0)) lines.push('* (no small-signal primitives were stamped)');
   return lines.join('\n');
 }
 
-function systemRows(model, { testTarget = null, inputNode = null }) {
-  const unknowns = [...model.nodes].filter((node) => node !== '@AC_GROUND' && node !== inputNode).sort();
+function systemRows(model, { testTarget = null, inputNode = null, fixedNodes = [] }) {
+  const fixed = new Set(fixedNodes || []);
+  const unknowns = [...model.nodes].filter((node) => node !== '@AC_GROUND' && node !== inputNode && !fixed.has(node)).sort();
   const rows = new Map(unknowns.map((node) => [node, { node, coefficients: new Map(), rhs: sxNumber(0) }]));
   const addCoefficient = (rowNode, columnNode, value) => {
-    if (!rows.has(rowNode) || columnNode === '@AC_GROUND') return;
+    if (!rows.has(rowNode) || columnNode === '@AC_GROUND' || fixed.has(columnNode)) return;
     if (columnNode === inputNode) {
       addRhs(rowNode, sxNeg(sxMul(value, sxSymbol('V_{in}'))));
       return;
@@ -801,7 +1493,11 @@ function solveSystem(rows, unknowns) {
 }
 
 function systematicImpedanceResult(circuit, model, context, label = 'Z_{out}', options = {}) {
-  const netlist = formatSmallSignalNetlist(circuit, model, { referenceIds: context.referenceIds });
+  const netlist = formatSmallSignalNetlist(circuit, model, {
+    referenceIds: context.referenceIds,
+    inputId: context.inputId || null,
+    inputZeroed: label === 'Z_{out}' && !!context.inputId,
+  });
   const unsupportedDevice = modelPathDevice(model, context);
   if (unsupportedDevice) return { ok: false, error: `${unsupportedDevice.refdes} (${unsupportedDevice.type}) touches the analyzed path and has no symbolic small-signal model yet`, equations: [], unknowns: [], model, netlist };
   const system = systemRows(model, { testTarget: context.target.id === '@AC_GROUND' ? null : context.target.id });
@@ -833,11 +1529,38 @@ function systematicImpedanceResult(circuit, model, context, label = 'Z_{out}', o
   const outputVoltage = solved.values.get(outputNode);
   if (!outputVoltage) return { ok: false, error: 'target node was not solvable in the node-equation system', equations, equationCount: equations.length, unknowns: system.unknowns, unknownCount: system.unknowns.length, model, netlist };
   const exactImpedance = simplifySx(sxDiv(outputVoltage, sxSymbol('I_{test}')));
-  const impedance = applyAnalysisApproximations(exactImpedance, options);
+  const impedance = applyAnalysisApproximations(exactImpedance, options, circuit);
+  // Re-solve only the presentation copy with Miller shunts represented by
+  // `A_{v1}`. The solver above keeps the expanded DC gain, while this copy
+  // preserves the recognizable Miller forms in both input and output
+  // impedance equations without changing any model or netlist values.
+  let displayExactImpedance = exactImpedance;
+  if (model.elements?.some((element) => element.displayValue)) {
+    const displayModel = {
+      ...model,
+      elements: model.elements.map((element) => element.displayValue
+        ? { ...element, value: element.displayValue }
+        : element),
+    };
+    const displaySystem = systemRows(displayModel, { testTarget: context.target.id === '@AC_GROUND' ? null : context.target.id });
+    const displaySolved = solveSystem(displaySystem.rows, displaySystem.unknowns);
+    const displayVoltage = displaySolved.ok ? displaySolved.values.get(outputNode) : null;
+    if (displayVoltage) displayExactImpedance = simplifySx(sxDiv(displayVoltage, sxSymbol('I_{test}')));
+  }
+  const displayImpedance = applyAnalysisApproximations(displayExactImpedance, options, circuit);
+  const display = (value) => sxText(displaySx(value, model.millerAliases));
+  const equation = appendMillerDefinitions(
+    `${label} ${equationOperator(exactImpedance, impedance, options, circuit)} ${display(displayImpedance)}`,
+    model.millerAliases,
+  );
+  const exactEquation = appendMillerDefinitions(
+    `${label} = ${display(displayExactImpedance)}`,
+    model.millerAliases,
+  );
   return {
     ok: true,
-    equation: `${label} ${equationOperator(exactImpedance, impedance, options)} ${sxText(impedance)}`,
-    exactEquation: `${label} = ${sxText(exactImpedance)}`,
+    equation,
+    exactEquation,
     expression: impedance,
     equations,
     equationCount: equations.length,
@@ -862,7 +1585,7 @@ function systematicOutputResult(circuit, model, context, options = {}) {
 function commonGateInputReduction(circuit, context, model, options) {
   const inputNet = context.target;
   const overrides = circuitModelOverrides(circuit, options.models);
-  const textbook = textbookApproximationNotes(options);
+  const textbook = textbookApproximationNotes(options, circuit);
   for (const component of circuit.components.values()) {
     if (!['nmos', 'pmos', 'nmosb', 'pmosb'].includes(component.type)) continue;
     if (isCurrentSourceModel(overrides.get(component.refdes)) || isTriodeModel(overrides.get(component.refdes))) continue;
@@ -876,23 +1599,30 @@ function commonGateInputReduction(circuit, context, model, options) {
     });
     const ro = sxSymbol(systemMosName(component.refdes, 'ro'), component.refdes);
     const gm = sxSymbol(systemMosName(component.refdes, 'gm'), component.refdes);
-    const bulk = component.def.terminals.some((term) => term.name === 'b')
+    const ignoreRo = componentIgnoresRo(component, options);
+    const hasBulk = component.def.terminals.some((term) => term.name === 'b');
+    const bulk = hasBulk
       ? circuit.netOfTerminal({ comp: component.refdes, term: 'b' })
       : null;
-    const gmb = !textbook.flags.ignoreBodyEffect && bulk && bulk.id !== source.id && context.referenceIds.has(bulk.id)
+    // An unexposed MOS bulk is implicitly tied to GND/VDD, which is an
+    // AC-ground reference here.  Include its body-effect transconductance in
+    // the common-gate/source-input compact form just as for an explicit bulk
+    // terminal tied to an AC reference.
+    const bulkIsAcGround = !bulk || context.referenceIds.has(bulk.id);
+    const gmb = !componentIgnoresBodyEffect(component, options) && bulkIsAcGround && (!bulk || bulk.id !== source.id)
       ? sxSymbol(systemMosName(component.refdes, 'gmb'), component.refdes)
       : null;
     const effectiveGm = gmb ? sxAdd(gm, gmb) : gm;
     const expression = output.expression;
     const terms = expression?.kind === 'parallel' ? expression.terms : [expression];
-    if (textbook.flags.ignoreChannelLengthModulation) {
+    if (ignoreRo) {
       const compact = sxInv(effectiveGm);
       return {
         expression: compact,
         exactExpression: compact,
         assumptions: [
           `${component.refdes} is recognized as a common-gate device: its source is the selected input node and its gate is AC-grounded.`,
-          'With channel-length modulation ignored, the common-gate input reduces to the inverse transconductance.',
+          `${component.refdes} has channel-length modulation ignored, so the common-gate input reduces to the inverse transconductance.`,
         ],
       };
     }
@@ -901,12 +1631,18 @@ function commonGateInputReduction(circuit, context, model, options) {
     const loadTerms = terms.filter((_, index) => index !== roIndex);
     const load = loadTerms.length === 1 ? loadTerms[0] : parallel(...loadTerms);
     const exactCompact = sxDiv(sxAdd(ro, load), sxAdd(sxNumber(1), sxMul(effectiveGm, ro)));
-    const compact = textbook.flags.gmroLarge
+    const compact = componentAssumesGmRoLarge(component, options)
       ? sxDiv(sxAdd(ro, load), sxMul(effectiveGm, ro))
       : exactCompact;
     return {
-      expression: applyAnalysisApproximations(compact, options),
-      exactExpression: applyAnalysisApproximations(exactCompact, { ...options, gmroLarge: false, assumeGmRoLarge: false, approximations: [] }),
+      expression: applyAnalysisApproximations(compact, options, circuit),
+      exactExpression: applyAnalysisApproximations(exactCompact, {
+        ...options,
+        gmroLarge: false,
+        assumeGmRoLarge: false,
+        approximations: [],
+        ignoreDeviceApproximationOverrides: true,
+      }, circuit),
       assumptions: [
         `${component.refdes} is recognized as a common-gate device: its source is the selected input node and its gate is AC-grounded.`,
         `The common-gate input impedance is reduced with the finite drain load and r_o retained symbolically.`,
@@ -916,8 +1652,84 @@ function commonGateInputReduction(circuit, context, model, options) {
   return null;
 }
 
+/** Reduce the common-source output resistance when the source returns to AC
+ * ground through one passive resistor.  The generic nodal solver is still
+ * retained in `systematicRawEquation`, but the report can show the familiar
+ * textbook form instead of a reciprocal sum containing several nested
+ * fractions:
+ *
+ *   R_out = R_L || [r_o + R_S + (g_m + g_mb) r_o R_S].
+ *
+ * This is only admitted for a single MOS device with an AC-grounded gate and
+ * bulk, a resistor from source to reference, and optional resistive loads from
+ * drain to reference.  Ambiguous feedback or multiple source branches fall
+ * back to the complete nodal expression.
+ */
+function sourceDegenerationOutputReduction(circuit, target, referenceIds, options = {}) {
+  const overrides = circuitModelOverrides(circuit, options.models);
+  const mos = [...circuit.components.values()].filter((component) => MOS_TYPES.has(component.type));
+  for (const component of mos) {
+    if (isCurrentSourceModel(overrides.get(component.refdes)) || isTriodeModel(overrides.get(component.refdes))) continue;
+    const drain = circuit.netOfTerminal({ comp: component.refdes, term: 'd' });
+    const source = circuit.netOfTerminal({ comp: component.refdes, term: 's' });
+    const gate = circuit.netOfTerminal({ comp: component.refdes, term: 'g' });
+    if (!drain || drain.id !== target.id || !source || referenceIds.has(source.id) || !gate || !referenceIds.has(gate.id)) continue;
+    const hasBulk = component.def.terminals.some((term) => term.name === 'b');
+    const bulk = hasBulk ? circuit.netOfTerminal({ comp: component.refdes, term: 'b' }) : null;
+    if (bulk && !referenceIds.has(bulk.id)) continue;
+    const sourceLoads = [];
+    const outputLoads = [];
+    for (const load of circuit.components.values()) {
+      if (load.refdes === component.refdes || !['resistor', 'variable_resistor'].includes(load.type)) continue;
+      const a = circuit.netOfTerminal({ comp: load.refdes, term: 'a' });
+      const b = circuit.netOfTerminal({ comp: load.refdes, term: 'b' });
+      if (!a || !b) continue;
+      const refAtA = referenceIds.has(a.id);
+      const refAtB = referenceIds.has(b.id);
+      if (a.id === source.id && refAtB) sourceLoads.push(load);
+      else if (b.id === source.id && refAtA) sourceLoads.push(load);
+      else if (a.id === target.id && refAtB) outputLoads.push(load);
+      else if (b.id === target.id && refAtA) outputLoads.push(load);
+    }
+    // A single source resistor is the unambiguous degeneration form. Parallel
+    // source resistors are deliberately left to the nodal reducer so we do
+    // not silently change the user's intended bias network.
+    if (sourceLoads.length !== 1) continue;
+    const ro = sxSymbol(systemMosName(component.refdes, 'ro'), component.refdes);
+    if (componentIgnoresRo(component, options)) continue;
+    const gm = sxSymbol(systemMosName(component.refdes, 'gm'), component.refdes);
+    const bodyEffect = !componentIgnoresBodyEffect(component, options) && (!bulk || bulk.id !== source.id);
+    const gmb = bodyEffect ? sxSymbol(systemMosName(component.refdes, 'gmb'), component.refdes) : null;
+    const effectiveGm = gmb ? sxAdd(gm, gmb) : gm;
+    const rs = sxSymbol(indexedName(sourceLoads[0].refdes, 'R'), sourceLoads[0].refdes);
+    const exactBranch = sxAdd(ro, rs, sxMul(effectiveGm, ro, rs));
+    const approximateBranch = componentAssumesGmRoLarge(component, options)
+      ? sxMul(effectiveGm, ro, rs)
+      : exactBranch;
+    const loadTerms = outputLoads.map((load) => sxSymbol(indexedName(load.refdes, 'R'), load.refdes));
+    const exactExpression = loadTerms.length
+      ? parallel(...loadTerms, exactBranch)
+      : exactBranch;
+    const expression = loadTerms.length
+      ? parallel(...loadTerms, approximateBranch)
+      : approximateBranch;
+    return {
+      component,
+      exactExpression,
+      expression,
+      sourceResistor: sourceLoads[0],
+      outputLoads,
+      bodyEffect,
+    };
+  }
+  return null;
+}
+
 function systematicTransferResult(circuit, model, context, options = {}) {
-  const netlist = formatSmallSignalNetlist(circuit, model, { referenceIds: context.referenceIds });
+  const netlist = formatSmallSignalNetlist(circuit, model, {
+    referenceIds: context.referenceIds,
+    inputId: context.input.id,
+  });
   const unsupportedDevice = modelPathDevice(model, context);
   if (unsupportedDevice) return { ok: false, error: `${unsupportedDevice.refdes} (${unsupportedDevice.type}) touches the analyzed path and has no symbolic small-signal model yet`, equations: [], unknowns: [], model, netlist };
   const system = systemRows(model, { inputNode: context.input.id });
@@ -939,17 +1751,103 @@ function systematicTransferResult(circuit, model, context, options = {}) {
   const outputVoltage = solved.values.get(context.target.id);
   if (!outputVoltage) return { ok: false, error: 'output node was not solvable in the node-equation system', equations, equationCount: equations.length, unknowns: system.unknowns, unknownCount: system.unknowns.length, model, netlist };
   const exactGain = simplifySx(sxDiv(outputVoltage, sxSymbol('V_{in}')));
-  const gain = applyAnalysisApproximations(exactGain, options);
+  const gain = applyAnalysisApproximations(exactGain, options, circuit);
+  const display = (value) => sxText(displaySx(value, model.millerAliases));
+  const equation = appendMillerDefinitions(
+    `A_v ${equationOperator(exactGain, gain, options, circuit)} ${display(gain)}`,
+    model.millerAliases,
+  );
+  const exactEquation = appendMillerDefinitions(
+    `A_v = ${display(exactGain)}`,
+    model.millerAliases,
+  );
   return {
     ok: true,
-    equation: `A_v ${equationOperator(exactGain, gain, options)} ${sxText(gain)}`,
-    exactEquation: `A_v = ${sxText(exactGain)}`,
+    equation,
+    exactEquation,
     expression: gain,
     equations,
     equationCount: equations.length,
     unknowns: system.unknowns.map((node) => nodeLabel(circuit, node, context.target.id, context.referenceIds, context.input.id)),
     unknownCount: system.unknowns.length,
     solution: Object.fromEntries([...solved.values].map(([node, value]) => [nodeLabel(circuit, node, context.target.id, context.referenceIds, context.input.id), sxText(value)])),
+    model,
+    netlist,
+  };
+}
+
+/**
+ * Derive the effective transconductance seen at the output node.  The output
+ * is shorted to the AC reference, the selected input is driven by V_in, and
+ * the current required to hold that short is measured.  This is the Norton
+ * form of the same linear small-signal network used for R_out:
+ *
+ *   A_v = G_m,eff · R_out,
+ *
+ * where G_m,eff includes all internal node feedback and cascode attenuation.
+ * It is therefore safe for multi-stage topologies as long as the stamped
+ * small-signal model is valid; it is not a hand-coded device case.
+ */
+function systematicTransconductanceResult(circuit, model, context, options = {}) {
+  const netlist = formatSmallSignalNetlist(circuit, model, {
+    referenceIds: context.referenceIds,
+    inputId: context.input.id,
+  });
+  const unsupportedDevice = modelPathDevice(model, context);
+  if (unsupportedDevice) {
+    return { ok: false, error: `${unsupportedDevice.refdes} (${unsupportedDevice.type}) touches the analyzed path and has no symbolic small-signal model yet`, equations: [], unknowns: [], model, netlist };
+  }
+  const inputNode = context.input.id;
+  const targetNode = context.target.id;
+  const system = systemRows(model, { inputNode, fixedNodes: [targetNode] });
+  const equations = [
+    'V_{out} = 0',
+    'V_{in} = V_{in}',
+    ...[...system.rows.values()].map((row) => renderSystemEquation(row, circuit, targetNode, context.referenceIds, inputNode)),
+  ];
+  const solved = solveSystem(system.rows, system.unknowns);
+  if (!solved.ok) return { ok: false, error: solved.error, equations, equationCount: equations.length, unknowns: system.unknowns, unknownCount: system.unknowns.length, model, netlist };
+  const voltage = (node) => {
+    if (!node || node === '@AC_GROUND' || context.referenceIds.has(node) || node === targetNode) return sxNumber(0);
+    if (node === inputNode) return sxSymbol('V_{in}');
+    return solved.values.get(node) || sxNumber(0);
+  };
+  const targetCurrent = (element) => {
+    let branchCurrent = null;
+    if (['resistor', 'output-resistance', 'triode-resistance', 'capacitor'].includes(element.kind)) {
+      branchCurrent = sxMul(sxInv(element.value), sxSub(voltage(element.a), voltage(element.b)));
+    } else if (element.kind === 'vccs') {
+      const gain = element.polarity === -1 ? sxNeg(element.value) : element.value;
+      branchCurrent = sxMul(gain, sxSub(voltage(element.controlPlus), voltage(element.controlMinus)));
+    }
+    if (!branchCurrent) return sxNumber(0);
+    if (element.a === targetNode) return branchCurrent;
+    if (element.b === targetNode) return sxNeg(branchCurrent);
+    return sxNumber(0);
+  };
+  const naturalCurrent = simplifySx(sxAdd(...model.elements.map(targetCurrent)));
+  const exactGm = simplifySx(sxDiv(sxNeg(naturalCurrent), sxSymbol('V_{in}')));
+  const gm = applyAnalysisApproximations(exactGm, options, circuit);
+  const display = (value) => sxText(displaySx(value, model.millerAliases));
+  const equation = appendMillerDefinitions(
+    `G_{m,eff} ${equationOperator(exactGm, gm, options, circuit)} ${display(gm)}`,
+    model.millerAliases,
+  );
+  const exactEquation = appendMillerDefinitions(
+    `G_{m,eff} = ${display(exactGm)}`,
+    model.millerAliases,
+  );
+  return {
+    ok: true,
+    equation,
+    exactEquation,
+    expression: gm,
+    exactExpression: exactGm,
+    equations,
+    equationCount: equations.length,
+    unknowns: system.unknowns.map((node) => nodeLabel(circuit, node, targetNode, context.referenceIds, inputNode)),
+    unknownCount: system.unknowns.length,
+    solution: Object.fromEntries([...solved.values].map(([node, value]) => [nodeLabel(circuit, node, targetNode, context.referenceIds, inputNode), sxText(value)])),
     model,
     netlist,
   };
@@ -1028,26 +1926,75 @@ export function analyzeTransferFunction(circuit, outputName, options = {}) {
       approximations: model.approximations,
     };
   }
-  const exactReport = hasTextbookApproximation(options)
-    ? analyzeTransferFunction(circuit, outputName, exactAnalysisOptions(options))
+  // Form the gain from the same two-port quantities used by the output
+  // impedance analysis.  With the output shorted, the stamped model yields
+  // the total effective transconductance; multiplying it by R_out avoids
+  // exposing the large, elimination-order-dependent rational expression that
+  // otherwise obscures cascoded and multi-stage behavior.
+  const useNortonGain = context.target.id !== inputResult.net.id;
+  const effectiveGm = useNortonGain
+    ? systematicTransconductanceResult(circuit, model, { ...context, input: inputResult.net }, options)
     : null;
+  const outputImpedance = useNortonGain
+    ? analyzeOutputImpedance(circuit, outputName, { ...options, input: inputResult.net.id })
+    : null;
+  const approximationSelected = analysisApproximationSelected(circuit, options);
+  const exactOptions = approximationSelected ? exactAnalysisOptions(options) : null;
+  const exactModel = exactOptions ? buildSystematicModel(circuit, { ...context, options: exactOptions }) : model;
+  const exactGm = exactOptions
+    ? systematicTransconductanceResult(circuit, exactModel, { ...context, input: inputResult.net }, exactOptions)
+    : effectiveGm;
+  const exactOutputImpedance = exactOptions
+    ? analyzeOutputImpedance(circuit, outputName, { ...exactOptions, input: inputResult.net.id })
+    : outputImpedance;
+  const gainFromNorton = effectiveGm?.ok && outputImpedance?.ok && outputImpedance.expression
+    ? sxMul(effectiveGm.expression, outputImpedance.expression)
+    : null;
+  const exactGainFromNorton = exactGm?.ok && exactOutputImpedance?.ok && exactOutputImpedance.expression
+    ? sxMul(exactGm.expression, exactOutputImpedance.expression)
+    : null;
+  const exactReport = approximationSelected
+    ? { ok: !!exactGainFromNorton, equation: exactGainFromNorton ? `A_v = ${sxText(exactGainFromNorton)}` : solved.exactEquation }
+    : null;
+  const gainEquation = gainFromNorton
+    ? `A_v ${equationOperator(exactGainFromNorton || gainFromNorton, gainFromNorton, options, circuit)} ${sxText(gainFromNorton)}`
+    : solved.equation;
+  const gainEquations = gainFromNorton
+    ? [...solved.equations, 'Effective transconductance:', ...(effectiveGm.equations || []), 'Output impedance:', ...(outputImpedance.nodeEquations || outputImpedance.equations || [])]
+    : solved.equations;
   return {
     ok: true,
     query: 'voltage-transfer',
     target: { netId: context.target.id, name: netLabel(context.target) },
     input: { netId: inputResult.net.id, name: netLabel(inputResult.net) },
     reference: { netId: context.reference.id, name: context.referenceResult.global || context.acGroundResult.nets.length ? 'AC_GROUND' : netLabel(context.reference), netIds: [...context.referenceIds].sort() },
-    equation: solved.equation,
-    exactEquation: exactReport?.ok ? exactReport.equation : (solved.exactEquation || solved.equation),
-    expression: solved.expression,
-    equations: solved.equations,
-    equationCount: solved.equationCount,
+    equation: gainEquation,
+    exactEquation: exactReport?.ok ? exactReport.equation : (exactGainFromNorton ? `A_v = ${sxText(exactGainFromNorton)}` : (solved.exactEquation || solved.equation)),
+    expression: gainFromNorton || solved.expression,
+    equations: gainEquations,
+    equationCount: gainEquations.length,
     unknowns: solved.unknowns,
     unknownCount: solved.unknownCount,
     solution: solved.solution,
+    effectiveTransconductance: effectiveGm?.ok ? {
+      equation: effectiveGm.equation,
+      exactEquation: effectiveGm.exactEquation,
+      expression: effectiveGm.expression,
+      equations: effectiveGm.equations,
+      solution: effectiveGm.solution,
+    } : null,
+    outputImpedance: outputImpedance?.ok ? {
+      equation: outputImpedance.equation,
+      exactEquation: outputImpedance.exactEquation,
+      expression: outputImpedance.expression,
+    } : null,
     smallSignalModel: model,
     smallSignalNetlist: solved.netlist,
-    assumptions: [...contextAssumptions(options), ...model.assumptions],
+    assumptions: [
+      ...contextAssumptions(options),
+      ...(gainFromNorton ? ['Voltage gain is formed from the output-short effective transconductance G_{m,eff} multiplied by the independently derived R_{out}.'] : []),
+      ...model.assumptions,
+    ],
     approximations: model.approximations,
   };
 }
@@ -1065,8 +2012,8 @@ export function analyzeInputImpedance(circuit, inputName, options = {}) {
   const commonGate = commonGateInputReduction(circuit, context, model, options);
   if (commonGate?.expression && systematic.ok) {
     systematic.expression = commonGate.expression;
-    systematic.equation = `Z_{in} ${equationOperator(commonGate.exactExpression || commonGate.expression, commonGate.expression, options)} ${sxText(commonGate.expression)}`;
-    systematic.exactEquation = `Z_{in} = ${sxText(commonGate.exactExpression || commonGate.expression)}`;
+    systematic.equation = `Z_{in} ${equationOperator(commonGate.exactExpression || commonGate.expression, commonGate.expression, options, circuit)} ${sxText(displaySx(commonGate.expression, model.millerAliases))}`;
+    systematic.exactEquation = `Z_{in} = ${sxText(displaySx(commonGate.exactExpression || commonGate.expression, model.millerAliases))}`;
   }
   const input = { netId: context.target.id, name: netLabel(context.target) };
   const reference = {
@@ -1099,7 +2046,7 @@ export function analyzeInputImpedance(circuit, inputName, options = {}) {
       approximations: model.approximations,
     };
   }
-  const exactReport = hasTextbookApproximation(options)
+  const exactReport = analysisApproximationSelected(circuit, options)
     ? analyzeInputImpedance(circuit, inputName, exactAnalysisOptions(options))
     : null;
   return {
@@ -1214,6 +2161,215 @@ function unsupported(target, reference, reason, dependencies = []) {
   };
 }
 
+const MOS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
+
+function cascodeOutputBranches(circuit, target, referenceIds, overrides, options = {}) {
+  const devices = [...circuit.components.values()]
+    .filter((component) => MOS_TYPES.has(component.type))
+    .filter((component) => !isCurrentSourceModel(overrides.get(component.refdes)) && !isTriodeModel(overrides.get(component.refdes)))
+    .map((component) => {
+      const drain = circuit.netOfTerminal({ comp: component.refdes, term: 'd' });
+      const source = circuit.netOfTerminal({ comp: component.refdes, term: 's' });
+      const gate = circuit.netOfTerminal({ comp: component.refdes, term: 'g' });
+      const bulk = component.def.terminals.some((term) => term.name === 'b')
+        ? circuit.netOfTerminal({ comp: component.refdes, term: 'b' })
+        : null;
+      if (!drain || !source || !gate || !referenceIds.has(gate.id) || (bulk && !referenceIds.has(bulk.id))) return null;
+      return { component, terminals: [drain.id, source.id], drain, source };
+    })
+    .filter(Boolean);
+  const targetId = target.id;
+  const branches = [];
+  for (let left = 0; left < devices.length; left++) {
+    for (let right = left + 1; right < devices.length; right++) {
+      const first = devices[left];
+      const second = devices[right];
+      const shared = first.terminals.filter((id) => second.terminals.includes(id)
+        && id !== targetId && !referenceIds.has(id));
+      if (shared.length !== 1) continue;
+      const sharedId = shared[0];
+      const firstOther = first.terminals.find((id) => id !== sharedId);
+      const secondOther = second.terminals.find((id) => id !== sharedId);
+      if (!((firstOther === targetId && referenceIds.has(secondOther))
+        || (secondOther === targetId && referenceIds.has(firstOther)))) continue;
+      const targetDevice = firstOther === targetId ? first : second;
+      const referenceDevice = firstOther === targetId ? second : first;
+      const outer = referenceDevice.component;
+      const cascode = targetDevice.component;
+      branches.push({
+        outer,
+        cascode,
+        sharedId,
+        finiteOuter: !componentIgnoresRo(outer, options),
+        finiteCascode: !componentIgnoresRo(cascode, options),
+        bodyEffect: !componentIgnoresBodyEffect(cascode, options),
+        gmroLarge: componentAssumesGmRoLarge(cascode, options),
+      });
+    }
+  }
+  const unique = [];
+  for (const branch of branches) {
+    const key = [branch.outer.refdes, branch.cascode.refdes].sort().join('|');
+    if (!unique.some((candidate) => [candidate.outer.refdes, candidate.cascode.refdes].sort().join('|') === key)) unique.push(branch);
+  }
+  return unique.length >= 2 ? unique : null;
+}
+
+function cascodeBranchExpression(branch, approximate) {
+  if (!branch.finiteOuter || !branch.finiteCascode) return symbol('\\infty');
+  const outerRo = symbol(mosOutputName(branch.outer.refdes), branch.outer.refdes);
+  const cascodeRo = symbol(mosOutputName(branch.cascode.refdes), branch.cascode.refdes);
+  const cascodeIndex = String(branch.cascode.refdes).match(/[0-9]+$/)?.[0] || branch.cascode.refdes;
+  const gm = symbol(`g_{m${cascodeIndex}}`, branch.cascode.refdes);
+  const gmb = symbol(`g_{mb${cascodeIndex}}`, branch.cascode.refdes);
+  const cascodeGm = branch.bodyEffect ? sum(gm, gmb) : gm;
+  return approximate
+    ? product(outerRo, cascodeGm, cascodeRo)
+    : sum(outerRo, cascodeRo, product(outerRo, cascodeGm, cascodeRo));
+}
+
+function finiteParallel(terms) {
+  const finite = terms.filter((term) => term?.kind !== 'symbol' || term.name !== '\\infty');
+  return finite.length ? parallel(...finite) : symbol('\\infty');
+}
+
+/**
+ * Under the explicit large-g_m r_o approximation, a cascoded transistor
+ * stack is normally much higher impedance than a directly attached passive
+ * load.  Recognize that load-limited shape for arbitrary stack depth so the
+ * gain shortcut can use the same R_out that the output report displays.
+ */
+function loadLimitedCascodeResistance(circuit, target, referenceIds, overrides, options = {}) {
+  if (!gmRoApproximationSelected(circuit, options)) return null;
+  const loadTerms = [];
+  for (const component of circuit.components.values()) {
+    if (!['resistor', 'variable_resistor'].includes(component.type)) continue;
+    const a = circuit.netOfTerminal({ comp: component.refdes, term: 'a' });
+    const b = circuit.netOfTerminal({ comp: component.refdes, term: 'b' });
+    if (!a || !b) continue;
+    const other = a.id === target.id && referenceIds.has(b.id) ? b
+      : b.id === target.id && referenceIds.has(a.id) ? a
+        : null;
+    if (other) loadTerms.push(symbol(indexedName(component.refdes, 'R'), component.refdes));
+  }
+  if (!loadTerms.length) return null;
+
+  const adjacency = new Map();
+  const link = (a, b, component) => {
+    if (!a || !b) return;
+    if (!adjacency.has(a)) adjacency.set(a, []);
+    if (!adjacency.has(b)) adjacency.set(b, []);
+    adjacency.get(a).push({ node: b, component });
+    adjacency.get(b).push({ node: a, component });
+  };
+  for (const component of circuit.components.values()) {
+    if (!MOS_TYPES.has(component.type)) continue;
+    const override = overrides.get(component.refdes);
+    if (isCurrentSourceModel(override) || isTriodeModel(override)) continue;
+    const drain = circuit.netOfTerminal({ comp: component.refdes, term: 'd' });
+    const source = circuit.netOfTerminal({ comp: component.refdes, term: 's' });
+    const gate = circuit.netOfTerminal({ comp: component.refdes, term: 'g' });
+    const bulk = component.def.terminals.some((term) => term.name === 'b')
+      ? circuit.netOfTerminal({ comp: component.refdes, term: 'b' })
+      : null;
+    if (!drain || !source || !gate || !referenceIds.has(gate.id) || (bulk && !referenceIds.has(bulk.id))) continue;
+    link(drain.id, source.id, component);
+  }
+  const seen = new Set([target.id]);
+  const mosRefs = new Set();
+  const queue = [target.id];
+  while (queue.length) {
+    const node = queue.shift();
+    for (const edge of adjacency.get(node) || []) {
+      mosRefs.add(edge.component.refdes);
+      if (seen.has(edge.node)) continue;
+      seen.add(edge.node);
+      queue.push(edge.node);
+    }
+  }
+  if (![...referenceIds].some((id) => seen.has(id)) || mosRefs.size < 2) return null;
+  return loadTerms.length === 1 ? loadTerms[0] : parallel(...loadTerms);
+}
+
+/** Recognize a single two-device cascode branch in parallel with a direct
+ * resistive drain load.  The complementary two-branch case is handled by
+ * `cascodeOutputBranches`; this narrower form covers the common cascoded CS
+ * with a passive load and keeps its exact output impedance out of the generic
+ * nested-admittance expansion.
+ */
+function singleCascodeLoadReduction(circuit, target, referenceIds, overrides, options = {}) {
+  const adjacency = new Map();
+  const link = (a, b, component) => {
+    if (!a || !b || a === b) return;
+    if (!adjacency.has(a)) adjacency.set(a, []);
+    if (!adjacency.has(b)) adjacency.set(b, []);
+    adjacency.get(a).push({ node: b, component });
+    adjacency.get(b).push({ node: a, component });
+  };
+  for (const component of circuit.components.values()) {
+    if (!MOS_TYPES.has(component.type)) continue;
+    const override = overrides.get(component.refdes);
+    if (isCurrentSourceModel(override) || isTriodeModel(override)) continue;
+    const drain = circuit.netOfTerminal({ comp: component.refdes, term: 'd' });
+    const source = circuit.netOfTerminal({ comp: component.refdes, term: 's' });
+    const gate = circuit.netOfTerminal({ comp: component.refdes, term: 'g' });
+    const bulk = component.def.terminals.some((term) => term.name === 'b')
+      ? circuit.netOfTerminal({ comp: component.refdes, term: 'b' })
+      : null;
+    if (!drain || !source || !gate || !referenceIds.has(gate.id) || (bulk && !referenceIds.has(bulk.id))) continue;
+    link(drain.id, source.id, component);
+  }
+  const path = [];
+  let node = target.id;
+  let previous = null;
+  for (let step = 0; step < 3 && !referenceIds.has(node); step++) {
+    const candidates = (adjacency.get(node) || []).filter((edge) => edge.component.refdes !== previous);
+    if (candidates.length !== 1) return null;
+    const edge = candidates[0];
+    path.push(edge.component);
+    previous = edge.component.refdes;
+    node = edge.node;
+  }
+  if (!referenceIds.has(node) || path.length !== 2) return null;
+
+  const loads = [];
+  for (const component of circuit.components.values()) {
+    if (!['resistor', 'variable_resistor'].includes(component.type)) continue;
+    const a = circuit.netOfTerminal({ comp: component.refdes, term: 'a' });
+    const b = circuit.netOfTerminal({ comp: component.refdes, term: 'b' });
+    if (!a || !b) continue;
+    if ((a.id === target.id && referenceIds.has(b.id)) || (b.id === target.id && referenceIds.has(a.id))) {
+      loads.push(component);
+    }
+  }
+  if (!loads.length) return null;
+
+  const makeBranch = (branchOptions) => {
+    const outer = path[1];
+    const cascode = path[0];
+    const branch = {
+      outer,
+      cascode,
+      finiteOuter: !componentIgnoresRo(outer, branchOptions),
+      finiteCascode: !componentIgnoresRo(cascode, branchOptions),
+      bodyEffect: !componentIgnoresBodyEffect(cascode, branchOptions),
+      gmroLarge: componentAssumesGmRoLarge(cascode, branchOptions),
+    };
+    return cascodeBranchExpression(branch, branch.gmroLarge);
+  };
+  const load = loads.length === 1
+    ? symbol(indexedName(loads[0].refdes, 'R'), loads[0].refdes)
+    : parallel(...loads.map((component) => symbol(indexedName(component.refdes, 'R'), component.refdes)));
+  const exactBranch = makeBranch(exactAnalysisOptions(options));
+  const branch = makeBranch(options);
+  return {
+    exactExpression: finiteParallel([load, exactBranch]),
+    expression: finiteParallel([load, branch]),
+    devices: path,
+    loads,
+  };
+}
+
 /**
  * Derive a symbolic output impedance between a target net and an AC reference.
  * The compact display recognizes resistor/variable-resistor series-parallel
@@ -1263,9 +2419,27 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
   const nodeForNet = (net) => referenceIds.has(net.id) ? referenceNode : net.id;
   if (referenceIds.has(target.id)) return unsupported(target, reference, 'target and reference must be different physical nets');
 
-  const textbook = textbookApproximationNotes(options);
+  const approximationFlags = normalizeAnalysisApproximations(options);
   const edges = [];
   const dependencies = [];
+  const overrides = circuitModelOverrides(circuit, options.models);
+  // Resolve this topology before stamping the nodal model.  When both
+  // large-g_m r_o and the form-wide r_o→∞ approximation are selected, the
+  // former is the more useful cascode description: retain finite symbolic
+  // r_o for the recognized branch devices so the report can show
+  // r_o(outer)·g_m(cascode)·r_o(cascode), while honoring explicit per-device
+  // or named-device r_o omissions.
+  const preliminaryCascodeBranches = cascodeOutputBranches(circuit, target, referenceIds, overrides, options);
+  const explicitlyIgnoredRoRefs = new Set(splitContextValues(options.ignoreRoDevices ?? options.ignoreChannelLengthModulationDevices));
+  const retainedCascodeRefs = preliminaryCascodeBranches && approximationFlags.gmroLarge && approximationFlags.ignoreChannelLengthModulation
+    ? [...new Set(preliminaryCascodeBranches.flatMap((branch) => [branch.outer.refdes, branch.cascode.refdes]))]
+      .filter((refdes) => normalizeChannelLengthModulationPolicy(circuit.components.get(refdes)?.analysis?.channelLengthModulation) !== 'ignore')
+      .filter((refdes) => !explicitlyIgnoredRoRefs.has(refdes))
+    : [];
+  const modelOptions = retainedCascodeRefs.length
+    ? { ...options, retainFiniteRoDevices: retainedCascodeRefs }
+    : options;
+  const textbook = textbookApproximationNotes(modelOptions, circuit);
   const assumptions = [
     ...textbook.assumptions,
     referenceResult.global
@@ -1276,10 +2450,13 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
   ];
   if (zeroedInput) assumptions.push(`${netLabel(zeroedInput) || zeroedInput.id} ${inputWasInferred ? 'was inferred as the input source' : 'is the input source'} and is set to zero (AC ground) for output-impedance analysis.`);
   const approximations = [...textbook.approximations];
-  const overrides = circuitModelOverrides(circuit, options.models);
   const deferredUnsupported = [];
-  const systematicModel = buildSystematicModel(circuit, { target, referenceIds, options });
-  const systematic = systematicOutputResult(circuit, systematicModel, { target, referenceIds }, options);
+  const systematicModel = buildSystematicModel(circuit, { target, referenceIds, options: modelOptions });
+  const systematic = systematicOutputResult(circuit, systematicModel, {
+    target,
+    referenceIds,
+    inputId: zeroedInput?.id || null,
+  }, options);
   const withSystematic = (report) => {
     report.smallSignalModel = systematicModel;
     report.smallSignalNetlist = systematic.netlist;
@@ -1304,6 +2481,11 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
   };
   const genericOutputReport = (report) => {
     if (!systematic.ok) return withSystematic(report);
+    // The compact reducer may have reached a topology it cannot collapse
+    // (source degeneration, feedback, etc.) even though the systematic
+    // nodal model solved it successfully. Do not leak the compact reducer's
+    // provisional `error` into an otherwise valid report.
+    delete report.error;
     report.ok = true;
     report.query = 'output-impedance';
     report.equation = systematic.equation;
@@ -1314,6 +2496,133 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
     report.exactEquation = systematic.exactEquation || systematic.equation;
     return withSystematic(report);
   };
+
+  // The compact reducer only knows the original two-terminal passive branch.
+  // Once Miller splitting is actually applicable, expose the stamped nodal
+  // model so the displayed impedance includes the transformed input/output
+  // shunts for any supported impedance type.
+  if (millerApproximationCandidates(circuit, modelOptions).length) {
+    return genericOutputReport({
+      ok: false,
+      query: 'output-impedance',
+      target: { netId: target.id, name: netLabel(target) },
+      reference: { netId: reference.id, name: netLabel(reference) },
+      assumptions,
+      approximations,
+    });
+  }
+
+  // A complementary cascode load is two independent small-signal branches
+  // from the output node to the AC reference.  Keep that topology visible:
+  // each branch is the outer device's r_o multiplied by the cascode device's
+  // intrinsic-gain factor, rather than exposing the expanded Gaussian result.
+  const cascodeBranches = preliminaryCascodeBranches
+    ? cascodeOutputBranches(circuit, target, referenceIds, overrides, modelOptions)
+    : null;
+  if (cascodeBranches) {
+    const approximationSelected = gmRoApproximationSelected(circuit, options) || deviceRoApproximationSelected(circuit, options);
+    const approximateExpression = finiteParallel(cascodeBranches.map((branch) => cascodeBranchExpression(branch, branch.gmroLarge)));
+    const exactBranches = cascodeOutputBranches(circuit, target, referenceIds, overrides, {
+      ...options,
+      ignoreChannelLengthModulation: false,
+      ignoreRoDevices: [],
+      ignoreChannelLengthModulationDevices: [],
+      ignoreDeviceRoOverrides: true,
+      ignoreDeviceApproximationOverrides: true,
+    });
+    const exactExpression = finiteParallel((exactBranches || cascodeBranches)
+      .map((branch) => cascodeBranchExpression({ ...branch, finiteOuter: true, finiteCascode: true }, false)));
+    const expression = textbook.flags.gmroLarge || approximationSelected ? approximateExpression : exactExpression;
+    const branchText = cascodeBranches
+      .map((branch) => `${branch.outer.refdes}/${branch.cascode.refdes}`)
+      .join(', ');
+    assumptions.push(`The output is recognized as parallel cascode branches (${branchText}) from the target node to AC ground.`);
+    approximations.push(cascodeBranches.some((branch) => branch.gmroLarge)
+      ? 'Cascode branch approximation: each branch keeps the outer r_o multiplied by the cascode g_m r_o factor.'
+      : 'Cascode branch impedances are retained as explicit series and controlled-source terms.');
+    if (retainedCascodeRefs.length) {
+      assumptions.push(`Finite symbolic r_o is retained for cascode devices (${retainedCascodeRefs.join(', ')}) so the selected g_m r_o \\gg 1 branch approximation remains meaningful; explicit per-device r_o omissions still produce an open branch.`);
+      approximations.push('Cascode-specific precedence: the large-g_m r_o reduction retains finite r_o instead of rendering the recognized branch as infinity.');
+    }
+    const equation = `Z_{out} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`;
+    return withSystematic({
+      ok: true,
+      query: 'output-impedance',
+      target: { netId: target.id, name: netLabel(target) },
+      reference: { netId: reference.id, name: netLabel(reference) },
+      equation,
+      exactEquation: `Z_{out} = ${expressionText(exactExpression)}`,
+      expression,
+      dependencies: [...expressionDependencies(expression)].sort(),
+      assumptions: [...new Set([...assumptions, ...systematicModel.assumptions])],
+      approximations: [...new Set([...approximations, ...systematicModel.approximations])],
+    });
+  }
+
+  const loadLimited = loadLimitedCascodeResistance(circuit, target, referenceIds, overrides, options);
+  if (loadLimited) {
+    const equation = `Z_{out} \\approx ${expressionText(loadLimited)}`;
+    assumptions.push('The cascoded device stack is recognized as a high-impedance branch in parallel with the directly attached passive load.');
+    approximations.push('Large-g_m r_o approximation: the cascoded branch is neglected relative to the explicit output load.');
+    return withSystematic({
+      ok: true,
+      query: 'output-impedance',
+      target: { netId: target.id, name: netLabel(target) },
+      reference: { netId: reference.id, name: netLabel(reference) },
+      equation,
+      exactEquation: systematic.ok ? systematic.exactEquation : equation,
+      expression: loadLimited,
+      dependencies: [...expressionDependencies(loadLimited)].sort(),
+      assumptions: [...new Set([...assumptions, ...systematicModel.assumptions])],
+      approximations: [...new Set([...approximations, ...systematicModel.approximations])],
+    });
+  }
+
+  const singleCascode = singleCascodeLoadReduction(circuit, target, referenceIds, overrides, options);
+  if (singleCascode) {
+    const exactExpression = singleCascode.exactExpression;
+    const expression = singleCascode.expression;
+    const approximationSelected = analysisApproximationSelected(circuit, options)
+      && sxKey(expression) !== sxKey(exactExpression);
+    assumptions.push(`The output is recognized as a two-device cascode branch in parallel with the direct load (${singleCascode.devices.map((device) => device.refdes).join('/')}).`);
+    approximations.push('Cascode output reduction: the exact finite-r_o branch is kept symbolically instead of expanding the nodal admittance into nested fractions.');
+    return withSystematic({
+      ok: true,
+      query: 'output-impedance',
+      target: { netId: target.id, name: netLabel(target) },
+      reference: { netId: reference.id, name: netLabel(reference) },
+      equation: `Z_{out} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`,
+      exactEquation: `Z_{out} = ${expressionText(exactExpression)}`,
+      expression,
+      dependencies: [...expressionDependencies(expression)].sort(),
+      assumptions: [...new Set([...assumptions, ...systematicModel.assumptions])],
+      approximations: [...new Set([...approximations, ...systematicModel.approximations])],
+    });
+  }
+
+  const sourceDegeneration = sourceDegenerationOutputReduction(circuit, target, referenceIds, options);
+  if (sourceDegeneration) {
+    const exactReduction = sourceDegenerationOutputReduction(circuit, target, referenceIds, exactAnalysisOptions(options));
+    const exactExpression = exactReduction?.exactExpression || sourceDegeneration.exactExpression;
+    const expression = sourceDegeneration.expression;
+    const approximationSelected = analysisApproximationSelected(circuit, options)
+      && sxKey(expression) !== sxKey(exactExpression);
+    assumptions.push(`${sourceDegeneration.component.refdes} source degeneration is reduced to its finite-r_o output resistance with the source resistor and body effect retained symbolically; the nodal source-feedback effects are captured by this compact reduction.`);
+    approximations.push('Source-degenerated common-source reduction: the nodal result is shown as the transistor output resistance in parallel with the drain load.');
+    const report = withSystematic({
+      ok: true,
+      query: 'output-impedance',
+      target: { netId: target.id, name: netLabel(target) },
+      reference: { netId: reference.id, name: netLabel(reference) },
+      equation: `Z_{out} ${approximationSelected ? '\\approx' : '='} ${sxText(expression)}`,
+      exactEquation: `Z_{out} = ${sxText(exactExpression)}`,
+      expression,
+      dependencies: [...expressionDependencies(expression)].sort(),
+      assumptions: [...new Set([...assumptions, ...systematicModel.assumptions])],
+      approximations: [...new Set([...approximations, ...systematicModel.approximations])],
+    });
+    return report;
+  }
 
   for (const component of circuit.components.values()) {
     const type = component.type;
@@ -1386,11 +2695,18 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
         dependencies));
     }
     if (nodeForNet(source) !== referenceNode) {
-      return genericOutputReport(unsupported(target, reference,
-        `${component.refdes} has source degeneration; gm/source-feedback effects are not yet symbolically reduced`,
-        dependencies));
+      assumptions.push(`${component.refdes} has source degeneration; its source node and g_m source-feedback effects are retained in the nodal small-signal model.`);
+      approximations.push(`Systematic small-signal approximation: ${component.refdes} source degeneration is solved by KCL rather than collapsed into a compact series/parallel form.`);
+      return genericOutputReport({
+        ok: false,
+        query: 'output-impedance',
+        target: { netId: target.id, name: netLabel(target) },
+        reference: { netId: reference.id, name: netLabel(reference) },
+        dependencies,
+      });
     }
-    if (!textbook.flags.ignoreChannelLengthModulation) {
+    const ignoreRo = componentIgnoresRo(component, options);
+    if (!ignoreRo) {
       edges.push({
         a: nodeForNet(drain),
         b: nodeForNet(source),
@@ -1404,10 +2720,16 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
     } else {
       assumptions.push(`${component.refdes} bulk is explicitly tied to the AC reference.`);
     }
-    assumptions.push(textbook.flags.ignoreChannelLengthModulation
+    if (normalizeChannelLengthModulationPolicy(component.analysis?.channelLengthModulation) === 'ignore') {
+      assumptions.push(`${component.refdes} has an explicit per-device override: channel-length modulation is ignored, so r_o is omitted.`);
+      approximations.push(`Per-device approximation: ${component.refdes} output resistance r_o is ignored.`);
+    } else if (normalizeChannelLengthModulationPolicy(component.analysis?.channelLengthModulation) === 'finite' && textbook.flags.ignoreChannelLengthModulation) {
+      assumptions.push(`${component.refdes} has an explicit per-device override: finite r_o is retained despite the form-wide channel-length modulation approximation.`);
+    }
+    assumptions.push(ignoreRo
       ? `${component.refdes} is modeled with channel-length modulation ignored; g_m and g_{mb} effects are omitted because its controlling terminals are AC-grounded.`
       : `${component.refdes} is modeled by r_{o${component.refdes.replace(/^[A-Za-z]+/, '')}} with g_m and g_{mb} effects omitted because its controlling terminals are AC-grounded.`);
-    approximations.push(textbook.flags.ignoreChannelLengthModulation
+    approximations.push(ignoreRo
       ? `Textbook approximation: ${component.refdes} output resistance r_o is ignored; capacitances and dependent-source effects are omitted.`
       : `Small-signal approximation: ${component.refdes} is reduced to its output resistance r_o; capacitances and dependent-source effects are omitted.`);
   }
@@ -1485,7 +2807,7 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
   }
   if (!approximations.length) approximations.push('Ideal passive approximation: each resistor is represented by a symbolic resistance; parasitic elements are omitted.');
   const expression = reduced.expression;
-  const approximationSelected = textbook.flags.ignoreChannelLengthModulation || textbook.flags.ignoreBodyEffect || textbook.flags.gmroLarge;
+  const approximationSelected = analysisApproximationSelected(circuit, options);
   const equation = `Z_{out} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`;
   let exactEquation = equation;
   if (approximationSelected) {

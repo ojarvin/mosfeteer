@@ -7,7 +7,7 @@
  * THICK — heavier linework (~1.5x the default) for selected features of some
  *         symbols (e.g. a MOSFET gate bar, bold power/ground rails).
  *
- * Razavi-style symbol roles (butt caps / miter joins for the crisp textbook
+ * Textbook symbol roles (butt caps / miter joins for the crisp classic
  * look). Symbols select a role via `style`: 'symbol' (normal), 'wire',
  * 'emph' (emphasis), 'ground', or 'supply'. Filled body shapes use polygon
  * fill.

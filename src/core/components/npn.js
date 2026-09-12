@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * NPN bipolar transistor (Razavi style). The local x origin is the collector /
+ * NPN bipolar transistor (textbook style). The local x origin is the collector /
  * emitter channel; b = base (left), c = collector (top), e = emitter (bottom).
  * Emitter arrow is a filled triangle pointing OUT of the base (conventional
  * +current C->E).

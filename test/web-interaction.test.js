@@ -79,6 +79,7 @@ test('editor shell exposes keyboard canvas and live status surfaces', () => {
   assert.match(html, /id="canvas"[^>]+tabindex="0"[^>]+role="application"/);
   assert.match(html, /id="status"[^>]+role="status"[^>]+aria-live="polite"/);
   assert.match(html, /id="accessibility-announcement"[^>]+aria-live="polite"/);
+  assert.match(html, /id="btn-label-bboxes"/);
 });
 
 test('new document control exposes one popup with schematic and block choices', () => {
@@ -108,11 +109,28 @@ test('small-signal analysis exposes a model/context popup', () => {
   assert.match(html, /id="analysis-annotate"/);
   assert.match(html, /id="analysis-equation"/);
   assert.match(html, /id="analysis-details"/);
-  assert.match(html, /id="analysis-netlist-panel"/);
   assert.match(html, /id="analysis-netlist"/);
+  assert.match(html, /id="analysis-panel-netlist"[^>]+role="tabpanel"/);
+  assert.doesNotMatch(html, /id="analysis-netlist-panel"/);
+  assert.match(html, /id="analysis-tab-equations"[^>]+role="tab"/);
+  assert.match(html, /id="analysis-tab-log"[^>]+role="tab"/);
+  assert.match(html, /id="analysis-tab-netlist"[^>]+role="tab"/);
+  assert.match(html, /id="analysis-panel-equations"[^>]+role="tabpanel"/);
+  assert.match(html, /id="analysis-panel-log"[^>]+role="tabpanel"/);
+  assert.match(html, /id="analysis-panel-netlist"[^>]+role="tabpanel"/);
   assert.match(html, /id="analysis-approx-ro"[^>]+type="checkbox"/);
   assert.match(html, /id="analysis-approx-body"[^>]+type="checkbox"/);
   assert.match(html, /id="analysis-approx-gmro"[^>]+type="checkbox"/);
+  assert.match(html, /id="analysis-approx-miller"[^>]+type="checkbox"/);
+  assert.match(html, /id="analysis-approx-miller"[^>]+checked/);
+  assert.match(html, /<div class="analysis-scroll">[\s\S]*id="analysis-result"[\s\S]*<\/div>\s*<div class="dialog-actions">/);
+  const style = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
+  assert.match(style, /\.analysis-dialog\s*\{[\s\S]*width: min\(64rem/);
+  assert.match(style, /\.analysis-dialog\s*\{[\s\S]*overflow: hidden/);
+  assert.match(style, /\.analysis-scroll\s*\{[\s\S]*overflow: auto/);
+  assert.match(style, /\.analysis-dialog \.dialog-actions\s*\{[\s\S]*flex: 0 0 auto/);
+  assert.match(style, /\.analysis-tabs\s*\{[\s\S]*border-bottom/);
+  assert.match(style, /\.analysis-tab-panels\s*\{[\s\S]*overflow: hidden/);
 });
 
 test('analysis form state is scoped and role metadata is restored from the active schematic', () => {
@@ -125,6 +143,83 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /ignoreChannelLengthModulation: !!analysisApproxRo\?\.checked/);
   assert.match(main, /ignoreBodyEffect: !!analysisApproxBody\?\.checked/);
   assert.match(main, /gmroLarge: !!analysisApproxGmRo\?\.checked/);
+  assert.match(main, /millerApproximation: !!analysisApproxMiller\?\.checked/);
+  assert.match(main, /smallSignalNetlist: reports\.transfer\.smallSignalNetlist \|\| reports\.output\.smallSignalNetlist/);
+  assert.match(main, /setAnalysisResultTab\(netlist && selectedTab === 'netlist' \? 'netlist' : selectedTab\)/);
+  assert.match(main, /const leftGap = 2 \* GRID/);
+  assert.match(main, /align: 'left'/);
+  assert.match(main, /effective transconductance/);
+  assert.match(main, /analysisAnnotationAssumptions/);
+  assert.match(main, /text: \['\\\\text\{Assumptions\\\\:\}', \.\.\.assumptions\]/);
+  assert.match(main, /syncRenderedLabelMetrics/);
+  assert.match(main, /function reflowEquationAnnotations/);
+  assert.match(main, /const pitch = heights\.length < 2/);
+  assert.match(main, /if \(gmroLarge\) add\('g_\{m\}r_\{o\} \\\\gg/);
+  assert.match(main, /bodyEffectIgnored/);
+  assert.match(main, /deviceRoFinite/);
+});
+
+test('analysis assumption annotations collapse equivalent device r_o overrides', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function analysisAnnotationAssumptions');
+  const end = main.indexOf('\n\nfunction openAnalysisDialog', start);
+  assert.ok(start >= 0 && end > start);
+  const summarize = vm.runInNewContext(`(${main.slice(start, end)})`);
+  const model = {
+    elements: [
+      { kind: 'vccs', component: 'M1' },
+      { kind: 'vccs', component: 'M2' },
+    ],
+  };
+
+  assert.deepEqual(Array.from(summarize({
+    smallSignalModel: model,
+    assumptions: [
+      'Per-device approximation: M1 r_o → ∞.',
+      'Per-device approximation: M2 r_o → ∞.',
+    ],
+    approximations: [],
+  })), ['r_{o} = \\infty']);
+  assert.deepEqual(Array.from(summarize({
+    smallSignalModel: model,
+    assumptions: ['Per-device approximation: M1 r_o → ∞.'],
+    approximations: [],
+  })), ['r_{o1} = \\infty \\; (M_{1})']);
+  assert.deepEqual(Array.from(summarize({
+    smallSignalModel: model,
+    assumptions: [
+      'Textbook approximation: r_o → ∞ except for M2 (finite r_o override).',
+      'Per-device approximation: M1 r_o → ∞.',
+    ],
+    approximations: [],
+  })), [
+    'r_{o} = \\infty \\; \\text{except } M_{2}',
+    'r_{o2} \\text{ finite} \\; (M_{2})',
+  ]);
+  assert.deepEqual(Array.from(summarize({
+    smallSignalModel: { elements: [{ kind: 'vccs', component: 'M1' }] },
+    assumptions: ['Per-device approximation: M1 r_o → ∞.'],
+    approximations: [],
+  })), ['r_{o1} = \\infty \\; (M_{1})']);
+  assert.deepEqual(Array.from(summarize({
+    smallSignalModel: { elements: [
+      { kind: 'vccs', component: 'M1' },
+      { kind: 'vccs', component: 'M2' },
+    ] },
+    assumptions: [],
+    approximations: ['Textbook approximation: M1 output resistance r_o is ignored; capacitances are omitted.'],
+  })), ['r_{o1} = \\infty \\; (M_{1})']);
+  assert.deepEqual(Array.from(summarize({
+    smallSignalModel: { elements: [{ kind: 'vccs', component: 'M1' }] },
+    assumptions: [],
+    approximations: [
+      'Per-device approximation: M1 g_m r_o \\gg 1.',
+      'Per-device approximation: M1 g_{mb} = 0.',
+    ],
+  })), [
+    'g_{m1}r_{o1} \\gg 1 \\; (M_{1})',
+    'V_{BS} = 0 \\; (M_{1})',
+  ]);
 });
 
 test('committed inserts repair coincident connectivity and analysis menus support multi-selection', () => {
@@ -137,6 +232,13 @@ test('committed inserts repair coincident connectivity and analysis menus suppor
   assert.match(main, /function analysisNetTargets\(target/);
   assert.match(main, /for \(const component of components\) circuit\.setComponentAnalysis/);
   assert.match(main, /for \(const net of nets\) circuit\.setNetAnalysis/);
+  assert.match(main, /channelLengthModulation: 'ignore'/);
+  assert.match(main, /channelLengthModulation: 'finite'/);
+  assert.match(main, /Clear output-resistance override/);
+  assert.match(main, /gmroLarge: true/);
+  assert.match(main, /ignoreBodyEffect: true/);
+  assert.match(main, /Clear g_m r_o override/);
+  assert.match(main, /Clear body-effect override/);
 });
 
 test('schematic and block pointer paths share snapped cursor conversion', () => {

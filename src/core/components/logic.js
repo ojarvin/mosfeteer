@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Digital logic symbols and op-amp (Razavi style). Gates use a filled-in body
+ * Digital logic symbols and op-amp (textbook style). Gates use a filled-in body
  * with a rounded output side and an optional negation bubble. Two-input gates
  * all share input terminals at x=-120 (a top, b bottom) for a consistent grid.
  */

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld } from '../src/core/model.js';
+import { Circuit, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
 import { GRID, snap, onGrid } from '../src/core/grid.js';
 import { segThroughInterior } from '../src/core/router.js';
 
@@ -10,6 +10,11 @@ test('parseTermRef parses REFDES.TERM and rejects malformed', () => {
   assert.throws(() => parseTermRef('R1'), /invalid terminal ref/);
   assert.throws(() => parseTermRef('.a'), /invalid terminal ref/);
   assert.throws(() => parseTermRef('R1.'), /invalid terminal ref/);
+});
+
+test('component label parsing requires explicit subscript markup', () => {
+  assert.deepEqual(parseLabelRuns('M1', { autoSubscript: true }), [{ text: 'M1' }]);
+  assert.deepEqual(parseLabelRuns('M_{1}'), [{ text: 'M' }, { text: '1', sub: true }]);
 });
 
 test('addComponent assigns refdes from prefix', () => {
@@ -33,20 +38,20 @@ test('component renames keep owned instance labels synchronized across symbols',
   const resistor = c.addComponent('resistor', { refdes: 'R1' });
   const mos = c.addComponent('nmos', { refdes: 'M1' });
 
-  // Explicit TeX-style source is equivalent to the compact auto-subscripted
-  // form and must not strand the child label on the old refdes.
+  // Explicit TeX-style source is the persisted display form and must not
+  // strand the owned label on the old refdes.
   c.labelOf('M1').setText('M_{1}');
   c.renameComponent('R1', 'R_{2}');
   c.renameComponent('M1', 'M2');
 
   assert.equal(resistor.refdes, 'R2');
   assert.equal(mos.refdes, 'M2');
-  assert.equal(c.labelOf('R2').text, 'R2');
-  assert.equal(c.labelOf('M2').text, 'M2');
+  assert.equal(c.labelOf('R2').text, 'R_{2}');
+  assert.equal(c.labelOf('M2').text, 'M_{2}');
   assert.deepEqual(c.labelOf('M2').runs(), [{ text: 'M' }, { text: '2', sub: true }]);
   const custom = c.addLabel({ text: 'sense', owner: 'R2', offset: { x: 0, y: 120 } });
   c.renameComponent('R2', 'R3');
-  assert.equal(c.labelOf('R3').text, 'R3');
+  assert.equal(c.labelOf('R3').text, 'R_{3}');
   assert.equal(custom.text, 'sense', 'custom owned text remains independent of refdes renames');
   assert.equal(c.labelOf('R1'), null);
   assert.equal(c.labelOf('M1'), null);
@@ -58,7 +63,7 @@ test('component rename repairs a missing legacy child label and preserves marker
   const instanceLabel = c.labelOf('R1');
   c.labels.delete(instanceLabel.id); // emulate a pre-owned-label document
   c.renameComponent('R1', 'R2');
-  assert.equal(c.labelOf('R2')?.text, 'R2');
+  assert.equal(c.labelOf('R2')?.text, 'R_{2}');
 
   const ground = c.addComponent('ground', { refdes: 'GND1' });
   const markerLabel = c.addLabel({ text: 'LOCAL_RETURN', owner: ground.refdes, offset: { x: 0, y: 120 } });
@@ -73,7 +78,23 @@ test('component rename accepts numeric subscript notation without storing braces
   const mos = c.addComponent('nmos', { refdes: 'M1' });
   c.renameComponent('M1', 'M_{3}');
   assert.equal(mos.refdes, 'M3');
-  assert.equal(c.labelOf('M3').text, 'M3');
+  assert.equal(c.labelOf('M3').text, 'M_{3}');
+});
+
+test('component names and owned labels stay synchronized and reject duplicates', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1' });
+  c.addComponent('resistor', { refdes: 'R2' });
+  c.labelOf('R1').setText('R_{D}');
+  assert.equal(c.getComponent('RD').refdes, 'RD');
+  assert.equal(c.labelOf('RD').text, 'R_{D}');
+  assert.throws(() => c.labelOf('R2').setText('R_{D}'), /already in use/);
+  assert.equal(c.getComponent('R2').refdes, 'R2');
+  assert.equal(c.labelOf('R2').text, 'R_{2}');
+  c.renameComponent('RD', 'R_{3}');
+  assert.equal(c.labelOf('R3').text, 'R_{3}');
+  c.renameComponent('R_{3}', 'R_{4}');
+  assert.equal(c.labelOf('R4').text, 'R_{4}');
 });
 
 test('adding VCM places its vcm terminal at the origin without an owned label', () => {
@@ -100,14 +121,27 @@ test('small-signal attributes persist on devices and nets', () => {
   c.addComponent('port', { refdes: 'VBN', x: -160, y: 0 });
   const net = c.connect('M1.g', 'VBN.p');
   c.setComponentAnalysis('M1', { model: 'triode' });
+  c.setComponentAnalysis('M1', { channelLengthModulation: 'finite' });
+  c.setComponentAnalysis('M1', { gmroLarge: true, ignoreBodyEffect: true });
   c.setComponentAnalysis('VBN', { role: 'dc-bias' });
   assert.equal(c.getComponent('M1').analysis.model, 'triode');
+  assert.equal(c.getComponent('M1').analysis.channelLengthModulation, 'finite');
+  assert.equal(c.getComponent('M1').analysis.gmroLarge, true);
+  assert.equal(c.getComponent('M1').analysis.ignoreBodyEffect, true);
   assert.equal(c.getComponent('VBN').analysis.role, 'dc-bias');
   assert.equal(net.analysis.acGround, true);
   const loaded = Circuit.fromJSON(c.toJSON());
   assert.equal(loaded.getComponent('M1').analysis.model, 'triode');
+  assert.equal(loaded.getComponent('M1').analysis.channelLengthModulation, 'finite');
+  assert.equal(loaded.getComponent('M1').analysis.gmroLarge, true);
+  assert.equal(loaded.getComponent('M1').analysis.ignoreBodyEffect, true);
   assert.equal(loaded.getComponent('VBN').analysis.role, 'dc-bias');
   assert.equal(loaded.netOfTerminal('VBN.p').analysis.acGround, true);
+  c.setComponentAnalysis('M1', { model: null, channelLengthModulation: null, gmroLarge: null, ignoreBodyEffect: null });
+  assert.equal(c.getComponent('M1').analysis.model, null);
+  assert.equal(c.getComponent('M1').analysis.channelLengthModulation, null);
+  assert.equal(c.getComponent('M1').analysis.gmroLarge, null);
+  assert.equal(c.getComponent('M1').analysis.ignoreBodyEffect, null);
 });
 
 test('math labels persist their TeX source marker', () => {
@@ -263,7 +297,7 @@ test('interface pins name their physical net and follow later renames', () => {
   const pinLabel = c.labelOf(pin.refdes);
 
   assert.equal(net.name, pin.refdes);
-  assert.equal(pinLabel.text, pin.refdes);
+  assert.equal(pinLabel.text, 'I_{1}');
 
   c.renameNet(net, 'VIN');
   assert.equal(net.name, 'VIN');
@@ -283,9 +317,28 @@ test('all interface pin directions participate in net naming', () => {
     const resistor = c.addComponent('resistor', { x: 240, y: 0 });
     const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
     assert.equal(net.name, pin.refdes, type);
+    const displayPrefix = type === 'output' ? 'O' : type === 'inputoutput' ? 'IO' : 'I';
+    assert.equal(c.labelOf(pin.refdes).text, `${displayPrefix}_{1}`, type);
     c.renameNet(net, 'RENAMED');
     assert.equal(c.labelOf(pin.refdes).text, 'RENAMED', type);
   }
+});
+
+test('interface pin names and owned labels stay synchronized with their single-owner net', () => {
+  const c = new Circuit();
+  const pin = c.addComponent('input', { x: 0, y: 0 });
+  const resistor = c.addComponent('resistor', { x: 240, y: 0 });
+  const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
+  const label = c.labelOf(pin.refdes);
+
+  label.setText('V_{IN}');
+  assert.equal(c.getComponent('VIN').refdes, 'VIN');
+  assert.equal(label.text, 'V_{IN}');
+  assert.equal(net.name, 'VIN');
+
+  c.renameComponent('VIN', 'V_{SOURCE}', { displayLabel: 'V_{SOURCE}' });
+  assert.equal(c.labelOf('VSOURCE').text, 'V_{SOURCE}');
+  assert.equal(net.name, 'VSOURCE');
 });
 
 test('reference markers auto-name attached nets and preserve explicit names', () => {
@@ -293,7 +346,7 @@ test('reference markers auto-name attached nets and preserve explicit names', ()
   const r1 = c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   const gnd = c.addComponent('ground', { refdes: 'GND1', x: -80, y: 0 });
   const net = c.connect(`${r1.refdes}.a`, `${gnd.refdes}.gnd`);
-  assert.equal(net.name, 'GND');
+  assert.equal(net.name, 'VSS');
 
   const r2 = c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
   const supply = c.addComponent('supply', { refdes: 'SUPPLY1', x: 480, y: 0 });
@@ -310,6 +363,29 @@ test('reference markers auto-name attached nets and preserve explicit names', ()
   assert.equal(explicit.name, 'LOCAL_RETURN');
   c.connect(`${r4.refdes}.b`, `${r1.refdes}.b`);
   assert.equal(explicit.name, 'LOCAL_RETURN');
+});
+
+test('legacy GND naming remains a global ground alias without creating a child label', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('ground', { refdes: 'GND1', x: -80, y: 0 });
+  const net = c.connect('R1.a', 'GND1.gnd');
+  c.renameNet(net, 'GND');
+  assert.equal(net.name, 'GND');
+  assert.equal(c.labelOf('GND1'), null);
+});
+
+test('reference labels distinguish compatibility aliases from explicit local rails', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('ground', { refdes: 'GND1', x: -80, y: 0 });
+  const net = c.connect('R1.a', 'GND1.gnd');
+  c.renameNet(net, 'VBIAS');
+  assert.equal(c.labelOf('GND1').referenceLocal, false);
+  const restored = Circuit.fromJSON(c.toJSON());
+  assert.equal(restored.labelOf('GND1').referenceLocal, false);
+  restored.labelOf('GND1').setText('LOCAL_GND');
+  assert.equal(restored.labelOf('GND1').referenceLocal, true);
 });
 
 test('a named reference marker becomes a local rail', () => {
@@ -1906,6 +1982,16 @@ test('setText resizes the bbox but keeps the anchor fixed', () => {
   assert.equal(l.bbox().x + l.bbox().w / 2, 400);
 });
 
+test('browser-measured label bounds round outward to even grid-cell dimensions', () => {
+  const c = new Circuit();
+  const l = c.addLabel({ text: '$$A_v$$', x: 400, y: 0, math: true });
+  assert.equal(l.setRenderedTextBounds(81, 41), true);
+  assert.deepEqual(l.bbox(), { x: 320, y: -40, w: 160, h: 80 });
+  assert.equal(l.setRenderedTextBounds(81, 41), false);
+  const restored = Circuit.fromJSON(c.toJSON()).labels.get(l.id);
+  assert.equal(restored._renderedTextBounds, null, 'runtime browser metrics are not persisted');
+});
+
 test('applyMarkup wraps, unwraps, and reverts mixed selections', () => {
   // wrap a plain selection in subscript markup
   let r = applyMarkup('CGS', 1, 3, '_');
@@ -1928,7 +2014,7 @@ test('owned label anchorWorld follows the component transform', () => {
   const m1 = c.addComponent('nmos', { x: 520, y: 0 });
   const lab = c.labelOf(m1.refdes);
   assert.ok(lab, 'nmos gets a dedicated instance label');
-  assert.equal(lab.text, 'M1');
+  assert.equal(lab.text, 'M_{1}');
   assert.equal(lab.owner, m1.refdes);
   // default offset (40,0) transforms to (560,0) at the origin (bulk side, gate height)
   assert.deepEqual(lab.anchorWorld(), { x: 560, y: 0 });
@@ -1953,7 +2039,7 @@ test('all component types auto-create an owned instance label for their id', () 
   const lab = c.labelOf(r.refdes);
   assert.ok(lab, 'resistor gets an owned instance label like every other symbol');
   assert.equal(lab.owner, r.refdes);
-  assert.equal(lab.text, r.refdes);
+  assert.equal(lab.text, 'R_{1}');
 });
 
 test('owned component labels inherit the component color', () => {
@@ -1995,7 +2081,7 @@ test('labels round-trip through toJSON/fromJSON (standalone and owned)', () => {
   assert.equal(c2.labels.size, 2);
   const owned = [...c2.labels.values()].find((l) => l.owner);
   assert.equal(owned.owner, 'M1');
-  assert.equal(owned.text, 'M1');
+  assert.equal(owned.text, 'M_{1}');
   assert.deepEqual(owned.anchorWorld(), { x: 440, y: 160 });
   const free = [...c2.labels.values()].find((l) => !l.owner);
   assert.equal(free.text, 'test point');

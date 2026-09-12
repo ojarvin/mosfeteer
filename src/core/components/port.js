@@ -51,7 +51,7 @@ export const portInputOutput = defineSymbol({
 
 
 /**
- * Razavi-style terminal markers: a small circle (open or filled) on a lead,
+ * Textbook terminal markers: a small circle (open or filled) on a lead,
  * used as a generic node/pin stub (no label box).
  */
 const marker = (type, description, filled) =>

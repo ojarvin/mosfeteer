@@ -2,7 +2,7 @@ import { defineSymbol } from './defineSymbol.js';
 
 /**
  * Supply rail symbol (VDD/VCC/+5V...). Single terminal on the bottom edge; a
- * filled horizontal slab above it (Razavi style). Name is stored as the
+ * filled horizontal slab above it (textbook style). Name is stored as the
  * component value and rendered as a free label where required.
  */
 export const supply = defineSymbol({

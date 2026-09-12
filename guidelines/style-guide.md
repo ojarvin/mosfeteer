@@ -9,7 +9,7 @@ Companion docs:
 - `AGENTS.md` — current symbol geometry, terminal names, routing, and editor
   behavior (the live spec, not this guide).
 
-The reference aesthetic is the **Razavi textbook look**: ordered transistor
+The reference aesthetic is the **classic textbook look**: ordered transistor
 arrays, straight rails, logical signal flow, zero redundant wiring. The
 deliverable must also report clean in `eval`.
 
@@ -427,7 +427,7 @@ that are not naturally voltages or currents, use a concise plain name such as
 `CLK`, `RESET`, or `EN` consistently at both the port and net level.
 Differential suffixes such as `P` / `N` are preferred over mixing them with
 `+` / `-` notation. Name nets for their purpose
-(`TAIL`, `GND`, `VDD`, `VOUT`, `DIODE`, `BIAS`) — a net's name appears in
+(`TAIL`, `VSS`, `VDD`, `VOUT`, `DIODE`, `BIAS`) — a net's name appears in
 the editor's net list, so it should tell the reader what the node does.
 
 `netId` identifies one physical net and its drawable geometry. Separate
@@ -477,13 +477,17 @@ physical net, using fresh net/label IDs and translated on-path anchors; they
 never turn them into annotations.
 
 **No font-12 value / refdes text.** Component identifiers are dedicated
-owned label objects. Ports auto-create their identifier label from the
-refdes (refPrefix `I` / `O` / `IO`, so `add input VINP` labels the pin
-"VINP"). Do not set component `value` text to convey names.
+owned label objects. Every labeled symbol, including ports, keeps its
+component name and owned label synchronized. Ports auto-create their
+identifier label from the refdes (refPrefix `I` / `O` / `IO`, so numeric
+defaults use explicit textbook markup such as `I_{1}`). Do not set component
+`value` text to convey names.
 
 Label text supports subscripts with `_{...}` markup (e.g. `C_{GS}`,
-`M_{1}`); owned instance labels render trailing digits as a subscript
-(M1 → M with subscript 1) for the textbook look. Label bounds are stable,
+`M_{1}`); component names and owned instance labels are synchronized
+and unique. Numeric defaults persist explicit markup (`M_{1}`) while the
+connectivity id remains `M1`; plain trailing digits are never auto-subscripted.
+Label bounds are stable,
 grid-snapped, and centered on the anchor for every alignment. Alignment (center
 / left / right) changes only the text position within that box (left edge,
 center, or right edge); changing text length may resize the box symmetrically
@@ -524,7 +528,7 @@ below it.
 
 - Implement the requested topology, not merely the requested component
   count.
-- Use meaningful net names such as `VDD`, `GND`, `VIN+`, `VIN-`, `OUT`,
+- Use meaningful net names such as `VDD`, `VSS`, `VIN+`, `VIN-`, `OUT`,
   and bias names where they clarify intent.
 - Connect every device terminal required by the topology.
 - Leave only intentional external terminals dangling, and label them.
@@ -570,13 +574,13 @@ below.
 ```sh
 node src/cli/index.js <circuit> "add supply VDD --at 240 -320"
 node src/cli/index.js <circuit> "add supply VDD2 --at 720 -320"
-node src/cli/index.js <circuit> "add ground GND --at 240 320"
-node src/cli/index.js <circuit> "add ground GND2 --at 600 320"
+node src/cli/index.js <circuit> "add ground VSS --at 240 320"
+node src/cli/index.js <circuit> "add ground VSS2 --at 600 320"
 ```
 
 Both supplies sit on the same top rail line and both grounds on the same
 bottom rail line; there is **no net between them** — each icon connects to its
-own local physical net. Do not add visible `VDD` or `GND` text unless requested;
+own local physical net. Do not add visible `VDD` or `VSS` text unless requested;
 the symbols provide that visual convention. If a visible rail name is requested,
 use one deliberate label rather than labeling every icon.
 ---

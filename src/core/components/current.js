@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Independent sources (Razavi style). Circle bodies with a filled arrow
+ * Independent sources (textbook style). Circle bodies with a filled arrow
  * (current) or polarity marks (voltage). Terminals a (top, +) and b (bottom, -).
  */
 export const current_source = defineSymbol({
