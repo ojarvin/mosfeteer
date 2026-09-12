@@ -526,11 +526,13 @@ export class BlockDiagram {
 
   addAnnotation(kind, options = {}) {
     if (!['arrow', 'box', 'line'].includes(kind)) throw new Error(`unknown annotation kind "${kind}"`);
-    const points = kind === 'line' && Array.isArray(options.points)
+    const points = ['arrow', 'line'].includes(kind) && Array.isArray(options.points)
       ? options.points.map((point) => ({ x: snap(point.x), y: snap(point.y) })) : null;
     const a = points?.[0] || { x: snap(options.x || 0), y: snap(options.y || 0) };
     const b = points?.at(-1) || (options.end ? { x: snap(options.end.x), y: snap(options.end.y) } : a);
-    if (kind === 'arrow' && Math.hypot(a.x - b.x, a.y - b.y) < GRID * 2) throw new Error('arrow must have non-zero length and minimum length of two grid cells');
+    const pathLength = points?.reduce((sum, point, index) => index ? sum + Math.hypot(point.x - points[index - 1].x, point.y - points[index - 1].y) : 0, 0)
+      ?? Math.hypot(a.x - b.x, a.y - b.y);
+    if (kind === 'arrow' && ((points && points.length < 2) || pathLength < GRID * 2)) throw new Error('arrow must have non-zero length and minimum length of two grid cells');
     if (kind === 'box' && (a.x === b.x || a.y === b.y)) throw new Error('box must have non-zero width and height');
     if (kind === 'line' && (!points || points.length < 2 || points.every((point) => point.x === a.x && point.y === a.y))) throw new Error('line must have at least two distinct points');
     const shape = this.addLabel({ ...options, kind, text: '', style: { ...(options.style || {}), lineStyle: options.style?.lineStyle || (kind === 'box' ? 'dashed' : 'solid') }, x: a.x, y: a.y, end: b, ...(points ? { points } : {}) });
@@ -540,8 +542,13 @@ export class BlockDiagram {
         const w = child.colWidth() * GRID; const h = child.rowHeight() * GRID;
         if (kind === 'box') child.anchor = { x: snap((a.x + b.x) / 2), y: snap(Math.min(a.y, b.y) - h / 2) };
         else {
-          const dx = Math.sign(b.x - a.x); const dy = Math.sign(b.y - a.y);
-          child.anchor = { x: snap(dx > 0 ? a.x - w / 2 : dx < 0 ? a.x + w / 2 : a.x), y: snap(dy > 0 ? a.y - h / 2 : dy < 0 ? a.y + h / 2 : a.y) };
+          const first = points?.[1] || b;
+          const dx = Math.sign(first.x - a.x); const dy = Math.sign(first.y - a.y);
+          const orthogonal = (dx === 0) !== (dy === 0);
+          child.anchor = {
+            x: snap(orthogonal && dx !== 0 ? (dx > 0 ? a.x - w / 2 : a.x + w / 2) : (dx > 0 ? a.x - w / 2 : dx < 0 ? a.x + w / 2 : a.x)),
+            y: snap(orthogonal && dy !== 0 ? (dy > 0 ? a.y - h / 2 : a.y + h / 2) : (dy > 0 ? a.y - h / 2 : dy < 0 ? a.y + h / 2 : a.y)),
+          };
         }
       }
     }
@@ -1029,8 +1036,8 @@ export class BlockDiagram {
         }
       }
       if (!['label', 'arrow', 'box', 'line'].includes(label.kind)) errors.push(`invalid block label kind "${id}"`);
-      if (label.kind === 'line' && (!Array.isArray(label.points) || label.points.length < 2)) errors.push(`line annotation "${id}" needs points`);
-      const points = label.kind === 'line' ? label.points : [label.anchor, label.end];
+      if (['arrow', 'line'].includes(label.kind) && (!Array.isArray(label.points) || label.points.length < 2)) errors.push(`${label.kind} annotation "${id}" needs points`);
+      const points = ['arrow', 'line'].includes(label.kind) ? label.points : [label.anchor, label.end];
       if (points.some((point) => !point || !finite(point.x) || !finite(point.y) || !onGrid(point.x) || !onGrid(point.y))) errors.push(`block label "${id}" points must be grid-aligned`);
       if (label.parent && !this.labels.has(label.parent)) errors.push(`block label "${id}" references a missing parent`);
     }

@@ -358,10 +358,47 @@ function millerForwardGain(circuit, device, candidate, options = {}) {
   };
 }
 
-/** Find feedback impedances that can use a Miller split. Any modeled passive
- * impedance may bridge one MOS gate net and that device's drain net. The split
- * is admitted only when the particular forward stage has the explicit
- * high-gain assumption and a safe DC gain estimate can be derived. */
+function expressionContainsGm(value) {
+  if (!value) return false;
+  if (value.kind === 'symbol') return /^g_\{m(?:b)?/.test(String(value.name || ''));
+  if (value.kind === 'neg' || value.kind === 'inv') return expressionContainsGm(value.value);
+  return (value.terms || []).some(expressionContainsGm) || expressionContainsGm(value.value);
+}
+
+/** Solve the forward voltage ratio between the two terminals of an arbitrary
+ * feedback impedance after removing that impedance from the model.  This is
+ * the generalized Miller step: unlike the legacy one-MOS shortcut, the path
+ * may contain any number of small-signal gain stages and internal nodes. */
+function millerForwardGainAcrossPath(circuit, impedance, input, output, options = {}) {
+  const referenceIds = millerReferenceIds(circuit);
+  if (referenceIds.has(input.id) || referenceIds.has(output.id)) return null;
+  const solverOptions = {
+    ...options,
+    millerApproximation: false,
+    miller: false,
+    excludeMillerImpedance: impedance.refdes,
+  };
+  const model = buildSystematicModel(circuit, { target: output, referenceIds, options: solverOptions });
+  const solved = systematicTransferResult(circuit, model, { target: output, input, referenceIds }, solverOptions);
+  if (!solved.ok) return null;
+  const expression = simplifySx(solved.expression || solved.exactExpression);
+  // Keep the recognizer bounded: if the unloaded path itself explodes, the
+  // exact nodal result remains available and a misleading Miller rewrite is
+  // worse than declining the reduction.
+  if (!expression || !expressionContainsGm(expression) || sxTreeSize(expression) > 180) return null;
+  return {
+    expression,
+    input,
+    output,
+    stageLabel: `A_{v,${impedance.refdes}}`,
+    conditions: 'feedback impedance removed; solved DC forward path contains one or more explicitly high-gain MOS stages',
+  };
+}
+
+/** Find feedback impedances that can use a Miller split. Direct gate/drain
+ * stages retain their compact textbook estimate; otherwise a bounded generic
+ * endpoint solve recognizes a multi-stage forward path. Every reduction still
+ * requires an explicit high-gain assumption. */
 export function millerApproximationCandidates(circuit, options = {}) {
   if (!normalizeAnalysisApproximations(options).miller) return [];
   const mos = [...(circuit?.components?.values?.() || [])]
@@ -383,6 +420,22 @@ export function millerApproximationCandidates(circuit, options = {}) {
       if (!((a.id === gate.id && b.id === drain.id) || (a.id === drain.id && b.id === gate.id))) continue;
       const gain = millerForwardGain(circuit, device, { impedance, gate, drain }, options);
       if (gain) candidates.push({ impedance, device, gate, drain, gain });
+      break;
+    }
+    if (candidates.some((candidate) => candidate.impedance.refdes === impedance.refdes)) continue;
+    // Generalized feedback: a passive can span multiple gain stages (for
+    // example the feedback resistor of a two-stage TIA).  Miller's theorem is
+    // admitted only when every MOS device in the small-signal path has the
+    // explicit g_m r_o >> 1 assumption; the exact nodal result remains the
+    // fallback when that condition is not established.
+    const allMosHighGain = [...(circuit?.components?.values?.() || [])]
+      .filter((component) => MILLER_MOS_TYPES.has(component.type))
+      .every((component) => componentAssumesGmRoLarge(component, options));
+    if (!allMosHighGain) continue;
+    for (const [input, output] of [[a, b], [b, a]]) {
+      const gain = millerForwardGainAcrossPath(circuit, impedance, input, output, options);
+      if (!gain) continue;
+      candidates.push({ impedance, device: null, gate: input, drain: output, gain, generalized: true, stageLabel: gain.stageLabel });
       break;
     }
   }
@@ -549,8 +602,11 @@ function sxIsIntrinsicOnly(value) {
   return false;
 }
 
-function millerGainName(device) {
-  const suffix = String(device?.refdes || '').match(/[0-9]+$/)?.[0] || String(device?.refdes || '1');
+function millerGainName(deviceOrCandidate) {
+  if (deviceOrCandidate?.stageLabel) return deviceOrCandidate.stageLabel;
+  if (deviceOrCandidate?.gain?.stageLabel) return deviceOrCandidate.gain.stageLabel;
+  const refdes = deviceOrCandidate?.refdes || deviceOrCandidate?.device?.refdes || '1';
+  const suffix = String(refdes).match(/[0-9]+$/)?.[0] || String(refdes);
   return `A_{v${suffix}}`;
 }
 
@@ -1077,10 +1133,17 @@ function systemRefdes(refdes, prefix, fallback = prefix) {
 }
 
 function systemMosName(refdes, kind) {
-  const index = String(refdes).match(/[0-9]+$/)?.[0] || String(refdes);
-  if (kind === 'ro') return `r_{o${index}}`;
-  if (kind === 'gmb') return `g_{mb${index}}`;
-  return `g_{m${index}}`;
+  const raw = String(refdes);
+  const ordinary = raw.match(/^M([0-9]+)$/i)?.[1];
+  // Keep the familiar textbook spelling for the canonical M1/M2/... names.
+  // Non-standard prefixes (MN1, MP1, MN_1, ...) retain the complete refdes so
+  // distinct device identities cannot alias merely because their suffixes
+  // happen to match.
+  const identity = ordinary ? ordinary : raw.replace(/[^A-Za-z0-9_]/g, '_');
+  if (kind === 'ro') return ordinary ? `r_{o${identity}}` : `r_{o,${identity}}`;
+  if (kind === 'rds') return ordinary ? `r_{ds${identity}}` : `r_{ds,${identity}}`;
+  if (kind === 'gmb') return ordinary ? `g_{mb${identity}}` : `g_{mb,${identity}}`;
+  return ordinary ? `g_{m${identity}}` : `g_{m,${identity}}`;
 }
 
 function systemCapName(refdes) {
@@ -1148,7 +1211,7 @@ function textbookApproximationNotes(options = {}, circuit = null) {
   }
   const miller = millerApproximationCandidates(circuit, options);
   if (flags.miller && miller.length) {
-    assumptions.push(`Miller approximation is applied to feedback impedances with an explicitly high forward gain (${miller.map(({ impedance, device }) => `${impedance.refdes}/${device.refdes}`).join(', ')}).`);
+    assumptions.push(`Miller approximation is applied to feedback impedances with an explicitly high forward gain (${miller.map((candidate) => `${candidate.impedance.refdes}/${candidate.device?.refdes || candidate.stageLabel || 'multi-stage path'}`).join(', ')}).`);
     approximations.push('Miller approximation: each eligible feedback impedance is split into input and output shunt impedances using the derived DC stage gain.');
   }
   return { flags, assumptions, approximations };
@@ -1482,7 +1545,7 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
   const millerByImpedance = new Map(millerApproximationCandidates(circuit, options)
     .map((candidate) => [candidate.impedance.refdes, candidate]));
   const millerAliases = [...millerByImpedance.values()].map((candidate) => ({
-    name: millerGainName(candidate.device),
+    name: millerGainName(candidate),
     expression: candidate.gain.expression,
     key: sxKey(candidate.gain.expression),
     negativeKey: sxKey(sxNeg(candidate.gain.expression)),
@@ -1493,25 +1556,29 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
     const gain = candidate.gain.expression;
     const inputImpedance = sxDiv(impedance, sxSub(sxNumber(1), gain));
     const outputImpedance = sxDiv(impedance, sxSub(sxNumber(1), sxInv(gain)));
-    const displayGain = sxSymbol(millerGainName(candidate.device));
+    const displayGain = sxSymbol(millerGainName(candidate));
     const inputDisplayImpedance = sxDiv(impedance, sxSub(sxNumber(1), displayGain));
     const outputDisplayImpedance = sxDiv(impedance, sxSub(sxNumber(1), sxInv(displayGain)));
     addShuntBranch(kind, component, candidate.gate, inputImpedance, {
-      millerRole: 'input', millerDevice: candidate.device.refdes, millerGain: gain,
+      millerRole: 'input', millerDevice: candidate.device?.refdes || null, millerGain: gain,
       displayValue: inputDisplayImpedance,
     });
     addShuntBranch(kind, component, candidate.drain, outputImpedance, {
-      millerRole: 'output', millerDevice: candidate.device.refdes, millerGain: gain,
+      millerRole: 'output', millerDevice: candidate.device?.refdes || null, millerGain: gain,
       displayValue: outputDisplayImpedance,
     });
     const impedanceName = sxText(impedance);
-    const gainName = millerGainName(candidate.device);
-    assumptions.push(`${component.refdes} is split by Miller's theorem around ${candidate.device.refdes}: Z_{in}=${sxText(displaySx(inputImpedance, millerAliases))}, Z_{out}=${sxText(displaySx(outputImpedance, millerAliases))} using ${gainName}\\approx${sxText(gain)}.`);
-    approximations.push(`Miller approximation: ${component.refdes} is split around ${candidate.device.refdes} using ${gainName}\\approx${sxText(gain)}; ${impedanceName} is otherwise unchanged.`);
+    const gainName = millerGainName(candidate);
+    const stage = candidate.device?.refdes || `${sxText(sxSymbol(netLabel(candidate.gate) || 'input'))}\\to${sxText(sxSymbol(netLabel(candidate.drain) || 'output'))}`;
+    assumptions.push(`${component.refdes} is split by Miller's theorem around ${stage}: Z_{in}=${sxText(displaySx(inputImpedance, millerAliases))}, Z_{out}=${sxText(displaySx(outputImpedance, millerAliases))} using ${gainName}\\approx${sxText(gain)}.`);
+    approximations.push(`Miller approximation: ${component.refdes} is split around ${stage} using ${gainName}\\approx${sxText(gain)}; ${impedanceName} is otherwise unchanged.`);
   };
 
   for (const component of circuit.components.values()) {
     const type = component.type;
+    if (options.excludeMillerImpedance && component.refdes === options.excludeMillerImpedance) {
+      continue;
+    }
     if (type === 'voltage_source') {
       const a = systemTerminalNet(circuit, component, 'a');
       const b = systemTerminalNet(circuit, component, 'b');

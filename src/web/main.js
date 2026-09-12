@@ -1480,7 +1480,7 @@ function annotationGeometryAt(world) {
   };
   for (const label of labels()) {
     if (label.kind === 'line' && label.points.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
-    if (label.kind === 'arrow' && near(label.anchor, label.end)) return label;
+    if (label.kind === 'arrow' && label.points?.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
     if (label.kind === 'box') {
       const a = label.anchor; const b = label.end;
       const x0 = Math.min(a.x, b.x); const x1 = Math.max(a.x, b.x);
@@ -1495,7 +1495,7 @@ function annotationGeometryAt(world) {
 function annotationEndpointAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   for (const label of labels()) {
-    if (label.kind === 'line') {
+    if (['arrow', 'line'].includes(label.kind)) {
       const index = label.points.findIndex((point) => Math.abs(p.x - point.x) <= GRID / 2 && Math.abs(p.y - point.y) <= GRID / 2);
       if (index >= 0) return { label, endpoint: `vertex:${index}` };
     }
@@ -1525,7 +1525,7 @@ function annotationSegmentAt(world) {
     return Math.hypot(p.x - q.x, p.y - q.y) <= GRID / 2;
   };
   for (const label of labels()) {
-    if (label.kind !== 'line') continue;
+    if (!['arrow', 'line'].includes(label.kind)) continue;
     for (let i = 1; i < label.points.length; i++) {
       if (near(label.points[i - 1], label.points[i])) return { label, segment: i };
     }
@@ -1918,7 +1918,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
       } else if (['arrow', 'box', 'line'].includes(l.kind)) {
         l.anchor = p;
         l.end = transformWorldPoints([l.end], center, operation)[0];
-        if (l.kind === 'line') l.points = transformWorldPoints(l.points, center, operation);
+        if (l.points) l.points = transformWorldPoints(l.points, center, operation);
         l.textAnchor = transformWorldPoints([l.textAnchor], center, operation)[0];
         for (const child of circuit.labels.values()) {
           if (child.parent === l.id) child.anchor = transformWorldPoints([child.anchor], center, operation)[0];
@@ -2275,10 +2275,46 @@ function commitLineAnnotation() {
   return true;
 }
 
+function commitArrowAnnotation(includeCursor = true) {
+  if (annotationPoints.length < 2) return false;
+  const points = annotationPoints.map((point) => ({ ...point }));
+  const tail = points.at(-1);
+  if (includeCursor && (!tail || tail.x !== cursor.x || tail.y !== cursor.y)) points.push({ ...cursor });
+  if (points.length < 2) return false;
+  let annotation;
+  commit(() => { annotation = circuit.addAnnotation('arrow', { points, text: 'label' }); });
+  setSelection([]);
+  setLabelSelection([annotation.id]);
+  logLine(`placed arrow with ${points.length} points`);
+  annotationPoints = [];
+  annotationStart = null;
+  labelMode = null;
+  render();
+  const annotationLabel = [...circuit.labels.values()].find((label) => label.parent === annotation.id);
+  inlineEditLabel(annotationLabel, { removeOnEmpty: true });
+  return true;
+}
+
 function placeShapeAnnotation(world, endOverride = null) {
   const point = { x: snap(world.x), y: snap(world.y) };
   let annotation;
   let annotationLabel;
+  if (labelMode === 'arrow') {
+    if (!annotationStart) {
+      annotationStart = point;
+      annotationPoints = [point];
+      logLine('ARROW: choose intermediate/end points; press Enter to commit');
+      render();
+      return false;
+    }
+    if (!annotationPoints.length) annotationPoints = [annotationStart];
+    const next = endOverride || point;
+    const previous = annotationPoints.at(-1);
+    if (!previous || previous.x !== next.x || previous.y !== next.y) annotationPoints.push(next);
+    logLine(`arrow point ${annotationPoints.length}; press Enter to commit`);
+    render();
+    return false;
+  }
   if (!annotationStart) {
     annotationStart = point;
     logLine(`${labelMode.toUpperCase()}: choose the end point`);
@@ -2302,6 +2338,7 @@ function placeShapeAnnotation(world, endOverride = null) {
   labelMode = null;
   render();
   inlineEditLabel(annotationLabel, { removeOnEmpty: true });
+  return true;
 }
 
 function placeNetLabelAt(world) {
@@ -2350,7 +2387,7 @@ function placeNetLabelAt(world) {
  */
 function placePending() {
   if (!pendingPlace) return;
-  if (pendingPlace.kind === 'block') {
+  if (pendingPlace.kind === 'block' && isBlockDiagram(circuit)) {
     const block = circuit.addBlock({ text: 'Block', x: cursor.x - 80, y: cursor.y - 80, w: 160, h: 160 });
     selectedBlocks = new Set([block.id]);
     selectedArrows.clear();
@@ -2797,7 +2834,9 @@ function renderCanvas(modelKey) {
     if (drag?.mode === 'blockannotationlineplace') {
       annotationPreview = { kind: 'line', points: [...annotationPoints, drag.previewEnd || cursor] };
     } else if (drag?.mode === 'blockannotationplace' || (['arrow', 'box'].includes(labelMode) && annotationStart)) {
-      annotationPreview = { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor };
+      annotationPreview = labelMode === 'arrow'
+        ? { kind: 'arrow', points: [...annotationPoints, drag?.previewEnd || cursor] }
+        : { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor };
     }
     canvasEl.innerHTML = renderDocument(circuit, {
       background: true,
@@ -2902,6 +2941,10 @@ function renderCanvas(modelKey) {
   const overlay = editorOverlay(circuit, {
     cursor,
     selection: [...new Set([...multi, ...diagnosticSelection.components])],
+    resizeBlocks: [...multi].filter((ref) => {
+      const component = circuit.components.get(ref);
+      return component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY;
+    }),
     centerGuides: selectionCenterBounds(),
     wireSegments: (() => {
       if (!selectedWires.size && !selectedWire) return [];
@@ -2940,7 +2983,9 @@ function renderCanvas(modelKey) {
       ? { kind: 'line', points: [...annotationPoints, ...(drag?.previewEnd ? [drag.previewEnd] : [cursor])] }
       : (drag?.mode === 'annotationplace' && (annotationStart || drag.previewEnd))
         || (['arrow', 'box'].includes(labelMode) && annotationStart)
-        ? { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
+        ? labelMode === 'arrow'
+          ? { kind: 'arrow', points: [...annotationPoints, drag?.previewEnd || cursor] }
+          : { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
         : undefined,
     warnOverlaps: netWarnings,
     rubber: visual
@@ -2985,6 +3030,7 @@ let lastNetClick = null; // { netId, x, y, at } of the previous nets-list click 
 let lastComponentClick = null; // { refdes, x, y, at } of the previous component-list click
 let lastBlockClick = null; // { id, x, y, at } of the previous block-list click
 let lastBlockCanvasClick = null;
+let lastSchematicComponentClick = null; // { refdes, x, y, at } for canvas double-click fallback
 
 /** A press becomes a drag once the pointer has moved BOTH more than the pixel
  *  threshold (a few px of click jitter is never a drag) AND more than half a
@@ -2999,6 +3045,12 @@ function dragMoved(startWorld, startClient, w, ev) {
 /** Abort an in-progress mouse drag. A cancelled wire run is restored to its
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
+  if (drag?.mode === 'blockresize') {
+    if (drag.startSnapshot) circuit = loadDocument(JSON.parse(drag.startSnapshot));
+    drag = null;
+    render();
+    return;
+  }
   if (drag?.mode === 'copyghost') {
     circuit = Circuit.fromJSON(JSON.parse(drag.ghost.beforeSnapshot));
     markModelChanged();
@@ -3426,7 +3478,7 @@ function netsTouching(refs) {
   for (const r of refs) {
     const c = circuit.components.get(r);
     if (!c) continue;
-    for (const t of c.def.terminals) {
+    for (const t of c.terminalDefs) {
       const net = circuit.netOfTerminal({ comp: c.refdes, term: t.name });
       if (net) touched.add(net.id);
     }
@@ -3445,7 +3497,7 @@ function managedEndpointMeta(net, point) {
   });
   if (terminal) {
     const c = circuit.components.get(terminal.comp);
-    const def = c?.def.terminals.find((t) => t.name === terminal.term);
+    const def = c?.terminalDefs.find((t) => t.name === terminal.term);
     return {
       type: 'terminal', comp: terminal.comp, term: terminal.term, point: { ...point },
       dir: c && def ? circuit._pinDir(c, def, point.x, point.y) : null,
@@ -3551,7 +3603,7 @@ function managedGeometryErrors(net) {
   });
   const pinStep = (terminal, point) => {
     const c = circuit.components.get(terminal.comp);
-    const def = c?.def.terminals.find((t) => t.name === terminal.term);
+    const def = c?.terminalDefs.find((t) => t.name === terminal.term);
     return c && def ? circuit._pinDir(c, def, point.x, point.y) : null;
   };
   const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
@@ -4144,6 +4196,23 @@ function canvasMouseDown(ev) {
     return;
   }
   if (b !== 0) return;
+  const blockHandle = !blockDocument ? ev.target.closest?.('[data-component-handle]') : null;
+  if (blockHandle) {
+    const refdes = blockHandle.closest?.('[data-component-resize-id]')?.dataset.componentResizeId;
+    const component = refdes && circuit.components.get(refdes);
+    if (component?.type === 'block') {
+      const origin = component.bboxWorld();
+      setSelection([refdes]);
+      setLabelSelection([]);
+      drag = {
+        mode: 'blockresize', refdes, handle: blockHandle.dataset.componentHandle,
+        startWorld, startClient, origin, startSnapshot: snapshot(), moved: false,
+      };
+      try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
+      render();
+      return;
+    }
+  }
   if (deleteMode) {
     // Defer the click action until mouseup so a real drag can form a box.
     // A stationary click keeps the existing Delete-mode semantics.
@@ -4513,6 +4582,25 @@ function canvasMouseDown(ev) {
   // then empty space.
   const hit = pickAt(startWorld);
   const termHit = hit && hit.term ? hit : null;
+  const componentHit = hit?.refdes ? circuit.components.get(hit.refdes) : null;
+  if (componentHit?.type === 'block' && !termHit) {
+    const now = Date.now();
+    const previous = lastSchematicComponentClick;
+    const doubleClick = ev.detail >= 2 || (previous && previous.refdes === componentHit.refdes &&
+      now - previous.at < 500 && Math.abs(startWorld.x - previous.x) <= GRID &&
+      Math.abs(startWorld.y - previous.y) <= GRID);
+    lastSchematicComponentClick = { refdes: componentHit.refdes, x: startWorld.x, y: startWorld.y, at: now };
+    if (doubleClick) {
+      lastSchematicComponentClick = null;
+      setSelection([componentHit.refdes]);
+      setLabelSelection([]);
+      render();
+      setTimeout(() => inlineEditSchematicBlock(componentHit), 0);
+      return;
+    }
+  } else {
+    lastSchematicComponentClick = null;
+  }
   if (termHit) {
     beginComponentDrag(hit, startWorld, startClient, ev);
     return;
@@ -5290,6 +5378,28 @@ function canvasMouseMove(ev) {
   }
 
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
+  if (movedOut) lastSchematicComponentClick = null;
+  if (drag.mode === 'blockresize') {
+    if (!movedOut) return;
+    drag.moved = true;
+    try {
+      // Rebuild each preview from the immutable pointer-down snapshot. This
+      // keeps corner drags reversible and avoids accumulating grid rounding.
+      circuit = loadDocument(JSON.parse(drag.startSnapshot));
+      const rect = blockResizeRect(drag.origin, drag.handle, w);
+      circuit.resizeBlock(drag.refdes, rect);
+      drag.invalid = false;
+      drag.previewRevision = (drag.previewRevision || 0) + 1;
+      renderCanvas(`${modelRevision}:blockresize:${drag.previewRevision}`);
+    } catch (error) {
+      circuit = loadDocument(JSON.parse(drag.startSnapshot));
+      drag.invalid = true;
+      drag.invalidReason = error.message;
+      drag.previewRevision = (drag.previewRevision || 0) + 1;
+      renderCanvas(`${modelRevision}:blockresize:${drag.previewRevision}`);
+    }
+    return;
+  }
   if (drag.mode === 'wirepick' && drag.wireHit && movedOut) {
     const hit = drag.wireHit;
     if (hit.net.terminals.length === 0 && floatingWireDragAt(hit, drag.startWorld, drag.startClient, ev, new Set([`${hit.net.id}:${hit.branch}:${hit.seg}`]))) {
@@ -5623,6 +5733,20 @@ function canvasMouseUp(ev) {
   if (!drag) return;
   const movedOut = dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
   const w = clientToWorld(ev.clientX, ev.clientY);
+  if (drag.mode === 'blockresize') {
+    if (drag.moved && !drag.invalid && snapshot() !== drag.startSnapshot) {
+      history.push(drag.startSnapshot);
+      if (history.length > 200) history.shift();
+      future.length = 0;
+      markModelChanged();
+      logLine(`resized ${drag.refdes}`);
+    } else if (drag.invalid || !drag.moved) {
+      circuit = loadDocument(JSON.parse(drag.startSnapshot));
+    }
+    drag = null;
+    render();
+    return;
+  }
   if (drag.mode === 'pan') {
     if (ev.button !== 1 && drag.pointerId !== ev.pointerId && ev.pointerType === 'mouse') return;
     drag = drag.resume || null;
@@ -8507,6 +8631,49 @@ function inlineEditBlock(block) {
   input.addEventListener('blur', () => done(true));
 }
 
+/** Edit the centered caption of a schematic block without changing its B<n>
+ * component identity. This mirrors the direct label editing of block nodes. */
+function inlineEditSchematicBlock(component) {
+  if (!component || component.type !== 'block' || inlineInput) return;
+  const pane = document.querySelector('.canvas-pane');
+  const paneRect = pane.getBoundingClientRect();
+  const box = component.bboxWorld();
+  const input = document.createElement('textarea');
+  input.value = component.value || '';
+  input.spellcheck = false;
+  input.className = 'label-inline-editor block-inline-editor';
+  input.style.position = 'absolute';
+  input.style.zIndex = '30';
+  input.style.left = `${paneRect.left + ((box.x - view.x) / view.w) * paneRect.width}px`;
+  input.style.top = `${paneRect.top + ((box.y - view.y) / view.h) * paneRect.height}px`;
+  input.style.width = `${(box.w / view.w) * paneRect.width}px`;
+  input.style.height = `${(box.h / view.h) * paneRect.height}px`;
+  input.style.textAlign = 'center';
+  input.style.resize = 'none';
+  input.style.whiteSpace = 'pre-wrap';
+  input.style.overflow = 'hidden';
+  document.body.appendChild(input);
+  inlineInput = input;
+  input.focus();
+  input.select();
+  let closed = false;
+  const done = (apply) => {
+    if (closed) return;
+    closed = true;
+    inlineInput = null;
+    const text = input.value.trim();
+    input.remove();
+    if (apply && text && text !== component.value) commit(() => circuit.setValue(component.refdes, text));
+    render();
+  };
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && ev.shiftKey) { ev.stopPropagation(); return; }
+    if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); done(true); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done(false); }
+  });
+  input.addEventListener('blur', () => done(true));
+}
+
 // Double-click edits the active document's object, never an electrical label
 // picker in a block diagram.
 canvasEl.addEventListener('dblclick', (ev) => {
@@ -8530,6 +8697,7 @@ canvasEl.addEventListener('dblclick', (ev) => {
     const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
     const wire = pickWire(w);
     if (component && isReferenceMarker(component)) openReferenceMarkerEditor(component);
+    else if (component?.type === 'block') inlineEditSchematicBlock(component);
     else if (wire) {
       selectedWire = null;
       selectedWires.clear();
@@ -8827,6 +8995,7 @@ function renderComponents() {
       lastComponentClick = { refdes: comp.refdes, x: ev.clientX, y: ev.clientY, at: now };
       if (doubleClick) {
         if (isReferenceMarker(comp)) openReferenceMarkerEditor(comp);
+        else if (comp.type === 'block') inlineEditSchematicBlock(comp);
         else startComponentRename(comp, ref);
         return;
       }
@@ -8850,6 +9019,7 @@ function renderComponents() {
       // Native dblclick backup for browsers that deliver it (manual detection
       // in the click handler covers row replacement during the first click).
       if (isReferenceMarker(comp)) openReferenceMarkerEditor(comp);
+      else if (comp.type === 'block') inlineEditSchematicBlock(comp);
       else startComponentRename(comp, ref);
     });
     row.addEventListener('keydown', (ev) => {
@@ -9178,8 +9348,8 @@ function onWireKey(key) {
     const comp = compUnderCursor() || selectedComp();
     if (!comp) {
       logLine('click a terminal (or point the cursor at a component)');
-    } else if (!comp.def.terminals[key]) {
-      logLine(`${comp.refdes} has no terminal "${key}" (${Object.keys(comp.def.terminals).join(',')})`);
+    } else if (!comp.terminalDefs.some((terminal) => terminal.name === key)) {
+      logLine(`${comp.refdes} has no terminal "${key}" (${comp.terminalDefs.map((terminal) => terminal.name).join(',')})`);
     } else if (!wire.source) {
       wire.source = { refdes: comp.refdes, term: key };
       wire.points = [];
@@ -9264,6 +9434,7 @@ const INSERT_CATEGORY_RULES = [
   ['Sources & power', /^(current_source|voltage_source|supply|ground|vcm)$/],
   ['Logic', /^(opamp|opamp_diff|inverter|buffer|.*_gate|adc|dac)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port|port_filled)$/],
+  ['Blocks / shells', /^block$/],
 ];
 
 /** Rank a component/label name against a fuzzy query (subsequence match).
@@ -9315,7 +9486,7 @@ function selectInsertMatch() {
   const type = entries[0];
   pendingPlace = type === 'label'
     ? { kind: 'label' }
-    : type === 'block'
+    : type === 'block' && isBlockDiagram(circuit)
       ? { kind: 'block' }
       : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null };
   insertQuery = '';
@@ -9437,6 +9608,10 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'Enter' && labelMode === 'line') {
     commitLineAnnotation();
+    return;
+  }
+  if (key === 'Enter' && labelMode === 'arrow' && annotationPoints.length >= 2) {
+    commitArrowAnnotation(true);
     return;
   }
   if (key === 'm' || key === 'M') {
@@ -9909,7 +10084,7 @@ function translateCopyGhost(ghost, dx, dy) {
     if (['arrow', 'box', 'line'].includes(label.kind)) {
       label.end.x += dx;
       label.end.y += dy;
-      if (label.kind === 'line') label.points = label.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+      if (label.points) label.points = label.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
       label.textAnchor.x += dx;
       label.textAnchor.y += dy;
     }
@@ -11261,6 +11436,11 @@ window.addEventListener('keydown', (ev) => {
     }
     if (mode !== 'insert' && ev.key === 'Enter' && labelMode === 'line' && annotationPoints.length >= 2) {
       commitLineAnnotation();
+      ev.preventDefault();
+      return;
+    }
+    if (mode !== 'insert' && ev.key === 'Enter' && labelMode === 'arrow' && annotationPoints.length >= 2) {
+      commitArrowAnnotation(true);
       ev.preventDefault();
       return;
     }

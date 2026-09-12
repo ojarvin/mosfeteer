@@ -519,13 +519,13 @@ export class LabelInstance {
       ? opts.referenceLocal !== false
       : null;
     this.offset = this.owner && opts.offset ? { x: snap(opts.offset.x), y: snap(opts.offset.y) } : null;
-    const rawPoints = this.kind === 'line' && Array.isArray(opts.points) ? opts.points : null;
+    const rawPoints = ['arrow', 'line'].includes(this.kind) && Array.isArray(opts.points) ? opts.points : null;
     const points = rawPoints?.map((point) => snapPoint(point?.x || 0, point?.y || 0)) || [];
     const p = points[0] || snapPoint(opts.x || 0, opts.y || 0);
     this.anchor = { x: p.x, y: p.y };
     const e = points.at(-1) || (opts.end ? snapPoint(opts.end.x, opts.end.y) : p);
     this.end = { x: e.x, y: e.y };
-    this.points = this.kind === 'line' ? (points.length ? points : [{ ...p }, { ...e }]) : null;
+    this.points = ['arrow', 'line'].includes(this.kind) ? (points.length ? points : [{ ...p }, { ...e }]) : null;
     const textPoint = opts.textAnchor ? snapPoint(opts.textAnchor.x, opts.textAnchor.y) : { x: snap((p.x + e.x) / 2), y: snap((p.y + e.y) / 2) };
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
     const net = this.netId ? circuit.nets.get(this.netId) : null;
@@ -671,7 +671,15 @@ export class LabelInstance {
   }
 
   bbox() {
-    if (this.kind === 'arrow' || this.kind === 'box') {
+    if (this.kind === 'arrow') {
+      const points = this.points?.length ? this.points : [this.anchor, this.end];
+      const x = Math.min(...points.map((point) => point.x));
+      const y = Math.min(...points.map((point) => point.y));
+      const x1 = Math.max(...points.map((point) => point.x));
+      const y1 = Math.max(...points.map((point) => point.y));
+      return { x, y, w: Math.max(GRID, x1 - x), h: Math.max(GRID, y1 - y) };
+    }
+    if (this.kind === 'box') {
       const x = Math.min(this.anchor.x, this.end.x);
       const y = Math.min(this.anchor.y, this.end.y);
       return { x, y, w: Math.max(GRID, Math.abs(this.end.x - this.anchor.x)), h: Math.max(GRID, Math.abs(this.end.y - this.anchor.y)) };
@@ -758,7 +766,7 @@ export class LabelInstance {
       const dy = wy - this.anchor.y;
       this.anchor = { x: wx, y: wy };
       this.end = { x: this.end.x + dx, y: this.end.y + dy };
-      if (this.kind === 'line') this.points = this.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+      if (this.points) this.points = this.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
       this.textAnchor = { x: this.textAnchor.x + dx, y: this.textAnchor.y + dy };
       for (const label of this.circuit.labels.values()) {
         if (label.parent === this.id) label.anchor = { x: label.anchor.x + dx, y: label.anchor.y + dy };
@@ -787,7 +795,7 @@ export class LabelInstance {
   }
 
   moveSegment(index, dx, dy) {
-    if (this.kind !== 'line' || !Number.isInteger(index) || index < 1 || index >= this.points.length) return false;
+    if (!['arrow', 'line'].includes(this.kind) || !Number.isInteger(index) || index < 1 || index >= this.points.length) return false;
     for (const point of [this.points[index - 1], this.points[index]]) {
       point.x += dx;
       point.y += dy;
@@ -798,7 +806,7 @@ export class LabelInstance {
   }
 
   moveVertex(index, wx, wy) {
-    if (this.kind !== 'line' || !Number.isInteger(index) || index < 0 || index >= this.points.length) return false;
+    if (!['arrow', 'line'].includes(this.kind) || !Number.isInteger(index) || index < 0 || index >= this.points.length) return false;
     this.points[index] = snapPoint(wx, wy);
     this.anchor = { ...this.points[0] };
     this.end = { ...this.points.at(-1) };
@@ -821,7 +829,7 @@ export class LabelInstance {
       offset: this.offset ? { ...this.offset } : null,
       anchor: this.owner ? null : { ...this.anchor },
       end: this.kind === 'label' ? null : { ...this.end },
-      points: this.kind === 'line' ? this.points.map((point) => ({ ...point })) : null,
+      points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       style: { ...this.style },
       drawOrder: this.drawOrder,
@@ -841,6 +849,21 @@ export class ComponentInstance {
       reserveLabels: !!this.def.labelOffset,
     });
     this.value = opts.value !== undefined ? String(opts.value) : this.def.defaultValue;
+    // Schematic blocks are the one resizable symbol. Keep their geometry and
+    // perimeter terminal slots on the instance rather than mutating the shared
+    // symbol definition (which would resize every block in the document).
+    this.blockSize = this.type === 'block'
+      ? {
+          w: Math.max(2 * GRID, snap(opts.blockSize?.w ?? opts.width ?? 160)),
+          h: Math.max(2 * GRID, snap(opts.blockSize?.h ?? opts.height ?? 160)),
+        }
+      : null;
+    this.blockTerminals = this.type === 'block'
+      ? (opts.blockTerminals || this.def.terminals.map((t) => {
+          const side = Math.abs(t.x) >= 80 ? (t.x > 0 ? 'right' : 'left') : (t.y < 0 ? 'top' : 'bottom');
+          return { name: t.name, side, offset: side === 'top' || side === 'bottom' ? t.x + 80 : t.y + 80 };
+        })).map((t) => ({ name: String(t.name), side: String(t.side), offset: snap(Number(t.offset)) }))
+      : null;
     this.analysis = {
       model: opts.analysis?.model || opts.analysis?.smallSignalModel || null,
       role: opts.analysis?.role || null,
@@ -865,8 +888,84 @@ export class ComponentInstance {
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
   }
 
+  /** Dynamic terminal definitions for a resizable schematic block. */
+  get terminalDefs() {
+    if (this.type !== 'block') return this.def.terminals;
+    const { w, h } = this.blockSize;
+    return this.blockTerminals.map((item) => {
+      const x = item.side === 'left' ? -w / 2 : item.side === 'right' ? w / 2 : -w / 2 + item.offset;
+      const y = item.side === 'top' ? -h / 2 : item.side === 'bottom' ? h / 2 : -h / 2 + item.offset;
+      const dir = item.side === 'top' ? { x: 0, y: -1 } : item.side === 'right' ? { x: 1, y: 0 } : item.side === 'bottom' ? { x: 0, y: 1 } : { x: -1, y: 0 };
+      return { name: item.name, x, y, direction: 'passive', dir };
+    });
+  }
+
+  setBlockSize(size = {}) {
+    if (this.type !== 'block') throw new Error(`component ${this.refdes} is not a schematic block`);
+    const next = {
+      w: Math.max(2 * GRID, snap(Number(size.w ?? old.w))),
+      h: Math.max(2 * GRID, snap(Number(size.h ?? old.h))),
+    };
+    if (![next.w, next.h].every(Number.isFinite)) throw new Error('block size must be finite');
+    const connected = new Set();
+    for (const net of this.circuit.nets.values()) {
+      for (const terminal of net.terminals || []) if (terminal.comp === this.refdes) connected.add(terminal.term);
+    }
+    const sideMax = (side) => side === 'top' || side === 'bottom' ? next.w : next.h;
+    const slots = [];
+    // Match block-diagram perimeter behavior: every grid slot one cell away
+    // from a corner is a valid attachment, including the exact edge midpoint.
+    for (let offset = GRID; offset <= next.w - GRID; offset += GRID) slots.push({ side: 'top', offset });
+    for (let offset = GRID; offset <= next.h - GRID; offset += GRID) slots.push({ side: 'right', offset });
+    for (let offset = next.w - GRID; offset >= GRID; offset -= GRID) slots.push({ side: 'bottom', offset });
+    for (let offset = next.h - GRID; offset >= GRID; offset -= GRID) slots.push({ side: 'left', offset });
+    const used = new Set();
+    const valid = new Set(slots.map((slot) => `${slot.side}:${slot.offset}`));
+    const keep = [];
+    const addExplicit = (item) => {
+      const nextLength = sideMax(item.side);
+      const offset = Math.max(0, Math.min(nextLength, snap(item.offset)));
+      const saved = { ...item, offset };
+      keep.push(saved);
+      const key = `${saved.side}:${saved.offset}`;
+      if (valid.has(key)) used.add(key);
+    };
+    // Explicit terminals and connected generated terminals are persistent.
+    // Unconnected generated terminals are disposable perimeter affordances,
+    // exactly like block-diagram terminals during a resize.
+    for (const item of this.blockTerminals.filter((candidate) => !/^T\d+$/.test(candidate.name))) addExplicit(item);
+    for (const item of this.blockTerminals.filter((candidate) => /^T\d+$/.test(candidate.name) && connected.has(candidate.name))) {
+      const nextLength = sideMax(item.side);
+      const offset = Math.max(0, Math.min(nextLength, snap(item.offset)));
+      const key = `${item.side}:${offset}`;
+      if (!valid.has(key) || used.has(key)) {
+        const replacement = slots.find((candidate) => !used.has(`${candidate.side}:${candidate.offset}`));
+        if (!replacement) throw new Error(`block ${this.refdes} resize creates coincident connected terminals`);
+        used.add(`${replacement.side}:${replacement.offset}`);
+        keep.push({ ...item, side: replacement.side, offset: replacement.offset });
+      } else {
+        used.add(key);
+        keep.push({ ...item, offset });
+      }
+    }
+    let nextGenerated = 1;
+    // Every remaining non-corner grid slot receives a generated terminal.
+    // Growing a block therefore creates new wireable T<n> terminals, while
+    // shrinking removes only the unconnected generated affordances.
+    for (const slot of slots) {
+      const key = `${slot.side}:${slot.offset}`;
+      if (used.has(key)) continue;
+      while (keep.some((item) => item.name === `T${nextGenerated}`)) nextGenerated++;
+      used.add(key);
+      keep.push({ name: `T${nextGenerated++}`, side: slot.side, offset: slot.offset });
+    }
+    this.blockSize = next;
+    this.blockTerminals = keep;
+    return this;
+  }
+
   localTerminal(name) {
-    const t = this.def.terminals.find((t) => t.name === name);
+    const t = this.terminalDefs.find((t) => t.name === name);
     if (!t) throw new Error(`component ${this.refdes} has no terminal "${name}"`);
     return t;
   }
@@ -878,11 +977,14 @@ export class ComponentInstance {
   }
 
   worldTerminals() {
-    return this.def.terminals.map((t) => ({ name: t.name, ...this.terminalWorld(t.name) }));
+    return this.terminalDefs.map((t) => ({ name: t.name, ...this.terminalWorld(t.name) }));
   }
 
   bboxWorld() {
-    return transformRect(this.transform, this.def.bbox);
+    const bbox = this.type === 'block'
+      ? { x: -this.blockSize.w / 2, y: -this.blockSize.h / 2, w: this.blockSize.w, h: this.blockSize.h }
+      : this.def.bbox;
+    return transformRect(this.transform, bbox);
   }
   setColor(color) {
     const previous = this.style.color;
@@ -904,6 +1006,7 @@ export class ComponentInstance {
         ? { analysis: { ...this.analysis } }
         : {}),
       transform: { ...this.transform },
+      ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -1410,6 +1513,45 @@ export class Circuit {
     return c;
   }
 
+  /** Resize a schematic block from a world-space rectangle.  The block's
+   * origin follows the rectangle center, so the same corner-drag semantics as
+   * the block-diagram editor can be used without changing ordinary component
+   * transform rules. */
+  resizeBlock(refdes, rect = {}) {
+    const component = this.getComponent(refdes);
+    if (component.type !== 'block') throw new Error(`component ${refdes} is not a schematic block`);
+    if (component.transform.rotation % 360 !== 0 || component.transform.mirrorX || component.transform.mirrorY) {
+      throw new Error('resizing a rotated or mirrored schematic block is not supported');
+    }
+    const beforeTransform = { ...component.transform };
+    const beforeSize = { ...component.blockSize };
+    const beforeTerminals = component.blockTerminals.map((terminal) => ({ ...terminal }));
+    const topology = this._snapshotNetTopology();
+    const x = snap(Number(rect.x)); const y = snap(Number(rect.y));
+    const w = Math.max(2 * GRID, snap(Number(rect.w)));
+    const h = Math.max(2 * GRID, snap(Number(rect.h)));
+    if (![x, y, w, h].every(Number.isFinite)) throw new Error('block rectangle must contain finite coordinates');
+    const touched = new Set([...this.nets.values()].filter((net) => net.terminals.some((t) => t.comp === refdes)).map((net) => net.id));
+    try {
+      component.setBlockSize({ w, h });
+      component.transform.x = x + w / 2;
+      component.transform.y = y + h / 2;
+      this.invalidateRoutingCache();
+      for (const id of touched) {
+        const net = this.nets.get(id);
+        if (net && !this.rerouteNet(net, 'refresh')) throw new Error(`unable to route net ${id} after block resize`);
+      }
+      this.connectCoincident(refdes);
+      return component;
+    } catch (error) {
+      component.transform = beforeTransform;
+      component.blockSize = beforeSize;
+      component.blockTerminals = beforeTerminals;
+      this._restoreNetTopology(topology);
+      throw error;
+    }
+  }
+
   setTransform(refdes, { rotation, mirrorX, mirrorY } = {}) {
     this.invalidateRoutingCache();
     const c = this.getComponent(refdes);
@@ -1566,7 +1708,7 @@ export class Circuit {
         : normalizedBodyEffect,
     };
     if (component.analysis.role === 'dc-bias') {
-      for (const terminal of component.def.terminals) {
+      for (const terminal of component.terminalDefs) {
         const net = this.netOfTerminal({ comp: component.refdes, term: terminal.name });
         if (net) this.setNetAnalysis(net, { role: 'dc-bias', acGround: true });
       }
@@ -1607,12 +1749,14 @@ export class Circuit {
   }
   addAnnotation(kind, opts = {}) {
     if (!['arrow', 'box', 'line'].includes(kind)) throw new Error(`unknown annotation kind "${kind}"`);
-    const points = kind === 'line' && Array.isArray(opts.points)
+    const points = ['arrow', 'line'].includes(kind) && Array.isArray(opts.points)
       ? opts.points.map((point) => ({ x: snap(point.x), y: snap(point.y) }))
       : null;
     const a = points?.[0] || { x: snap(opts.x || 0), y: snap(opts.y || 0) };
     const b = points?.at(-1) || (opts.end ? { x: snap(opts.end.x), y: snap(opts.end.y) } : a);
-    if (kind === 'arrow' && Math.hypot(a.x - b.x, a.y - b.y) < GRID * 2) throw new Error('arrow must have non-zero length and minimum length of two grid cells');
+    const pathLength = points?.reduce((sum, point, index) => index ? sum + Math.hypot(point.x - points[index - 1].x, point.y - points[index - 1].y) : 0, 0)
+      ?? Math.hypot(a.x - b.x, a.y - b.y);
+    if (kind === 'arrow' && ((points && points.length < 2) || pathLength < GRID * 2)) throw new Error('arrow must have non-zero length and minimum length of two grid cells');
     if (kind === 'box' && (a.x === b.x || a.y === b.y)) throw new Error('box must have non-zero width and height');
     if (kind === 'line' && (!points || points.length < 2 || points.every((point) => point.x === a.x && point.y === a.y))) throw new Error('line must have at least two distinct points');
     const shape = this.addLabel({
@@ -1641,11 +1785,17 @@ export class Circuit {
           const top = Math.min(a.y, b.y);
           child.anchor = { x: snap((a.x + b.x) / 2), y: snap(top - h / 2) };
         } else {
-          const dx = Math.sign(b.x - a.x);
-          const dy = Math.sign(b.y - a.y);
+          // Place an arrow caption against the first authored segment. For an
+          // orthogonal route this keeps the caption aligned with the shaft,
+          // instead of hanging diagonally from the first corner. Preserve the
+          // historic quadrant placement for diagonal arrows.
+          const first = points?.[1] || b;
+          const dx = Math.sign(first.x - a.x);
+          const dy = Math.sign(first.y - a.y);
+          const orthogonal = (dx === 0) !== (dy === 0);
           child.anchor = {
-            x: snap(dx > 0 ? a.x - w / 2 : dx < 0 ? a.x + w / 2 : a.x),
-            y: snap(dy > 0 ? a.y - h / 2 : dy < 0 ? a.y + h / 2 : a.y),
+            x: snap(orthogonal && dx !== 0 ? (dx > 0 ? a.x - w / 2 : a.x + w / 2) : (dx > 0 ? a.x - w / 2 : dx < 0 ? a.x + w / 2 : a.x)),
+            y: snap(orthogonal && dy !== 0 ? (dy > 0 ? a.y - h / 2 : a.y + h / 2) : (dy > 0 ? a.y - h / 2 : dy < 0 ? a.y + h / 2 : a.y)),
           };
         }
       }
@@ -2044,14 +2194,14 @@ export class Circuit {
       if (c.type === 'solder') continue;
       const body = c.bboxWorld();
       rects.push(body);
-      for (const t of c.def.terminals) {
+      for (const t of c.terminalDefs) {
         const w = c.terminalWorld(t.name);
         pins.set(`${w.x},${w.y}`, this._pinDir(c, t, w.x, w.y));
         const key = `${w.x},${w.y}`;
         if (!pinRects.has(key)) pinRects.set(key, []);
         pinRects.get(key).push(body);
       }
-      const gate = c.def.terminals.find((t) => t.direction === 'gate');
+      const gate = c.terminalDefs.find((t) => t.direction === 'gate');
       if (gate) {
         const point = c.terminalWorld(gate.name);
         const gateNet = this.netOfTerminal({ comp: c.refdes, term: gate.name });
@@ -2341,7 +2491,7 @@ export class Circuit {
       for (const [refdes, delta] of moved) {
         const c = this.components.get(refdes);
         if (!c) continue;
-        for (const t of c.def.terminals) {
+        for (const t of c.terminalDefs) {
           const cur = c.terminalWorld(t.name);
           const old = { x: cur.x - delta.dx, y: cur.y - delta.dy };
           if (Math.abs(p.x - old.x) <= 1 && Math.abs(p.y - old.y) <= 1) return { refdes, cur, delta };
@@ -3042,7 +3192,7 @@ export class Circuit {
     if (net.routingMode !== 'fixed') return;
     const members = new Set(net.terminals.map((t) => `${t.comp}.${t.term}`));
     const valid = (anchor) => anchor && members.has(`${anchor.comp}.${anchor.term}`) &&
-      this.components.get(anchor.comp)?.def.terminals.some((t) => t.name === anchor.term);
+      this.components.get(anchor.comp)?.terminalDefs.some((t) => t.name === anchor.term);
     for (const entry of net.fixedPaths) {
       if (!valid(entry.start)) entry.start = null;
       if (!valid(entry.end)) entry.end = null;
@@ -3392,7 +3542,7 @@ export class Circuit {
           }
         }
         if (!matches) continue;
-        for (const t of left.def.terminals) {
+        for (const t of left.terminalDefs) {
           if (!samePoint(right.terminalWorld(t.name), reflect(left.terminalWorld(t.name), center))) {
             matches = false;
             break;
@@ -3652,7 +3802,7 @@ export class Circuit {
       net.terminals.push({ comp: term.comp, term: term.term });
     }
     for (const c of this.components.values()) {
-      for (const t of c.def.terminals) {
+      for (const t of c.terminalDefs) {
         const p = c.terminalWorld(t.name);
         if (p.x === P.x && p.y === P.y && !net.terminals.some((q) => q.comp === c.refdes && q.term === t.name)) {
           net.terminals.push({ comp: c.refdes, term: t.name });
@@ -3778,7 +3928,7 @@ export class Circuit {
     // dangling pin.
     for (const endpoint of [P0, P]) {
       for (const c of this.components.values()) {
-        for (const t of c.def.terminals) {
+      for (const t of c.terminalDefs) {
           const p = c.terminalWorld(t.name);
           if (p.x === endpoint.x && p.y === endpoint.y &&
               !net.terminals.some((q) => q.comp === c.refdes && q.term === t.name)) {
@@ -4339,7 +4489,7 @@ export class Circuit {
 
   countTerminals() {
     let n = 0;
-    for (const c of this.components.values()) n += c.def.terminals.length;
+    for (const c of this.components.values()) n += c.terminalDefs.length;
     return n;
   }
 
@@ -4391,6 +4541,8 @@ export class Circuit {
         rotation: c.transform.rotation,
         mirrorX: c.transform.mirrorX,
         mirrorY: c.transform.mirrorY,
+        blockSize: c.blockSize,
+        blockTerminals: c.blockTerminals,
         style: c.style,
         analysis: c.analysis,
         drawOrder: c.drawOrder,

@@ -32,7 +32,7 @@ function labelText(label, selected = false) {
 }
 
 function annotationHandles(label) {
-  const points = label.kind === 'line'
+  const points = ['arrow', 'line'].includes(label.kind)
     ? label.points.map((p, index) => [`vertex:${index}`, p])
     : label.kind === 'box'
       ? (() => {
@@ -56,12 +56,14 @@ function annotationSvg(label, selected) {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect data-label-id="${esc(label.id)}" class="block-annotation block-box${cls}" x="${n(x)}" y="${n(y)}" width="${n(Math.abs(b.x - a.x))}" height="${n(Math.abs(b.y - a.y))}" fill="none" ${style}/>`;
   }
-  const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  const route = label.points?.length ? label.points : [a, b];
+  const start = route.at(-2) || a;
+  const angle = Math.atan2(b.y - start.y, b.x - start.x);
   const shaft = { x: b.x - 32 * Math.cos(angle), y: b.y - 32 * Math.sin(angle) };
   const left = { x: shaft.x + 18 * Math.sin(angle), y: shaft.y - 18 * Math.cos(angle) };
   const right = { x: shaft.x - 18 * Math.sin(angle), y: shaft.y + 18 * Math.cos(angle) };
   const color = esc(resolveColor(label.style?.color || '#111'));
-  return `<g data-label-id="${esc(label.id)}" class="block-annotation block-arrow${cls}"><path d="M ${point(a)} L ${point(shaft)}" fill="none" ${style}/><polygon points="${point(b)} ${point(left)} ${point(right)}" fill="${color}" stroke="none"/></g>`;
+  return `<g data-label-id="${esc(label.id)}" class="block-annotation block-arrow${cls}"><path d="${route.slice(0, -1).map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ')} L ${point(shaft)}" fill="none" ${style}/><polygon points="${point(b)} ${point(left)} ${point(right)}" fill="${color}" stroke="none"/></g>`;
 }
 
 function arrowSvg(arrow, selected, omitHead = false, selectedSegments = new Set()) {
@@ -113,6 +115,12 @@ export function blockSvgString(diagram, options = {}) {
   const preview = options.annotationPreview;
   if (preview?.kind === 'line' && preview.points?.length > 1) {
     out.push(`<path class="annotation-preview block-line" d="${preview.points.map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ')}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/>`);
+  } else if (preview?.kind === 'arrow' && preview.points?.length > 1) {
+    const route = preview.points;
+    const a = route.at(-2); const b = route.at(-1);
+    const angle = Math.atan2(b.y - a.y, b.x - a.x); const base = { x: b.x - 32 * Math.cos(angle), y: b.y - 32 * Math.sin(angle) };
+    const left = { x: base.x + 18 * Math.sin(angle), y: base.y - 18 * Math.cos(angle) }; const right = { x: base.x - 18 * Math.sin(angle), y: base.y + 18 * Math.cos(angle) };
+    out.push(`<g class="annotation-preview block-arrow"><path d="${route.slice(0, -1).map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ')} L ${point(base)}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 8"/><polygon points="${point(b)} ${point(left)} ${point(right)}" fill="var(--accent, #4f9cf9)"/></g>`);
   } else if (preview?.a && preview?.b) {
     const a = preview.a; const b = preview.b;
     if (preview.kind === 'box') out.push(`<rect class="annotation-preview block-box" x="${n(Math.min(a.x, b.x))}" y="${n(Math.min(a.y, b.y))}" width="${n(Math.abs(b.x - a.x))}" height="${n(Math.abs(b.y - a.y))}" fill="none" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 8"/>`);

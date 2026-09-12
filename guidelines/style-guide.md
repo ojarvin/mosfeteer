@@ -191,6 +191,7 @@ mirror flag to override that default.
 | supply | `p` (bottom edge) | x:-40..40, y:-80..0 |
 | input / output / inputoutput | `p` (circuit side) | boxed port, id label on circuit-outer side |
 | adc / dac | ADC: `ain` in, `d` out; DAC: `d` in, `aout` out | ADC point-to-flat left-to-right; DAC flat-to-point left-to-right; one diagonal slash marks the digital bus; centered `ADC` / `DAC` label |
+| block | `T1`…`T12`, every non-corner grid slot per side | resizable schematic shell (default 160×160) with centered editable caption; selected blocks expose eight resize handles, preserve connected terminal identities, and unused terminals do not fail Design Check |
 
 Notes:
 
@@ -212,6 +213,13 @@ Notes:
   hanging down off the wire). **Supply** attaches `p` on its bottom edge
   (drop it onto the rail above the net). Ports face their `p` into the
   circuit.
+- **Schematic blocks** mix functional abstraction into a transistor-level
+  drawing. Double-click the body or its component-row entry to edit the
+  centered caption. Their perimeter pins use ordinary schematic wires, and
+  the body remains an obstacle for overlap and wire-through checks. Resize a
+  selected block with the same eight handles used by block diagrams; the
+  opposite corner stays fixed, touched managed nets are rerouted atomically,
+  and the size is persisted per instance.
 - Transform order is **mirror → rotate → translate**.
 
 **Spacing**: keep at least one full 40-grid cell between adjacent
@@ -464,8 +472,9 @@ electrical labels and net names. Net-label text follows the physical net name;
 removing one label occurrence does not remove or rename its net. In the editor,
 `L` persistently places a net label only on an unambiguous physical wire; at a
 crossing, select/highlight the intended net first. `Shift+N` places one free
-annotation and then returns to selection; `a` and `b` likewise place one arrow
-or box annotation. The generic insert-menu entry is also an annotation. `l`
+annotation and then returns to selection; `a` places a multi-point arrow by
+clicking vertices and committing with Enter, while `b` places one box. The
+generic insert-menu entry is also an annotation. `l`
 draws a non-electrical multi-point line annotation with rounded caps; its
 snapped vertices and segments remain editable.
 

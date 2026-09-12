@@ -18,6 +18,7 @@ import { adc, dac } from './converter.js';
 import { variable_resistor, variable_capacitor, variable_inductor } from './variable.js';
 import { solder } from './solder.js';
 import { switch_open, switch_closed } from './switch.js';
+import { block } from './block.js';
 
 /** All registered symbol definitions, keyed by type name. */
 export const symbolTypes = {
@@ -59,6 +60,7 @@ export const symbolTypes = {
   solder,
   switch_open,
   switch_closed,
+  block,
 };
 
 /** Ordered list of type names (for palettes / docs). */

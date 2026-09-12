@@ -4,7 +4,7 @@ export function moveAnnotationEndpoint(label, endpoint, p) {
   const oldAnchor = { ...label.anchor };
   const oldEnd = { ...label.end };
   const oldPoints = label.points?.map((point) => ({ ...point }));
-  if (label.kind === 'line' && endpoint.startsWith('vertex:')) {
+  if (['arrow', 'line'].includes(label.kind) && endpoint.startsWith('vertex:')) {
     label.moveVertex(Number(endpoint.slice(7)), p.x, p.y);
   } else if (endpoint.startsWith('corner:')) {
     const corner = endpoint.slice(7);
@@ -20,8 +20,13 @@ export function moveAnnotationEndpoint(label, endpoint, p) {
     }[corner];
     label.anchor = p;
     label.end = fixed;
-  } else if (endpoint === 'start') label.anchor = p;
-  else if (endpoint === 'end') label.end = p;
+  } else if (endpoint === 'start') {
+    label.anchor = p;
+    if (label.points?.length) label.points[0] = { ...p };
+  } else if (endpoint === 'end') {
+    label.end = p;
+    if (label.points?.length) label.points[label.points.length - 1] = { ...p };
+  }
   else if (endpoint === 'left' || endpoint === 'right') {
     const left = endpoint === 'left';
     if ((label.anchor.x < label.end.x) === left) label.anchor.x = p.x;

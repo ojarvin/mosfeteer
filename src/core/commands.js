@@ -27,7 +27,7 @@ function rerouteNetsFor(circuit, refs, moved, fresh = false) {
   for (const r of refs) {
     const c = circuit.components.get(r);
     if (!c) continue;
-    for (const t of c.def.terminals) {
+    for (const t of c.terminalDefs) {
       const net = circuit.netOfTerminal({ comp: c.refdes, term: t.name });
       if (net) touched.add(net.id);
     }
@@ -44,7 +44,7 @@ function rerouteNetsFor(circuit, refs, moved, fresh = false) {
  *  Honors the terminal's explicit local direction (via the transform) first,
  *  matching the editor's pinDir, then falls back to the bbox-centre heuristic. */
 function pinDir(c, wx, wy) {
-  const t = c.def.terminals.find((term) => {
+  const t = c.terminalDefs.find((term) => {
     const p = applyTransform(c.transform, term.x, term.y);
     return p.x === wx && p.y === wy;
   });
@@ -208,7 +208,7 @@ export function evaluate(circuit) {
 
   let violations = [];
   for (const c of comps) {
-    for (const t of c.def.terminals) {
+    for (const t of c.terminalDefs) {
       const w = c.terminalWorld(t.name);
       const net = circuit.netOfTerminal({ comp: c.refdes, term: t.name });
       const ref = `${c.refdes}.${t.name}`;
@@ -222,7 +222,10 @@ export function evaluate(circuit) {
         addIssue('grid-violation', message, { refs: [ref], points: [point], location: 'terminal' });
       }
       terminals.push({ ref: `${c.refdes}.${t.name}`, x: w.x, y: w.y, net: net ? net.id : null });
-      if (!net) {
+      // Schematic blocks are visual interface shells. Their perimeter pins are
+      // available for optional wiring, but an unused pin is not a design-check
+      // failure; the block body is still included in overlap/body geometry.
+      if (!net && c.type !== 'block') {
         const message = `${ref}@(${w.x},${w.y})`;
         dangling.push(message);
         addIssue('unconnected-terminal', `unconnected terminal ${message}`, {
@@ -336,7 +339,7 @@ export function evaluate(circuit) {
   const gatePassagesForNet = (net) => {
     const passages = [];
     for (const comp of comps) {
-      const gate = comp.def.terminals.find((t) => t.direction === 'gate');
+      const gate = comp.terminalDefs.find((t) => t.direction === 'gate');
       if (!gate) continue;
       const gateNet = circuit.netOfTerminal({ comp: comp.refdes, term: gate.name });
       if (gateNet?.id !== net.id) continue;

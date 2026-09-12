@@ -833,6 +833,15 @@ button:disabled {
 .canvas svg .block-resize-handles rect[data-block-handle="sw"] { cursor: nesw-resize; }
 .canvas svg .block-resize-handles rect[data-block-handle="nw"],
 .canvas svg .block-resize-handles rect[data-block-handle="se"] { cursor: nwse-resize; }
+.canvas svg .component-resize-handles rect { cursor: nwse-resize; pointer-events: all; }
+.canvas svg .component-resize-handles rect[data-component-handle="n"],
+.canvas svg .component-resize-handles rect[data-component-handle="s"] { cursor: ns-resize; }
+.canvas svg .component-resize-handles rect[data-component-handle="e"],
+.canvas svg .component-resize-handles rect[data-component-handle="w"] { cursor: ew-resize; }
+.canvas svg .component-resize-handles rect[data-component-handle="ne"],
+.canvas svg .component-resize-handles rect[data-component-handle="sw"] { cursor: nesw-resize; }
+.canvas svg .component-resize-handles rect[data-component-handle="nw"],
+.canvas svg .component-resize-handles rect[data-component-handle="se"] { cursor: nwse-resize; }
 
 .block-info {
   color: var(--text-dim);

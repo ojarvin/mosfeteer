@@ -46,7 +46,13 @@ function graphicsToSvg(g, textTransform = '', objectStyle = null) {
 function symbolTextSvg(g, t, color = '#111') {
   const p = applyTransform(t, g.x, g.y);
   const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`);
-  return `<text x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none">${escapeSvg(g.text)}</text>`;
+  const attrs = `x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none"`;
+  const lines = String(g.text ?? '').split('\n');
+  if (lines.length === 1) return `<text ${attrs}>${escapeSvg(lines[0])}</text>`;
+  const lineHeight = g.font === 'label' ? LABEL_FONT_SIZE : 16;
+  const firstDy = -((lines.length - 1) * lineHeight) / 2;
+  const tspans = lines.map((line, index) => `<tspan x="${fmt(p.x)}" dy="${fmt(index ? lineHeight : firstDy)}">${escapeSvg(line)}</tspan>`).join('');
+  return `<text ${attrs}>${tspans}</text>`;
 }
 
 function textEl(x, y, text, anchor, size, fill) {
@@ -310,8 +316,11 @@ function shapeAnnotationSvg(label, opacity = '') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
   }
-  const { shaft, left, right } = annotationArrowPoints(a, b);
-  return `<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${escapeSvg(resolveColor(label.style?.color || '#111'))}" stroke="none"${opacity}/>`;
+  const points = label.points?.length ? label.points : [a, b];
+  const base = points.at(-2) || a;
+  const { shaft, left, right } = annotationArrowPoints(base, b);
+  const shaftPath = points.slice(0, -1).map((point, index) => `${index ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+  return `<path d="${shaftPath} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${escapeSvg(resolveColor(label.style?.color || '#111'))}" stroke="none"${opacity}/>`;
 }
 /**
  * Render a Circuit to an SVG string.
@@ -459,7 +468,12 @@ export function svgString(circuit, opts = {}) {
     const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
     const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
     parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
-    for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
+    if (c.type === 'block') {
+      const r = c.blockSize;
+      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`);
+    } else {
+      for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
+    }
     parts.push('</g></g>');
     for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
     if (o.includeBBox) {
@@ -512,7 +526,10 @@ export function svgString(circuit, opts = {}) {
     const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
     if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
-      parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333')}</g>`);
+      const valueText = def.textPos.font
+        ? symbolTextSvg({ ...def.textPos, text: c.value }, c.transform, c.style?.color || '#333')
+        : textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333');
+      parts.push(`<g${opacity}>${valueText}</g>`);
     }
     if (isReferenceMarker(c) && !def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
       const marker = referenceMarkerInfo(c.type);
@@ -564,6 +581,21 @@ export function editorOverlay(circuit, opts = {}) {
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
     if (c) parts.push(halo(c.bboxWorld()));
+  }
+
+  // Resizable schematic blocks use the same eight-handle affordance as block
+  // diagrams. Handles live in the interaction overlay, so they never become
+  // selectable circuit geometry or affect bounds/routing.
+  for (const ref of opts.resizeBlocks || []) {
+    const c = circuit.components.get(ref);
+    if (!c || c.type !== 'block') continue;
+    const r = c.bboxWorld();
+    const handles = [
+      ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
+      ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
+      ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
+    ];
+    parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
   }
 
   // Optional global label-box inspection. The dashed rectangle is the
@@ -726,8 +758,11 @@ export function editorOverlay(circuit, opts = {}) {
       const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
       parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
     } else {
-      const { shaft, left, right } = annotationArrowPoints(a, b);
-      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(shaft.x, shaft.y)}" ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="#4f9cf9" stroke="none" opacity=".8"/>`);
+      const route = points?.length ? points : [a, b];
+      const start = route.at(-2) || a;
+      const { shaft, left, right } = annotationArrowPoints(start, route.at(-1));
+      const d = route.slice(0, -1).map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+      parts.push(`<path d="${d} L ${pt(shaft.x, shaft.y)}" ${attrs}/><polygon points="${pt(route.at(-1).x, route.at(-1).y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="#4f9cf9" stroke="none" opacity=".8"/>`);
     }
   }
 

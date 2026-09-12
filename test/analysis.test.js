@@ -93,6 +93,38 @@ function commonGate() {
   return circuit;
 }
 
+function twoStageFeedback() {
+  const circuit = new Circuit();
+  const raw = (...refs) => {
+    const net = circuit._createNet();
+    net.terminals = refs.map((ref) => circuit.resolveTerm(ref));
+    return net;
+  };
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'RD1', x: 0, y: -240 });
+  circuit.addComponent('pmos', { refdes: 'M2', x: 400, y: 0 });
+  circuit.addComponent('pmos', { refdes: 'M3', x: 400, y: 240 });
+  circuit.addComponent('resistor', { refdes: 'RD2', x: 400, y: -240 });
+  circuit.addComponent('resistor', { refdes: 'RF', x: 200, y: -400 });
+  circuit.addComponent('ground', { refdes: 'GND', x: 0, y: 600 });
+  circuit.addComponent('supply', { refdes: 'VDD', x: 400, y: -600 });
+  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'OUT', x: 640, y: 0 });
+  raw('M1.g', 'IN.p', 'RF.a');
+  raw('M1.s', 'GND.gnd');
+  raw('M1.d', 'RD1.a', 'M2.g');
+  raw('M2.s', 'M3.d');
+  raw('M2.d', 'M3.g', 'RD2.a', 'OUT.p', 'RF.b');
+  raw('M3.s', 'VDD.p');
+  raw('RD1.b', 'GND.gnd');
+  raw('RD2.b', 'GND.gnd');
+  namedNet(circuit, 'IN.p', 'VIN');
+  namedNet(circuit, 'OUT.p', 'VOUT');
+  const bias = namedNet(circuit, 'M2.s', 'VB');
+  circuit.setNetAnalysis(bias, { acGround: true });
+  return circuit;
+}
+
 function flippedVoltageFollower() {
   const circuit = new Circuit();
   // M5 is the source follower whose source is the output. M6 senses the
@@ -445,6 +477,30 @@ test('Miller approximation also splits a feedback resistor using the derived DC 
   });
   assert.match(input.equation, /,\\quad A_\{v1\}\\approx-g_\{m1\}/);
   assert.match(output.equation, /,\\quad A_\{v1\}\\approx-g_\{m1\}/);
+});
+
+test('Miller approximation recognizes a feedback resistor across two gain stages', () => {
+  const circuit = twoStageFeedback();
+  const report = deriveSmallSignalModel(circuit, 'VOUT', {
+    input: 'VIN',
+    acGrounds: ['VB'],
+    gmroLarge: true,
+    ignoreBodyEffect: true,
+    millerApproximation: true,
+  });
+  const feedback = report.model.elements.filter((element) => element.component === 'RF');
+  assert.deepEqual(feedback.map((element) => element.millerRole).sort(), ['input', 'output']);
+  assert.match(report.assumptions.join('\n'), /A_\{v,RF\}/);
+  assert.match(report.approximations.join('\n'), /RF is split/);
+});
+
+test('non-standard MOS refdes keeps its complete identity in symbolic names', () => {
+  const circuit = commonSource();
+  circuit.renameComponent('M1', 'MN_1');
+  const report = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN' });
+  assert.equal(report.ok, true);
+  assert.match(report.equation, /g_\{m,MN_1\}/);
+  assert.doesNotMatch(report.equation, /g_\{m1\}/);
 });
 
 test('treats unnamed ground, supply, and VCM markers as one AC reference group', () => {
