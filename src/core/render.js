@@ -2,7 +2,7 @@ import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
 import { fontAttrs, resolveColor, strokeAttrs, styleAttrs } from './style.js';
-import { LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
+import { LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 
 function escapeSvg(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -121,10 +121,6 @@ function mathMlParallel(tall = false, requestedSize = null) {
   return mathMlAtom('∥', 'mo', attrs);
 }
 
-function mathMlBar() {
-  return mathMlAtom('|', 'mo', 'fence="false" stretchy="true" minsize="1.2em"');
-}
-
 /** Convert the small TeX subset emitted by symbolic analysis into MathML.
  * MathML is rendered by the browser inside the live SVG through a
  * foreignObject; keeping this parser local avoids a runtime CDN dependency. */
@@ -181,9 +177,8 @@ function texToMathML(source) {
     // them as visible word spaces in <mtext> so prose such as "Miller
     // approximation used for" does not collapse together.
     const prose = raw
-      // The editor historically used `\:` as the escaped colon in the
-      // assumptions heading. Keep that authored spelling readable while the
-      // remaining spacing commands become ordinary word spaces.
+      // Accept the editor's escaped colon while converting other spacing
+      // commands to ordinary word spaces.
       .replace(/\\:/g, ':')
       .replace(/\\qquad/g, '  ')
       .replace(/\\quad/g, ' ')

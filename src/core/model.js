@@ -1,7 +1,7 @@
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
-import { balancedCrossCoupling, balancedPaths, balancedRoute, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
+import { balancedCrossCoupling, balancedPaths, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 
@@ -20,9 +20,7 @@ const REFERENCE_MARKER_INFO = Object.freeze({
   vcm: Object.freeze({ terminal: 'vcm', globalName: 'VCM', labelOffset: { x: 0, y: 120 } }),
 });
 
-// `GND` was the historical default for ground markers. Keep it as a
-// global-name alias when loading/editing older schematics, while all new
-// unnamed ground markers use the textbook `VSS` name above.
+// Keep `GND` as a compatibility alias; new unnamed ground markers use `VSS`.
 const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.freeze(['GND']) });
 
 export function referenceMarkerInfo(type) {
@@ -1018,9 +1016,8 @@ export class Net {
     this.circuit = circuit;
     this.id = opts.id || uid();
     this.name = canonicalNetName(opts.name);
-    // Empty nets made by the public wire-island/direct-wire APIs are retained
-    // when their last terminal is detached.  Ordinary connect() nets retain
-    // the historical cleanup of an unreferenced auto-route.
+    // Preserve public wire islands; ordinary connect() nets may be pruned when
+    // they no longer have an electrical anchor.
     this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
     this.wireStyles = { ...(opts.wireStyles || {}) };
@@ -1031,8 +1028,7 @@ export class Net {
     };
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
-    /** Net policy: managed retains the historic autorouting behavior; fixed
-     * protects the exact point sequences in fixedPaths. */
+    /** Managed nets autoroute; fixed nets preserve fixedPaths. */
     this.routingMode = opts.routingMode === 'fixed' ? 'fixed' : 'managed';
     /** Explicit authorization for authored managed diagonal segments. */
     this.allowDiagonal = this.routingMode === 'managed' && opts.allowDiagonal === true;
@@ -1186,11 +1182,6 @@ function diagonalRouteRequested(options) {
     options.route === 'diagonal' || options.style === 'diagonal';
 }
 
-function hasDiagonalGeometry(net) {
-  return net?.paths().some((path) => pathSegments(path).some((segment) =>
-    segment.a.x !== segment.b.x && segment.a.y !== segment.b.y)) === true;
-}
-
 function wireTargetIdentity(options) {
   const target = options?.targetIdentity || options?.target;
   if (target && typeof target === 'object') return target;
@@ -1243,6 +1234,17 @@ function inferWireTarget(circuit, P) {
   }
   if (hits.size > 1) throw new Error('ambiguous wire target; provide target identity');
   return hits.values().next().value || null;
+}
+
+function resolveWireTarget(circuit, point, identity = null) {
+  if (identity) return validateWireTarget(circuit, point, identity).targetNet;
+  for (const net of circuit.nets.values()) {
+    for (const terminal of net.terminals) {
+      const position = circuit.getComponent(terminal.comp).terminalWorld(terminal.term);
+      if (position.x === point.x && position.y === point.y) return net;
+    }
+  }
+  return inferWireTarget(circuit, point)?.targetNet || null;
 }
 
 /** Return whether two points are already connected by explicit net topology.
@@ -1804,7 +1806,7 @@ export class Circuit {
           // Place an arrow caption against the first authored segment. For an
           // orthogonal route this keeps the caption aligned with the shaft,
           // instead of hanging diagonally from the first corner. Preserve the
-          // historic quadrant placement for diagonal arrows.
+          // Preserve quadrant placement for diagonal arrows.
           const first = points?.[1] || b;
           const dx = Math.sign(first.x - a.x);
           const dy = Math.sign(first.y - a.y);
@@ -1896,10 +1898,7 @@ export class Circuit {
     const name = net.name;
     for (const pin of pins) {
       const label = this.labelOf(pin.refdes);
-      // Preserve an explicitly formatted owned pin label (for example
-      // `V_{OUT}`) while rebuilding a preview/load clone. Passing the net name
-      // itself here used to flatten that source to `VOUT` during every drag
-      // preview, which was visible only for the duration of the mouse hold.
+      // Preserve explicit formatting on an owned pin label during cloning.
       const display = normalizeComponentRefdes(name) === normalizeComponentRefdes(pin.refdes)
         ? componentLabelText(pin.refdes, label?._text || name)
         : name;
@@ -2296,7 +2295,7 @@ export class Circuit {
       };
       net.branches = null;
       net.route = null;
-      net.junctions = []; // stale junction points would steer _layoutFresh into the single-polyline branch and skip balancedPaths
+      net.junctions = []; // Fresh layout starts from terminal anchors only.
       if (!this._layoutFresh(net, anchors, env)) {
         // A refresh is allowed to fail, but it must never erase a route that
         // was already valid merely because the new layout is unroutable.
@@ -3671,10 +3670,8 @@ export class Circuit {
     const entries = involved.flatMap((n) => this._fixedPathEntries(n));
     const junctions = involved.flatMap((n) => n.junctions || []);
 
-    // A free endpoint landing on existing geometry is an intentional splice,
-    // not merely a crossing. Keep the old fixed path untouched and record the
-    // landing point as an explicit junction anchor. Terminal endpoints remain
-    // terminal anchors and do not need a solder marker.
+    // A free endpoint on existing geometry is a splice; record it as a
+    // junction while preserving the existing fixed path.
     const pathAt = (p, candidate) => candidate && this._explicitBranches(candidate)
       .some((path) => pointOnPath(p, path));
     for (const endpointInfo of [start, end]) {
@@ -3719,24 +3716,12 @@ export class Circuit {
     const srcPos = this.getComponent(term.comp).terminalWorld(term.term);
     const P = snapPoint(meet.x, meet.y);
 
-    // Terminal targets retain their historical priority. An explicitly
+    // Terminal targets have priority. An explicitly
     // selected wire target is otherwise authoritative and must be validated;
     // inferred interior targets reject ambiguous cross-net hits instead of
     // depending on Map iteration order.
     const identity = wireTargetIdentity(options);
-    let targetNet = null;
-    if (identity) {
-      targetNet = validateWireTarget(this, P, identity).targetNet;
-    } else {
-      for (const net of this.nets.values()) {
-        for (const t of net.terminals) {
-          const p = this.getComponent(t.comp).terminalWorld(t.term);
-          if (p.x === P.x && p.y === P.y) { targetNet = net; break; }
-        }
-        if (targetNet) break;
-      }
-      if (!targetNet) targetNet = inferWireTarget(this, P)?.targetNet || null;
-    }
+    const targetNet = resolveWireTarget(this, P, identity);
 
     const srcNet = this.netOfTerminal(term);
     const preserveExistingGeometry = [srcNet, targetNet].some((net) =>
@@ -3879,19 +3864,7 @@ export class Circuit {
     const P = snapPoint(meet.x, meet.y);
 
     const identity = wireTargetIdentity(options);
-    let targetNet = null;
-    if (identity) {
-      targetNet = validateWireTarget(this, P, identity).targetNet;
-    } else {
-      for (const net of this.nets.values()) {
-        for (const t of net.terminals) {
-          const p = this.getComponent(t.comp).terminalWorld(t.term);
-          if (p.x === P.x && p.y === P.y) { targetNet = net; break; }
-        }
-        if (targetNet) break;
-      }
-      if (!targetNet) targetNet = inferWireTarget(this, P)?.targetNet || null;
-    }
+    const targetNet = resolveWireTarget(this, P, identity);
 
     const originNet = netId ? this.nets.get(netId) : null;
     const preserveExistingGeometry = [originNet, targetNet].some((net) =>

@@ -2655,9 +2655,7 @@ test('a committed detour is preserved when the same endpoints are re-wired', () 
 });
 
 test('a wire run dragged onto a same-net wire merges on commit (no hidden overlap)', async () => {
-  // Editor flow: T-join net, then drag the stem's horizontal run down onto the
-  // bus line (the exact gesture that used to produce overlapped hidden wires),
-  // then commit exactly like canvasMouseUp: rerouteNet + _reduceNet.
+  // Move the stem's horizontal run onto the bus, then commit the edit path.
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });

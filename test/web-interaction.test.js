@@ -264,7 +264,7 @@ test('committed inserts repair coincident connectivity and analysis menus suppor
   assert.match(main, /for \(const net of nets\) circuit\.setNetAnalysis/);
   assert.match(main, /channelLengthModulation: 'ignore'/);
   assert.match(main, /channelLengthModulation: 'finite'/);
-  assert.match(main, /Clear output-resistance override/);
+  assert.match(main, /Clear r_o override/);
   assert.match(main, /gmroLarge: true/);
   assert.match(main, /ignoreBodyEffect: true/);
   assert.match(main, /resistance: 'infinite'/);

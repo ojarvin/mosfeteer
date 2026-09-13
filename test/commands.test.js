@@ -229,12 +229,8 @@ test('connect joins terminals into a net and names it', () => {
 });
 
 test('adding a terminal to an existing net draws a real wire to it', () => {
-  // Regression for the "phantom connected" bug: connecting R1.b and R2.a creates
-  // a 2-terminal wire; then connecting R1.b and R3.a used to add R3.a to the
-  // net's terminal list but leave `net.branches` carrying the old 2-terminal
-  // polyline. After save/reload, `fromJSON`'s repair loop normalised that
-  // branch back into `net.route`, dropping the new wire — `eval` still
-  // reported R3.a as connected (it's in the net) but no branch reached it.
+  // Adding a terminal to an existing net must add a drawn branch, not only a
+  // terminal reference.
   const c = fresh();
   runCommand(c, 'add resistor --at 0 0');    // R1: a=(0,0)   b=(160,0)
   runCommand(c, 'add resistor --at 200 0');  // R2: a=(200,0) b=(360,0)
@@ -250,8 +246,7 @@ test('adding a terminal to an existing net draws a real wire to it', () => {
   assert.equal(n1.terminals.length, 3, 'R3.a should be in the net');
   assert.ok(n1.length() >= 240, `net length should grow to cover R3.a's wire (got ${n1.length()})`);
 
-  // After a save/reload, the new terminal must still be reachable by a real
-  // wire — this is where the bug used to silently revert.
+  // Save/reload must preserve the branch to the new terminal.
   const reloaded = Circuit.fromJSON(c.toJSON());
   const nets = [...reloaded.nets.values()].filter((net) => net.terminals.length === 3);
   assert.equal(nets.length, 1, 'reloaded circuit must still have the merged 3-terminal net');

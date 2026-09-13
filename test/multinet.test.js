@@ -42,7 +42,7 @@ function assertNetClean(circuit, net, expectedDots) {
 
 function scenario() {
   const c = new Circuit();
-  // The centered-origin symbols preserve these historical world terminals.
+  // Centered-origin symbols use these world terminals.
   // R1.a(0,0) R1.b(160,0)   R2.a(400,0) R2.b(560,0)   R3.a(280,-200) R3.b(440,-200)
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
@@ -140,9 +140,8 @@ test('deleting a segment shortens the net and preserves the remaining branches',
 });
 
 test('loading stale overlapping branches splits them so dragging never loops or adds dots', () => {
-  // A hand-authored state whose bottom branch was not split at the junction
-  // (the historical bug). Loaded, it must be split so each side of the dot is
-  // its own segment, and dragging the far terminal stays clean.
+  // Loaded branches must split at the junction so each side of the dot is its
+  // own segment and dragging the far terminal stays clean.
   const c = Circuit.fromJSON({
     version: 1, grid: 40,
     components: [

@@ -1,4 +1,4 @@
-import { GRID, onGrid } from '../grid.js';
+import { GRID } from '../grid.js';
 
 /**
  * Symbol definition factory. Enforces the contract:

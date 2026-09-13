@@ -7,7 +7,7 @@ import { GRID, snap } from './grid.js';
  * to treat aligned segments on either side of a terminal or junction
  * independently. Dragging a segment moves its bounded run perpendicularly.
  * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
- * omitted metadata retains the historical terminal-endpoint behavior.
+ * omitted metadata uses terminal-endpoint behavior.
  *
  * Key behaviors:
  *  - The run may slide as far as an adjacent run; reaching it collapses the
@@ -103,9 +103,8 @@ export function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpo
         if (elbow) {
           path.splice(i === 0 ? 1 : i, 0, elbow);
         } else if (desired) {
-          // The one-elbow solution is the old junction itself. Detour one
-          // extra grid cell outward from the terminal so pin conformity stays
-          // intact without retaining the old junction coordinate.
+          // Detour one extra grid cell outward from the terminal to preserve
+          // pin conformity without retaining the junction coordinate.
           const sign = otherMeta.dir;
           const distance = same({ x: neighbor.x + sign.x * GRID, y: neighbor.y + sign.y * GRID }, oldPoint) ? 2 : 1;
           const pinLead = { x: neighbor.x + sign.x * GRID * distance, y: neighbor.y + sign.y * GRID * distance };
@@ -225,7 +224,7 @@ export function moveWireRun(pts, orient, line, target, endpointMeta = null) {
   }
 
   // A standalone bridge is bounded by two real junctions rather than pins.
-  // Legacy callers without run bounds retain the historical whole-bridge move.
+  // Without run bounds, move the whole bridge.
   if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
     for (const p of pts) {
       if (orient === 'h') p.y = t;

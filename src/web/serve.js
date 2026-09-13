@@ -10,7 +10,7 @@ import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'no
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDocument, documentKind, loadDocument, renderDocument } from '../core/document.js';
-import { runCommand, evaluate } from '../core/commands.js';
+import { runCommand } from '../core/commands.js';
 import { renderAscii } from '../core/ascii.js';
 import { svgString } from '../core/render.js';
 import { generateCircuit, routeCircuit } from '../core/generator.js';

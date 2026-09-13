@@ -706,12 +706,6 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const explanation = flags.explain ? routeExplanation(circuit, pos.slice(0, 2)) : null;
     const net = circuit.connect(...pos);
     if (flags.name && flags.name[0]) circuit.renameNet(net, flags.name[0]);
-    // circuit.connect now re-routes fresh internally when it adds any new
-    // terminal to an existing net (so the new terminal always gets a real
-    // drawn branch). The previous separate `routeNet(circuit, net)` here
-    // was a partial duplicate that only set `net.route` and left stale
-    // `net.branches` from the prior save — making the new terminal
-    // "connected by reference" with no wire to it after reload.
     const terms = net.terminals.map((t) => termInfo(circuit, t.comp, t.term));
     return result(`net ${net.id}${net.name ? ` "${net.name}"` : ''}: ${terms.join('  ')}; len=${net.length()}${explanation ? `; ${explanation.reason}` : ''}`, { netId: net.id, name: net.name, terminals: net.terminals.map((t) => ({ ...t })), length: net.length(), ...(explanation ? { explanation } : {}) }, true);
   }

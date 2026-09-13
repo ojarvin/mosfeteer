@@ -10,7 +10,7 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerName, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeInputImpedance, analyzeOutputImpedance, analyzeTransferFunction } from '../core/analysis/index.js';
@@ -19,7 +19,7 @@ import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, render
 import { snap, GRID } from '../core/grid.js';
 import { moveBlockArrowRun, routeBlockArrow } from '../core/block-router.js';
 import { applyMarkup } from '../core/model.js';
-import { segThroughInterior, smartRoute } from '../core/router.js';
+import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
@@ -285,7 +285,7 @@ let modelRevision = 0;
 // Drag previews run against a disposable document clone. Keeping the
 // committed instance here means a cancelled/no-op gesture never persists a
 // half-edited model or pollutes undo history.
-let previewTransaction = null; // { baseCircuit, startSnapshot, startWiresDirty }
+let previewTransaction = null; // { baseCircuit, startSnapshot }
 let previewRevision = 0;
 let sortedCompsCache = null;
 let visibleNetsCache = null;
@@ -443,9 +443,7 @@ function markModelChanged(wires = true) {
 }
 
 function commit(fn) {
-  history.push(JSON.stringify(circuit.toJSON()));
-  if (history.length > 200) history.shift();
-  future.length = 0;
+  recordHistoryEntry(snapshot());
   fn();
   markModelChanged();
 }
@@ -459,7 +457,6 @@ function beginPreviewTransaction(startSnapshot = snapshot()) {
   previewTransaction = {
     baseCircuit: circuit,
     startSnapshot,
-    startWiresDirty: wiresDirty,
   };
   circuit = loadDocument(JSON.parse(startSnapshot));
   previewRevision += 1;
@@ -491,10 +488,16 @@ function cancelPreviewTransaction() {
   return true;
 }
 
-function recordHistoryBefore(startSnapshot) {
+const HISTORY_LIMIT = 200;
+
+function rememberHistory(state, trim = true) {
+  history.push(state);
+  if (trim && history.length > HISTORY_LIMIT) history.shift();
+}
+
+function recordHistoryEntry(startSnapshot, trim = true) {
   if (!startSnapshot) return;
-  history.push(startSnapshot);
-  if (history.length > 200) history.shift();
+  rememberHistory(startSnapshot, trim);
   future.length = 0;
 }
 
@@ -894,10 +897,7 @@ async function syncActiveCircuitOnce() {
 
   if (saveInFlight || generation !== syncGeneration) return;
 
-  // A named local draft is the user's current editing session. On the first
-  // successful active response after boot, seed the seen value but do not
-  // replace that draft with a stale server-active circuit. Later active changes
-  // still follow the normal auto-load path.
+  // Seed the active revision without replacing the restored local draft.
   if (activeResponseSucceeded && restoredDraftName && currentCircuitName === restoredDraftName) {
     lastSeenActive = active;
     lastSeenRevision = activeRevision;
@@ -996,8 +996,7 @@ function applyJson(blob) {
   resetCheckState();
   circuit = loadDocument(JSON.parse(blob));
   markModelChanged(); // wire geometry may have changed under any wholesale load
-  // A wholesale replacement has no compatible editor selection.  Do not carry
-  // stale branch indices, labels, or net highlights across load/undo/redo.
+  // A wholesale replacement has no compatible editor selection.
   selected = null;
   multi.clear();
   selectedBlocks.clear();
@@ -1052,7 +1051,7 @@ function redo() {
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
-  history.push(snapshot());
+  rememberHistory(snapshot(), false);
   applyJson(future.pop());
   restoreToolState(toolState);
   render();
@@ -1411,6 +1410,14 @@ function styleDefaults(field) {
   return field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal';
 }
 
+function selectedBlockObjects() {
+  return [
+    ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
+    ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
+    ...selectedLabels(),
+  ];
+}
+
 function selectedWireTargetKeys() {
   const keys = new Set(selectedWires);
   if (selectedWire) keys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
@@ -1419,11 +1426,7 @@ function selectedWireTargetKeys() {
 
 function selectedStyleSource() {
   if (isBlockDiagram(circuit)) {
-    const objects = [
-      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
-      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
-      ...selectedLabels(),
-    ];
+    const objects = selectedBlockObjects();
     return objects.length === 1 ? { kind: 'object', style: { ...(objects[0].style || {}) } } : null;
   }
   const comps = selectedComps();
@@ -1446,11 +1449,7 @@ function selectedStyleSource() {
 
 function applyStyleToSelected(style) {
   if (isBlockDiagram(circuit)) {
-    const objects = [
-      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
-      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
-      ...selectedLabels(),
-    ];
+    const objects = selectedBlockObjects();
     if (!objects.length) { logLine('nothing selected for style paste'); return false; }
     commit(() => {
       for (const object of objects) {
@@ -1504,11 +1503,7 @@ function pasteStyle() {
 
 function applySelectedStyle(field, value) {
   if (isBlockDiagram(circuit)) {
-    const objects = [
-      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
-      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
-      ...selectedLabels(),
-    ];
+    const objects = selectedBlockObjects();
     if (!objects.length) return;
     const next = value || styleDefaults(field);
     commit(() => {
@@ -1549,11 +1544,7 @@ function updateStyleControls() {
   const width = document.getElementById('style-width');
   if (!line || !color || !width) return;
   if (isBlockDiagram(circuit)) {
-    const objects = [
-      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
-      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
-      ...selectedLabels(),
-    ];
+    const objects = selectedBlockObjects();
     line.disabled = color.disabled = width.disabled = !objects.length;
     if (!objects.length) {
       color.value = '#111'; line.value = 'solid'; width.value = 'normal'; color.style.backgroundColor = '#111';
@@ -1693,11 +1684,7 @@ function selectedComps() {
 
 function selectedDrawTargets() {
   if (isBlockDiagram(circuit)) {
-    const objects = [
-      ...[...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean),
-      ...[...selectedArrows].map((id) => circuit.arrows.get(id)).filter(Boolean),
-      ...selectedLabels(),
-    ];
+    const objects = selectedBlockObjects();
     return objects.length ? { groups: [{ objects, peers: [...circuit.blocks.values(), ...circuit.arrows.values(), ...circuit.labels.values()] }] } : null;
   }
   const groups = [];
@@ -1840,9 +1827,7 @@ function moveGhostActive() {
 function recordMoveGhostMutation() {
   if (!drag || !moveGhostActive()) return;
   if (!drag.committed) {
-    history.push(drag.startSnapshot || snapshot());
-    if (history.length > 200) history.shift();
-    future.length = 0;
+    recordHistoryEntry(drag.startSnapshot || snapshot());
     drag.committed = true;
   }
   drag.moved = true;
@@ -1977,9 +1962,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     : null;
   if (translation && (!delta || (delta.dx === 0 && delta.dy === 0))) return false;
   validateSelectedWires();
-  // A component-set move ghost owns the complete attached nets through
-  // `netsTouching(refs)`. Do not let a stale segment selection turn that
-  // complete set into a rejected partial-net transform.
+  // A component-set move ghost owns complete attached nets.
   const movingComponentSet = moveGhostActive() && selectedComps().length > 1;
   const keys = movingComponentSet ? new Set() : new Set(selectedWires);
   if (!movingComponentSet && selectedWire) keys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
@@ -2118,19 +2101,13 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     }
     circuit.syncJunctionSolders();
     circuit.invalidateRoutingCache();
-    if (recordHistory) {
-      history.push(before);
-      if (history.length > 200) history.shift();
-      future.length = 0;
-    }
+    if (recordHistory) recordHistoryEntry(before);
     markModelChanged();
     return true;
   } catch (err) {
     const keepMoveGhost = moveGhostActive() && !recordHistory;
     if (keepMoveGhost) {
-      // A failed preview transform must restore only the circuit payload.
-      // Clearing the modal drag here strands the move ghost and can leave the
-      // next pointer event operating on stale component/net references.
+      // Restore only the circuit payload so the move ghost can continue.
       circuit = Circuit.fromJSON(JSON.parse(before));
       restoreSelection();
       rebaseMoveGhost();
@@ -2187,9 +2164,7 @@ function deleteSelection() {
       if (circuit.nets.get(netId)) circuit.deleteWireSegments(netId, segs);
     }
     for (const lab of labels) circuit.removeLabel(lab.id);
-    // Removing a whole net above can synchronize away an auto-generated
-    // junction solder that was also captured in `comps`. Deletion is allowed
-    // to be idempotent: do not pass that stale component to removeComponent.
+    // Net deletion may also remove captured junction solder components.
     for (const c of comps) {
       if (circuit.components.has(c.refdes)) circuit.removeComponent(c.refdes);
     }
@@ -2305,30 +2280,6 @@ function cycleLabelSelection(dir, fromId = selectedLabel()?.id) {
   const a = next.anchorWorld();
   cursor = { x: a.x, y: a.y };
   render();
-}
-
-function placeAtCursor(type) {
-  try {
-    const comp = circuit.addComponent(type, { x: cursor.x, y: cursor.y });
-    setSelection([comp.refdes]);
-    logLine(`placed ${comp.refdes} (${type}) @ (${cursor.x},${cursor.y})`);
-  } catch (err) {
-    logLine(`Error placing ${type}: ${err.message}`);
-  }
-}
-
-/** Place a dedicated label object at the cursor (anchor = cursor), then open the inline editor. */
-function placeLabelAtCursor(text = 'label') {
-  try {
-    const label = circuit.addLabel({ text, x: cursor.x, y: cursor.y, align: 'center' });
-    setSelection([]);
-    setLabelSelection([label.id]);
-    logLine(`placed label "${label.text}" @ (${label.anchor.x},${label.anchor.y})`);
-    render();
-    inlineEditLabel(label);
-  } catch (err) {
-    logLine(`Error placing label: ${err.message}`);
-  }
 }
 
 /** Return the drawable wire candidates under a label-placement click.  A
@@ -3544,9 +3495,7 @@ function commitFixedEndpointDraft(source, target, points, mode) {
       }
     }
     const result = circuit.attachWireEndpoint(source.netId, source.pathIndex, endpointIndex, resolvedTarget);
-    history.push(before);
-    if (history.length > 200) history.shift();
-    future.length = 0;
+    recordHistoryEntry(before);
     markModelChanged();
     logLine(`fixed endpoint attached to ${typeof target === 'string' ? target : `net ${target.netId}`}`);
     return result;
@@ -3582,7 +3531,7 @@ function floatingWireDragAt(hit, startWorld, startClient, ev, moveKeys) {
     const count = new Set(selected.map((k) => keyToWire(k).segment)).size;
     if (count !== live.length - 1) {
       cancelPreviewTransaction();
-      return false; // partial: use safe old behavior
+      return false; // Partial selection uses the regular drag path.
     }
     if (!fragments.some((f) => f.net === net && f.branch === w.branch)) {
       fragments.push({ net, branch: w.branch, orig: live.map((p) => ({ ...p })), fixed: net.routingMode === 'fixed' });
@@ -3675,9 +3624,7 @@ function managedEndpointMeta(net, point) {
   if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) return { type: 'junction', point: { ...point } };
   return { type: 'free', point: { ...point } };
 }
-/** Restore a collapsed interior run so an earlier zero-clearance edit remains
- * reversible. The hint is transient editor state; ordinary authored straight
- * pin-to-pin wires retain their historical immovability. */
+/** Restore a collapsed interior run from transient editor state. */
 function editableManagedPath(net, branch, path) {
   const hint = net?._wireRunHint;
   if (!hint || hint.branch !== branch || !path || path.length !== 2 ||
@@ -3699,9 +3646,7 @@ function managedWireBreaks(net) {
   return new Set((net?.anchorWorlds?.() || []).map((p) => `${p.x},${p.y}`));
 }
 
-/** Propagate a moved managed junction endpoint to every branch that shares it.
- * The edited branch has already moved its endpoint, so only points still at
- * the old coordinate need updating. */
+/** Propagate a moved managed junction endpoint to incident branches. */
 function moveManagedJunction(net, oldPoint, newPoint) {
   if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return;
   const paths = net.branches?.length ? net.branches : net.route ? [net.route] : [];
@@ -3751,55 +3696,10 @@ function restoreManagedNetSnapshots(snapshots) {
   }
 }
 
-/** Keep the legacy single-route view in lockstep with explicit managed
- * branches. A bridge may leave reduction as a no-op, so relying on
- * _reduceNet() to rewrite `route` leaves debug/ASCII consumers stale. */
+/** Keep the single-route view in sync with explicit managed branches. */
 function syncManagedRoute(net) {
   if (net.routingMode !== 'managed' || !net.branches) return;
   net.route = net.branches[0] ? net.branches[0].map((p) => ({ ...p })) : null;
-}
-
-/** Validate managed paths after a literal bridge edit. This intentionally
- * checks all branches of the affected net, not just the dragged bridge: moving
- * a junction can make an unselected incident leg diagonal or drill a body. */
-function managedGeometryErrors(net) {
-  const errors = [...net.wiringErrors()];
-  const env = circuit._netEnv(net.id);
-  const terminalAt = (point) => net.terminals.find((t) => {
-    const c = circuit.components.get(t.comp);
-    const p = c?.terminalWorld(t.term);
-    return p && p.x === point.x && p.y === point.y;
-  });
-  const pinStep = (terminal, point) => {
-    const c = circuit.components.get(terminal.comp);
-    const def = c?.terminalDefs.find((t) => t.name === terminal.term);
-    return c && def ? circuit._pinDir(c, def, point.x, point.y) : null;
-  };
-  const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
-  for (const [bi, path] of net.paths().entries()) {
-    if (path.length < 2) continue;
-    const first = terminalAt(path[0]);
-    const last = terminalAt(path[path.length - 1]);
-    if (first) {
-      const dir = pinStep(first, path[0]);
-      const actual = step(path[0], path[1]);
-      if (dir && (actual.x !== dir.x || actual.y !== dir.y)) errors.push(`branch ${bi} leaves ${first.comp}.${first.term} against its pin direction`);
-    }
-    if (last) {
-      const dir = pinStep(last, path[path.length - 1]);
-      const actual = step(path[path.length - 1], path[path.length - 2]);
-      if (dir && (actual.x !== dir.x || actual.y !== dir.y)) errors.push(`branch ${bi} enters ${last.comp}.${last.term} against its pin direction`);
-    }
-    for (let i = 1; i < path.length; i++) {
-      const a = path[i - 1];
-      const b = path[i];
-      for (const rect of env.rects) if (segThroughInterior(a, b, rect)) {
-        errors.push(`branch ${bi} crosses component body`);
-        break;
-      }
-    }
-  }
-  return errors;
 }
 
 /** Connect two terminals, route only their new connection branch, and commit
@@ -3830,8 +3730,7 @@ function connectTwo(src, dst, points) {
   const meet = circuit.components.get(dst.refdes).terminalWorld(dst.term);
   const net = circuit.wireTo(`${src.refdes}.${src.term}`, meet, points, wireRouteOptions());
   markModelChanged(); // wireTo grew / spliced a net
-  history.push(before);
-  future.length = 0;
+  recordHistoryEntry(before, false);
   // Stay in wiring mode so the next click can start another connection.
   wire = newWireDraft();
   setSelection([dst.refdes]);
@@ -3889,9 +3788,7 @@ function commitDirectWire(dst) {
       `${dst.refdes}.${dst.term}`,
       directWire.points,
     );
-    history.push(before);
-    if (history.length > 200) history.shift();
-    future.length = 0;
+    recordHistoryEntry(before);
     markModelChanged();
     directWire = { source: null, points: [] };
     setSelection([dst.refdes]);
@@ -4105,8 +4002,7 @@ function commitWireAtCursor() {
       ? circuit.wireTo(`${wire.source.refdes}.${wire.source.term}`, path[path.length - 1], points, wireRouteOptions())
       : circuit.wirePointTo(wire.source, path[path.length - 1], points, wire.source.netId, wireRouteOptions());
     markModelChanged();
-    history.push(before);
-    future.length = 0;
+    recordHistoryEntry(before, false);
     wire = newWireDraft();
     if (net) selectedNets = new Set([net.id]);
     logLine(`wire ${net.id}: open-ended route; len=${net.length()}`);
@@ -4139,8 +4035,7 @@ function connectWireToTerminal(dst) {
   const before = snapshot();
   const net = circuit.wirePointTo({ x: src.x, y: src.y }, end, points, src.netId, wireRouteOptions());
   markModelChanged(); // a draft spliced into the target net
-  history.push(before);
-  future.length = 0;
+  recordHistoryEntry(before, false);
   wire = newWireDraft();
   selectedNets = new Set([net.id]);
   logLine(`wired into net ${net.id} at ${dst.refdes}.${dst.term}; len=${net.length()}`);
@@ -4203,8 +4098,7 @@ function joinWireToNet(wireHit, selectedTarget = null) {
     ? circuit.wireTo(`${src.refdes}.${src.term}`, P, points, wireRouteOptions(targetIdentity))
     : circuit.wirePointTo(src, P, points, src.netId, wireRouteOptions(targetIdentity));
   markModelChanged(); // a draft joined into an existing net
-  history.push(before);
-  future.length = 0;
+  recordHistoryEntry(before, false);
   wire = newWireDraft();
   selectedNets = new Set([net.id]);
   logLine(`joined into net ${net.id} at (${P.x},${P.y})`);
@@ -5230,7 +5124,7 @@ function commitModalMove() {
   if (!drag?.modal) return false;
   if (drag.mode === 'labelmove') {
     if (drag.moved && previewTransaction && snapshot() !== drag.startSnapshot) {
-      recordHistoryBefore(drag.startSnapshot);
+      recordHistoryEntry(drag.startSnapshot);
       commitPreviewTransaction();
     } else if (previewTransaction) {
       cancelPreviewTransaction();
@@ -5267,7 +5161,7 @@ function commitModalMove() {
   if (drag.moved) {
     finishMoveMutation(drag);
     if (previewTransaction) {
-      if (snapshot() !== drag.startSnapshot) recordHistoryBefore(drag.startSnapshot);
+      if (snapshot() !== drag.startSnapshot) recordHistoryEntry(drag.startSnapshot);
       commitPreviewTransaction();
     }
   } else {
@@ -5432,9 +5326,7 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
         const runs = [...(blockDrag.runs?.get(arrowId) || [blockDrag.run])].sort((a, b) => b.lo - a.lo);
         for (const run of runs) points = moveBlockArrowRun(points, run, delta);
         arrow.points = points;
-        // Project connector labels before validation. During a segment drag the
-        // path moves first; validating with the old label anchor spuriously
-        // rejects an otherwise valid drag.
+        // Sync connector labels before validating the moved path.
         circuit._syncConnectorLabels(arrow);
       }
       circuit.validate();
@@ -5772,9 +5664,7 @@ function canvasMouseMove(ev) {
           drag.labelId = selLabel;
           logLine('duplicated selection — dragging the copy');
         } else if (!drag.modal) {
-          history.push(snapshot());
-          if (history.length > 200) history.shift();
-          future.length = 0;
+          recordHistoryEntry(snapshot());
         }
         drag.committed = true;
       }
@@ -5796,10 +5686,7 @@ function canvasMouseMove(ev) {
       const moved = new Map();
       if (!drag.committed) {
         if (drag.duplicate) {
-          // Paste at the original selection anchor first. The paste operation
-          // records the pre-duplicate snapshot; the rest of this drag moves
-          // the fresh selection, keeping the whole gesture undoable as one
-          // operation.
+          // Paste at the selection anchor so the whole gesture stays atomic.
           copySelection();
           const anchor = clipboard?.anchor;
           if (anchor) {
@@ -5907,9 +5794,7 @@ function canvasMouseUp(ev) {
   const w = clientToWorld(ev.clientX, ev.clientY);
   if (drag.mode === 'blockresize') {
     if (drag.moved && !drag.invalid && snapshot() !== drag.startSnapshot) {
-      history.push(drag.startSnapshot);
-      if (history.length > 200) history.shift();
-      future.length = 0;
+      recordHistoryEntry(drag.startSnapshot);
       markModelChanged();
       logLine(`resized ${drag.refdes}`);
     } else if (drag.invalid || !drag.moved) {
@@ -6027,7 +5912,7 @@ function canvasMouseUp(ev) {
       circuit.syncJunctionSolders();
       if (snapshot() !== drag.startSnapshot) {
         markModelChanged(); // committed wire drag changed net geometry
-        recordHistoryBefore(drag.startSnapshot);
+        recordHistoryEntry(drag.startSnapshot);
         commitPreviewTransaction();
       } else {
         cancelPreviewTransaction();
@@ -6099,9 +5984,7 @@ function canvasMouseUp(ev) {
       circuit.syncJunctionSolders();
       if (snapshot() !== drag.startSnapshot) {
         markModelChanged();
-        history.push(drag.startSnapshot);
-        if (history.length > 200) history.shift();
-        future.length = 0;
+        recordHistoryEntry(drag.startSnapshot);
         commitPreviewTransaction();
       } else {
         cancelPreviewTransaction();
@@ -6127,9 +6010,7 @@ function canvasMouseUp(ev) {
     } else {
       if (snapshot() !== drag.startSnapshot) {
         circuit.syncJunctionSolders();
-        history.push(drag.startSnapshot);
-        if (history.length > 200) history.shift();
-        future.length = 0;
+        recordHistoryEntry(drag.startSnapshot);
         markModelChanged();
         logLine(drag.junction >= 0 ? 'moved fixed junction dot' : 'moved fixed wire geometry');
         commitPreviewTransaction();
@@ -6169,9 +6050,7 @@ function canvasMouseUp(ev) {
         }
       }
       if (snapshot() !== drag.startSnapshot) {
-        history.push(drag.startSnapshot);
-        if (history.length > 200) history.shift();
-        future.length = 0;
+        recordHistoryEntry(drag.startSnapshot);
         markModelChanged();
         logLine(target ? 'attached fixed endpoint' : 'moved fixed endpoint');
         commitPreviewTransaction();
@@ -6188,7 +6067,7 @@ function canvasMouseUp(ev) {
       drag.modal = false;
     }
     if (drag.moved && previewTransaction && snapshot() !== drag.startSnapshot) {
-      recordHistoryBefore(drag.startSnapshot);
+      recordHistoryEntry(drag.startSnapshot);
       commitPreviewTransaction();
     } else if (previewTransaction) {
       cancelPreviewTransaction();
@@ -6206,9 +6085,7 @@ function canvasMouseUp(ev) {
     }
   } else if (drag.mode === 'annotationtextmove') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
-      history.push(drag.startSnapshot);
-      if (history.length > 200) history.shift();
-      future.length = 0;
+      recordHistoryEntry(drag.startSnapshot);
     }
   } else if (drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (drag.moved) {
@@ -6221,9 +6098,7 @@ function canvasMouseUp(ev) {
     }
   } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
-      history.push(drag.startSnapshot);
-      if (history.length > 200) history.shift();
-      future.length = 0;
+      recordHistoryEntry(drag.startSnapshot);
     }
   } else if (drag.mode === 'wirepick') {
     if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit, drag.fixedEndpoint, drag.fixedTarget);
@@ -6256,7 +6131,7 @@ function canvasMouseUp(ev) {
     if (drag.moved) {
       finishMoveMutation(drag);
       if (previewTransaction) {
-        if (snapshot() !== drag.startSnapshot) recordHistoryBefore(drag.startSnapshot);
+        if (snapshot() !== drag.startSnapshot) recordHistoryEntry(drag.startSnapshot);
         commitPreviewTransaction();
       }
     } else {
@@ -7235,189 +7110,6 @@ function applyNetAnalysis(target, attrs) {
   logLine(`applied analysis attributes to ${nets.length} net${nets.length === 1 ? '' : 's'}`, 'status');
 }
 
-function openAnalysisAttributeMenu(target, x, y) {
-  // Components and nets use the same context menu regardless of whether they
-  // were opened from the canvas or their side-panel row.
-  if (target?.kind === 'component' || target?.kind === 'net') {
-    openComponentContextMenu(target, x, y);
-    return;
-  }
-  if (!componentContextMenuEl || !target) return;
-  closeComponentContextMenu();
-  componentContextTarget = null;
-  const menu = componentContextMenuEl;
-  menu.replaceChildren();
-  menu.classList.add('analysis-attribute-menu', 'opens-left');
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 180))}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  const scope = target.kind === 'component'
-    ? analysisComponentTargets(target.value)
-    : analysisNetTargets(target.value);
-  const scopeSuffix = scope.length > 1 ? ` (${scope.length} selected)` : '';
-  heading.textContent = target.kind === 'component'
-    ? `${target.value.refdes} small-signal attributes${scopeSuffix}`
-    : `${target.value.name || target.value.id} analysis attributes${scopeSuffix}`;
-  menu.appendChild(heading);
-  const addSubmenu = (text, entries) => {
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.textContent = text;
-    trigger.setAttribute('aria-haspopup', 'true');
-    trigger.setAttribute('aria-expanded', 'false');
-    const arrow = document.createElement('span');
-    arrow.textContent = '›';
-    arrow.setAttribute('aria-hidden', 'true');
-    trigger.appendChild(arrow);
-    const submenu = document.createElement('div');
-    submenu.className = 'context-submenu';
-    submenu.setAttribute('role', 'menu');
-    submenu.setAttribute('aria-label', text);
-    for (const entry of entries) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.textContent = entry.label;
-      item.setAttribute('role', 'menuitem');
-      item.disabled = !!entry.disabled;
-      item.addEventListener('click', () => {
-        if (entry.disabled) return;
-        entry.action();
-        closeComponentContextMenu();
-        render();
-      });
-      submenu.appendChild(item);
-    }
-    const open = () => {
-      submenu.classList.add('open');
-      componentContextSubmenu = submenu;
-      trigger.setAttribute('aria-expanded', 'true');
-    };
-    trigger.addEventListener('mouseenter', open);
-    trigger.addEventListener('focus', open);
-    trigger.addEventListener('click', open);
-    trigger.addEventListener('keydown', (ev) => {
-      if (ev.key === 'ArrowLeft') {
-        ev.preventDefault();
-        closeComponentContextMenu();
-      } else if (ev.key === 'ArrowRight' || ev.key === 'Enter' || ev.key === ' ') {
-        ev.preventDefault();
-        open();
-        submenu.querySelector('button:not(:disabled)')?.focus();
-      }
-    });
-    menu.append(trigger, submenu);
-  };
-  if (target.kind === 'component') {
-    const component = target.value;
-    const transistor = SMALL_SIGNAL_TRANSISTOR_TYPES.has(component.type);
-    const resistor = SMALL_SIGNAL_RESISTOR_TYPES.has(component.type);
-    if (transistor) {
-      addSubmenu('Small-signal attributes', [
-        { label: 'Triode device (r_ds resistor)', action: () => applyComponentAnalysis(component, { model: 'triode' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)) },
-        {
-          label: 'Clear device model',
-          action: () => applyComponentAnalysis(component, { model: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-          disabled: !analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)).some((candidate) => candidate.analysis?.model),
-        },
-        {
-          label: 'Ignore channel-length modulation (r_o → ∞)',
-          action: () => applyComponentAnalysis(component, { channelLengthModulation: 'ignore' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-        },
-        {
-          label: 'Retain finite r_o',
-          action: () => applyComponentAnalysis(component, { channelLengthModulation: 'finite' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-        },
-        {
-          label: 'Clear output-resistance override',
-          action: () => applyComponentAnalysis(component, { channelLengthModulation: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-          disabled: !analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type))
-            .some((candidate) => candidate.analysis?.channelLengthModulation),
-        },
-        {
-          label: 'Assume g_m r_o ≫ 1',
-          action: () => applyComponentAnalysis(component, { gmroLarge: true }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-        },
-        {
-          label: 'Retain finite g_m r_o',
-          action: () => applyComponentAnalysis(component, { gmroLarge: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-        },
-        {
-          label: 'Clear g_m r_o override',
-          action: () => applyComponentAnalysis(component, { gmroLarge: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-          disabled: !analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type))
-            .some((candidate) => candidate.analysis?.gmroLarge !== null && candidate.analysis?.gmroLarge !== undefined),
-        },
-        {
-          label: 'Ignore body effect (V_BS = 0)',
-          action: () => applyComponentAnalysis(component, { ignoreBodyEffect: true }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-        },
-        {
-          label: 'Retain body effect',
-          action: () => applyComponentAnalysis(component, { ignoreBodyEffect: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-        },
-        {
-          label: 'Clear body-effect override',
-          action: () => applyComponentAnalysis(component, { ignoreBodyEffect: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)),
-          disabled: !analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type))
-            .some((candidate) => candidate.analysis?.ignoreBodyEffect !== null && candidate.analysis?.ignoreBodyEffect !== undefined),
-        },
-      ]);
-    }
-    if (resistor) {
-      const resistorTargets = (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type);
-      addSubmenu('Small-signal attributes', [
-        {
-          label: 'Treat as R = ∞ (large relative to parallel paths)',
-          action: () => applyComponentAnalysis(component, { resistance: 'infinite' }, resistorTargets),
-        },
-        {
-          label: 'Retain finite R',
-          action: () => applyComponentAnalysis(component, { resistance: 'finite' }, resistorTargets),
-        },
-        {
-          label: 'Clear resistance override',
-          action: () => applyComponentAnalysis(component, { resistance: null }, resistorTargets),
-          disabled: !analysisComponentTargets(component, resistorTargets)
-            .some((candidate) => candidate.analysis?.resistance !== null && candidate.analysis?.resistance !== undefined),
-        },
-      ]);
-    }
-    const port = SMALL_SIGNAL_PORT_TYPES.has(component.type);
-    if (port) {
-      addSubmenu('Port analysis role', [
-        { label: 'DC bias / AC ground', action: () => applyComponentAnalysis(component, { role: 'dc-bias' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)) },
-        { label: 'Input', action: () => applyComponentAnalysis(component, { role: 'input' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)) },
-        { label: 'Output', action: () => applyComponentAnalysis(component, { role: 'output' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)) },
-        {
-          label: 'Clear port analysis role',
-          action: () => applyComponentAnalysis(component, { role: null }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)),
-          disabled: !analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)).some((candidate) => candidate.analysis?.role),
-        },
-      ]);
-    }
-    if (!transistor && !resistor && !port) {
-      const note = document.createElement('div');
-      note.className = 'context-menu-note';
-      note.textContent = 'No device-specific small-signal attributes.';
-      menu.appendChild(note);
-    }
-  } else {
-    const net = target.value;
-    addSubmenu('Net analysis role', [
-      { label: 'DC bias / AC ground', action: () => applyNetAnalysis(net, { role: 'dc-bias', acGround: true }) },
-      { label: 'Input', action: () => applyNetAnalysis(net, { role: 'input', acGround: false }) },
-      { label: 'Output', action: () => applyNetAnalysis(net, { role: 'output', acGround: false }) },
-      {
-        label: 'Clear net analysis role',
-        action: () => applyNetAnalysis(net, { role: null, acGround: false }),
-        disabled: !analysisNetTargets(net).some((candidate) => candidate.analysis?.role || candidate.analysis?.acGround),
-      },
-    ]);
-  }
-  menu.querySelector('button:not(:disabled)')?.focus();
-}
 
 analysisCancel?.addEventListener('click', () => analysisDialog?.close());
 let analysisDialogPress = null;
@@ -7752,9 +7444,7 @@ window.addEventListener('mouseup', canvasMouseUp);
 // never enter the electrical picker/drag state above.
 function recordBlockHistory(before) {
   if (before === snapshot()) return;
-  history.push(before);
-  if (history.length > 200) history.shift();
-  future.length = 0;
+  recordHistoryEntry(before);
 }
 
 function blockSelectionExists() {
@@ -8333,9 +8023,7 @@ function placeBlockNetLabelAt(world) {
     const label = circuit.addNetLabel(target.arrow.id, { anchor: target.point, text: 'label' });
     setSelection([]);
     setLabelSelection([label.id]);
-    history.push(before);
-    if (history.length > 200) history.shift();
-    future.length = 0;
+    recordHistoryEntry(before);
     markModelChanged(false);
     labelMode = 'net';
     logLine(`placed net label on ${target.arrow.id} @ (${label.anchor.x},${label.anchor.y})`);
@@ -8516,9 +8204,7 @@ function finishBlockConnector(target) {
     const arrow = points.length
       ? circuit.addArrow({ from: source, to: { block: target.block, terminal: target.terminal }, routingMode: 'fixed', points: orthogonalBlockRoute(circuit.terminalPoint(source), { x: target.x, y: target.y }, points) })
       : circuit.addArrow({ from: source, to: { block: target.block, terminal: target.terminal } });
-    history.push(before);
-    if (history.length > 200) history.shift();
-    future.length = 0;
+    recordHistoryEntry(before);
     selectedArrows = new Set([arrow.id]);
     selectedBlocks.clear();
     blockConnector = { source: null, points: [] };
@@ -9269,9 +8955,7 @@ function inlineEditLabel(label, options = {}) {
       if (applyText && v) {
         try {
           renameLabelThroughModel(label, v);
-          history.push(initialSnapshot || snapshot());
-          if (history.length > 200) history.shift();
-          future.length = 0;
+          recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
           logLine(`net label edit cancelled: ${err.message}`, 'error');
           restoreProvisionalLabel(label, initialName);
@@ -9285,9 +8969,7 @@ function inlineEditLabel(label, options = {}) {
         try {
           label.setText(v);
           if (!v) circuit.removeLabel(label.id);
-          history.push(initialSnapshot || snapshot());
-          if (history.length > 200) history.shift();
-          future.length = 0;
+          recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
           logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
           circuit.removeLabel(label.id);
@@ -9300,9 +8982,7 @@ function inlineEditLabel(label, options = {}) {
       if (applyText && v) {
         try {
           if (v !== label.text) renameLabelThroughModel(label, v);
-          history.push(initialSnapshot || snapshot());
-          if (history.length > 200) history.shift();
-          future.length = 0;
+          recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
           logLine(`component label edit cancelled: ${err.message}`, 'error');
           circuit.removeLabel(label.id);
@@ -10360,10 +10040,6 @@ function keymapText() {
   return editorKeymapText(isBlockDiagram(circuit) ? 'block' : 'schematic');
 }
 
-function logKeymap() {
-  logLine(keymapText());
-}
-
 let helpText = '';
 
 function renderHelpSearch() {
@@ -10639,9 +10315,7 @@ function commitCopyGhost() {
   circuit.reconnectCoincidentNets();
   circuit.ensureUniqueTerminals(ghost.refs);
   circuit.syncJunctionSolders();
-  history.push(ghost.beforeSnapshot);
-  if (history.length > 200) history.shift();
-  future.length = 0;
+  recordHistoryEntry(ghost.beforeSnapshot);
   const anchorShift = ghost.anchorShift;
   drag = null;
   copyPending = false;
@@ -10776,9 +10450,7 @@ function runLine(line) {
 
   if (result && result.mutated) {
     if (trimmed.split(/\s+/)[0].toLowerCase() === 'clear') resetCheckState();
-    history.push(before);
-    if (history.length > 200) history.shift();
-    future.length = 0;
+    recordHistoryEntry(before);
     markModelChanged(); // commands can re-route / splice nets or mutate block geometry
     if (isBlockDiagram(circuit)) {
       selectedBlocks = new Set([...selectedBlocks].filter((id) => circuit.blocks.has(id)));

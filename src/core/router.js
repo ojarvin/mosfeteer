@@ -533,9 +533,7 @@ export function steinerBranches(terminals, env = { rects: [], pins: new Map(), w
   const cancelled = () => env?.signal?.aborted || env?.cancelled?.() === true;
   const tree = steinerTree(unique, env);
   if (!tree) {
-    // Cancellation abandons exact work immediately. A linear chain keeps the
-    // historical safe fallback connected without launching every pairwise
-    // shortest-path search again.
+    // Cancellation skips the pairwise fallback and keeps a connected chain.
     if (cancelled()) {
       const paths = [];
       for (let i = 1; i < k; i++) {
@@ -653,7 +651,7 @@ export function steinerRoute(terminals, env) {
 
 /**
  * Renderable branch paths for a multi-terminal net — the exact Steiner minimum
- * tree honoring the routing environment. Retained under the historic name.
+ * tree honoring the routing environment. Kept as a compatibility wrapper.
  */
 export function balancedPaths(points, env) {
   return steinerBranches(points, env);

@@ -2397,11 +2397,8 @@ export function analyzeTransferFunction(circuit, outputName, options = {}) {
   const exactNortonGain = exactGm?.ok && exactOutputImpedance?.ok && exactOutputImpedance.expression
     ? simplifySx(sxMul(exactGm.expression, exactOutputImpedance.expression))
     : null;
-  // Vout/Vin is the authoritative transfer definition.  The Norton product
-  // is a readability shortcut, but it can become a spurious zero when the
-  // output-short test leaves a high-impedance feedback node floating (the
-  // idealized FVF case is the canonical example).  Never let that shortcut
-  // replace a non-zero direct nodal result.
+  // Vout/Vin is authoritative; the Norton shortcut can lose a floating
+  // high-impedance feedback node contribution.
   // Prefer the direct Vout/Vin result whenever it is already compact.  The
   // Norton product is only a display reduction for genuinely expanded
   // multi-node solutions; it must not replace a readable source-follower
@@ -3043,7 +3040,7 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
     referenceIds,
     inputId: zeroedInput?.id || null,
   }, systematicOptions);
-  const withSystematic = (report) => {
+  const withSystematic = (report, includeExtraFields = true) => {
     report.smallSignalModel = systematicModel;
     report.smallSignalNetlist = systematic.netlist;
     report.nodeEquations = systematic.equations || [];
@@ -3053,9 +3050,9 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
     report.systematicEquation = null;
     report.systematicRawEquation = systematic.ok ? systematic.equation : null;
     report.systematicExactEquation = systematic.ok ? (systematic.exactEquation || systematic.equation) : null;
-    report.systematicExactExpression = systematic.ok ? (systematic.exactExpression || null) : null;
+    if (includeExtraFields) report.systematicExactExpression = systematic.ok ? (systematic.exactExpression || null) : null;
     report.systematicError = systematic.ok ? null : systematic.error;
-    if (zeroedInput) {
+    if (includeExtraFields && zeroedInput) {
       report.input = { netId: zeroedInput.id, name: netLabel(zeroedInput), zeroed: true, inferred: inputWasInferred };
       report.reference = {
         ...(report.reference || {}),
@@ -3082,6 +3079,11 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
     report.approximations = [...new Set([...approximations, ...systematicModel.approximations])];
     report.exactEquation = systematic.exactEquation || systematic.equation;
     return withSystematic(report);
+  };
+  const unsupportedOutputReport = (report, reportApproximations = approximations, generic = false) => {
+    report.assumptions = assumptions;
+    report.approximations = reportApproximations;
+    return generic ? genericOutputReport(report) : withSystematic(report, false);
   };
 
   // Independent voltage sources alter connectivity by becoming shorts. The
@@ -3396,56 +3398,20 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
     const report = unsupported(target, reference,
       `${unsupportedPathDevice.refdes} (${unsupportedPathDevice.type}) touches the analyzed path and has no symbolic small-signal model yet`,
       [...dependencies, unsupportedPathDevice.refdes]);
-    report.assumptions = assumptions;
-    report.approximations = approximations;
-    report.smallSignalModel = systematicModel;
-    report.smallSignalNetlist = systematic.netlist;
-    report.nodeEquations = systematic.equations || [];
-    report.equationCount = systematic.equationCount || report.nodeEquations.length;
-    report.nodeUnknowns = systematic.unknowns || [];
-    report.unknownCount = systematic.unknownCount || report.nodeUnknowns.length;
-    report.systematicEquation = null;
-    report.systematicRawEquation = systematic.ok ? systematic.equation : null;
-    report.systematicExactEquation = systematic.ok ? (systematic.exactEquation || systematic.equation) : null;
-    report.systematicError = systematic.ok ? null : systematic.error;
-    return report;
+    return unsupportedOutputReport(report);
   }
   if (!edges.length) {
     const report = unsupported(target, reference, 'no supported passive or small-signal MOS path connects the requested nets', dependencies);
-    report.assumptions = assumptions;
-    report.approximations = approximations.length
+    return unsupportedOutputReport(report, approximations.length
       ? approximations
-      : ['No numerical values are evaluated; this is a symbolic topology result only.'];
-    report.smallSignalModel = systematicModel;
-    report.smallSignalNetlist = systematic.netlist;
-    report.nodeEquations = systematic.equations || [];
-    report.equationCount = systematic.equationCount || report.nodeEquations.length;
-    report.nodeUnknowns = systematic.unknowns || [];
-    report.unknownCount = systematic.unknownCount || report.nodeUnknowns.length;
-    report.systematicEquation = null;
-    report.systematicRawEquation = systematic.ok ? systematic.equation : null;
-    report.systematicExactEquation = systematic.ok ? (systematic.exactEquation || systematic.equation) : null;
-    report.systematicError = systematic.ok ? null : systematic.error;
-    return genericOutputReport(report);
+      : ['No numerical values are evaluated; this is a symbolic topology result only.'], true);
   }
   const relevantEdges = connectedEdges(edges, target.id);
   const reduced = reduceNetwork(relevantEdges, target.id, referenceNode);
   if (!reduced.ok) {
     const unresolved = [...new Set(relevantEdges.flatMap((edge) => edge.sources || []))];
     const report = unsupported(target, reference, 'topology is outside the currently supported series/parallel symbolic reduction', unresolved);
-    report.assumptions = assumptions;
-    report.approximations = approximations.length ? approximations : report.approximations;
-    report.smallSignalModel = systematicModel;
-    report.smallSignalNetlist = systematic.netlist;
-    report.nodeEquations = systematic.equations || [];
-    report.equationCount = systematic.equationCount || report.nodeEquations.length;
-    report.nodeUnknowns = systematic.unknowns || [];
-    report.unknownCount = systematic.unknownCount || report.nodeUnknowns.length;
-    report.systematicEquation = null;
-    report.systematicRawEquation = systematic.ok ? systematic.equation : null;
-    report.systematicExactEquation = systematic.ok ? (systematic.exactEquation || systematic.equation) : null;
-    report.systematicError = systematic.ok ? null : systematic.error;
-    return genericOutputReport(report);
+    return unsupportedOutputReport(report, approximations.length ? approximations : report.approximations, true);
   }
   if (!approximations.length) approximations.push('Ideal passive approximation: each resistor is represented by a symbolic resistance; parasitic elements are omitted.');
   const expression = reduced.expression;
