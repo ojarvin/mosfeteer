@@ -145,7 +145,7 @@
     <form id="analysis-form">
       <div class="analysis-scroll">
         <h2 id="analysis-dialog-title">Small-signal analysis</h2>
-        <p class="analysis-intro">Choose the input and output nodes first. One derivation produces symbolic input impedance, output impedance, and voltage-transfer equations; no numerical values are evaluated.</p>
+        <p class="analysis-intro">Select the input (source) and output nodes. The report always shows DC gain and input/output impedances. Circuits with capacitors or inductors also show AC impedances, the frequency-dependent transfer, poles, and zeros. Results stay symbolic; no numerical values are evaluated.</p>
         <div class="analysis-grid">
           <label for="analysis-kind" hidden>Analysis
             <select id="analysis-kind" name="kind">
@@ -180,19 +180,19 @@
           <p class="field-hint">Use named nets, physical net IDs, or terminal references. These DC bias ports are treated as AC ground.</p>
           <label for="analysis-models">Device model overrides</label>
           <input id="analysis-models" name="models" type="text" placeholder="M2=triode" autocomplete="off" spellcheck="false" />
-          <p class="field-hint">Use <code>REF=triode</code> for a symbolic <span class="math-inline">r<sub>ds</sub></span> resistor or <code>REF=current-source</code> for an ideal small-signal current source. Other device attributes are available in the context menu.</p>
+          <p class="field-hint">Use <code>REF=triode</code> to model a MOS as a symbolic <span class="math-inline">r<sub>ds</sub></span> resistor. The command/API also accepts <code>REF=current-source</code>, which removes that device’s small-signal <span class="math-inline">g<sub>m</sub></span>, <span class="math-inline">g<sub>mb</sub></span>, and <span class="math-inline">r<sub>o</sub></span> branches. Other per-device attributes are available in the context menu.</p>
           <label for="analysis-context">Additional context</label>
           <textarea id="analysis-context" name="context" rows="3" placeholder="Describe bias assumptions or which side of a differential pair is held quiet."></textarea>
         </fieldset>
         <fieldset class="analysis-approximations">
           <legend>Textbook approximations</legend>
-          <label><input id="analysis-approx-dc" name="approxDc" type="checkbox" /> Analyze DC topology only (<span class="math-inline">C → open, L → short</span>)</label>
           <label><input id="analysis-approx-cascode" name="approxCascode" type="checkbox" checked /> Apply cascode dominant-term reduction only when <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span> is also selected</label>
           <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</label>
           <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</label>
           <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></label>
           <label><input id="analysis-approx-miller" name="approxMiller" type="checkbox" checked /> Apply Miller approximation to eligible feedback impedances</label>
-          <p class="field-hint">These are explicit textbook simplifications. Miller splitting is used only for eligible feedback impedances in a conservative inverting stage with an AC-grounded source, a visible DC load, and an explicit <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span> assumption. Exact equations remain in the Log tab, and selected approximations are listed there.</p>
+          <label><input id="analysis-approx-dominant-pole" name="approxDominantPole" type="checkbox" /> Use dominant-pole approximation when multiple AC poles are present</label>
+          <p class="field-hint">These are explicit textbook simplifications. Miller splitting is used only for eligible feedback impedances in a conservative inverting stage with an AC-grounded source, a visible DC load, and an explicit <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span> assumption. The dominant-pole option keeps the constant and <span class="math-inline">s</span> terms of the AC denominator. Exact equations remain in the Log tab.</p>
       </fieldset>
       <div id="analysis-result" class="analysis-result" aria-live="polite" hidden>
         <div class="analysis-tabs" role="tablist" aria-label="Analysis output">

@@ -24,8 +24,8 @@ function parallel(...terms) { return combine('parallel', terms); }
 function product(...terms) { return combine('product', terms); }
 
 // Keep multiplicative factors in textbook order without changing the symbolic
-// tree used by the solver.  This is deliberately presentation-only: frequency
-// first, then transconductances, resistances, inductances, and capacitances.
+// tree used by the solver.  Frequency and component symbols come first; grouped
+// factors such as (1 - A_v) stay at the end of a product.
 function factorOrderRank(value) {
   if (!value) return 99;
   if (value.kind === 'number') return -1;
@@ -39,6 +39,10 @@ function factorOrderRank(value) {
     return 5;
   }
   if (value.kind === 'inv' || value.kind === 'neg') return factorOrderRank(value.value);
+  if (value.kind === 'add' || value.kind === 'sum' || value.kind === 'parallel') return 8;
+  if (value.kind === 'mul' || value.kind === 'product') {
+    return Math.min(...(value.terms || []).map(factorOrderRank), 5);
+  }
   if (value.terms?.length) return Math.min(...value.terms.map(factorOrderRank));
   return 99;
 }
@@ -48,6 +52,29 @@ function orderedProductTerms(terms) {
     .map((term, index) => ({ term, index, rank: factorOrderRank(term) }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map(({ term }) => term);
+}
+
+function combineRepeatedDisplayFactors(terms) {
+  const combined = [];
+  const symbols = new Map();
+  for (const term of terms) {
+    if (term?.kind !== 'symbol') {
+      combined.push({ term, exponent: 1 });
+      continue;
+    }
+    const key = sxKey(term);
+    const prior = symbols.get(key);
+    if (prior) {
+      prior.exponent += 1;
+      continue;
+    }
+    const entry = { term, exponent: 1 };
+    symbols.set(key, entry);
+    combined.push(entry);
+  }
+  return combined.map(({ term, exponent }) => exponent === 1
+    ? term
+    : { kind: 'power', base: term, exponent });
 }
 
 function expressionText(expr, parentKind = null) {
@@ -318,21 +345,28 @@ function millerReferenceIds(circuit) {
   return ids;
 }
 
-/** Derive a conservative low-frequency forward gain for one inverting MOS
- * stage. Miller's theorem is exact for a linear two-node relation when the
- * voltage ratio A=v_out/v_in is known; this helper supplies the usual
- * textbook DC estimate only when the source is an AC reference and the drain
- * has a directly visible passive load. It deliberately declines source
- * degeneration, cascoding, or ambiguous feedback rather than inventing A. */
-function millerForwardGain(circuit, device, candidate, options = {}) {
-  const source = circuit.netOfTerminal({ comp: device.refdes, term: 's' });
-  const drain = candidate.drain;
-  if (!source || !drain) return null;
+/** Derive a conservative low-frequency gain for parallel inverting MOS stages.
+ * Use the textbook estimate only when their sources are AC references and the
+ * drain has a directly visible passive load. */
+function millerForwardGain(circuit, candidate, options = {}) {
   const referenceIds = millerReferenceIds(circuit);
-  if (!referenceIds.has(source.id)) return null;
+  const overrides = circuitModelOverrides(circuit, options.models);
+  const stageDevices = [...circuit.components.values()].filter((component) => {
+    if (!MILLER_MOS_TYPES.has(component.type)) return false;
+    const override = overrides.get(component.refdes);
+    if (isCurrentSourceModel(override) || isTriodeModel(override)) return false;
+    const gate = circuit.netOfTerminal({ comp: component.refdes, term: 'g' });
+    const drain = circuit.netOfTerminal({ comp: component.refdes, term: 'd' });
+    const source = circuit.netOfTerminal({ comp: component.refdes, term: 's' });
+    return gate?.id === candidate.gate.id
+      && drain?.id === candidate.drain.id
+      && source && referenceIds.has(source.id);
+  });
+  if (!stageDevices.length) return null;
   const loads = [];
-  const deviceRo = componentIgnoresRo(device, options) ? null : sxSymbol(systemMosName(device.refdes, 'ro'), device.refdes);
-  if (deviceRo) loads.push(deviceRo);
+  for (const stage of stageDevices) {
+    if (!componentIgnoresRo(stage, options)) loads.push(sxSymbol(systemMosName(stage.refdes, 'ro'), stage.refdes));
+  }
   for (const load of circuit.components.values()) {
     if (load.refdes === candidate.impedance.refdes) continue;
     if (load.type !== 'resistor' && load.type !== 'variable_resistor') continue;
@@ -340,8 +374,8 @@ function millerForwardGain(circuit, device, candidate, options = {}) {
     const a = circuit.netOfTerminal({ comp: load.refdes, term: 'a' });
     const b = circuit.netOfTerminal({ comp: load.refdes, term: 'b' });
     if (!a || !b) continue;
-    const other = a.id === drain.id && referenceIds.has(b.id) ? a
-      : b.id === drain.id && referenceIds.has(a.id) ? b
+    const other = a.id === candidate.drain.id && referenceIds.has(b.id) ? a
+      : b.id === candidate.drain.id && referenceIds.has(a.id) ? b
       : null;
     if (other) loads.push(sxSymbol(systemRefdes(load.refdes, 'R'), load.refdes));
   }
@@ -349,11 +383,12 @@ function millerForwardGain(circuit, device, candidate, options = {}) {
   const load = loads.length === 1
     ? loads[0]
     : sxInv(sxAdd(...loads.map((term) => sxInv(term))));
-  const sign = device.type.startsWith('pmos') ? 1 : -1;
-  const gain = sxMul(sxNumber(sign), sxSymbol(systemMosName(device.refdes, 'gm'), device.refdes), load);
+  const gm = sxAdd(...stageDevices.map((stage) => sxSymbol(systemMosName(stage.refdes, 'gm'), stage.refdes)));
+  const gain = sxMul(sxNumber(-1), gm, load);
   return {
     expression: gain,
     load,
+    devices: stageDevices,
     conditions: 'source at AC ground with a directly visible resistive drain load; DC capacitive/inductive branches are omitted',
   };
 }
@@ -382,9 +417,7 @@ function millerForwardGainAcrossPath(circuit, impedance, input, output, options 
   const solved = systematicTransferResult(circuit, model, { target: output, input, referenceIds }, solverOptions);
   if (!solved.ok) return null;
   const expression = simplifySx(solved.expression || solved.exactExpression);
-  // Keep the recognizer bounded: if the unloaded path itself explodes, the
-  // exact nodal result remains available and a misleading Miller rewrite is
-  // worse than declining the reduction.
+  // Keep the recognizer bounded; the exact nodal result remains available.
   if (!expression || !expressionContainsGm(expression) || sxTreeSize(expression) > 180) return null;
   return {
     expression,
@@ -418,7 +451,7 @@ export function millerApproximationCandidates(circuit, options = {}) {
       const drain = circuit.netOfTerminal({ comp: device.refdes, term: 'd' });
       if (!gate || !drain || gate.id === drain.id) continue;
       if (!((a.id === gate.id && b.id === drain.id) || (a.id === drain.id && b.id === gate.id))) continue;
-      const gain = millerForwardGain(circuit, device, { impedance, gate, drain }, options);
+      const gain = millerForwardGain(circuit, { impedance, gate, drain }, options);
       if (gain) candidates.push({ impedance, device, gate, drain, gain });
       break;
     }
@@ -580,6 +613,12 @@ function sxDiv(a, b) {
     }
   }
   return sxMul(a, sxInv(b));
+}
+
+function acQuantityLabel(label, model) {
+  return model?.elements?.some((element) => element.kind === 'capacitor' || element.kind === 'inductor')
+    ? `${label}(s)`
+    : label;
 }
 
 function sxKey(value) {
@@ -809,6 +848,9 @@ function simplifySx(value) {
         numeric = 1;
       }
     }
+    if (kept.length > 1 && kept.every((term) => term.kind === 'inv')) {
+      return simplifySx(sxInv(sxMul(...kept.map((term) => term.value))));
+    }
     // Distribute only when an additive term has an exact inverse/direct factor
     // beside it.  This keeps ordinary textbook products compact while
     // collapsing the recurring cascode `(1/r_o + g_m) r_o` identity.
@@ -1034,22 +1076,24 @@ function sxDependencies(value, out = new Set()) {
   if (value.value && typeof value.value === 'object') sxDependencies(value.value, out);
   return out;
 }
-function sxText(value, parent = null) {
+function sxText(value, parent = null, clean = false) {
   if (!value) return '0';
   if (value.kind === 'number') return String(value.value);
   if (value.kind === 'symbol') return value.name;
+  if (value.kind === 'power') return `${sxText(value.base, 'power', clean)}^{${value.exponent}}`;
   if (value.kind === 'neg') {
-    const body = sxText(value.value, 'neg');
-    return `-${value.value.kind === 'add' ? `\\left(${body}\\right)` : body}`;
+    return value.value.kind === 'add'
+      ? `-\\left(${sxText(value.value, null, clean)}\\right)`
+      : `-${sxText(value.value, 'neg', clean)}`;
   }
   if (value.kind === 'inv') {
     const parallelTerms = reciprocalParallelTerms(value.value);
     if (parallelTerms) {
-      const rendered = parallelTerms.map((term) => sxText(term, 'parallel'));
+      const rendered = parallelTerms.map((term) => sxText(term, 'parallel', clean));
       const body = rendered.join(parallelSeparator(rendered));
       return parent && parent !== 'parallel' ? `\\left(${body}\\right)` : body;
     }
-    return `\\frac{1}{${sxText(value.value)}}`;
+    return `\\frac{1}{${sxText(value.value, null, clean)}}`;
   }
   // Compact impedance reducers use the same lightweight expression tree as
   // the nodal solver but keep parallel groups as `parallel` nodes.  Accept
@@ -1062,12 +1106,12 @@ function sxText(value, parent = null) {
       const denominator = inverseIndex >= 0 ? value.terms[inverseIndex]?.value : null;
       if (inverseIndex >= 0 && numerator && denominator && numerator.kind !== 'inv'
         && parent === null && !isReciprocalParallel(denominator)) {
-        const fraction = `\\frac{${sxText(numerator)}}{${sxText(denominator)}}`;
+        const fraction = `\\frac{${sxText(numerator, null, clean)}}{${sxText(denominator, null, clean)}}`;
         return parent === 'sum' ? `\\left(${fraction}\\right)` : fraction;
       }
     }
     const terms = value.kind === 'product' ? orderedProductTerms(value.terms) : value.terms;
-    const rendered = terms.map((term) => sxText(term, value.kind));
+    const rendered = terms.map((term) => sxText(term, value.kind, clean));
     let body = rendered[0] || '';
     for (let i = 1; i < rendered.length; i++) {
       const previous = terms[i - 1];
@@ -1081,12 +1125,29 @@ function sxText(value, parent = null) {
     return parent && parent !== value.kind ? `\\left(${body}\\right)` : body;
   }
   if (value.kind === 'mul') {
+    const negativeAdd = clean && value.terms.find((term) => term?.kind === 'neg' && term.value?.kind === 'add');
+    if (negativeAdd) {
+      const rest = value.terms.map((term) => term === negativeAdd ? negativeAdd.value : term);
+      return `-${sxText(sxMul(...rest), parent, clean)}`;
+    }
+    const allNegativeAdd = clean && value.terms.find((term) => term?.kind === 'add'
+      && term.terms.length > 1 && term.terms.every((child) => signedSxTerm(child).sign < 0));
+    if (allNegativeAdd) {
+      const positiveTerms = allNegativeAdd.terms
+        .map((child) => signedSxTerm(child).value)
+        // Put a scalar constant after the physical factors in a normalized
+        // magnitude such as `-(r_o + 1)`.
+        .sort((left, right) => (left.kind === 'number') - (right.kind === 'number'));
+      const positive = sxAdd(...positiveTerms);
+      const rest = value.terms.map((term) => term === allNegativeAdd ? positive : term);
+      return `-${sxText(sxMul(...rest), parent, clean)}`;
+    }
     // Keep polarity readable in textbook form: `-g_{m1}`, never the noisy
     // intermediate `-1 \\, g_{m1}` that can appear after elimination.
     const negativeOne = value.terms.findIndex((term) => term.kind === 'number' && term.value === -1);
     if (negativeOne >= 0) {
       const rest = value.terms.filter((_, index) => index !== negativeOne);
-      if (rest.length) return `-${sxText(sxMul(...rest), parent)}`;
+      if (rest.length) return `-${sxText(sxMul(...rest), parent, clean)}`;
     }
     // A reciprocal used as the complete top-level second factor reads much
     // more clearly as one fraction: `A \\, 1/B` becomes `\\frac{A}{B}`. Keep
@@ -1094,44 +1155,258 @@ function sxText(value, parent = null) {
     // creates a stack of fractions in a nodal impedance. Also leave an
     // inverse admittance group alone so its `R_1 \\|\\| R_2` rendering is not
     // replaced by the underlying `1/R_1 + 1/R_2` when it is used in A_v.
-    if (value.terms.length === 2) {
+    if (value.terms.some((term) => term?.kind === 'inv')) {
       const inverseIndex = value.terms.findIndex((term) => term?.kind === 'inv');
-      const numerator = value.terms[1 - inverseIndex];
+      const numerator = sxMul(...value.terms.filter((_, index) => index !== inverseIndex));
       const denominator = inverseIndex >= 0 ? value.terms[inverseIndex]?.value : null;
       if (inverseIndex >= 0 && numerator && denominator && numerator.kind !== 'inv'
         && parent === null && !isReciprocalParallel(denominator)) {
-        const numeratorText = sxText(numerator);
-        const denominatorText = sxText(denominator);
+        const numeratorText = sxText(numerator, null, clean);
+        const denominatorText = sxText(denominator, null, clean);
         const fraction = `\\frac{${numeratorText}}{${denominatorText}}`;
-        return parent === 'add' ? `\\left(${fraction}\\right)` : fraction;
+        return parent === 'add' && !clean ? `\\left(${fraction}\\right)` : fraction;
       }
     }
     const terms = orderedProductTerms(value.terms);
-    const rendered = terms.map((term) => sxText(term, 'mul'));
+    const displayTerms = clean ? combineRepeatedDisplayFactors(terms) : terms;
+    const rendered = displayTerms.map((term) => sxText(term, 'mul', clean));
     // Back-to-back reciprocal terms are visually ambiguous once rendered as
     // stacked fractions.  Use an explicit multiplication dot between them;
     // ordinary products keep the lighter textbook spacing.
     let body = rendered[0] || '';
     for (let i = 1; i < rendered.length; i++) {
-      const previous = terms[i - 1];
-      const current = terms[i];
+      const previous = displayTerms[i - 1];
+      const current = displayTerms[i];
       const separator = previous?.kind === 'inv' && current?.kind === 'inv'
         ? ' \\, \\cdot \\, '
         : ' \\, ';
       body += separator + rendered[i];
     }
-    return parent === 'add' ? `\\left(${body}\\right)` : body;
+    return clean ? body : parent === 'add' ? `\\left(${body}\\right)` : body;
   }
   if (value.kind === 'add') {
+    const signedTerms = value.terms.map(signedSxTerm);
+    if (signedTerms.length > 1 && signedTerms.every(({ sign }) => sign < 0)) {
+      const positive = sxAdd(...signedTerms.map(({ value: term }) => term));
+      return `-\\left(${sxText(positive, null, clean)}\\right)`;
+    }
     const body = value.terms.map((term, index) => {
       const signed = signedSxTerm(term);
-      const body = sxText(signed.value, 'add');
+      const body = sxText(signed.value, 'add', clean);
       if (index === 0) return signed.sign < 0 ? `-${body}` : body;
       return signed.sign < 0 ? `- ${body}` : `+ ${body}`;
     }).join(' ');
     return parent && parent !== 'add' ? `\\left(${body}\\right)` : body;
   }
   return '';
+}
+
+function polynomialConstant(value) {
+  return sxIsZero(value) ? new Map() : new Map([[0, value]]);
+}
+
+function polynomialClean(value) {
+  return new Map([...value.entries()]
+    .map(([power, coefficient]) => {
+      const simplified = simplifySx(coefficient);
+      const factored = simplified?.kind === 'add' ? factorCommonSxAdd(simplified.terms) : null;
+      return [power, factored ? simplifySx(factored) : simplified];
+    })
+    .filter(([, coefficient]) => !sxIsZero(coefficient))
+    .sort(([left], [right]) => left - right));
+}
+
+function polynomialAdd(...values) {
+  const result = new Map();
+  for (const polynomial of values) {
+    for (const [power, coefficient] of polynomial || []) {
+      result.set(power, sxAdd(result.get(power), coefficient));
+    }
+  }
+  return polynomialClean(result);
+}
+
+function polynomialNeg(value) {
+  return polynomialClean(new Map([...value.entries()].map(([power, coefficient]) => [power, sxNeg(coefficient)])));
+}
+
+function polynomialMul(left, right) {
+  const result = new Map();
+  for (const [leftPower, leftCoefficient] of left || []) {
+    for (const [rightPower, rightCoefficient] of right || []) {
+      const power = leftPower + rightPower;
+      result.set(power, sxAdd(result.get(power), sxMul(leftCoefficient, rightCoefficient)));
+    }
+  }
+  return polynomialClean(result);
+}
+
+function polynomialRationalAdd(values) {
+  let numerator = new Map();
+  let denominator = polynomialConstant(sxNumber(1));
+  for (const value of values) {
+    numerator = polynomialAdd(
+      polynomialMul(numerator, value.denominator),
+      polynomialMul(value.numerator, denominator),
+    );
+    denominator = polynomialMul(denominator, value.denominator);
+  }
+  return { numerator, denominator };
+}
+
+function sxFrequencyRational(value) {
+  if (!value) return { numerator: new Map(), denominator: polynomialConstant(sxNumber(1)) };
+  if (value.kind === 'number') return { numerator: polynomialConstant(value), denominator: polynomialConstant(sxNumber(1)) };
+  if (value.kind === 'symbol') {
+    const power = value.name === 's' ? 1 : String(value.name || '').match(/^s\^\{(\d+)\}$/)?.[1];
+    return power
+      ? { numerator: new Map([[Number(power), sxNumber(1)]]), denominator: polynomialConstant(sxNumber(1)) }
+      : { numerator: polynomialConstant(value), denominator: polynomialConstant(sxNumber(1)) };
+  }
+  if (value.kind === 'neg') {
+    const inner = sxFrequencyRational(value.value);
+    return { numerator: polynomialNeg(inner.numerator), denominator: inner.denominator };
+  }
+  if (value.kind === 'inv') {
+    const inner = sxFrequencyRational(value.value);
+    return { numerator: inner.denominator, denominator: inner.numerator };
+  }
+  if (value.kind === 'mul' || value.kind === 'product') {
+    return value.terms.reduce((result, term) => {
+      const next = sxFrequencyRational(term);
+      return {
+        numerator: polynomialMul(result.numerator, next.numerator),
+        denominator: polynomialMul(result.denominator, next.denominator),
+      };
+    }, { numerator: polynomialConstant(sxNumber(1)), denominator: polynomialConstant(sxNumber(1)) });
+  }
+  if (value.kind === 'add' || value.kind === 'sum') {
+    return polynomialRationalAdd(value.terms.map((term) => sxFrequencyRational(term)));
+  }
+  if (value.kind === 'parallel') {
+    return sxFrequencyRational(sxInv(sxAdd(...value.terms.map((term) => sxInv(term)))));
+  }
+  return { numerator: polynomialConstant(value), denominator: polynomialConstant(sxNumber(1)) };
+}
+
+function polynomialDegree(value) {
+  return value?.size ? Math.max(...value.keys()) : -1;
+}
+
+function polynomialToSx(value) {
+  const terms = [...(value || [])].sort(([left], [right]) => right - left).map(([power, coefficient]) => {
+    if (power === 0) return coefficient;
+    const frequency = sxSymbol(power === 1 ? 's' : `s^{${power}}`);
+    return sxMul(coefficient, frequency);
+  });
+  return sxAdd(...terms);
+}
+
+function polynomialCancelCommonFactors(numerator, denominator) {
+  let nextNumerator = polynomialClean(numerator);
+  let nextDenominator = polynomialClean(denominator);
+  const first = [...nextNumerator.values()][0];
+  const candidates = sxFactorList(first).filter((factor) => factor?.kind !== 'number');
+  for (const factor of candidates) {
+    const numeratorReduced = [...nextNumerator].map(([power, coefficient]) => [power, sxCancelFactor(coefficient, factor)]);
+    const denominatorReduced = [...nextDenominator].map(([power, coefficient]) => [power, sxCancelFactor(coefficient, factor)]);
+    if (numeratorReduced.some(([, coefficient]) => !coefficient) || denominatorReduced.some(([, coefficient]) => !coefficient)) continue;
+    nextNumerator = polynomialClean(new Map(numeratorReduced));
+    nextDenominator = polynomialClean(new Map(denominatorReduced));
+  }
+  return { numerator: nextNumerator, denominator: nextDenominator };
+}
+
+function frequencyResponseFromExpression(expression) {
+  const rational = sxFrequencyRational(expression);
+  const cancelled = polynomialCancelCommonFactors(rational.numerator, rational.denominator);
+  const numerator = cancelled.numerator;
+  const denominator = cancelled.denominator;
+  return {
+    numerator,
+    denominator,
+    numeratorDegree: polynomialDegree(numerator),
+    denominatorDegree: polynomialDegree(denominator),
+    expression: simplifySx(sxDiv(polynomialToSx(numerator), polynomialToSx(denominator))),
+  };
+}
+
+function dominantPoleResponse(response) {
+  if (!response || response.denominatorDegree <= 1) return response;
+  const denominator = polynomialClean(new Map([...response.denominator].filter(([power]) => power <= 1)));
+  if (polynomialDegree(denominator) < 1) return response;
+  return {
+    ...response,
+    denominator,
+    denominatorDegree: polynomialDegree(denominator),
+    expression: simplifySx(sxDiv(polynomialToSx(response.numerator), polynomialToSx(denominator))),
+    dominantPoleApplied: true,
+  };
+}
+
+function polynomialRootDescriptors(polynomial, prefix) {
+  const degree = polynomialDegree(polynomial);
+  if (degree < 1) return [];
+  const coefficient = (power) => sxText(polynomial.get(power) || sxNumber(0), null, true);
+  if (degree === 1) {
+    const constant = polynomial.get(0) || sxNumber(0);
+    const factoredConstant = constant.kind === 'add'
+      ? factorCommonSxAdd(constant.terms) || constant
+      : constant;
+    const root = simplifySx(sxDiv(sxNeg(factoredConstant), polynomial.get(1)));
+    return [{
+      name: `${prefix}_{0}`,
+      equation: `${prefix}_{0} = ${sxText(root, null, true)}`,
+      expression: root,
+      explicit: true,
+    }];
+  }
+  if (degree === 2) {
+    const a0 = coefficient(0);
+    const a1 = coefficient(1);
+    const a2 = coefficient(2);
+    return [{
+      name: `${prefix}_{0,1}`,
+      equation: `${prefix}_{0,1} = \\frac{-(${a1}) \\pm \\sqrt{(${a1})^2 - 4 \\, (${a2}) \\, (${a0})}}{2 \\, (${a2})}`,
+      explicit: true,
+    }];
+  }
+  return [{
+    name: `${prefix}_{0\\ldots${degree - 1}}`,
+    equation: `${prefix}_{0\\ldots${degree - 1}}: \\text{roots of } ${sxText(polynomialToSx(polynomial), null, true)} = 0`,
+    explicit: false,
+  }];
+}
+
+function frequencyResponseSummary(model, selectedExpression, exactExpression, options = {}) {
+  const hasAcComponents = model.elements.some((element) => element.kind === 'capacitor' || element.kind === 'inductor');
+  if (!hasAcComponents) return null;
+  const exact = frequencyResponseFromExpression(exactExpression || selectedExpression);
+  const selectedBase = frequencyResponseFromExpression(selectedExpression || exactExpression);
+  const flags = normalizeAnalysisApproximations(options);
+  const selected = flags.dominantPoleApproximation ? dominantPoleResponse(selectedBase) : selectedBase;
+  const poles = polynomialRootDescriptors(selected.denominator, 'p');
+  const zeros = polynomialRootDescriptors(selected.numerator, 'z');
+  return {
+    hasFrequency: true,
+    numerator: polynomialToSx(selected.numerator),
+    denominator: polynomialToSx(selected.denominator),
+    numeratorDegree: selected.numeratorDegree,
+    denominatorDegree: selected.denominatorDegree,
+    expression: selected.expression,
+    poles,
+    zeros,
+    dominantPoleApplied: !!selected.dominantPoleApplied,
+    exact: {
+      numerator: polynomialToSx(exact.numerator),
+      denominator: polynomialToSx(exact.denominator),
+      numeratorDegree: exact.numeratorDegree,
+      denominatorDegree: exact.denominatorDegree,
+      expression: exact.expression,
+      poles: polynomialRootDescriptors(exact.denominator, 'p'),
+      zeros: polynomialRootDescriptors(exact.numerator, 'z'),
+    },
+  };
 }
 
 function nodeLabel(circuit, nodeId, targetId, referenceIds, inputId = null) {
@@ -1184,6 +1459,8 @@ export function normalizeAnalysisApproximations(options = {}) {
   const dcOnly = !!options.dcOnly || !!options.dcOperatingPoint || has('dc', 'dc-only', 'dc-operating-point');
   const cascodeApproximation = !!options.cascodeApproximation || !!options.cascodeReduction
     || has('cascode', 'cascode-reduction', 'cascode-approximation', 'cascode-dominant');
+  const dominantPoleApproximation = !!options.dominantPoleApproximation || !!options.dominantPole
+    || has('dominant-pole', 'dominant-pole-approximation', 'dominant-pole-reduction');
   const explicitMiller = options.millerApproximation ?? options.miller;
   return {
     ignoreChannelLengthModulation: !!options.ignoreChannelLengthModulation || has('ignore-channel-length-modulation', 'ignore-clm', 'ro-infinity', 'neglect-ro'),
@@ -1191,6 +1468,7 @@ export function normalizeAnalysisApproximations(options = {}) {
     gmroLarge: !!options.gmroLarge || !!options.assumeGmRoLarge || has('gmro-large', 'gmro>>1', 'gm-ro-large', 'large-gmro'),
     dcOnly,
     cascodeApproximation,
+    dominantPoleApproximation,
     // Miller is the normal textbook reduction. Callers can opt out with an
     // explicit false (the exact/reference pass does this); legacy option
     // objects that omit the field therefore get the useful default-on path.
@@ -1226,9 +1504,16 @@ function textbookApproximationNotes(options = {}, circuit = null) {
     assumptions.push('DC-only reduction: capacitors are open circuits and inductors are short circuits.');
     approximations.push('DC operating-point topology: C \u2192 open, L \u2192 short.');
   }
+  if (flags.dominantPoleApproximation) {
+    assumptions.push('The dominant-pole option keeps the constant and first-order terms of the AC denominator when it has higher order.');
+    approximations.push('Dominant-pole approximation selected; it applies only when the AC denominator has multiple poles.');
+  }
   const miller = millerApproximationCandidates(circuit, options);
   if (flags.miller && miller.length) {
-    assumptions.push(`Miller approximation is applied to feedback impedances with an explicitly high forward gain (${miller.map((candidate) => `${candidate.impedance.refdes}/${candidate.device?.refdes || candidate.stageLabel || 'multi-stage path'}`).join(', ')}).`);
+    assumptions.push(`Miller approximation is applied to feedback impedances with an explicitly high forward gain (${miller.map((candidate) => {
+      const devices = candidate.gain?.devices?.map((device) => device.refdes).join('/') || candidate.device?.refdes || candidate.stageLabel || 'multi-stage path';
+      return `${candidate.impedance.refdes}/${devices}`;
+    }).join(', ')}).`);
     approximations.push('Miller approximation: each eligible feedback impedance is split into input and output shunt impedances using the derived DC stage gain.');
   }
   return { flags, assumptions, approximations };
@@ -1252,6 +1537,8 @@ function exactAnalysisOptions(options = {}) {
     miller: false,
     cascodeApproximation: false,
     cascodeReduction: false,
+    dominantPoleApproximation: false,
+    dominantPole: false,
     ignoreResistanceOverrides: true,
     ignoreRoDevices: [],
     ignoreChannelLengthModulationDevices: [],
@@ -1295,6 +1582,10 @@ function signedSxTerm(value) {
   const unwrapped = unwrapSxNeg(value);
   let current = unwrapped.value;
   let sign = unwrapped.sign;
+  if (current?.kind === 'number' && current.value < 0) {
+    sign *= -1;
+    current = sxNumber(-current.value);
+  }
   if (current?.kind === 'mul') {
     const negativeOne = current.terms.findIndex((term) => term.kind === 'number' && term.value === -1);
     if (negativeOne >= 0) {
@@ -1384,6 +1675,10 @@ function factorCommonSxAdd(terms, allowAny = false) {
     }
     return sxMul(...factors);
   });
+  const signed = reduced.map(signedSxTerm);
+  if (signed.every(({ sign }) => sign < 0)) {
+    return sxNeg(sxMul(...symbolicCommon, sxAdd(...signed.map(({ value }) => value))));
+  }
   return sxMul(...symbolicCommon, sxAdd(...reduced));
 }
 
@@ -1576,18 +1871,20 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
     const displayGain = sxSymbol(millerGainName(candidate));
     const inputDisplayImpedance = sxDiv(impedance, sxSub(sxNumber(1), displayGain));
     const outputDisplayImpedance = sxDiv(impedance, sxSub(sxNumber(1), sxInv(displayGain)));
+    const stage = candidate.gain?.devices?.map((device) => device.refdes).join('/')
+      || candidate.device?.refdes
+      || `${sxText(sxSymbol(netLabel(candidate.gate) || 'input'))}\\to${sxText(sxSymbol(netLabel(candidate.drain) || 'output'))}`;
     addShuntBranch(kind, component, candidate.gate, inputImpedance, {
-      millerRole: 'input', millerDevice: candidate.device?.refdes || null, millerGain: gain,
+      millerRole: 'input', millerDevice: stage, millerGain: gain,
       displayValue: inputDisplayImpedance,
     });
     addShuntBranch(kind, component, candidate.drain, outputImpedance, {
-      millerRole: 'output', millerDevice: candidate.device?.refdes || null, millerGain: gain,
+      millerRole: 'output', millerDevice: stage, millerGain: gain,
       displayValue: outputDisplayImpedance,
     });
     const impedanceName = sxText(impedance);
     const gainName = millerGainName(candidate);
-    const stage = candidate.device?.refdes || `${sxText(sxSymbol(netLabel(candidate.gate) || 'input'))}\\to${sxText(sxSymbol(netLabel(candidate.drain) || 'output'))}`;
-    assumptions.push(`${component.refdes} is split by Miller's theorem around ${stage}: Z_{in}=${sxText(displaySx(inputImpedance, millerAliases))}, Z_{out}=${sxText(displaySx(outputImpedance, millerAliases))} using ${gainName}\\approx${sxText(gain)}.`);
+    assumptions.push(`${component.refdes} is split by Miller's theorem around ${stage}: Z_{in}(s)=${sxText(displaySx(inputImpedance, millerAliases))}, Z_{out}(s)=${sxText(displaySx(outputImpedance, millerAliases))} using ${gainName}\\approx${sxText(gain)}.`);
     approximations.push(`Miller approximation: ${component.refdes} is split around ${stage} using ${gainName}\\approx${sxText(gain)}; ${impedanceName} is otherwise unchanged.`);
   };
 
@@ -1619,6 +1916,7 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
     }
     if (type === 'capacitor' || type === 'variable_capacitor') {
       if (dcOnly) {
+        openCircuits.push({ component: component.refdes, reason: 'capacitor is open at DC' });
         assumptions.push(component.refdes + ' is open at DC; its capacitor branch is omitted.');
         continue;
       }
@@ -1690,7 +1988,10 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
       // -g_mb*v_s body-effect contribution in source-followers and other
       // source-degenerated stages.
       const b = addNode(bulk) || '@AC_GROUND';
-      const polarity = type.startsWith('pmos') ? -1 : 1;
+      // The branch current is defined from drain to source and the control is
+      // v_g - v_s, so both MOS polarities use a positive gm coefficient.
+      const polarity = 1;
+      const bodyReference = type.startsWith('pmos') ? 'VDD' : 'GND';
       const ignoreRo = componentIgnoresRo(component, options);
       if (!ignoreRo) {
         addBranch('output-resistance', component, drain, source, sxSymbol(systemMosName(component.refdes, 'ro'), component.refdes));
@@ -1711,7 +2012,7 @@ function buildSystematicModel(circuit, { target, referenceIds, options = {} }) {
         });
       }
       if (!hasBulk || !bulk) {
-        assumptions.push(`${component.refdes} bulk is unused and is assumed tied to ${polarity > 0 ? 'GND' : 'VDD'}; in the small-signal model this is an AC-ground assumption.`);
+        assumptions.push(`${component.refdes} bulk is unused and is assumed tied to ${bodyReference}; in the small-signal model this is an AC-ground assumption.`);
       }
       if (component.analysis?.ignoreBodyEffect === true && !options.ignoreDeviceApproximationOverrides) {
         assumptions.push(`${component.refdes} has an explicit per-device override: body effect is ignored, so g_{mb} = 0.`);
@@ -1835,7 +2136,8 @@ function systemRows(model, { testTarget = null, inputNode = null, fixedNodes = [
     addCoefficient(element.b, element.controlMinus, gain);
   };
   for (const element of model.elements) {
-    if (element.kind === 'resistor' || element.kind === 'output-resistance' || element.kind === 'triode-resistance' || element.kind === 'capacitor') stampConductance(element.a, element.b, sxInv(element.value));
+    if (element.kind === 'resistor' || element.kind === 'output-resistance' || element.kind === 'triode-resistance'
+      || element.kind === 'capacitor' || element.kind === 'inductor') stampConductance(element.a, element.b, sxInv(element.value));
     else if (element.kind === 'vccs') stampVccs(element);
   }
   if (canonicalTarget && rows.has(canonicalTarget)) addRhs(canonicalTarget, sxSymbol('I_{test}'));
@@ -1914,6 +2216,7 @@ function solveSystem(rows, unknowns) {
 }
 
 function systematicImpedanceResult(circuit, model, context, label = 'Z_{out}', options = {}) {
+  const resultLabel = acQuantityLabel(label, model);
   const targetNode = modelNodeId(model, context.target.id);
   const inputNode = modelNodeId(model, context.inputId || null);
   const referenceIds = new Set([...context.referenceIds].map((id) => modelNodeId(model, id)));
@@ -1930,9 +2233,9 @@ function systematicImpedanceResult(circuit, model, context, label = 'Z_{out}', o
   if (targetNode === '@AC_GROUND') {
     return {
       ok: true,
-      equation: `${label} = 0`,
+      equation: `${resultLabel} = 0`,
       expression: sxNumber(0),
-      exactEquation: `${label} = 0`,
+      exactEquation: `${resultLabel} = 0`,
       equations: ['V_{AC} = 0'],
       equationCount: 1,
       unknowns: [],
@@ -1966,7 +2269,7 @@ function systematicImpedanceResult(circuit, model, context, label = 'Z_{out}', o
     const expression = sxSymbol('\\infty');
     return {
       ok: true,
-      equation: `${label} = \\infty`,
+      equation: `${resultLabel} = \\infty`,
       expression,
       equations,
       equationCount: equations.length,
@@ -2002,13 +2305,13 @@ function systematicImpedanceResult(circuit, model, context, label = 'Z_{out}', o
     if (displayVoltage) displayExactImpedance = normalizeSxRational(sxDiv(displayVoltage, sxSymbol('I_{test}')));
   }
   const displayImpedance = applyNonZeroApproximation(displayExactImpedance, options, circuit);
-  const display = (value) => sxText(displaySx(value, model.millerAliases));
+  const display = (value) => sxText(displaySx(value, model.millerAliases), null, true);
   const equation = appendMillerDefinitions(
-    `${label} ${equationOperator(exactImpedance, impedance, options, circuit)} ${display(displayImpedance)}`,
+    `${resultLabel} ${equationOperator(exactImpedance, impedance, options, circuit)} ${display(displayImpedance)}`,
     model.millerAliases,
   );
   const exactEquation = appendMillerDefinitions(
-    `${label} = ${display(displayExactImpedance)}`,
+    `${resultLabel} = ${display(displayExactImpedance)}`,
     model.millerAliases,
   );
   return {
@@ -2358,6 +2661,80 @@ export function deriveSmallSignalModel(circuit, targetName, options = {}) {
   };
 }
 
+function parallelizeDcRatio(numerator, denominator) {
+  if (denominator?.kind !== 'add' || denominator.terms.length !== 2) return null;
+  const numeratorParts = productTerms(numerator);
+  const pair = denominator.terms.map((term) => simplifySx(term)).sort((left, right) => {
+    const rank = (term) => /^r_\{(?:o|ds)/i.test(String(term?.name || '')) ? 0 : 1;
+    return rank(left) - rank(right);
+  });
+  const remaining = [...numeratorParts.terms];
+  for (const term of pair) {
+    const index = remaining.findIndex((candidate) => sxKey(candidate) === sxKey(term));
+    if (index < 0) return null;
+    remaining.splice(index, 1);
+  }
+  return sxMul(sxNumber(numeratorParts.sign), ...remaining, parallel(...pair));
+}
+
+function dcLimitExpression(expression) {
+  const { numerator, denominator } = frequencyResponseFromExpression(expression);
+  if (!numerator.size) return sxNumber(0);
+  if (!denominator.size) return sxSymbol('\\infty');
+  const numeratorMin = Math.min(...numerator.keys());
+  const denominatorMin = Math.min(...denominator.keys());
+  if (numeratorMin > denominatorMin) return sxNumber(0);
+  if (numeratorMin < denominatorMin) {
+    const ratio = sxDiv(numerator.get(numeratorMin), denominator.get(denominatorMin));
+    return productTerms(ratio).sign < 0 ? sxNeg(sxSymbol('\\infty')) : sxSymbol('\\infty');
+  }
+  return parallelizeDcRatio(numerator.get(numeratorMin), denominator.get(denominatorMin))
+    || simplifySx(sxDiv(numerator.get(numeratorMin), denominator.get(denominatorMin)));
+}
+
+function dcResultSummary(result, label) {
+  if (!result?.ok) return { ok: false, error: result?.error || 'DC analysis could not be solved' };
+  const expression = dcLimitExpression(result.exactExpression || result.expression);
+  const equation = `${label} = ${sxText(expression)}`;
+  return { ok: true, equation, exactEquation: equation, expression };
+}
+
+function deriveDcAnalysisSummary(circuit, context, input, options = {}) {
+  try {
+    // DC is the zero-frequency limit of the exact AC model. Keep the full
+    // RLC model here so capacitors contribute 1/(sC) and inductors contribute
+    // sL before the limit is taken.
+    const fullOptions = exactAnalysisOptions(options);
+    const fullContext = { ...context, input };
+    const fullModel = buildSystematicModel(circuit, { ...fullContext, options: fullOptions });
+    const fullTransfer = systematicTransferResult(circuit, fullModel, fullContext, fullOptions);
+
+    const fullInputContext = { ...context, target: input };
+    const fullInput = systematicImpedanceResult(circuit, fullModel, fullInputContext, 'Z_{in}', fullOptions);
+    const fullOutputReferenceIds = new Set([...context.referenceIds, input.id]);
+    const fullOutput = context.referenceIds.has(context.target.id) || input.id === context.target.id
+      ? { ok: false, error: 'target and reference must be different physical nets' }
+      : (() => {
+        const fullOutputContext = { ...context, referenceIds: fullOutputReferenceIds };
+        const fullOutputModel = buildSystematicModel(circuit, { ...fullOutputContext, options: fullOptions });
+        return systematicOutputResult(circuit, fullOutputModel, {
+          target: context.target,
+          referenceIds: fullOutputReferenceIds,
+          inputId: input.id,
+        }, fullOptions);
+      })();
+    return {
+      dcGain: dcResultSummary(fullTransfer, 'A_v(0)'),
+      dcInputImpedance: dcResultSummary(fullInput, 'Z_{in}(0)'),
+      dcOutputImpedance: dcResultSummary(fullOutput, 'Z_{out}(0)'),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const unavailable = { ok: false, error: `DC companion analysis failed: ${message}` };
+    return { dcGain: unavailable, dcInputImpedance: unavailable, dcOutputImpedance: unavailable };
+  }
+}
+
 /** Derive a symbolic voltage transfer from an ideal input-node drive to the
  * requested output node using the same nodal system as impedance analysis. */
 export function analyzeTransferFunction(circuit, outputName, options = {}) {
@@ -2369,6 +2746,7 @@ export function analyzeTransferFunction(circuit, outputName, options = {}) {
   if (!inputResult.ok) return { ok: false, query: 'voltage-transfer', error: inputResult.error, assumptions: contextAssumptions(options), approximations: [] };
   if (context.referenceIds.has(inputResult.net.id)) return { ok: false, query: 'voltage-transfer', error: 'input and reference must be different physical nets', assumptions: contextAssumptions(options), approximations: [] };
   const model = buildSystematicModel(circuit, { ...context, options });
+  const dcSummary = deriveDcAnalysisSummary(circuit, context, inputResult.net, options);
   const solved = systematicTransferResult(circuit, model, { ...context, input: inputResult.net }, options);
   if (!solved.ok) {
     return {
@@ -2386,6 +2764,7 @@ export function analyzeTransferFunction(circuit, outputName, options = {}) {
       smallSignalNetlist: solved.netlist,
       assumptions: [...contextAssumptions(options), ...model.assumptions],
       approximations: model.approximations,
+      ...dcSummary,
     };
   }
   // Form the gain from the same two-port quantities used by the output
@@ -2441,6 +2820,17 @@ export function analyzeTransferFunction(circuit, outputName, options = {}) {
   const gainEquation = selectedGain
     ? `A_v ${equationOperator(selectedExactGain || selectedGain, selectedGain, options, circuit)} ${sxText(selectedGain)}`
     : solved.equation;
+  // Keep the frequency response tied to the direct nodal Vout/Vin solution.
+  // The compact Norton display can contain legacy impedance text symbols such
+  // as `1/(s C)`; the direct tree preserves `s` for polynomial extraction.
+  const frequencyResponse = frequencyResponseSummary(model, solved.expression || selectedGain, solved.exactExpression || selectedExactGain, options);
+  const acTransfer = frequencyResponse ? {
+    ok: true,
+    equation: `A_v(s) ${frequencyResponse.dominantPoleApplied || approximationSelected ? '\\approx' : '='} ${sxText(displaySx(frequencyResponse.expression, model.millerAliases), null, true)}`,
+    exactEquation: `A_v(s) = ${sxText(displaySx(frequencyResponse.exact.expression, model.millerAliases), null, true)}`,
+    expression: frequencyResponse.expression,
+    exactExpression: frequencyResponse.exact.expression,
+  } : null;
   const gainEquations = gainFromNorton
     ? [...solved.equations, 'Effective transconductance:', ...(effectiveGm.equations || []), 'Output impedance:', ...(outputImpedance.nodeEquations || outputImpedance.equations || [])]
     : solved.equations;
@@ -2472,6 +2862,9 @@ export function analyzeTransferFunction(circuit, outputName, options = {}) {
       exactEquation: outputImpedance.exactEquation,
       expression: outputImpedance.expression,
     } : null,
+    ...dcSummary,
+    acTransfer,
+    frequencyResponse,
     smallSignalModel: model,
     smallSignalNetlist: solved.netlist,
     assumptions: [
@@ -2498,8 +2891,9 @@ export function analyzeInputImpedance(circuit, inputName, options = {}) {
     : commonGateInputReduction(circuit, context, model, options);
   if (commonGate?.expression && systematic.ok) {
     systematic.expression = commonGate.expression;
-    systematic.equation = `Z_{in} ${equationOperator(commonGate.exactExpression || commonGate.expression, commonGate.expression, options, circuit)} ${sxText(displaySx(commonGate.expression, model.millerAliases))}`;
-    systematic.exactEquation = `Z_{in} = ${sxText(displaySx(commonGate.exactExpression || commonGate.expression, model.millerAliases))}`;
+    const resultLabel = acQuantityLabel('Z_{in}', model);
+    systematic.equation = `${resultLabel} ${equationOperator(commonGate.exactExpression || commonGate.expression, commonGate.expression, options, circuit)} ${sxText(displaySx(commonGate.expression, model.millerAliases), null, true)}`;
+    systematic.exactEquation = `${resultLabel} = ${sxText(displaySx(commonGate.exactExpression || commonGate.expression, model.millerAliases), null, true)}`;
   }
   const input = { netId: context.target.id, name: netLabel(context.target) };
   const reference = {
@@ -3148,6 +3542,7 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
   const approximations = [...textbook.approximations];
   const deferredUnsupported = [];
   const systematicModel = buildSystematicModel(circuit, { target, referenceIds, options: systematicOptions });
+  const resultLabel = acQuantityLabel('Z_{out}', systematicModel);
   const systematic = systematicOutputResult(circuit, systematicModel, {
     target,
     referenceIds,
@@ -3300,14 +3695,14 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
       assumptions.push(`Finite symbolic r_o is retained for the selected cascode branch devices (${retainedCascodeRefs.join(', ')}) so the g_m r_o \\gg 1 approximation remains meaningful; explicit per-device r_o omissions still produce an open branch.`);
       approximations.push('Cascode-specific precedence: the large-g_m r_o reduction retains finite r_o instead of rendering the recognized branch as infinity.');
     }
-    const equation = `Z_{out} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`;
+    const equation = `${resultLabel} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`;
     return withSystematic({
       ok: true,
       query: 'output-impedance',
       target: { netId: target.id, name: netLabel(target) },
       reference: { netId: reference.id, name: netLabel(reference) },
       equation,
-      exactEquation: `Z_{out} = ${expressionText(exactExpression)}`,
+      exactEquation: `${resultLabel} = ${expressionText(exactExpression)}`,
       expression,
       dependencies: [...expressionDependencies(expression)].sort(),
       assumptions: [...new Set([...assumptions, ...systematicModel.assumptions])],
@@ -3317,7 +3712,7 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
 
   const loadLimited = loadLimitedCascodeResistance(circuit, target, referenceIds, overrides, options);
   if (loadLimited) {
-    const equation = `Z_{out} \\approx ${expressionText(loadLimited)}`;
+    const equation = `${resultLabel} \\approx ${expressionText(loadLimited)}`;
     assumptions.push('The cascoded device stack is recognized as a high-impedance branch in parallel with the directly attached passive load.');
     approximations.push('Large-g_m r_o approximation: the cascoded branch is neglected relative to the explicit output load.');
     return withSystematic({
@@ -3357,8 +3752,8 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
       query: 'output-impedance',
       target: { netId: target.id, name: netLabel(target) },
       reference: { netId: reference.id, name: netLabel(reference) },
-      equation: `Z_{out} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`,
-      exactEquation: `Z_{out} = ${expressionText(exactExpression)}`,
+      equation: `${resultLabel} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`,
+      exactEquation: `${resultLabel} = ${expressionText(exactExpression)}`,
       expression,
       dependencies: [...expressionDependencies(expression)].sort(),
       assumptions: [...new Set([...assumptions, ...systematicModel.assumptions])],
@@ -3380,8 +3775,8 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
       query: 'output-impedance',
       target: { netId: target.id, name: netLabel(target) },
       reference: { netId: reference.id, name: netLabel(reference) },
-      equation: `Z_{out} ${approximationSelected ? '\\approx' : '='} ${sxText(expression)}`,
-      exactEquation: `Z_{out} = ${sxText(exactExpression)}`,
+      equation: `${resultLabel} ${approximationSelected ? '\\approx' : '='} ${sxText(expression)}`,
+      exactEquation: `${resultLabel} = ${sxText(exactExpression)}`,
       expression,
       dependencies: [...expressionDependencies(expression)].sort(),
       assumptions: [...new Set([...assumptions, ...systematicModel.assumptions])],
@@ -3419,6 +3814,19 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
       dependencies.push(component.refdes);
       assumptions.push(`${component.refdes} is represented by the small-signal impedance \\frac{1}{s ${indexedName(component.refdes, 'C')}}.`);
       approximations.push(`Small-signal approximation: ${component.refdes} is treated as an ideal capacitor in the frequency domain.`);
+      continue;
+    }
+    const isInductor = type === 'inductor' || type === 'variable_inductor';
+    if (isInductor) {
+      const a = circuit.netOfTerminal({ comp: component.refdes, term: 'a' });
+      const b = circuit.netOfTerminal({ comp: component.refdes, term: 'b' });
+      if (!a || !b) continue;
+      const inductance = `s \, ${indexedName(component.refdes, 'L')}`;
+      const expr = symbol(inductance, component.refdes);
+      edges.push({ a: nodeForNet(a), b: nodeForNet(b), expr, sources: [component.refdes] });
+      dependencies.push(component.refdes);
+      assumptions.push(`${component.refdes} is represented by the small-signal impedance s ${indexedName(component.refdes, 'L')}.`);
+      approximations.push(`Small-signal approximation: ${component.refdes} is treated as an ideal inductor in the frequency domain.`);
       continue;
     }
 
@@ -3544,7 +3952,7 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
   if (!approximations.length) approximations.push('Ideal passive approximation: each resistor is represented by a symbolic resistance; parasitic elements are omitted.');
   const expression = reduced.expression;
   const approximationSelected = analysisApproximationSelected(circuit, options);
-  const equation = `Z_{out} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`;
+  const equation = `${resultLabel} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`;
   let exactEquation = equation;
   if (approximationSelected) {
     const exact = analyzeOutputImpedance(circuit, targetName, exactAnalysisOptions(options));

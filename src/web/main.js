@@ -98,7 +98,7 @@ const analysisApproxRo = document.getElementById('analysis-approx-ro');
 const analysisApproxBody = document.getElementById('analysis-approx-body');
 const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
 const analysisApproxMiller = document.getElementById('analysis-approx-miller');
-const analysisApproxDc = document.getElementById('analysis-approx-dc');
+const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
 const analysisApproxCascode = document.getElementById('analysis-approx-cascode');
 const analysisResult = document.getElementById('analysis-result');
 const analysisEquation = document.getElementById('analysis-equation');
@@ -6432,12 +6432,12 @@ function analysisFormValues() {
     models: analysisModels?.value || '',
     context: analysisContext?.value || '',
     approximationOptions: {
-      dcOnly: !!analysisApproxDc?.checked,
       cascodeApproximation: !!analysisApproxCascode?.checked,
       ignoreChannelLengthModulation: !!analysisApproxRo?.checked,
       ignoreBodyEffect: !!analysisApproxBody?.checked,
       gmroLarge: !!analysisApproxGmRo?.checked,
       millerApproximation: !!analysisApproxMiller?.checked,
+      dominantPoleApproximation: !!analysisApproxDominantPole?.checked,
     },
   };
 }
@@ -6462,7 +6462,7 @@ function restoreAnalysisForm(defaults = {}) {
   try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(currentCircuitName)) || 'null'); } catch { /* storage unavailable */ }
   if (!saved) {
     // A new schematic starts with the useful textbook simplifications enabled;
-    // r_o → ∞ and the topology-changing DC-only mode remain opt-in.
+    // r_o → ∞ remains opt-in.
     if (analysisReference) analysisReference.value = '';
     if (analysisMode) analysisMode.value = 'single-ended';
     if (analysisComplementary) analysisComplementary.value = '';
@@ -6473,7 +6473,7 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisApproxBody) analysisApproxBody.checked = true;
     if (analysisApproxGmRo) analysisApproxGmRo.checked = true;
     if (analysisApproxMiller) analysisApproxMiller.checked = true;
-    if (analysisApproxDc) analysisApproxDc.checked = false;
+    if (analysisApproxDominantPole) analysisApproxDominantPole.checked = false;
     if (analysisApproxCascode) analysisApproxCascode.checked = true;
     return false;
   }
@@ -6501,7 +6501,6 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisContext && typeof saved.context === 'string') analysisContext.value = saved.context;
   const savedApproximations = saved.approximationOptions || {};
   const approximationList = new Set(Array.isArray(saved.approximations) ? saved.approximations : []);
-  if (analysisApproxDc) analysisApproxDc.checked = !!(savedApproximations.dcOnly || savedApproximations.dcOperatingPoint || approximationList.has('dc') || approximationList.has('dc-only') || approximationList.has('dc-operating-point'));
   if (analysisApproxCascode) {
     const hasSavedCascode = Object.prototype.hasOwnProperty.call(savedApproximations, 'cascodeApproximation')
       || Object.prototype.hasOwnProperty.call(savedApproximations, 'cascodeReduction')
@@ -6542,6 +6541,13 @@ function restoreAnalysisForm(defaults = {}) {
       ? !!(savedApproximations.millerApproximation || savedApproximations.miller || approximationList.has('miller') || approximationList.has('miller-approximation'))
       : true;
   }
+  if (analysisApproxDominantPole) {
+    analysisApproxDominantPole.checked = !!(savedApproximations.dominantPoleApproximation
+      || savedApproximations.dominantPole
+      || approximationList.has('dominant-pole')
+      || approximationList.has('dominant-pole-approximation')
+      || approximationList.has('dominant-pole-reduction'));
+  }
   // The dialog now derives all three results from the same input/output pair.
   // Keep the hidden kind selector persisted, but always show the input node.
   if (analysisInputField) analysisInputField.hidden = false;
@@ -6568,20 +6574,34 @@ function prefillAnalysisAttributes() {
 function analysisReportText(report) {
   if (report?.query === 'combined') {
     const lines = [report.complete ? 'all requested equations derived' : 'one or more requested equations unavailable'];
+    for (const { title, result } of analysisEquationEntries(report)) {
+      if (result?.ok && result.equation) lines.push(`${title}: ${result.equation}`);
+      if (result?.exactEquation && result.exactEquation !== result.equation) {
+        lines.push(`${title} before selected approximations: ${result.exactEquation}`);
+      }
+    }
     for (const [key, child] of Object.entries(report.reports || {})) {
       const title = key === 'input' ? 'input impedance' : key === 'output' ? 'output impedance' : 'voltage transfer';
-      lines.push(`${title}: ${child.ok ? child.equation : `unsupported: ${child.error || 'analysis unavailable'}`}`);
-      if (child.exactEquation && child.exactEquation !== child.equation) lines.push(`${title} before selected approximations: ${child.exactEquation}`);
+      if (!child.ok) lines.push(`${title}: unsupported: ${child.error || 'analysis unavailable'}`);
       if (child.effectiveTransconductance?.equation) lines.push(`${title} effective transconductance: ${child.effectiveTransconductance.equation}`);
       if (child.outputImpedance?.equation) lines.push(`${title} output impedance: ${child.outputImpedance.equation}`);
       if (child.target?.name) lines.push(`${title} target: ${child.target.name}`);
       if (child.input?.name && key !== 'input') lines.push(`${title} input: ${child.input.name}`);
+    }
+    for (const [key, child] of Object.entries(report.reports || {})) {
+      const title = key === 'input' ? 'input impedance' : key === 'output' ? 'output impedance' : 'voltage transfer';
       for (const assumption of child.assumptions || []) lines.push(`${title} assumption: ${assumption}`);
       for (const approximation of child.approximations || []) lines.push(`${title} approximation: ${approximation}`);
     }
     return lines.join('\n');
   }
   const lines = [report.ok ? report.equation : `unsupported: ${report.error}`];
+  for (const { title, result } of analysisEquationEntries(report)) {
+    if (result?.equation && result.equation !== report.equation) lines.push(`${title}: ${result.equation}`);
+    if (result?.exactEquation && result.exactEquation !== result.equation) {
+      lines.push(`${title} before selected approximations: ${result.exactEquation}`);
+    }
+  }
   if (report.exactEquation && report.exactEquation !== report.equation) lines.push(`before selected approximations: ${report.exactEquation}`);
   if (report.effectiveTransconductance?.equation) lines.push(`effective transconductance: ${report.effectiveTransconductance.equation}`);
   if (report.outputImpedance?.equation) lines.push(`output impedance: ${report.outputImpedance.equation}`);
@@ -6595,6 +6615,69 @@ function analysisReportText(report) {
   for (const assumption of report.assumptions || []) lines.push(`assumption: ${assumption}`);
   for (const approximation of report.approximations || []) lines.push(`approximation: ${approximation}`);
   return lines.join('\n');
+}
+
+function analysisEquationHasReactiveTerm(equation) {
+  const rhs = String(equation || '').replace(/^.*?(?:=|\\approx)\s*/, '');
+  return /\bs\b|[CL](?=_\{|[0-9])/i.test(rhs);
+}
+
+function analysisHasReactiveFinalForms(report) {
+  return !!report?.frequencyResponse?.hasFrequency
+    || [report?.equation, report?.acTransfer?.equation]
+    .some(analysisEquationHasReactiveTerm);
+}
+
+function analysisEquationEntries(report, includeEmptyRoots = false) {
+  const entries = [];
+  const add = (title, result) => {
+    if (result) entries.push({ title, result });
+  };
+  const roots = (frequency) => {
+    if (!frequency) return;
+    for (const [title, values] of [['Poles', frequency.poles], ['Zeros', frequency.zeros]]) {
+      if (values?.length) add(title, { ok: true, equation: values.map((root) => root.equation).join('\n') });
+      else if (includeEmptyRoots) add(title, { ok: true, equation: 'none' });
+    }
+  };
+
+  if (report?.query === 'combined') {
+    const input = report.reports?.input;
+    const output = report.reports?.output;
+    const transfer = report.reports?.transfer;
+    const reactiveTransfer = analysisHasReactiveFinalForms(transfer);
+    if (analysisHasReactiveFinalForms(input)) add('AC input impedance', input);
+    add('DC input impedance', transfer?.dcInputImpedance || input?.dcInputImpedance);
+    if (analysisHasReactiveFinalForms(output)) add('AC output impedance', output);
+    add('DC output impedance', transfer?.dcOutputImpedance || output?.dcOutputImpedance);
+    if (reactiveTransfer) add('AC voltage transfer', transfer?.acTransfer);
+    add('DC gain', transfer?.dcGain);
+    roots(reactiveTransfer ? transfer?.frequencyResponse : null);
+    return entries;
+  }
+
+  const kind = report?.query;
+  if (kind === 'input-impedance') {
+    if (analysisHasReactiveFinalForms(report)) add('AC input impedance', report);
+    add('DC input impedance', report.dcInputImpedance);
+  } else if (kind === 'output-impedance') {
+    if (analysisHasReactiveFinalForms(report)) add('AC output impedance', report);
+    add('DC output impedance', report.dcOutputImpedance);
+  } else {
+    const reactive = analysisHasReactiveFinalForms(report);
+    if (reactive) add('AC voltage transfer', report.acTransfer);
+    add('DC input impedance', report.dcInputImpedance);
+    add('DC output impedance', report.dcOutputImpedance);
+    add('DC gain', report.dcGain);
+    roots(reactive ? report.frequencyResponse : null);
+  }
+  return entries;
+}
+
+function analysisAnnotationEntries(report) {
+  return analysisEquationEntries(report).flatMap(({ title, result }) => (
+    result?.ok && result.equation ? [{ title, equation: result.equation }] : []
+  ));
 }
 
 function renderEquationMath(container, equation) {
@@ -6628,12 +6711,7 @@ function renderAnalysisResult(report) {
   if (analysisEquation) {
     analysisEquation.replaceChildren();
     if (report.query === 'combined') {
-      const entries = [
-        ['Input impedance', report.reports?.input],
-        ['Output impedance', report.reports?.output],
-        ['Voltage transfer', report.reports?.transfer],
-      ];
-      for (const [title, child] of entries) {
+      for (const { title, result: child } of analysisEquationEntries(report, true)) {
         const row = document.createElement('div');
         row.className = 'analysis-equation-row';
         const heading = document.createElement('div');
@@ -6870,12 +6948,12 @@ analysisForm?.addEventListener('submit', (ev) => {
     models: parseAnalysisList(analysisModels?.value),
     context: analysisContext?.value || '',
     differentialSide: analysisComplementary?.value || undefined,
-    dcOnly: !!analysisApproxDc?.checked,
     cascodeApproximation: !!analysisApproxCascode?.checked,
     ignoreChannelLengthModulation: !!analysisApproxRo?.checked,
     ignoreBodyEffect: !!analysisApproxBody?.checked,
     gmroLarge: !!analysisApproxGmRo?.checked,
     millerApproximation: !!analysisApproxMiller?.checked,
+    dominantPoleApproximation: !!analysisApproxDominantPole?.checked,
   };
   // Run each requested derivation independently. A topology edge case in one
   // report must not erase useful results from the other two; the failed card
@@ -6925,7 +7003,7 @@ analysisForm?.addEventListener('submit', (ev) => {
   }
 });
 
-for (const control of [analysisKind, analysisTarget, analysisReference, analysisMode, analysisInput, analysisComplementary, analysisAcGrounds, analysisModels, analysisContext, analysisApproxDc, analysisApproxCascode, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxMiller]) {
+for (const control of [analysisKind, analysisTarget, analysisReference, analysisMode, analysisInput, analysisComplementary, analysisAcGrounds, analysisModels, analysisContext, analysisApproxCascode, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxMiller, analysisApproxDominantPole]) {
   control?.addEventListener('input', persistAnalysisForm);
   control?.addEventListener('change', persistAnalysisForm);
 }
@@ -6977,9 +7055,7 @@ function equationForLabel(equation) {
 function annotateAnalysisResult() {
   const report = latestAnalysisReport;
   if (!report?.ok) return;
-  const entries = report.query === 'combined'
-    ? [report.reports?.input, report.reports?.output, report.reports?.transfer].filter((child) => child?.ok && child.equation)
-    : [report].filter((child) => child.equation);
+  const entries = analysisAnnotationEntries(report);
   if (!entries.length) return;
   // Keep generated equations below the figure. Label boxes are centered on
   // their anchors, so place each center from the figure's left and bottom
@@ -6993,9 +7069,9 @@ function annotateAnalysisResult() {
   const equationLabels = [];
   let assumptionsLabel = null;
   commit(() => {
-    for (const child of entries) {
+    for (const entry of entries) {
       const label = circuit.addLabel({
-        text: equationForLabel(child.equation),
+        text: equationForLabel(`\\text{${entry.title}: }\\;${entry.equation}`),
         x: 0,
         y: 0,
         align: 'left',

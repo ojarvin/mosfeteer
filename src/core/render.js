@@ -21,7 +21,7 @@ function polygonPoints(g) {
 }
 
 function graphicsToSvg(g, textTransform = '', objectStyle = null) {
-  const stroke = objectStyle ? styleAttrs(objectStyle, g.style) : strokeAttrs(g.style);
+  const stroke = objectStyle ? styleAttrs(objectStyle, g.style, g.miterLimit) : strokeAttrs(g.style, g.miterLimit);
   switch (g.kind) {
     case 'path':
       return `<path d="${g.d}" fill="none" ${stroke}/>`;

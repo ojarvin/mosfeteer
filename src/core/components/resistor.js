@@ -1,7 +1,7 @@
 import { defineSymbol } from './defineSymbol.js';
 
 /**
- * Resistor (textbook style): a horizontal five-tooth zigzag between a (left) and
+ * Resistor (textbook style): a centered horizontal zigzag between a (left) and
  * b (right). The component origin is at the electrical midpoint so transforms
  * and placement keep the symbol centered.
  */
@@ -15,7 +15,7 @@ export const resistor = defineSymbol({
   ],
   bbox: { x: -80, y: -40, w: 160, h: 80 },
   graphics: [
-    { kind: 'path', d: 'M -80 0 L -34.88 0 L -25.58 21.49 L -16.28 -18.42 L -4.65 21.49 L 6.98 -19.95 L 18.6 21.49 L 30.23 -18.42 L 34.88 0 L 80 0', style: 'symbol' },
+    { kind: 'path', d: 'M -80 0 L -30 0 L -25 20 L -15 -20 L -5 20 L 5 -20 L 15 20 L 25 -20 L 30 0 L 80 0', style: 'symbol', miterLimit: 5 },
   ],
   textPos: { x: 0, y: -30, anchor: 'middle' },
   refPos: null,

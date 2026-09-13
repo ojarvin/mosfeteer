@@ -3113,7 +3113,10 @@ export class Circuit {
         for (const r of okRefs) {
           if (involved.has(`${r.comp}.${r.term}`)) continue;
           const sourceRef = source();
-          this.wireTo(`${sourceRef.comp}.${sourceRef.term}`, this.getComponent(r.comp).terminalWorld(r.term), [], routeOptions());
+          const connected = this.wireTo(`${sourceRef.comp}.${sourceRef.term}`, this.getComponent(r.comp).terminalWorld(r.term), [], routeOptions());
+          if (!connected.terminals.some((entry) => entry.comp === r.comp && entry.term === r.term)) {
+            connected.terminals.push({ ...r });
+          }
         }
         if (net) {
           this._syncReferenceMarkerNetName(net);
@@ -3738,6 +3741,9 @@ export class Circuit {
     // into an apparent routing failure.
     if (points.length === 0 && srcNet && srcNet === targetNet &&
         wirePointsConnected(srcNet, srcPos, P, this, identity?.pathIndex)) {
+      if (!srcNet.terminals.some((entry) => entry.comp === term.comp && entry.term === term.term)) {
+        srcNet.terminals.push({ comp: term.comp, term: term.term });
+      }
       this._syncReferenceMarkerNetName(srcNet);
       this._syncInterfacePinLabels(srcNet, { enforceName: true });
       return srcNet;
@@ -4184,6 +4190,11 @@ export class Circuit {
   }
 
   _redistributeNetLabels(source, candidates) {
+    if (candidates.length > 1) {
+      // A split removes the merge conflict; do not keep warning about names
+      // that now belong to different physical nets.
+      this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== source.id);
+    }
     for (const label of [...this.labels.values()]) {
       if (label.netId !== source.id) continue;
       const point = label.anchorWorld();
@@ -4595,6 +4606,10 @@ export class Circuit {
         message: warning.message || `merged nets with names ${warning.names.join(', ')}`,
       }))
       .filter((warning) => warning.names.length > 1);
+    // A secondary name on a separate current net is a stale warning from a
+    // merge that was later split.
+    circuit.netNameWarnings = circuit.netNameWarnings.filter((warning) => !warning.names.slice(1).some((name) =>
+      [...circuit.nets].some(([id, net]) => id !== warning.netId && canonicalNetName(net.name) === canonicalNetName(name))));
     const loadedLabelIds = new Set();
     for (const l of data.labels || []) {
       if (l.id && loadedLabelIds.has(l.id)) throw new Error(`label id "${l.id}" already in use`);

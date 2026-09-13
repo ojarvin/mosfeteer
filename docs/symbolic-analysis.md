@@ -1,7 +1,7 @@
 # Symbolic circuit analysis
 
-The first analysis command derives textbook-style output-impedance equations
-without evaluating numeric values:
+The analysis command derives textbook-style symbolic equations without
+evaluating numeric values:
 
 ```text
 analyze output-impedance VOUT
@@ -10,6 +10,7 @@ analyze output-impedance VOUT --model M1=current-source
 analyze transfer-function VOUT --input VIN --ac-ground VBN,VCASCN
 analyze transfer-function VOUT --input VIN --mode differential --differential-side VINB
 analyze transfer-function VOUT --input VIN --ignore-channel-length-modulation --ignore-body-effect --gmro-large
+analyze transfer-function VOUT --input VIN --dominant-pole
 ```
 
 The operation is available from the dedicated **Analysis** group at the end of
@@ -40,8 +41,11 @@ sources and leaves an open small-signal branch.
 
 New analysis forms default to the practical symbolic approximations (body
 effect ignored, `g_m r_o \\gg 1`, cascode reduction enabled, and Miller enabled).
-The global MOS `r_o \\to \\infty` control remains off by default, as does the
-topology-changing DC-only mode.
+The global MOS `r_o \\to \\infty` control remains off by default. Every
+transfer derivation also includes three DC-limit results. They are obtained
+from the exact full-RLC solution at `s → 0`: DC power/reference rails such as
+VDD and VSS are zero and share AC ground, capacitors are open, and inductors
+are shorted.
 
 The analysis pipeline is deliberately nodal rather than a growing collection
 of topology cases:
@@ -73,17 +77,32 @@ Voltage-transfer reports also expose the equivalent two-port shortcut
 measuring the resulting input-controlled current, so cascodes and internal
 feedback are included rather than guessed from one transistor's `g_m`.
 
+The combined voltage-transfer report separates the results into DC and AC:
+AC impedance forms use `Z_{in}(s)` and `Z_{out}(s)`, while the AC transfer uses
+`A_v(s) = N(s)/D(s)`. The GUI lists AC input impedance, DC input impedance, AC
+output impedance, DC output impedance, AC voltage transfer, DC gain, poles,
+zeros, and assumptions in that order.
+`A_v(0)`, `Z_{in}(0)`, and `Z_{out}(0)` are the `s → 0` limit of the exact
+full-RLC solution. Thus capacitors are open and inductors are short at DC. The
+AC transfer retains reactive elements and is
+represented as `A_v(s) = N(s)/D(s)`. Poles are the roots of the canceled `D(s)`
+and zeros are the roots of the canceled `N(s)`; first- and second-order roots are shown explicitly,
+while higher-order roots remain as a symbolic polynomial. The optional
+dominant-pole control keeps only the constant and `s` terms of `D(s)` when it
+has higher order, under the assumption `|p_0| \ll |p_1|`; the exact transfer
+remains in the Log tab.
+
 The current compact resistor reducer remains as a compatibility display for
 simple output-impedance networks, while the generic node-equation result is
-attached to every successful report and is the foundation for future transfer
-functions. Singular or unsupported models are reported explicitly rather than
+attached to every successful report and also supplies transfer functions.
+Singular or unsupported models are reported explicitly rather than
 silently guessed.
 
-The form exposes six explicit textbook controls: analyze the DC topology only
-(capacitors open and inductors short), ignore channel-length modulation for MOS
-devices (`r_o \to \infty`), ignore body effect (`g_{mb}=0`), assume
-`g_m r_o \gg 1`, apply the cascode dominant-term reduction, and apply the
-Miller approximation to eligible feedback impedances. The cascode reduction is
+The form exposes six explicit textbook controls: ignore channel-length
+modulation for MOS devices (`r_o \to \infty`), ignore body effect
+(`g_{mb}=0`), assume `g_m r_o \gg 1`, apply the cascode dominant-term
+reduction, apply the Miller approximation to eligible feedback impedances, and
+use the dominant-pole approximation for higher-order AC denominators. The cascode reduction is
 opt-in and is applied only to recognized branches whose cascode device also has
 the explicit `g_m r_o \gg 1` assumption; selecting the generic intrinsic-gain
 condition alone never silently discards the additive `r_o` terms. Miller is enabled by default, but splitting is used
@@ -105,8 +124,9 @@ When the cascode control and both form-wide `g_m r_o \gg 1`/finite-`r_o`
 conditions are checked, the recognized cascode reduction retains finite
 symbolic `r_o` for its branch devices so the `g_m r_o` factor does not collapse
 to `\infty`; an explicit per-device `r_o` omission still produces an open
-branch. DC-only mode is structural: the inductor union-find aliases its
-terminals before KCL stamping, while capacitor branches are omitted entirely.
+branch. The explicit `dcOnly` model option is structural: it aliases inductor
+terminals before KCL stamping and omits capacitor branches entirely. Transfer
+reports use the exact full-RLC result and take its low-frequency limit instead.
 The same assumption simplifies loaded cascoded common-source gains through
 the recurring loaded-common-gate identity, so a deep stack with a resistive
 load is displayed as `A_v \approx -g_{m1}R_D` when the load limits the gain,
@@ -122,7 +142,9 @@ terms reduce algebraically (for example to
 `Z_{out} \approx 1/(g_{m,out} g_{m,fb} r_{o,out})`) without naming a particular
 topology.
 Multiplicative factors are rendered in a stable textbook order:
-frequency, transconductance, resistance, inductance, then capacitance.
+frequency, transconductance, resistance, inductance, then capacitance. Other
+grouped multipliers are placed last; for example, `s C (1-A_{v1})`, not
+`(1-A_{v1}) s C`.
 The cascode dominant-term step is explicit: it drops ro1 + ro2 only when
 (gm,c + gmb,c)(ro1 || ro2) >> 1, equivalently when
 (gm,c + gmb,c)ro1ro2 >> ro1 + ro2. The usual gm ro >> 1 assumption is
@@ -163,9 +185,11 @@ transistor, for example `R_x = r_{o11} || r_{o3}`. The final output resistance
 is `Z_n || Z_p`; the exact finite-`r_o` expression remains in the Log tab when
 the dominant-term approximation is selected.
 
-After a successful derivation, **Annotate schematic** places each successful
-symbolic equation as a free diagram label below the circuit, aligned to its
-left edge with a two-cell clearance. After the browser has measured the
+After a successful derivation, **Annotate schematic** places the DC equations
+as free diagram labels below the circuit, aligned to its left edge with a
+two-cell clearance. If C or L remains in a final equation, it also places the
+AC transfer and any reported poles and zeros; canceled reactive terms do not
+trigger AC annotations. After the browser has measured the
 rendered equation boxes, their horizontal centerlines use one shared pitch
 based on the largest adjacent half-sum of bbox heights; at least one
 neighboring pair can therefore touch while narrower pairs have more

@@ -62,6 +62,25 @@ test('passive symbols use a centered local origin', () => {
   assert.deepEqual(getSymbol('switch_open').labelOffset, { x: 0, y: 40 });
 });
 
+test('resistor zigzag is centered and symmetric', () => {
+  const path = getSymbol('resistor').graphics.find((graphic) => graphic.kind === 'path');
+  assert.equal(path.d, 'M -80 0 L -30 0 L -25 20 L -15 -20 L -5 20 L 5 -20 L 15 20 L 25 -20 L 30 0 L 80 0');
+
+  const points = [...path.d.matchAll(/(?:M|L) (-?\d+) (-?\d+)/g)]
+    .map(([, x, y]) => ({ x: Number(x), y: Number(y) }));
+  assert.deepEqual(points, points.slice().reverse().map(({ x, y }) => ({ x: -x, y: -y || 0 })));
+
+  const diagonals = points.slice(1).map((point, index) => ({
+    dx: point.x - points[index].x,
+    dy: point.y - points[index].y,
+  }));
+  assert.deepEqual(diagonals.map(({ dx, dy }) => [Math.abs(dx), Math.abs(dy)]), [
+    [50, 0], [5, 20], [10, 40], [10, 40], [10, 40], [10, 40], [10, 40], [5, 20], [50, 0],
+  ]);
+  assert.ok(diagonals.slice(1, -1).every(({ dx, dy }) => Math.abs(dy / dx) === 4));
+  assert.ok(Math.abs(diagonals[1].dy / diagonals[1].dx) === 4);
+});
+
 test('independent source circles use the compact 35-unit body and adjacent labels', () => {
   for (const type of ['current_source', 'voltage_source']) {
     const def = getSymbol(type);

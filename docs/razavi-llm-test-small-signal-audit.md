@@ -10,9 +10,11 @@ design questions.
 The analyzer derives symbolic linearized KCL around a declared bias context. It
 models resistors, capacitors, inductors, MOS `g_m`, `g_mb`, and `r_o`, opens
 independent DC current sources, shorts independent DC voltage sources, and
-reports input impedance, output impedance, and voltage transfer. Optional
-textbook approximations and eligible Miller reductions retain the exact nodal
-result in the report.
+reports input impedance, output impedance, and voltage transfer. For reactive
+networks it also reports the symbolic AC numerator/denominator and poles or
+zeros; the optional dominant-pole reduction is presentation-only and retains
+the exact nodal result in the report. Optional textbook approximations and
+eligible Miller reductions likewise retain their exact reference.
 
 The two-stage shunt-feedback TIA in Q17 is within this contract: its feedback
 path can use the generalized Miller reduction when the required high-gain

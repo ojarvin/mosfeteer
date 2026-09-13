@@ -25,7 +25,15 @@ test('wire rendering uses round caps without changing symbol stroke roles', () =
   const wire = svg.match(/<path class="wire-managed"[^>]+>/)?.[0] || '';
   assert.match(wire, /stroke-linecap="round"/);
   assert.match(wire, /stroke-linejoin="miter"/);
-  assert.match(svg.match(/<path d="M -80 0 L -34\.88 0[^>]+>/)?.[0] || '', /stroke-linecap="butt"/);
+  assert.match(svg.match(/<path d="M -80 0 L -30 0[^>]+>/)?.[0] || '', /stroke-linecap="butt"/);
+});
+
+test('symmetric resistor zigzag keeps sharp mitered corners', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  const path = svgString(c).match(/<path d="M -80 0 L -30 0[^>]+>/)?.[0] || '';
+  assert.match(path, /stroke-linejoin="miter"/);
+  assert.match(path, /stroke-miterlimit="5"/);
 });
 
 test('annotation arrowheads stay close to MOS source-arrow size', () => {

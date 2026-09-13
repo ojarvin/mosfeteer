@@ -2482,6 +2482,34 @@ test('conflicting net names merge with a reconciliation warning', () => {
   assert.deepEqual(c.netNameWarnings, []);
 });
 
+test('splitting a merged net clears its stale name warning', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  const a = c.createWireNet({ name: 'A', route: [{ x: 160, y: 0 }, { x: 240, y: 0 }] });
+  a.terminals.push({ comp: 'R1', term: 'b' });
+  const b = c.createWireNet({ name: 'B', route: [{ x: 240, y: 0 }, { x: 400, y: 0 }] });
+  b.terminals.push({ comp: 'R2', term: 'a' });
+  c.reconnectCoincidentNets();
+  assert.equal(c.netNameWarnings.length, 1);
+
+  c.deleteWireSegments(a.id, [{ branch: 0, segment: 1 }]);
+  assert.deepEqual(c.netNameWarnings, []);
+});
+
+test('loading a split net drops its persisted merge warning', () => {
+  const c = new Circuit();
+  c.createWireNet({ name: 'VOUT', route: [{ x: 0, y: 0 }, { x: 40, y: 0 }] });
+  c.createWireNet({ name: 'VDD', route: [{ x: 80, y: 0 }, { x: 120, y: 0 }] });
+  const data = c.toJSON();
+  data.netNameWarnings = [{
+    netId: 'N1',
+    names: ['VOUT', 'VDD'],
+    message: 'merged nets retain "VOUT" but also contained VDD',
+  }];
+  assert.deepEqual(Circuit.fromJSON(data).netNameWarnings, []);
+});
+
 test('floating managed and fixed wire nets survive serialization and have drawable points', () => {
   const c = new Circuit();
   const managed = c.createWireNet({ branches: [[{ x: 0, y: 0 }, { x: 40, y: 40 }]], route: [{ x: 0, y: 0 }, { x: 40, y: 40 }] });
