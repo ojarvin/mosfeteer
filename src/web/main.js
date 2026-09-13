@@ -323,7 +323,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
     key: 'wire',
     canvasClass: 'direct-wire-mode',
     toolbar: 'wire',
-    label: directWire.routeMode === 'diagonal' ? 'DIAGONAL WIRE' : 'LEGACY FIXED WIRE',
+    label: directWire.routeMode === 'diagonal' ? 'DIAGONAL WIRE' : 'FIXED WIRE',
   };
   if (wire) return {
     key: 'wire',
@@ -2567,8 +2567,8 @@ function syncDocumentSurface() {
     : 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
   const netLabelButton = document.getElementById('btn-mode-net-label');
   if (netLabelButton) {
-    netLabelButton.title = block ? 'Attach a label to a block connector (Shift+L)' : 'Place a net label to name and connect wires (L)';
-    netLabelButton.setAttribute('aria-label', block ? 'Attach connector label' : 'Place net label');
+    netLabelButton.title = block ? 'Attach a label to a block connector (Shift+L)' : 'Place a label on a physical wire (L)';
+    netLabelButton.setAttribute('aria-label', block ? 'Attach connector label' : 'Place a label on a physical wire');
   }
 }
 
@@ -2917,7 +2917,7 @@ function scheduleMeasuredLabelRender() {
 }
 
 function renderCanvas(modelKey) {
-  // Legacy fixed-net editing deliberately does no routing or orthogonalization.
+  // Fixed-net editing preserves literal geometry.
   const directFrom = directWire?.source ? wireOrigin(directWire.source) : null;
   if (directWire?.source && !directFrom) directWire = null;
   const directPreview = directFrom
@@ -3423,7 +3423,7 @@ function fixedWireDragAt(hit, w, startClient, ev) {
     fixedSnapshots, startSnapshot, rubber: null,
   };
   cursor = { x: snap(w.x), y: snap(w.y) };
-  logLine(junction >= 0 ? 'legacy fixed junction — drag to move its dot' : vertex >= 0 ? 'legacy fixed vertex — drag to move it' : 'legacy fixed path — drag to move its segment');
+  logLine(junction >= 0 ? 'fixed junction — drag to move its dot' : vertex >= 0 ? 'fixed vertex — drag to move it' : 'fixed path — drag to move its segment');
   render();
   return true;
 }
@@ -3453,7 +3453,7 @@ function fixedEndpointDragAt(endpoint, startWorld, startClient) {
     moved: false, committed: false, startSnapshot, saved,
   };
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-  logLine('legacy fixed open endpoint — drag to move, or use Wire to extend');
+  logLine('fixed open endpoint — drag to move, or use Wire to extend');
   render();
   return true;
 }
@@ -3673,7 +3673,7 @@ function moveManagedWireRun(run, target) {
     if (meta?.type !== 'junction' || !oldPoint) continue;
     const actualPoint = i === 0 ? run.pts[0] : run.pts[run.pts.length - 1];
     // Topology-bounded runs keep junction endpoints fixed and add connector
-    // legs. Only legacy unbounded bridge moves propagate the junction.
+    // legs; unbounded bridge moves propagate the junction.
     if (actualPoint?.x === oldPoint.x && actualPoint?.y === oldPoint.y) continue;
     const newPoint = run.orient === 'h'
       ? { x: oldPoint.x, y: run.line }
@@ -3781,7 +3781,7 @@ function doDirectWireClick(x, y, fixedEndpoint = null) {
 
 function commitDirectWire(dst) {
   const before = snapshot();
-  const directKind = directWire?.routeMode === 'diagonal' ? 'diagonal' : 'legacy fixed';
+  const directKind = directWire?.routeMode === 'diagonal' ? 'diagonal' : 'fixed';
   try {
     const net = circuit.wireDirectTo(
       `${directWire.source.refdes}.${directWire.source.term}`,
@@ -3833,7 +3833,7 @@ function wireOrigin(src) {
 }
 
 function activeDirectLabel() {
-  return directWire?.routeMode === 'diagonal' ? 'DIAGONAL WIRE' : 'LEGACY FIXED WIRE';
+  return directWire?.routeMode === 'diagonal' ? 'DIAGONAL WIRE' : 'FIXED WIRE';
 }
 
 /** Grid-snapped projection of `w` onto the nearest segment of `net`'s drawn
@@ -6514,10 +6514,7 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisApproxRo) {
     const hasSavedRo = Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreChannelLengthModulation')
       || Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreRo');
-    // A modern explicit false must win over legacy `approximations` arrays.
-    // Without this guard, a document saved by an older build could retain an
-    // `ignore-channel-length-modulation` token forever after the checkbox was
-    // unticked.
+    // Explicit modern values take precedence over saved approximation lists.
     analysisApproxRo.checked = hasSavedRo
       ? !!(savedApproximations.ignoreChannelLengthModulation || savedApproximations.ignoreRo)
       : approximationList.has('ignore-channel-length-modulation');
@@ -6547,8 +6544,7 @@ function restoreAnalysisForm(defaults = {}) {
       : true;
   }
   // The dialog now derives all three results from the same input/output pair.
-  // Keep the legacy kind selector persisted (and hidden in the markup), but
-  // never hide the input node when restoring an older saved form.
+  // Keep the hidden kind selector persisted, but always show the input node.
   if (analysisInputField) analysisInputField.hidden = false;
   if (analysisComplementaryField) analysisComplementaryField.hidden = analysisMode?.value !== 'differential';
   return true;
@@ -6562,8 +6558,7 @@ function prefillAnalysisAttributes() {
   for (const value of markedGrounds) if (!groundValues.includes(value)) groundValues.push(value);
   if (analysisAcGrounds && groundValues.length) analysisAcGrounds.value = groundValues.join(', ');
   const markedModels = sortedComps()
-    // `current-source` is retained only as a read-compatible legacy value;
-    // new UI actions use the explicit r_o → ∞ attribute instead.
+    // Preserve saved current-source values; new UI actions use explicit r_o controls.
     .filter((component) => component.analysis?.model && component.analysis.model !== 'current-source')
     .map((component) => `${component.refdes}=${component.analysis.model}`);
   const modelValues = parseAnalysisList(analysisModels?.value);
@@ -8808,10 +8803,9 @@ function inlineEditSchematicBlock(component) {
   input.addEventListener('blur', () => done(true));
 }
 
-// Double-click edits the active document's object, never an electrical label
-// picker in a block diagram. Components consistently edit their owned child
-// label; legacy/reference markers create the same provisional child label used
-// by their dedicated editor when one is missing.
+// Double-click edits the active document's object. Components edit their owned
+// child label; reference markers create the same provisional child label when
+// one is missing.
 canvasEl.addEventListener('dblclick', (ev) => {
   if (isBlockDiagram(circuit)) {
     const node = ev.target.closest?.('[data-block-id]');
@@ -9102,14 +9096,17 @@ function renderComponents() {
     const ordinaryInstance = !isReferenceMarker(comp);
     const instanceLabel = ordinaryInstance ? circuit.labelOf(comp.refdes) : null;
     ref.textContent = instanceLabel?.text || (ordinaryInstance ? componentLabelText(comp.refdes) : comp.refdes);
+    ref.title = isReferenceMarker(comp)
+      ? 'Double-click to edit its label'
+      : comp.type === 'block'
+        ? 'Double-click to edit block text'
+        : 'Double-click to rename';
 
     const meta = document.createElement('span');
     meta.className = 'meta';
     const analysisTags = [];
     if (comp.analysis?.model === 'triode') analysisTags.push('triode');
-    // Do not expose the retired current-source flag in the side panel. Old
-    // documents remain readable, but their equivalent visible hint is r_o→∞.
-    if (comp.analysis?.model === 'current-source') analysisTags.push('r_o→∞');
+    if (comp.analysis?.model === 'current-source') analysisTags.push('current-source');
     if (comp.analysis?.role) analysisTags.push(comp.analysis.role);
     if (comp.analysis?.resistance === 'infinite' || comp.analysis?.resistance === true) analysisTags.push('R=∞');
     if (comp.analysis?.resistance === 'finite') analysisTags.push('finite R');
@@ -9448,7 +9445,7 @@ function renderDetail() {
 
   const meta = document.createElement('div');
   meta.className = 'detail-meta';
-  meta.textContent = `${comp.refdes} (${comp.type})  value: ${comp.value || '-'}  —  Wire: managed/orthogonal or F3-selected diagonal`;
+  meta.textContent = `${comp.refdes} (${comp.type})  value: ${comp.value || '-'}  —  Wire: managed or fixed; F3 selects new route shape`;
   detailEl.appendChild(meta);
 
   const table = document.createElement('table');
@@ -10549,7 +10546,7 @@ function renderStatus() {
     if (mode === 'insert') parts.push(pendingPlace ? `place ${pendingPlace.kind === 'block' ? 'block' : 'label'} @ click/Enter · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type to filter · Esc exit');
     if (blockPlacement) parts.push('click to place a block · Esc cancel');
     if (blockConnector) parts.push(blockConnector.source
-      ? `CONNECTOR ${blockConnector.source.block}.${blockConnector.source.terminal} → click a terminal to commit · other clicks guide · Enter cancels`
+      ? `CONNECTOR ${blockConnector.source.block}.${blockConnector.source.terminal} → click a terminal to commit · other clicks guide · Esc cancels`
       : 'CONNECTOR: click a block terminal to start · Esc cancel');
     statusEl.textContent = parts.join('  ·  ');
     statusEl.className = `status ${interaction.key}`;
@@ -10567,7 +10564,7 @@ function renderStatus() {
     parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
   }
   if (mode === 'insert') {
-    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/X · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
+    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
   }
   if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
   if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
@@ -10580,7 +10577,7 @@ function renderStatus() {
           : wire.source.refdes
             ? `WIRE ${wire.source.refdes}.${wire.source.term} → terminal click commits · other clicks guide · Enter commits`
             : `WIRE (${wire.source.x},${wire.source.y}) → terminal click commits · other clicks guide · Enter commits`
-        : `WIRE (${wire.routeStyle || routeMode}): click a terminal to commit, or any point to start`,
+        : `WIRE (${wire.routeStyle || routeMode}): click a terminal or point to start`,
     );
   }
   if (directWire) {
@@ -10861,7 +10858,7 @@ function activateWire() {
   // F3 changes the route style of this same managed workflow.  Diagonal wires
   // never become direct/fixed nets.
   wire = newWireDraft();
-  logLine(`wiring (${routeMode}): click a terminal to commit, or any point to start; Enter commits elsewhere`);
+  logLine(`wiring (${routeMode}): click a terminal or point to start; terminal clicks commit, Enter commits elsewhere`);
   render();
 }
 
@@ -11388,7 +11385,7 @@ const themeBtn = document.getElementById('btn-theme');
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
   setButtonLabel(themeBtn, dark ? 'Light' : 'Dark');
-  if (themeBtn) themeBtn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
+  if (themeBtn) themeBtn.title = dark ? 'Switch to light theme (D)' : 'Switch to dark theme (D)';
   try {
     localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
   } catch { /* storage unavailable */ }
@@ -11427,7 +11424,7 @@ function setGrid(on) {
 if (gridBtn) {
   gridBtn.addEventListener('click', () => setGrid(!showGrid));
   setButtonLabel(gridBtn, showGrid ? 'Grid' : 'Grid off');
-  gridBtn.title = 'Hide the placement grid (#)';
+  gridBtn.title = showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
 }
 
 function setLabelBBoxes(on, announce = true) {

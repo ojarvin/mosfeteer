@@ -352,16 +352,12 @@ For a visually balanced NOR latch or similar cross-coupled gate pair:
 - determine `Q` and `QB` from the Boolean equations, not from which gate is
   drawn uppermost. Swap output port identities if the initial placement gives
   the opposite polarity;
-- construct the feedback X in diagonal router mode first. Start each branch
-  at the input-side escape point one grid cell outside the symbol, at equal
-  and opposite offsets about the centerline; end at the corresponding
-  output-side escape point one grid cell outside the symbol;
-- connect the escape points to the actual input and output terminals with
-  short orthogonal stubs. This keeps the diagonal spans in open space and
-  prevents them from drilling through gate bodies;
-- the two diagonal spans must be geometric mirror images and must cross without
-  a solder dot. Add junction dots only where a feedback branch joins its own
-  output wire;
+- use `cross A1 A2 B1 B2` for a matched fixed cross when the four terminals form
+  a rectangle; it creates diagonal routes between opposite corners with an
+  unsoldered central crossing;
+- if a deliberate diagonal fixed span is required, keep it in open space,
+  symmetric, and free of solder dots at crossings. Add junction dots only
+  where a feedback branch joins its own output wire;
 - connect the output ports only after the X is complete when manual routing is
   required. A single multi-terminal autoroute may reduce or reshape the
   intended X.
@@ -488,8 +484,8 @@ never turn them into annotations.
 **No font-12 value / refdes text.** Component identifiers are dedicated
 owned label objects. Every labeled symbol, including ports, keeps its
 component name and owned label synchronized. Ports auto-create their
-identifier label from the refdes (refPrefix `I` / `O` / `IO`, so numeric
-defaults use explicit textbook markup such as `I_{1}`). Do not set component
+identifier label from the refdes (refPrefix `VI` / `VO` / `VIO`, so numeric
+defaults use explicit textbook markup such as `V_{I1}`). Do not set component
 `value` text to convey names.
 
 Label text supports subscripts with `_{...}` markup (e.g. `C_{GS}`,
@@ -562,9 +558,9 @@ node src/cli/index.js <circuit> "add nmos M2 --at 480 0 --mirrorX"
 node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL"
 ```
 
-The two sources meet on the symmetry column; `M1.d` and `M2.d` sit on one
-shared row for the load / output wiring. Give the pair enough pitch for
-clean label space.
+The two sources align on one row and connect through a centered tail or
+junction; `M1.d` and `M2.d` sit on one shared row for the load / output wiring.
+Give the pair enough pitch for clean label space.
 
 ### Vertical stack (shared source / drain on one grid line)
 

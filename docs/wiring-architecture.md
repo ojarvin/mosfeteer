@@ -2,19 +2,20 @@
 
 ## Goals
 
-The wiring model is a topological graph with orthogonal, grid-aligned geometry.
-Electrical connectivity is independent from component placement and from the
-visual route chosen for a net. A route may be changed without changing the
-terminal set, and a topology operation may preserve every existing path unless
-the user explicitly deletes geometry.
+The managed wiring model is a topological graph with orthogonal, grid-aligned
+geometry. Fixed paths may preserve deliberate diagonal geometry. Electrical
+connectivity is independent from component placement and from the visual route
+chosen for a net. A route may be changed without changing the terminal set, and
+a topology operation may preserve every existing path unless the user explicitly
+deletes geometry.
 
 ## Canonical data model
 
 Each `Net` owns:
 
 - `terminals`: component terminal references, the electrical endpoints.
-- `branches`: explicit orthogonal polylines. Every branch is an editable wire
-  path; a branch endpoint is either a terminal or a junction.
+- `branches`: explicit managed orthogonal polylines. Every branch is an
+  editable wire path; a branch endpoint is either a terminal or a junction.
 - `junctions`: explicit grid points where two or more branches are joined.
   Branch endpoints can imply junctions, but geometric crossings alone never
   create connectivity; explicit joins are serialized for stable agent output.
@@ -32,7 +33,7 @@ no-waypoint request already connected by explicit topology is a no-op; an
 explicit target path can instead split that path and record a deliberate
 same-net join at a crossing. Existing geometry otherwise changes only through
 an explicit wire edit, transform, reroute, or another operation whose purpose
-is to repair geometry; fixed legacy paths remain protected.
+is to repair geometry; fixed paths remain protected.
 
 ## Automatic routing
 
@@ -103,8 +104,9 @@ so they can be removed when topology changes.
 
 ## Invariants
 
-- every wire point is on the 40-unit grid;
-- every branch is orthogonal and has no duplicate/collinear interior points;
+- every managed wire point is on the 40-unit grid;
+- every managed branch is orthogonal and has no duplicate/collinear interior points;
+- every fixed-path point is on the 40-unit grid; fixed paths may be diagonal;
 - branch endpoints that represent terminals equal the live terminal position;
 - no committed segment enters a component body or overlaps another net's wire;
 - all terminal connectivity is represented by exactly one net;

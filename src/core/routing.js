@@ -2,7 +2,7 @@
 import { evaluate } from './commands.js';
 import { normalizeCircuitSpec } from './circuitSpec.js';
 import { placeCircuit } from './placement.js';
-import { Circuit } from './model.js';
+import { Circuit, componentLabelText } from './model.js';
 import { segmentsCross } from './router.js';
 import { crossNetOverlaps, pathSegments } from './wiring.js';
 import { GRID } from './grid.js';
@@ -102,7 +102,7 @@ function addOwnedLabels(circuit) {
     if (!component.def.labelOffset || component.type === 'solder') continue;
     circuit.addLabel({
       id: `label-${component.refdes}`,
-      text: component.refdes,
+      text: componentLabelText(component.refdes),
       owner: component.refdes,
       offset: component.def.labelOffset,
       align: 'center',

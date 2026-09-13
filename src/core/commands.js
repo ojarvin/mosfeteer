@@ -134,7 +134,7 @@ const ISSUE_HINTS = {
   'label-component-overlap': 'Move the label into open space; keep its anchor attached if it is an electrical net label.',
   'label-overlap': 'Separate the labels or adjust their alignment so their boxes do not overlap.',
   'wire-through-body': 'Reroute the net around the component body; only a shared MOS gate bus may use the documented exception.',
-  'managed-diagonal': 'Use F3/orthogonal routing or convert this legacy path to an intentional fixed route.',
+  'managed-diagonal': 'Redraw this net with F3 set to orthogonal; reserve diagonal geometry for deliberate fixed routes.',
   'grid-violation': 'Move or edit the object onto the 40-unit grid.',
   'cross-net-overlap': 'Choose one physical net and move the other collinear span; crossings may cross transversely but must not overlap.',
   'malformed-net-label': 'Retarget the label to a drawable point on a named physical net, or convert it to a free annotation.',
@@ -444,13 +444,13 @@ export function commandHelp() {
     '  rename <refdes> <new>          - rename a component',
     '  rm <refdes>                    - remove a component',
     '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
-    '  cross A1 A2 B1 B2             - protected matched diagonal cross-coupling',
+    '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  nets                           - list nets with terminals and length',
-    '  net <id> add|drop|name|label|rm ... - manage a net (fixed: path, vertex, junction edits)',
+    '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
-    '  netlabel add NET [ID] NAME X Y  - place a label owned by a net',
+    '  netlabel add NET [ID] NAME X Y  - place a label on a physical net',
     '  netlabel rename|retarget|rm ... - edit/remove a net label',
     '  netlabel convert LABEL NET    - convert an annotation to a net label',
     '  netlabel detach LABEL [TEXT]  - convert a net label to an annotation',
@@ -460,10 +460,11 @@ export function commandHelp() {
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
-    '  eval                           - quality report (unconnected/overlaps/off-grid)',
-    '  analyze output-impedance NET [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive a symbolic textbook equation (input is zeroed)',
-    '  analyze input-impedance NET [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive symbolic Z_in',
-    '  analyze transfer-function OUT [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--differential-side NET] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive a symbolic voltage transfer',
+    '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
+    '  analyze output-impedance NET [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended|differential] [--differential-side NET] [--model REF=triode|current-source] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive symbolic Z_out (input is zeroed)',
+    '  analyze input-impedance NET [--reference NET] [--ac-ground NET,...] [--mode single-ended|differential] [--differential-side NET] [--model REF=triode|current-source] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive symbolic Z_in',
+    '  analyze transfer-function OUT [--input IN] [--reference NET] [--ac-ground NET,...] [--mode single-ended|differential] [--differential-side NET] [--model REF=triode|current-source] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller] - derive symbolic A_v',
+    '  --miller                       - explicitly enable the default Miller approximation',
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
     '  ascii                          - coarse ASCII layout preview',
@@ -534,10 +535,10 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'analyze' || cmd === 'analysis') {
     const subject = pos.shift();
     if (subject !== 'output-impedance' && subject !== 'rout' && subject !== 'zout' && subject !== 'input-impedance' && subject !== 'rin' && subject !== 'zin' && subject !== 'transfer-function' && subject !== 'transfer' && subject !== 'gain') {
-      throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller]');
+      throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended|differential] [--differential-side NET] [--model REF=triode|current-source] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller]');
     }
     const target = pos.shift();
-    if (!target || pos.length) throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended] [--model REF=MODEL] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller]');
+    if (!target || pos.length) throw new Error('usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--reference NET] [--ac-ground NET,...] [--mode single-ended|differential] [--differential-side NET] [--model REF=triode|current-source] [--context TEXT] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--miller]');
     const analysisOptions = {
       reference: flags.reference?.[0],
       acGrounds: flags['ac-ground'],
@@ -1178,5 +1179,5 @@ function netCommand(circuit, pos, result) {
     circuit.removeNet(net);
     return result(`removed net ${net.id}`, null, true);
   }
-  throw new Error('usage: net <id> add|drop|name|rm|path|vertex|junction');
+  throw new Error('usage: net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction');
 }

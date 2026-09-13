@@ -36,14 +36,14 @@
         </div>
         <button id="btn-delete-circuit" data-icon="trash" class="danger-action" title="Permanently delete the saved current document" disabled>Delete document</button>
         <button id="btn-check" data-icon="check" data-action="check" data-doc-kind="schematic" title="Check the current schematic (x)">Check</button>
-        <button id="btn-save" data-icon="save" data-action="save" title="Save the current document, including designs with issues (Shift+x)">Save</button>
+        <button id="btn-save" data-icon="save" data-action="save" title="Save the current document, including designs with issues (Shift+x or Ctrl/Cmd+S)">Save</button>
         <button id="btn-export" data-icon="download" title="Export the current document as SVG, PDF, or high-resolution PNG">Export</button>
       </div>
 
       <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style">
         <span class="toolbar-group-label" id="style-heading">Design style</span>
         <label for="style-color">Color</label>
-        <select id="style-color" title="Apply color to the selected objects; Ctrl+Shift+V pastes a copied object's color (Ctrl+Shift+V)">
+        <select id="style-color" title="Apply color to selected objects; Ctrl/Cmd+Shift+V pastes all style fields from the copied object">
           <option value="#111" style="background:#111;color:#fff">&nbsp;&nbsp;&nbsp;</option>
           <option value="#7a7d85" style="background:#7a7d85;color:#fff">&nbsp;&nbsp;&nbsp;</option>
           <option value="#d96c75" style="background:#d96c75">&nbsp;&nbsp;&nbsp;</option><option value="#e59f71" style="background:#e59f71">&nbsp;&nbsp;&nbsp;</option>
@@ -53,12 +53,12 @@
           <option value="#d889b5" style="background:#d889b5">&nbsp;&nbsp;&nbsp;</option><option value="#9aa7b8" style="background:#9aa7b8">&nbsp;&nbsp;&nbsp;</option>
         </select>
         <label for="style-line">Line</label>
-        <select id="style-line" title="Apply line style wherever supported; Ctrl+Shift+V pastes a copied object's line style (Ctrl+Shift+V)">
+        <select id="style-line" title="Apply line style where supported; Ctrl/Cmd+Shift+V pastes all style fields from the copied object">
           <option value="solid">Solid</option><option value="dashed">Dashed</option>
           <option value="dash-dot">Dash-dot</option><option value="dotted">Dotted</option>
         </select>
         <label for="style-width">Width</label>
-        <select id="style-width" title="Apply stroke width to selected objects; Ctrl+Shift+V pastes a copied object's width (Ctrl+Shift+V)">
+        <select id="style-width" title="Apply stroke width to selected objects; Ctrl/Cmd+Shift+V pastes all style fields from the copied object">
           <option value="normal">Normal</option><option value="thin">Thin</option><option value="thick">Thick</option>
         </select>
       </div>
@@ -73,10 +73,10 @@
       </div>
       <div class="toolbar-group view-actions" aria-labelledby="view-heading">
         <span class="toolbar-group-label" id="view-heading">View</span>
-        <button id="btn-grid" data-icon="grid" title="Hide the placement grid (#)">Grid</button>
-        <button id="btn-crosshair" data-icon="crosshair" title="Hide the crosshair (C)">Crosshair</button>
+        <button id="btn-grid" data-icon="grid" title="Show or hide the placement grid (#)">Grid</button>
+        <button id="btn-crosshair" data-icon="crosshair" title="Show or hide the crosshair (C)">Crosshair</button>
         <button id="btn-label-bboxes" data-icon="box-select" data-doc-kind="schematic" title="Show rounded and tight rendered label boxes">Label boxes</button>
-        <button id="btn-theme" data-icon="moon" title="Switch to dark theme (D)">Dark</button>
+        <button id="btn-theme" data-icon="moon" title="Switch between light and dark themes (D)">Dark</button>
       </div>
       <div class="toolbar-group analysis-group" aria-labelledby="analysis-heading" data-doc-kind="schematic">
         <span class="toolbar-group-label" id="analysis-heading">Analysis</span>
@@ -178,21 +178,21 @@
           <label for="analysis-ac-grounds">Additional AC-ground ports/nets</label>
           <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" />
           <p class="field-hint">Use named nets, physical net IDs, or terminal references. These DC bias ports are treated as AC ground.</p>
-          <label for="analysis-models">Triode model overrides</label>
+          <label for="analysis-models">Device model overrides</label>
           <input id="analysis-models" name="models" type="text" placeholder="M2=triode" autocomplete="off" spellcheck="false" />
-          <p class="field-hint">For example, mark a transistor used as a bias current source as an ideal small-signal current source.</p>
+          <p class="field-hint">Use <code>REF=triode</code> for a symbolic <span class="math-inline">r<sub>ds</sub></span> resistor or <code>REF=current-source</code> for an ideal small-signal current source. Other device attributes are available in the context menu.</p>
           <label for="analysis-context">Additional context</label>
           <textarea id="analysis-context" name="context" rows="3" placeholder="Describe bias assumptions or which side of a differential pair is held quiet."></textarea>
         </fieldset>
         <fieldset class="analysis-approximations">
           <legend>Textbook approximations</legend>
-          <label><input id="analysis-approx-dc" name="approxDc" type="checkbox" /> Analyze DC topology only (<span class="math-inline">C → open, L → 0</span>)</label>
+          <label><input id="analysis-approx-dc" name="approxDc" type="checkbox" /> Analyze DC topology only (<span class="math-inline">C → open, L → short</span>)</label>
           <label><input id="analysis-approx-cascode" name="approxCascode" type="checkbox" checked /> Apply cascode dominant-term reduction only when <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span> is also selected</label>
           <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</label>
           <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</label>
           <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></label>
           <label><input id="analysis-approx-miller" name="approxMiller" type="checkbox" checked /> Apply Miller approximation to eligible feedback impedances</label>
-          <p class="field-hint">These are explicit textbook simplifications. Miller's theorem can split any linear impedance between a stage input and output, but this tool applies it only when the device is marked <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span> and a safe DC stage gain can be derived. Exact symbolic equations remain in the details, and every selected approximation is listed as an assumption.</p>
+          <p class="field-hint">These are explicit textbook simplifications. Miller splitting is used only for eligible feedback impedances in a conservative inverting stage with an AC-grounded source, a visible DC load, and an explicit <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span> assumption. Exact equations remain in the Log tab, and selected approximations are listed there.</p>
       </fieldset>
       <div id="analysis-result" class="analysis-result" aria-live="polite" hidden>
         <div class="analysis-tabs" role="tablist" aria-label="Analysis output">
@@ -231,19 +231,19 @@
         <button id="btn-mode-wire" class="mode-control" data-icon="wire" data-mode="wire" data-doc-kind="schematic" aria-pressed="false" title="Draw an electrical wire using the selected shape (w)" aria-label="Draw an electrical wire">Wire <kbd>w</kbd></button>
         <button id="btn-mode-connector" class="mode-control" data-icon="wire" data-action="connector" data-doc-kind="block" hidden aria-pressed="false" title="Draw a block connector with an arrowhead (w)" aria-label="Draw a block connector">Connector <kbd>w</kbd></button>
         <button id="btn-mode-visual" class="mode-control" data-icon="box-select" data-mode="visual" aria-pressed="false" title="Select everything completely inside a box (v)" aria-label="Box select">Box select <kbd>v</kbd></button>
-        <button id="btn-mode-move" class="mode-control" data-icon="move" data-action="move" aria-pressed="false" title="Move the selected object and stay in Move mode until Esc (m)" aria-label="Move selected object">Move <kbd>m</kbd></button>
-        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Move without carrying electrical connectivity; stay active until Esc (Shift+m)" aria-label="Detach move">Detach move <kbd>Shift+m</kbd></button>
-        <button id="btn-mode-copy" class="mode-control" data-icon="copy" data-action="copy" aria-pressed="false" title="Copy the selected object or set; Ctrl+Shift+V pastes one copied object's style onto selected objects (c)" aria-label="Copy selected object">Copy <kbd>c</kbd></button>
+        <button id="btn-mode-move" class="mode-control" data-icon="move" data-action="move" aria-pressed="false" title="Move selected objects with their connectivity; stays active until Esc (m)" aria-label="Move selected objects">Move <kbd>m</kbd></button>
+        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Move selected objects without carrying connected nets; stays active until Esc (Shift+m)" aria-label="Detach move">Detach move <kbd>Shift+m</kbd></button>
+        <button id="btn-mode-copy" class="mode-control" data-icon="copy" data-action="copy" aria-pressed="false" title="Copy a selected object or set; stays active for repeated copies (c)" aria-label="Copy selected objects">Copy <kbd>c</kbd></button>
         <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc (Delete)" aria-label="Delete selected objects">Delete <kbd>Delete</kbd></button>
-        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a net label (L)" aria-label="Place net label">Net label <kbd>L</kbd></button>
+        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a label on a physical wire (L)" aria-label="Place a label on a physical wire">Net label <kbd>L</kbd></button>
         <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-icon="text" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires (Shift+N)" aria-label="Place annotation">Annotation <kbd>Shift+N</kbd></button>
         <button id="btn-mode-arrow" class="mode-control annotation-control" data-icon="arrow" data-action="arrow" aria-pressed="false" title="Draw a multi-point arrow; press Enter to commit (a)" aria-label="Draw multi-point arrow">Arrow <kbd>a</kbd></button>
         <button id="btn-mode-box" class="mode-control annotation-control" data-icon="rectangle" data-action="box" aria-pressed="false" title="Draw a two-point box (b)" aria-label="Draw box">Box <kbd>b</kbd></button>
         <button id="btn-mode-line" class="mode-control annotation-control" data-icon="line" data-action="line" aria-pressed="false" title="Draw a non-connectivity line annotation (l)" aria-label="Draw line annotation">Line <kbd>l</kbd></button>
-        <button id="btn-bring-front" class="mode-control layer-control" data-icon="front" data-action="bring-front" aria-pressed="false" aria-keyshortcuts="Shift+ArrowUp" title="Bring the selected object to the front (Shift+Up)" aria-label="Bring selected object to front">Bring to front <kbd>Shift+↑</kbd></button>
-        <button id="btn-send-back" class="mode-control layer-control" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send the selected object to the back (Shift+Down)" aria-label="Send selected object to back">Send to back <kbd>Shift+↓</kbd></button>
+        <button id="btn-bring-front" class="mode-control layer-control" data-icon="front" data-action="bring-front" aria-pressed="false" aria-keyshortcuts="Shift+ArrowUp" title="Bring selected objects to the front (Shift+Up)" aria-label="Bring selected objects to front">Bring to front <kbd>Shift+↑</kbd></button>
+        <button id="btn-send-back" class="mode-control layer-control" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send selected objects to the back (Shift+Down)" aria-label="Send selected objects to back">Send to back <kbd>Shift+↓</kbd></button>
       </div>
-      <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Schematic canvas. Tab to focus objects; Enter selects the focused object; arrow keys nudge selection."></div>
+      <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Editor canvas. Tab to focus objects; Enter or Space selects the focused object; arrow keys nudge selection."></div>
       <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Context actions"></div>
     </section>
 
@@ -266,7 +266,7 @@
       <section class="panel-group check-summary" id="check-summary" data-panel="check-summary" data-doc-kind="schematic" aria-labelledby="check-summary-heading">
         <h2 class="panel-heading" id="check-summary-heading">Design check <button id="btn-clear-check" data-icon="x-circle" type="button" class="check-clear" title="Clear the Design check report">Clear</button></h2>
         <div class="check-summary-body" id="check-summary-body" data-role="check-summary" aria-live="polite">
-          <div class="check-summary-empty" data-check-state="empty">Run Check to review this circuit.</div>
+          <div class="check-summary-empty" data-check-state="empty">Run Check to review this schematic.</div>
         </div>
       </section>
 

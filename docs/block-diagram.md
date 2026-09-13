@@ -1,8 +1,8 @@
 # Block-diagram core contract
 
-The planned convergence with the schematic editor is described in
-[One editor, two component palettes](plans/unified-block-editor.md). The
-contract below describes the current implementation, not that future design.
+The contract below describes the current implementation. The proposed editor
+convergence is tracked separately in
+[One editor, two component palettes](plans/unified-block-editor.md).
 
 Block diagrams are a separate document kind. The core model lives in
 `src/core/block-model.js`; its router is `src/core/block-router.js`. It does not
@@ -96,22 +96,24 @@ scoped (`block.terminal`); geometry never infers an arrow relationship.
 
 Block rectangles and terminal offsets are snapped to the 40-unit grid. New
 blocks receive stable generic `T<n>` terminals at every non-corner perimeter
-grid point, with one unused grid square at each corner; legacy `in`/`out` terminals
-remain loadable. A terminal stores only its side and offset along that side, so
+grid point, with one unused grid square at each corner; older `in`/`out` terminal
+data remains loadable. A terminal stores only its side and offset along that side, so
 moving or resizing a block recomputes its exact perimeter point. A side being
 pulled inward stops one grid square beyond the last connected terminal it
 would pass; otherwise the rectangle may shrink to the ordinary minimum size.
 Unused generated terminals may be repositioned or discarded, while explicit
 terminals are clamped to the resized perimeter. Block text is centered at the
-rectangle center. Arrow endpoints are terminal identities, not free points.
+rectangle center. Attached arrow endpoints are terminal identities; detached
+visual connectors may have free endpoints.
 Deleting a block preserves its incident connectors as detached fixed visuals,
 including the surviving endpoint and connector labels. Deleting a referenced
 terminal is rejected.
 
 ## Routing and arrowheads
 
-Automatic arrows use `routeBlockArrow()` and avoid block interiors with a
-one-grid-cell clearance. The first segment leaves the source terminal in its
+Fresh automatic arrows use `routeBlockArrow()` and avoid block interiors with a
+one-grid-cell clearance; connected block moves reroute with two cells of
+clearance. The first segment leaves the source terminal in its
 outward direction, and the final segment approaches the target from outside
 its block. No connector runs parallel along a block edge: the adjacent route
 lane stays at least one grid square away so the arrowhead points into the
@@ -127,8 +129,8 @@ cannot leave the arrow tangent to the block edge.
 Fixed routes keep their interior waypoints while model mutations re-anchor
 only their endpoint points. Automatic routing minimizes bend count before
 route length, so a longer safe outside L wins over a shorter staircase. Among
-routes with the same bend count, diagonal layouts prefer a balanced midpoint
-dogleg; obstacle routing remains the fallback.
+routes with the same bend count, the centered dogleg is preferred; grid search
+is the fallback.
 
 `blockArrowGeometry(points)` returns `{ shaftPoints, tip, left, right }`.
 The tip is exactly the last route point; the default filled head is 32 units
@@ -137,8 +139,8 @@ long and 36 units wide, using the final cardinal segment for orientation.
 ## Persistence, commands, and rendering
 
 `src/core/document.js` is the document boundary. It dispatches by `data.kind`
-(`block` selects `BlockDiagram.fromJSON()`, while a missing kind remains
-legacy electrical state), validates through the selected model, and selects
+(`block` selects `BlockDiagram.fromJSON()`, while a missing kind is treated as
+electrical state), validates through the selected model, and selects
 the matching SVG renderer. The HTTP server, desktop storage, browser load/sync
 path, and SVG export all use this boundary, so block data never passes through
 `Circuit.fromJSON()` or electrical `evaluate()`.
@@ -176,9 +178,8 @@ controls, crosshair, dark mode, marquee, nudge, undo/redo, copy, Delete,
 annotation tools, and Shift+L connector-label placement apply without invoking
 electrical pickers or routing.
 
-Double-clicking a block opens its inline text editor even though selection
-redraws replace the underlying SVG node. Selected or actively edited labels
-show their calculated bounding boxes and anchors, matching schematic labels.
+Double-click a block to edit its text. Selected or actively edited labels show
+their calculated bounding boxes and anchors, matching schematic labels.
 
 Connector endpoints are draggable and may be reattached to any unambiguous
 terminal on the same or another block; all block terminals are visible during

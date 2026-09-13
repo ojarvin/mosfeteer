@@ -36,6 +36,8 @@ test('help returns help text', () => {
   assert.ok(res.text.includes('move <refdes>'));
   assert.ok(commandHelp().includes('eval'));
   assert.ok(commandHelp().includes('explain connect'));
+  assert.ok(commandHelp().includes('segment-rm'));
+  assert.ok(commandHelp().includes('--model REF=triode|current-source'));
   assert.ok(commandHelp().includes('[--miller]'));
 });
 

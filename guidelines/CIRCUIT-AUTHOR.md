@@ -212,25 +212,15 @@ The browser live-syncs changed active-circuit revisions while visible; CLI comma
 3. Choose a circuit name (for example `analog-block` or `low-voltage-cascode`) and issue the first command. The server marks it active and the browser loads it on the next visible sync cycle.
 4. Drive placement, review, then routing through CLI or HTTP. Fit the view after each phase and after later edits that change drawing extents; never leave the final review zoomed away.
 
-## Reliable automation (don't lose a session to these)
+## Browser automation notes
 
-- **One persistent CDP connection for the whole session.** Reconnecting per
-  command drops the page's debugger and can trigger the "Leave site?"
-  prompt (the app has a `beforeunload` handler for unsaved changes).
-- **CDP process safety:** use isolated random HTTP and Chromium debug ports for
-  each session and shut down only the server/browser processes you own. Never
-  use broad `pkill` against the live editor or a shared browser.
-- **Headless never fires native `dblclick`.** Use real
-  `Input.dispatchMouseEvent` with `clickCount: 2`. Inline editors are
-  `input[style*="position: absolute"]`. Ctrl+A =
-  `keyDown('a', { modifiers: MOD, code: 'KeyA', keyCode: 65 })`.
-- **`syncActiveCircuit` protects a just-saved design from stale in-flight
-  responses**, but after every save still **verify the file** with
-  `GET /api/circuits/<name>` — never trust only the live tab.
-- **Multi-terminal net coverage lives in `branches`, not just `eval`.**
-  `eval` reports a terminal "connected" if it's in a net even when no wire
-  reaches it. A 3+ terminal net is stored as `branches` (one polyline per
-  arm); confirm every terminal's world position appears in some branch.
+- Keep one persistent CDP connection for the session. Use isolated HTTP and
+  Chromium debug ports, and stop only processes started for this session.
+- For a double-click, send two pointer events with `clickCount: 2`. Inline
+  editors use `input[style*="position: absolute"]`.
+- After saving, verify the document with `GET /api/circuits/<name>`.
+- For a multi-terminal net, inspect `branches` and confirm every terminal's
+  world position appears in a branch; `eval` alone checks membership, not reach.
 
 ## Inspect existing circuits
 
@@ -262,18 +252,26 @@ mirror <refdes> <x|y>          flip along an axis
 value <refdes> <V>             set value text
 rename <refdes> <new>          rename a component (updates its instance label)
 rm <refdes>                    remove a component
-connect REF.TERM REF.TERM ... [--name N]     (alias wire) join terminals into one net
+connect REF.TERM REF.TERM ... [--name N] [--explain]
+                               join terminals into one net (alias wire)
 cross A1 A2 B1 B2                      add two matched protected cross-coupled routes
 disconnect REF.TERM            detach one terminal from its net
 nets                           list nets with terminals and lengths
-net <id> add|drop|name|rm ...  manage a net, e.g. net N1 add R1.a ; net N1 name OUT
+net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ...
+                               manage a net or edit fixed-path geometry
 list                           list components with world terminals
 state                          full JSON state
 bounds                         drawing extents
-eval                           quality report (unconnected/overlaps/off-grid/managed-wire diagonals)
+eval                           quality report (connectivity, overlaps, routing, labels, grid)
 explain eval                   grouped diagnostics with plain-language repair hints
 explain connect REF.TERM REF.TERM
                                dry-run route with path, bends, and pin-escape details
+analyze output-impedance NET   derive symbolic Z_out (input is zeroed)
+analyze input-impedance NET    derive symbolic Z_in
+analyze transfer-function OUT  derive symbolic A_v (use --input IN)
+                               use --reference, --ac-ground, --mode,
+                               --differential-side, --model, --context, or
+                               the approximation flags as needed
 ascii                          coarse ASCII layout preview
 help                           full command list
 ```
@@ -293,10 +291,10 @@ help                           full command list
   [`docs/circuit-spec.md`](../docs/circuit-spec.md); the browser has no
   natural-language generation tool.
 - `cross A1 A2 B1 B2` accepts four terminals at the corners of one grid-aligned
-  rectangle. It creates exactly two fixed, orthogonal nets for the opposite
-  diagonal pairings, with one central crossing and no solder/join at the
-  crossing. Non-rectangular or already-connected endpoints are rejected unless
-  the exact same fixed cross already exists.
+  rectangle. It creates exactly two fixed diagonal nets for the opposite
+  pairings, with one central crossing and no solder/join at the crossing.
+  Non-rectangular or already-connected endpoints are rejected unless the exact
+  same fixed cross already exists.
 
 ### Terminal names (current grid = 40)
 ```text
@@ -320,14 +318,14 @@ it toward the semantic drain. Three-terminal `nmos`/`pmos` keep `{x:40,y:0}`.
 Full per-symbol geometry is in `AGENTS.md`; the rules for how to lay them
 out are in `style-guide.md`.
 
-### Browser editing hotkeys and legacy fixed paths
+### Schematic browser editing hotkeys and fixed paths
 
-- `y` yanks the selected set; `p` pastes it with fresh ids. `yy` is not
-  required. `Ctrl/Cmd+C` and `Ctrl/Cmd+V` are equivalent copy/paste shortcuts.
+- `y` copies the selected set; `p` pastes it with fresh ids.
+  `Ctrl/Cmd+C` and `Ctrl/Cmd+V` are equivalent copy/paste shortcuts.
 - `Ctrl/Cmd+S` saves the current design. The design dropdown refuses to switch
   while the current design has unsaved changes; save first, or the selection is
   restored and an unsaved-changes warning is logged.
-- Ctrl/Cmd-drag a selected set to duplicate it, then drag the copy; labels remain part of mixed selections. In armed Move or Copy mode, drag from empty space to box-select the complete set before clicking to enter ghost mode.
+- In armed Move or Copy mode, drag from empty space to box-select the complete set before clicking to enter ghost mode; labels remain part of mixed selections.
 - `l` starts a non-connectivity multi-point line annotation; click successive points and press Enter or double-click to commit. Selected line segments and vertices can be dragged.
 - `w` is the single managed Wire command. It supports orthogonal or diagonal
   routes and can start at a terminal, an existing wire, or any grid point.
@@ -336,11 +334,10 @@ out are in `style-guide.md`.
   commits at a free point or wire interior, so the new endpoint need not be a
   terminal. `F3` toggles the route choice for new wires. There is no separate
   uppercase-`W` editor mode.
-- Persisted nets with `routingMode: "fixed"` remain loadable for compatibility,
-  including legacy diagonal paths. Use the `net` command's fixed-path
-  operations when inspecting or deliberately editing such data; ordinary
-  managed routing does not convert a fixed net into a managed one.
-- Moving a component re-anchors legacy fixed-path endpoints without
+- Persisted nets with `routingMode: "fixed"` remain loadable, including
+  diagonal paths. Use the `net` command's fixed-path operations when inspecting
+  or deliberately editing them; managed routing does not convert a fixed net.
+- Moving a component re-anchors fixed-path endpoints without
   autorouting; moving a complete selected set translates fixed paths with it.
 - `explain eval` is read-only and groups evaluator issues with repair hints for
   agent workflows. `explain connect A.t B.t` is a non-mutating dry run of the
@@ -403,7 +400,7 @@ label remains visible and clear after fitting the view.
   junction unless the topology says it is.
 
 
-## Save and learn
+## Save and record verified notes
 
 Saving produces both `circuits/<name>/circuit.json` (source of truth) and
 `circuits/<name>/circuit.svg` (review/export artifact). The CLI / HTTP
@@ -415,7 +412,7 @@ When placing components, do not add explanatory or value text unless the
 user explicitly requests it. Components render only their inherent
 instance labels by default.
 
-After a non-obvious routing or symbol issue, update
+After a verified routing or symbol observation, update
 `circuits/<name>/learnings.md`. Structure:
 
 ```markdown
@@ -430,22 +427,14 @@ After a non-obvious routing or symbol issue, update
 ## Routing
 - Manual route choice and why it avoids trouble.
 
-## Problems And Fixes
-- Problem: ...
-  Cause: ...
-  Fix: ...
-
-## Advice For Future Agents
+## Advice for future agents
 - Reusable guidance specific to this design.
 ```
 
 Only record verified observations. Do not record speculative explanations
-or temporary debugging output. Keep the file scalable: each new drawing
-attempt adds its own verified observations to the relevant circuit's file,
-so guidance accumulates without bloating the global guides. If a learning
-is general (not specific to this circuit), consider promoting it to
-`style-guide.md` instead — but only when it's a stable rule, not a one-off
-fix.
+or temporary debugging output. Keep the file scalable: add verified
+observations to the relevant circuit's file. If a note is general, promote it
+to `style-guide.md` only when it is a stable rule.
 
 ## Final verification
 

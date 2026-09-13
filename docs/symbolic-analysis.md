@@ -18,8 +18,8 @@ selectors; one derivation produces input impedance, output impedance, and
 voltage-transfer results together. The form stays populated across
 close/reopen and browser reloads. Right-click a device
 or net in the right-hand lists to persist optional small-signal attributes:
-transistors can be marked as ideal current sources or triode resistors, while
-resistors can be marked **R = ∞** when they are large enough to be negligible
+transistors can be marked as triode resistors, while resistors can be marked
+**R = ∞** when they are large enough to be negligible
 relative to the other resistive paths on the same nets. Ports/nets can be
 marked as DC-bias (AC-ground), input, or output. Those
 attributes pre-fill the form and are also consumed automatically by analysis.
@@ -33,10 +33,10 @@ returns to the form setting. This makes a cascode/bias-device approximation
 explicit instead of silently idealizing every MOS device in the schematic.
 The same menu can assume `g_m r_o \\gg 1` or retain finite intrinsic gain for
 one device, and can ignore or retain that device's body effect (`V_{BS}=0` when
-ignored). A current-source override remains distinct: `r_o \\to \\infty`
-removes only the output conductance, while an ideal current-source model also
-removes the transistor's controlled `g_m`/`g_{mb}` sources and leaves an open
-small-signal branch.
+ignored). The command/API `current-source` override remains distinct:
+`r_o \\to \\infty` removes only the output conductance, while an ideal
+current-source model also removes the transistor's controlled `g_m`/`g_{mb}`
+sources and leaves an open small-signal branch.
 
 New analysis forms default to the practical symbolic approximations (body
 effect ignored, `g_m r_o \\gg 1`, cascode reduction enabled, and Miller enabled).
@@ -226,8 +226,8 @@ generic nodal solver handles modelable feedback and source degeneration.
 When a MOS source is not at AC ground, the compact reducer hands the request to
 the nodal solver; the source node, `g_m` feedback, and source impedance remain
 explicit in the KCL equations instead of producing an unsupported error.
-`current-source` and `triode` attributes explicitly select the corresponding
-small-signal primitive. Independent DC current sources are open circuits and
+Command/API `current-source` and `triode` overrides explicitly select the
+corresponding small-signal primitive. Independent DC current sources are open circuits and
 independent DC voltage sources are shorts; the latter force the report through
 the aliased nodal model so their zero-impedance connection is preserved.
 Unmodelled devices or singular systems return an
