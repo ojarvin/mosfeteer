@@ -4630,6 +4630,8 @@ export class Circuit {
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
       if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld())) circuit.labels.delete(label.id);
     }
+    // Restore direct pin contacts that are not represented by wire geometry.
+    if (!data.topologyOnly) circuit.connectCoincident();
     // Migrate legacy owned instance labels that persisted a compact trailing
     // number (for example `M1`) to the explicit source used by the current
     // renderer (`M_{1}`). Custom markup such as `R_{D}` is preserved.
@@ -4650,6 +4652,7 @@ export class Circuit {
     // net to a minimal connected structure (no parallel wires, no loops).
     for (const net of circuit.nets.values()) circuit._reduceNet(net);
     circuit.syncJunctionSolders();
+    circuit._loading = false;
     return circuit;
   }
 }

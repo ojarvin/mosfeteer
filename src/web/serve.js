@@ -11,7 +11,6 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDocument, documentKind, loadDocument, renderDocument } from '../core/document.js';
 import { runCommand } from '../core/commands.js';
-import { renderAscii } from '../core/ascii.js';
 import { svgString } from '../core/render.js';
 import { generateCircuit, routeCircuit } from '../core/generator.js';
 
@@ -202,7 +201,6 @@ async function handleCircuitApi(req, res, url) {
         state: generated.state,
         artifacts: {
           svg: svgString(generated.circuit, { grid: true, terminals: false, junctions: false, background: true, netNames: true }),
-          ascii: renderAscii(generated.circuit),
         },
       };
       generationPreviews.set(response.previewId, { target: name, state: generated.state, response });

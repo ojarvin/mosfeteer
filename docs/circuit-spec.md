@@ -95,7 +95,7 @@ explicit CircuitSpec or a supported template input. The server first normalizes,
 places, routes, and evaluates a temporary candidate. A preview never loads,
 changes, saves, or activates the named circuit and returns `normalizedSpec`,
 `topology`, `candidate` (score, issues, placement, metrics, and report),
-`state`, and `artifacts.svg` / `artifacts.ascii`. Commit requires the `previewId`
+`state`, and `artifacts.svg`. Commit requires the `previewId`
 from a successful preview, revalidates that preview, and saves the named circuit
 only when it is new. Failed, malformed, or existing targets return a structured
 error without changing the saved circuit.

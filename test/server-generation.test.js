@@ -96,7 +96,7 @@ serverTest('the browser and server expose only deterministic generation', async 
   assert.equal(legacy.status, 404);
 });
 
-serverTest('generation preview is non-mutating and returns consistent SVG/ASCII artifacts', async (t) => {
+serverTest('generation preview is non-mutating and returns a consistent SVG artifact', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
   const seed = await fetch(`${app.base}/api/circuits/manual/cmd`, {
@@ -110,7 +110,7 @@ serverTest('generation preview is non-mutating and returns consistent SVG/ASCII 
   assert.deepEqual(data.normalizedSpec, data.topology);
   assert.ok(data.candidate.score.length > 0);
   assert.match(data.artifacts.svg, /^<svg/);
-  assert.ok(data.artifacts.ascii.includes('R1:resistor'));
+  assert.deepEqual(Object.keys(data.artifacts), ['svg']);
   assert.deepEqual((await (await fetch(`${app.base}/api/circuits/manual`)).json()).state, before);
 });
 

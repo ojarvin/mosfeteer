@@ -1853,6 +1853,26 @@ test('toJSON / fromJSON round-trips refs, positions, transforms, net membership,
   }
 });
 
+test('fromJSON restores coincident pin contacts omitted from wire nets', () => {
+  const circuit = Circuit.fromJSON({
+    version: 2,
+    grid: 40,
+    components: [
+      { refdes: 'M1', type: 'nmos', value: '', transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'GND1', type: 'ground', value: '', transform: { x: 0, y: 80, rotation: 0, mirrorX: false, mirrorY: false } },
+    ],
+    nets: [],
+    labels: [],
+  });
+
+  const net = circuit.netOfTerminal('M1.s');
+  assert.ok(net);
+  assert.equal(net, circuit.netOfTerminal('GND1.gnd'));
+
+  circuit.addComponent('ground', { refdes: 'GND2', x: 0, y: 80 });
+  assert.equal(net, circuit.netOfTerminal('GND2.gnd'));
+});
+
 test('draw order round-trips for components, nets, and labels', () => {
   const c = new Circuit();
   const r1 = c.addComponent('resistor', { refdes: 'R1', x: 80, drawOrder: 7 });

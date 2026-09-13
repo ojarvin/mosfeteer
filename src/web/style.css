@@ -1341,7 +1341,8 @@ button:disabled {
 }
 
 .component-context-menu button:hover,
-.component-context-menu button:focus-visible {
+.component-context-menu button:focus-visible,
+.component-context-menu button.context-item-open {
   background: var(--accent-dim);
   outline: 1px solid var(--accent);
   outline-offset: -1px;

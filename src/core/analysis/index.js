@@ -509,6 +509,15 @@ function markedAcGrounds(circuit) {
 // impedance, and pole/zero queries alike.
 function sxSymbol(name, source = null) { return { kind: 'symbol', name, source }; }
 function sxNumber(value) { return { kind: 'number', value }; }
+function sxInfinitySign(value) {
+  let sign = 1;
+  let current = value;
+  while (current?.kind === 'neg') {
+    sign *= -1;
+    current = current.value;
+  }
+  return current?.kind === 'symbol' && current.name === '\\infty' ? sign : 0;
+}
 function sxAdd(...values) {
   const terms = values.flatMap((value) => value?.kind === 'add' ? value.terms : [value]).filter((value) => value && !(value.kind === 'number' && value.value === 0));
   if (!terms.length) return sxNumber(0);
@@ -527,6 +536,13 @@ function sxSub(a, b) { return sxAdd(a, sxNeg(b)); }
 function sxMul(...values) {
   const terms = values.flatMap((value) => value?.kind === 'mul' ? value.terms : [value]).filter(Boolean);
   if (terms.some((value) => value.kind === 'number' && value.value === 0)) return sxNumber(0);
+  if (terms.some((value) => sxInfinitySign(value))) {
+    const sign = terms.reduce((total, value) => {
+      if (value.kind === 'number') return total * Math.sign(value.value || 1);
+      return total * (value.kind === 'neg' ? -1 : 1);
+    }, 1);
+    return sign < 0 ? sxNeg(sxSymbol('\\infty')) : sxSymbol('\\infty');
+  }
   let numeric = 1;
   let sign = 1;
   const expanded = [];
@@ -546,6 +562,7 @@ function sxMul(...values) {
 }
 function sxInv(value) {
   if (value.kind === 'number') return value.value === 0 ? sxSymbol('\\infty') : sxNumber(1 / value.value);
+  if (sxInfinitySign(value)) return sxNumber(0);
   if (value.kind === 'inv') return value.value;
   return { kind: 'inv', value };
 }
@@ -1763,6 +1780,7 @@ export function formatSmallSignalNetlist(circuit, model, { referenceIds = new Se
       const controlPlus = controlNodeName(element.controlPlus, element.controlPlusNetId);
       const controlMinus = controlNodeName(element.controlMinus, element.controlMinusNetId);
       const value = sxText(element.polarity === -1 ? sxNeg(element.value) : element.value);
+      lines.push(`* G_${element.component} current: ${value} (${controlPlus} - ${controlMinus})`);
       lines.push(`G_${element.component} ${a} ${b} ${controlPlus} ${controlMinus} ${value}`);
     } else if (element.kind === 'resistor' || element.kind === 'output-resistance' || element.kind === 'triode-resistance') {
       const suffix = element.millerRole ? `_${element.millerRole}` : '';
@@ -2688,6 +2706,10 @@ function feedbackFiniteRoDevices(circuit, referenceIds, overrides, options = {})
 }
 
 function cascodeOutputBranches(circuit, target, referenceIds, overrides, options = {}) {
+  const terminalsByNet = new Map();
+  for (const net of circuit.nets.values()) {
+    terminalsByNet.set(net.id, new Set(net.terminals.map(({ comp }) => comp)));
+  }
   const devices = [...circuit.components.values()]
     .filter((component) => MOS_TYPES.has(component.type))
     .filter((component) => !isCurrentSourceModel(overrides.get(component.refdes)) && !isTriodeModel(overrides.get(component.refdes)))
@@ -2716,6 +2738,10 @@ function cascodeOutputBranches(circuit, target, referenceIds, overrides, options
       const secondOther = second.terminals.find((id) => id !== sharedId);
       if (!((firstOther === targetId && referenceIds.has(secondOther))
         || (secondOther === targetId && referenceIds.has(firstOther)))) continue;
+      if (first.component.type.startsWith('nmos') !== second.component.type.startsWith('nmos')) continue;
+      const branchRefs = new Set([first.component.refdes, second.component.refdes]);
+      const loaded = [...(terminalsByNet.get(sharedId) || [])].some((refdes) => !branchRefs.has(refdes));
+      if (loaded) continue;
       const targetDevice = firstOther === targetId ? first : second;
       const referenceDevice = firstOther === targetId ? second : first;
       const outer = referenceDevice.component;
@@ -2739,6 +2765,68 @@ function cascodeOutputBranches(circuit, target, referenceIds, overrides, options
   return unique.length >= 2 ? unique : null;
 }
 
+/** Recognize a folded cascode side whose cascode source/drain node is loaded
+ * by an opposite-polarity MOS device with an AC-grounded gate.  The folded
+ * device contributes its output resistance in parallel with the current
+ * source transistor at the cascode's internal node. */
+function foldedCascodeOutputBranches(circuit, target, referenceIds, overrides, options = {}) {
+  const devices = [...circuit.components.values()]
+    .filter((component) => MOS_TYPES.has(component.type))
+    .filter((component) => !isCurrentSourceModel(overrides.get(component.refdes)) && !isTriodeModel(overrides.get(component.refdes)))
+    .map((component) => {
+      const drain = circuit.netOfTerminal({ comp: component.refdes, term: 'd' });
+      const source = circuit.netOfTerminal({ comp: component.refdes, term: 's' });
+      const gate = circuit.netOfTerminal({ comp: component.refdes, term: 'g' });
+      const bulk = component.def.terminals.some((term) => term.name === 'b')
+        ? circuit.netOfTerminal({ comp: component.refdes, term: 'b' }) : null;
+      if (!drain || !source || !gate || !referenceIds.has(gate.id) || (bulk && !referenceIds.has(bulk.id))) return null;
+      return { component, drain, source, polarity: component.type.startsWith('nmos') ? 'n' : 'p' };
+    })
+    .filter(Boolean);
+  const targetId = target.id;
+  const branches = [];
+  for (let left = 0; left < devices.length; left++) {
+    for (let right = left + 1; right < devices.length; right++) {
+      const first = devices[left];
+      const second = devices[right];
+      if (first.polarity !== second.polarity) continue;
+      const shared = [first.drain.id, first.source.id].filter((id) =>
+        [second.drain.id, second.source.id].includes(id) && id !== targetId && !referenceIds.has(id));
+      if (shared.length !== 1) continue;
+      const sharedId = shared[0];
+      const firstOther = first.drain.id === sharedId ? first.source.id : first.drain.id;
+      const secondOther = second.drain.id === sharedId ? second.source.id : second.drain.id;
+      if (!((firstOther === targetId && referenceIds.has(secondOther))
+        || (secondOther === targetId && referenceIds.has(firstOther)))) continue;
+      const targetDevice = firstOther === targetId ? first : second;
+      const referenceDevice = firstOther === targetId ? second : first;
+      const loadDevices = devices
+        .filter((device) => device.polarity !== first.polarity)
+        .filter((device) => device.component.refdes !== targetDevice.component.refdes
+          && device.component.refdes !== referenceDevice.component.refdes)
+        .filter((device) => device.drain.id === sharedId || device.source.id === sharedId)
+        .map((device) => device.component);
+      branches.push({
+        outer: referenceDevice.component,
+        cascode: targetDevice.component,
+        sharedId,
+        ...(loadDevices.length ? { loadDevices: [referenceDevice.component, ...loadDevices] } : {}),
+        options,
+        finiteOuter: !componentIgnoresRo(referenceDevice.component, options),
+        finiteCascode: !componentIgnoresRo(targetDevice.component, options),
+        bodyEffect: !componentIgnoresBodyEffect(targetDevice.component, options),
+        gmroLarge: componentAssumesGmRoLarge(targetDevice.component, options),
+      });
+    }
+  }
+  const unique = [];
+  for (const branch of branches) {
+    const key = [branch.outer.refdes, branch.cascode.refdes].sort().join('|');
+    if (!unique.some((candidate) => [candidate.outer.refdes, candidate.cascode.refdes].sort().join('|') === key)) unique.push(branch);
+  }
+  return unique.length >= 2 && unique.some((branch) => branch.loadDevices?.length > 1) ? unique : null;
+}
+
 function cascodeBranchExpression(branch, approximate) {
   if (!branch.finiteOuter || !branch.finiteCascode) return symbol('\\infty');
   const outerRo = symbol(mosOutputName(branch.outer.refdes), branch.outer.refdes);
@@ -2750,6 +2838,29 @@ function cascodeBranchExpression(branch, approximate) {
   return approximate
     ? product(outerRo, cascodeGm, cascodeRo)
     : sum(outerRo, cascodeRo, product(outerRo, cascodeGm, cascodeRo));
+}
+
+function foldedCascodeBranchExpression(branch, approximate) {
+  if (!branch.finiteCascode) return symbol('\\infty');
+  const internal = finiteParallel((branch.loadDevices || []).map((device) => {
+    if (componentIgnoresRo(device, branch.options || {})) return symbol('\\infty');
+    return symbol(mosOutputName(device.refdes), device.refdes);
+  }));
+  if (internal.kind === 'symbol' && internal.name === '\\infty') return internal;
+  const cascodeIndex = String(branch.cascode.refdes).match(/[0-9]+$/)?.[0] || branch.cascode.refdes;
+  const gm = symbol(`g_{m${cascodeIndex}}`, branch.cascode.refdes);
+  const gmb = symbol(`g_{mb${cascodeIndex}}`, branch.cascode.refdes);
+  const cascodeGm = branch.bodyEffect ? sum(gm, gmb) : gm;
+  return approximate
+    ? product(internal, cascodeGm, symbol(mosOutputName(branch.cascode.refdes), branch.cascode.refdes))
+    : sum(internal, symbol(mosOutputName(branch.cascode.refdes), branch.cascode.refdes), product(internal, cascodeGm, symbol(mosOutputName(branch.cascode.refdes), branch.cascode.refdes)));
+}
+
+function foldedCascodeDominantCondition(branch) {
+  const index = String(branch.cascode.refdes).match(/[0-9]+$/)?.[0] || branch.cascode.refdes;
+  const gm = branch.bodyEffect ? `(g_{m${index}} + g_{mb${index}})` : `g_{m${index}}`;
+  const load = (branch.loadDevices || []).map((device) => mosOutputName(device.refdes)).join(' \\|\\| ');
+  return `${gm} (${load} \\|\\| ${mosOutputName(branch.cascode.refdes)}) \\gg 1`;
 }
 
 function cascodeDominantCondition(branch) {
@@ -2964,16 +3075,18 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
   // Resolve this topology before stamping the nodal model.  When both
   // large-g_m r_o and the form-wide r_o→∞ approximation are selected, the
   // former is the more useful cascode description: retain finite symbolic
-  // r_o for the recognized branch devices so the report can show
-  // r_o(outer)·g_m(cascode)·r_o(cascode), while honoring explicit per-device
-  // or named-device r_o omissions.
-  const preliminaryCascodeBranches = cascodeOutputBranches(circuit, target, referenceIds, overrides, options);
+  // r_o for recognized branch devices so compact cascode products remain
+  // meaningful, while honoring explicit per-device or named-device omissions.
+  const preliminaryFoldedBranches = foldedCascodeOutputBranches(circuit, target, referenceIds, overrides, options);
+  const preliminaryCascodeBranches = preliminaryFoldedBranches || cascodeOutputBranches(circuit, target, referenceIds, overrides, options);
   const singleCascodeTopology = !preliminaryCascodeBranches
     ? singleCascodeLoadReduction(circuit, target, referenceIds, overrides, options)
     : null;
   const explicitlyIgnoredRoRefs = new Set(splitContextValues(options.ignoreRoDevices ?? options.ignoreChannelLengthModulationDevices));
   const retainedCascodeDevices = preliminaryCascodeBranches
-    ? preliminaryCascodeBranches.flatMap((branch) => [branch.outer, branch.cascode])
+    ? preliminaryCascodeBranches.flatMap((branch) => branch.loadDevices
+      ? [...branch.loadDevices, branch.cascode]
+      : [branch.outer, branch.cascode])
     : singleCascodeTopology?.devices || [];
   const cascodeGmroSelected = preliminaryCascodeBranches
     ? preliminaryCascodeBranches.some((branch) => branch.gmroLarge)
@@ -3130,20 +3243,26 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
     });
   }
 
-  // A complementary cascode load is two independent small-signal branches
-  // from the output node to the AC reference.  Keep that topology visible:
-  // each branch is the outer device's r_o multiplied by the cascode device's
-  // intrinsic-gain factor, rather than exposing the expanded Gaussian result.
+  // Complementary and folded cascodes are independent small-signal branches
+  // from the output node to AC ground. Keep each branch visible instead of
+  // exposing the expanded nodal expression.
   const cascodeBranches = preliminaryCascodeBranches
-    ? cascodeOutputBranches(circuit, target, referenceIds, overrides, modelOptions)
+    ? (preliminaryFoldedBranches
+      ? foldedCascodeOutputBranches(circuit, target, referenceIds, overrides, modelOptions)
+      : cascodeOutputBranches(circuit, target, referenceIds, overrides, modelOptions))
     : null;
   if (cascodeBranches) {
     const cascodeReductionSelected = approximationFlags.cascodeApproximation;
     const cascodeReductionApplied = cascodeReductionSelected
       && cascodeBranches.some((branch) => branch.gmroLarge && branch.finiteOuter && branch.finiteCascode);
-    const approximateExpression = finiteParallel(cascodeBranches.map((branch) => cascodeBranchExpression(branch, cascodeReductionApplied && branch.gmroLarge)));
-    const finiteExpression = finiteParallel(cascodeBranches.map((branch) => cascodeBranchExpression(branch, false)));
-    const exactBranches = cascodeOutputBranches(circuit, target, referenceIds, overrides, {
+    const branchExpression = (branch, approximate) => branch.loadDevices
+      ? foldedCascodeBranchExpression(branch, approximate)
+      : cascodeBranchExpression(branch, approximate);
+    const approximateExpression = finiteParallel(cascodeBranches.map((branch) => branchExpression(branch, cascodeReductionApplied && branch.gmroLarge)));
+    const finiteExpression = finiteParallel(cascodeBranches.map((branch) => branchExpression(branch, false)));
+    const exactBranches = (preliminaryFoldedBranches
+      ? foldedCascodeOutputBranches
+      : cascodeOutputBranches)(circuit, target, referenceIds, overrides, {
       ...options,
       ignoreChannelLengthModulation: false,
       ignoreRoDevices: [],
@@ -3152,7 +3271,7 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
       ignoreDeviceApproximationOverrides: true,
     });
     const exactExpression = finiteParallel((exactBranches || cascodeBranches)
-      .map((branch) => cascodeBranchExpression({ ...branch, finiteOuter: true, finiteCascode: true }, false)));
+      .map((branch) => branchExpression({ ...branch, finiteOuter: true, finiteCascode: true, options: { ...options, ignoreDeviceRoOverrides: true } }, false)));
     const expression = cascodeReductionApplied ? approximateExpression : finiteExpression;
     const approximationSelected = cascodeReductionApplied
       || approximationFlags.ignoreChannelLengthModulation
@@ -3161,15 +3280,24 @@ export function analyzeOutputImpedance(circuit, targetName, options = {}) {
     const branchText = cascodeBranches
       .map((branch) => `${branch.outer.refdes}/${branch.cascode.refdes}`)
       .join(', ');
-    assumptions.push(`The output is recognized as parallel cascode branches (${branchText}) from the target node to AC ground.`);
+    if (preliminaryFoldedBranches) {
+      const loadedText = cascodeBranches
+        .filter((branch) => branch.loadDevices?.length > 1)
+        .map((branch) => `${branch.cascode.refdes} source node: ${branch.loadDevices.map((device) => mosOutputName(device.refdes)).join(' \\|\\| ')}`)
+        .join('; ');
+      assumptions.push(`The output is recognized as parallel folded-cascode branches (${branchText}) from the target node to AC ground.`);
+      if (loadedText) assumptions.push(`The folded cascode internal load is modeled as parallel output resistances (${loadedText}).`);
+    } else {
+      assumptions.push(`The output is recognized as parallel cascode branches (${branchText}) from the target node to AC ground.`);
+    }
     const dominantBranches = cascodeReductionApplied
       ? cascodeBranches.filter((branch) => branch.gmroLarge && branch.finiteOuter && branch.finiteCascode)
       : [];
     approximations.push(dominantBranches.length
-      ? 'Cascode dominant-term approximation: ' + dominantBranches.map(cascodeDominantCondition).join('; ') + '.'
+      ? 'Cascode dominant-term approximation: ' + dominantBranches.map((branch) => branch.loadDevices ? foldedCascodeDominantCondition(branch) : cascodeDominantCondition(branch)).join('; ') + '.'
       : 'Cascode branch impedances are retained as explicit series and controlled-source terms.');
     if (retainedCascodeRefs.length) {
-      assumptions.push(`Finite symbolic r_o is retained for cascode devices (${retainedCascodeRefs.join(', ')}) so the selected g_m r_o \\gg 1 branch approximation remains meaningful; explicit per-device r_o omissions still produce an open branch.`);
+      assumptions.push(`Finite symbolic r_o is retained for the selected cascode branch devices (${retainedCascodeRefs.join(', ')}) so the g_m r_o \\gg 1 approximation remains meaningful; explicit per-device r_o omissions still produce an open branch.`);
       approximations.push('Cascode-specific precedence: the large-g_m r_o reduction retains finite r_o instead of rendering the recognized branch as infinity.');
     }
     const equation = `Z_{out} ${approximationSelected ? '\\approx' : '='} ${expressionText(expression)}`;

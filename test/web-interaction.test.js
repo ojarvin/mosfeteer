@@ -58,7 +58,7 @@ test('annotation endpoints move, resize, and reject invalid shapes', () => {
   assert.deepEqual(line.points[1], { x: 160, y: 80 });
 });
 
-test('desktop preload exposes a close command through IPC', async () => {
+test('desktop preload exposes close and reload commands through IPC', async () => {
   let exposed;
   const calls = [];
   vm.runInNewContext(readFileSync(new URL('../src/desktop/preload.cjs', import.meta.url), 'utf8'), {
@@ -71,7 +71,11 @@ test('desktop preload exposes a close command through IPC', async () => {
   });
   assert.equal(exposed.isDesktop, true);
   await exposed.closeWindow();
-  assert.deepEqual(calls, [{ channel: 'window:close', args: [] }]);
+  await exposed.reloadApp();
+  assert.deepEqual(calls, [
+    { channel: 'window:close', args: [] },
+    { channel: 'app:reload', args: [] },
+  ]);
 });
 
 test('editor shell exposes keyboard canvas and live status surfaces', () => {
@@ -158,8 +162,11 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /analysisApproxGmRo\.checked = true/);
   assert.match(main, /millerApproximation: !!analysisApproxMiller\?\.checked/);
   assert.match(main, /smallSignalNetlist: reports\.transfer\.smallSignalNetlist \|\| reports\.output\.smallSignalNetlist/);
-  assert.match(main, /setAnalysisResultTab\(netlist && selectedTab === 'netlist' \? 'netlist' : selectedTab\)/);
-  assert.match(main, /const leftGap = 2 \* GRID/);
+  assert.match(main, /const availableTab = selectedTab === 'netlist' && netlist/);
+  assert.match(main, /const topGap = 2 \* GRID/);
+  assert.match(main, /const bottomEdge = circuitBounds\.h > 0 \? circuitBounds\.y \+ circuitBounds\.h/);
+  assert.match(main, /const leftEdge = circuitBounds\.w > 0 \? circuitBounds\.x/);
+  assert.match(main, /layout\.bottomEdge \+ layout\.topGap/);
   assert.match(main, /align: 'left'/);
   assert.match(main, /effective transconductance/);
   assert.match(main, /analysisAnnotationAssumptions/);
@@ -187,6 +194,16 @@ test('desktop startup overlaps document listing with last-document restoration',
   assert.match(main, /if \(name\) await loadCircuit\(name, true\);/);
   assert.match(main, /fitView\(\);\s*restoreDesktopStartup\(\)/);
   assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreDesktopStartup/);
+});
+
+test('F5 reloads the application instead of entering the normal keymap', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /if \(ev\.key === 'F5'\)/);
+  assert.match(main, /ev\.preventDefault\(\);\s*flushDraft\(\);/);
+  assert.match(main, /reloadApp\(\)\.catch\(\(\) => window\.location\.reload\(\)\)/);
+  const desktop = readFileSync(new URL('../src/desktop/main.js', import.meta.url), 'utf8');
+  assert.match(desktop, /ipcMain\.handle\('app:reload'/);
+  assert.match(desktop, /app\.relaunch\(\);\s*app\.quit\(\);/);
 });
 
 test('analysis assumption annotations collapse equivalent device r_o overrides', () => {
@@ -276,6 +293,8 @@ test('committed inserts repair coincident connectivity and analysis menus suppor
   assert.match(main, /appendContextSubmenu\(menu, 'Select'/);
   assert.match(main, /function analysisChoiceState\(targets, read, expected\)/);
   assert.match(main, /context-item-active/);
+  assert.match(main, /trigger\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(main, /trigger\.classList\.add\('context-item-open'\)/);
   assert.match(main, /aria-checked/);
   assert.match(main, /function openComponentChildLabelEditor\(component\)/);
   assert.match(main, /ownedLabelDraft: true/);

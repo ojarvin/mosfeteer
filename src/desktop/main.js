@@ -3,14 +3,12 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createNativeStorage, validCircuitName } from './storage.js';
-import { startDevHotReload } from './hot-reload.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const INDEX = join(ROOT, 'src', 'web', 'index.html');
 const PRELOAD = fileURLToPath(new URL('./preload.cjs', import.meta.url));
 let mainWindow;
 let storage;
-let stopHotReload;
 let lastOpenedPath;
 let storageReady = Promise.resolve();
 let storageInitError = null;
@@ -143,6 +141,11 @@ function registerPersistence() {
     trusted(event);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
   });
+  ipcMain.handle('app:reload', (event) => {
+    trusted(event);
+    app.relaunch();
+    app.quit();
+  });
 }
 
 async function createWindow() {
@@ -180,22 +183,8 @@ async function createWindow() {
     setTimeout(() => app.quit(), 50);
   }
   mainWindow.on('closed', () => {
-    stopHotReload?.();
-    stopHotReload = null;
     mainWindow = null;
   });
-  if (!app.isPackaged && process.env.SCHEMATIC_SPAWNER_HOT_RELOAD === '1') {
-    // Reloading keeps the renderer's localStorage draft, which is its crash-safe
-    // unsaved-work boundary; never enable this path for packaged applications.
-    stopHotReload = startDevHotReload({
-      directories: [
-        join(ROOT, 'src', 'web'),
-        join(ROOT, 'src', 'desktop'),
-        join(ROOT, 'src', 'core'),
-      ],
-      reload: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload(); },
-    });
-  }
 }
 
 app.whenReady().then(async () => {

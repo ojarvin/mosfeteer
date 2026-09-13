@@ -50,9 +50,10 @@ For single-stage presentation, the permitted compact recognizers are the three
 textbook forms—common-source, common-gate, and common-drain. They consume the same
 stamped model and solved equations as every other request; they only replace a
 large equivalent expression with a familiar form when the topology and
-assumptions prove that rewrite valid. Feedback loops, cascoded networks, and
-other multi-device arrangements stay in the generic graph/KCL path unless the
-user explicitly enables the separate cascode dominant-term approximation.
+assumptions prove that rewrite valid. Feedback loops and other multi-device
+arrangements stay in the generic graph/KCL path. A folded output with an
+explicitly AC-grounded internal load uses the dedicated branch reduction;
+the dominant-term form still requires its separate approximation control.
 
 1. The selected output/input nets and AC references are resolved to physical
    nodes. A differential request is represented as a single-ended equivalent;
@@ -138,6 +139,11 @@ sets it to zero (AC ground) before forming the small-signal model. An
 explicit input role or a uniquely named `VIN`/`IN` net is inferred when
 available; ambiguous circuits should select the source explicitly.
 
+The Analysis result includes a read-only SPICE-like small-signal netlist beside
+the equations and log. Each controlled-source entry also states its current
+explicitly using the actual control-node names, for example
+`g_{m3}(V_{IN}-N1)`.
+
 The same nodal engine can derive input impedance by applying a symbolic
 `I_{test}` at the selected input and reporting `Z_{in}=V_{test}/I_{test}`.
 Resistors and capacitors are retained symbolically; a capacitor contributes
@@ -148,12 +154,21 @@ form `(r_o + R_L)/(1 + g_m r_o)` when a finite drain load is available. The
 voltage-transfer result retains the finite-`r_o` term, giving the corresponding
 positive common-gate gain.
 
+For a folded-cascode output, the two sides are derived separately and placed in
+parallel. A cascode side uses
+`Z_side = r_{o,c} + R_x + (g_{m,c}+g_{mb,c})r_{o,c}R_x`, where `R_x` is the
+parallel output resistance seen at the cascode internal node. On the folded
+side, the input transistor at that node is included with the current-source
+transistor, for example `R_x = r_{o11} || r_{o3}`. The final output resistance
+is `Z_n || Z_p`; the exact finite-`r_o` expression remains in the Log tab when
+the dominant-term approximation is selected.
+
 After a successful derivation, **Annotate schematic** places each successful
-symbolic equation as a free diagram label in a left-aligned column to the
-right of the circuit bounds, with a two-cell clearance. After the browser has
-measured the rendered equation boxes, their horizontal centerlines use one
-shared pitch based on the largest adjacent half-sum of bbox heights; at least
-one neighboring pair can therefore touch while narrower pairs have more
+symbolic equation as a free diagram label below the circuit, aligned to its
+left edge with a two-cell clearance. After the browser has measured the
+rendered equation boxes, their horizontal centerlines use one shared pitch
+based on the largest adjacent half-sum of bbox heights; at least one
+neighboring pair can therefore touch while narrower pairs have more
 whitespace. A separate multiline
 MathML-backed **Assumptions:** label is added only when a `g_m r_o \gg 1`,
 `r_o = \infty`, body-effect omission, or additional cascode-reduction

@@ -38,7 +38,6 @@ src/
 │   ├── wiring.js       Wire geometry, branch joining, normalizePath.
 │   ├── wireedit.js     Wire drag/edit primitives.
 │   ├── render.js       SVG renderer (svgString, editorOverlay).
-│   ├── ascii.js        Coarse ASCII preview.
 │   ├── circuitSpec.js  Versioned generator-facing topology contract.
 │   ├── semantic.js     Pure checks for declared analog intent.
 │   ├── generator.js    Topology compiler and placement facades.

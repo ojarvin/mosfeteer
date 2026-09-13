@@ -224,6 +224,60 @@ function complementaryCascodeOutput() {
   return circuit;
 }
 
+function loadedCascodeOutput() {
+  const circuit = new Circuit();
+  let x = 0;
+  for (const [type, refdes] of [
+    ['nmos', 'M1'], ['nmos', 'M2'], ['pmos', 'M3'], ['pmos', 'M4'], ['nmos', 'M5'],
+    ['ground', 'GND'], ['supply', 'VDD'], ['output', 'OUT'],
+  ]) circuit.addComponent(type, { refdes, x: x += 400, y: 0 });
+  const raw = (name, ...refs) => {
+    const net = circuit._createNet(name);
+    net.terminals = refs.map((ref) => circuit.resolveTerm(ref));
+    return net;
+  };
+  raw('VSS', 'M1.s', 'GND.gnd', 'M5.s');
+  raw('VDD', 'M3.s', 'VDD.p');
+  raw('NINTN', 'M1.d', 'M2.s');
+  raw('NINTP', 'M3.d', 'M4.s', 'M5.d');
+  raw('VOUT', 'M2.d', 'M4.d', 'OUT.p');
+  for (let index = 1; index <= 5; index++) raw(`B${index}`, `M${index}.g`);
+  return circuit;
+}
+
+function foldedCascodeOutputWithInputLoad() {
+  const circuit = new Circuit();
+  for (const [type, refdes, x, y] of [
+    ['nmos', 'M8', 0, 240], ['nmos', 'M9', 0, 80],
+    ['pmos', 'M10', 400, -80], ['pmos', 'M11', 400, -240], ['nmos', 'M3', 800, -80],
+    ['resistor', 'RS', 680, 160], ['ground', 'GND', 0, 320], ['ground', 'GND2', 600, 160],
+    ['supply', 'VDD', 400, -320], ['input', 'IN', 680, -80],
+    ['port', 'BNO', -120, 240], ['port', 'BCN', -120, 80],
+    ['port', 'BCP', 280, -80], ['port', 'BPO', 280, -240],
+  ]) circuit.addComponent(type, { refdes, x, y });
+  circuit.connect('M8.s', 'GND.gnd');
+  circuit.connect('M8.d', 'M9.s');
+  circuit.connect('M9.d', 'M10.d');
+  circuit.connect('M10.s', 'M11.d', 'M3.d');
+  circuit.connect('M11.s', 'VDD.p');
+  circuit.connect('M3.g', 'IN.p');
+  circuit.connect('M3.s', 'RS.b');
+  circuit.connect('RS.a', 'GND2.gnd');
+  circuit.connect('M9.g', 'BCN.p');
+  circuit.connect('M10.g', 'BCP.p');
+  circuit.connect('M8.g', 'BNO.p');
+  circuit.connect('M11.g', 'BPO.p');
+  namedNet(circuit, 'GND.gnd', 'VSS');
+  namedNet(circuit, 'VDD.p', 'VDD');
+  namedNet(circuit, 'IN.p', 'VIN');
+  namedNet(circuit, 'M9.d', 'VOUT');
+  namedNet(circuit, 'BCN.p', 'BCN');
+  namedNet(circuit, 'BCP.p', 'BCP');
+  namedNet(circuit, 'BNO.p', 'BNO');
+  namedNet(circuit, 'BPO.p', 'BPO');
+  return circuit;
+}
+
 test('derives a symbolic resistor output impedance without numerical evaluation', () => {
   const circuit = singleResistor();
   const report = analyzeOutputImpedance(circuit, 'VOUT');
@@ -322,6 +376,7 @@ test('recognizes an AC-grounded common-source MOS output resistance', () => {
   assert.equal(report.ok, true);
   assert.equal(report.equation, 'Z_{out} = r_{o1}');
   assert.match(report.smallSignalNetlist, /G_M1 .* g_\{m1\}/);
+  assert.match(report.smallSignalNetlist, /G_M1 current: g_\{m1\} \(0 - 0\)/);
   assert.doesNotMatch(report.smallSignalNetlist, /-1.*g_\{m1\}/);
   assert.match(report.smallSignalNetlist, /R_M1 .* r_\{o1\}/);
   assert.ok(report.assumptions.some((text) => /M1 bulk is unused and is assumed tied to GND/.test(text)));
@@ -808,6 +863,42 @@ test('renders complementary cascode output branches in parallel', () => {
   assert.match(report.nodeEquations.join('\\n'), /V_\{IN\} = 0/);
 });
 
+test('keeps a loaded folded cascode on the nodal output-impedance path', () => {
+  const report = analyzeOutputImpedance(loadedCascodeOutput(), 'VOUT', {
+    acGrounds: ['B1', 'B2', 'B3', 'B4', 'B5'],
+  });
+  assert.equal(report.ok, true);
+  assert.match(report.equation, /r_\{o2\}/);
+  assert.match(report.equation, /r_\{o4\}/);
+  assert.match(report.equation, /r_\{o5\}/);
+  assert.match(report.assumptions.join('\n'), /folded-cascode branches/);
+  assert.match(report.assumptions.join('\n'), /r_\{o3\}.*r_\{o5\}/);
+});
+
+test('includes the input-side transistor in a folded cascode branch load', () => {
+  const report = analyzeOutputImpedance(foldedCascodeOutputWithInputLoad(), 'VOUT', {
+    input: 'VIN',
+    acGrounds: ['VDD', 'BNO', 'BCN', 'BCP', 'BPO'],
+    gmroLarge: true,
+    cascodeApproximation: true,
+    ignoreBodyEffect: true,
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.equation, 'Z_{out} \\approx \\left(g_{m9} \\, r_{o8} \\, r_{o9}\\right) \\|\\| \\left(g_{m10} \\, \\left(r_{o11} \\|\\| r_{o3}\\right) \\, r_{o10}\\right)');
+  assert.match(report.smallSignalNetlist, /G_M3 current: g_\{m3\} \(V_\{IN\} - N12\)/);
+  assert.match(report.exactEquation, /r_\{o11\} \\|\\| r_\{o3\}/);
+  assert.match(report.assumptions.join('\n'), /internal load.*r_\{o11\}.*r_\{o3\}/);
+  const retained = analyzeOutputImpedance(foldedCascodeOutputWithInputLoad(), 'VOUT', {
+    input: 'VIN',
+    acGrounds: ['VDD', 'BNO', 'BCN', 'BCP', 'BPO'],
+    gmroLarge: true,
+    cascodeApproximation: true,
+    ignoreChannelLengthModulation: true,
+    ignoreBodyEffect: true,
+  });
+  assert.equal(retained.equation, report.equation);
+});
+
 test('forms complementary cascode voltage gain from effective Gm and Rout', () => {
   const report = analyzeTransferFunction(complementaryCascodeOutput(), 'VOUT', {
     input: 'VIN',
@@ -836,7 +927,7 @@ test('keeps finite cascode r_o when large-gmro and global ro omission are both s
   assert.doesNotMatch(report.equation, /\\infty/);
   assert.match(report.smallSignalNetlist, /R_M1 .* r_\{o1\}/);
   assert.match(report.smallSignalNetlist, /G_M1 .* V_\{IN\} 0 g_\{m1\}/);
-  assert.ok(report.assumptions.some((text) => /Finite symbolic r_o is retained for cascode devices/.test(text)));
+  assert.ok(report.assumptions.some((text) => /Finite symbolic r_o is retained for .*cascode branch devices/.test(text)));
 });
 
 test('reports the ideal MOS gate input as infinite impedance', () => {

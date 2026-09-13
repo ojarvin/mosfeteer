@@ -18,8 +18,7 @@ modify the requested circuit and to inspect its saved state.
   `learnings.md`;
 - use `add`, `move`, `rotate`, `mirror`, `connect`, `net`, `disconnect`,
   `rename`, `value`, and `rm` against the requested circuit;
-- run `eval`, `state`, `bounds`, `nets`, `list`, and `ascii` as read-only
-  checks;
+- run `eval`, `state`, `bounds`, `nets`, and `list` as read-only checks;
 - ask the user before choosing among materially different topologies,
   polarities, bias schemes, port meanings, or supply conventions.
 
@@ -87,7 +86,7 @@ node src/cli/index.js <new-circuit-name> generate --preview \
 
 # Review the structured JSON report and its artifacts before asking approval.
 # It includes normalized CircuitSpec, candidate score/issues, semantic report,
-# placement/routing report, state, artifacts.svg, and artifacts.ascii.
+# placement/routing report, state, and artifacts.svg.
 
 # After explicit user approval, rerun the same spec as a new named circuit.
 node src/cli/index.js <new-circuit-name> generate --commit \
@@ -107,8 +106,8 @@ node src/cli/index.js <new-circuit-name> generate --preview < spec.json
 cat spec.json | node src/cli/index.js <new-circuit-name> generate --commit
 ```
 
-A preview must be inspected in both the structured report and the SVG/ASCII
-output. If generation fails, report the returned validation/routing details,
+A preview must be inspected in both the structured report and the SVG output.
+If generation fails, report the returned validation/routing details,
 preserve all existing circuits, ask for the missing decision or corrected
 CircuitSpec, and preview again. Do not silently alter the topology to make a
 candidate pass. A malformed spec returns an error without saving; a candidate
@@ -142,8 +141,8 @@ Follow one reviewable sequence:
    keeping their input terminals readable for either transistor polarity. Keep
    bias/reference circuitry separate from the main path but close to the
    devices it controls. Leave at least one empty grid cell around bodies,
-   labels, and wires. Inspect `list`, `bounds`, `state`, `ascii`, and the fitted
-   browser view.
+   labels, and wires. Inspect `list`, `bounds`, `state`, and the fitted browser
+   view.
 2. **Rails, grounds, and ports** — after the functional layout is established,
    add supply and ground symbols, then external input/output ports. Connect each
    rail symbol directly to its intended net; aligned symbols are independent
@@ -272,7 +271,6 @@ analyze transfer-function OUT  derive symbolic A_v (use --input IN)
                                use --reference, --ac-ground, --mode,
                                --differential-side, --model, --context, or
                                the approximation flags as needed
-ascii                          coarse ASCII layout preview
 help                           full command list
 ```
 

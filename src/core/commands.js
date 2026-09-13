@@ -4,7 +4,6 @@ import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
 import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
-import { renderAscii } from './ascii.js';
 import { svgString } from './render.js';
 import { BlockDiagram } from './block-model.js';
 import { renderDocument, saveDocument } from './document.js';
@@ -467,7 +466,6 @@ export function commandHelp() {
     '  --miller                       - explicitly enable the default Miller approximation',
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
-    '  ascii                          - coarse ASCII layout preview',
     '  svg [file] [--grid]            - export SVG (default data/preview.svg)',
     '  png [file] [--grid]            - rasterize SVG to PNG (default data/preview.png)',
     '  save <file> | load <file>      - JSON snapshot I/O',
@@ -594,8 +592,6 @@ function dispatch(circuit, cmd, pos, flags, io) {
     }
     throw new Error('usage: explain eval | explain connect REF.TERM REF.TERM');
   }
-  if (cmd === 'ascii') return result(renderAscii(circuit), null);
-
   // ---------- components ----------
   if (cmd === 'add') {
     const type = pos[0];

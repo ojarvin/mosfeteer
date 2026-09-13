@@ -2819,10 +2819,8 @@ function renderedLabelTextBounds(group) {
 }
 
 let measuredLabelBBoxes = new Map();
-// Equation annotations are initially positioned with the deterministic model
-// estimate. Once the browser reports the actual MathML dimensions, this layout
-// record re-centers the equation column and keeps the assumptions anchor
-// stable if a web font reports a second, slightly different measurement.
+// Equation annotations are initially positioned with the model estimate. Once
+// MathML dimensions are available, the layout is recalculated below the figure.
 let equationAnnotationLayout = null;
 
 function reflowEquationAnnotations() {
@@ -2862,12 +2860,13 @@ function reflowEquationAnnotations() {
   const pitch = heights.length < 2
     ? heights[0]
     : Math.max(...heights.slice(1).map((height, index) => (heights[index] + height) / 2));
-  const left = snap(layout.rightEdge + layout.leftGap);
+  const left = snap(layout.leftEdge);
+  const top = snap(layout.bottomEdge + layout.topGap);
   let moved = false;
   equations.forEach((label, index) => {
     const box = label.bbox();
     const x = snap(left + box.w / 2);
-    const y = snap(layout.top + pitch / 2 + index * pitch);
+    const y = snap(top + pitch / 2 + index * pitch);
     const anchor = label.anchorWorld();
     if (anchor.x !== x || anchor.y !== y) moved = true;
     label.moveTo(x, y);
@@ -2876,7 +2875,7 @@ function reflowEquationAnnotations() {
   if (assumptions) {
     const box = assumptions.bbox();
     const x = snap(left + box.w / 2);
-    const y = snap(layout.top + pitch * equations.length + GRID + box.h / 2);
+    const y = snap(top + pitch * equations.length + GRID + box.h / 2);
     const anchor = assumptions.anchorWorld();
     if (anchor.x !== x || anchor.y !== y) moved = true;
     assumptions.moveTo(x, y);
@@ -6678,7 +6677,8 @@ function renderAnalysisResult(report) {
   // equations panel beside it; reopening the dialog still preserves the tab
   // the user had selected.
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
-  setAnalysisResultTab(netlist && selectedTab === 'netlist' ? 'netlist' : selectedTab);
+  const availableTab = selectedTab === 'netlist' && netlist ? 'netlist' : selectedTab;
+  setAnalysisResultTab(availableTab);
 }
 
 /** Keep the diagram annotation concise: model-construction assumptions remain
@@ -6981,17 +6981,14 @@ function annotateAnalysisResult() {
     ? [report.reports?.input, report.reports?.output, report.reports?.transfer].filter((child) => child?.ok && child.equation)
     : [report].filter((child) => child.equation);
   if (!entries.length) return;
-  // Keep generated equations in a readable side column instead of placing
-  // them over the selected circuit.  Label boxes are centered on their
-  // anchors, so we create each label once to learn its measured dimensions,
-  // then move its center so the left edge sits two grid cells beyond the
-  // complete circuit bbox. The browser pass below re-centers the equations on
-  // a shared pitch based on the tallest measured box, so shorter equations
-  // naturally gain whitespace while tall ones may touch.
+  // Keep generated equations below the figure. Label boxes are centered on
+  // their anchors, so place each center from the figure's left and bottom
+  // edges after learning its model dimensions.
   const circuitBounds = circuit.bounds();
-  const rightEdge = circuitBounds.w > 0 ? circuitBounds.x + circuitBounds.w : cursor.x;
-  const leftGap = 2 * GRID;
-  let nextTop = circuitBounds.h > 0 ? circuitBounds.y : cursor.y;
+  const leftEdge = circuitBounds.w > 0 ? circuitBounds.x : cursor.x;
+  const bottomEdge = circuitBounds.h > 0 ? circuitBounds.y + circuitBounds.h : cursor.y;
+  const topGap = 2 * GRID;
+  let nextTop = bottomEdge + topGap;
   const labels = [];
   const equationLabels = [];
   let assumptionsLabel = null;
@@ -7005,7 +7002,7 @@ function annotateAnalysisResult() {
         math: true,
       });
       const box = label.bbox();
-      const left = snap(rightEdge + leftGap);
+      const left = snap(leftEdge);
       const x = snap(left + box.w / 2);
       const y = snap(nextTop + box.h / 2);
       label.moveTo(x, y);
@@ -7023,7 +7020,7 @@ function annotateAnalysisResult() {
         math: true,
       });
       const box = label.bbox();
-      const left = snap(rightEdge + leftGap);
+      const left = snap(leftEdge);
       label.moveTo(snap(left + box.w / 2), snap(nextTop + box.h / 2));
       labels.push(label);
       assumptionsLabel = label;
@@ -7032,15 +7029,15 @@ function annotateAnalysisResult() {
   equationAnnotationLayout = {
     equationIds: equationLabels.map((label) => label.id),
     assumptionsId: assumptionsLabel?.id || null,
-    rightEdge,
-    leftGap,
-    top: circuitBounds.h > 0 ? circuitBounds.y : cursor.y,
+    leftEdge,
+    bottomEdge,
+    topGap,
     signature: null,
   };
   setLabelSelection(labels.map((label) => label.id), labels[0]?.id);
   const equationCount = entries.length;
   logLine(`annotated schematic with ${equationCount} equation${equationCount === 1 ? '' : 's'}${labels.length > equationCount ? ' and assumptions' : ''}`, 'status');
-  render();
+  fitView();
 }
 
 analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
@@ -7213,15 +7210,22 @@ function appendContextSubmenu(parent, label, build) {
   build(submenu);
   const closeSiblings = () => {
     for (const sibling of parent.querySelectorAll(':scope > .context-submenu.open')) sibling.classList.remove('open');
-    for (const siblingTrigger of parent.querySelectorAll(':scope > button[aria-expanded="true"]')) siblingTrigger.setAttribute('aria-expanded', 'false');
+    for (const siblingTrigger of parent.querySelectorAll(':scope > button[aria-expanded="true"]')) {
+      siblingTrigger.setAttribute('aria-expanded', 'false');
+      siblingTrigger.classList.remove('context-item-open');
+    }
   };
   const open = () => {
     closeSiblings();
     submenu.classList.add('open');
     componentContextSubmenu = submenu;
     trigger.setAttribute('aria-expanded', 'true');
+    trigger.classList.add('context-item-open');
   };
-  trigger.addEventListener('mouseenter', open);
+  trigger.addEventListener('mouseenter', () => {
+    trigger.focus({ preventScroll: true });
+    open();
+  });
   trigger.addEventListener('focus', open);
   trigger.addEventListener('click', open);
   trigger.addEventListener('keydown', (ev) => {
@@ -7229,6 +7233,7 @@ function appendContextSubmenu(parent, label, build) {
       ev.preventDefault();
       submenu.classList.remove('open');
       trigger.setAttribute('aria-expanded', 'false');
+      trigger.classList.remove('context-item-open');
       trigger.focus();
       return;
     }
@@ -11470,6 +11475,14 @@ if (crosshairBtn) {
 // ----- keyboard -------------------------------------------------------------
 
 window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'F5') {
+    ev.preventDefault();
+    flushDraft();
+    const reloadApp = window.schematicStorage?.reloadApp;
+    if (reloadApp) void reloadApp().catch(() => window.location.reload());
+    else window.location.reload();
+    return;
+  }
   if (isCloseWindowShortcut(ev) && window.schematicStorage?.closeWindow) {
     ev.preventDefault();
     flushDraft();

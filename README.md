@@ -19,12 +19,9 @@ each named document with its `circuit.json` and `circuit.svg` files there. The
 Export dialog is separate from that internal storage: it asks once for an
 external output location (Pictures by default) and can produce SVG, PDF, and
 high-resolution 4× PNG files there, with independent grid and dark-mode
-appearance options. It does
-not start an HTTP server. For opt-in development hot reload, run
-`SCHEMATIC_SPAWNER_HOT_RELOAD=1 npm run desktop`; changes under `src/web/`,
-`src/desktop/`, or `src/core/` reload the window. Reloads preserve the
-renderer’s localStorage draft, including unsaved work. Packaged applications
-never enable this watcher.
+appearance options. It does not start an HTTP server. Press F5 to restart the
+Electron application and reload all application processes; unsaved drafts are
+preserved in the renderer’s local storage.
 To package a distributable app, run `npm run desktop:package`.
 
 For browser development and CLI/agent automation, keep using the HTTP server:

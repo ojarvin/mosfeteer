@@ -10,6 +10,7 @@ const channels = Object.freeze({
   markOpened: 'storage:mark-opened',
   export: 'storage:export',
   closeWindow: 'window:close',
+  reloadApp: 'app:reload',
 });
 
 contextBridge.exposeInMainWorld('schematicStorage', Object.freeze({
@@ -23,4 +24,5 @@ contextBridge.exposeInMainWorld('schematicStorage', Object.freeze({
   markOpened: (name) => ipcRenderer.invoke(channels.markOpened, name),
   export: (options) => ipcRenderer.invoke(channels.export, options),
   closeWindow: () => ipcRenderer.invoke(channels.closeWindow),
+  reloadApp: () => ipcRenderer.invoke(channels.reloadApp),
 }));
