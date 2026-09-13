@@ -67,6 +67,11 @@ const deleteDialog = document.getElementById('delete-dialog');
 const deleteDialogMessage = document.getElementById('delete-dialog-message');
 const switchDialog = document.getElementById('switch-dialog');
 const switchDialogMessage = document.getElementById('switch-dialog-message');
+const exportDialog = document.getElementById('export-dialog');
+const exportForm = document.getElementById('export-form');
+const exportCancel = document.getElementById('export-cancel');
+const exportGridInput = exportForm?.querySelector('input[name="grid"]');
+const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
 const checkSummaryBodyEl = document.getElementById('check-summary-body');
 const clearCheckButtonEl = document.getElementById('btn-clear-check');
 const documentKindEl = document.getElementById('document-kind');
@@ -188,6 +193,14 @@ installButtonIcons();
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
+
+function markLastOpened(name) {
+  if (persistence.mode !== 'desktop' || typeof persistence.markOpened !== 'function') return;
+  Promise.resolve(persistence.markOpened(name)).catch(() => {
+    // This is convenience metadata; a transient native-storage failure must
+    // never interrupt editing or saving.
+  });
+}
 
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
@@ -495,7 +508,12 @@ function flushDraft() {
     // A tab can close during a pointer gesture. Persist only the committed
     // document, never the disposable preview clone.
     const committed = previewTransaction?.baseCircuit || circuit;
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({ name: currentCircuitName, state: committed.toJSON(), savedSnapshot: lastSavedSnapshot }));
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      name: currentCircuitName,
+      state: committed.toJSON(),
+      savedSnapshot: lastSavedSnapshot,
+      view: { x: view.x, y: view.y, w: view.w, h: view.h },
+    }));
   } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
 }
 function scheduleInteractionRender() {
@@ -513,10 +531,15 @@ function restoreDraft() {
     applyJson(JSON.stringify(draft.state));
     currentCircuitName = draft.name || '';
     circuitNameEl.value = currentCircuitName;
+    const savedView = draft.view;
+    if (savedView && [savedView.x, savedView.y, savedView.w, savedView.h].every(Number.isFinite) && savedView.w > 0 && savedView.h > 0) {
+      view = { x: savedView.x, y: savedView.y, w: savedView.w, h: savedView.h };
+    }
     lastSavedSnapshot = draft.savedSnapshot || snapshot();
     restoredDraftName = /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(currentCircuitName)
       ? currentCircuitName
       : null;
+    if (restoredDraftName) markLastOpened(currentCircuitName);
   } catch (err) {
     logLine(`Could not restore local draft: ${err.message}`, 'error');
     lastSavedSnapshot = snapshot();
@@ -538,6 +561,18 @@ async function refreshCircuitList() {
   }
 }
 
+async function restoreDesktopStartup() {
+  await refreshCircuitList();
+  // A valid local draft (including an intentionally empty new document) is
+  // more authoritative than the native last-opened marker. The marker is the
+  // fallback for Electron sessions where renderer localStorage is unavailable.
+  if (persistence.mode !== 'desktop' || currentCircuitName || typeof persistence.lastOpened !== 'function') return;
+  let name = null;
+  try { name = await persistence.lastOpened(); } catch { return; }
+  if (!name || ![...circuitSelectEl.options].some((option) => option.value === name)) return;
+  await loadCircuit(name, true);
+}
+
 async function saveCircuit() {
   const name = circuitNameEl.value.trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) {
@@ -556,6 +591,7 @@ async function saveCircuit() {
     lastCircuitTag = data.etag || null;
     lastSavedSnapshot = snapshot();
     persistDraft();
+    markLastOpened(name);
     await refreshCircuitList();
     renderSaveState();
     logLine(`Saved ${name} (${documentKindLabel(circuit)}, circuit.json and circuit.svg).`);
@@ -567,18 +603,118 @@ async function saveCircuit() {
   }
 }
 
-async function exportCircuit() {
-  const name = circuitNameEl.value.trim() || 'circuit';
+function svgDimensions(svg) {
+  const root = String(svg).match(/<svg\b[^>]*>/i)?.[0] || '';
+  const width = Number(root.match(/\bwidth="([\d.]+)"/i)?.[1]);
+  const height = Number(root.match(/\bheight="([\d.]+)"/i)?.[1]);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : 1000,
+    height: Number.isFinite(height) && height > 0 ? height : 800,
+  };
+}
+
+async function svgToPngDataUrl(svg, scale = 4) {
+  const { width, height } = svgDimensions(svg);
+  const image = new Image();
+  // A Blob URL gives SVGs an opaque origin. Chromium then taints the canvas
+  // when the SVG contains foreignObject/MathML equation labels. A data URL is
+  // origin-clean for this self-contained SVG and remains exportable.
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error('could not rasterize SVG for PNG export'));
+    image.src = url;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.ceil(width * scale));
+  canvas.height = Math.max(1, Math.ceil(height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('PNG export requires canvas support');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
+}
+
+function openPdfPrintWindow() {
   try {
-    const result = await persistence.export({
-      content: renderDocument(circuit, { grid: true, terminals: false, junctions: false, background: true, netNames: true }),
-      suggestedName: `${name}.svg`,
-      extension: 'svg',
-    });
-    if (!result.canceled) logLine(`Exported ${result.path || `${name}.svg`}.`);
+    const popup = window.open('', 'schematic-spawner-pdf-export', 'width=900,height=700');
+    if (popup) popup.document.write('<!doctype html><title>Preparing PDF export…</title><p>Preparing PDF export…</p>');
+    return popup;
+  } catch { return null; }
+}
+
+function applyExportDarkTheme(svg) {
+  // The editor's dark theme normally recolors the inline SVG with CSS. An
+  // exported SVG is standalone, so bake the same palette into its attributes
+  // without touching the live document or its theme state.
+  return String(svg)
+    .replace(/var\(--paper,\s*#fff\)/gi, '#15171c')
+    .replace(/var\(--grid,\s*#ddd\)/gi, '#22262e')
+    .replace(/var\(--text,\s*#111\)/gi, '#dde1e8')
+    .replace(/var\(--svg-ink,\s*#111\)/gi, '#dde1e8')
+    .replace(/#e9e9e9\b/gi, '#22262e')
+    .replace(/#eee\b/gi, '#22262e')
+    .replace(/#fff\b/gi, '#15171c')
+    .replace(/#111\b/gi, '#dde1e8');
+}
+
+async function runExport(formats, appearance = {}) {
+  const name = circuitNameEl.value.trim() || 'circuit';
+  const renderedSvg = renderDocument(circuit, {
+    grid: appearance.grid !== false,
+    terminals: false,
+    junctions: false,
+    background: true,
+    netNames: true,
+  });
+  const svg = appearance.dark ? applyExportDarkTheme(renderedSvg) : renderedSvg;
+  try {
+    // Electron owns the filesystem export path. Send the whole batch in one
+    // request so the native dialog is shown once and every format lands in
+    // the same selected directory.
+    if (persistence.mode === 'desktop') {
+      const options = {
+        formats,
+        content: svg,
+        suggestedName: name,
+      };
+      if (formats.includes('png')) options.pngDataUrl = await svgToPngDataUrl(svg, 4);
+      const result = await persistence.export(options);
+      if (!result.canceled) {
+        const paths = result.paths || (result.path ? [result.path] : []);
+        logLine(`Exported ${paths.join(', ') || name}.`);
+      }
+      return;
+    }
+
+    // Browsers cannot write arbitrary files into a user-selected directory
+    // without the File System Access API. Keep the established download/print
+    // fallback there, while reusing one rendered SVG and one PNG conversion.
+    const printWindow = formats.includes('pdf') ? openPdfPrintWindow() : null;
+    const pngDataUrl = formats.includes('png') ? await svgToPngDataUrl(svg, 4) : null;
+    const exported = [];
+    for (const format of formats) {
+      const options = {
+        format,
+        extension: format,
+        content: svg,
+        suggestedName: `${name}.${format}`,
+        ...(printWindow ? { printWindow } : {}),
+      };
+      if (format === 'png') options.dataUrl = pngDataUrl;
+      const result = await persistence.export(options);
+      if (!result.canceled) exported.push(result.path || `${name}.${format}`);
+    }
+    if (exported.length) logLine(`Exported ${exported.join(', ')}.`);
   } catch (err) {
     logLine(`Could not export circuit: ${err.message}`, 'error');
   }
+}
+
+function exportCircuit() {
+  if (exportDarkInput) exportDarkInput.checked = document.documentElement.classList.contains('dark');
+  exportDialog?.showModal();
 }
 
 async function loadCircuit(name = circuitSelectEl.value, quiet = false, options = {}) {
@@ -608,6 +744,7 @@ async function loadCircuit(name = circuitSelectEl.value, quiet = false, options 
     lastSeenRevision = data.revision || null;
     lastCircuitTag = data.etag || null;
     fitView();
+    markLastOpened(data.name);
     render();
     logLine(`Loaded ${data.name}.`);
     return true;
@@ -695,6 +832,7 @@ async function deleteSavedCircuit() {
     lastCircuitTag = null;
     restoredDraftName = null;
     remoteConflictLogged = false;
+    markLastOpened(null);
     try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
     render();
     await refreshCircuitList();
@@ -4583,7 +4721,7 @@ function canvasMouseDown(ev) {
   const hit = pickAt(startWorld);
   const termHit = hit && hit.term ? hit : null;
   const componentHit = hit?.refdes ? circuit.components.get(hit.refdes) : null;
-  if (componentHit?.type === 'block' && !termHit) {
+  if (componentHit && !termHit) {
     const now = Date.now();
     const previous = lastSchematicComponentClick;
     const doubleClick = ev.detail >= 2 || (previous && previous.refdes === componentHit.refdes &&
@@ -4595,7 +4733,10 @@ function canvasMouseDown(ev) {
       setSelection([componentHit.refdes]);
       setLabelSelection([]);
       render();
-      setTimeout(() => inlineEditSchematicBlock(componentHit), 0);
+      // The canvas SVG is regenerated during the click sequence, so defer the
+      // editor until mouseup has finished. This fallback also covers drivers
+      // that do not dispatch a native `dblclick` after the SVG replacement.
+      setTimeout(() => openComponentChildLabelEditor(componentHit), 0);
       return;
     }
   } else {
@@ -6186,7 +6327,9 @@ function contextStyleValue(target, field) {
 }
 
 function contextTargetType(target) {
-  return ['component', 'block', 'connector'].includes(target.kind) ? target.kind : target.kind === 'wire' ? 'wire' : 'label';
+  return ['component', 'block', 'connector', 'net'].includes(target.kind)
+    ? target.kind
+    : target.kind === 'wire' ? 'wire' : 'label';
 }
 
 function contextMatches(target, candidate, criterion) {
@@ -6195,6 +6338,7 @@ function contextMatches(target, candidate, criterion) {
     if (target.kind === 'block') return true;
     if (target.kind === 'connector') return true;
     if (target.kind === 'component') return candidate.value.type === target.value.type;
+    if (target.kind === 'net') return candidate.value.name === target.value.name;
     if (target.kind === 'wire') return !!candidate.value.net.routingMode === !!target.value.net.routingMode;
     return candidate.value.kind === target.value.kind &&
       !!candidate.value.owner === !!target.value.owner &&
@@ -6248,6 +6392,9 @@ function contextCandidates(target, criterion) {
   if (target.kind === 'label') {
     return [...circuit.labels.values()].map((value) => ({ kind: 'label', value }));
   }
+  if (target.kind === 'net') {
+    return [...circuit.nets.values()].map((value) => ({ kind: 'net', value }));
+  }
   const candidates = [];
   for (const net of circuit.nets.values()) {
     const paths = net.paths();
@@ -6266,6 +6413,7 @@ function selectSameTarget(criterion) {
   const candidates = contextCandidates(target, criterion).filter((candidate) => contextMatches(target, candidate, criterion));
   const refs = candidates.filter(({ kind }) => kind === 'component').map(({ value }) => value.refdes);
   const labels = candidates.filter(({ kind }) => kind === 'label').map(({ value }) => value.id);
+  const nets = candidates.filter(({ kind }) => kind === 'net').map(({ value }) => value.id);
   const wires = candidates.filter(({ kind }) => kind === 'wire')
     .map(({ value }) => `${value.net.id}:${value.branch}:${value.segment}`);
   if (isBlockDiagram(circuit)) {
@@ -6278,6 +6426,10 @@ function selectSameTarget(criterion) {
   }
   setSelection(refs, target.kind === 'component' ? target.value.refdes : refs[0], true);
   setLabelSelection(labels, target.kind === 'label' ? target.value.id : labels[0], true);
+  if (target.kind === 'net') {
+    selectedNets = new Set(nets);
+    selectedWire = null;
+  }
   selectedWires = new Set(wires);
   syncSelectedWire();
   closeComponentContextMenu();
@@ -6434,7 +6586,13 @@ function restoreAnalysisForm(defaults = {}) {
   setSelect(analysisInput, defaults.inputMarked ? defaults.input : saved.input);
   setSelect(analysisComplementary, saved.differentialSide);
   if (analysisAcGrounds && typeof saved.acGrounds === 'string') analysisAcGrounds.value = pruneAnalysisNetValues(saved.acGrounds, visibleNets());
-  if (analysisModels && typeof saved.models === 'string') analysisModels.value = pruneAnalysisModelValues(saved.models, sortedComps().map((component) => component.refdes));
+  if (analysisModels && typeof saved.models === 'string') {
+    analysisModels.value = pruneAnalysisModelValues(saved.models, sortedComps().map((component) => component.refdes))
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => !/=\s*current-source\s*$/i.test(value))
+      .join(', ');
+  }
   if (analysisContext && typeof saved.context === 'string') analysisContext.value = saved.context;
   const savedApproximations = saved.approximationOptions || {};
   const approximationList = new Set(Array.isArray(saved.approximations) ? saved.approximations : []);
@@ -6498,7 +6656,9 @@ function prefillAnalysisAttributes() {
   for (const value of markedGrounds) if (!groundValues.includes(value)) groundValues.push(value);
   if (analysisAcGrounds && groundValues.length) analysisAcGrounds.value = groundValues.join(', ');
   const markedModels = sortedComps()
-    .filter((component) => component.analysis?.model)
+    // `current-source` is retained only as a read-compatible legacy value;
+    // new UI actions use the explicit r_o → ∞ attribute instead.
+    .filter((component) => component.analysis?.model && component.analysis.model !== 'current-source')
     .map((component) => `${component.refdes}=${component.analysis.model}`);
   const modelValues = parseAnalysisList(analysisModels?.value);
   for (const value of markedModels) if (!modelValues.includes(value)) modelValues.push(value);
@@ -7045,6 +7205,12 @@ function applyNetAnalysis(target, attrs) {
 }
 
 function openAnalysisAttributeMenu(target, x, y) {
+  // Components and nets use the same context menu regardless of whether they
+  // were opened from the canvas or their side-panel row.
+  if (target?.kind === 'component' || target?.kind === 'net') {
+    openComponentContextMenu(target, x, y);
+    return;
+  }
   if (!componentContextMenuEl || !target) return;
   closeComponentContextMenu();
   componentContextTarget = null;
@@ -7118,7 +7284,6 @@ function openAnalysisAttributeMenu(target, x, y) {
     const resistor = SMALL_SIGNAL_RESISTOR_TYPES.has(component.type);
     if (transistor) {
       addSubmenu('Small-signal attributes', [
-        { label: 'Current source (ideal small-signal open)', action: () => applyComponentAnalysis(component, { model: 'current-source' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)) },
         { label: 'Triode device (r_ds resistor)', action: () => applyComponentAnalysis(component, { model: 'triode' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)) },
         {
           label: 'Clear device model',
@@ -7250,56 +7415,252 @@ window.addEventListener('pointerup', () => {
   }, 0);
 }, true);
 
+function contextNet(target) {
+  return target?.kind === 'wire' ? target.value.net : target?.kind === 'net' ? target.value : null;
+}
+
+function selectContextNet(target, { namedGroup = false, segment = false } = {}) {
+  const net = contextNet(target);
+  if (!net) return;
+  const candidates = namedGroup && net.name
+    ? [...circuit.nets.values()].filter((candidate) => candidate.name === net.name)
+    : referenceGroupNets(net);
+  setSelection([], null, true);
+  setLabelSelection([], null, true);
+  selectedNets = new Set(candidates.flatMap((candidate) => referenceGroupNets(candidate).map((item) => item.id)));
+  selectedWire = null;
+  selectedWires.clear();
+  if (segment && target.kind === 'wire') {
+    const { branch, segment: segmentIndex } = target.value;
+    const key = `${net.id}:${branch}:${segmentIndex}`;
+    selectedWires.add(key);
+    selectedWire = { netId: net.id, branch, segment: segmentIndex };
+  }
+  syncSelectedWire();
+  closeComponentContextMenu();
+  render();
+}
+
+function appendContextItem(parent, label, action, { disabled = false, active = false, mixed = false } = {}) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.textContent = label;
+  item.setAttribute('role', active || mixed ? 'menuitemradio' : 'menuitem');
+  if (active || mixed) {
+    item.classList.add(active ? 'context-item-active' : 'context-item-mixed');
+    item.setAttribute('aria-checked', mixed ? 'mixed' : 'true');
+    const state = document.createElement('span');
+    state.className = 'context-item-state';
+    state.textContent = active ? '✓' : '•';
+    state.setAttribute('aria-hidden', 'true');
+    item.appendChild(state);
+  }
+  item.disabled = disabled;
+  item.addEventListener('click', () => {
+    if (item.disabled) return;
+    action();
+    closeComponentContextMenu();
+    render();
+  });
+  parent.appendChild(item);
+  return item;
+}
+
+function analysisChoiceState(targets, read, expected) {
+  const values = targets.map(read);
+  const matches = values.filter((value) => value === expected).length;
+  return {
+    active: values.length > 0 && matches === values.length,
+    mixed: matches > 0 && matches < values.length,
+  };
+}
+
+/** Add one keyboard-accessible nested menu. The same helper is used for
+ * selection, net roles, and device attributes so canvas and side-panel menus
+ * have identical hierarchy and interaction semantics. */
+function appendContextSubmenu(parent, label, build) {
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.textContent = label;
+  trigger.setAttribute('aria-haspopup', 'true');
+  trigger.setAttribute('aria-expanded', 'false');
+  const arrow = document.createElement('span');
+  arrow.textContent = '›';
+  arrow.setAttribute('aria-hidden', 'true');
+  trigger.appendChild(arrow);
+  const submenu = document.createElement('div');
+  submenu.className = 'context-submenu';
+  submenu.setAttribute('role', 'menu');
+  submenu.setAttribute('aria-label', label);
+  build(submenu);
+  const closeSiblings = () => {
+    for (const sibling of parent.querySelectorAll(':scope > .context-submenu.open')) sibling.classList.remove('open');
+    for (const siblingTrigger of parent.querySelectorAll(':scope > button[aria-expanded="true"]')) siblingTrigger.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    closeSiblings();
+    submenu.classList.add('open');
+    componentContextSubmenu = submenu;
+    trigger.setAttribute('aria-expanded', 'true');
+  };
+  trigger.addEventListener('mouseenter', open);
+  trigger.addEventListener('focus', open);
+  trigger.addEventListener('click', open);
+  trigger.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowLeft' || ev.key === 'Escape') {
+      ev.preventDefault();
+      submenu.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.focus();
+      return;
+    }
+    if (ev.key === 'ArrowRight' || ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      open();
+      submenu.querySelector('button:not(:disabled)')?.focus();
+    }
+  });
+  parent.append(trigger, submenu);
+  return submenu;
+}
+
+function appendContextSelectionMenu(menu, target) {
+  appendContextSubmenu(menu, 'Select', (submenu) => {
+    if (target.kind === 'component') {
+      appendContextItem(submenu, 'Select this component', () => {
+        setSelection([target.value.refdes]);
+        setLabelSelection([], null, true);
+      });
+    } else if (target.kind === 'net' || target.kind === 'wire') {
+      appendContextItem(submenu, 'Select this net', () => selectContextNet(target));
+      if (target.kind === 'wire') appendContextItem(submenu, 'Select wire segment', () => selectContextNet(target, { segment: true }));
+      const net = contextNet(target);
+      if (target.kind === 'wire') {
+        appendContextItem(submenu, 'Select same named nets', () => selectContextNet(target, { namedGroup: true }), { disabled: !net?.name });
+      }
+    }
+    const typeLabel = target.kind === 'component' ? 'Same component type'
+      : target.kind === 'block' ? 'Same block type'
+        : target.kind === 'connector' ? 'Same connector type'
+          : target.kind === 'wire' ? 'Same wire type'
+            : target.kind === 'net' ? 'Same net name' : 'Same label type';
+    const criteria = target.kind === 'net'
+      ? [['type', typeLabel]]
+      : [['type', typeLabel], ['color', 'Same color'], ['lineStyle', 'Same line style']];
+    for (const [criterion, label] of criteria) {
+      if (target.kind === 'net' && !target.value.name) continue;
+      appendContextItem(submenu, label, () => selectSameTarget(criterion));
+    }
+  });
+}
+
+function appendContextSmallSignalMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value : null;
+  const net = contextNet(target);
+  if (target.kind !== 'component' && !net) return;
+  if (net) {
+    appendContextSubmenu(menu, 'Small-signal attributes', (submenu) => {
+      const targets = analysisNetTargets(net);
+      appendContextItem(submenu, 'DC bias / AC ground', () => applyNetAnalysis(net, { role: 'dc-bias', acGround: true }), analysisChoiceState(targets, (candidate) => candidate.analysis?.role === 'dc-bias' || candidate.analysis?.acGround, true));
+      appendContextItem(submenu, 'Input node', () => applyNetAnalysis(net, { role: 'input', acGround: false }), analysisChoiceState(targets, (candidate) => candidate.analysis?.role, 'input'));
+      appendContextItem(submenu, 'Output node', () => applyNetAnalysis(net, { role: 'output', acGround: false }), analysisChoiceState(targets, (candidate) => candidate.analysis?.role, 'output'));
+      appendContextItem(submenu, 'Clear net role', () => applyNetAnalysis(net, { role: null, acGround: false }), {
+        disabled: !targets.some((candidate) => candidate.analysis?.role || candidate.analysis?.acGround),
+      });
+    });
+    return;
+  }
+  const transistor = SMALL_SIGNAL_TRANSISTOR_TYPES.has(component.type);
+  const resistor = SMALL_SIGNAL_RESISTOR_TYPES.has(component.type);
+  const port = SMALL_SIGNAL_PORT_TYPES.has(component.type);
+  if (!transistor && !resistor && !port) return;
+  appendContextSubmenu(menu, 'Small-signal attributes', (submenu) => {
+    if (transistor) {
+      const transistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type));
+      appendContextSubmenu(submenu, 'Device model', (modelMenu) => {
+        appendContextItem(modelMenu, 'Triode device (r_ds resistor)', () => applyComponentAnalysis(component, { model: 'triode' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.model, 'triode'));
+        appendContextItem(modelMenu, 'Clear device model', () => applyComponentAnalysis(component, { model: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+          disabled: !transistorTargets.some((candidate) => candidate.analysis?.model),
+        });
+      });
+      appendContextSubmenu(submenu, 'Output resistance', (roMenu) => {
+        appendContextItem(roMenu, 'Ignore channel-length modulation (r_o → ∞)', () => applyComponentAnalysis(component, { channelLengthModulation: 'ignore' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.channelLengthModulation, 'ignore'));
+        appendContextItem(roMenu, 'Retain finite r_o', () => applyComponentAnalysis(component, { channelLengthModulation: 'finite' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.channelLengthModulation, 'finite'));
+        appendContextItem(roMenu, 'Clear r_o override', () => applyComponentAnalysis(component, { channelLengthModulation: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+          disabled: !transistorTargets.some((candidate) => candidate.analysis?.channelLengthModulation),
+        });
+      });
+      appendContextSubmenu(submenu, 'Intrinsic gain', (gmroMenu) => {
+        appendContextItem(gmroMenu, 'Assume g_m r_o ≫ 1', () => applyComponentAnalysis(component, { gmroLarge: true }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.gmroLarge, true));
+        appendContextItem(gmroMenu, 'Retain finite g_m r_o', () => applyComponentAnalysis(component, { gmroLarge: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.gmroLarge, false));
+        appendContextItem(gmroMenu, 'Clear g_m r_o override', () => applyComponentAnalysis(component, { gmroLarge: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+          disabled: !transistorTargets.some((candidate) => candidate.analysis?.gmroLarge !== null && candidate.analysis?.gmroLarge !== undefined),
+        });
+      });
+      appendContextSubmenu(submenu, 'Body effect', (bodyMenu) => {
+        appendContextItem(bodyMenu, 'Ignore body effect (V_BS = 0)', () => applyComponentAnalysis(component, { ignoreBodyEffect: true }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.ignoreBodyEffect, true));
+        appendContextItem(bodyMenu, 'Retain body effect', () => applyComponentAnalysis(component, { ignoreBodyEffect: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.ignoreBodyEffect, false));
+        appendContextItem(bodyMenu, 'Clear body-effect override', () => applyComponentAnalysis(component, { ignoreBodyEffect: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+          disabled: !transistorTargets.some((candidate) => candidate.analysis?.ignoreBodyEffect !== null && candidate.analysis?.ignoreBodyEffect !== undefined),
+        });
+      });
+    }
+    if (resistor) {
+      const resistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type));
+      appendContextSubmenu(submenu, 'Resistance', (resistanceMenu) => {
+        appendContextItem(resistanceMenu, 'Treat as R = ∞', () => applyComponentAnalysis(component, { resistance: 'infinite' }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), analysisChoiceState(resistorTargets, (candidate) => candidate.analysis?.resistance, 'infinite'));
+        appendContextItem(resistanceMenu, 'Retain finite R', () => applyComponentAnalysis(component, { resistance: 'finite' }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), analysisChoiceState(resistorTargets, (candidate) => candidate.analysis?.resistance, 'finite'));
+        appendContextItem(resistanceMenu, 'Clear resistance override', () => applyComponentAnalysis(component, { resistance: null }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), {
+          disabled: !resistorTargets.some((candidate) => candidate.analysis?.resistance !== null && candidate.analysis?.resistance !== undefined),
+        });
+      });
+    }
+    if (port) {
+      const portTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type));
+      appendContextSubmenu(submenu, 'Port role', (roleMenu) => {
+        appendContextItem(roleMenu, 'DC bias / AC ground', () => applyComponentAnalysis(component, { role: 'dc-bias' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'dc-bias'));
+        appendContextItem(roleMenu, 'Input node', () => applyComponentAnalysis(component, { role: 'input' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'input'));
+        appendContextItem(roleMenu, 'Output node', () => applyComponentAnalysis(component, { role: 'output' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'output'));
+        appendContextItem(roleMenu, 'Clear port role', () => applyComponentAnalysis(component, { role: null }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), {
+          disabled: !portTargets.some((candidate) => candidate.analysis?.role),
+        });
+      });
+    }
+  });
+}
+
 function openComponentContextMenu(target, x, y) {
   if (!componentContextMenuEl || !target) return;
   closeComponentContextMenu();
   componentContextTarget = target;
   const menu = componentContextMenuEl;
+  menu.classList.remove('analysis-attribute-menu');
   menu.hidden = false;
   if (x > window.innerWidth - 420) menu.classList.add('opens-left');
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 220))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 90))}px`;
-
-  const sameButton = document.createElement('button');
-  sameButton.type = 'button';
-  sameButton.textContent = 'Select same';
-  sameButton.setAttribute('aria-haspopup', 'true');
-  sameButton.setAttribute('aria-expanded', 'false');
-  const arrow = document.createElement('span');
-  arrow.textContent = '›';
-  arrow.setAttribute('aria-hidden', 'true');
-  sameButton.appendChild(arrow);
-
-  const submenu = document.createElement('div');
-  submenu.className = 'context-submenu';
-  submenu.setAttribute('role', 'menu');
-  submenu.setAttribute('aria-label', 'Select same criteria');
-  const typeLabel = target.kind === 'component' ? 'Component type' : target.kind === 'block' ? 'Block type' : target.kind === 'connector' ? 'Connector type' : target.kind === 'wire' ? 'Wire type' : 'Label type';
-  for (const [criterion, label] of [['type', typeLabel], ['color', 'Color'], ['lineStyle', 'Linestyle']]) {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.textContent = label;
-    item.setAttribute('role', 'menuitem');
-    item.addEventListener('click', () => selectSameTarget(criterion));
-    submenu.appendChild(item);
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  const contextComponent = target.kind === 'component' ? target.value : null;
+  const contextNetwork = contextNet(target);
+  const scopeCount = contextComponent
+    ? analysisComponentTargets(contextComponent).length
+    : contextNetwork
+      ? analysisNetTargets(contextNetwork).length
+      : 1;
+  const scopeSuffix = scopeCount > 1 ? ` (${scopeCount} selected)` : '';
+  heading.textContent = contextComponent
+    ? `${contextComponent.refdes} · ${contextComponent.type}${scopeSuffix}`
+    : contextNetwork
+      ? `${contextNetwork.name || '(unnamed net)'} · ${contextNetwork.id}${scopeSuffix}`
+      : target.kind === 'wire' ? 'Wire segment' : 'Selection';
+  menu.appendChild(heading);
+  appendContextSelectionMenu(menu, target);
+  appendContextSmallSignalMenu(menu, target);
+  if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
+    appendContextItem(menu, 'Close', closeComponentContextMenu);
   }
-  const openSubmenu = () => {
-    submenu.classList.add('open');
-    componentContextSubmenu = submenu;
-    sameButton.setAttribute('aria-expanded', 'true');
-  };
-  sameButton.addEventListener('mouseenter', openSubmenu);
-  sameButton.addEventListener('focus', openSubmenu);
-  sameButton.addEventListener('click', openSubmenu);
-  sameButton.addEventListener('keydown', (ev) => {
-    if (ev.key === 'ArrowRight' || ev.key === 'Enter' || ev.key === ' ') {
-      ev.preventDefault();
-      openSubmenu();
-      submenu.querySelector('button')?.focus();
-    }
-  });
-  menu.append(sameButton, submenu);
-  sameButton.focus();
+  menu.querySelector('button:not(:disabled)')?.focus();
 }
 
 canvasEl.addEventListener('contextmenu', (ev) => {
@@ -7322,8 +7683,9 @@ canvasEl.addEventListener('contextmenu', (ev) => {
   const annotation = annotationGeometryAt(world);
   const hit = matchAt(snap(world.x), snap(world.y));
   const wire = pickWire(world);
+  const labelNet = label?.netId ? circuit.nets.get(label.netId) : null;
   const target = label
-    ? { kind: 'label', value: label }
+    ? labelNet ? { kind: 'net', value: labelNet } : { kind: 'label', value: label }
     : annotation
       ? { kind: 'label', value: annotation }
       : hit?.refdes && circuit.components.has(hit.refdes)
@@ -8675,7 +9037,9 @@ function inlineEditSchematicBlock(component) {
 }
 
 // Double-click edits the active document's object, never an electrical label
-// picker in a block diagram.
+// picker in a block diagram. Components consistently edit their owned child
+// label; legacy/reference markers create the same provisional child label used
+// by their dedicated editor when one is missing.
 canvasEl.addEventListener('dblclick', (ev) => {
   if (isBlockDiagram(circuit)) {
     const node = ev.target.closest?.('[data-block-id]');
@@ -8696,8 +9060,7 @@ canvasEl.addEventListener('dblclick', (ev) => {
     const hit = matchAt(snap(w.x), snap(w.y));
     const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
     const wire = pickWire(w);
-    if (component && isReferenceMarker(component)) openReferenceMarkerEditor(component);
-    else if (component?.type === 'block') inlineEditSchematicBlock(component);
+    if (component) openComponentChildLabelEditor(component);
     else if (wire) {
       selectedWire = null;
       selectedWires.clear();
@@ -8706,6 +9069,30 @@ canvasEl.addEventListener('dblclick', (ev) => {
     }
   }
 });
+
+function openComponentChildLabelEditor(component) {
+  if (!component || inlineInput) return;
+  if (isReferenceMarker(component)) {
+    openReferenceMarkerEditor(component);
+    return;
+  }
+  if (component.type === 'block') {
+    inlineEditSchematicBlock(component);
+    return;
+  }
+  let label = circuit.labelOf(component.refdes);
+  if (label) {
+    inlineEditLabel(label);
+    return;
+  }
+  // Legacy/imported symbols can lack the owned label that current inserts get
+  // automatically. Create it at the symbol's declared label offset, then use
+  // a draft edit so Escape/blank restores the pre-edit circuit unchanged.
+  if (!component.def?.labelOffset || !circuit._ensureComponentInstanceLabel) return;
+  const before = snapshot();
+  label = circuit._ensureComponentInstanceLabel(component);
+  if (label) inlineEditLabel(label, { ownedLabelDraft: true, initialSnapshot: before });
+}
 
 function openReferenceMarkerEditor(component) {
   if (!component || inlineInput) return;
@@ -8820,6 +9207,21 @@ function inlineEditLabel(label, options = {}) {
           circuit.removeLabel(label.id);
         }
       } else {
+        circuit.removeLabel(label.id);
+      }
+      markModelChanged(false);
+    } else if (options.ownedLabelDraft) {
+      if (applyText && v) {
+        try {
+          if (v !== label.text) renameLabelThroughModel(label, v);
+          history.push(initialSnapshot || snapshot());
+          if (history.length > 200) history.shift();
+          future.length = 0;
+        } catch (err) {
+          logLine(`component label edit cancelled: ${err.message}`, 'error');
+          circuit.removeLabel(label.id);
+        }
+      } else if (circuit.labels.has(label.id)) {
         circuit.removeLabel(label.id);
       }
       markModelChanged(false);
@@ -8938,7 +9340,10 @@ function renderComponents() {
     const meta = document.createElement('span');
     meta.className = 'meta';
     const analysisTags = [];
-    if (comp.analysis?.model) analysisTags.push(comp.analysis.model);
+    if (comp.analysis?.model === 'triode') analysisTags.push('triode');
+    // Do not expose the retired current-source flag in the side panel. Old
+    // documents remain readable, but their equivalent visible hint is r_o→∞.
+    if (comp.analysis?.model === 'current-source') analysisTags.push('r_o→∞');
     if (comp.analysis?.role) analysisTags.push(comp.analysis.role);
     if (comp.analysis?.resistance === 'infinite' || comp.analysis?.resistance === true) analysisTags.push('R=∞');
     if (comp.analysis?.resistance === 'finite') analysisTags.push('finite R');
@@ -8978,7 +9383,7 @@ function renderComponents() {
     row.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      openAnalysisAttributeMenu({ kind: 'component', value: comp }, ev.clientX, ev.clientY);
+      openComponentContextMenu({ kind: 'component', value: comp }, ev.clientX, ev.clientY);
     });
 
     row.addEventListener('click', (ev) => {
@@ -9076,7 +9481,7 @@ function renderNets() {
     row.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      openAnalysisAttributeMenu({ kind: 'net', value: net }, ev.clientX, ev.clientY);
+      openComponentContextMenu({ kind: 'net', value: net }, ev.clientX, ev.clientY);
     });
 
     row.addEventListener('click', (ev) => {
@@ -11153,6 +11558,7 @@ function startNewDocument(kind) {
   circuitNameEl.value = '';
   circuitSelectEl.value = '';
   currentCircuitName = '';
+  markLastOpened(null);
   history = [];
   future = [];
   applyJson(JSON.stringify(createDocument(kind).toJSON()));
@@ -11211,6 +11617,20 @@ window.addEventListener('keydown', (ev) => {
 document.getElementById('btn-load-circuit').addEventListener('click', () => requestCircuitLoad());
 deleteCircuitBtn?.addEventListener('click', askDeleteCircuit);
 exportCircuitBtn?.addEventListener('click', exportCircuit);
+exportCancel?.addEventListener('click', () => exportDialog?.close());
+exportForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const formats = [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => input.value);
+  if (!formats.length) {
+    logLine('Choose at least one export format.', 'error');
+    return;
+  }
+  exportDialog.close();
+  runExport(formats, {
+    grid: exportGridInput?.checked !== false,
+    dark: exportDarkInput?.checked === true,
+  });
+});
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => requestCircuitLoad(circuitSelectEl.value));
 
@@ -11661,8 +12081,9 @@ window.__app ||= { renders: [] };
 try {
   restoreDraft();
   draftReady = true;
+  fitView();
   render();
-  refreshCircuitList();
+  restoreDesktopStartup().catch((err) => logLine(`Could not restore the last document: ${err.message}`, 'error'));
   syncActiveCircuit(); // pick up the agent's active circuit immediately
   window.setInterval(syncActiveCircuit, 500);
   document.addEventListener('visibilitychange', () => {

@@ -28,14 +28,27 @@ async function httpJson(fetchImpl, url, options = {}) {
   return withResponseMeta(data, response);
 }
 
-function browserExport({ content, suggestedName = 'circuit.svg', extension = 'svg' }) {
-  const blob = new Blob([content], { type: extension === 'svg' ? 'image/svg+xml' : 'application/octet-stream' });
+function browserExport({ content, dataUrl, suggestedName = 'circuit.svg', extension = 'svg', format = extension, printWindow = null }) {
+  if (format === 'pdf') {
+    if (!printWindow || printWindow.closed) throw new Error('could not open the browser print window');
+    const size = String(content || '').match(/<svg\b[^>]*\bwidth="([\d.]+)"[^>]*\bheight="([\d.]+)"/i);
+    const width = size?.[1] || '1000';
+    const height = size?.[2] || '800';
+    printWindow.document.open();
+    printWindow.document.write(`<!doctype html><html><head><title>${String(suggestedName).replace(/[<&>]/g, '')}</title><style>@page{size:${width}px ${height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block;width:${width}px;height:${height}px}</style></head><body>${content || ''}</body></html>`);
+    printWindow.document.close();
+    setTimeout(() => { printWindow.focus(); printWindow.print(); }, 100);
+    return { canceled: false, path: suggestedName };
+  }
+  const blob = dataUrl
+    ? null
+    : new Blob([content], { type: extension === 'svg' ? 'image/svg+xml' : 'application/octet-stream' });
   const link = document.createElement('a');
-  const url = URL.createObjectURL(blob);
+  const url = dataUrl || URL.createObjectURL(blob);
   link.href = url;
   link.download = suggestedName;
   link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  if (!dataUrl) setTimeout(() => URL.revokeObjectURL(url), 0);
   return { canceled: false, path: suggestedName };
 }
 
@@ -49,6 +62,8 @@ export function createPersistenceAdapter({ nativeApi = globalThis.schematicStora
       create: (name, kind) => nativeApi.create ? nativeApi.create(name, kind) : nativeApi.save(name, kind === 'block' ? { kind: 'block', version: 1, grid: 40, blocks: [], arrows: [] } : { version: 2, grid: 40, components: [], nets: [], labels: [] }),
       save: (name, state) => nativeApi.save(name, state),
       delete: (name) => nativeApi.delete(name),
+      lastOpened: () => nativeApi.lastOpened ? nativeApi.lastOpened() : Promise.resolve(null),
+      markOpened: (name) => nativeApi.markOpened ? nativeApi.markOpened(name) : Promise.resolve(null),
       export: (options) => nativeApi.export(options),
     };
   }

@@ -412,6 +412,27 @@ button:disabled {
   font-weight: 600;
 }
 
+.export-dialog fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.export-dialog legend {
+  padding: 0 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.export-dialog label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .help-dialog {
   width: min(48rem, calc(100vw - 32px));
   height: min(80vh, 48rem);
@@ -1326,6 +1347,25 @@ button:disabled {
   outline-offset: -1px;
 }
 
+.component-context-menu button.context-item-active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.component-context-menu button.context-item-mixed {
+  background: color-mix(in srgb, var(--accent-dim) 55%, transparent);
+  color: var(--text);
+}
+
+.context-item-state {
+  min-width: 1.2em;
+  margin-left: 10px;
+  color: var(--accent);
+  font-weight: 700;
+  text-align: center;
+}
+
 .component-context-menu button:disabled {
   color: var(--text-dim);
   opacity: 0.55;
@@ -1344,11 +1384,6 @@ button:disabled {
   font-weight: 700;
 }
 
-.analysis-attribute-menu {
-  min-width: 250px;
-}
-
-.component-context-menu.analysis-attribute-menu .context-submenu,
 .component-context-menu.opens-left .context-submenu {
   left: auto;
   right: calc(100% - 2px);
@@ -1365,6 +1400,13 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(20, 24, 34, 0.24);
+}
+
+/* Nested attribute groups open level with the row that owns them. Keeping the
+ * same inward direction on every level prevents right-toolbar menus from
+ * escaping the application window. */
+.component-context-menu .context-submenu .context-submenu {
+  top: -5px;
 }
 
 .component-context-menu .context-submenu.open,

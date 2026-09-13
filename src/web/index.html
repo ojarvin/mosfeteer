@@ -37,7 +37,7 @@
         <button id="btn-delete-circuit" data-icon="trash" class="danger-action" title="Permanently delete the saved current document" disabled>Delete document</button>
         <button id="btn-check" data-icon="check" data-action="check" data-doc-kind="schematic" title="Check the current schematic (x)">Check</button>
         <button id="btn-save" data-icon="save" data-action="save" title="Save the current document, including designs with issues (Shift+x)">Save</button>
-        <button id="btn-export" data-icon="download" title="Export the current document as SVG">Export</button>
+        <button id="btn-export" data-icon="download" title="Export the current document as SVG, PDF, or high-resolution PNG">Export</button>
       </div>
 
       <div class="toolbar-group style-group" aria-labelledby="style-heading" data-control-group="style">
@@ -108,6 +108,27 @@
       </div>
     </form>
   </dialog>
+  <dialog id="export-dialog" class="confirm-dialog export-dialog" aria-labelledby="export-dialog-title">
+    <form id="export-form">
+      <h2 id="export-dialog-title">Export document</h2>
+      <p>Choose one or more formats. All selected files go to the same folder. PNG is rendered at 4× scale for high-resolution output.</p>
+      <fieldset>
+        <legend>Formats</legend>
+        <label><input type="checkbox" name="format" value="svg" checked /> SVG</label>
+        <label><input type="checkbox" name="format" value="pdf" checked /> PDF</label>
+        <label><input type="checkbox" name="format" value="png" checked /> PNG (4×)</label>
+      </fieldset>
+      <fieldset>
+        <legend>Appearance</legend>
+        <label><input type="checkbox" name="grid" checked /> Include grid</label>
+        <label><input type="checkbox" name="dark" /> Dark mode</label>
+      </fieldset>
+      <div class="dialog-actions">
+        <button id="export-cancel" type="button" data-icon="x-circle">Cancel</button>
+        <button type="submit" data-icon="download" class="confirm-action">Export selected</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
     <form method="dialog">
@@ -157,8 +178,8 @@
           <label for="analysis-ac-grounds">Additional AC-ground ports/nets</label>
           <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" />
           <p class="field-hint">Use named nets, physical net IDs, or terminal references. These DC bias ports are treated as AC ground.</p>
-          <label for="analysis-models">Device model overrides</label>
-          <input id="analysis-models" name="models" type="text" placeholder="M1=current-source, M2=r_o" autocomplete="off" spellcheck="false" />
+          <label for="analysis-models">Triode model overrides</label>
+          <input id="analysis-models" name="models" type="text" placeholder="M2=triode" autocomplete="off" spellcheck="false" />
           <p class="field-hint">For example, mark a transistor used as a bias current source as an ideal small-signal current source.</p>
           <label for="analysis-context">Additional context</label>
           <textarea id="analysis-context" name="context" rows="3" placeholder="Describe bias assumptions or which side of a differential pair is held quiet."></textarea>
@@ -223,7 +244,7 @@
         <button id="btn-send-back" class="mode-control layer-control" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send the selected object to the back (Shift+Down)" aria-label="Send selected object to back">Send to back <kbd>Shift+↓</kbd></button>
       </div>
       <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Schematic canvas. Tab to focus objects; Enter selects the focused object; arrow keys nudge selection."></div>
-      <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Component actions"></div>
+      <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Context actions"></div>
     </section>
 
     <aside class="side-panel">

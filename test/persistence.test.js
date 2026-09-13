@@ -91,14 +91,18 @@ test('persistence adapter keeps native and HTTP contracts narrow', async () => {
     load: async (name) => ({ name, state: { native: true } }),
     save: async (...args) => { calls.push(['save', ...args]); return { name: args[0] }; },
     delete: async (name) => ({ name, deleted: true }),
+    lastOpened: async () => 'native',
+    markOpened: async (name) => { calls.push(['markOpened', name]); return name; },
     export: async (options) => ({ canceled: false, path: options.suggestedName }),
   };
   const desktop = createPersistenceAdapter({ nativeApi: native });
   assert.equal(desktop.mode, 'desktop');
   assert.equal(desktop.liveSync, false);
   assert.deepEqual(await desktop.list(), { circuits: ['native'] });
+  assert.equal(await desktop.lastOpened(), 'native');
   await desktop.save('one', { ok: true });
-  assert.deepEqual(calls, [['save', 'one', { ok: true }]]);
+  assert.equal(await desktop.markOpened('one'), 'one');
+  assert.deepEqual(calls, [['save', 'one', { ok: true }], ['markOpened', 'one']]);
   assert.deepEqual(await desktop.export({ suggestedName: 'one.svg' }), { canceled: false, path: 'one.svg' });
 
   const requests = [];

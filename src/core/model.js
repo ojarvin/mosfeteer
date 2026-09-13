@@ -1707,10 +1707,17 @@ export class Circuit {
         ? component.analysis?.ignoreBodyEffect ?? null
         : normalizedBodyEffect,
     };
-    if (component.analysis.role === 'dc-bias') {
+    // Interface-port roles describe the electrical net, so keep the two
+    // representations synchronized regardless of which context menu changed
+    // them. Clearing a port role also clears the role on its attached net;
+    // `setNetAnalysis` below propagates that clear to any sibling ports.
+    if (hasOwn('role') && ['input', 'output', 'inputoutput', 'port', 'port_filled'].includes(component.type)) {
       for (const terminal of component.terminalDefs) {
         const net = this.netOfTerminal({ comp: component.refdes, term: terminal.name });
-        if (net) this.setNetAnalysis(net, { role: 'dc-bias', acGround: true });
+        if (net) this.setNetAnalysis(net, {
+          role: component.analysis.role,
+          acGround: component.analysis.role === 'dc-bias',
+        });
       }
     }
     return component;
@@ -1723,11 +1730,20 @@ export class Circuit {
     if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
       throw new Error(`unknown small-signal net role "${role}"`);
     }
-    net.analysis = {
-      role: role === undefined ? net.analysis?.role || null : (role ? String(role) : null),
-      acGround: attrs.acGround === undefined ? !!net.analysis?.acGround : !!attrs.acGround,
-    };
+    const nextRole = role === undefined ? net.analysis?.role || null : (role ? String(role) : null);
+    const nextAcGround = attrs.acGround === undefined
+      ? role === undefined ? !!net.analysis?.acGround : nextRole === 'dc-bias'
+      : !!attrs.acGround;
+    net.analysis = { role: nextRole, acGround: nextAcGround };
     if (net.analysis.role === 'dc-bias') net.analysis.acGround = true;
+    if (role !== undefined || attrs.acGround !== undefined) {
+      const syncedRole = net.analysis.role || (net.analysis.acGround ? 'dc-bias' : null);
+      for (const terminal of net.terminals) {
+        const component = this.components.get(terminal.comp);
+        if (!component || !['input', 'output', 'inputoutput', 'port', 'port_filled'].includes(component.type)) continue;
+        component.analysis = { ...component.analysis, role: syncedRole };
+      }
+    }
     return net;
   }
 
@@ -1880,8 +1896,12 @@ export class Circuit {
     const name = net.name;
     for (const pin of pins) {
       const label = this.labelOf(pin.refdes);
+      // Preserve an explicitly formatted owned pin label (for example
+      // `V_{OUT}`) while rebuilding a preview/load clone. Passing the net name
+      // itself here used to flatten that source to `VOUT` during every drag
+      // preview, which was visible only for the duration of the mouse hold.
       const display = normalizeComponentRefdes(name) === normalizeComponentRefdes(pin.refdes)
-        ? componentLabelText(pin.refdes, name)
+        ? componentLabelText(pin.refdes, label?._text || name)
         : name;
       if (label && label._text !== display) {
         label._text = display;
@@ -2944,12 +2964,16 @@ export class Circuit {
 
   _syncAnalysisAttributes(net) {
     if (!net) return net;
-    for (const terminal of net.terminals) {
-      const component = this.components.get(terminal.comp);
-      if (component?.analysis?.role === 'dc-bias') {
-        net.analysis = { ...(net.analysis || {}), role: 'dc-bias', acGround: true };
-        break;
-      }
+    const portTypes = new Set(['input', 'output', 'inputoutput', 'port', 'port_filled']);
+    const ports = net.terminals
+      .map((terminal) => this.components.get(terminal.comp))
+      .filter((component) => component && portTypes.has(component.type));
+    const portRole = ports.map((component) => component.analysis?.role).find(Boolean) || null;
+    const netRole = net.analysis?.role || (net.analysis?.acGround ? 'dc-bias' : null);
+    const role = netRole || portRole;
+    if (role) {
+      net.analysis = { ...(net.analysis || {}), role, acGround: role === 'dc-bias' || !!net.analysis?.acGround };
+      for (const component of ports) component.analysis = { ...component.analysis, role };
     }
     return net;
   }

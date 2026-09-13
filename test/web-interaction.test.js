@@ -256,6 +256,21 @@ test('committed inserts repair coincident connectivity and analysis menus suppor
   assert.match(main, /Clear resistance override/);
   assert.match(main, /Clear g_m r_o override/);
   assert.match(main, /Clear body-effect override/);
+  assert.match(main, /function appendContextSmallSignalMenu\(menu, target\)/);
+  assert.match(main, /appendContextSubmenu\(menu, 'Select'/);
+  assert.match(main, /function analysisChoiceState\(targets, read, expected\)/);
+  assert.match(main, /context-item-active/);
+  assert.match(main, /aria-checked/);
+  assert.match(main, /function openComponentChildLabelEditor\(component\)/);
+  assert.match(main, /ownedLabelDraft: true/);
+  assert.match(main, /if \(component\) openComponentChildLabelEditor\(component\)/);
+  assert.match(main, /const doubleClick = ev\.detail >= 2/);
+  assert.match(main, /setTimeout\(\(\) => openComponentChildLabelEditor\(componentHit\), 0\)/);
+  assert.match(main, /openComponentContextMenu\(\{ kind: 'component', value: comp \}/);
+  assert.match(main, /openComponentContextMenu\(\{ kind: 'net', value: net \}/);
+  assert.doesNotMatch(main, /Current source \(ideal small-signal open\)/);
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /M1=current-source/);
 });
 
 test('schematic and block pointer paths share snapped cursor conversion', () => {

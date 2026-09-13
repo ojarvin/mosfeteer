@@ -157,6 +157,25 @@ test('small-signal attributes persist on devices and nets', () => {
   assert.equal(loaded.getComponent('M1').analysis.ignoreBodyEffect, true);
   assert.equal(loaded.getComponent('VBN').analysis.role, 'dc-bias');
   assert.equal(loaded.netOfTerminal('VBN.p').analysis.acGround, true);
+  // Port and net roles are one piece of metadata: either editing surface
+  // updates the other side of the physical connection.
+  const roleCircuit = new Circuit();
+  roleCircuit.addComponent('input', { refdes: 'VI1', x: 0, y: 0 });
+  roleCircuit.addComponent('output', { refdes: 'VO1', x: 160, y: 0 });
+  const roleNet = roleCircuit.connect('VI1.p', 'VO1.p');
+  roleCircuit.setComponentAnalysis('VI1', { role: 'input' });
+  assert.equal(roleNet.analysis.role, 'input');
+  assert.equal(roleCircuit.getComponent('VI1').analysis.role, 'input');
+  assert.equal(roleCircuit.getComponent('VO1').analysis.role, 'input');
+  const loadedRoleCircuit = Circuit.fromJSON(roleCircuit.toJSON());
+  assert.equal(loadedRoleCircuit.netOfTerminal('VI1.p').analysis.role, 'input');
+  assert.equal(loadedRoleCircuit.getComponent('VO1').analysis.role, 'input');
+  roleCircuit.setNetAnalysis(roleNet, { role: 'output', acGround: false });
+  assert.equal(roleCircuit.getComponent('VI1').analysis.role, 'output');
+  assert.equal(roleCircuit.getComponent('VO1').analysis.role, 'output');
+  roleCircuit.setComponentAnalysis('VI1', { role: null });
+  assert.equal(roleNet.analysis.role, null);
+  assert.equal(roleCircuit.getComponent('VO1').analysis.role, null);
   c.setComponentAnalysis('M1', { model: null, channelLengthModulation: null, gmroLarge: null, ignoreBodyEffect: null });
   assert.equal(c.getComponent('M1').analysis.model, null);
   assert.equal(c.getComponent('M1').analysis.channelLengthModulation, null);
@@ -370,6 +389,16 @@ test('interface pin names and owned labels stay synchronized with their single-o
   c.renameComponent('VIN', 'V_{SOURCE}', { displayLabel: 'V_{SOURCE}' });
   assert.equal(c.labelOf('VSOURCE').text, 'V_{SOURCE}');
   assert.equal(net.name, 'VSOURCE');
+});
+
+test('formatted interface labels survive preview/load reconstruction', () => {
+  const c = new Circuit();
+  const output = c.addComponent('output', { x: 0, y: 0 });
+  const resistor = c.addComponent('resistor', { x: 240, y: 0 });
+  c.connect(`${output.refdes}.p`, `${resistor.refdes}.a`);
+  c.renameComponent(output.refdes, 'VOUT', { displayLabel: 'V_{OUT}' });
+  const loaded = Circuit.fromJSON(c.toJSON());
+  assert.equal(loaded.labelOf('VOUT').text, 'V_{OUT}');
 });
 
 test('reference markers auto-name attached nets and preserve explicit names', () => {

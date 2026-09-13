@@ -15,7 +15,11 @@ npm run desktop
 
 The desktop app supports Linux and macOS. On first launch it imports existing
 repository circuits into Electron's per-user application data folder, and saves
-each named document with its `circuit.json` and `circuit.svg` files there. It does
+each named document with its `circuit.json` and `circuit.svg` files there. The
+Export dialog is separate from that internal storage: it asks once for an
+external output location (Pictures by default) and can produce SVG, PDF, and
+high-resolution 4× PNG files there, with independent grid and dark-mode
+appearance options. It does
 not start an HTTP server. For opt-in development hot reload, run
 `SCHEMATIC_SPAWNER_HOT_RELOAD=1 npm run desktop`; changes under `src/web/`,
 `src/desktop/`, or `src/core/` reload the window. Reloads preserve the
