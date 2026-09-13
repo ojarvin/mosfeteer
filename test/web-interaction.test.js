@@ -173,6 +173,22 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /deviceRoFinite/);
 });
 
+test('arrow-key nudging moves mixed selections atomically', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /transformMixedSelection\('translate', \{ translation: \{ dx, dy \} \}\)/);
+  assert.match(main, /function nudgeBlockSelection\(dx, dy\)/);
+  assert.match(main, /cannot nudge attached connector/);
+  assert.match(main, /circuit\.validate\(\);\s*recordBlockHistory\(before\);/);
+});
+
+test('desktop startup overlaps document listing with last-document restoration', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /const listPromise = refreshCircuitList\(\);/);
+  assert.match(main, /if \(name\) await loadCircuit\(name, true\);/);
+  assert.match(main, /fitView\(\);\s*restoreDesktopStartup\(\)/);
+  assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreDesktopStartup/);
+});
+
 test('analysis assumption annotations collapse equivalent device r_o overrides', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function analysisAnnotationAssumptions');

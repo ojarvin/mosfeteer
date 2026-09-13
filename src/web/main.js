@@ -268,6 +268,7 @@ let view = { x: -640, y: -480, w: 1280, h: 960 }; // fixed world window (infinit
 let currentCircuitName = '';
 let lastSavedSnapshot = '';
 let draftReady = false;
+let draftRestored = false;
 let deleteInFlight = false;
 const DRAFT_KEY = 'schematic-spawner:draft';
 let restoredDraftName = null;
@@ -529,6 +530,7 @@ function restoreDraft() {
       return;
     }
     applyJson(JSON.stringify(draft.state));
+    draftRestored = true;
     currentCircuitName = draft.name || '';
     circuitNameEl.value = currentCircuitName;
     const savedView = draft.view;
@@ -562,15 +564,24 @@ async function refreshCircuitList() {
 }
 
 async function restoreDesktopStartup() {
-  await refreshCircuitList();
+  // The document list and last-opened marker are independent native calls.
+  // Start the list scan immediately, but do not make loading the previous
+  // document wait for every saved circuit to be inspected first.
+  const listPromise = refreshCircuitList();
   // A valid local draft (including an intentionally empty new document) is
   // more authoritative than the native last-opened marker. The marker is the
   // fallback for Electron sessions where renderer localStorage is unavailable.
-  if (persistence.mode !== 'desktop' || currentCircuitName || typeof persistence.lastOpened !== 'function') return;
+  if (persistence.mode !== 'desktop' || draftRestored || typeof persistence.lastOpened !== 'function') {
+    await listPromise;
+    return;
+  }
   let name = null;
-  try { name = await persistence.lastOpened(); } catch { return; }
-  if (!name || ![...circuitSelectEl.options].some((option) => option.value === name)) return;
-  await loadCircuit(name, true);
+  try { name = await persistence.lastOpened(); } catch {
+    await listPromise;
+    return;
+  }
+  if (name) await loadCircuit(name, true);
+  await listPromise;
 }
 
 async function saveCircuit() {
@@ -745,7 +756,6 @@ async function loadCircuit(name = circuitSelectEl.value, quiet = false, options 
     lastCircuitTag = data.etag || null;
     fitView();
     markLastOpened(data.name);
-    render();
     logLine(`Loaded ${data.name}.`);
     return true;
   } catch (err) {
@@ -1961,7 +1971,11 @@ function mirrorSelectionAbout(axis) {
 /** World-space transform for a mixed component/label/wire selection. Attached
  * nets must be wholly selected (and all their terminals selected); otherwise a
  * transform would need unsafe detach/rubber-band semantics and is rejected. */
-function transformMixedSelection(operation, { recordHistory = true, center: pivot = null } = {}) {
+function transformMixedSelection(operation, { recordHistory = true, center: pivot = null, translation = null } = {}) {
+  const delta = translation && Number.isFinite(translation.dx) && Number.isFinite(translation.dy)
+    ? { dx: snap(translation.dx), dy: snap(translation.dy) }
+    : null;
+  if (translation && (!delta || (delta.dx === 0 && delta.dy === 0))) return false;
   validateSelectedWires();
   // A component-set move ghost owns the complete attached nets through
   // `netsTouching(refs)`. Do not let a stale segment selection turn that
@@ -2042,24 +2056,34 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
   };
   try {
     const selectedAnnotationIds = new Set(selectedLabels().filter((l) => ['arrow', 'box', 'line'].includes(l.kind)).map((l) => l.id));
+    const deferredNetLabels = [];
     for (const c of selectedComps()) {
-      c.transform = transformComponentWorld(c.transform, center, operation);
+      c.transform = delta
+        ? { ...c.transform, x: c.transform.x + delta.dx, y: c.transform.y + delta.dy }
+        : transformComponentWorld(c.transform, center, operation);
     }
+    const mapPoints = (points) => delta
+      ? points.map((point) => ({ x: point.x + delta.dx, y: point.y + delta.dy }))
+      : transformWorldPoints(points, center, operation);
     for (const l of selectedLabels()) {
       if (l.parent && selectedAnnotationIds.has(l.parent)) continue;
-      if (l.owner) continue;
-      const p = transformWorldPoints([l.anchorWorld()], center, operation)[0];
+      if (l.owner && selectedRefSet.has(l.owner)) continue;
+      const p = mapPoints([l.anchorWorld()])[0];
       if (l.netId) {
-        // Net geometry is transformed above; assign the corresponding anchor
-        // directly so moveTo cannot reject the valid transformed path.
-        l.anchor = { x: snap(p.x), y: snap(p.y) };
+        if (delta && !geometryNetIds.has(l.netId)) {
+          deferredNetLabels.push({ label: l, point: p });
+        } else {
+          // Net geometry is transformed above; assign the corresponding anchor
+          // directly so moveTo cannot reject the valid transformed path.
+          l.anchor = { x: snap(p.x), y: snap(p.y) };
+        }
       } else if (['arrow', 'box', 'line'].includes(l.kind)) {
         l.anchor = p;
-        l.end = transformWorldPoints([l.end], center, operation)[0];
-        if (l.points) l.points = transformWorldPoints(l.points, center, operation);
-        l.textAnchor = transformWorldPoints([l.textAnchor], center, operation)[0];
+        l.end = mapPoints([l.end])[0];
+        if (l.points) l.points = mapPoints(l.points);
+        l.textAnchor = mapPoints([l.textAnchor])[0];
         for (const child of circuit.labels.values()) {
-          if (child.parent === l.id) child.anchor = transformWorldPoints([child.anchor], center, operation)[0];
+          if (child.parent === l.id) child.anchor = mapPoints([child.anchor])[0];
         }
       } else {
         l.moveTo(p.x, p.y);
@@ -2068,12 +2092,15 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     for (const id of geometryNetIds) {
       const net = circuit.nets.get(id); if (!net) continue;
       if (net.routingMode === 'fixed') {
-        net.fixedPaths = net.fixedPaths.map((e) => ({ ...e, points: transformWorldPoints(e.points, center, operation) }));
+        net.fixedPaths = net.fixedPaths.map((e) => ({ ...e, points: mapPoints(e.points) }));
       } else {
-        const paths = net.paths().map((p) => transformWorldPoints(p, center, operation));
+        const paths = net.paths().map((p) => mapPoints(p));
         net.branches = paths; net.route = paths[0] || null;
       }
-      net.junctions = net.junctions.map((p) => transformWorldPoints([p], center, operation)[0]);
+      net.junctions = net.junctions.map((p) => mapPoints([p])[0]);
+    }
+    if (delta && refs.length) {
+      circuit.connectCoincident(refs);
     }
     // Complete net geometry inside the selection is part of the rigid set and
     // is never re-routed or reduced. Other touched nets are refreshed from
@@ -2084,6 +2111,10 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
       if (net && !transformed.has(id)) {
         if (rerouteNet(net, 'refresh') === false) throw new Error(`unable to reroute net ${id} safely`);
       }
+    }
+    if (delta) circuit.reconnectCoincidentNets();
+    for (const { label, point } of deferredNetLabels) {
+      if (!moveLabelSafely(label, point.x, point.y)) throw new Error(`unable to move net label ${label.id} safely`);
     }
     circuit.syncJunctionSolders();
     circuit.invalidateRoutingCache();
@@ -8364,6 +8395,61 @@ function moveBlockLabelOrigins(origins, dx, dy) {
   }
 }
 
+/** Nudge every selected object in a block diagram as one atomic operation.
+ * Connected arrows are moved by the block model when one of their endpoint
+ * blocks moves; detached arrows can translate independently. An attached
+ * arrow with neither endpoint selected would lose its terminal, so reject the
+ * complete nudge instead of partially moving the selection. */
+function nudgeBlockSelection(dx, dy) {
+  const blockIds = [...selectedBlocks].filter((id) => circuit.blocks.has(id));
+  const arrowIds = [...selectedArrows].filter((id) => circuit.arrows.has(id));
+  const labels = selectedLabels();
+  if (!blockIds.length && !arrowIds.length && !labels.length) return false;
+  const selectedBlockIds = new Set(blockIds);
+  const before = snapshot();
+  const movedArrowIds = new Set();
+  try {
+    for (const id of arrowIds) {
+      const arrow = circuit.getArrow(id);
+      const followsBlock = arrow.from?.block && selectedBlockIds.has(arrow.from.block) ||
+        arrow.to?.block && selectedBlockIds.has(arrow.to.block);
+      if (!arrow.detached && !followsBlock) {
+        throw new Error(`cannot nudge attached connector ${id} without selecting an endpoint block`);
+      }
+    }
+    if (blockIds.length) {
+      circuit.moveBlocks(blockIds, dx, dy);
+      for (const arrow of circuit.arrows.values()) {
+        if (arrow.detached) {
+          if (selectedBlockIds.has(arrow.from?.block) || selectedBlockIds.has(arrow.to?.block)) movedArrowIds.add(arrow.id);
+        } else if (selectedBlockIds.has(arrow.from?.block) || selectedBlockIds.has(arrow.to?.block)) {
+          movedArrowIds.add(arrow.id);
+        }
+      }
+    }
+    for (const id of arrowIds) {
+      if (movedArrowIds.has(id)) continue;
+      const arrow = circuit.getArrow(id);
+      arrow.points = arrow.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+      circuit._syncConnectorLabels?.(arrow);
+      movedArrowIds.add(id);
+    }
+    const labelOrigins = new Map(labels
+      .filter((label) => !label.connectorId || !movedArrowIds.has(label.connectorId))
+      .map((label) => [label.id, { anchor: { ...label.anchor } }]));
+    moveBlockLabelOrigins(labelOrigins, dx, dy);
+    circuit.validate();
+    recordBlockHistory(before);
+    markModelChanged();
+    persistDraft();
+    return true;
+  } catch (err) {
+    circuit = loadDocument(JSON.parse(before));
+    logLine(`nudge cancelled: ${err.message}`, 'error');
+    return false;
+  }
+}
+
 function beginBlockDrag(w, copy, before = snapshot(), modal = true) {
   const source = [...selectedBlocks];
   if (!source.length) return false;
@@ -10087,28 +10173,11 @@ function onNormalKey(key, shiftKey = false) {
   if (nudgeKey) {
     const comps = selectedComps();
     const labs = selectedLabels();
-    if (comps.length || labs.length) {
-      const dx = nudgeKey[0] * count * 40;
-      const dy = nudgeKey[1] * count * 40;
-      commit(() => {
-        const refs = comps.map((c) => c.refdes);
-        const moved = new Map();
-        for (const c of comps) {
-          circuit.moveComponent(c.refdes, c.transform.x + dx, c.transform.y + dy);
-          moved.set(c.refdes, { dx, dy });
-        }
-        // Only free labels are moved explicitly — owned labels follow their
-        // component's transform automatically (avoid double-moving them).
-        for (const lab of labs) if (!lab.owner) moveLabelSafely(lab, lab.anchorWorld().x + dx, lab.anchorWorld().y + dy);
-        // Coincident terminals are resolved only after the complete nudge has
-        // been applied. This commit boundary matches mouse-based moves.
-        circuit.connectCoincident(refs);
-        // Nudging moves the wires too, exactly like a drag: a net whose
-        // terminals all ride nudged components translates rigidly with them.
-        rerouteTouchedNets(refs, moved);
-        circuit.reconnectCoincidentNets();
-      });
-      markModelChanged();
+    const hasWireSelection = selectedWires.size > 0 || !!selectedWire || selectedNets.size > 0;
+    if (comps.length || labs.length || hasWireSelection) {
+      const dx = nudgeKey[0] * count * GRID;
+      const dy = nudgeKey[1] * count * GRID;
+      transformMixedSelection('translate', { translation: { dx, dy } });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
       if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
@@ -11831,22 +11900,11 @@ window.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       return;
     }
-    if (mode !== 'insert' && !blockDrag && (selectedBlocks.size || selLabels.size) && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(ev.key)) {
+    if (mode !== 'insert' && !blockDrag && blockSelectionExists() && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(ev.key)) {
       const dx = ev.key === 'ArrowLeft' ? -GRID : ev.key === 'ArrowRight' ? GRID : 0;
       const dy = ev.key === 'ArrowUp' ? -GRID : ev.key === 'ArrowDown' ? GRID : 0;
-      const before = snapshot();
-      // Connector labels are path-attached and must be projected back onto
-      // their connector when nudged on their own. When blocks are selected,
-      // the model's block move already updates those labels, so only free
-      // labels are moved explicitly to avoid a double translation.
-      const labelOrigins = new Map(selectedLabels()
-        .filter((label) => !label.connectorId || !selectedBlocks.size)
-        .map((label) => [label.id, { anchor: { ...label.anchor } }]));
-      circuit.moveBlocks([...selectedBlocks], dx, dy);
-      moveBlockLabelOrigins(labelOrigins, dx, dy);
-      recordBlockHistory(before);
-      markModelChanged();
-      persistDraft(); render(); ev.preventDefault(); return;
+      nudgeBlockSelection(dx, dy);
+      render(); ev.preventDefault(); return;
     }
     if (mode !== 'insert' && blockDrag?.modal && ev.key === 'Enter') {
       blockDrag.delta = { x: snap(cursor.x - blockDrag.start.x), y: snap(cursor.y - blockDrag.start.y) };
@@ -12081,8 +12139,10 @@ window.__app ||= { renders: [] };
 try {
   restoreDraft();
   draftReady = true;
+  // Paint the editor shell immediately. The native last-opened lookup and
+  // document load continue in the background, so storage migration can never
+  // leave the user staring at an unpainted/blank window.
   fitView();
-  render();
   restoreDesktopStartup().catch((err) => logLine(`Could not restore the last document: ${err.message}`, 'error'));
   syncActiveCircuit(); // pick up the agent's active circuit immediately
   window.setInterval(syncActiveCircuit, 500);

@@ -12,6 +12,8 @@ let mainWindow;
 let storage;
 let stopHotReload;
 let lastOpenedPath;
+let storageReady = Promise.resolve();
+let storageInitError = null;
 
 const EXPORT_EXTENSIONS = new Set(['svg', 'pdf', 'png', 'json']);
 
@@ -47,26 +49,39 @@ function trusted(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('untrusted renderer');
 }
 
-async function registerPersistence() {
+function registerPersistence() {
   const userData = app.getPath('userData');
   const root = join(userData, 'circuits');
   lastOpenedPath = join(userData, 'last-opened.json');
   storage = createNativeStorage(root);
   const importMarker = join(userData, '.repository-circuits-imported');
-  try {
-    await readFile(importMarker);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    await storage.importFrom(join(ROOT, 'circuits'));
-    await writeFile(importMarker, '1\n', { flag: 'wx' });
-  }
-  ipcMain.handle('storage:list', (event) => { trusted(event); return storage.list(); });
-  ipcMain.handle('storage:create', (event, name, kind) => { trusted(event); return storage.create(name, kind); });
-  ipcMain.handle('storage:load', (event, name) => { trusted(event); return storage.load(name); });
-  ipcMain.handle('storage:save', (event, name, state) => { trusted(event); return storage.save(name, state); });
-  ipcMain.handle('storage:delete', (event, name) => { trusted(event); return storage.delete(name); });
+  // Repository migration can touch and render every bundled document. Do not
+  // put that work before BrowserWindow creation: all storage IPC calls wait on
+  // this promise, so the renderer can paint a useful window while migration
+  // completes without exposing a partially initialized storage layer.
+  storageReady = (async () => {
+    try {
+      await readFile(importMarker);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      await storage.importFrom(join(ROOT, 'circuits'));
+      await writeFile(importMarker, '1\n', { flag: 'wx' });
+    }
+  })().catch((error) => {
+    storageInitError = error;
+  });
+  const awaitStorage = async () => {
+    await storageReady;
+    if (storageInitError) throw storageInitError;
+  };
+  ipcMain.handle('storage:list', async (event) => { trusted(event); await awaitStorage(); return storage.list(); });
+  ipcMain.handle('storage:create', async (event, name, kind) => { trusted(event); await awaitStorage(); return storage.create(name, kind); });
+  ipcMain.handle('storage:load', async (event, name) => { trusted(event); await awaitStorage(); return storage.load(name); });
+  ipcMain.handle('storage:save', async (event, name, state) => { trusted(event); await awaitStorage(); return storage.save(name, state); });
+  ipcMain.handle('storage:delete', async (event, name) => { trusted(event); await awaitStorage(); return storage.delete(name); });
   ipcMain.handle('storage:last-opened', async (event) => {
     trusted(event);
+    await awaitStorage();
     try {
       const data = JSON.parse(await readFile(lastOpenedPath, 'utf8'));
       return validCircuitName(data?.name) || null;
@@ -77,6 +92,7 @@ async function registerPersistence() {
   });
   ipcMain.handle('storage:mark-opened', async (event, name) => {
     trusted(event);
+    await awaitStorage();
     const safe = name ? validCircuitName(name) : null;
     if (name && !safe) throw new Error('invalid circuit name');
     await writeFile(lastOpenedPath, JSON.stringify({ name: safe }), 'utf8');
@@ -84,6 +100,7 @@ async function registerPersistence() {
   });
   ipcMain.handle('storage:export', async (event, options = {}) => {
     trusted(event);
+    await awaitStorage();
     const requestedFormats = Array.isArray(options.formats) ? options.formats : [options.format || options.extension || 'svg'];
     const formats = [...new Set(requestedFormats.filter((format) => EXPORT_EXTENSIONS.has(format)))];
     if (!formats.length) throw new Error('no valid export formats selected');
@@ -134,6 +151,11 @@ async function createWindow() {
     height: 1000,
     minWidth: 960,
     minHeight: 640,
+    // Do not expose Electron's default white surface while the renderer is
+    // parsing modules and restoring the document. Show the window only after
+    // the first renderer paint instead.
+    show: false,
+    backgroundColor: '#f4f6fa',
     autoHideMenuBar: true,
     webPreferences: {
       preload: PRELOAD,
@@ -142,6 +164,16 @@ async function createWindow() {
       sandbox: true,
     },
   });
+  let shown = false;
+  const showWindow = () => {
+    if (shown || !mainWindow || mainWindow.isDestroyed()) return;
+    shown = true;
+    mainWindow.show();
+  };
+  mainWindow.once('ready-to-show', showWindow);
+  // Keep a fallback for platforms/configurations where ready-to-show is not
+  // emitted for a hidden window.
+  mainWindow.webContents.once('did-finish-load', () => setTimeout(showWindow, 0));
   await mainWindow.loadFile(INDEX);
   if (process.env.SCHEMATIC_SPAWNER_SMOKE === '1') {
     console.log('SCHEMATIC_SPAWNER_READY');
@@ -168,7 +200,7 @@ async function createWindow() {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
-  await registerPersistence();
+  registerPersistence();
   await createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

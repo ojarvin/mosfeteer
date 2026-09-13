@@ -126,3 +126,13 @@ test('persistence adapter keeps native and HTTP contracts narrow', async () => {
   assert.equal(requests[2][1].method, 'PUT');
   assert.equal(requests[3][1].method, 'DELETE');
 });
+
+test('desktop startup creates the window without waiting for storage migration', async () => {
+  const main = await readFile(new URL('../src/desktop/main.js', import.meta.url), 'utf8');
+  assert.match(main, /storageReady = \(async \(\) =>/);
+  assert.match(main, /await awaitStorage\(\);/);
+  assert.match(main, /registerPersistence\(\);\s*await createWindow\(\);/);
+  assert.doesNotMatch(main, /await registerPersistence\(\);\s*await createWindow\(\);/);
+  assert.match(main, /show: false/);
+  assert.match(main, /mainWindow\.once\('ready-to-show', showWindow\)/);
+});
