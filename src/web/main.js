@@ -13,7 +13,7 @@
 import { Circuit, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
-import { analyzeInputImpedance, analyzeOutputImpedance, analyzeTransferFunction } from '../core/analysis/index.js';
+import { analyzeInputImpedance, analyzeOutputImpedance, analyzeTransferFunction, expressionHasFrequency } from '../core/analysis/index.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -27,7 +27,7 @@ import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { componentPaletteItems, editorKeymapText, layerActionForKey, naturalCompare } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
 import { analysisFormDefaults, analysisFormStorageKey, pruneAnalysisModelValues, pruneAnalysisNetValues } from './analysis-state.js';
-import { isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
+import { constrainAxis, isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -2513,6 +2513,7 @@ function placePending() {
     selectedArrows.clear();
     setLabelSelection([]);
     logLine(`placed ${block.id} @ (${cursor.x},${cursor.y})`);
+    pendingPlace.startWorld = { ...cursor };
     return;
   }
   if (pendingPlace.kind === 'label') {
@@ -2540,6 +2541,7 @@ function placePending() {
     setSelection([comp.refdes]);
     logLine(`placed ${comp.refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
   }
+  if (pendingPlace) pendingPlace.startWorld = { ...cursor };
 }
 
 // ----- render -----------------------------------------------------------
@@ -4290,8 +4292,10 @@ function canvasMouseDown(ev) {
     return;
   }
   if (drag?.mode === 'copyghost') {
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-    moveCopyGhost(startWorld);
+    drag.shift = ev.shiftKey;
+    const point = constrainedWorld(drag.startWorld, startWorld, ev.shiftKey);
+    cursor = snappedWorld(point);
+    moveCopyGhost(point);
     commitCopyGhost();
     return;
   }
@@ -4300,7 +4304,10 @@ function canvasMouseDown(ev) {
   // new source.
   if (drag?.modal && (movePending || copyPending)) {
     drag.commitPoint = { world: { ...startWorld }, client: { ...startClient } };
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    drag.shift = ev.shiftKey;
+    const point = constrainedWorld(drag.startWorld, startWorld, ev.shiftKey);
+    drag.commitPoint.world = { ...point };
+    cursor = snappedWorld(point);
     commitModalMove();
     return;
   }
@@ -4551,7 +4558,7 @@ function canvasMouseDown(ev) {
   // Insert mode with a ghost selected: a left-click places the ghost at the
   // snapped cursor and stays on the same component so more can be placed.
   if (mode === 'insert' && pendingPlace) {
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    cursor = snappedWorld(placementWorld(startWorld, ev.shiftKey));
     commit(() => placePending());
     render();
     return;
@@ -5134,7 +5141,7 @@ function commitModalMove() {
     return true;
   }
   const point = drag.commitPoint || (() => {
-    const world = { ...cursor };
+    const world = constrainedWorld(drag.startWorld, cursor, drag.shift);
     return { world, client: worldToClient(world.x, world.y) };
   })();
   if (drag.mode === 'wireseg' || drag.mode === 'fixedwire' || drag.mode === 'floatingwire') {
@@ -5280,7 +5287,8 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
   }
   if (drag?.mode === 'blockannotationplace' || drag?.mode === 'blockannotationlineplace') {
     if (dragMoved(drag.startWorld, drag.startClient, w, ev)) drag.moved = true;
-    drag.previewEnd = { ...cursor };
+    drag.previewEnd = snappedWorld(constrainedWorld(drag.startWorld, w, ev.shiftKey));
+    cursor = { ...drag.previewEnd };
     scheduleInteractionRender();
     return;
   }
@@ -5295,28 +5303,34 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
     return;
   }
   if (!blockDrag) {
-    if (cursorChanged) scheduleInteractionRender();
+    if (mode === 'insert' && pendingPlace) {
+      const point = snappedWorld(placementWorld(w, ev.shiftKey));
+      const changed = point.x !== cursor.x || point.y !== cursor.y;
+      cursor = point;
+      if (cursorChanged || changed) scheduleInteractionRender();
+    } else if (cursorChanged) scheduleInteractionRender();
     return;
   }
   const movedOut = dragMoved(blockDrag.start, blockDrag.startClient || { x: blockDrag.start.x, y: blockDrag.start.y }, w, ev);
+  const movedWorld = constrainedWorld(blockDrag.start, w, ev.shiftKey);
   if (blockDrag.mode === 'blockarrowendpoint') {
     if (!movedOut) return;
     blockDrag.moved = true;
-    blockDrag.cursor = { x: snap(w.x), y: snap(w.y) };
-    blockDrag.target = blockArrowEndpointTarget(w, blockDrag);
+    blockDrag.cursor = snappedWorld(movedWorld);
+    blockDrag.target = blockArrowEndpointTarget(movedWorld, blockDrag);
     renderCanvas();
     return;
   }
   if (blockDrag.mode === 'blockresize') {
     if (!movedOut) return;
     blockDrag.moved = true;
-    try { circuit.resizeBlock(blockDrag.id, blockResizeRect(blockDrag.origin, blockDrag.handle, w)); renderCanvas(); }
+    try { circuit.resizeBlock(blockDrag.id, blockResizeRect(blockDrag.origin, blockDrag.handle, movedWorld)); renderCanvas(); }
     catch (err) { circuit = loadDocument(JSON.parse(blockDrag.startSnapshot)); blockDrag = null; logLine(`block resize cancelled: ${err.message}`, 'error'); render(); }
     return;
   }
   if (blockDrag.mode === 'blockarrowsegment') {
     if (!movedOut) return;
-    const delta = blockDrag.run.orient === 'h' ? snap(w.y - blockDrag.start.y) : snap(w.x - blockDrag.start.x);
+    const delta = blockDrag.run.orient === 'h' ? snap(movedWorld.y - blockDrag.start.y) : snap(movedWorld.x - blockDrag.start.x);
     try {
       for (const [arrowId, origin] of blockDrag.origins || [[blockDrag.id, blockDrag.origin]]) {
         const arrow = circuit.arrows.get(arrowId);
@@ -5343,14 +5357,14 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
   }
   if (blockDrag.mode === 'blockannotationendpoint') {
     if (!movedOut) return;
-    if (moveAnnotationEndpoint(blockDrag.label, blockDrag.endpoint, { x: snap(w.x), y: snap(w.y) })) blockDrag.moved = true;
+    if (moveAnnotationEndpoint(blockDrag.label, blockDrag.endpoint, snappedWorld(movedWorld))) blockDrag.moved = true;
     renderCanvas();
     return;
   }
   if (blockDrag.mode === 'blocklabelmove') {
     if (!movedOut) return;
     blockDrag.moved = true;
-    const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
+    const dx = snap(movedWorld.x - blockDrag.start.x); const dy = snap(movedWorld.y - blockDrag.start.y);
     moveBlockLabelOrigins(blockDrag.labels, dx, dy);
     renderCanvas();
     return;
@@ -5362,13 +5376,13 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
     if (!source) return;
     if (!blockDrag.copyId) blockDrag.copyId = copyBlockLabel(source, 0, 0).id;
     const copy = circuit.labels.get(blockDrag.copyId);
-    const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
+    const dx = snap(movedWorld.x - blockDrag.start.x); const dy = snap(movedWorld.y - blockDrag.start.y);
     if (copy) copy.moveTo(source.anchor.x + dx, source.anchor.y + dy);
     setLabelSelection([blockDrag.copyId]);
     renderCanvas();
     return;
   }
-  const dx = snap(w.x - blockDrag.start.x); const dy = snap(w.y - blockDrag.start.y);
+  const dx = snap(movedWorld.x - blockDrag.start.x); const dy = snap(movedWorld.y - blockDrag.start.y);
   if (blockDrag.copy) {
     blockDrag.delta = { x: dx, y: dy };
     renderCanvas();
@@ -5429,6 +5443,20 @@ function updateCursorFromEvent(ev) {
   return { w, cursorChanged };
 }
 
+function constrainedWorld(start, current, shiftKey) {
+  return constrainAxis(start, current, shiftKey);
+}
+
+function snappedWorld(point) {
+  return { x: snap(point.x), y: snap(point.y) };
+}
+
+function placementWorld(current, shiftKey) {
+  return pendingPlace?.startWorld
+    ? constrainedWorld(pendingPlace.startWorld, current, shiftKey)
+    : current;
+}
+
 function canvasMouseMove(ev) {
   const { w, cursorChanged } = updateCursorFromEvent(ev);
   if (isBlockDiagram(circuit)) return blockCanvasMouseMove(ev, w, cursorChanged);
@@ -5436,11 +5464,17 @@ function canvasMouseMove(ev) {
   if (!drag) {
     // The cursor follows the mouse, always snapped to the nearest grid point.
     // The view never pans on its own — pan manually with the middle button.
-    if (cursorChanged) scheduleInteractionRender();
+    const point = mode === 'insert' && pendingPlace ? placementWorld(w, ev.shiftKey) : w;
+    const nextCursor = snappedWorld(point);
+    const changed = nextCursor.x !== cursor.x || nextCursor.y !== cursor.y;
+    cursor = nextCursor;
+    if (cursorChanged || changed) scheduleInteractionRender();
     return;
   }
 
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
+  const movedWorld = constrainedWorld(drag.startWorld, w, ev.shiftKey);
+  if (drag.modal) drag.shift = ev.shiftKey;
   if (movedOut) lastSchematicComponentClick = null;
   if (drag.mode === 'blockresize') {
     if (!movedOut) return;
@@ -5449,7 +5483,7 @@ function canvasMouseMove(ev) {
       // Rebuild each preview from the immutable pointer-down snapshot. This
       // keeps corner drags reversible and avoids accumulating grid rounding.
       circuit = loadDocument(JSON.parse(drag.startSnapshot));
-      const rect = blockResizeRect(drag.origin, drag.handle, w);
+      const rect = blockResizeRect(drag.origin, drag.handle, movedWorld);
       circuit.resizeBlock(drag.refdes, rect);
       drag.invalid = false;
       drag.previewRevision = (drag.previewRevision || 0) + 1;
@@ -5476,14 +5510,16 @@ function canvasMouseMove(ev) {
   }
   if (drag.mode === 'annotationlineplace') {
     if (movedOut) drag.moved = true;
-    drag.previewEnd = { ...cursor };
+    drag.previewEnd = snappedWorld(movedWorld);
+    cursor = { ...drag.previewEnd };
     scheduleInteractionRender();
     return;
   }
   if (drag.mode === 'annotationplace') {
     if (movedOut) drag.moved = true;
     if (annotationStart || drag.moved) {
-      drag.previewEnd = { ...cursor };
+      drag.previewEnd = snappedWorld(movedWorld);
+      cursor = { ...drag.previewEnd };
       scheduleInteractionRender();
     }
     return;
@@ -5491,8 +5527,8 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationtextmove') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
-      const dx = snap(w.x) - snap(drag.startWorld.x);
-      const dy = snap(w.y) - snap(drag.startWorld.y);
+      const dx = snap(movedWorld.x) - snap(drag.startWorld.x);
+      const dy = snap(movedWorld.y) - snap(drag.startWorld.y);
       drag.label.textAnchor = { x: drag.startText.x + dx, y: drag.startText.y + dy };
       cursor = { ...drag.label.textAnchor };
       markModelChanged(false);
@@ -5503,8 +5539,8 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationsegment') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
-      const dx = snap(w.x) - snap(drag.startWorld.x);
-      const dy = snap(w.y) - snap(drag.startWorld.y);
+      const dx = snap(movedWorld.x) - snap(drag.startWorld.x);
+      const dy = snap(movedWorld.y) - snap(drag.startWorld.y);
       drag.label.points = drag.startPoints.map((point) => ({ ...point }));
       drag.label.moveSegment(drag.segment, dx, dy);
       cursor = { ...cursor };
@@ -5516,8 +5552,9 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationendpoint') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
-      moveAnnotationEndpoint(drag.label, drag.endpoint, { x: snap(w.x), y: snap(w.y) });
-      cursor = { x: snap(w.x), y: snap(w.y) };
+      const point = snappedWorld(movedWorld);
+      moveAnnotationEndpoint(drag.label, drag.endpoint, point);
+      cursor = point;
       markModelChanged(false);
       scheduleInteractionRender();
     }
@@ -5525,7 +5562,8 @@ function canvasMouseMove(ev) {
   }
   if (drag.mode === 'copyghost') {
     drag.moved = movedOut || drag.moved;
-    moveCopyGhost(w);
+    drag.shift = ev.shiftKey;
+    moveCopyGhost(movedWorld);
     scheduleInteractionRender();
     return;
   }
@@ -5552,7 +5590,7 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'wireseg') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
-      cursor = { x: snap(w.x), y: snap(w.y) };
+      cursor = snappedWorld(movedWorld);
       if (!drag.committed) {
         drag.committed = true;
         // The drag owns each run's polyline: attach copies to their nets so the
@@ -5575,7 +5613,7 @@ function canvasMouseMove(ev) {
         r.pts = paths[r.branch] || paths[0];
         r.line = r.startLine;
       }
-      const axis = drag.orient === 'h' ? w.y : w.x;
+      const axis = drag.orient === 'h' ? movedWorld.y : movedWorld.x;
       const delta = axis - drag.startAxis;
       for (const r of drag.runs) {
         const target = r.startLine + delta;
@@ -5590,8 +5628,8 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'floatingwire') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
-      const dx = snap(w.x) - snap(drag.startWorld.x);
-      const dy = snap(w.y) - snap(drag.startWorld.y);
+      const dx = snap(movedWorld.x) - snap(drag.startWorld.x);
+      const dy = snap(movedWorld.y) - snap(drag.startWorld.y);
       for (const f of drag.fragments) {
         const points = f.orig.map((p) => ({ x: p.x + dx, y: p.y + dy }));
         if (f.fixed) f.net.fixedPaths[f.branch].points = points;
@@ -5600,7 +5638,7 @@ function canvasMouseMove(ev) {
           if (f.branch === 0) f.net.route = points;
         }
       }
-      cursor = { x: snap(w.x), y: snap(w.y) };
+      cursor = snappedWorld(movedWorld);
       markModelChanged();
     }
     scheduleInteractionRender();
@@ -5610,8 +5648,8 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'fixedwire') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
-      const dx = snap(w.x) - snap(drag.startWorld.x);
-      const dy = snap(w.y) - snap(drag.startWorld.y);
+      const dx = snap(movedWorld.x) - snap(drag.startWorld.x);
+      const dy = snap(movedWorld.y) - snap(drag.startWorld.y);
       for (const [net, saved] of drag.fixedSnapshots) {
         net.fixedPaths = saved.fixedPaths.map((entry) => ({
           ...entry,
@@ -5641,7 +5679,7 @@ function canvasMouseMove(ev) {
           for (const i of indices) entry.points[i] = movePoint(saved.points[i]);
         }
       }
-      cursor = { x: snap(w.x), y: snap(w.y) };
+      cursor = snappedWorld(movedWorld);
       markModelChanged();
       scheduleInteractionRender();
     }
@@ -5667,7 +5705,7 @@ function canvasMouseMove(ev) {
         }
         drag.committed = true;
       }
-      const delta = snappedDragDelta(drag.startWorld, w);
+      const delta = snappedDragDelta(drag.startWorld, movedWorld);
       moveLabelOriginsOnce(drag.startAnchors, delta.dx, delta.dy);
       const primary = circuit.labels.get(drag.labelId);
       if (primary) {
@@ -5722,7 +5760,7 @@ function canvasMouseMove(ev) {
         }
         drag.committed = true;
       }
-      const delta = snappedDragDelta(drag.startWorld, w);
+      const delta = snappedDragDelta(drag.startWorld, movedWorld);
       for (const [r, o] of drag.origins) {
         const c = circuit.components.get(r);
         if (!c) continue;
@@ -5791,6 +5829,7 @@ function canvasMouseUp(ev) {
   if (!drag) return;
   const movedOut = dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
   const w = clientToWorld(ev.clientX, ev.clientY);
+  const movedWorld = constrainedWorld(drag.startWorld, w, ev.shiftKey);
   if (drag.mode === 'blockresize') {
     if (drag.moved && !drag.invalid && snapshot() !== drag.startSnapshot) {
       recordHistoryEntry(drag.startSnapshot);
@@ -6028,7 +6067,7 @@ function canvasMouseUp(ev) {
       syncSelectedWire();
       selectedNets.clear();
     } else {
-      const point = { x: snap(w.x), y: snap(w.y) };
+      const point = snappedWorld(movedWorld);
       const terminalHits = sortedComps().flatMap((c) => c.worldTerminals()
         .filter((t) => t.x === point.x && t.y === point.y)
         .map((t) => ({ refdes: c.refdes, term: t.name })));
@@ -6036,7 +6075,7 @@ function canvasMouseUp(ev) {
       if (terminalHits.length === 1) target = `${terminalHits[0].refdes}.${terminalHits[0].term}`;
       else if (terminalHits.length > 1) logLine('fixed endpoint target is ambiguous — choose one terminal');
       else {
-        const wireTarget = exactWireTargetAt(w, null, drag.endpoint);
+        const wireTarget = exactWireTargetAt(movedWorld, null, drag.endpoint);
         if (wireTarget?.ambiguous) logLine('fixed endpoint target is ambiguous — choose one exact wire');
         else if (wireTarget) target = wireTarget;
       }
@@ -6106,7 +6145,7 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'annotationplace') {
     if (drag.moved) {
       if (!annotationStart) annotationStart = { x: snap(drag.startWorld.x), y: snap(drag.startWorld.y) };
-      placeShapeAnnotation(w, { x: snap(w.x), y: snap(w.y) });
+      placeShapeAnnotation(movedWorld, snappedWorld(movedWorld));
     } else {
       placeShapeAnnotation(w);
     }
@@ -6617,15 +6656,9 @@ function analysisReportText(report) {
   return lines.join('\n');
 }
 
-function analysisEquationHasReactiveTerm(equation) {
-  const rhs = String(equation || '').replace(/^.*?(?:=|\\approx)\s*/, '');
-  return /\bs\b|[CL](?=_\{|[0-9])/i.test(rhs);
-}
-
 function analysisHasReactiveFinalForms(report) {
-  return !!report?.frequencyResponse?.hasFrequency
-    || [report?.equation, report?.acTransfer?.equation]
-    .some(analysisEquationHasReactiveTerm);
+  return report?.frequencyResponse?.hasFrequency === true
+    || [report?.expression, report?.acTransfer?.expression].some(expressionHasFrequency);
 }
 
 function analysisEquationEntries(report, includeEmptyRoots = false) {
@@ -6813,7 +6846,7 @@ function analysisAnnotationAssumptions(report) {
         if (refs.length && explicitDevice) refs.forEach((ref) => deviceGmRoLarge.add(ref));
         else gmroLarge = true;
       }
-      if (/body effect is ignored|g(?:_|\s)*\{?mb\}?\s*=\s*0|ignore body effect/i.test(text)) {
+      if (/body effect is ignored|g(?:_|\s)*\{?mb\}?\s*=\s*0|ignore body effect|common-gate.*V(?:_|\s)*\{?BS\}?\s*=\s*0/i.test(text)) {
         if (refs.length && explicitDevice) refs.forEach((ref) => deviceBodyEffectIgnored.add(ref));
         else bodyEffectIgnored = true;
       }
@@ -7888,10 +7921,11 @@ function blockDragPreview(state) {
 function updateBlockDragPreview(w, ev) {
   if (!blockDrag) return;
   if (dragMoved(blockDrag.start, blockDrag.startClient || { x: blockDrag.start.x, y: blockDrag.start.y }, w, ev)) blockDrag.moved = true;
-  blockDrag.delta = { x: snap(w.x - blockDrag.start.x), y: snap(w.y - blockDrag.start.y) };
+  const movedWorld = constrainedWorld(blockDrag.start, w, ev.shiftKey);
+  blockDrag.delta = { x: snap(movedWorld.x - blockDrag.start.x), y: snap(movedWorld.y - blockDrag.start.y) };
   if (blockDrag.mode === 'blockarrowendpoint') {
-    blockDrag.cursor = { x: snap(w.x), y: snap(w.y) };
-    blockDrag.target = blockArrowEndpointTarget(w, blockDrag);
+    blockDrag.cursor = snappedWorld(movedWorld);
+    blockDrag.target = blockArrowEndpointTarget(movedWorld, blockDrag);
   }
   scheduleInteractionRender();
 }
@@ -8331,11 +8365,13 @@ canvasEl.addEventListener('pointerdown', (ev) => {
   // source, a later click chooses the destination. A destination click must
   // win over normal object picking (including labels and connector paths).
   if (blockDrag?.modal) {
-    cursor = { x: snap(w.x), y: snap(w.y) };
-    blockDrag.delta = { x: snap(w.x - blockDrag.start.x), y: snap(w.y - blockDrag.start.y) };
+    const movedWorld = constrainedWorld(blockDrag.start, w, ev.shiftKey);
+    blockDrag.shift = ev.shiftKey;
+    cursor = snappedWorld(movedWorld);
+    blockDrag.delta = { x: snap(movedWorld.x - blockDrag.start.x), y: snap(movedWorld.y - blockDrag.start.y) };
     blockDrag.moved = blockDrag.moved || blockDrag.delta.x !== 0 || blockDrag.delta.y !== 0;
     if (blockDrag.mode === 'blockarrowendpoint') {
-      blockDrag.target = blockArrowEndpointTarget(w, blockDrag);
+      blockDrag.target = blockArrowEndpointTarget(movedWorld, blockDrag);
       blockDrag.cursor = { ...cursor };
     }
     endBlockDrag(ev);
@@ -8343,7 +8379,7 @@ canvasEl.addEventListener('pointerdown', (ev) => {
   }
 
   if (mode === 'insert' && pendingPlace) {
-    cursor = { x: snap(w.x), y: snap(w.y) };
+    cursor = snappedWorld(placementWorld(w, ev.shiftKey));
     commit(() => placePending());
     render();
     return;
@@ -8353,7 +8389,7 @@ canvasEl.addEventListener('pointerdown', (ev) => {
     return;
   }
   if (mode === 'insert') {
-    cursor = { x: snap(w.x), y: snap(w.y) };
+    cursor = snappedWorld(w);
     render();
     return;
   }
@@ -8743,11 +8779,12 @@ function endBlockPointerInteraction(ev) {
   const state = drag;
   if (!['blocklabelplace', 'blockannotationplace', 'blockannotationlineplace', 'blocklabelmove', 'blockmarquee'].includes(state.mode)) return;
   const w = clientToWorld(ev.clientX, ev.clientY);
+  const movedWorld = constrainedWorld(state.startWorld, w, ev.shiftKey);
   const moved = dragMoved(state.startWorld, state.startClient, w, ev);
   if (state.mode === 'blocklabelplace' && !moved) placeAnnotationAt(w);
   else if (state.mode === 'blockannotationplace') {
     if (moved && !annotationStart) annotationStart = { x: snap(state.startWorld.x), y: snap(state.startWorld.y) };
-    if (!moved || annotationStart) placeShapeAnnotation(w, moved ? { x: snap(w.x), y: snap(w.y) } : null);
+    if (!moved || annotationStart) placeShapeAnnotation(movedWorld, moved ? snappedWorld(movedWorld) : null);
   } else if (state.mode === 'blockannotationlineplace' && !moved) {
     const p = { x: snap(w.x), y: snap(w.y) };
     if (!annotationPoints.length || annotationPoints.at(-1).x !== p.x || annotationPoints.at(-1).y !== p.y) annotationPoints.push(p);
@@ -9732,12 +9769,13 @@ function transformPendingComponent(operation) {
 function selectInsertMatch() {
   const entries = insertMenuEntries();
   if (!entries.length) return false;
+  const startWorld = { ...cursor };
   const type = entries[0];
   pendingPlace = type === 'label'
-    ? { kind: 'label' }
+    ? { kind: 'label', startWorld }
     : type === 'block' && isBlockDiagram(circuit)
-      ? { kind: 'block' }
-      : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null };
+      ? { kind: 'block', startWorld }
+      : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null, startWorld };
   insertQuery = '';
   return true;
 }
@@ -9841,10 +9879,17 @@ function onVisualKey(key) {
 
 function onNormalKey(key, shiftKey = false) {
   if (key === 'Enter' && drag?.mode === 'copyghost') {
+    if (shiftKey) {
+      const point = constrainedWorld(drag.startWorld, cursor, true);
+      drag.shift = true;
+      moveCopyGhost(point);
+      cursor = snappedWorld(point);
+    }
     commitCopyGhost();
     return;
   }
   if (movePending && key === 'Enter') {
+    if (drag) drag.shift = shiftKey;
     commitModalMove();
     return;
   }
@@ -11665,7 +11710,10 @@ window.addEventListener('keydown', (ev) => {
       render(); ev.preventDefault(); return;
     }
     if (mode !== 'insert' && blockDrag?.modal && ev.key === 'Enter') {
-      blockDrag.delta = { x: snap(cursor.x - blockDrag.start.x), y: snap(cursor.y - blockDrag.start.y) };
+      blockDrag.shift = ev.shiftKey;
+      const point = constrainedWorld(blockDrag.start, cursor, ev.shiftKey);
+      cursor = snappedWorld(point);
+      blockDrag.delta = { x: snap(point.x - blockDrag.start.x), y: snap(point.y - blockDrag.start.y) };
       blockDrag.moved = blockDrag.moved || blockDrag.delta.x !== 0 || blockDrag.delta.y !== 0;
       endBlockDrag();
       ev.preventDefault(); return;

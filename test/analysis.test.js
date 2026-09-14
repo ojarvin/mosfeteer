@@ -51,6 +51,55 @@ function rlHighPass() {
   return circuit;
 }
 
+function parallelRlCoupling() {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('inductor', { refdes: 'L1', x: 0, y: 160 });
+  circuit.addComponent('resistor', { refdes: 'R2', x: 240, y: 160 });
+  circuit.addComponent('ground', { refdes: 'GND1', x: 320, y: 160 });
+  circuit.addComponent('input', { refdes: 'IN', x: -160, y: 0 });
+  circuit.addComponent('output', { refdes: 'OUT', x: 160, y: 0 });
+  circuit.connect('IN.p', 'R1.a', 'L1.a');
+  circuit.connect('R1.b', 'L1.b', 'R2.a', 'OUT.p');
+  circuit.connect('R2.b', 'GND1.gnd');
+  namedNet(circuit, 'IN.p', 'VIN');
+  namedNet(circuit, 'OUT.p', 'VOUT');
+  return circuit;
+}
+
+function crossCoupledTransconductors() {
+  const circuit = new Circuit();
+  const raw = (...refs) => {
+    const net = circuit._createNet();
+    net.terminals = refs.map((ref) => circuit.resolveTerm(ref));
+    return net;
+  };
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('nmos', { refdes: 'M2', x: 240, y: 0 });
+  circuit.addComponent('ground', { refdes: 'GND1', x: 120, y: 160 });
+  circuit.addComponent('output', { refdes: 'OUT', x: 120, y: -160 });
+  circuit.addComponent('port', { refdes: 'X', x: 120, y: 0 });
+  circuit.nets.clear();
+  raw('M1.s', 'M2.s', 'GND1.gnd');
+  raw('M1.d', 'M2.g', 'OUT.p');
+  raw('M1.g', 'M2.d', 'X.p');
+  namedNet(circuit, 'OUT.p', 'VOUT');
+  namedNet(circuit, 'X.p', 'VX');
+  return circuit;
+}
+
+function commonSourceWithDisconnectedCapacitor() {
+  const circuit = commonSource();
+  circuit.addComponent('capacitor', { refdes: 'CISO', x: 800, y: 0 });
+  circuit.addComponent('port', { refdes: 'ISOA', x: 640, y: 0 });
+  circuit.addComponent('port', { refdes: 'ISOB', x: 960, y: 0 });
+  const first = circuit._createNet();
+  first.terminals = ['CISO.a', 'ISOA.p'].map((ref) => circuit.resolveTerm(ref));
+  const second = circuit._createNet();
+  second.terminals = ['CISO.b', 'ISOB.p'].map((ref) => circuit.resolveTerm(ref));
+  return circuit;
+}
+
 function commonSource() {
   const circuit = new Circuit();
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
@@ -354,7 +403,7 @@ function foldedCascodeOutputWithInputLoad() {
 test('derives a symbolic resistor output impedance without numerical evaluation', () => {
   const circuit = singleResistor();
   const report = analyzeOutputImpedance(circuit, 'VOUT');
-  assert.equal(report.ok, true);
+  assert.equal(report.ok, true, report.error);
   assert.equal(report.equation, 'Z_{out} = R_{1}');
   assert.ok(report.equationCount > report.unknownCount);
   assert.deepEqual(report.dependencies, ['R1']);
@@ -572,6 +621,42 @@ test('takes the DC limit of an inductor-loaded transfer', () => {
   assert.equal(report.dcOutputImpedance.equation, 'Z_{out}(0) = 0');
   assert.equal(report.frequencyResponse.zeros[0].equation, 'z_{0} = 0');
   assert.equal(report.frequencyResponse.poles[0].equation, 'p_{0} = -\\frac{R_{1}}{L_{1}}');
+});
+
+test('includes every output-connected RLC branch in the Norton cross-check', () => {
+  const report = analyzeTransferFunction(parallelRlCoupling(), 'VOUT', {
+    input: 'VIN',
+    millerApproximation: false,
+  });
+  assert.equal(report.ok, true);
+  assert.match(report.effectiveTransconductance.equation, /R_\{1\}/);
+  assert.match(report.effectiveTransconductance.equation, /L_\{1\}/);
+  assert.match(report.acTransfer.equation, /L_\{1\}/);
+});
+
+test('ignores disconnected reactive islands when solving and labeling results', () => {
+  const circuit = commonSourceWithDisconnectedCapacitor();
+  const options = { input: 'VIN', millerApproximation: false };
+  const transfer = analyzeTransferFunction(circuit, 'VOUT', options);
+  const input = analyzeInputImpedance(circuit, 'VIN', options);
+  const output = analyzeOutputImpedance(circuit, 'VOUT', options);
+  assert.equal(transfer.ok, true, transfer.error);
+  assert.equal(input.ok, true, input.error);
+  assert.equal(output.ok, true, output.error);
+  assert.equal(transfer.acTransfer, null);
+  assert.equal(transfer.frequencyResponse, null);
+  assert.doesNotMatch(input.equation, /Z_\{in\}\(s\)/);
+  assert.doesNotMatch(output.equation, /Z_\{out\}\(s\)/);
+});
+
+test('maps a pivoted nodal solution to variables rather than source rows', () => {
+  const report = analyzeOutputImpedance(crossCoupledTransconductors(), 'VOUT', {
+    ignoreChannelLengthModulation: true,
+    ignoreBodyEffect: true,
+    ignoreRoDevices: ['M1', 'M2'],
+  });
+  assert.equal(report.ok, true, report.error);
+  assert.equal(report.equation, 'Z_{out} \\approx 0');
 });
 
 test('keeps a capacitor-loaded common-source analyzable in the DC companion', () => {
@@ -852,7 +937,10 @@ test('source degeneration is solved by the systematic nodal model', () => {
   const transfer = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN' });
   assert.equal(transfer.ok, true);
   assert.doesNotMatch(transfer.error || '', /source degeneration/);
-  assert.ok(transfer.equation.includes('r_{o1}'));
+  assert.equal(transfer.equation, 'A_v = -\\frac{R_{D} \\, r_{o1} \\, \\left(g_{m1} + g_{mb1}\\right)}{r_{o1} + R_{D} + R_{S} + \\left(r_{o1} \\, R_{S} \\, \\left(g_{m1} + g_{mb1}\\right)\\right)}');
+  assert.equal(transfer.acTransfer, null);
+  assert.equal(transfer.frequencyResponse, null);
+  assert.equal(transfer.dcOutputImpedance.equation, 'Z_{out}(0) = R_{D} \\|\\| \\left(r_{o1} + R_{S} + r_{o1} \\, R_{S} \\, \\left(g_{m1} + g_{mb1}\\right)\\right)');
   const output = analyzeOutputImpedance(circuit, 'VOUT', { input: 'VIN' });
   assert.equal(output.ok, true);
   assert.doesNotMatch(output.error || '', /source degeneration/);
@@ -863,8 +951,19 @@ test('source degeneration is solved by the systematic nodal model', () => {
   // into the underlying `1/R_1 + 1/R_2` admittance when it is multiplied into
   // A_v.
   assert.match(output.equation, /\\|\\|/);
-  assert.match(transfer.equation, /\\|\\|/);
   assert.doesNotMatch(transfer.equation, /\\frac\{1\}\{r_\{o1\}\} \+ \\frac\{1\}\{R_D\}/);
+
+  const approximate = analyzeTransferFunction(circuit, 'VOUT', {
+    input: 'VIN',
+    gmroLarge: true,
+    ignoreBodyEffect: true,
+  });
+  assert.equal(approximate.ok, true);
+  assert.equal(approximate.equation, 'A_v \\approx -\\frac{g_{m1} \\, R_{D}}{1 + \\left(g_{m1} \\, R_{S}\\right)}');
+  assert.equal(approximate.dcGain.equation, 'A_v(0) \\approx -\\frac{g_{m1} \\, R_{D}}{1 + g_{m1} \\, R_{S}}');
+  assert.doesNotMatch(approximate.equation, /g_\{mb1\}/);
+  assert.doesNotMatch(approximate.dcGain.equation, /g_\{mb1\}/);
+  assert.doesNotMatch(approximate.smallSignalNetlist, /g_\{mb1\}/);
 });
 
 test('includes implicit MOS body effect in a common-drain source follower', () => {
@@ -915,6 +1014,7 @@ test('keeps an exact cascoded output load compact and parallel in the gain', () 
   assert.equal(output.equation, 'Z_{out} = R_{D} \\|\\| \\left(r_{o1} + r_{o2} + \\left(r_{o1} \\, r_{o2} \\, \\left(g_{m2} + g_{mb2}\\right)\\right)\\right)');
   const gain = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN' });
   assert.equal(gain.ok, true);
+  assert.equal(gain.dcOutputImpedance.equation, 'Z_{out}(0) = R_{D} \\|\\| \\left(r_{o1} + r_{o2} + \\left(r_{o1} \\, r_{o2} \\, \\left(g_{m2} + g_{mb2}\\right)\\right)\\right)');
   assert.match(gain.equation, /R_{D} \\|\\|/);
   assert.doesNotMatch(gain.equation, /\\frac\{1\}\{R_{D}\}/);
 });
@@ -977,6 +1077,14 @@ test('large-gmro simplification reaches the load through a deeper cascode stack'
   assert.doesNotMatch(report.equation, /\\frac\{1\}\{0\}/);
 });
 
+test('keeps an exact deeper cascode output resistance in series-stack form', () => {
+  const report = analyzeOutputImpedance(cascodedCommonSource(4), 'VOUT', { input: 'VIN' });
+  assert.equal(report.ok, true);
+  assert.match(report.equation, /^Z_{out} = R_{D} \\|\\|/);
+  assert.match(report.equation, /r_\{o1\}.*r_\{o2\}.*r_\{o3\}.*r_\{o4\}/);
+  assert.doesNotMatch(report.equation, /\\frac\{1\}/);
+});
+
 test('per-device r_o policy overrides the form-wide channel-length approximation', () => {
   const circuit = cascodedCommonSource();
   circuit.setComponentAnalysis('M1', { channelLengthModulation: 'ignore' });
@@ -987,7 +1095,8 @@ test('per-device r_o policy overrides the form-wide channel-length approximation
   });
   assert.equal(report.ok, true);
   assert.match(report.equation, /r_\{o2\}/);
-  assert.match(report.exactEquation, /r_\{o1\}/);
+  assert.doesNotMatch(report.exactEquation, /r_\{o1\}/);
+  assert.match(report.exactEquation, /r_\{o2\}/);
   assert.ok(report.assumptions.some((text) => /M2.*finite r_o/.test(text)));
 });
 
@@ -1000,15 +1109,28 @@ test('a device-level r_o omission is applied without enabling it globally', () =
   assert.ok(report.approximations.some((text) => /M1.*r_o.*∞/.test(text)));
 });
 
+test('per-device r_o and body-effect omissions persist in DC companion results', () => {
+  const circuit = sourceDegeneratedCommonSource();
+  circuit.setComponentAnalysis('M1', { channelLengthModulation: 'ignore', ignoreBodyEffect: true });
+  const report = analyzeTransferFunction(circuit, 'VOUT', { input: 'VIN' });
+  assert.equal(report.ok, true);
+  for (const result of [report.dcGain, report.dcOutputImpedance]) {
+    assert.doesNotMatch(result.equation, /r_\{o1\}|g_\{mb1\}/);
+  }
+});
+
 test('common-gate gain and input impedance use the source-input half-circuit form', () => {
   const circuit = commonGate();
   const options = { input: 'VIN', acGrounds: ['VBIAS'] };
   const gain = analyzeTransferFunction(circuit, 'VOUT', options);
   assert.equal(gain.ok, true);
-  assert.equal(gain.equation, 'A_v = \\left(\\frac{1}{r_{o1}} + g_{m1} + g_{mb1}\\right) \\, \\left(r_{o1} \\|\\| R_{D}\\right)');
+  assert.equal(gain.equation, 'A_v = \\left(\\frac{1}{r_{o1}} + g_{m1}\\right) \\, \\left(r_{o1} \\|\\| R_{D}\\right)');
+  assert.equal(gain.dcInputImpedance.equation, 'Z_{in}(0) = \\frac{R_{D} + r_{o1}}{1 + g_{m1} \\, r_{o1}}');
+  assert.doesNotMatch(gain.smallSignalNetlist, /g_\{mb1\}/);
   const input = analyzeInputImpedance(circuit, 'VIN', options);
   assert.equal(input.ok, true);
-  assert.equal(input.equation, 'Z_{in} = \\frac{r_{o1} + R_{D}}{1 + r_{o1} \\, \\left(g_{m1} + g_{mb1}\\right)}');
+  assert.equal(input.equation, 'Z_{in} = \\frac{r_{o1} + R_{D}}{1 + g_{m1} \\, r_{o1}}');
+  assert.ok(input.assumptions.some((text) => /V_\{BS\} = 0/.test(text)));
   assert.ok(input.assumptions.some((text) => /common-gate device/.test(text)));
 });
 
@@ -1030,8 +1152,8 @@ test('applies explicit textbook approximations and preserves the exact equation'
     gmroLarge: true,
     ignoreChannelLengthModulation: true,
   });
-  assert.equal(commonGateInput.equation, 'Z_{in} \\approx \\frac{1}{g_{m1} + g_{mb1}}');
-  assert.equal(commonGateInput.exactEquation, 'Z_{in} = \\frac{r_{o1} + R_{D}}{1 + r_{o1} \\, \\left(g_{m1} + g_{mb1}\\right)}');
+  assert.equal(commonGateInput.equation, 'Z_{in} \\approx \\frac{1}{g_{m1}}');
+  assert.equal(commonGateInput.exactEquation, 'Z_{in} = \\frac{r_{o1} + R_{D}}{1 + g_{m1} \\, r_{o1}}');
   assert.ok(commonGateInput.approximations.some((text) => /g_m r_o.*1/.test(text)));
 });
 
@@ -1121,6 +1243,20 @@ test('forms complementary cascode voltage gain from effective Gm and Rout', () =
   assert.equal(report.outputImpedance.equation, 'Z_{out} \\approx \\left(r_{o1} \\, r_{o2} \\, \\left(g_{m2} + g_{mb2}\\right)\\right) \\|\\| \\left(r_{o3} \\, r_{o4} \\, \\left(g_{m4} + g_{mb4}\\right)\\right)');
   assert.doesNotMatch(report.smallSignalNetlist, /V_\{IN\} = 0/);
   assert.match(report.smallSignalNetlist, /G_M1 .* V_\{IN\} 0 g_\{m1\}/);
+});
+
+test('keeps the complementary cascode DC companion compact', () => {
+  const report = analyzeTransferFunction(complementaryCascodeOutput(), 'VOUT', {
+    input: 'VIN',
+    acGrounds: ['VBIAS3.p', 'VBIAS4.p'],
+  });
+  assert.equal(report.ok, true);
+  assert.match(report.dcOutputImpedance.equation, /^Z_\{out\}\(0\) = /);
+  assert.ok(report.dcOutputImpedance.equation.includes('\\|\\|'));
+  assert.ok(report.dcOutputImpedance.equation.includes('r_{o1}'));
+  assert.ok(report.dcOutputImpedance.equation.includes('r_{o4}'));
+  assert.equal(report.dcGain.equation, report.equation.replace('A_v =', 'A_v(0) ='));
+  assert.ok(report.dcGain.equation.length < 500);
 });
 
 test('keeps finite cascode r_o when large-gmro and global ro omission are both selected', () => {

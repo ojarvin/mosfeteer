@@ -1375,7 +1375,14 @@ export class Circuit {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) {
       throw new Error(`invalid refdes "${next}"`);
     }
+    const interfacePin = ['input', 'output', 'inputoutput'].includes(component.type);
+    const interfaceNet = interfacePin ? this.netOfTerminal({ comp: current, term: 'p' }) : null;
+    const interfacePinCount = interfaceNet
+      ? interfaceNet.terminals.filter(({ comp }) => ['input', 'output', 'inputoutput'].includes(this.components.get(comp)?.type)).length
+      : 0;
+    const referenceMarker = isReferenceMarker(component);
     if (next === current) {
+      if (interfaceNet && interfacePinCount <= 1 && interfaceNet.name !== next) this.renameNet(interfaceNet, next);
       if (!isReferenceMarker(component)) {
         const label = this.labelOf(current);
         if (label && (displayLabel !== null || labelMatchesRefdes(label._text, current))) {
@@ -1388,12 +1395,6 @@ export class Circuit {
     if (this.components.has(next)) throw new Error(`component name "${next}" is already in use`);
 
     const ownedLabels = [...this.labels.values()].filter((label) => label.owner === current);
-    const interfacePin = ['input', 'output', 'inputoutput'].includes(component.type);
-    const interfaceNet = interfacePin ? this.netOfTerminal({ comp: current, term: 'p' }) : null;
-    const interfacePinCount = interfaceNet
-      ? interfaceNet.terminals.filter(({ comp }) => ['input', 'output', 'inputoutput'].includes(this.components.get(comp)?.type)).length
-      : 0;
-    const referenceMarker = isReferenceMarker(component);
     this.components.delete(current);
     component.refdes = next;
     this.components.set(next, component);

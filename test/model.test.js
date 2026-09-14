@@ -360,6 +360,19 @@ test('interface pins name their physical net and follow later renames', () => {
   assert.equal(pinLabel.text, 'DATA');
 });
 
+test('interface label restores a renamed single-pin net', () => {
+  const c = new Circuit();
+  const pin = c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  const resistor = c.addComponent('resistor', { x: 240, y: 0 });
+  const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
+  const pinLabel = c.labelOf(pin.refdes);
+
+  c.renameNet(net, 'OTHER');
+  pinLabel.setText('V_{IN}');
+  assert.equal(net.name, 'VIN');
+  assert.equal(pinLabel.text, 'V_{IN}');
+});
+
 test('all interface pin directions participate in net naming', () => {
   for (const type of ['input', 'output', 'inputoutput']) {
     const c = new Circuit();

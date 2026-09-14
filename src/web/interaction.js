@@ -86,3 +86,13 @@ export function worldAndCursorFromClient(clientX, clientY, rect, view) {
   };
   return { world, cursor: { x: snap(world.x), y: snap(world.y) } };
 }
+
+/** Lock a pointer displacement to its dominant axis. */
+export function constrainAxis(start, current, enabled = true) {
+  if (!enabled) return { ...current };
+  const dx = current.x - start.x;
+  const dy = current.y - start.y;
+  return Math.abs(dx) >= Math.abs(dy)
+    ? { x: current.x, y: start.y }
+    : { x: start.x, y: current.y };
+}

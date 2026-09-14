@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { constrainAxis, isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -22,6 +22,14 @@ test('selection extension uses one cross-platform modifier policy', () => {
   assert.equal(isSelectionModifier({ ctrlKey: true }), true);
   assert.equal(isSelectionModifier({ metaKey: true }), true);
   assert.equal(isSelectionModifier({ altKey: true }), false);
+});
+
+test('axis constraint follows the dominant pointer direction', () => {
+  const start = { x: 40, y: 80 };
+  assert.deepEqual(constrainAxis(start, { x: 200, y: 160 }), { x: 200, y: 80 });
+  assert.deepEqual(constrainAxis(start, { x: 120, y: 280 }), { x: 40, y: 280 });
+  assert.deepEqual(constrainAxis(start, { x: 200, y: 240 }), { x: 200, y: 80 });
+  assert.deepEqual(constrainAxis(start, { x: 200, y: 240 }, false), { x: 200, y: 240 });
 });
 
 test('pointer policy accepts pen/touch primary presses and pans blank touch space', () => {
@@ -169,10 +177,12 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /const topGap = 2 \* GRID/);
   assert.match(main, /const bottomEdge = circuitBounds\.h > 0 \? circuitBounds\.y \+ circuitBounds\.h/);
   assert.match(main, /const leftEdge = circuitBounds\.w > 0 \? circuitBounds\.x/);
-  assert.match(main, /function analysisEquationHasReactiveTerm/);
+  assert.doesNotMatch(main, /function analysisEquationHasReactiveTerm/);
+  assert.doesNotMatch(main, /function analysisExpressionHasFrequency/);
+  assert.match(main, /expressionHasFrequency \} from '\.\.\/core\/analysis\/index\.js'/);
   assert.match(main, /function analysisHasReactiveFinalForms/);
   assert.match(main, /frequencyResponse\?\.hasFrequency/);
-  assert.match(main, /replace\(\/\^\.\*\?\(\?:=\|\\\\approx\)/);
+  assert.match(main, /\[report\?\.expression, report\?\.acTransfer\?\.expression\]\.some\(expressionHasFrequency\)/);
   assert.match(main, /if \(analysisHasReactiveFinalForms\(input\)\) add\('AC input impedance', input\)/);
   assert.match(main, /add\('DC input impedance', transfer\?\.dcInputImpedance \|\| input\?\.dcInputImpedance\)/);
   assert.match(main, /if \(analysisHasReactiveFinalForms\(output\)\) add\('AC output impedance', output\)/);

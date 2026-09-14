@@ -84,6 +84,8 @@ output impedance, DC output impedance, AC voltage transfer, DC gain, poles,
 zeros, and assumptions in that order.
 `A_v(0)`, `Z_{in}(0)`, and `Z_{out}(0)` are the `s → 0` limit of the exact
 full-RLC solution. Thus capacitors are open and inductors are short at DC. The
+solver excludes subcircuits with no algebraic coupling to the selected ports;
+controlled-source output and control nodes remain coupled. The
 AC transfer retains reactive elements and is
 represented as `A_v(s) = N(s)/D(s)`. Poles are the roots of the canceled `D(s)`
 and zeros are the roots of the canceled `N(s)`; first- and second-order roots are shown explicitly,
@@ -132,9 +134,9 @@ the recurring loaded-common-gate identity, so a deep stack with a resistive
 load is displayed as `A_v \approx -g_{m1}R_D` when the load limits the gain,
 instead of exposing repeated nested parallel groups. The exact nodal result
 remains available in the details. Likewise, an unambiguous source-degenerated
-common source and a two-device cascode with a direct drain load use compact
-finite-`r_o` output-resistance forms while retaining the complete nodal
-derivation in the details. Feedback-loop devices are handled by the same
+common source and a grounded-gate series cascode stack with a direct resistive
+load use compact finite-`r_o` output-resistance forms while retaining the
+complete nodal derivation in the details. Feedback-loop devices are handled by the same
 graph-based model: if a finite `r_o` lies on a controlled-source feedback edge,
 it is retained until the symbolic approximation pass, even when the global
 `r_o → ∞` option is selected. With `g_m r_o \gg 1`, the resulting loop-gain
@@ -172,9 +174,11 @@ Resistors and capacitors are retained symbolically; a capacitor contributes
 the frequency-domain impedance `1/(s C)` without evaluating a frequency.
 When the selected input is a MOS source and its gate is an AC reference, the
 input report recognizes the common-gate half-circuit and presents the compact
-form `(r_o + R_L)/(1 + g_m r_o)` when a finite drain load is available. The
-voltage-transfer result retains the finite-`r_o` term, giving the corresponding
-positive common-gate gain.
+form `(r_o + R_L)/(1 + g_m r_o)` when a finite drain load is available. For a
+plain MOS symbol in this topology, the implicit bulk follows the source input,
+so `V_{BS}=0` and `g_{mb}` is omitted. An explicitly exposed bulk keeps its
+actual connection. The voltage-transfer result retains the finite-`r_o` term,
+giving the corresponding positive common-gate gain.
 
 For a folded-cascode output, the two sides are derived separately and placed in
 parallel. A cascode side uses
@@ -274,7 +278,8 @@ explanation rather than silently changing the meaning of an equation.
 
 No numerical calculation is performed. An unused MOS bulk is assumed tied to
 GND for NMOS or VDD for PMOS; that assumption is included in the report. The
-implicit bulk is still stamped as an AC-ground control for `g_{mb}`, so a
-moving source (for example, in a common-drain stage) includes the body-effect
-term automatically. Select **ignore body effect** when that contribution is
+implicit bulk is stamped as an AC-ground control for `g_{mb}` when the source
+is moving (for example, in a common-drain stage). A plain MOS source-input
+common-gate stage instead ties its implicit bulk to the input source, giving
+`V_{BS}=0`. Select **ignore body effect** when the contribution is otherwise
 intentionally omitted.
