@@ -1,0 +1,293 @@
+import {
+  add,
+  equals,
+  integer,
+  multiply,
+  polynomialCoefficients,
+  power,
+  rationalFunction,
+  substituteRational,
+  symbol,
+} from './rational.js';
+
+const ZERO = integer(0);
+const OWN = Object.prototype.hasOwnProperty;
+
+function entries(value) {
+  if (!value) return [];
+  if (value instanceof Map) return [...value.entries()];
+  if (Array.isArray(value)) return value.map((entry) => [entry, {}]);
+  return Object.entries(value);
+}
+
+function firstOwn(record, names) {
+  if (!record || typeof record !== 'object') return undefined;
+  for (const name of names) if (OWN.call(record, name)) return record[name];
+  return undefined;
+}
+
+function booleanOption(local, global, names, selected = false) {
+  const value = firstOwn(local, names);
+  if (value !== undefined) return Boolean(value);
+  const inherited = firstOwn(global, names);
+  return inherited === undefined ? selected : Boolean(inherited);
+}
+
+function parameterValue(device, names) {
+  const value = firstOwn(device, names);
+  if (value === undefined || value === null || value === '') return null;
+  return String(value);
+}
+
+function defaultParameter(refdes, prefix) {
+  const suffix = String(refdes).replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
+  return `${prefix}${suffix}`;
+}
+
+function deviceParameter(device, prefix, aliases) {
+  return parameterValue(device, aliases) || defaultParameter(device.id, prefix);
+}
+
+function deviceRecords(options) {
+  const parameterSource = options.parameters || options.deviceParameters || {};
+  const settingSource = options.devices || options.deviceOptions || options.deviceOverrides || {};
+  const records = new Map();
+  for (const [id, value] of [...entries(parameterSource), ...entries(settingSource)]) {
+    const key = String(id);
+    const current = records.get(key) || { id: key };
+    records.set(key, { ...current, ...(value && typeof value === 'object' ? value : {}) });
+  }
+  return [...records.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function symbolNames(value) {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) return value.flatMap(symbolNames);
+  if (typeof value === 'string') return value.split(/[\s,]+/).map((name) => name.trim()).filter(Boolean);
+  return [String(value)];
+}
+
+function globalSymbols(options, names) {
+  const sources = [options.symbols, options.parameters, options.deviceParameters];
+  return sources.flatMap((source) => names.flatMap((name) => {
+    const value = source instanceof Map ? source.get(name) : source?.[name];
+    return symbolNames(value);
+  }));
+}
+
+function settingObjects(options) {
+  const global = {
+    ...(options.global || {}),
+    ...(options.assumptions && typeof options.assumptions === 'object' ? options.assumptions : {}),
+    ...options,
+  };
+  return { global };
+}
+
+function rationalEqual(left, right) {
+  return left.variable === right.variable
+    && equals(left.numerator, right.numerator)
+    && equals(left.denominator, right.denominator);
+}
+
+function applySubstitution(current, replacements) {
+  if (!replacements.size) return current;
+  return substituteRational(current, replacements);
+}
+
+function assumptionName(kind, device = null) {
+  const suffix = device ? ` (${device})` : '';
+  if (kind === 'body') return `g_mb = 0${suffix}`;
+  if (kind === 'output') return `r_o -> infinity${suffix}`;
+  if (kind === 'intrinsic') return `g_m r_o >> 1${suffix}`;
+  return 'dominant-pole approximation';
+}
+
+function scalingEntries(value) {
+  if (!value || typeof value !== 'object') return [];
+  const source = value.symbols || value.scale || value;
+  const rawEntries = source instanceof Map ? [...source.entries()] : Object.entries(source);
+  return rawEntries
+    .filter(([name, exponent]) => name !== 'gm' && name !== 'ro' && name !== 'go')
+    .map(([name, exponent]) => [String(name), Number(exponent)])
+    .filter(([, exponent]) => Number.isInteger(exponent) && exponent !== 0);
+}
+
+function deviceScaling(device, options) {
+  const source = device.scaling || device.scale;
+  const direct = scalingEntries(source);
+  if (direct.length) return direct;
+
+  const gm = deviceParameter(device, 'gm', ['gmSymbol', 'gm']);
+  const ro = parameterValue(device, ['roSymbol', 'ro']);
+  const go = parameterValue(device, ['goSymbol', 'go']);
+  const scale = source && typeof source === 'object' ? source : {};
+  const result = [];
+  if (Number.isInteger(Number(scale.gm)) && Number(scale.gm) !== 0) result.push([gm, Number(scale.gm)]);
+  if (ro && Number.isInteger(Number(scale.ro)) && Number(scale.ro) !== 0) result.push([ro, Number(scale.ro)]);
+  if (go && Number.isInteger(Number(scale.go)) && Number(scale.go) !== 0) result.push([go, Number(scale.go)]);
+  if (result.length) return result;
+
+  const global = options.scaling;
+  if (!global || typeof global !== 'object') return [];
+  const byDevice = global instanceof Map ? global.get(device.id) : global[device.id];
+  if (byDevice) return scalingEntries(byDevice);
+  return scalingEntries(global);
+}
+
+function leadingExpression(value, scales) {
+  if (value.kind === 'number') return { degree: 0, expression: value };
+  if (value.kind === 'symbol') return {
+    degree: scales.get(value.name) || 0,
+    expression: value,
+    supported: true,
+  };
+  if (value.kind === 'power') {
+    const base = leadingExpression(value.base, scales);
+    if (base.supported === false) return base;
+    return {
+      degree: base.degree * value.exponent,
+      expression: power(base.expression, value.exponent),
+      supported: true,
+    };
+  }
+  if (value.kind === 'multiply') {
+    const parts = value.factors.map((factor) => leadingExpression(factor, scales));
+    if (parts.some((part) => part.supported === false)) return { supported: false };
+    return {
+      degree: parts.reduce((sum, part) => sum + part.degree, 0),
+      expression: multiply(parts.map((part) => part.expression)),
+      supported: true,
+    };
+  }
+  if (value.kind === 'add') {
+    const parts = value.terms.map((term) => leadingExpression(term, scales));
+    if (parts.some((part) => part.supported === false)) return { supported: false };
+    const degree = Math.max(...parts.map((part) => part.degree));
+    const expression = add(parts.filter((part) => part.degree === degree).map((part) => part.expression));
+    if (equals(expression, ZERO)) return { supported: false };
+    return { degree, expression, supported: true };
+  }
+  return { supported: false };
+}
+
+function leadingRational(current, scales) {
+  const numerator = leadingExpression(current.numerator, scales);
+  const denominator = leadingExpression(current.denominator, scales);
+  if (numerator.supported === false || denominator.supported === false) return null;
+  return rationalFunction(numerator.expression, denominator.expression, { variable: current.variable });
+}
+
+function intrinsicScales(options, records, global) {
+  const scales = new Map();
+  let hasProof = false;
+  const selectedGo = new Set(symbolNames(options.ignoreRoDevices || options.ignoreChannelLengthModulationDevices));
+  for (const device of records) {
+    const goInfinity = booleanOption(device, global, ['go0', 'roInfinity', 'ignoreChannelLengthModulation', 'neglectChannelLengthModulation', 'ignoreRo'], selectedGo.has(device.id));
+    const highGain = booleanOption(device, global, ['gmroLarge', 'highIntrinsicGain', 'intrinsicGainLarge']);
+    if (!highGain || goInfinity) continue;
+    const metadata = deviceScaling(device, options);
+    if (!metadata.length) continue;
+    for (const [name, exponent] of metadata) {
+      if (scales.has(name) && scales.get(name) !== exponent) return { scales: new Map(), hasProof: false };
+      scales.set(name, exponent);
+    }
+    const gm = deviceParameter(device, 'gm', ['gmSymbol', 'gm']);
+    const ro = parameterValue(device, ['roSymbol', 'ro']);
+    const go = parameterValue(device, ['goSymbol', 'go']);
+    const gmDegree = scales.get(gm) || 0;
+    const roDegree = ro ? (scales.get(ro) || 0) : -(scales.get(go) || 0);
+    if (gmDegree + roDegree > 0) hasProof = true;
+  }
+  return { scales, hasProof };
+}
+
+function firstOrderDenominator(current, options) {
+  const coefficients = polynomialCoefficients(current.denominator, current.variable, options.rational || {});
+  if (!coefficients || coefficients.length === 0 || coefficients[0].power <= 1) return null;
+  const kept = coefficients.filter(({ power: exponent }) => exponent <= 1);
+  if (!kept.length) return null;
+  const denominator = add(kept.map(({ power: exponent, coefficient }) => (
+    exponent === 0 ? coefficient : multiply(coefficient, power(symbol(current.variable), exponent))
+  )));
+  if (equals(denominator, current.denominator)) return null;
+  return rationalFunction(current.numerator, denominator, { variable: current.variable });
+}
+
+/**
+ * Apply selected post-solve assumptions to a canonical rational expression.
+ * `parameters` names device symbols; `devices` supplies per-device flags.
+ * A `scaling` map such as `{ M1: { gm: 1, ro: 0 } }` proves the high-gain
+ * limit by making the declared `g_m r_o` product grow with one formal scale.
+ */
+export function applyApproximations(input, options = {}) {
+  const exact = input?.kind === 'rational'
+    ? input
+    : rationalFunction(input, integer(1), { variable: options.variable || 's', ...(options.rational || {}) });
+  let selected = exact;
+  const assumptions = [];
+  const { global } = settingObjects(options);
+  const records = deviceRecords(options);
+
+  const substitutions = [];
+  const selectedGo = new Set(symbolNames(options.ignoreRoDevices || options.ignoreChannelLengthModulationDevices));
+  for (const device of records) {
+    const gmb = parameterValue(device, ['gmbSymbol', 'gmb']) || deviceParameter(device, 'gmb', ['gmbSymbol', 'gmb']);
+    const go = parameterValue(device, ['goSymbol', 'go']) || deviceParameter(device, 'go', ['goSymbol', 'go']);
+    if (booleanOption(device, global, ['gmb0', 'ignoreBodyEffect', 'bodyEffectIgnored', 'neglectBodyEffect', 'ignoreGmb', 'gmbZero'])) substitutions.push({ kind: 'body', device: device.id, name: gmb });
+    if (booleanOption(device, global, ['go0', 'roInfinity', 'ignoreChannelLengthModulation', 'neglectChannelLengthModulation', 'ignoreRo'], selectedGo.has(device.id))) substitutions.push({ kind: 'output', device: device.id, name: go });
+  }
+  for (const name of globalSymbols(options, ['gmb', 'gmbSymbols'])) substitutions.push({ kind: 'body', device: null, name });
+  for (const name of globalSymbols(options, ['go', 'goSymbols'])) substitutions.push({ kind: 'output', device: null, name });
+
+  const seen = new Set();
+  for (const substitution of substitutions) {
+    if (seen.has(substitution.name)) continue;
+    seen.add(substitution.name);
+    const next = applySubstitution(selected, new Map([[substitution.name, ZERO]]));
+    if (!rationalEqual(next, selected)) {
+      selected = next;
+      assumptions.push(assumptionName(substitution.kind, substitution.device));
+    }
+  }
+
+  const scale = intrinsicScales(options, records, global);
+  if (scale.hasProof) {
+    const before = selected;
+    const next = leadingRational(selected, scale.scales);
+    if (next && !rationalEqual(next, selected)) {
+      selected = next;
+      for (const device of records) {
+        const goInfinity = booleanOption(device, global, ['go0', 'roInfinity', 'ignoreChannelLengthModulation', 'neglectChannelLengthModulation', 'ignoreRo'], selectedGo.has(device.id));
+        const highGain = booleanOption(device, global, ['gmroLarge', 'highIntrinsicGain', 'intrinsicGainLarge']);
+        if (!highGain || goInfinity) continue;
+        const parameters = new Set([
+          deviceParameter(device, 'gm', ['gmSymbol', 'gm']),
+          parameterValue(device, ['roSymbol', 'ro']),
+          parameterValue(device, ['goSymbol', 'go']),
+        ].filter(Boolean));
+        const localScales = new Map(deviceScaling(device, options).filter(([name]) => parameters.has(name)));
+        const local = localScales.size ? leadingRational(before, localScales) : null;
+        if (local && !rationalEqual(local, before)) assumptions.push(assumptionName('intrinsic', device.id));
+      }
+    }
+  }
+
+  if (booleanOption({}, global, ['dominantPole', 'dominantPoleApproximation'])) {
+    const next = firstOrderDenominator(selected, options);
+    if (next && !rationalEqual(next, selected)) {
+      selected = next;
+      assumptions.push(assumptionName('pole'));
+    }
+  }
+
+  return Object.freeze({
+    exact,
+    selected,
+    changed: !rationalEqual(exact, selected),
+    assumptions: Object.freeze(assumptions),
+  });
+}
+
+export const applyPostSolveApproximations = applyApproximations;
+export const reduceApproximations = applyApproximations;
