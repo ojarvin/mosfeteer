@@ -116,11 +116,11 @@ function sameValue(left, right) {
   }
 }
 
-function render(value) {
+function render(value, options) {
   if (value === undefined || value === null) return null;
   if (typeof value === 'string') return value;
-  if (value.kind === 'infinity') return renderExpression(value);
-  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value);
+  if (value.kind === 'infinity') return renderExpression(value, options);
+  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
   return String(value);
 }
 
@@ -128,8 +128,8 @@ function responseExpression(response) {
   return expressionOf(response);
 }
 
-function equation(label, expression, approximate = false) {
-  const body = render(expression);
+function equation(label, expression, approximate = false, options) {
+  const body = render(expression, options);
   return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
 }
 
@@ -144,6 +144,13 @@ function dcValue(limit) {
   return undefined;
 }
 
+function equivalenceOptions(source) {
+  return {
+    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
+    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
+  };
+}
+
 function dcResult(label, selected, exact, source) {
   const selectedLimit = selected?.dc || source?.dc;
   const exactLimit = exact?.dc || selectedLimit;
@@ -156,10 +163,11 @@ function dcResult(label, selected, exact, source) {
     };
   }
   const changed = !sameValue(selectedValue, exactValue);
+  const options = equivalenceOptions(source);
   return {
     ok: true,
-    equation: equation(label, selectedValue, changed),
-    exactEquation: equation(label, exactValue, false),
+    equation: equation(label, selectedValue, changed, options),
+    exactEquation: equation(label, exactValue, false, options),
     expression: selectedValue,
     exactExpression: exactValue,
   };
@@ -260,6 +268,7 @@ function adaptChild(combined, key, quantity) {
   const reactive = Boolean(frequencyResponse(selected, exact, source));
   const label = reactive ? `${labelBase}(s)` : labelBase;
   const changed = !sameValue(selectedExpression, exactExpression);
+  const renderOptions = equivalenceOptions(source);
   const result = {
     ...source,
     ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
@@ -267,8 +276,8 @@ function adaptChild(combined, key, quantity) {
     ...childMetadata(combined, source, key),
     ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
     ...(exactExpression !== undefined ? { exactExpression } : {}),
-    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed) } : {}),
-    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false) } : {}),
+    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
+    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
     ...details,
     assumptions: unique([combined?.assumptions, source?.assumptions]),
     approximations: unique([combined?.approximations, source?.approximations]),
@@ -333,7 +342,7 @@ function equationEntries(reports) {
   add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
   if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
   add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
-  if (reports.transfer.acTransfer) add('AC voltage transfer', reports.transfer.acTransfer);
+  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
   add('DC gain', reports.transfer.dcGain);
   const frequency = reports.transfer.frequencyResponse;
   if (frequency?.poles?.length) add('Poles', { ok: true, equation: frequency.poles.map((root) => root.equation).join('\n') });

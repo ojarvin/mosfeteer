@@ -183,6 +183,88 @@ test('small-signal attributes persist on devices and nets', () => {
   assert.equal(c.getComponent('M1').analysis.ignoreBodyEffect, null);
 });
 
+test('obsolete MOS current-source model requests are rejected without mutation', () => {
+  const configured = new Circuit().addComponent('nmos', {
+    refdes: 'M1',
+    analysis: {
+      model: 'triode',
+      channelLengthModulation: 'finite',
+      gmroLarge: false,
+      ignoreBodyEffect: false,
+    },
+  });
+  assert.equal(configured.analysis.model, 'triode');
+  assert.equal(configured.analysis.channelLengthModulation, 'finite');
+  assert.equal(configured.analysis.gmroLarge, false);
+  assert.equal(configured.analysis.ignoreBodyEffect, false);
+
+  const c = new Circuit();
+  c.addComponent('nmos', { refdes: 'M1' });
+  c.setComponentAnalysis('M1', {
+    model: 'triode',
+    channelLengthModulation: 'finite',
+    gmroLarge: true,
+    ignoreBodyEffect: false,
+  });
+  const before = structuredClone(c.getComponent('M1').analysis);
+
+  assert.throws(
+    () => c.setComponentAnalysis('M1', { model: 'current-source' }),
+    /current-source model override is no longer supported/,
+  );
+  assert.throws(
+    () => c.setComponentAnalysis('M1', { smallSignalModel: 'CURRENT-SOURCE' }),
+    /current-source model override is no longer supported/,
+  );
+  assert.deepEqual(c.getComponent('M1').analysis, before);
+
+  const empty = new Circuit();
+  assert.throws(
+    () => empty.addComponent('nmos', { refdes: 'M1', analysis: { model: 'current-source' } }),
+    /current-source model override is no longer supported/,
+  );
+  assert.equal(empty.components.size, 0);
+});
+
+test('fromJSON drops obsolete MOS current-source models without reinterpreting other attributes', () => {
+  const data = {
+    version: 2,
+    grid: 40,
+    components: [{
+      refdes: 'M1',
+      type: 'nmos',
+      value: '',
+      transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false },
+      analysis: {
+        model: 'current-source',
+        smallSignalModel: 'triode',
+        role: 'output',
+        channelLengthModulation: 'finite',
+        gmroLarge: true,
+        ignoreBodyEffect: false,
+      },
+    }],
+    nets: [],
+    labels: [],
+  };
+  const before = structuredClone(data);
+
+  const loaded = Circuit.fromJSON(data);
+  const analysis = loaded.getComponent('M1').analysis;
+  assert.equal(analysis.model, null);
+  assert.equal(analysis.role, 'output');
+  assert.equal(analysis.channelLengthModulation, 'finite');
+  assert.equal(analysis.gmroLarge, true);
+  assert.equal(analysis.ignoreBodyEffect, false);
+  assert.deepEqual(data, before, 'loading must not mutate serialized input');
+
+  const saved = loaded.toJSON().components.find(({ refdes }) => refdes === 'M1');
+  assert.notEqual(saved.analysis.model, 'current-source');
+  assert.equal(saved.analysis.channelLengthModulation, 'finite');
+  assert.equal(saved.analysis.gmroLarge, true);
+  assert.equal(saved.analysis.ignoreBodyEffect, false);
+});
+
 test('resistor infinity attributes persist and can be cleared', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });

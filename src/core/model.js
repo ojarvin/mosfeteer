@@ -835,6 +835,34 @@ export class LabelInstance {
   }
 }
 
+const SMALL_SIGNAL_DEVICE_MODELS = new Set(['triode', 'ro']);
+
+function normalizeSmallSignalDeviceModel(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const model = String(value);
+  if (model.trim().toLowerCase() === 'current-source') {
+    throw new Error('small-signal current-source model override is no longer supported');
+  }
+  if (!SMALL_SIGNAL_DEVICE_MODELS.has(model)) {
+    throw new Error(`unknown small-signal device model "${model}"`);
+  }
+  return model;
+}
+
+function migrateSerializedComponentAnalysis(analysis) {
+  if (!analysis || typeof analysis !== 'object') return analysis;
+  const migrated = { ...analysis };
+  const obsoleteModel = String(migrated.model ?? '').trim().toLowerCase() === 'current-source';
+  const obsoleteAlias = String(migrated.smallSignalModel ?? '').trim().toLowerCase() === 'current-source';
+  if (obsoleteModel) {
+    delete migrated.model;
+    delete migrated.smallSignalModel;
+  } else if (obsoleteAlias) {
+    delete migrated.smallSignalModel;
+  }
+  return migrated;
+}
+
 export class ComponentInstance {
   constructor(circuit, type, opts = {}) {
     this.circuit = circuit;
@@ -863,7 +891,7 @@ export class ComponentInstance {
         })).map((t) => ({ name: String(t.name), side: String(t.side), offset: snap(Number(t.offset)) }))
       : null;
     this.analysis = {
-      model: opts.analysis?.model || opts.analysis?.smallSignalModel || null,
+      model: normalizeSmallSignalDeviceModel(opts.analysis?.model ?? opts.analysis?.smallSignalModel),
       role: opts.analysis?.role || null,
       channelLengthModulation: opts.analysis?.channelLengthModulation
         || opts.analysis?.clm
@@ -1680,9 +1708,7 @@ export class Circuit {
       throw new Error(`unknown resistance override "${value}"`);
     };
     const normalizedResistance = normalizeResistance(resistanceValue);
-    if (model !== undefined && model !== null && model !== '' && !['current-source', 'triode', 'ro'].includes(String(model))) {
-      throw new Error(`unknown small-signal device model "${model}"`);
-    }
+    const normalizedModel = model === undefined ? undefined : normalizeSmallSignalDeviceModel(model);
     if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
       throw new Error(`unknown small-signal device role "${role}"`);
     }
@@ -1695,7 +1721,7 @@ export class Circuit {
       throw new Error(`unknown channel-length modulation policy "${clmValue}"`);
     }
     component.analysis = {
-      model: model === undefined ? component.analysis?.model || null : (model ? String(model) : null),
+      model: normalizedModel === undefined ? component.analysis?.model || null : normalizedModel,
       role: role === undefined ? component.analysis?.role || null : (role ? String(role) : null),
       channelLengthModulation: clmValue === undefined
         ? component.analysis?.channelLengthModulation || null
@@ -4553,7 +4579,7 @@ export class Circuit {
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
         style: c.style,
-        analysis: c.analysis,
+        analysis: migrateSerializedComponentAnalysis(c.analysis),
         drawOrder: c.drawOrder,
         noLabel: true,
       });

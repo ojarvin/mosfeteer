@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   equation,
+  equivalenceTable,
   infinity,
   provenParallel,
   quantityLabel,
@@ -56,6 +57,22 @@ test('uses parallel notation only with explicit proven equivalence metadata', ()
   const equivalent = rationalFunction(multiply(r1, r2), add(r1, r2));
   assert.notEqual(renderExpression(equivalent), 'R_{1} \\parallel R_{2}');
   assert.equal(renderExpression(equivalent, { equivalence: provenParallel(equivalent, r1, r2) }), 'R_{1} \\parallel R_{2}');
+});
+
+test('finds a nested proof in an equivalences table by structural key, not just a top-level match', () => {
+  const r1 = symbol('R1');
+  const r2 = symbol('R2');
+  const r3 = symbol('R3');
+  // R1 \| R2 written as one plain node (a valid factor within a larger sum,
+  // unlike a full `rational`-kind fraction, which never nests inside a plain
+  // expression tree in this codebase — every exact solve result is built
+  // from plain add/multiply/power nodes with a `rational` wrapper only at
+  // the very top).
+  const parallelAsFactor = multiply(r1, r2, power(add(r1, r2), -1));
+  const whole = add(r3, parallelAsFactor);
+  assert.notEqual(renderExpression(parallelAsFactor), 'R_{1} \\parallel R_{2}');
+  const equivalences = equivalenceTable([provenParallel(parallelAsFactor, r1, r2)]);
+  assert.equal(renderExpression(whole, { equivalences }), 'R_{1} \\parallel R_{2} + R_{3}');
 });
 
 test('renders standard quantity and zero-based root labels', () => {

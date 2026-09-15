@@ -55,6 +55,10 @@ function unsigned(value) {
   if (value?.kind === 'multiply' && isNegativeNumber(value.factors[0])) {
     const [coefficient, ...factors] = value.factors;
     const positive = absoluteNumber(coefficient);
+    if (isNumber(positive) && positive.numerator === 1n && positive.denominator === 1n) {
+      if (factors.length === 0) return positive;
+      return factors.length === 1 ? factors[0] : Object.freeze({ ...value, factors: Object.freeze(factors) });
+    }
     return factors.length === 0 ? positive : Object.freeze({ ...value, factors: Object.freeze([positive, ...factors]) });
   }
   return value;
@@ -173,12 +177,30 @@ function renderRational(value, context, options) {
   return negative ? `-${fraction}` : fraction;
 }
 
-function explicitParallel(value, options) {
-  const metadata = options.equivalence || options.parallel;
+function operandsOf(metadata) {
   if (!metadata || metadata.proven !== true || !PARALLEL_KINDS.has(metadata.kind)) return null;
   const operands = metadata.operands || [metadata.left, metadata.right];
-  if (!Array.isArray(operands) || operands.length !== 2 || metadata.equivalent === undefined) return null;
-  return equivalent(value, metadata.equivalent) ? operands : null;
+  return Array.isArray(operands) && operands.length >= 2 && metadata.equivalent !== undefined ? operands : null;
+}
+
+/**
+ * `options.equivalence`/`options.parallel` proves parallel notation for one
+ * specific value (checked at every recursive `render` call, so it can match
+ * a nested sub-expression, not just the top-level one). `options.equivalences`
+ * additionally carries a whole table of such proofs — e.g. from a network's
+ * general series/parallel pre-reduction (`reduce.js`), which can prove many
+ * unrelated sub-networks at once — keyed by `structuralKey` of the value each
+ * one proves, for the same reason `equivalent()` below reduces to that key.
+ */
+function explicitParallel(value, options) {
+  const direct = options.equivalence || options.parallel;
+  const directOperands = operandsOf(direct);
+  if (directOperands && equivalent(value, direct.equivalent)) return directOperands;
+  const table = options.equivalences;
+  if (!table) return null;
+  const key = structuralKey(value);
+  const entry = table instanceof Map ? table.get(key) : table[key];
+  return operandsOf(entry);
 }
 
 function renderParallel(value, context, options) {
@@ -251,13 +273,25 @@ export function renderRootEquation(kind, index, value, options = {}) {
   return renderEquation(`${prefix}_{${index}}`, value, options);
 }
 
+/**
+ * Build the `options.equivalences` table `render` checks at every recursive
+ * call (see `explicitParallel`) from a list of `provenParallel(...)` results
+ * (or equivalent `{ equivalent, operands }` records) — e.g. one per parallel
+ * merge a network's series/parallel pre-reduction (`reduce.js`) performed.
+ */
+export function equivalenceTable(proofs) {
+  const table = new Map();
+  for (const proof of proofs) table.set(structuralKey(proof.equivalent), proof);
+  return table;
+}
+
 /** Build explicit metadata for a caller-proven parallel-resistance display. */
-export function provenParallel(equivalent, left, right) {
+export function provenParallel(equivalent, ...operands) {
   return Object.freeze({
     kind: 'parallel-resistance',
     proven: true,
     equivalent,
-    operands: Object.freeze([left, right]),
+    operands: Object.freeze(operands),
   });
 }
 

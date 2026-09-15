@@ -29,10 +29,10 @@ test('body-effect substitution is pure and reports only a changed assumption', (
   assert.equal(result.changed, true);
 });
 
-test('per-device ro infinity wins over high intrinsic gain', () => {
+test('per-device ro infinity needs its own scaling proof, independent of high intrinsic gain', () => {
   const exact = rationalFunction(add(integer(1), multiply(symbol('g_m1'), symbol('r_o1'))));
   const result = applyApproximations(exact, {
-    parameters: { M1: { go: 'g_o1', gm: 'g_m1', ro: 'r_o1' } },
+    parameters: { M1: { gm: 'g_m1', ro: 'r_o1' } },
     devices: { M1: { roInfinity: true, highIntrinsicGain: true, scaling: { gm: 1, ro: 0 } } },
   });
   assert.equal(text(result), 'g_m1*r_o1 + 1 / 1');
@@ -40,13 +40,13 @@ test('per-device ro infinity wins over high intrinsic gain', () => {
   assert.equal(result.changed, false);
 });
 
-test('global ro infinity substitutes selected go symbols and suppresses high-gain listing', () => {
-  const exact = rationalFunction(add(symbol('g_o1'), symbol('g_o2')));
+test('global ro infinity keeps only the growing r_o term and lists a per-device assumption', () => {
+  const exact = rationalFunction(add(integer(1), symbol('r_o1'), symbol('r_o2')));
   const result = applyApproximations(exact, {
-    parameters: { M1: { go: 'g_o1', gm: 'g_m1' }, M2: { go: 'g_o2', gm: 'g_m2' } },
+    parameters: { M1: { ro: 'r_o1' }, M2: { ro: 'r_o2' } },
     global: { roInfinity: true, highIntrinsicGain: true },
   });
-  assert.equal(formatExpression(result.selected.numerator), '0');
+  assert.equal(formatExpression(result.selected.numerator), 'r_o1 + r_o2');
   assert.deepEqual(result.assumptions, ['r_o -> infinity (M1)', 'r_o -> infinity (M2)']);
 });
 

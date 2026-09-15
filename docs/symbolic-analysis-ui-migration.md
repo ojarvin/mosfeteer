@@ -1,65 +1,70 @@
-# Symbolic-analysis UI migration
+# Symbolic-analysis UI contract
 
-The rewrite uses one concise option set. Exact full-RLC equations remain the
-engine's source of truth; these options control only the displayed reduction.
+The analysis form controls one exact full-RLC solve. Presentation options are
+applied afterward and do not alter the exact result.
 
 ## Canonical state
 
-`migrateAnalysisFormState(saved, { isMosControlVoltageZero })` returns
-`{ state, diagnostics }`. `state` contains the selected `input`, `output`,
-`reference`, `mode`, `differentialSide`, and `acGrounds`; `models` contains only
-triode entries such as `M2=triode`; and `options` contains:
+Persist only these selections:
 
-| Option | Default | Meaning |
+- `input`
+- `output`
+- `reference`
+- `acGrounds`
+- `deviceRegions`, containing triode overrides only
+- `options`
+
+`options` contains:
+
+| Key | Default | Label |
 | --- | ---: | --- |
-| `neglectBodyEffect` | `true` | Set `g_mb = 0`; does not change bulk connectivity. |
-| `highIntrinsicGain` | `true` | Apply the general `g_m r_o \gg 1` reduction where `r_o` remains finite. |
-| `neglectChannelLengthModulation` | `false` | Set `r_o \to \infty`. |
-| `dominantPole` | `false` | Apply the optional final dominant-pole reduction to a multi-pole AC transfer. |
+| `neglectBodyEffect` | `true` | Ignore body effect (`g_mb = 0`) |
+| `highIntrinsicGain` | `true` | Assume high intrinsic gain (`g_m r_o \gg 1`) |
+| `neglectChannelLengthModulation` | `false` | Ignore channel-length modulation (`r_o \to \infty`) |
+| `dominantPole` | `false` | Use dominant-pole approximation |
 
-`r_o \to \infty` wins over `g_m r_o \gg 1` because the latter is redundant.
-The same precedence applies per device. No additional cascode, load-dominance,
-Miller, or DC-only switches are needed.
+Ignoring channel-length modulation takes precedence over the high-intrinsic-
+gain assumption for the affected device because the latter then adds no
+information.
 
-## Exact old-to-new migration
+## Form copy
 
-- `target` becomes `output`; `input`, `reference`, `mode`,
-  `differentialSide`, and AC-ground selections are preserved.
-- `ignoreBodyEffect`, `ignoreGmb`, `approxIgnoreBody`, and
-  `bodyEffectIgnored` become
-  `neglectBodyEffect`.
-- `gmroLarge`, `assumeGmRoLarge`, `approxGmRo`, and `approxGmRoLarge` become
-  `highIntrinsicGain`.
-- `ignoreChannelLengthModulation`, `ignoreRo`, `approxIgnoreRo`, and
-  `roInfinite` become
-  `neglectChannelLengthModulation`.
-- `dominantPoleApproximation`, `dominantPoleReduction`, and
-  `approxDominantPole` become `dominantPole`.
-- Legacy `approximations` list entries are accepted only for those four
-  canonical options. Miller, cascode, and DC-only entries are dropped.
-- `context`/`additionalContext` are dropped; the exact report and explicit
-  selections are the durable sources of analysis context.
-- `models`/`modelOverrides` retains `REF=triode` and drops every legacy
-  `REF=current-source` entry. A safe conversion adds a per-device
-  `neglectChannelLengthModulation` override.
+Use this introduction:
 
-Current-source conversion is safe only when the caller's
-`isMosControlVoltageZero(refdes, details)` returns exactly `true` after proving
-both `v_g-v_s` and `v_b-v_s` are identically zero. Otherwise the entry is
-cleared and one deduplicated `legacy-mos-current-source` warning is returned for
-that device. The helper never guesses from topology or from a numeric sample.
+> Select the input and output nodes. The analysis derives gain and impedances
+> from one symbolic RLC model; frequency-dependent results include poles and
+> zeros.
 
-## Future concise UI labels and hints
+Use this options hint:
 
-Use these labels:
+> The exact symbolic result is computed first. These options simplify only the
+> displayed equations.
 
-- “Ignore body effect (`g_mb = 0`)”
-- “Assume high intrinsic gain (`g_m r_o \gg 1`)”
-- “Ignore channel-length modulation (`r_o \to \infty`)”
-- “Use dominant-pole approximation”
-- “Device region” with `REF=triode` as the only override
-- “AC-ground nets” with the hint “Comma-separated net names or terminal references.”
+Use **AC-ground nets** with the hint:
 
-One short group hint is sufficient: “The exact symbolic result is computed
-first. These options simplify only the displayed result.” Do not expose Miller,
-cascode-reduction, DC-only, free-text context, or MOS current-source controls.
+> Comma-separated net names or terminal references.
+
+Use **Device region** for structured triode selection.
+
+## Persistence boundary
+
+Normalize saved state when loading it, discard unknown fields, and filter all
+component and net references against the current circuit. A new unnamed
+schematic starts with default state; a named schematic restores its validated
+state across close/reopen and reload.
+
+The report adapter must keep selected-port metadata separate from the three
+derived quantities. Render equations in this order:
+
+1. `Z_{in}(s)`
+2. `Z_{in}(0)`
+3. `Z_{out}(s)`
+4. `Z_{out}(0)`
+5. `A_v(s)`
+6. `A_v(0)`
+7. poles
+8. zeros
+9. assumptions
+
+Hide AC rows that contain no `s`, empty pole/zero rows, and assumptions that do
+not change the displayed equations.

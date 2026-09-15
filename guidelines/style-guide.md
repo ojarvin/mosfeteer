@@ -527,6 +527,21 @@ clearest open space. For example, a horizontal resistor with room above
 should be mirrored vertically so its label is above the body rather than
 below it.
 
+### 8.1 Analysis annotations
+
+Keep symbolic-analysis annotations compact and subordinate to the schematic.
+Place them below the figure, align them with its left edge, and leave two grid
+cells of clearance. Use the order `Z_{in}(s)`, `Z_{in}(0)`, `Z_{out}(s)`,
+`Z_{out}(0)`, `A_v(s)`, `A_v(0)`, poles, zeros, assumptions; omit rows that add
+no information. AC rows, poles, and zeros appear only when reactive terms
+remain after cancellation.
+
+Render the shortest proven equivalent expression. Order powers of `s` from
+highest to lowest, combine repeated factors as powers, keep useful common
+factors, and remove redundant parentheses. List only assumptions that change a
+displayed equation. The complete exact result remains in the analysis report,
+not as extra prose on the drawing.
+
 ---
 
 ## 9. Electrical correctness

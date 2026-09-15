@@ -1,6 +1,6 @@
 import { AC_GROUND, resolveAnalysisContext } from './context.js';
 import { convertCircuitToPrimitives } from './devices.js';
-import { coupledSubgraph } from './graph.js';
+import { coupledSubgraph, splitAtNode } from './graph.js';
 import { buildMNA, numberOps, validateMnaOps } from './mna.js';
 import {
   add as addExpression,
@@ -10,6 +10,9 @@ import {
   power as powerExpression,
   rationalFunction,
 } from './rational.js';
+import { applyMillerApproximation } from './miller.js';
+import { provenParallel } from './present.js';
+import { reduceNetwork } from './reduce.js';
 import { solveMNA } from './solve.js';
 
 const INPUT_SOURCE = '@analysis-input';
@@ -31,7 +34,7 @@ function scalar(value, ops) {
   return value;
 }
 
-function resolveValue(value, primitive, options, ops) {
+export function resolveValue(value, primitive, options, ops) {
   const resolver = Object.hasOwn(options, 'valueOf') ? options.valueOf : options.resolveValue;
   if (typeof resolver === 'function') {
     return scalar(resolver(value, primitive), ops);
@@ -348,6 +351,93 @@ function queryValues(solution, system, context, excitations, ops) {
   };
 }
 
+/**
+ * When `node` is an articulation point of the coupled small-signal graph
+ * (see `splitAtNode`), the impedance looking into it is provably the
+ * parallel combination of each independent branch's own impedance, solved
+ * on a much smaller system. `zeroedVoltageSourceNode` replicates the other
+ * port's zeroed *voltage* source (a short) in whichever branch contains it;
+ * a zeroed *current* source needs no replica since an absent branch already
+ * behaves as the open circuit it represents. Returns `null` (never throws)
+ * whenever the graph isn't separable, a shunt primitive would need special
+ * handling, or any sub-solve fails, so callers can always fall back to the
+ * single combined solve.
+ */
+function trySplitImpedance(node, { selectedMna, context, ops, zeroedVoltageSourceNode }) {
+  let split;
+  try {
+    split = splitAtNode(selectedMna, node, {
+      acGroundIds: context.acGroundIds,
+      nodeAliases: context.nodeAliases,
+    });
+  } catch {
+    return null;
+  }
+  if (!split || split.shunts.length) return null;
+  const shortRoot = zeroedVoltageSourceNode ? split.componentOf(zeroedVoltageSourceNode) : null;
+
+  const pieces = [];
+  for (const component of split.components) {
+    const elements = component.primitiveIndices.map((index) => selectedMna[index]);
+    const testId = uniqueName('@analysis-split-test', elements);
+    const branchElements = [...elements, {
+      kind: 'current-source', id: testId, name: testId,
+      terminals: { a: AC_GROUND, b: node }, value: ops.one,
+    }];
+    if (zeroedVoltageSourceNode && component.root === shortRoot) {
+      const shortId = uniqueName('@analysis-split-short', branchElements);
+      branchElements.push({
+        kind: 'voltage-source', id: shortId, name: shortId,
+        terminals: { a: zeroedVoltageSourceNode, b: AC_GROUND }, value: ops.zero,
+      });
+    }
+    let system;
+    let solution;
+    try {
+      system = buildMNA(branchElements, { ops, ground: AC_GROUND, grounds: [...context.acGroundIds] });
+      solution = solveMNA(system, { ops });
+    } catch {
+      return null;
+    }
+    if (!solution.ok) return null;
+    const voltage = solutionValue(solution, `V(${node})`, 0);
+    if (voltage === undefined) return null;
+    pieces.push(queryDivide(voltage, ops.one, ops));
+  }
+  if (pieces.length < 2) return null;
+
+  let combined;
+  try {
+    combined = pieces.reduce((left, right) => (
+      left === null ? right : queryDivide(ops.mul(left, right), ops.add(left, right), ops)
+    ), null);
+  } catch {
+    return null;
+  }
+  if (!combined || combined.kind !== 'rational' || combined.budgetExceeded) return null;
+  return { value: combined, equivalence: provenParallel(combined, ...pieces) };
+}
+
+/**
+ * General series/parallel pre-reduction of the coupled network (`reduce.js`),
+ * never eliminating the input/output query nodes. A human reduces a load or
+ * feedback network to `Z1 \| Z2`/`Z1+Z2` by hand before writing KCL for
+ * whatever remains; this is that same step. Numeric-only callers (no `ops.s`)
+ * and `networkReduction: false` skip it; a network that doesn't reduce is
+ * returned unchanged, never an error.
+ */
+function reduceSelectedNetwork(primitives, context, options, ops) {
+  if (options.networkReduction === false || typeof ops.s !== 'function') {
+    return { primitives, proofs: [] };
+  }
+  const resolved = primitives.map((primitive) => ({ ...primitive, value: resolveValue(primitive.value, primitive, options, ops) }));
+  try {
+    return reduceNetwork(resolved, [context.input.node, context.output.node], ops);
+  } catch {
+    return { primitives, proofs: [] };
+  }
+}
+
 function failure(stage, error, details = {}) {
   return {
     ok: false,
@@ -375,7 +465,10 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     diagnostics: converted.diagnostics,
   });
 
-  const exactPrimitives = converted.primitives;
+  const miller = options.millerApproximation === false
+    ? { primitives: converted.primitives, applied: [] }
+    : applyMillerApproximation(converted.primitives, context, options, ops);
+  const exactPrimitives = miller.primitives;
   let mnaPrimitives;
   try {
     mnaPrimitives = toMnaPrimitives(exactPrimitives, { ...options, s: options.s ?? ops.one }, ops);
@@ -393,19 +486,33 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     context, conversion: converted, primitives: exactPrimitives, mnaPrimitives, coupled, diagnostics: coupled.diagnostics,
   });
 
-  const selectedExact = coupled.primitiveIndices.map((index) => exactPrimitives[index]);
-  const selectedMna = coupled.primitiveIndices.map((index) => mnaPrimitives[index]);
-  const selected = adaptPrimitiveDescriptors(selectedExact, { ...options, ops });
+  const selectedExactUnreduced = coupled.primitiveIndices.map((index) => exactPrimitives[index]);
+  const reduction = reduceSelectedNetwork(selectedExactUnreduced, context, options, ops);
+  const selectedExact = reduction.primitives;
+  let selectedMna;
+  try {
+    selectedMna = toMnaPrimitives(selectedExact, { ...options, s: options.s ?? ops.one }, ops);
+  } catch (error) {
+    return failure('mna', error, { context, conversion: converted, primitives: exactPrimitives, mnaPrimitives, coupled });
+  }
+  // `selected` feeds the read-only audit netlist, which must stay the full,
+  // unreduced device-level model (AGENTS.md) — reduction is an internal
+  // solve-path optimization only, invisible here.
+  const selected = adaptPrimitiveDescriptors(selectedExactUnreduced, { ...options, ops });
   const descriptorBudget = budgetFailure(ops, 'descriptor adaptation');
   if (descriptorBudget) return failure('budget', descriptorBudget.error, descriptorBudget);
   const excitations = createTestExcitations(context, selected, { ops });
   const elements = [...selectedMna, excitations.input, excitations.output];
+  const nodeOrder = coupled.nodeOrder.filter((node) => elements.some((element) => (
+    element.terminals?.a === node || element.terminals?.b === node
+    || element.control?.a === node || element.control?.b === node
+  )));
   let system;
   try {
     system = buildMNA(elements, {
       ops,
       rhsCount: excitations.rhsCount,
-      nodes: coupled.nodeOrder,
+      nodes: nodeOrder,
       ground: AC_GROUND,
       grounds: [...context.acGroundIds],
     });
@@ -439,6 +546,8 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     primitives: adaptPrimitiveDescriptors(exactPrimitives, { ...options, ops }),
     exactPrimitives,
     mnaPrimitives,
+    millerSubstitutions: miller.applied,
+    networkReductionProofs: reduction.proofs,
     coupled,
     selected,
     selectedExact,
@@ -446,6 +555,27 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     excitations,
     system,
     solution,
-    queries: queryValues(solution, system, context, excitations, ops),
+    queries: refineSeparableQueries(
+      queryValues(solution, system, context, excitations, ops),
+      { selectedMna, context, ops },
+    ),
   };
+}
+
+/**
+ * Try the articulation-point split (see `trySplitImpedance`) for Zin and
+ * Zout independently. Each is a self-contained, provably-correct swap of
+ * the exact query value for one that keeps its natural parallel structure;
+ * a failed or inapplicable split leaves that query's original value alone.
+ */
+function refineSeparableQueries(queries, solveContext) {
+  const { context } = solveContext;
+  const outputSplit = trySplitImpedance(context.output.node, {
+    ...solveContext,
+    zeroedVoltageSourceNode: context.input.node,
+  });
+  if (outputSplit) queries.outputImpedance = { ...queries.outputImpedance, ...outputSplit };
+  const inputSplit = trySplitImpedance(context.input.node, solveContext);
+  if (inputSplit) queries.inputImpedance = { ...queries.inputImpedance, ...inputSplit };
+  return queries;
 }

@@ -33,8 +33,22 @@ function controlledNodes(primitive, canonicalNode) {
     .filter((node, index, all) => node && node !== AC_GROUND && all.indexOf(node) === index);
 }
 
+function isZero(value) {
+  if (typeof value === 'number') return value === 0;
+  if (typeof value === 'bigint') return value === 0n;
+  if (value?.kind === 'number') return value.numerator === 0n;
+  if (value?.kind === 'rational') {
+    return value.budgetExceeded !== true && isZero(value.numerator);
+  }
+  return false;
+}
+
 function connects(primitive) {
   if (primitive.couples === false) return false;
+  if (primitive.kind === 'current-source') return false;
+  if (['capacitor', 'conductance', 'admittance'].includes(primitive.kind)) {
+    return !isZero(primitive.value ?? primitive.admittance);
+  }
   return SUPPORTED_KINDS.has(primitive.kind);
 }
 
@@ -50,6 +64,79 @@ function canonicalizer(options = {}) {
 function rootsFrom(value, canonicalNode) {
   const values = value instanceof Set || Array.isArray(value) ? [...value] : [value];
   return [...new Set(values.map((root) => canonicalNode(asNode(root))).filter((root) => root && root !== AC_GROUND))];
+}
+
+/**
+ * Split a coupled primitive set at `node`, treating it (like ground) as a
+ * non-traversable boundary. Each returned component is a maximal set of
+ * primitives whose non-ground, non-`node` nodes are mutually reachable
+ * without passing through `node`; a VCCS's control nodes count toward its
+ * reach exactly as they do for the relevance walk above, so a primitive
+ * that couples two would-be components (directly, or through a control
+ * terminal) forces them into one component instead of a false split.
+ * Returns `null` when `node` is not an articulation point (fewer than two
+ * components result), so the caller's single combined solve remains the
+ * only correct option. `shunts` lists primitives touching only `node` and
+ * ground (a direct node-to-ground branch, no other real node); callers
+ * that cannot fold those in separately should treat their presence as a
+ * reason not to split.
+ */
+export function splitAtNode(primitives = [], node, options = {}) {
+  const canonicalNode = canonicalizer(options);
+  const target = canonicalNode(asNode(node));
+  if (!target || target === AC_GROUND) return null;
+
+  const parent = new Map();
+  const find = (value) => {
+    if (!parent.has(value)) parent.set(value, value);
+    let root = value;
+    while (parent.get(root) !== root) root = parent.get(root);
+    parent.set(value, root);
+    return root;
+  };
+  const union = (a, b) => {
+    const rootA = find(a);
+    const rootB = find(b);
+    if (rootA !== rootB) parent.set(rootA, rootB);
+  };
+
+  const entries = primitives.map((primitive, index) => {
+    if (!connects(primitive)) return { index, realNodes: [], touchesTarget: false };
+    const nodes = primitive.kind === 'vccs'
+      ? controlledNodes(primitive, canonicalNode)
+      : primitiveNodes(primitive, canonicalNode);
+    const touchesTarget = nodes.includes(target);
+    const realNodes = nodes.filter((candidate) => candidate !== target);
+    return { index, realNodes, touchesTarget };
+  });
+
+  for (const { realNodes } of entries) {
+    for (let i = 1; i < realNodes.length; i++) union(realNodes[0], realNodes[i]);
+  }
+
+  const groups = new Map();
+  const shunts = [];
+  for (const entry of entries) {
+    if (entry.realNodes.length === 0) {
+      if (entry.touchesTarget) shunts.push(entry.index);
+      continue;
+    }
+    const root = find(entry.realNodes[0]);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(entry.index);
+  }
+
+  if (groups.size < 2) return null;
+  return {
+    target,
+    components: [...groups.entries()].map(([root, primitiveIndices]) => ({ root, primitiveIndices })),
+    shunts,
+    componentOf(rawNode) {
+      const canonical = canonicalNode(asNode(rawNode));
+      if (!canonical || canonical === AC_GROUND || canonical === target) return null;
+      return find(canonical);
+    },
+  };
 }
 
 /**

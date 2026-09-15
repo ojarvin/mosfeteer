@@ -38,14 +38,29 @@ export function pruneAnalysisNetValues(value, nets = []) {
   return splitAnalysisValues(value).filter((token) => aliases.has(token)).join(', ');
 }
 
-export function pruneAnalysisModelValues(value, refdes = []) {
+export function pruneAnalysisDeviceRegions(value, refdes = []) {
   const refs = new Set(refdes.map((ref) => String(ref)));
-  return splitAnalysisValues(value)
-    .filter((entry) => {
-      const match = String(entry).match(/^([^=:]+)[=:](.+)$/);
-      return match && refs.has(match[1].trim());
-    })
-    .join(', ');
+  const entries = value instanceof Map
+    ? [...value.entries()]
+    : value && typeof value === 'object'
+      ? Object.entries(value)
+      : splitAnalysisValues(value).map((entry) => {
+        const match = String(entry).match(/^([^=:]+)[=:](.+)$/);
+        return match ? [match[1].trim(), match[2].trim()] : null;
+      }).filter(Boolean);
+  const regions = {};
+  for (const [rawRefdes, rawValue] of entries) {
+    const component = String(rawRefdes || '').trim();
+    const region = typeof rawValue === 'object' ? rawValue?.region ?? rawValue?.model : rawValue;
+    if (refs.has(component) && String(region || '').trim().toLowerCase() === 'triode') {
+      regions[component] = { region: 'triode' };
+    }
+  }
+  return regions;
+}
+
+export function formatAnalysisDeviceRegions(value = {}) {
+  return Object.keys(value).sort().map((refdes) => `${refdes}=triode`).join(', ');
 }
 
 function firstMatching(nets, predicate, excludedId = '') {

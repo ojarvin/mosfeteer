@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analysisFormDefaults, analysisFormStorageKey, pruneAnalysisModelValues, pruneAnalysisNetValues } from '../src/web/analysis-state.js';
+import { analysisFormDefaults, analysisFormStorageKey, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from '../src/web/analysis-state.js';
 
 const nets = [
   { id: 'N1', name: 'VIN', terminals: [{ comp: 'P1', term: 'p' }], analysis: { role: 'input' } },
@@ -17,7 +17,13 @@ test('analysis form preferences are scoped to each named document', () => {
 
 test('analysis form drops net and device references that are absent from the current schematic', () => {
   assert.equal(pruneAnalysisNetValues('OLD, VIN, P1.p, N3, missing', nets), 'VIN, P1.p, N3');
-  assert.equal(pruneAnalysisModelValues('M1=current-source, P2=triode, OLD=ro', ['M1', 'P2']), 'M1=current-source, P2=triode');
+  assert.deepEqual(pruneAnalysisDeviceRegions({ M1: { region: 'current-source' }, P2: { region: 'triode' }, OLD: { region: 'triode' } }, ['M1', 'P2']), {
+    P2: { region: 'triode' },
+  });
+  assert.deepEqual(pruneAnalysisDeviceRegions('M1=current-source, P2=triode, OLD=triode', ['M1', 'P2']), {
+    P2: { region: 'triode' },
+  });
+  assert.equal(formatAnalysisDeviceRegions({ P2: { region: 'triode' }, M1: { region: 'triode' } }), 'M1=triode, P2=triode');
 });
 
 test('explicit input/output net roles become analysis defaults', () => {

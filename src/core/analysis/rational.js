@@ -1,7 +1,7 @@
 const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
 const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
 const MINUS_ONE = Object.freeze({ kind: 'number', numerator: -1n, denominator: 1n });
-const DEFAULT_MAX_OPERATIONS = 10000;
+const DEFAULT_MAX_OPERATIONS = 50000;
 
 function gcd(a, b) {
   let x = a < 0n ? -a : a;
@@ -139,14 +139,21 @@ function makeMultiply(values) {
   return multiply(...values);
 }
 
-function makeAdd(values, factorCommon) {
-  const terms = values.flatMap(value => value.kind === 'add' ? value.terms : [value]);
-  const infinities = terms.filter(isInfinity);
-  if (infinities.length) {
-    const signs = new Set(infinities.map(value => value.sign < 0 ? -1 : 1));
-    if (signs.size > 1) throw new RangeError('undefined infinity addition');
-    return infinity(infinities[0].sign);
-  }
+// A term shaped like `numericCoefficient * (sum)` (and nothing else) is kept
+// factored by default so unrelated `add()` calls elsewhere in the pipeline
+// can still find it as a shared multiplicative factor. It is only expanded
+// here, on a trial basis, when doing so lets its pieces cancel against
+// sibling terms (for example `-1*(gm1+gm2) + gm1 + gm2` collapsing to `0`);
+// see `combineTerms`/`distributeScaledSum` below.
+function distributeScaledSum(term) {
+  if (term.kind !== 'multiply') return null;
+  const nonNumeric = term.factors.filter((factor) => !isNumber(factor));
+  if (nonNumeric.length !== 1 || nonNumeric[0].kind !== 'add') return null;
+  const coefficient = term.factors.find((factor) => isNumber(factor)) || ONE;
+  return nonNumeric[0].terms.map((subterm) => makeMultiply([coefficient, subterm]));
+}
+
+function combineTerms(terms) {
   const combined = new Map();
   for (const rawTerm of terms) {
     const term = asExpression(rawTerm);
@@ -159,11 +166,28 @@ function makeAdd(values, factorCommon) {
       ? { coefficient: numericAdd(previous.coefficient, coefficient), core: previous.core }
       : { coefficient, core });
   }
-
-  const normalized = [];
+  const result = [];
   for (const { coefficient, core } of combined.values()) {
     if (isZero(coefficient)) continue;
-    normalized.push(isOne(core) ? coefficient : makeMultiply([coefficient, core]));
+    result.push(isOne(core) ? coefficient : makeMultiply([coefficient, core]));
+  }
+  return result;
+}
+
+function makeAdd(values, factorCommon) {
+  const terms = values.flatMap(value => value.kind === 'add' ? value.terms : [value]).map(asExpression);
+  const infinities = terms.filter(isInfinity);
+  if (infinities.length) {
+    const signs = new Set(infinities.map(value => value.sign < 0 ? -1 : 1));
+    if (signs.size > 1) throw new RangeError('undefined infinity addition');
+    return infinity(infinities[0].sign);
+  }
+  const direct = combineTerms(terms);
+  let normalized = direct;
+  if (terms.some(term => distributeScaledSum(term) !== null)) {
+    const expandedTerms = terms.flatMap(term => distributeScaledSum(term) || [term]);
+    const expanded = combineTerms(expandedTerms);
+    if (expanded.length < direct.length) normalized = expanded;
   }
   if (!normalized.length) return ZERO;
   if (normalized.length === 1) return normalized[0];

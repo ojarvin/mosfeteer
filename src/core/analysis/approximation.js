@@ -202,6 +202,50 @@ function intrinsicScales(options, records, global) {
   return { scales, hasProof };
 }
 
+/**
+ * `r_o -> infinity` (ignore channel-length modulation) is the same
+ * leading-term limit as the intrinsic-gain reduction above, scoped to just
+ * the flagged devices' own `r_o` symbol: declaring it the sole growing
+ * quantity and keeping only the dominant additive term wherever it appears.
+ */
+// Unlike `deviceScaling` (which collapses a joint gm*ro proof into one flat
+// list), this distinguishes "no scaling info given" (default to degree 1,
+// r_o -> infinity is trusted at face value) from "explicitly declared 0"
+// (no proof, leave the exact expression alone) for a single symbol.
+function declaredExponent(source, genericName, specificName) {
+  if (!source || typeof source !== 'object') return undefined;
+  const symbols = source.symbols || source.scale;
+  if (symbols && typeof symbols === 'object') {
+    const bySpecific = symbols instanceof Map ? symbols.get(specificName) : symbols[specificName];
+    if (bySpecific !== undefined) return Number(bySpecific);
+  }
+  if (source[genericName] !== undefined) return Number(source[genericName]);
+  return undefined;
+}
+
+function outputScales(options, records, global) {
+  const scales = new Map();
+  let hasProof = false;
+  const selectedGo = new Set(symbolNames(options.ignoreRoDevices || options.ignoreChannelLengthModulationDevices));
+  for (const device of records) {
+    const roInfinity = booleanOption(device, global, ['go0', 'roInfinity', 'ignoreChannelLengthModulation', 'neglectChannelLengthModulation', 'ignoreRo'], selectedGo.has(device.id));
+    if (!roInfinity) continue;
+    const ro = parameterValue(device, ['roSymbol', 'ro']) || deviceParameter(device, 'ro', ['roSymbol', 'ro']);
+    const declared = declaredExponent(device.scaling || device.scale, 'ro', ro);
+    const degree = declared === undefined ? 1 : declared;
+    if (!degree) continue;
+    if (scales.has(ro) && scales.get(ro) !== degree) continue;
+    scales.set(ro, degree);
+    hasProof = true;
+  }
+  for (const name of globalSymbols(options, ['ro', 'roSymbols'])) {
+    if (scales.has(name) && scales.get(name) !== 1) continue;
+    scales.set(name, 1);
+    hasProof = true;
+  }
+  return { scales, hasProof };
+}
+
 function firstOrderDenominator(current, options) {
   const coefficients = polynomialCoefficients(current.denominator, current.variable, options.rational || {});
   if (!coefficients || coefficients.length === 0 || coefficients[0].power <= 1) return null;
@@ -233,12 +277,9 @@ export function applyApproximations(input, options = {}) {
   const selectedGo = new Set(symbolNames(options.ignoreRoDevices || options.ignoreChannelLengthModulationDevices));
   for (const device of records) {
     const gmb = parameterValue(device, ['gmbSymbol', 'gmb']) || deviceParameter(device, 'gmb', ['gmbSymbol', 'gmb']);
-    const go = parameterValue(device, ['goSymbol', 'go']) || deviceParameter(device, 'go', ['goSymbol', 'go']);
     if (booleanOption(device, global, ['gmb0', 'ignoreBodyEffect', 'bodyEffectIgnored', 'neglectBodyEffect', 'ignoreGmb', 'gmbZero'])) substitutions.push({ kind: 'body', device: device.id, name: gmb });
-    if (booleanOption(device, global, ['go0', 'roInfinity', 'ignoreChannelLengthModulation', 'neglectChannelLengthModulation', 'ignoreRo'], selectedGo.has(device.id))) substitutions.push({ kind: 'output', device: device.id, name: go });
   }
   for (const name of globalSymbols(options, ['gmb', 'gmbSymbols'])) substitutions.push({ kind: 'body', device: null, name });
-  for (const name of globalSymbols(options, ['go', 'goSymbols'])) substitutions.push({ kind: 'output', device: null, name });
 
   const seen = new Set();
   for (const substitution of substitutions) {
@@ -248,6 +289,23 @@ export function applyApproximations(input, options = {}) {
     if (!rationalEqual(next, selected)) {
       selected = next;
       assumptions.push(assumptionName(substitution.kind, substitution.device));
+    }
+  }
+
+  const output = outputScales(options, records, global);
+  if (output.hasProof) {
+    const before = selected;
+    const next = leadingRational(selected, output.scales);
+    if (next && !rationalEqual(next, selected)) {
+      selected = next;
+      for (const device of records) {
+        const roInfinity = booleanOption(device, global, ['go0', 'roInfinity', 'ignoreChannelLengthModulation', 'neglectChannelLengthModulation', 'ignoreRo'], selectedGo.has(device.id));
+        if (!roInfinity) continue;
+        const ro = parameterValue(device, ['roSymbol', 'ro']) || deviceParameter(device, 'ro', ['roSymbol', 'ro']);
+        const degree = output.scales.get(ro);
+        const local = degree ? leadingRational(before, new Map([[ro, degree]])) : null;
+        if (local && !rationalEqual(local, before)) assumptions.push(assumptionName('output', device.id));
+      }
     }
   }
 

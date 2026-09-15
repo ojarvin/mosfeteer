@@ -103,7 +103,7 @@ test('new document control exposes one popup with schematic and block choices', 
   assert.doesNotMatch(html, /id="btn-new-circuit"|id="btn-new-block"/);
 });
 
-test('small-signal analysis exposes a model/context popup', () => {
+test('small-signal analysis exposes the canonical v2 controls', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-analysis"/);
   assert.match(html, /class="toolbar-group analysis-group"[^>]+data-doc-kind="schematic"/);
@@ -111,13 +111,11 @@ test('small-signal analysis exposes a model/context popup', () => {
   assert.match(html, /id="analysis-dialog"/);
   assert.match(html, /id="analysis-input-field"[^>]*>Input node/);
   assert.match(html, /for="analysis-target">Output node/);
+  assert.match(html, /for="analysis-reference">Reference \(optional\)/);
   assert.match(html, /id="analysis-submit"[^>]*>Derive all equations/);
-  assert.match(html, /value="single-ended"/);
-  assert.match(html, /value="input-impedance"/);
   assert.match(html, /id="analysis-ac-grounds"/);
-  assert.match(html, /id="analysis-models"/);
-  assert.match(html, /value="voltage-transfer"/);
-  assert.match(html, /id="analysis-complementary"/);
+  assert.match(html, /id="analysis-device-regions"/);
+  assert.match(html, /REF=triode/);
   assert.match(html, /id="analysis-annotate"/);
   assert.match(html, /id="analysis-equation"/);
   assert.match(html, /id="analysis-details"/);
@@ -131,17 +129,12 @@ test('small-signal analysis exposes a model/context popup', () => {
   assert.match(html, /id="analysis-panel-log"[^>]+role="tabpanel"/);
   assert.match(html, /id="analysis-panel-netlist"[^>]+role="tabpanel"/);
   assert.match(html, /id="analysis-approx-ro"[^>]+type="checkbox"/);
-  assert.doesNotMatch(html, /id="analysis-approx-dc"/);
-  assert.doesNotMatch(html, /Analyze DC topology only/);
-  assert.match(html, /id="analysis-approx-cascode"[^>]+type="checkbox"/);
-  assert.match(html, /id="analysis-approx-cascode"[^>]+checked/);
-  assert.match(html, /id="analysis-approx-body"[^>]+type="checkbox"/);
-  assert.match(html, /id="analysis-approx-gmro"[^>]+type="checkbox"/);
-  assert.match(html, /id="analysis-approx-miller"[^>]+type="checkbox"/);
-  assert.match(html, /id="analysis-approx-miller"[^>]+checked/);
+  assert.match(html, /id="analysis-approx-body"[^>]+type="checkbox"[^>]+checked/);
+  assert.match(html, /id="analysis-approx-gmro"[^>]+type="checkbox"[^>]+checked/);
   assert.match(html, /id="analysis-approx-dominant-pole"[^>]+type="checkbox"/);
-  assert.match(html, /id="analysis-approx-body"[^>]+checked/);
-  assert.match(html, /id="analysis-approx-gmro"[^>]+checked/);
+  assert.doesNotMatch(html, /id="analysis-(?:kind|context|mode|complementary|models)"/);
+  assert.doesNotMatch(html, /id="analysis-approx-(?:dc|cascode|miller)"/);
+  assert.doesNotMatch(html, /current-source|Miller|cascode|Analyze DC topology only/i);
   assert.match(html, /<div class="analysis-scroll">[\s\S]*id="analysis-result"[\s\S]*<\/div>\s*<div class="dialog-actions">/);
   const style = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
   assert.match(style, /\.analysis-dialog\s*\{[\s\S]*width: min\(64rem/);
@@ -157,53 +150,44 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /analysisFormStorageKey\(currentCircuitName\)/);
   assert.match(main, /Select an input node before deriving equations/);
   assert.match(main, /analysis failed: \$\{message\}/);
-  assert.match(main, /pruneAnalysisNetValues\(saved\.acGrounds, visibleNets\(\)\)/);
-  assert.match(main, /pruneAnalysisModelValues\(saved\.models, sortedComps\(\)\.map/);
-  assert.match(main, /defaults\.targetMarked \? defaults\.target : saved\.target/);
-  assert.match(main, /defaults\.inputMarked \? defaults\.input : saved\.input/);
-  assert.match(main, /ignoreChannelLengthModulation: !!analysisApproxRo\?\.checked/);
-  assert.match(main, /const hasSavedRo = Object\.prototype\.hasOwnProperty\.call\(savedApproximations, 'ignoreChannelLengthModulation'\)/);
-  assert.doesNotMatch(main, /analysisApproxDc|analysis-approx-dc/);
-  assert.match(main, /cascodeApproximation: !!analysisApproxCascode\?\.checked/);
-  assert.match(main, /ignoreBodyEffect: !!analysisApproxBody\?\.checked/);
-  assert.match(main, /gmroLarge: !!analysisApproxGmRo\?\.checked/);
+  assert.match(main, /migrateAnalysisFormState\(saved\)/);
+  assert.match(main, /pruneAnalysisNetValues\(state\.acGrounds, visibleNets\(\)\)/);
+  assert.match(main, /pruneAnalysisDeviceRegions/);
+  assert.match(main, /defaults\.targetMarked \? defaults\.target : state\.output/);
+  assert.match(main, /defaults\.inputMarked \? defaults\.input : state\.input/);
+  assert.match(main, /neglectChannelLengthModulation: !!analysisApproxRo\?\.checked/);
+  assert.match(main, /neglectBodyEffect: !!analysisApproxBody\?\.checked/);
+  assert.match(main, /highIntrinsicGain: !!analysisApproxGmRo\?\.checked/);
+  assert.match(main, /dominantPole: !!analysisApproxDominantPole\?\.checked/);
+  assert.match(main, /deviceRegions: analysisDeviceRegions\?\.value/);
+  assert.match(main, /options\.neglectBodyEffect = source\.ignoreBodyEffect/);
+  assert.match(main, /options\.highIntrinsicGain = source\.gmroLarge/);
+  assert.match(main, /options\.neglectChannelLengthModulation = true/);
+  assert.match(main, /\.\.\.\(Object\.keys\(devices\)\.length \? \{ devices \} : \{\}\)/);
   assert.match(main, /resistance: 'infinite'/);
-  assert.match(main, /analysisApproxBody\.checked = true/);
-  assert.match(main, /analysisApproxGmRo\.checked = true/);
-  assert.match(main, /millerApproximation: !!analysisApproxMiller\?\.checked/);
-  assert.match(main, /dominantPoleApproximation: !!analysisApproxDominantPole\?\.checked/);
-  assert.match(main, /smallSignalNetlist: reports\.transfer\.smallSignalNetlist \|\| reports\.output\.smallSignalNetlist/);
+  assert.equal((main.match(/analyzeSmallSignalV2\(/g) || []).length, 1);
+  assert.match(main, /adaptCombinedReport\(analyzeSmallSignalV2\(circuit, request\)\)/);
+  assert.doesNotMatch(main, /analyzeInputImpedance|analyzeOutputImpedance|analyzeTransferFunction/);
+  assert.doesNotMatch(main, /core\/analysis\/index\.js/);
+  assert.doesNotMatch(main, /analysisKind|analysisMode|analysisComplementary|analysisContext|analysisModels|analysisApproxMiller|analysisApproxCascode|dcOnly/);
+  assert.match(main, /Array\.isArray\(report\?\.equationEntries\)/);
+  assert.match(main, /for \(const \{ title, result: child \} of entries\)/);
   assert.match(main, /const availableTab = selectedTab === 'netlist' && netlist/);
   assert.match(main, /const topGap = 2 \* GRID/);
   assert.match(main, /const bottomEdge = circuitBounds\.h > 0 \? circuitBounds\.y \+ circuitBounds\.h/);
   assert.match(main, /const leftEdge = circuitBounds\.w > 0 \? circuitBounds\.x/);
-  assert.doesNotMatch(main, /function analysisEquationHasReactiveTerm/);
-  assert.doesNotMatch(main, /function analysisExpressionHasFrequency/);
-  assert.match(main, /expressionHasFrequency \} from '\.\.\/core\/analysis\/index\.js'/);
-  assert.match(main, /function analysisHasReactiveFinalForms/);
-  assert.match(main, /frequencyResponse\?\.hasFrequency/);
-  assert.match(main, /\[report\?\.expression, report\?\.acTransfer\?\.expression\]\.some\(expressionHasFrequency\)/);
-  assert.match(main, /if \(analysisHasReactiveFinalForms\(input\)\) add\('AC input impedance', input\)/);
-  assert.match(main, /add\('DC input impedance', transfer\?\.dcInputImpedance \|\| input\?\.dcInputImpedance\)/);
-  assert.match(main, /if \(analysisHasReactiveFinalForms\(output\)\) add\('AC output impedance', output\)/);
-  assert.match(main, /add\('DC output impedance', transfer\?\.dcOutputImpedance \|\| output\?\.dcOutputImpedance\)/);
-  assert.match(main, /if \(reactiveTransfer\) add\('AC voltage transfer', transfer\?\.acTransfer\)/);
-  assert.match(main, /\['Poles', frequency\.poles\]/);
-  assert.match(main, /\['Zeros', frequency\.zeros\]/);
-  assert.match(main, /function analysisEquationEntries\(report, includeEmptyRoots = false\)/);
-  assert.match(main, /analysisEquationEntries\(report, true\)/);
+  assert.match(main, /function analysisEquationEntries\(report\)/);
   assert.match(main, /layout\.bottomEdge \+ layout\.topGap/);
   assert.match(main, /align: 'left'/);
-  assert.match(main, /effective transconductance/);
   assert.match(main, /analysisAnnotationAssumptions/);
-  assert.match(main, /Cascode dominant term/);
   assert.match(main, /text: \['\\\\text\{Assumptions\\\\:\}', \.\.\.assumptions\]/);
   assert.match(main, /syncRenderedLabelMetrics/);
   assert.match(main, /function reflowEquationAnnotations/);
   assert.match(main, /const pitch = heights\.length < 2/);
-  assert.match(main, /if \(gmroLarge\) add\('g_\{m\}r_\{o\} \\\\gg/);
-  assert.match(main, /bodyEffectIgnored/);
-  assert.match(main, /deviceRoFinite/);
+  assert.match(main, /options\.neglectBodyEffect/);
+  assert.match(main, /options\.highIntrinsicGain/);
+  assert.match(main, /options\.neglectChannelLengthModulation/);
+  assert.match(main, /options\.dominantPoleApplied/);
 });
 
 test('arrow-key nudging moves mixed selections atomically', () => {
@@ -232,67 +216,26 @@ test('F5 reloads the application instead of entering the normal keymap', () => {
   assert.match(desktop, /app\.relaunch\(\);\s*app\.quit\(\);/);
 });
 
-test('analysis assumption annotations collapse equivalent device r_o overrides', () => {
+test('analysis annotations use structured canonical assumptions', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function analysisAnnotationAssumptions');
   const end = main.indexOf('\n\nfunction openAnalysisDialog', start);
   assert.ok(start >= 0 && end > start);
   const summarize = vm.runInNewContext(`(${main.slice(start, end)})`);
-  const model = {
-    elements: [
-      { kind: 'vccs', component: 'M1' },
-      { kind: 'vccs', component: 'M2' },
-    ],
-  };
-
   assert.deepEqual(Array.from(summarize({
-    smallSignalModel: model,
-    assumptions: [
-      'Per-device approximation: M1 r_o → ∞.',
-      'Per-device approximation: M2 r_o → ∞.',
-    ],
-    approximations: [],
-  })), ['r_{o} = \\infty']);
-  assert.deepEqual(Array.from(summarize({
-    smallSignalModel: model,
-    assumptions: ['Per-device approximation: M1 r_o → ∞.'],
-    approximations: [],
-  })), ['r_{o1} = \\infty \\; (M_{1})']);
-  assert.deepEqual(Array.from(summarize({
-    smallSignalModel: model,
-    assumptions: [
-      'Textbook approximation: r_o → ∞ except for M2 (finite r_o override).',
-      'Per-device approximation: M1 r_o → ∞.',
-    ],
-    approximations: [],
+    analysisOptions: {
+      highIntrinsicGain: true,
+      neglectChannelLengthModulation: true,
+      neglectBodyEffect: true,
+      dominantPoleApplied: true,
+    },
   })), [
-    'r_{o} = \\infty \\; \\text{except } M_{2}',
-    'r_{o2} \\text{ finite} \\; (M_{2})',
+    'g_{m}r_{o} \\gg 1',
+    'r_{o} = \\infty',
+    'g_{mb} = 0',
+    '\\text{Dominant-pole approximation}',
   ]);
-  assert.deepEqual(Array.from(summarize({
-    smallSignalModel: { elements: [{ kind: 'vccs', component: 'M1' }] },
-    assumptions: ['Per-device approximation: M1 r_o → ∞.'],
-    approximations: [],
-  })), ['r_{o1} = \\infty \\; (M_{1})']);
-  assert.deepEqual(Array.from(summarize({
-    smallSignalModel: { elements: [
-      { kind: 'vccs', component: 'M1' },
-      { kind: 'vccs', component: 'M2' },
-    ] },
-    assumptions: [],
-    approximations: ['Textbook approximation: M1 output resistance r_o is ignored; capacitances are omitted.'],
-  })), ['r_{o1} = \\infty \\; (M_{1})']);
-  assert.deepEqual(Array.from(summarize({
-    smallSignalModel: { elements: [{ kind: 'vccs', component: 'M1' }] },
-    assumptions: [],
-    approximations: [
-      'Per-device approximation: M1 g_m r_o \\gg 1.',
-      'Per-device approximation: M1 g_{mb} = 0.',
-    ],
-  })), [
-    'g_{m1}r_{o1} \\gg 1 \\; (M_{1})',
-    'V_{BS} = 0 \\; (M_{1})',
-  ]);
+  assert.deepEqual(Array.from(summarize({ analysisOptions: {} })), []);
 });
 
 test('committed inserts repair coincident connectivity and analysis menus support multi-selection', () => {

@@ -191,7 +191,7 @@ function mosOrientation(type) {
     channel: pmos ? 'p' : 'n',
     currentDirection: 'drain-to-source',
     polarity: 1,
-    convention: 'i_ds = gm(v_g-v_s) + gmb(v_b-v_s) + go(v_d-v_s)',
+    convention: 'i_ds = gm(v_g-v_s) + gmb(v_b-v_s) + (v_d-v_s)/ro',
   };
 }
 
@@ -199,7 +199,7 @@ function mosPrimitives(component, nodes, model, metadata) {
   const names = {
     gm: parameterName('gm', component.refdes),
     gmb: parameterName('gmb', component.refdes),
-    go: parameterName('go', component.refdes),
+    ro: parameterName('ro', component.refdes),
   };
   const orientation = mosOrientation(component.type);
   const explicitBulk = component.def.terminals.some((terminal) => terminal.name === 'b');
@@ -215,10 +215,10 @@ function mosPrimitives(component, nodes, model, metadata) {
   };
   return [
     {
-      kind: 'conductance',
-      id: `${component.refdes}.go`,
+      kind: 'resistor',
+      id: `${component.refdes}.ro`,
       terminals: { a: nodes.d, b: nodes.s },
-      value: names.go,
+      value: names.ro,
       metadata: deviceMetadata,
     },
     {
@@ -261,7 +261,7 @@ function convertMos(circuit, component, context) {
       `${component.refdes} uses the removed MOS current-source override`,
       component,
       'error',
-      'Remove the override. Use the exact MOS model; a zero-controlled device naturally contributes no gm/gmb current, while go=0 is the channel-length-modulation approximation.',
+      'Remove the override. Use the exact MOS model; a zero-controlled device naturally contributes no gm/gmb current, while r_o -> infinity is the channel-length-modulation approximation.',
     ));
     return { primitives: [], diagnostics, nodes: [] };
   }
@@ -312,6 +312,13 @@ function convertOneComponent(circuit, component, context) {
     const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);
     if (diagnostics.length) return { primitives: [], diagnostics, nodes: terminals.map(([, result]) => result.node).filter(Boolean) };
     const nodes = Object.fromEntries(terminals.map(([terminal, result]) => [terminal, result.node]));
+    // "Treat as R = infinity" (model.js `setComponentAnalysis`, a per-component
+    // small-signal attribute, mirroring the MOS triode `analysis.model`
+    // override) removes the branch entirely — an open circuit is exactly "no
+    // primitive here", not a primitive carrying an infinite value.
+    if (kind === 'resistor' && component.analysis?.resistance === 'infinite') {
+      return { primitives: [], diagnostics: [], nodes: [nodes.a, nodes.b] };
+    }
     return { primitives: [twoTerminalPrimitive(component, kind, nodes.a, nodes.b)], diagnostics: [], nodes: [nodes.a, nodes.b] };
   }
   const terminals = component.def?.terminals

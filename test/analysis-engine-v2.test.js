@@ -111,14 +111,81 @@ test('retains AC transfer and canonical pole data for an RC network', () => {
   assert.equal(report.poles[0].index, 0);
   assert.ok(report.transfer.ac.equation.startsWith('A_v(s) = '));
   assert.strictEqual(report.details.solution, report.details.pipeline.solution);
+  assert.strictEqual(report.details.queries, report.details.pipeline.queries);
 });
 
 test('derives common-source gain from the shared exact model', () => {
   const report = analyzeSmallSignalV2(commonSource());
   assert.equal(report.ok, true, report.error);
   assert.match(expressionText(report.exact.Av), /gm1/);
-  assert.match(expressionText(report.exact.Av), /go1/);
+  assert.match(expressionText(report.exact.Av), /ro1/);
   assert.match(report.netlist.text, /G_M1 .* V_\{IN\}/);
+});
+
+test('g_m r_o >> 1 alone never drops a finite r_o next to an unrelated resistor', () => {
+  // g_m r_o >> 1 only licenses dropping a bare additive constant next to a
+  // gm*ro product; it says nothing about r_o vs. an unrelated resistor like
+  // R_D, so the default (r_o -> infinity left off) must keep R_D || r_o1
+  // intact rather than silently collapsing it to R_D alone.
+  const report = analyzeSmallSignalV2(commonSource());
+  assert.equal(report.ok, true, report.error);
+  assert.deepEqual(report.assumptions, []);
+  assert.match(expressionText(report.approximate.Zout.selected), /ro1/);
+  assert.match(expressionText(report.approximate.Zout.selected), /RD/);
+
+  const withRoInfinity = analyzeSmallSignalV2(commonSource(), { ignoreChannelLengthModulation: true });
+  assert.equal(withRoInfinity.ok, true, withRoInfinity.error);
+  assert.deepEqual(withRoInfinity.assumptions, ['r_o -> infinity (M1)']);
+  assert.doesNotMatch(expressionText(withRoInfinity.approximate.Zout.selected), /ro1/);
+});
+
+test('honors a resistor marked "treat as R = infinity", dropping it from Zout and the gain like an ideal current-source load', () => {
+  const circuit = commonSource();
+  circuit.setComponentAnalysis('RD', { resistance: 'infinite' });
+  const report = analyzeSmallSignalV2(circuit);
+  assert.equal(report.ok, true, report.error);
+  assert.equal(report.output.dc.equation, 'Z_{out}(0) = r_{o1}');
+  assert.equal(report.transfer.dc.equation, 'A_v(0) = -g_{m1} \\, r_{o1}');
+});
+
+test('renders the exact common-source output impedance as R_D || r_o1, matching the general network pre-reduction', () => {
+  const report = analyzeSmallSignalV2(commonSource());
+  assert.equal(report.ok, true, report.error);
+  assert.equal(report.output.dc.equation, 'Z_{out}(0) = r_{o1} \\parallel R_{D}');
+});
+
+test('renders every branch at a common-source-with-load-cap output node in one parallel group', () => {
+  const circuit = new Circuit();
+  ports(circuit);
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
+  circuit.addComponent('capacitor', { refdes: 'CL', x: 240, y: -160 });
+  circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
+  circuit.addComponent('ground', { refdes: 'GND2', x: 320, y: -80 });
+  circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -320 });
+  net(circuit, 'VIN', 'IN.p', 'M1.g');
+  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'CL.a', 'OUT.p');
+  net(circuit, 'VSS', 'M1.s', 'GND.gnd');
+  net(circuit, 'VDD', 'RD.b', 'VDD.p');
+  net(circuit, 'VSS2', 'CL.b', 'GND2.gnd');
+  const report = analyzeSmallSignalV2(circuit);
+  assert.equal(report.ok, true, report.error);
+  assert.match(report.output.ac.exactEquation, /r_\{o1\} \\parallel R_\{D\} \\parallel \\frac\{1\}\{s \\, C_\{L\}\}/);
+  // The exact row alone isn't enough — the default equation (what actually
+  // gets annotated onto the schematic) comes from one leading-term
+  // reduction of the whole expression and does not automatically inherit
+  // this factored structure, so it needs its own equivalence.
+  assert.match(report.output.ac.equation, /r_\{o1\} \\parallel R_\{D\} \\parallel \\frac\{1\}\{s \\, C_\{L\}\}/);
+  // At s=0 the load cap is an open circuit and must drop out of the group
+  // rather than the whole thing failing to combine.
+  assert.equal(report.output.dc.equation, 'Z_{out}(0) = r_{o1} \\parallel R_{D}');
+  assert.deepEqual(report.equations.slice(0, 5), [
+    report.input.dc.equation,
+    report.output.ac.equation,
+    report.output.dc.equation,
+    report.transfer.ac.equation,
+    report.transfer.dc.equation,
+  ]);
 });
 
 test('keeps NMOS and PMOS transconductances parallel in an inverter', () => {
@@ -186,4 +253,58 @@ test('returns one top-level diagnostic when the finite analysis budget is exhaus
   assert.deepEqual(report.diagnostics.errors.map(({ code }) => code), ['operation-budget']);
   assert.equal(report.details.code, 'operation-budget');
   assert.equal(report.details.budget.limit, 0);
+});
+
+function renameNetAt(circuit, terminal, name) {
+  const physicalNet = circuit.netOfTerminal(terminal);
+  circuit.renameNet(physicalNet, name);
+}
+
+function cascodeWithCascodeLoad() {
+  const circuit = new Circuit();
+  ports(circuit);
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('nmos', { refdes: 'M2', x: 0, y: -160 });
+  circuit.addComponent('pmos', { refdes: 'M3', x: 0, y: -320 });
+  circuit.addComponent('pmos', { refdes: 'M4', x: 0, y: -480 });
+  circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
+  circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -640 });
+  circuit.addComponent('port', { refdes: 'BIASN', x: -160, y: -160 });
+  circuit.addComponent('port', { refdes: 'BIASP', x: -160, y: -320 });
+  circuit.connect('IN.p', 'M1.g');
+  circuit.connect('M1.s', 'GND.gnd');
+  circuit.connect('M1.d', 'M2.s');
+  circuit.connect('M2.g', 'BIASN.p');
+  circuit.connect('M2.d', 'M3.d', 'OUT.p');
+  circuit.connect('M3.g', 'M4.g', 'BIASP.p');
+  circuit.connect('M3.s', 'M4.d');
+  circuit.connect('M4.s', 'VDD.p');
+  renameNetAt(circuit, 'IN.p', 'VIN');
+  renameNetAt(circuit, 'OUT.p', 'VOUT');
+  renameNetAt(circuit, 'BIASN.p', 'VBIASN');
+  renameNetAt(circuit, 'BIASP.p', 'VBIASP');
+  return circuit;
+}
+
+test('decomposes a cascoded common-source stage with a cascoded current-mirror load into a proven parallel Zout', () => {
+  const report = analyzeSmallSignalV2(cascodeWithCascodeLoad(), { acGrounds: ['VBIASN', 'VBIASP'] });
+  assert.equal(report.ok, true, report.error);
+  assert.ok(report.output.equivalence, 'Zout should carry a proven-parallel decomposition');
+  assert.equal(report.output.equivalence.operands.length, 2);
+
+  const values = { gm1: 2, gm2: 3, gm3: 1.7, ro1: 10, ro2: 5, ro3: 6.67, ro4: 20, gmb2: 0, gmb3: 0 };
+  function evaluate(node) {
+    if (node.kind === 'number') return Number(node.numerator) / Number(node.denominator);
+    if (node.kind === 'symbol') return values[node.name];
+    if (node.kind === 'power') return evaluate(node.base) ** node.exponent;
+    if (node.kind === 'multiply') return node.factors.reduce((product, factor) => product * evaluate(factor), 1);
+    return node.terms.reduce((sum, term) => sum + evaluate(term), 0);
+  }
+  const zout = report.exact.Zout.expression;
+  const numeric = evaluate(zout.numerator) / evaluate(zout.denominator);
+  const { ro1, ro2, ro3, ro4 } = values;
+  const nmosCascode = ro1 + ro2 + values.gm2 * ro1 * ro2;
+  const pmosCascode = ro3 + ro4 + values.gm3 * ro3 * ro4;
+  const expected = 1 / (1 / nmosCascode + 1 / pmosCascode);
+  assert.ok(Math.abs(numeric - expected) < 1e-9 * expected, `${numeric} !== ${expected}`);
 });

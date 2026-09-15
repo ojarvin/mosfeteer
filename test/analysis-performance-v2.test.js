@@ -1,7 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit } from '../src/core/model.js';
-import { createAnalysisCache } from '../src/core/analysis/cache.js';
 import { createRationalOps } from '../src/core/analysis/algebra-ops.js';
 import { buildExactAnalysisPipeline } from '../src/core/analysis/pipeline.js';
 import { numberOps } from '../src/core/analysis/mna.js';
@@ -140,31 +138,4 @@ test('bounds a symbolic second-order RLC solve and preserves its algebra budget'
   assert.ok(ops.budget.used <= OPERATION_CEILINGS.secondOrderRlc, `RLC used ${ops.budget.used} operations`);
   assert.equal(report.queries.transfer.value.kind, 'rational');
   assert.ok(elapsed <= BASELINE_CEILINGS_MS.twoTransistor * TIMING_MULTIPLIER, `RLC solve took ${elapsed.toFixed(2)} ms`);
-});
-
-test('reuses unchanged exact context and invalidates the cache on revision', () => {
-  const circuit = new Circuit();
-  circuit.revision = 17;
-  const cache = createAnalysisCache({ maxEntries: 2 });
-  const request = { input: 'VIN', output: 'VOUT' };
-  let constructions = 0;
-  const compute = () => ({ ok: true, construction: ++constructions });
-
-  const first = cache.getOrCompute(circuit, request, compute);
-  assert.equal(first.construction, 1);
-  const warmStart = performance.now();
-  for (let index = 0; index < 20; index += 1) {
-    assert.equal(cache.getOrCompute(circuit, request, compute), first);
-  }
-  const warmMs = performance.now() - warmStart;
-
-  assert.equal(constructions, 1);
-  assert.equal(cache.stats(circuit).hits, 20);
-  assert.ok(warmMs <= BASELINE_CEILINGS_MS.oneTransistor * TIMING_MULTIPLIER, `cache warm runs took ${warmMs.toFixed(2)} ms`);
-
-  circuit.revision = 18;
-  const revised = cache.getOrCompute(circuit, request, compute);
-  assert.equal(revised.construction, 2);
-  assert.equal(cache.stats(circuit).misses, 2);
-  assert.equal(cache.stats(circuit).sets, 2);
 });

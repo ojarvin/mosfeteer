@@ -16,6 +16,41 @@ function smallCircuit() {
   return c;
 }
 
+function analysisCircuit({ capacitor = false } = {}) {
+  const c = fresh();
+  c.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
+  c.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 240, y: 160 });
+  c.addComponent('ground', { refdes: 'GND', x: 400, y: 240 });
+  if (capacitor) c.addComponent('capacitor', { refdes: 'C1', x: 480, y: 160 });
+  const connect = (name, ...refs) => {
+    const net = c._createNet(name);
+    net.terminals = refs.map((ref) => c.resolveTerm(ref));
+  };
+  connect('VIN', 'IN.p', 'R1.a');
+  connect('VOUT', 'R1.b', 'R2.a', 'OUT.p', ...(capacitor ? ['C1.a'] : []));
+  connect('VSS', 'R2.b', 'GND.gnd', ...(capacitor ? ['C1.b'] : []));
+  return c;
+}
+
+function triodeCircuit() {
+  const c = fresh();
+  c.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
+  c.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  c.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
+  c.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
+  const connect = (name, ...refs) => {
+    const net = c._createNet(name);
+    net.terminals = refs.map((ref) => c.resolveTerm(ref));
+  };
+  connect('VIN', 'IN.p', 'M1.g');
+  connect('VOUT', 'M1.d', 'RD.a', 'OUT.p');
+  connect('VSS', 'M1.s', 'RD.b', 'GND.gnd');
+  return c;
+}
+
 test('splitArgs honors double-quoted strings', () => {
   assert.deepEqual(splitArgs('value R1 "10 kilohm"'), ['value', 'R1', '10 kilohm']);
   assert.deepEqual(splitArgs('add resistor --at 400 0'), ['add', 'resistor', '--at', '400', '0']);
@@ -37,8 +72,62 @@ test('help returns help text', () => {
   assert.ok(commandHelp().includes('eval'));
   assert.ok(commandHelp().includes('explain connect'));
   assert.ok(commandHelp().includes('segment-rm'));
-  assert.ok(commandHelp().includes('--model REF=triode|current-source'));
-  assert.ok(commandHelp().includes('[--miller]'));
+  assert.ok(commandHelp().includes('--device-region REF=triode'));
+  assert.doesNotMatch(commandHelp(), /current-source|--miller|--context|--mode|--dc-only|cascode/);
+});
+
+test('analyze selects one requested quantity from the combined solve', () => {
+  const result = runCommand(
+    analysisCircuit({ capacitor: true }),
+    'analyze transfer-function VOUT --input VIN',
+  );
+
+  assert.equal(result.mutated, false);
+  assert.equal(result.json.ok, true, result.json.error);
+  assert.equal(result.json.query, 'voltage-transfer');
+  assert.match(result.text, /^A_v\(s\) =/);
+  assert.match(result.text, /DC: A_v\(0\) =/);
+  assert.match(result.text, /pole: p_\{0\} =/);
+  assert.doesNotMatch(result.text, /DC input impedance|DC output impedance/);
+});
+
+test('analyze accepts canonical ports, grounds, regions, and approximations', () => {
+  const result = runCommand(
+    triodeCircuit(),
+    'analyze output-impedance VOUT --input VIN --reference VSS --ac-ground VSS --device-region M1=triode --ignore-body-effect --gmro-large --ignore-channel-length-modulation --dominant-pole',
+  );
+
+  assert.equal(result.json.ok, true, result.json.error);
+  assert.equal(result.json.query, 'output-impedance');
+  assert.match(result.json.smallSignalNetlist, /RDS_M1/);
+  assert.doesNotMatch(result.json.smallSignalNetlist, /G_M1/);
+});
+
+test('input impedance accepts an explicit output port', () => {
+  const result = runCommand(
+    analysisCircuit(),
+    'analyze input-impedance VIN --output VOUT',
+  );
+
+  assert.equal(result.json.ok, true, result.json.error);
+  assert.equal(result.json.query, 'input-impedance');
+  assert.match(result.text, /^Z_\{in\} =/);
+  assert.match(result.text, /input: VIN/);
+  assert.match(result.text, /output: VOUT/);
+});
+
+test('analyze rejects removed legacy options and non-triode regions', () => {
+  const circuit = analysisCircuit();
+  for (const flag of ['--miller', '--context old', '--mode differential', '--dc-only', '--model M1=current-source']) {
+    assert.throws(
+      () => runCommand(circuit, `analyze transfer-function VOUT --input VIN ${flag}`),
+      /unknown flag/,
+    );
+  }
+  assert.throws(
+    () => runCommand(circuit, 'analyze transfer-function VOUT --input VIN --device-region M1=current-source'),
+    /REF=triode/,
+  );
 });
 
 test('explain eval groups issues and provides repair hints', () => {

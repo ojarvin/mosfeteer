@@ -55,6 +55,19 @@ test('converts passive RLC components to stable primitive descriptors', () => {
   assert.equal(inductor.type, 'inductor');
 });
 
+test('a resistor marked "treat as R = infinity" (model.js setComponentAnalysis) drops its branch entirely', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  attach(circuit, 'NR1', 'R1.a');
+  attach(circuit, 'NR2', 'R1.b');
+  circuit.setComponentAnalysis('R1', { resistance: 'infinite' });
+
+  const result = convertCircuitToPrimitives(circuit, contextFor(circuit));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(find(result.primitives, 'R1.resistor'), undefined);
+});
+
 test('converts DC sources with zero small-signal excitation', () => {
   const circuit = new Circuit();
   circuit.addComponent('voltage_source', { refdes: 'V1', x: 0, y: 0, value: 'VDD' });
@@ -108,7 +121,7 @@ test('moving-source MOS retains body effect with implicit VSS/VDD bulk', () => {
   assert.equal(gmb.control.a, '0');
   assert.equal(gmb.control.b, 'N2');
   assert.equal(gmb.metadata.controlExpression, 'gmb1(v_b-v_s)');
-  assert.equal(find(result.primitives, 'M1.go').value, 'go1');
+  assert.equal(find(result.primitives, 'M1.ro').value, 'ro1');
 });
 
 test('three-terminal MOS uses implicit VSS/VDD while four-terminal MOS uses its explicit bulk net', () => {

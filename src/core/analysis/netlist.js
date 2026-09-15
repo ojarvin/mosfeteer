@@ -1,3 +1,5 @@
+import { formatExpression } from './rational.js';
+
 const AC_GROUND_NAMES = new Set(['0', '@AC_GROUND', 'AC_GROUND', 'GND', 'VSS', 'VDD', 'VCM']);
 
 const KIND_ORDER = new Map([
@@ -55,8 +57,8 @@ function normalizePrimitive(primitive) {
   const control = primitive.control || {};
   const kind = normalizedKind({ kind: primitive.kind || primitive.type });
   const terminals = {
-    a: firstDefined(primitive.a, nodes.a, nodes.positive, output.a, output.positive, primitive.positive),
-    b: firstDefined(primitive.b, nodes.b, nodes.negative, output.b, output.negative, primitive.negative),
+    a: firstDefined(primitive.a, primitive.outPlus, nodes.a, nodes.positive, output.a, output.positive, primitive.positive),
+    b: firstDefined(primitive.b, primitive.outMinus, nodes.b, nodes.negative, output.b, output.negative, primitive.negative),
   };
   const controlTerminals = kind === 'vccs' ? {
     a: firstDefined(primitive.controlPlus, control.a, control.plus, control.positive),
@@ -97,8 +99,22 @@ function sortedPrimitives(primitives) {
   });
 }
 
+function rawName(value) {
+  if (value && typeof value === 'object' && value.kind) {
+    if (value.kind === 'symbol') return value.name;
+    if (value.kind === 'rational') {
+      const numeratorText = rawName(value.numerator);
+      const unitDenominator = value.denominator?.kind === 'number'
+        && value.denominator.numerator === 1n && value.denominator.denominator === 1n;
+      return unitDenominator ? numeratorText : `${numeratorText}/${rawName(value.denominator)}`;
+    }
+    return formatExpression(value);
+  }
+  return String(value);
+}
+
 function textbookName(value) {
-  const raw = String(value);
+  const raw = rawName(value);
   if (raw === '0' || raw === '@AC_GROUND') return '0';
   if (raw.includes('_{') || raw.includes('^{')) return raw;
   if (/^V[A-Za-z0-9]+$/.test(raw)) return `V_{${raw.slice(1)}}`;
@@ -107,6 +123,7 @@ function textbookName(value) {
     return `${match[1]}_{${match[2]}${match[3]}}`;
   }
   if (/^rds[A-Za-z0-9_]*$/.test(raw)) return `r_{ds${raw.slice(3)}}`;
+  if (/^ro[A-Za-z0-9_]*$/.test(raw)) return `r_{o${raw.slice(2)}}`;
   if (/^[RCL][A-Za-z0-9_]+$/.test(raw)) return `${raw[0]}_{${raw.slice(1)}}`;
   return raw;
 }
@@ -133,7 +150,7 @@ function nodeResolver(options) {
 }
 
 function parameterOf(primitive, fallback) {
-  return firstDefined(primitive.value, fallback);
+  return firstDefined(primitive.parameter, primitive.value, fallback);
 }
 
 function lineName(prefix, primitive, suffix = '') {
@@ -179,7 +196,10 @@ function describePrimitive(primitive, resolveNode) {
   if (kind === 'resistor' && primitive.metadata?.model === 'triode') {
     return { kind: 'triode-resistance', id: primitiveId(primitive), line: branchLine('RDS', primitive, a, b, parameterOf(primitive, 'rds')), notes: [] };
   }
-  if (kind === 'resistor' && primitive.metadata?.model !== 'triode') {
+  if (kind === 'resistor' && primitive.metadata?.device === 'mos') {
+    return { kind, id: primitiveId(primitive), line: branchLine('RO', primitive, a, b, parameterOf(primitive, 'ro')), notes: [] };
+  }
+  if (kind === 'resistor') {
     return { kind, id: primitiveId(primitive), line: branchLine('R', primitive, a, b, parameterOf(primitive, 'R')), notes: [] };
   }
   if (kind === 'capacitor') {

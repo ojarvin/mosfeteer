@@ -3,14 +3,16 @@ import { createRationalOps } from './algebra-ops.js';
 import { buildExactAnalysisPipeline } from './pipeline.js';
 import { presentDiagnostics } from './diagnostics.js';
 import { describeSmallSignalNetlist } from './netlist.js';
-import { extractSmallSignalQueries } from './queries.js';
 import { analyzeResponse } from './response.js';
 import {
   integer,
   rational,
   rationalFunction,
+  substituteRational,
 } from './rational.js';
 import {
+  equivalenceTable,
+  provenParallel,
   renderQuantityEquation,
   renderRootEquation,
   infinity,
@@ -127,13 +129,17 @@ function normaliseOptions(options, circuit, symbolic, ops) {
       id: component.refdes,
       gm: `gm${suffix}`,
       gmb: `gmb${suffix}`,
-      go: `go${suffix}`,
+      ro: `ro${suffix}`,
       highIntrinsicGain: Boolean(intrinsic),
       gmb0: Boolean(body),
       roInfinity: Boolean(output),
-      // Scale gm, gmb, and go together for a valid intrinsic-gain limit.
-      // Keeping the names explicit also lets the reducer retain body effect.
-      scaling: { symbols: { [`gm${suffix}`]: 1, [`gmb${suffix}`]: 1, [`go${suffix}`]: -1 } },
+      // g_m r_o >> 1 only declares the gm*ro PRODUCT large relative to a bare
+      // constant (dropping a "+1" beside it); r_o itself keeps degree 0, so a
+      // finite r_o added to or paralleled with an unrelated symbol like R_D
+      // is never discarded — that would silently assume r_o -> infinity,
+      // a separate, off-by-default assumption. Only scaling gm/gmb here (not
+      // ro) is what makes any product containing gm dominate a gm-free term.
+      scaling: { symbols: { [`gm${suffix}`]: 1, [`gmb${suffix}`]: 1 } },
       ...(devices[component.refdes] || {}),
     };
   }
@@ -168,84 +174,6 @@ function makeEngineOps(options) {
   return { ops, symbolic: !options.ops };
 }
 
-function solutionForQueries(pipeline, ops) {
-  const outputBranch = `I(${pipeline.excitations.output.name})`;
-  const columns = pipeline.solution.columns.map((column, index) => [
-    ...column,
-    index === 1 ? ops.one : ops.zero,
-  ]);
-  return {
-    ...pipeline.solution,
-    variables: [...pipeline.solution.variables, outputBranch],
-    columns,
-    values: columns,
-    solution: columns,
-    rhsCount: columns.length,
-  };
-}
-
-function queryMetadata(pipeline) {
-  const inputNode = `V(${pipeline.context.input.node})`;
-  const outputNode = `V(${pipeline.context.output.node})`;
-  return {
-    inputDrive: {
-      rhsColumn: 0,
-      voltageUnknown: inputNode,
-      currentUnknown: `I(${pipeline.excitations.input.name})`,
-      currentSign: -1,
-    },
-    output: { voltageUnknown: outputNode },
-    outputTest: {
-      rhsColumn: 1,
-      inputZeroed: true,
-      voltageUnknown: outputNode,
-      currentUnknown: `I(${pipeline.excitations.output.name})`,
-      currentSign: 1,
-    },
-  };
-}
-
-function exactQueries(pipeline, ops) {
-  const extracted = extractSmallSignalQueries(solutionForQueries(pipeline, ops), queryMetadata(pipeline), { ops });
-  const direct = pipeline.queries;
-  if (!extracted.ok) {
-    // An ideal open input has zero drive current, so the generic ratio helper
-    // intentionally rejects Zin. The pipeline's direct query still carries
-    // the valid infinity result for that case.
-    const directValues = {
-      Av: direct.transfer?.value,
-      Zin: direct.inputImpedance?.value,
-      Zout: direct.outputImpedance?.value,
-    };
-    if (Object.values(directValues).some((value) => value === undefined)) return extracted;
-    return {
-      ...extracted,
-      ok: true,
-      values: directValues,
-      direct: {
-        transfer: direct.transfer?.value,
-        inputImpedance: direct.inputImpedance?.value,
-        outputImpedance: direct.outputImpedance?.value,
-      },
-      fallback: 'pipeline-direct-query',
-    };
-  }
-  const values = {
-    Av: extracted.av.value,
-    Zin: extracted.zin.value,
-    Zout: extracted.zout.value,
-  };
-  return {
-    ...extracted,
-    values,
-    direct: {
-      transfer: values.Av,
-      inputImpedance: values.Zin,
-      outputImpedance: values.Zout,
-    },
-  };
-}
-
 function responseOptions(options) {
   return {
     variable: options.variable || 's',
@@ -260,6 +188,58 @@ function renderRoot(root, kind, index, options) {
   }
   if (!root.root?.kind) return `${kind}_{${index}}: roots of the reported polynomial`;
   return renderRootEquation(kind, index, root.root, options);
+}
+
+function combineParallel(values, ops) {
+  return values.reduce((left, right) => (
+    left === null ? right : ops.div(ops.mul(left, right), ops.add(left, right))
+  ), null);
+}
+
+function dcLimitOf(value, variable) {
+  try {
+    const limit = substituteRational(value, new Map([[variable, integer(0)]]), { variable });
+    return limit.kind === 'infinity' ? null : limit;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Turn each `reduce.js` parallel-merge proof into `present.js` equivalences
+ * for every form that might actually get displayed: the exact AC value (as
+ * solved), the same branches reduced under whichever assumptions are
+ * selected (e.g. `g_m r_o >> 1`) and recombined — the textbook default `A_v`/
+ * `Z_in`/`Z_out` equation comes from one leading-term reduction of the
+ * *whole* expression, which generally does not preserve this factored
+ * structure, so without this the `\|` only ever showed up on the exact row
+ * — and each of those at `s=0` for the DC-limit row, dropping any branch
+ * that's an open circuit at DC (a capacitor) rather than trying to combine
+ * an infinite impedance in parallel with the rest.
+ */
+function buildParallelEquivalenceProofs(networkReductionProofs, approximationOptions, ops) {
+  const variable = ops.variable || 's';
+  return (networkReductionProofs || []).flatMap(({ impedance, operands }) => {
+    const proofs = [provenParallel(impedance, ...operands)];
+    const dcOperands = operands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
+    if (dcOperands.length >= 2) {
+      const dcCombined = combineParallel(dcOperands, ops);
+      if (dcCombined) proofs.push(provenParallel(dcCombined, ...dcOperands));
+    }
+    try {
+      const reducedOperands = operands.map((operand) => applyApproximations(operand, approximationOptions).selected);
+      const combined = combineParallel(reducedOperands, ops);
+      if (combined) proofs.push(provenParallel(combined, ...reducedOperands));
+      const reducedDcOperands = reducedOperands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
+      if (reducedDcOperands.length >= 2) {
+        const reducedDcCombined = combineParallel(reducedDcOperands, ops);
+        if (reducedDcCombined) proofs.push(provenParallel(reducedDcCombined, ...reducedDcOperands));
+      }
+    } catch {
+      // Leave whichever proofs already built if the reduced form fails.
+    }
+    return proofs;
+  });
 }
 
 function displayResponse(name, exact, approximation, options) {
@@ -290,6 +270,8 @@ function displayResponse(name, exact, approximation, options) {
     poles: selected.poles,
     zeros: selected.zeros,
     equations: [ac?.equation, dc.equation].filter(Boolean),
+    ...(options.equivalence ? { equivalence: options.equivalence } : {}),
+    ...(options.equivalences ? { equivalences: options.equivalences } : {}),
   };
 }
 
@@ -431,21 +413,20 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   if (!pipeline.ok) return failureReport(pipeline, normalized);
   if (ops.budget?.exceeded) return budgetFailureReport('exact solve', ops.budget, analysisOptions);
 
-  const queries = exactQueries(pipeline, ops);
+  const queries = pipeline.queries;
   if (ops.budget?.exceeded) return budgetFailureReport('query extraction', ops.budget, analysisOptions);
-  if (!queries.ok) return failureReport({
+  const values = {
+    Av: queries?.transfer?.value,
+    Zin: queries?.inputImpedance?.value,
+    Zout: queries?.outputImpedance?.value,
+  };
+  if (Object.values(values).some((value) => value === undefined)) return failureReport({
     ...pipeline,
     stage: 'queries',
-    error: queries.diagnostics.map(({ error, message }) => error || message).join('; '),
+    error: 'pipeline query results are incomplete',
     queries,
   }, normalized);
 
-  const exact = {};
-  for (const [name, value] of Object.entries(queries.values)) {
-    exact[name] = canonicalResponseValue(value, responseOptions(analysisOptions));
-    if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
-  }
-  if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
   const approximationOptions = {
     ...analysisOptions,
     parameters: analysisOptions.parameters || {},
@@ -454,6 +435,16 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
       ...(ops.budget ? { budget: ops.budget } : {}),
     },
   };
+
+  const equivalences = equivalenceTable(buildParallelEquivalenceProofs(pipeline.networkReductionProofs, approximationOptions, ops));
+  const withEquivalences = (options) => ({ ...options, equivalences });
+
+  const exact = {};
+  for (const [name, value] of Object.entries(values)) {
+    exact[name] = canonicalResponseValue(value, withEquivalences(responseOptions(analysisOptions)));
+    if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
+  }
+  if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
   const approximations = {};
   for (const [name, response] of Object.entries(exact)) {
     approximations[name] = response.expression?.kind === 'infinity'
@@ -462,12 +453,22 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
   }
   const displayed = {
-    transfer: displayResponse('Av', exact.Av.expression, approximations.Av, responseOptions(analysisOptions)),
-    input: displayResponse('Zin', exact.Zin.expression, approximations.Zin, responseOptions(analysisOptions)),
-    output: displayResponse('Zout', exact.Zout.expression, approximations.Zout, responseOptions(analysisOptions)),
+    transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions))),
+    input: displayResponse('Zin', exact.Zin.expression, approximations.Zin, withEquivalences({
+      ...responseOptions(analysisOptions),
+      ...(queries.inputImpedance.equivalence ? { equivalence: queries.inputImpedance.equivalence } : {}),
+    })),
+    output: displayResponse('Zout', exact.Zout.expression, approximations.Zout, withEquivalences({
+      ...responseOptions(analysisOptions),
+      ...(queries.outputImpedance.equivalence ? { equivalence: queries.outputImpedance.equivalence } : {}),
+    })),
   };
   if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
-  const assumptions = unique(Object.values(approximations).flatMap(({ assumptions: values }) => values));
+  const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
+  const assumptions = unique([
+    ...millerAssumptions,
+    ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
+  ]);
   const transfer = displayed.transfer.response;
   const roots = rootRows(transfer, responseOptions(analysisOptions));
   if (ops.budget?.exceeded) return budgetFailureReport('pole and zero extraction', ops.budget, analysisOptions);

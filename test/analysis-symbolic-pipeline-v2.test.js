@@ -163,39 +163,40 @@ test('reports an RL high-pass origin zero through the production response reduce
   assertExpression(response.zeros[0].root, integer(0), 'RL zero at the origin');
 });
 
-test('keeps finite-go NMOS common-source polarity and output loading exact', () => {
+test('keeps finite-ro NMOS common-source polarity and output loading exact', () => {
   const { responses } = symbolicPipeline('nmos-common-source');
   const gm1 = symbol('gm1');
-  const go1 = symbol('go1');
+  const ro1 = symbol('ro1');
   const RD = symbol('RD');
-  const outputDenominator = add(one, multiply(go1, RD));
-  assertRational(responses.Av.expression, rationalFunction(multiply(integer(-1), gm1, RD), outputDenominator), 'NMOS common-source Av');
-  assertRational(responses.Zout.expression, rationalFunction(RD, outputDenominator), 'NMOS common-source Zout');
+  const outputDenominator = add(RD, ro1);
+  assertRational(responses.Av.expression, rationalFunction(multiply(integer(-1), gm1, RD, ro1), outputDenominator), 'NMOS common-source Av');
+  assertRational(responses.Zout.expression, rationalFunction(multiply(RD, ro1), outputDenominator), 'NMOS common-source Zout');
 });
 
 test('combines NMOS and PMOS transconductors with the inverter sign', () => {
   const { responses } = symbolicPipeline('cmos-inverter');
   const gm1 = symbol('gm1');
   const gm2 = symbol('gm2');
-  const go1 = symbol('go1');
-  const go2 = symbol('go2');
+  const ro1 = symbol('ro1');
+  const ro2 = symbol('ro2');
+  const denominator = add(ro1, ro2);
   assertRational(
     responses.Av.expression,
-    rationalFunction(multiply(integer(-1), add(gm1, gm2)), add(go1, go2)),
+    rationalFunction(multiply(integer(-1), ro1, ro2, add(gm1, gm2)), denominator),
     'CMOS inverter Av',
   );
-  assertRational(responses.Zout.expression, rationalFunction(one, add(go1, go2)), 'CMOS inverter Zout');
+  assertRational(responses.Zout.expression, rationalFunction(multiply(ro1, ro2), denominator), 'CMOS inverter Zout');
 });
 
 test('retains source-follower body effect in the exact symbolic transfer', () => {
   const { transfer, ops, primitives } = oneInputTransfer(sourceFollower());
   const gm1 = symbol('gm1');
   const gmb1 = symbol('gmb1');
-  const go1 = symbol('go1');
+  const ro1 = symbol('ro1');
   const RS = symbol('RS');
   const expected = rationalFunction(
-    multiply(RS, gm1),
-    add(one, multiply(RS, add(gm1, gmb1, go1))),
+    multiply(RS, gm1, ro1),
+    add(multiply(RS, add(multiply(ro1, add(gm1, gmb1)), one)), ro1),
   );
   assertRational(transfer, expected, 'source-follower Av');
   const gmb = primitives.find(({ id }) => id === 'M1.gmb');
@@ -208,44 +209,43 @@ test('retains source-follower body effect in the exact symbolic transfer', () =>
 test('applies gmb=0 after solving without changing the source-follower topology', () => {
   const { transfer } = oneInputTransfer(sourceFollower());
   const result = applyApproximations(transfer, {
-    parameters: { M1: { gm: 'gm1', gmb: 'gmb1', go: 'go1' } },
+    parameters: { M1: { gm: 'gm1', gmb: 'gmb1', ro: 'ro1' } },
     global: { gmb0: true },
   });
   const expected = rationalFunction(
-    multiply(symbol('RS'), symbol('gm1')),
-    add(one, multiply(symbol('RS'), add(symbol('gm1'), symbol('go1')))),
+    multiply(symbol('RS'), symbol('gm1'), symbol('ro1')),
+    add(multiply(symbol('RS'), add(multiply(symbol('gm1'), symbol('ro1')), one)), symbol('ro1')),
   );
   assertRational(result.selected, expected, 'source-follower gmb=0');
   assert.deepEqual(result.assumptions, ['g_mb = 0 (M1)']);
 });
 
 test('gives r_o infinity precedence over high-intrinsic-gain reduction', () => {
-  const exact = rationalFunction(add(symbol('go1'), symbol('gmb1'), symbol('gm1')));
+  const exact = rationalFunction(add(symbol('ro1'), symbol('gmb1'), symbol('gm1')));
   const result = applyApproximations(exact, {
-    parameters: { M1: { gm: 'gm1', gmb: 'gmb1', go: 'go1' } },
+    parameters: { M1: { gm: 'gm1', gmb: 'gmb1', ro: 'ro1' } },
     global: { gmb0: true, roInfinity: true, highIntrinsicGain: true },
   });
-  assertRational(result.selected, rationalFunction(symbol('gm1')));
+  assertRational(result.selected, rationalFunction(symbol('ro1')));
   assert.deepEqual(result.assumptions, ['g_mb = 0 (M1)', 'r_o -> infinity (M1)']);
   assert.equal(result.assumptions.some((entry) => entry.includes('g_m r_o')), false);
 });
 
 test('does not let a disconnected reactive island change the selected port solve', () => {
   const { responses, report } = symbolicPipeline('disconnected-reactive-island');
-  const gm1 = symbol('gm1');
-  const go1 = symbol('go1');
+  const ro1 = symbol('ro1');
   const RD = symbol('RD');
   assert.equal(report.coupled.primitives.some(({ component }) => component === 'CISO'), false);
-  assertRational(responses.Zout.expression, rationalFunction(RD, add(one, multiply(go1, RD))), 'isolated-island Zout');
+  assertRational(responses.Zout.expression, rationalFunction(multiply(RD, ro1), add(RD, ro1)), 'isolated-island Zout');
 });
 
 test('preserves exact identities in the pivot-row cross-coupled topology', () => {
   const { responses } = symbolicPipeline('pivot-cross-coupled-pair');
   const gm1 = symbol('gm1');
   const gm2 = symbol('gm2');
-  const go1 = symbol('go1');
-  const go2 = symbol('go2');
-  assertRational(responses.Av.expression, rationalFunction(multiply(integer(-1), gm1), go1), 'pivot Av');
-  assertRational(responses.Zin.expression, rationalFunction(go1, add(multiply(integer(-1), gm1, gm2), multiply(go1, go2))), 'pivot Zin');
-  assertRational(responses.Zout.expression, rationalFunction(one, go1), 'pivot Zout');
+  const ro1 = symbol('ro1');
+  const ro2 = symbol('ro2');
+  assertRational(responses.Av.expression, rationalFunction(multiply(integer(-1), gm1, ro1)), 'pivot Av');
+  assertRational(responses.Zin.expression, rationalFunction(ro2, add(multiply(integer(-1), gm1, gm2, ro1, ro2), one)), 'pivot Zin');
+  assertRational(responses.Zout.expression, rationalFunction(ro1), 'pivot Zout');
 });

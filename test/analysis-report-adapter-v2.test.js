@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Circuit } from '../src/core/model.js';
+import { analyzeSmallSignalV2 } from '../src/core/analysis/engine.js';
 import { adaptCombinedReport } from '../src/core/analysis/report-adapter.js';
 import { add, integer, multiply, rationalFunction, symbol } from '../src/core/analysis/rational.js';
 import { analyzeResponse } from '../src/core/analysis/response.js';
@@ -91,7 +93,7 @@ test('maps reactive responses, DC limits, and zero-based roots', () => {
   assert.equal(report.reports.transfer.frequencyResponse.poles[0].equation, 'p_{0} = -\\frac{1}{C \\, R}');
   assert.deepEqual(report.equationOrder, [
     'AC input impedance', 'DC input impedance', 'DC output impedance',
-    'AC voltage transfer', 'DC gain', 'Poles',
+    'AC gain', 'DC gain', 'Poles',
   ]);
 });
 
@@ -128,6 +130,30 @@ test('maps a singular combined report into three explicit failures', () => {
   assert.equal(report.reports.transfer.stage, 'solve');
   assert.deepEqual(report.reports.transfer.equations, ['0 = 1']);
   assert.deepEqual(report.reports.transfer.log, ['pivot failed']);
+});
+
+test('carries network-pre-reduction parallel notation through to the legacy shape the GUI actually renders', () => {
+  // web/main.js calls exactly this combination — adaptCombinedReport() has
+  // its own, separate equation-rendering path from engine.js's own report
+  // fields, and previously threaded neither the single `equivalence` nor
+  // the `equivalences` table into it, so `\|` never reached the app despite
+  // being present on `analyzeSmallSignalV2`'s own return value.
+  const circuit = new Circuit();
+  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
+  circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
+  circuit.connect('IN.p', 'M1.g');
+  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('M1.s', 'RD.b', 'GND.gnd');
+
+  const v2 = analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p' });
+  assert.equal(v2.ok, true, v2.error);
+  const legacy = adaptCombinedReport(v2);
+  assert.equal(legacy.dcOutputImpedance.equation, 'Z_{out}(0) = r_{o1} \\parallel R_{D}');
+  const outputEntry = legacy.equationEntries.find(({ title }) => title === 'DC output impedance');
+  assert.equal(outputEntry.result.equation, 'Z_{out}(0) = r_{o1} \\parallel R_{D}');
 });
 
 test('does not mutate the v2 report while producing the legacy shape', () => {

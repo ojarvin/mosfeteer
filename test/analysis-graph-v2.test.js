@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AC_GROUND } from '../src/core/analysis/context.js';
-import { coupledSubgraph } from '../src/core/analysis/graph.js';
+import { coupledSubgraph, splitAtNode } from '../src/core/analysis/graph.js';
 
 const p = (kind, id, a, b, value = 1, control) => ({
   kind, id, terminals: { a, b }, value,
@@ -19,6 +19,32 @@ test('disconnected RLC islands are excluded while ground does not bridge islands
   assert.deepEqual(result.primitiveIndices, [0]);
   assert.deepEqual(result.nodeOrder, ['IN']);
   assert.deepEqual([...result.nodes], ['IN']);
+});
+
+test('independent current sources do not couple an attached island', () => {
+  const primitives = [
+    p('resistor', 'R1', 'IN', 'OUT'),
+    p('current-source', 'IISO', 'OUT', 'ISO'),
+    p('resistor', 'RISO', 'ISO', AC_GROUND),
+  ];
+  const result = coupledSubgraph(primitives, ['IN']);
+  assert.deepEqual(result.primitiveIndices, [0]);
+  assert.deepEqual(result.nodeOrder, ['IN', 'OUT']);
+});
+
+test('zero-admittance branches and s=0 capacitors do not couple islands', () => {
+  const primitives = [
+    p('resistor', 'R1', 'IN', 'OUT'),
+    p('conductance', 'G0', 'OUT', 'G_ISO', 0),
+    p('capacitor', 'C0', 'OUT', 'C_ISO', 0),
+    p('resistor', 'RG', 'G_ISO', AC_GROUND),
+    p('resistor', 'RC', 'C_ISO', AC_GROUND),
+    p('capacitor', 'CS', 'OUT', 'S_ISO', { kind: 'symbol', name: 'sC' }),
+    p('resistor', 'RS', 'S_ISO', AC_GROUND),
+  ];
+  const result = coupledSubgraph(primitives, ['IN']);
+  assert.deepEqual(result.primitiveIndices, [0, 5, 6]);
+  assert.deepEqual(result.nodeOrder, ['IN', 'OUT', 'S_ISO']);
 });
 
 test('controlled sources couple output and every control dependency', () => {
@@ -72,4 +98,53 @@ test('graph ordering follows primitive order and uses linear queue traversal', (
   const result = coupledSubgraph(primitives, ['A']);
   assert.deepEqual(result.primitiveIndices, [0, 1, 2]);
   assert.deepEqual(result.nodeOrder, ['A', 'B', 'C', 'D']);
+});
+
+test('splitAtNode separates two branches joined only at the boundary node', () => {
+  const primitives = [
+    p('resistor', 'R1', 'A', 'OUT'),
+    p('resistor', 'R2', 'A', AC_GROUND),
+    p('resistor', 'R3', 'B', 'OUT'),
+    p('resistor', 'R4', 'B', AC_GROUND),
+  ];
+  const split = splitAtNode(primitives, 'OUT');
+  assert.equal(split.components.length, 2);
+  assert.deepEqual(split.shunts, []);
+  const groups = split.components.map(({ primitiveIndices }) => [...primitiveIndices].sort());
+  assert.deepEqual(groups.sort(), [[0, 1], [2, 3]]);
+  assert.equal(split.componentOf('OUT'), null);
+  assert.notEqual(split.componentOf('A'), split.componentOf('B'));
+});
+
+test('splitAtNode refuses a split when a controlled source crosses branches', () => {
+  const primitives = [
+    p('resistor', 'R1', 'A', 'OUT'),
+    p('resistor', 'R2', 'A', AC_GROUND),
+    p('resistor', 'R3', 'B', 'OUT'),
+    p('resistor', 'R4', 'B', AC_GROUND),
+    p('vccs', 'GX', 'A', AC_GROUND, 1, ['B', AC_GROUND]),
+  ];
+  assert.equal(splitAtNode(primitives, 'OUT'), null);
+});
+
+test('splitAtNode reports a direct node-to-ground shunt separately', () => {
+  const primitives = [
+    p('resistor', 'R1', 'A', 'OUT'),
+    p('resistor', 'R2', 'A', AC_GROUND),
+    p('resistor', 'R3', 'B', 'OUT'),
+    p('resistor', 'R4', 'B', AC_GROUND),
+    p('resistor', 'RSHUNT', 'OUT', AC_GROUND),
+  ];
+  const split = splitAtNode(primitives, 'OUT');
+  assert.equal(split.components.length, 2);
+  assert.deepEqual(split.shunts, [4]);
+});
+
+test('splitAtNode returns null when the node is not an articulation point', () => {
+  const primitives = [
+    p('resistor', 'R1', 'A', 'OUT'),
+    p('resistor', 'R2', 'A', 'B'),
+    p('resistor', 'R3', 'B', 'OUT'),
+  ];
+  assert.equal(splitAtNode(primitives, 'OUT'), null);
 });

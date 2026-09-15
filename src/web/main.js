@@ -13,7 +13,8 @@
 import { Circuit, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
-import { analyzeInputImpedance, analyzeOutputImpedance, analyzeTransferFunction, expressionHasFrequency } from '../core/analysis/index.js';
+import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
+import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { svgString, editorOverlay } from '../core/render.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -26,7 +27,8 @@ import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, comple
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { componentPaletteItems, editorKeymapText, layerActionForKey, naturalCompare } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
-import { analysisFormDefaults, analysisFormStorageKey, pruneAnalysisModelValues, pruneAnalysisNetValues } from './analysis-state.js';
+import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
+import { analysisFormDefaults, analysisFormStorageKey, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { constrainAxis, isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
@@ -84,22 +86,14 @@ const helpSearch = document.getElementById('help-search');
 const analysisDialog = document.getElementById('analysis-dialog');
 const analysisForm = document.getElementById('analysis-form');
 const analysisTarget = document.getElementById('analysis-target');
-const analysisKind = document.getElementById('analysis-kind');
 const analysisReference = document.getElementById('analysis-reference');
-const analysisMode = document.getElementById('analysis-mode');
 const analysisInput = document.getElementById('analysis-input');
-const analysisInputField = document.getElementById('analysis-input-field');
-const analysisComplementary = document.getElementById('analysis-complementary');
-const analysisComplementaryField = document.getElementById('analysis-complementary-field');
 const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
-const analysisModels = document.getElementById('analysis-models');
-const analysisContext = document.getElementById('analysis-context');
+const analysisDeviceRegions = document.getElementById('analysis-device-regions');
 const analysisApproxRo = document.getElementById('analysis-approx-ro');
 const analysisApproxBody = document.getElementById('analysis-approx-body');
 const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
-const analysisApproxMiller = document.getElementById('analysis-approx-miller');
 const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
-const analysisApproxCascode = document.getElementById('analysis-approx-cascode');
 const analysisResult = document.getElementById('analysis-result');
 const analysisEquation = document.getElementById('analysis-equation');
 const analysisDetails = document.getElementById('analysis-details');
@@ -6425,19 +6419,6 @@ function fillAnalysisDialog(targetNetId) {
     }
     if (defaults.input) analysisInput.value = defaults.input;
   }
-  if (analysisComplementary) {
-    analysisComplementary.replaceChildren();
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = 'Choose a quiet-side net (optional)';
-    analysisComplementary.appendChild(none);
-    for (const net of nets) {
-      const option = document.createElement('option');
-      option.value = net.id;
-      option.textContent = analysisNetText(net);
-      analysisComplementary.appendChild(option);
-    }
-  }
   return defaults;
 }
 
@@ -6459,26 +6440,41 @@ function clearLatestAnalysisResult() {
   if (analysisAnnotate) analysisAnnotate.hidden = true;
 }
 
+function analysisFormOptions() {
+  return normalizeAnalysisOptions({
+    neglectBodyEffect: !!analysisApproxBody?.checked,
+    highIntrinsicGain: !!analysisApproxGmRo?.checked,
+    neglectChannelLengthModulation: !!analysisApproxRo?.checked,
+    dominantPole: !!analysisApproxDominantPole?.checked,
+    deviceRegions: analysisDeviceRegions?.value || '',
+  });
+}
+
 function analysisFormValues() {
+  const { deviceRegions = {}, ...options } = analysisFormOptions();
   return {
-    kind: analysisKind?.value || 'output-impedance',
-    target: analysisTarget?.value || '',
-    reference: analysisReference?.value || '',
-    mode: analysisMode?.value || 'single-ended',
     input: analysisInput?.value || '',
-    differentialSide: analysisComplementary?.value || '',
+    output: analysisTarget?.value || '',
+    reference: analysisReference?.value || '',
     acGrounds: analysisAcGrounds?.value || '',
-    models: analysisModels?.value || '',
-    context: analysisContext?.value || '',
-    approximationOptions: {
-      cascodeApproximation: !!analysisApproxCascode?.checked,
-      ignoreChannelLengthModulation: !!analysisApproxRo?.checked,
-      ignoreBodyEffect: !!analysisApproxBody?.checked,
-      gmroLarge: !!analysisApproxGmRo?.checked,
-      millerApproximation: !!analysisApproxMiller?.checked,
-      dominantPoleApproximation: !!analysisApproxDominantPole?.checked,
-    },
+    deviceRegions,
+    options,
   };
+}
+
+function analysisDeviceOptions() {
+  const devices = {};
+  for (const component of sortedComps()) {
+    if (!['nmos', 'pmos', 'nmosb', 'pmosb'].includes(component.type)) continue;
+    const source = component.analysis || {};
+    const options = {};
+    if (typeof source.ignoreBodyEffect === 'boolean') options.neglectBodyEffect = source.ignoreBodyEffect;
+    if (typeof source.gmroLarge === 'boolean') options.highIntrinsicGain = source.gmroLarge;
+    if (source.channelLengthModulation === 'ignore') options.neglectChannelLengthModulation = true;
+    if (source.channelLengthModulation === 'finite') options.neglectChannelLengthModulation = false;
+    if (Object.keys(options).length) devices[component.refdes] = options;
+  }
+  return devices;
 }
 
 function migrateAnalysisFormStorage(previousName, nextName) {
@@ -6500,97 +6496,37 @@ function restoreAnalysisForm(defaults = {}) {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(currentCircuitName)) || 'null'); } catch { /* storage unavailable */ }
   if (!saved) {
-    // A new schematic starts with the useful textbook simplifications enabled;
-    // r_o → ∞ remains opt-in.
+    const options = analysisOptionDefaults();
     if (analysisReference) analysisReference.value = '';
-    if (analysisMode) analysisMode.value = 'single-ended';
-    if (analysisComplementary) analysisComplementary.value = '';
     if (analysisAcGrounds) analysisAcGrounds.value = '';
-    if (analysisModels) analysisModels.value = '';
-    if (analysisContext) analysisContext.value = '';
-    if (analysisApproxRo) analysisApproxRo.checked = false;
-    if (analysisApproxBody) analysisApproxBody.checked = true;
-    if (analysisApproxGmRo) analysisApproxGmRo.checked = true;
-    if (analysisApproxMiller) analysisApproxMiller.checked = true;
-    if (analysisApproxDominantPole) analysisApproxDominantPole.checked = false;
-    if (analysisApproxCascode) analysisApproxCascode.checked = true;
+    if (analysisDeviceRegions) analysisDeviceRegions.value = '';
+    if (analysisApproxRo) analysisApproxRo.checked = options.neglectChannelLengthModulation;
+    if (analysisApproxBody) analysisApproxBody.checked = options.neglectBodyEffect;
+    if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
+    if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
     return false;
   }
+  const { state, diagnostics } = migrateAnalysisFormState(saved);
+  for (const diagnostic of diagnostics) logLine(diagnostic.message, diagnostic.severity === 'error' ? 'error' : 'status');
   const setSelect = (el, value, force = false) => {
     if (!el || !value || ![...el.options].some((option) => option.value === value)) return;
     if (!force && value === '') return;
     el.value = value;
   };
-  setSelect(analysisKind, saved.kind);
-  // An explicit net role is schematic metadata and must win over a stale or
-  // previously chosen target from this document's older topology.
-  setSelect(analysisTarget, defaults.targetMarked ? defaults.target : saved.target);
-  setSelect(analysisReference, saved.reference);
-  setSelect(analysisMode, saved.mode);
-  setSelect(analysisInput, defaults.inputMarked ? defaults.input : saved.input);
-  setSelect(analysisComplementary, saved.differentialSide);
-  if (analysisAcGrounds && typeof saved.acGrounds === 'string') analysisAcGrounds.value = pruneAnalysisNetValues(saved.acGrounds, visibleNets());
-  if (analysisModels && typeof saved.models === 'string') {
-    analysisModels.value = pruneAnalysisModelValues(saved.models, sortedComps().map((component) => component.refdes))
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => !/=\s*current-source\s*$/i.test(value))
-      .join(', ');
+  setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
+  setSelect(analysisReference, state.reference);
+  setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
+  if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
+  if (analysisDeviceRegions) {
+    analysisDeviceRegions.value = formatAnalysisDeviceRegions(pruneAnalysisDeviceRegions(
+      state.deviceRegions,
+      sortedComps().map((component) => component.refdes),
+    ));
   }
-  if (analysisContext && typeof saved.context === 'string') analysisContext.value = saved.context;
-  const savedApproximations = saved.approximationOptions || {};
-  const approximationList = new Set(Array.isArray(saved.approximations) ? saved.approximations : []);
-  if (analysisApproxCascode) {
-    const hasSavedCascode = Object.prototype.hasOwnProperty.call(savedApproximations, 'cascodeApproximation')
-      || Object.prototype.hasOwnProperty.call(savedApproximations, 'cascodeReduction')
-      || approximationList.has('cascode') || approximationList.has('cascode-approximation') || approximationList.has('cascode-reduction');
-    analysisApproxCascode.checked = hasSavedCascode
-      ? !!(savedApproximations.cascodeApproximation || savedApproximations.cascodeReduction || approximationList.has('cascode') || approximationList.has('cascode-approximation') || approximationList.has('cascode-reduction'))
-      : true;
-  }
-  if (analysisApproxRo) {
-    const hasSavedRo = Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreChannelLengthModulation')
-      || Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreRo');
-    // Explicit modern values take precedence over saved approximation lists.
-    analysisApproxRo.checked = hasSavedRo
-      ? !!(savedApproximations.ignoreChannelLengthModulation || savedApproximations.ignoreRo)
-      : approximationList.has('ignore-channel-length-modulation');
-  }
-  if (analysisApproxBody) {
-    const hasSavedBody = Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreBodyEffect')
-      || Object.prototype.hasOwnProperty.call(savedApproximations, 'ignoreGmb')
-      || approximationList.has('ignore-body-effect');
-    analysisApproxBody.checked = hasSavedBody
-      ? !!(savedApproximations.ignoreBodyEffect || savedApproximations.ignoreGmb || approximationList.has('ignore-body-effect'))
-      : true;
-  }
-  if (analysisApproxGmRo) {
-    const hasSavedGmRo = Object.prototype.hasOwnProperty.call(savedApproximations, 'gmroLarge')
-      || Object.prototype.hasOwnProperty.call(savedApproximations, 'assumeGmRoLarge')
-      || approximationList.has('gmro-large');
-    analysisApproxGmRo.checked = hasSavedGmRo
-      ? !!(savedApproximations.gmroLarge || savedApproximations.assumeGmRoLarge || approximationList.has('gmro-large'))
-      : true;
-  }
-  if (analysisApproxMiller) {
-    const hasSavedMiller = Object.prototype.hasOwnProperty.call(savedApproximations, 'millerApproximation')
-      || Object.prototype.hasOwnProperty.call(savedApproximations, 'miller')
-      || approximationList.has('miller') || approximationList.has('miller-approximation');
-    analysisApproxMiller.checked = hasSavedMiller
-      ? !!(savedApproximations.millerApproximation || savedApproximations.miller || approximationList.has('miller') || approximationList.has('miller-approximation'))
-      : true;
-  }
-  if (analysisApproxDominantPole) {
-    analysisApproxDominantPole.checked = !!(savedApproximations.dominantPoleApproximation
-      || savedApproximations.dominantPole
-      || approximationList.has('dominant-pole')
-      || approximationList.has('dominant-pole-approximation')
-      || approximationList.has('dominant-pole-reduction'));
-  }
-  // The dialog now derives all three results from the same input/output pair.
-  // Keep the hidden kind selector persisted, but always show the input node.
-  if (analysisInputField) analysisInputField.hidden = false;
-  if (analysisComplementaryField) analysisComplementaryField.hidden = analysisMode?.value !== 'differential';
+  if (analysisApproxRo) analysisApproxRo.checked = state.options.neglectChannelLengthModulation;
+  if (analysisApproxBody) analysisApproxBody.checked = state.options.neglectBodyEffect;
+  if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
+  if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
   return true;
 }
 
@@ -6601,110 +6537,29 @@ function prefillAnalysisAttributes() {
   const groundValues = parseAnalysisList(analysisAcGrounds?.value);
   for (const value of markedGrounds) if (!groundValues.includes(value)) groundValues.push(value);
   if (analysisAcGrounds && groundValues.length) analysisAcGrounds.value = groundValues.join(', ');
-  const markedModels = sortedComps()
-    // Preserve saved current-source values; new UI actions use explicit r_o controls.
-    .filter((component) => component.analysis?.model && component.analysis.model !== 'current-source')
-    .map((component) => `${component.refdes}=${component.analysis.model}`);
-  const modelValues = parseAnalysisList(analysisModels?.value);
-  for (const value of markedModels) if (!modelValues.includes(value)) modelValues.push(value);
-  if (analysisModels && modelValues.length) analysisModels.value = modelValues.join(', ');
+  const regions = analysisFormOptions().deviceRegions || {};
+  for (const component of sortedComps()) {
+    if (component.analysis?.model === 'triode') regions[component.refdes] = { region: 'triode' };
+  }
+  if (analysisDeviceRegions) analysisDeviceRegions.value = formatAnalysisDeviceRegions(regions);
 }
 
 function analysisReportText(report) {
-  if (report?.query === 'combined') {
-    const lines = [report.complete ? 'all requested equations derived' : 'one or more requested equations unavailable'];
-    for (const { title, result } of analysisEquationEntries(report)) {
-      if (result?.ok && result.equation) lines.push(`${title}: ${result.equation}`);
-      if (result?.exactEquation && result.exactEquation !== result.equation) {
-        lines.push(`${title} before selected approximations: ${result.exactEquation}`);
-      }
-    }
-    for (const [key, child] of Object.entries(report.reports || {})) {
-      const title = key === 'input' ? 'input impedance' : key === 'output' ? 'output impedance' : 'voltage transfer';
-      if (!child.ok) lines.push(`${title}: unsupported: ${child.error || 'analysis unavailable'}`);
-      if (child.effectiveTransconductance?.equation) lines.push(`${title} effective transconductance: ${child.effectiveTransconductance.equation}`);
-      if (child.outputImpedance?.equation) lines.push(`${title} output impedance: ${child.outputImpedance.equation}`);
-      if (child.target?.name) lines.push(`${title} target: ${child.target.name}`);
-      if (child.input?.name && key !== 'input') lines.push(`${title} input: ${child.input.name}`);
-    }
-    for (const [key, child] of Object.entries(report.reports || {})) {
-      const title = key === 'input' ? 'input impedance' : key === 'output' ? 'output impedance' : 'voltage transfer';
-      for (const assumption of child.assumptions || []) lines.push(`${title} assumption: ${assumption}`);
-      for (const approximation of child.approximations || []) lines.push(`${title} approximation: ${approximation}`);
-    }
-    return lines.join('\n');
-  }
-  const lines = [report.ok ? report.equation : `unsupported: ${report.error}`];
-  for (const { title, result } of analysisEquationEntries(report)) {
-    if (result?.equation && result.equation !== report.equation) lines.push(`${title}: ${result.equation}`);
+  const lines = [report?.complete ? 'All equations derived.' : report?.error || 'Some equations are unavailable.'];
+  for (const { title, result } of report?.equationEntries || []) {
+    if (result?.equation) lines.push(`${title}: ${result.equation}`);
     if (result?.exactEquation && result.exactEquation !== result.equation) {
-      lines.push(`${title} before selected approximations: ${result.exactEquation}`);
+      lines.push(`${title}, exact: ${result.exactEquation}`);
     }
   }
-  if (report.exactEquation && report.exactEquation !== report.equation) lines.push(`before selected approximations: ${report.exactEquation}`);
-  if (report.effectiveTransconductance?.equation) lines.push(`effective transconductance: ${report.effectiveTransconductance.equation}`);
-  if (report.outputImpedance?.equation) lines.push(`output impedance: ${report.outputImpedance.equation}`);
-  if (report.systematicEquation && report.systematicEquation !== report.equation) lines.push(`systematic: ${report.systematicEquation}`);
-  if (report.target?.name) lines.push(`target: ${report.target.name}`);
-  if (report.input?.name) lines.push(`input: ${report.input.name}`);
-  if (report.reference?.name) lines.push(`reference: ${report.reference.name}${report.reference.inferred ? ' (inferred)' : ''}`);
-  if (report.dependencies?.length) lines.push(`depends on: ${report.dependencies.join(', ')}`);
-  if (Number.isFinite(report.equationCount)) lines.push(`node system: ${report.equationCount} equations, ${report.unknownCount} unknowns`);
-  for (const equation of report.nodeEquations || report.equations || []) lines.push(`node: ${equation}`);
-  for (const assumption of report.assumptions || []) lines.push(`assumption: ${assumption}`);
-  for (const approximation of report.approximations || []) lines.push(`approximation: ${approximation}`);
+  for (const assumption of report?.assumptions || []) lines.push(`Assumption: ${assumption}`);
+  const log = Array.isArray(report?.log) ? report.log.join('\n') : String(report?.log || '').trim();
+  if (log) lines.push(log);
   return lines.join('\n');
 }
 
-function analysisHasReactiveFinalForms(report) {
-  return report?.frequencyResponse?.hasFrequency === true
-    || [report?.expression, report?.acTransfer?.expression].some(expressionHasFrequency);
-}
-
-function analysisEquationEntries(report, includeEmptyRoots = false) {
-  const entries = [];
-  const add = (title, result) => {
-    if (result) entries.push({ title, result });
-  };
-  const roots = (frequency) => {
-    if (!frequency) return;
-    for (const [title, values] of [['Poles', frequency.poles], ['Zeros', frequency.zeros]]) {
-      if (values?.length) add(title, { ok: true, equation: values.map((root) => root.equation).join('\n') });
-      else if (includeEmptyRoots) add(title, { ok: true, equation: 'none' });
-    }
-  };
-
-  if (report?.query === 'combined') {
-    const input = report.reports?.input;
-    const output = report.reports?.output;
-    const transfer = report.reports?.transfer;
-    const reactiveTransfer = analysisHasReactiveFinalForms(transfer);
-    if (analysisHasReactiveFinalForms(input)) add('AC input impedance', input);
-    add('DC input impedance', transfer?.dcInputImpedance || input?.dcInputImpedance);
-    if (analysisHasReactiveFinalForms(output)) add('AC output impedance', output);
-    add('DC output impedance', transfer?.dcOutputImpedance || output?.dcOutputImpedance);
-    if (reactiveTransfer) add('AC voltage transfer', transfer?.acTransfer);
-    add('DC gain', transfer?.dcGain);
-    roots(reactiveTransfer ? transfer?.frequencyResponse : null);
-    return entries;
-  }
-
-  const kind = report?.query;
-  if (kind === 'input-impedance') {
-    if (analysisHasReactiveFinalForms(report)) add('AC input impedance', report);
-    add('DC input impedance', report.dcInputImpedance);
-  } else if (kind === 'output-impedance') {
-    if (analysisHasReactiveFinalForms(report)) add('AC output impedance', report);
-    add('DC output impedance', report.dcOutputImpedance);
-  } else {
-    const reactive = analysisHasReactiveFinalForms(report);
-    if (reactive) add('AC voltage transfer', report.acTransfer);
-    add('DC input impedance', report.dcInputImpedance);
-    add('DC output impedance', report.dcOutputImpedance);
-    add('DC gain', report.dcGain);
-    roots(reactive ? report.frequencyResponse : null);
-  }
-  return entries;
+function analysisEquationEntries(report) {
+  return Array.isArray(report?.equationEntries) ? report.equationEntries : [];
 }
 
 function analysisAnnotationEntries(report) {
@@ -6743,8 +6598,9 @@ function renderAnalysisResult(report) {
   const text = analysisReportText(report);
   if (analysisEquation) {
     analysisEquation.replaceChildren();
-    if (report.query === 'combined') {
-      for (const { title, result: child } of analysisEquationEntries(report, true)) {
+    const entries = analysisEquationEntries(report);
+    if (entries.length) {
+      for (const { title, result: child } of entries) {
         const row = document.createElement('div');
         row.className = 'analysis-equation-row';
         const heading = document.createElement('div');
@@ -6765,17 +6621,13 @@ function renderAnalysisResult(report) {
         analysisEquation.appendChild(row);
       }
       analysisEquation.setAttribute('aria-label', text);
-    } else if (report.ok && report.equation) renderEquationMath(analysisEquation, report.equation);
-    else {
+    } else {
       analysisEquation.textContent = `Unsupported: ${report.error || 'analysis unavailable'}`;
       analysisEquation.removeAttribute('aria-label');
     }
   }
-  if (analysisDetails) analysisDetails.textContent = report.query === 'combined' ? text : text.split('\n').slice(1).join('\n');
-  const netlist = report.smallSignalNetlist
-    || report.reports?.output?.smallSignalNetlist
-    || report.reports?.transfer?.smallSignalNetlist
-    || report.reports?.input?.smallSignalNetlist;
+  if (analysisDetails) analysisDetails.textContent = text;
+  const netlist = report.smallSignalNetlist || '';
   if (analysisNetlistPanel) analysisNetlistPanel.hidden = !netlist;
   if (analysisNetlist) analysisNetlist.textContent = netlist || '';
   const netlistTab = document.getElementById('analysis-tab-netlist');
@@ -6783,165 +6635,18 @@ function renderAnalysisResult(report) {
     netlistTab.disabled = !netlist;
     if (!netlist && netlistTab.getAttribute('aria-selected') === 'true') setAnalysisResultTab('equations');
   }
-  // Rendering a fresh report updates the netlist panel content. Re-apply the
-  // tab selection afterward so an available netlist never leaks into the
-  // equations panel beside it; reopening the dialog still preserves the tab
-  // the user had selected.
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
   const availableTab = selectedTab === 'netlist' && netlist ? 'netlist' : selectedTab;
   setAnalysisResultTab(availableTab);
 }
 
-/** Keep the diagram annotation concise: model-construction assumptions remain
- * available in the report details, while only user-visible simplifications
- * and extra cascode reductions are promoted into the schematic. */
 function analysisAnnotationAssumptions(report) {
-  const children = report?.query === 'combined'
-    ? Object.values(report.reports || {})
-    : [report];
+  const options = report?.analysisOptions || {};
   const lines = [];
-  const seen = new Set();
-  const deviceRoInfinity = new Set();
-  const deviceRoFinite = new Set();
-  const deviceGmRoLarge = new Set();
-  const deviceGmRoFinite = new Set();
-  const deviceBodyEffectIgnored = new Set();
-  const deviceBodyEffectRetained = new Set();
-  const analyzedDeviceRefs = new Set();
-  let gmroLarge = false;
-  let roInfinity = false;
-  let bodyEffectIgnored = false;
-  let dcOnly = false;
-  let cascodeReduction = false;
-  const millerComponents = new Set();
-  const roInfinityPattern = /r(?:_|\s)*\{?o\}?\s*(?:is\s+(?:(?:treated\s+as\s+)?(?:infinite|∞|\\infty)|ignored|omitted)|(?:=|→|->|\\to)\s*(?:infinite|∞|\\infty))/i;
-  const roLimitPattern = /r(?:_|\s)*\{?o\}?\s*(?:=|→|->|\\to)\s*(?:infinite|∞|\\infty)/i;
-  for (const child of children) {
-    // The systematic model is the authoritative list of MOS devices that
-    // participated in this report.  It lets us recognize when a set of
-    // equivalent per-device r_o overrides is really a global rule.
-    for (const element of child?.smallSignalModel?.elements || []) {
-      if (element?.kind !== 'vccs' || !/^M\d+$/i.test(String(element.component || ''))) continue;
-      analyzedDeviceRefs.add(String(element.component).replace(/^M/i, ''));
-    }
-    // Each feedback impedance is stamped twice (input and output shunt). The
-    // input-side element is the canonical occurrence for the concise
-    // annotation, and its component label gives the user a useful list such
-    // as C_{gd}, R_{F}, or L_{feedback}.
-    for (const element of child?.smallSignalModel?.elements || []) {
-      if (element?.millerRole !== 'input' || !element.component) continue;
-      const component = circuit.components.get(element.component);
-      const label = circuit.labelOf(element.component);
-      millerComponents.add(label?.text || componentLabelText(component?.refdes || element.component));
-    }
-    for (const value of [...(child?.assumptions || []), ...(child?.approximations || [])]) {
-      const text = String(value || '').trim();
-      if (!text) continue;
-      const refs = [...text.matchAll(/\bM(\d+)\b/gi)].map((match) => match[1]);
-      const explicitDevice = /^Per-device approximation:/i.test(text)
-        || /has an explicit per-device override/i.test(text);
-      const globalException = /except\s+for/i.test(text);
-      const compact = text.replace(/[{}\\\s]/g, '').toLowerCase();
-      if (compact.includes('g_mr_o') && (compact.includes('gg') || text.includes('≫') || /intrinsic[- ]gain/i.test(text))) {
-        if (refs.length && explicitDevice) refs.forEach((ref) => deviceGmRoLarge.add(ref));
-        else gmroLarge = true;
-      }
-      if (/body effect is ignored|g(?:_|\s)*\{?mb\}?\s*=\s*0|ignore body effect|common-gate.*V(?:_|\s)*\{?BS\}?\s*=\s*0/i.test(text)) {
-        if (refs.length && explicitDevice) refs.forEach((ref) => deviceBodyEffectIgnored.add(ref));
-        else bodyEffectIgnored = true;
-      }
-      if (refs.length && explicitDevice && /finite\s+g_m\s+r_o|finite\s+g(?:_|\s)*m(?:_|\s)*r(?:_|\s)*o|retained despite the form-wide approximation/i.test(text)) {
-        refs.forEach((ref) => deviceGmRoFinite.add(ref));
-      }
-      if (refs.length && explicitDevice && /body effect is retained despite the form-wide approximation/i.test(text)) {
-        refs.forEach((ref) => deviceBodyEffectRetained.add(ref));
-      }
-      if (roInfinityPattern.test(text)) {
-        // Per-device model notes are not all prefixed with
-        // "Per-device approximation:"; some are emitted as prose such as
-        // "M1 output resistance is ignored." Device references therefore
-        // determine scope, except for the explicit global "except for ..."
-        // form, which must retain the global rule.
-        if (refs.length && !globalException) refs.forEach((ref) => deviceRoInfinity.add(ref));
-        else roInfinity = true;
-      }
-      if (explicitDevice && /finite\s+r(?:_|\s)*\{?o\}?|retain(?:s|ed)?\s+finite/i.test(text)) {
-        refs.forEach((ref) => deviceRoFinite.add(ref));
-      } else if (globalException || /explicitly\s+retain\s+finite/i.test(text)) {
-        refs.forEach((ref) => deviceRoFinite.add(ref));
-        if (roLimitPattern.test(text)) roInfinity = true;
-      }
-      // These are genuine extra reductions performed after the small-signal
-      // model is built. Keep only a compact marker, not the implementation
-      // prose that describes every internal algebraic step.
-      if (/^Cascode (?:branch approximation|dominant-term approximation):/i.test(text)) cascodeReduction = true;
-      if (/^Large-g_m r_o approximation:/i.test(text)) cascodeReduction = true;
-      if (/DC-only reduction|DC operating-point topology|capacitors? are open|inductors? are short/i.test(text)) dcOnly = true;
-    }
-  }
-  // If every analyzed MOS device has the same explicit r_o→∞ override,
-  // collapse the redundant list into the equivalent global statement.
-  // Do not infer this when the model did not expose a complete device set.
-  // Keep a lone device-specific setting visibly scoped to that device.  Even
-  // though it is mathematically equivalent to a global rule in a one-device
-  // model, the annotation should preserve the user's explicit scope.
-  const allDevicesExplicitlyIgnoreRo = analyzedDeviceRefs.size > 1
-    && [...analyzedDeviceRefs].every((ref) => deviceRoInfinity.has(ref))
-    && deviceRoInfinity.size === analyzedDeviceRefs.size
-    && deviceRoFinite.size === 0;
-  if (!roInfinity && allDevicesExplicitlyIgnoreRo) roInfinity = true;
-  const add = (text) => {
-    if (text && !seen.has(text)) {
-      seen.add(text);
-      lines.push(text);
-    }
-  };
-  if (gmroLarge) add('g_{m}r_{o} \\gg 1');
-  if (!gmroLarge) {
-    for (const ref of [...deviceGmRoLarge].sort((a, b) => Number(a) - Number(b))) {
-      add(`g_{m${ref}}r_{o${ref}} \\gg 1 \\; (M_{${ref}})`);
-    }
-  } else {
-    for (const ref of [...deviceGmRoFinite].sort((a, b) => Number(a) - Number(b))) {
-      add(`g_{m${ref}}r_{o${ref}} \\text{ finite} \\; (M_{${ref}})`);
-    }
-  }
-  if (roInfinity) {
-    const finiteRefs = [...deviceRoFinite].sort((a, b) => Number(a) - Number(b));
-    add(finiteRefs.length
-      ? `r_{o} = \\infty \\; \\text{except } ${finiteRefs.map((ref) => `M_{${ref}}`).join(', ')}`
-      : 'r_{o} = \\infty');
-  }
-  if (bodyEffectIgnored) add('V_{BS} = 0');
-  if (!bodyEffectIgnored) {
-    for (const ref of [...deviceBodyEffectIgnored].sort((a, b) => Number(a) - Number(b))) {
-      add(`V_{BS} = 0 \\; (M_{${ref}})`);
-    }
-  } else {
-    for (const ref of [...deviceBodyEffectRetained].sort((a, b) => Number(a) - Number(b))) {
-      add(`V_{BS} \\ne 0 \\; (M_{${ref}})`);
-    }
-  }
-  // With no global rule, show the explicit device-specific omissions.  Once
-  // a global r_o→∞ rule exists, those same-direction per-device overrides
-  // are redundant; only contradictory finite overrides remain useful below.
-  if (!roInfinity) {
-    for (const ref of [...deviceRoInfinity].sort((a, b) => Number(a) - Number(b))) {
-      add(`r_{o${ref}} = \\infty \\; (M_{${ref}})`);
-    }
-  }
-  if (roInfinity) {
-    for (const ref of [...deviceRoFinite].sort((a, b) => Number(a) - Number(b))) {
-      add(`r_{o${ref}} \\text{ finite} \\; (M_{${ref}})`);
-    }
-  }
-  if (cascodeReduction) {
-    add('\\text{Cascode dominant term\\: }(g_{m,c}+g_{mb,c})r_{o,out}r_{o,c} \\gg r_{o,out}+r_{o,c}');
-  }
-  if (dcOnly) add('\\text{DC only\\: }Z_C\\to\\infty,\\; Z_L\\to0');
-  if (millerComponents.size) {
-    add(`\\text{Miller approximation used for }${[...millerComponents].sort().join(', ')}`);
-  }
+  if (options.highIntrinsicGain) lines.push('g_{m}r_{o} \\gg 1');
+  if (options.neglectChannelLengthModulation) lines.push('r_{o} = \\infty');
+  if (options.neglectBodyEffect) lines.push('g_{mb} = 0');
+  if (options.dominantPoleApplied) lines.push('\\text{Dominant-pole approximation}');
   return lines;
 }
 
@@ -6973,81 +6678,41 @@ analysisForm?.addEventListener('submit', (ev) => {
     return;
   }
   persistAnalysisForm();
-  const options = {
+  const formOptions = analysisFormOptions();
+  const devices = analysisDeviceOptions();
+  const request = {
+    ...formOptions,
+    ...(Object.keys(devices).length ? { devices } : {}),
+    input,
+    output,
     reference: analysisReference?.value || undefined,
-    mode: analysisMode?.value || 'single-ended',
-    input: input || undefined,
     acGrounds: parseAnalysisList(analysisAcGrounds?.value),
-    models: parseAnalysisList(analysisModels?.value),
-    context: analysisContext?.value || '',
-    differentialSide: analysisComplementary?.value || undefined,
-    cascodeApproximation: !!analysisApproxCascode?.checked,
-    ignoreChannelLengthModulation: !!analysisApproxRo?.checked,
-    ignoreBodyEffect: !!analysisApproxBody?.checked,
-    gmroLarge: !!analysisApproxGmRo?.checked,
-    millerApproximation: !!analysisApproxMiller?.checked,
-    dominantPoleApproximation: !!analysisApproxDominantPole?.checked,
   };
-  // Run each requested derivation independently. A topology edge case in one
-  // report must not erase useful results from the other two; the failed card
-  // still carries the original exception text for diagnosis.
-  const safeAnalysis = (query, derive) => {
-    try {
-      return derive();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        ok: false,
-        query,
-        error: `analysis failed: ${message}`,
-        assumptions: [],
-        approximations: [],
-      };
-    }
-  };
-  const reports = {
-    input: safeAnalysis('input-impedance', () => analyzeInputImpedance(circuit, input, options)),
-    output: safeAnalysis('output-impedance', () => analyzeOutputImpedance(circuit, output, { ...options, input })),
-    transfer: safeAnalysis('voltage-transfer', () => analyzeTransferFunction(circuit, output, { ...options, input })),
-  };
-  const children = Object.values(reports);
-  const successful = children.filter((child) => child.ok);
-  const report = {
-    query: 'combined',
-    ok: successful.length > 0,
-    complete: successful.length === children.length,
-    reports,
-    input: reports.input.input,
-    target: reports.output.target || reports.transfer.target,
-    // The combined report's netlist is the general driven-input model. The
-    // output-impedance child intentionally zeroes V_in, so it is only a
-    // fallback when the transfer derivation is unavailable.
-    smallSignalNetlist: reports.transfer.smallSignalNetlist || reports.output.smallSignalNetlist || reports.input.smallSignalNetlist,
-  };
+  let report;
+  try {
+    report = adaptCombinedReport(analyzeSmallSignalV2(circuit, request));
+    report.analysisOptions = {
+      ...formOptions,
+      devices,
+      dominantPoleApplied: formOptions.dominantPole
+        && report.assumptions?.includes('dominant-pole approximation'),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
+  }
   latestAnalysisReport = report;
   renderAnalysisResult(report);
   if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
   logLine(report.complete ? 'derived input impedance, output impedance, and voltage transfer' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
-  for (const [key, child] of Object.entries(reports)) {
-    const title = key === 'input' ? 'Input impedance' : key === 'output' ? 'Output impedance' : 'Voltage transfer';
-    logLine(child.ok ? `${title}: ${child.equation}` : `${title} analysis unavailable: ${child.error}`, child.ok ? 'status' : 'error');
-    for (const assumption of child.assumptions || []) logLine(`${title} assumption: ${assumption}`);
-    for (const approximation of child.approximations || []) logLine(`${title} approximation: ${approximation}`);
-  }
+  for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
+  for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
 });
 
-for (const control of [analysisKind, analysisTarget, analysisReference, analysisMode, analysisInput, analysisComplementary, analysisAcGrounds, analysisModels, analysisContext, analysisApproxCascode, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxMiller, analysisApproxDominantPole]) {
+for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole]) {
   control?.addEventListener('input', persistAnalysisForm);
   control?.addEventListener('change', persistAnalysisForm);
 }
-
-analysisKind?.addEventListener('change', () => {
-  if (analysisInputField) analysisInputField.hidden = false;
-});
-
-analysisMode?.addEventListener('change', () => {
-  if (analysisComplementaryField) analysisComplementaryField.hidden = analysisMode.value !== 'differential';
-});
 
 function equationForDiagram(equation) {
   return String(equation || '')
@@ -9224,7 +8889,6 @@ function renderComponents() {
     meta.className = 'meta';
     const analysisTags = [];
     if (comp.analysis?.model === 'triode') analysisTags.push('triode');
-    if (comp.analysis?.model === 'current-source') analysisTags.push('current-source');
     if (comp.analysis?.role) analysisTags.push(comp.analysis.role);
     if (comp.analysis?.resistance === 'infinite' || comp.analysis?.resistance === true) analysisTags.push('R=∞');
     if (comp.analysis?.resistance === 'finite') analysisTags.push('finite R');

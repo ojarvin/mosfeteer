@@ -77,9 +77,9 @@ function commonSource() {
 }
 
 test('gets the common-source transconductance sign from the exact VCCS stamp', () => {
-  const report = analyze(commonSource(), { gm1: 0.01, gmb1: 0, go1: 0, RD: 1000 });
+  const report = analyze(commonSource(), { gm1: 0.01, gmb1: 0, ro1: 1e9, RD: 1000 });
   assert.equal(report.ok, true, report.error);
-  assert.equal(report.queries.transfer.value, -10);
+  assert.ok(Math.abs(report.queries.transfer.value - -10) < 1e-4, String(report.queries.transfer.value));
 });
 
 test('carries a structured triode region through the full pipeline', () => {
@@ -108,7 +108,7 @@ function inverter() {
 }
 
 test('gets parallel NMOS and PMOS gm signs in a CMOS inverter', () => {
-  const report = analyze(inverter(), { gm1: 1, gm2: 2, gmb1: 0, gmb2: 0, go1: 0.01, go2: 0.01 });
+  const report = analyze(inverter(), { gm1: 1, gm2: 2, gmb1: 0, gmb2: 0, ro1: 100, ro2: 100 });
   assert.equal(report.ok, true, report.error);
   assert.equal(report.queries.transfer.value, -150);
 });
