@@ -39,3 +39,16 @@ test('analysis defaults retain a selected target when no output role is marked',
   assert.equal(defaults.targetMarked, false);
   assert.equal(defaults.inputMarked, true);
 });
+
+test('analysis defaults prefer output ports and the non-inverting input port over list order', () => {
+  const ports = [
+    { id: 'N1', name: 'MILLER_SERIES', analysis: {} },
+    { id: 'N2', name: 'VINN', analysis: {} },
+    { id: 'N3', name: 'VINP', analysis: {} },
+    { id: 'N4', name: 'VOUT', analysis: {} },
+  ];
+  const defaults = analysisFormDefaults(ports, { componentInputNetIds: ['N2', 'N3'], componentOutputNetIds: ['N4'] });
+  assert.equal(defaults.target, 'N4');
+  assert.equal(defaults.input, 'N3');
+  assert.equal(analysisFormDefaults(ports.slice(0, 1).concat({ id: 'N9', name: 'Vout', analysis: {} })).target, 'N9');
+});

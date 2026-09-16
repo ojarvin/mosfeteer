@@ -72,16 +72,21 @@ function firstMatching(nets, predicate, excludedId = '') {
  * a caller hint or a conservative name/type heuristic.  The marked flags let
  * the UI distinguish a deliberate toolbar role from a persisted user choice.
  */
-export function analysisFormDefaults(nets = [], { targetNetId = '', componentInputNetIds = [] } = {}) {
+export function analysisFormDefaults(nets = [], { targetNetId = '', componentInputNetIds = [], componentOutputNetIds = [] } = {}) {
   const usable = nets.filter((net) => net?.id);
   const markedOutput = firstMatching(usable, (net) => net.analysis?.role === 'output');
   const targetHint = usable.find((net) => net.id === targetNetId);
-  const target = markedOutput || targetHint || usable[0] || null;
+  const componentOutputIds = new Set(componentOutputNetIds);
+  const componentOutput = firstMatching(usable, (net) => componentOutputIds.has(net.id));
+  const namedOutput = firstMatching(usable, (net) => /^(?:v_?\{?out\}?|output|out)$/i.test(String(net.name || '').trim()));
+  const target = markedOutput || targetHint || componentOutput || namedOutput || usable[0] || null;
 
   const markedInput = firstMatching(usable, (net) => net.analysis?.role === 'input', target?.id);
   const componentInputIds = new Set(componentInputNetIds);
-  const componentInput = firstMatching(usable, (net) => componentInputIds.has(net.id), target?.id);
-  const namedInput = firstMatching(usable, (net) => /^(?:v_?in|input|in)$/i.test(String(net.name || '').trim()), target?.id);
+  // With a differential input pair, the non-inverting (…P / …+) side is the conventional drive.
+  const componentInput = firstMatching(usable, (net) => componentInputIds.has(net.id) && /(?:p|\+|plus)\}?$/i.test(String(net.name || '')), target?.id)
+    || firstMatching(usable, (net) => componentInputIds.has(net.id), target?.id);
+  const namedInput = firstMatching(usable, (net) => /^(?:v_?\{?in\}?|input|in)$/i.test(String(net.name || '').trim()), target?.id);
   const firstAlternative = firstMatching(usable, () => true, target?.id);
   const input = markedInput || componentInput || namedInput || firstAlternative || null;
 

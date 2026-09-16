@@ -2041,14 +2041,14 @@ test('label align keeps stable centered bounds and positions text inside them', 
   assert.equal(left.x + left.w / 2, 400, 'left: box remains centered on anchor');
   t = l.textPos();
   assert.equal(t.anchor, 'start');
-  assert.equal(t.x, left.x, 'left: text starts at the box left edge');
+  assert.equal(t.x, left.x + GRID / 4, 'left: text starts a quarter cell inside the box left edge');
   l.setAlign('right');
   const right = l.bbox();
   assert.deepEqual(right, center, 'right: alignment does not move or resize the bbox');
   assert.equal(right.x + right.w / 2, 400, 'right: box remains centered on anchor');
   t = l.textPos();
   assert.equal(t.anchor, 'end');
-  assert.equal(t.x, right.x + right.w, 'right: text ends at the box right edge');
+  assert.equal(t.x, right.x + right.w - GRID / 4, 'right: text ends a quarter cell inside the box right edge');
 });
 test('arrow and box annotations persist geometry and move as selected labels', () => {
   const c = new Circuit();

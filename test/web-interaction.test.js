@@ -10,7 +10,7 @@ const view = { x: -80, y: -80, w: 400, h: 400 };
 test('MathML annotation measurements are independent of zoom on reload', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function renderedLabelTextBounds(');
-  const end = main.indexOf('\nlet measuredLabelBBoxes', start);
+  const end = main.indexOf('\n// Equation annotations are initially positioned', start);
   for (const scale of [0.08, 0.5, 1, 2]) {
     const rect = { left: 100 * scale, top: 200 * scale, right: 400 * scale, bottom: 291 * scale, width: 300 * scale, height: 91 * scale };
     const content = { getBoundingClientRect: () => rect };
@@ -31,7 +31,7 @@ test('MathML annotation measurements are independent of zoom on reload', () => {
 test('multiline assumptions measure their text independently of the restored container width', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function renderedLabelTextBounds(');
-  const end = main.indexOf('\nlet measuredLabelBBoxes', start);
+  const end = main.indexOf('\n// Equation annotations are initially positioned', start);
   for (const containerWidth of [240, 320, 400]) {
     for (const scale of [0.08, 0.590074019, 1, 2]) {
       const rect = (width, top) => ({ left: 100 * scale, right: (100 + width) * scale, top: top * scale, bottom: (top + 36) * scale, width: width * scale, height: 36 * scale });
@@ -135,7 +135,7 @@ test('editor shell exposes keyboard canvas and live status surfaces', () => {
   assert.match(html, /id="canvas"[^>]+tabindex="0"[^>]+role="application"/);
   assert.match(html, /id="status"[^>]+role="status"[^>]+aria-live="polite"/);
   assert.match(html, /id="accessibility-announcement"[^>]+aria-live="polite"/);
-  assert.match(html, /id="btn-label-bboxes"/);
+  assert.doesNotMatch(html, /id="btn-label-bboxes"/);
 });
 
 test('new document control exposes one popup with schematic and block choices', () => {
@@ -150,8 +150,8 @@ test('new document control exposes one popup with schematic and block choices', 
 test('small-signal analysis exposes the canonical v2 controls', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-analysis"/);
-  assert.match(html, /class="toolbar-group analysis-group"[^>]+data-doc-kind="schematic"/);
-  assert.match(html, /id="view-heading"[\s\S]*id="analysis-heading"/);
+  assert.match(html, /class="toolbar-cluster analysis-cluster"[^>]+data-doc-kind="schematic"/);
+  assert.match(html, /id="btn-analysis"[\s\S]*id="btn-theme"/);
   assert.match(html, /id="analysis-dialog"/);
   assert.match(html, /id="analysis-input-field"[^>]*>Input node/);
   assert.match(html, /for="analysis-target">Output node/);
@@ -181,10 +181,14 @@ test('small-signal analysis exposes the canonical v2 controls', () => {
   assert.doesNotMatch(html, /current-source|Miller|cascode|Analyze DC topology only/i);
   assert.match(html, /<div class="analysis-scroll">[\s\S]*id="analysis-result"[\s\S]*<\/div>\s*<div class="dialog-actions">/);
   const style = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  assert.match(style, /\.analysis-dialog\s*\{[\s\S]*width: min\(64rem/);
-  assert.match(style, /\.analysis-dialog\s*\{[\s\S]*overflow: hidden/);
+  assert.match(html, /<section id="analysis-dialog" class="analysis-dock"[^>]*hidden/);
+  assert.doesNotMatch(html, /<dialog id="analysis-dialog"/);
+  assert.match(html, /data-analysis-pick="analysis-input"/);
+  assert.match(html, /data-analysis-pick="analysis-target"/);
+  assert.match(style, /\.analysis-dock\s*\{[\s\S]*width: var\(--analysis-dock-width\)/);
+  assert.match(style, /\.analysis-dock\s*\{[\s\S]*overflow: hidden/);
   assert.match(style, /\.analysis-scroll\s*\{[\s\S]*overflow: auto/);
-  assert.match(style, /\.analysis-dialog \.dialog-actions\s*\{[\s\S]*flex: 0 0 auto/);
+  assert.match(style, /\.analysis-dock \.dialog-actions\s*\{[\s\S]*flex: 0 0 auto/);
   assert.match(style, /\.analysis-tabs\s*\{[\s\S]*border-bottom/);
   assert.match(style, /\.analysis-tab-panels\s*\{[\s\S]*overflow: hidden/);
 });

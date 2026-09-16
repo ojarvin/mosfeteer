@@ -207,7 +207,7 @@ The browser live-syncs changed active-circuit revisions while visible; CLI comma
 ## Start so the user sees you live
 
 1. Use an existing server/browser if present. Otherwise run `./start.sh`, or an isolated `PORT=<random-port> node src/web/serve.js` with Chromium on its own random debug port. Track and stop only processes you started; never launch a competing editor instance.
-2. Have the user open `http://127.0.0.1:<port>/` once and leave it open. They do not type a circuit name, click Load or Save, or refresh; the active circuit loads automatically.
+2. Have the user open `http://127.0.0.1:<port>/` once and leave it open. They do not type a circuit name, pick a document, click Save, or refresh; the active circuit loads automatically.
 3. Choose a circuit name (for example `analog-block` or `low-voltage-cascode`) and issue the first command. The server marks it active and the browser loads it on the next visible sync cycle.
 4. Drive placement, review, then routing through CLI or HTTP. Fit the view after each phase and after later edits that change drawing extents; never leave the final review zoomed away.
 

@@ -61,7 +61,6 @@ const circuitSelectEl = document.getElementById('circuit-select');
 const circuitNameEl = document.getElementById('circuit-name');
 const newDocumentButton = document.getElementById('btn-new-document');
 const newDocumentMenu = document.getElementById('new-document-menu');
-const saveStateEl = document.getElementById('save-state');
 const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
 const exportCircuitBtn = document.getElementById('btn-export');
 const analysisButton = document.getElementById('btn-analysis');
@@ -76,7 +75,6 @@ const exportGridInput = exportForm?.querySelector('input[name="grid"]');
 const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
 const checkSummaryBodyEl = document.getElementById('check-summary-body');
 const clearCheckButtonEl = document.getElementById('btn-clear-check');
-const documentKindEl = document.getElementById('document-kind');
 const blocksListEl = document.getElementById('blocks-list');
 const connectorsListEl = document.getElementById('connectors-list');
 const blockDetailEl = document.getElementById('block-detail');
@@ -145,6 +143,13 @@ const ICON_PATHS = {
   grid: '<path d="M4 4h16v16H4zM4 10h16M4 16h16M10 4v16M16 4v16"/>',
   crosshair: '<circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  'align-left': '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>',
+  'align-center': '<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>',
+  'align-right': '<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>',
+  more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
+  'route-orthogonal': '<path d="M4 18h8V6h8"/>',
+  'route-diagonal': '<path d="M4 18h5l6-12h5"/>',
   cursor: '<path d="m5 3 4 17 3-7 7-3z"/>',
   plus: '<path d="M12 4v16M4 12h16"/>',
   wire: '<path d="M3 17h5l4-10h5l4 6"/>',
@@ -157,8 +162,8 @@ const ICON_PATHS = {
   arrow: '<path d="M4 18 18 6m0 0h-7m7 0v7"/>',
   rectangle: '<rect x="4" y="5" width="16" height="14" rx="1"/>',
   line: '<path d="M5 19 19 5"/>',
-  front: '<path d="M12 19V5m0 0-5 5m5-5 5 5"/>',
-  back: '<path d="M12 5v14m0 0-5-5m5 5 5-5"/>',
+  front: '<rect x="4" y="4" width="11" height="11" rx="1.5" stroke-dasharray="2.5 2"/><rect x="9" y="9" width="11" height="11" rx="1.5" fill="currentColor" fill-opacity="0.35"/>',
+  back: '<rect x="9" y="9" width="11" height="11" rx="1.5" stroke-dasharray="2.5 2"/><rect x="4" y="4" width="11" height="11" rx="1.5" fill="currentColor" fill-opacity="0.35"/>',
   'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
 };
@@ -175,12 +180,6 @@ function installButtonIcons() {
     icon.innerHTML = path;
     button.prepend(icon);
   }
-}
-
-function setButtonLabel(button, text) {
-  if (!button) return;
-  const icon = button.querySelector('.button-icon');
-  button.replaceChildren(...(icon ? [icon, document.createTextNode(text)] : [document.createTextNode(text)]));
 }
 
 installButtonIcons();
@@ -253,7 +252,6 @@ let directWire = null; // protected direct wire: { source:{refdes,term}, points:
 let counts = 0;
 let pendingKey = null; // { key, at } for dd chord
 let showGrid = true; // '#' toggles the placement grid
-let showLabelBBoxes = false; // View toggle: rounded model box + measured glyph box
 let history = []; // undo stack (JSON blobs)
 let future = []; // redo stack
 let pendingCircuitLoad = null;
@@ -548,11 +546,11 @@ function restoreDraft() {
 async function refreshCircuitList() {
   try {
     const data = await persistence.list();
-    circuitSelectEl.replaceChildren(new Option('Open document...', ''));
     const documents = data.documents || (data.circuits || []).map((name) => ({ name, kind: 'circuit' }));
-    for (const document of documents) {
-      const label = document.kind === 'block' ? 'Block diagram' : 'Schematic';
-      circuitSelectEl.appendChild(new Option(`${label} · ${document.name}`, document.name));
+    const options = documents.map((document) => [document.kind === 'block' ? `${document.name} (block diagram)` : document.name, document.name]);
+    const current = [...circuitSelectEl.options].slice(1).map((option) => [option.text, option.value]);
+    if (JSON.stringify(options) !== JSON.stringify(current)) {
+      circuitSelectEl.replaceChildren(new Option('Open document…', ''), ...options.map(([text, value]) => new Option(text, value)));
     }
     if (currentCircuitName) circuitSelectEl.value = currentCircuitName;
   } catch (err) {
@@ -784,13 +782,14 @@ function requestCircuitLoad(name = circuitSelectEl.value || circuitNameEl.value.
 
 function renderSaveState() {
   const dirty = hasUnsavedChanges();
-  if (saveStateEl) {
-    saveStateEl.textContent = dirty ? '• unsaved' : currentCircuitName ? 'saved' : '';
-    saveStateEl.classList.toggle('unsaved', dirty);
-  }
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentCircuitName || deleteInFlight;
   const saveButton = document.getElementById('btn-save');
-  if (saveButton) saveButton.disabled = !dirty || saveInFlight > 0;
+  if (saveButton) {
+    saveButton.disabled = !dirty || saveInFlight > 0;
+    saveButton.title = dirty
+      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+x)'
+      : currentCircuitName ? 'All changes saved' : 'Nothing to save yet';
+  }
 }
 
 
@@ -903,6 +902,10 @@ async function syncActiveCircuitOnce() {
   }
 
   if (active !== lastSeenActive) {
+    // The server only sends a revision for an active circuit whose file exists.
+    // Wait silently for a missing one (not yet written, or deleted) instead of
+    // requesting it and reporting a load error on every poll.
+    if (active && active !== currentCircuitName && activeResponseSucceeded && !activeRevision) return;
     if (active && active !== currentCircuitName) {
       // A failed load (e.g. the agent marked a brand-new circuit active before
       // its first file write) must NOT advance lastSeenActive — otherwise the
@@ -1342,37 +1345,46 @@ function moveLabelOriginsOnce(origins, dx, dy) {
     pending.delete(id);
   }
 }
-function toggleSelectedLabelFont(field) {
-  if (isBlockDiagram(circuit)) {
-    if (!selectedBlocks.size && !selLabels.size) return;
-    commit(() => {
-      for (const id of selectedBlocks) {
-        const block = circuit.blocks.get(id);
-        if (block) block.style[field] = block.style[field] === false;
-      }
-      for (const label of selectedLabels()) {
-        label.style[field] = label.style[field] === false;
-        if (['arrow', 'box', 'line'].includes(label.kind)) for (const child of circuit.labels.values()) {
-          if (child.parent === label.id) child.style[field] = label.style[field];
-        }
-      }
-    });
-    render();
-    return;
-  }
-  const targets = new Map();
+/** Text-bearing selection: labels (with the captions of selected shapes) plus, in block diagrams, blocks. */
+function selectedTextTargets() {
+  const labels = new Map();
   for (const label of selectedLabels()) {
-    targets.set(label.id, label);
+    if (label.kind === 'label') labels.set(label.id, label);
     if (['arrow', 'box', 'line'].includes(label.kind)) {
       for (const child of circuit.labels.values()) {
-        if (child.parent === label.id) targets.set(child.id, child);
+        if (child.parent === label.id) labels.set(child.id, child);
       }
     }
   }
-  if (!targets.size) return;
+  const blocks = isBlockDiagram(circuit)
+    ? [...selectedBlocks].map((id) => circuit.blocks.get(id)).filter(Boolean)
+    : [];
+  return { labels: [...labels.values()], blocks };
+}
+
+function selectedFontState(field) {
+  const { labels, blocks } = selectedTextTargets();
+  const objects = [...labels, ...blocks];
+  return objects.length > 0 && objects.every((object) => object.style?.[field] !== false);
+}
+
+function setSelectedLabelFont(field, on) {
+  const { labels, blocks } = selectedTextTargets();
+  if (!labels.length && !blocks.length) return;
   commit(() => {
-    for (const label of targets.values()) label.style[field] = label.style[field] === false;
+    for (const object of [...labels, ...blocks]) object.style[field] = on;
   });
+  render();
+}
+
+function toggleSelectedLabelFont(field) {
+  setSelectedLabelFont(field, !selectedFontState(field));
+}
+
+function setSelectedLabelAlign(align) {
+  const { labels } = selectedTextTargets();
+  if (!labels.length) return;
+  commit(() => labels.forEach((label) => label.setAlign(align)));
   render();
 }
 
@@ -1532,23 +1544,44 @@ function applySelectedStyle(field, value) {
   });
   render();
 }
+function syncTextStyleControls() {
+  const row = document.getElementById('style-text-row');
+  if (!row) return;
+  const { labels, blocks } = selectedTextTargets();
+  row.hidden = !labels.length && !blocks.length;
+  if (row.hidden) return;
+  const align = labels.length && labels.every((label) => label.align === labels[0].align) ? labels[0].align : null;
+  for (const button of row.querySelectorAll('[data-style-align]')) {
+    button.hidden = !labels.length;
+    button.setAttribute('aria-pressed', String(button.dataset.styleAlign === align));
+  }
+  for (const button of row.querySelectorAll('[data-style-font]')) {
+    button.setAttribute('aria-pressed', String(selectedFontState(button.dataset.styleFont)));
+  }
+}
+
+/** Reflect a (possibly mixed) selection style; the panel only exists while something is styleable. */
 function updateStyleControls() {
+  const panel = document.getElementById('style-panel');
   const line = document.getElementById('style-line');
-  const color = document.getElementById('style-color');
   const width = document.getElementById('style-width');
-  if (!line || !color || !width) return;
+  const swatches = [...document.querySelectorAll('#style-color .swatch')];
+  if (!panel || !line || !width) return;
+  const show = (colorValue, lineValue, widthValue, supportsLine) => {
+    panel.hidden = false;
+    syncTextStyleControls();
+    line.disabled = !supportsLine;
+    line.closest('.style-row').hidden = !supportsLine;
+    line.value = lineValue;
+    width.value = widthValue;
+    for (const swatch of swatches) swatch.setAttribute('aria-checked', String(swatch.dataset.value === colorValue));
+  };
+  const common = (values) => (values.length && values.every((v) => v === values[0]) ? values[0] : '');
   if (isBlockDiagram(circuit)) {
     const objects = selectedBlockObjects();
-    line.disabled = color.disabled = width.disabled = !objects.length;
-    if (!objects.length) {
-      color.value = '#111'; line.value = 'solid'; width.value = 'normal'; color.style.backgroundColor = '#111';
-      return;
-    }
-    for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
-      const values = objects.map((object) => object.style?.[field] || styleDefaults(field));
-      el.value = values.every((value) => value === values[0]) ? values[0] : '';
-    }
-    color.style.backgroundColor = color.value || '';
+    if (!objects.length) { panel.hidden = true; return; }
+    const pick = (field) => common(objects.map((object) => object.style?.[field] || styleDefaults(field)));
+    show(pick('color'), pick('lineStyle'), pick('width'), true);
     return;
   }
   const wireTargets = selectedWireTargets();
@@ -1557,26 +1590,14 @@ function updateStyleControls() {
     if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
   }
   const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean)];
+  if (!objects.length && !wireTargets.length) { panel.hidden = true; return; }
   const hasWireSelection = wireTargets.length > 0 || selectedWire || selectedWires.size > 0 || selectedNets.size > 0;
   const supportsLine = hasWireSelection || objects.some((o) => ['arrow', 'box', 'line'].includes(o.kind));
-  line.disabled = (!objects.length && !wireTargets.length) || !supportsLine;
-  color.disabled = width.disabled = !objects.length && !wireTargets.length;
-  if (!objects.length && !wireTargets.length) {
-    color.value = '#111';
-    line.value = 'solid';
-    width.value = 'normal';
-    color.style.backgroundColor = '#111';
-    return;
-  }
-  for (const [el, field] of [[color, 'color'], [line, 'lineStyle'], [width, 'width']]) {
-    const values = [
-      ...objects.map((o) => o.style?.[field] || styleDefaults(field)),
-      ...wireTargets.map(({ net, key }) => net.wireStyles?.[key]?.[field] || net.style?.[field] || styleDefaults(field)),
-    ];
-    const value = values[0];
-    el.value = values.length && values.every((v) => v === value) ? value : '';
-  }
-  color.style.backgroundColor = color.value || '';
+  const pick = (field) => common([
+    ...objects.map((o) => o.style?.[field] || styleDefaults(field)),
+    ...wireTargets.map(({ net, key }) => net.wireStyles?.[key]?.[field] || net.style?.[field] || styleDefaults(field)),
+  ]);
+  show(pick('color'), pick('lineStyle'), pick('width'), supportsLine);
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
@@ -2552,10 +2573,6 @@ function syncDocumentSurface() {
   for (const element of document.querySelectorAll('[data-doc-kind]')) {
     element.hidden = (element.dataset.docKind === 'block') !== block;
   }
-  if (documentKindEl) {
-    documentKindEl.textContent = documentKindLabel(circuit);
-    documentKindEl.classList.toggle('block', block);
-  }
   const heading = document.getElementById('mode-heading');
   if (heading) heading.textContent = block ? 'Block diagram tools' : 'Schematic tools';
   if (cmdInput) cmdInput.placeholder = block
@@ -2672,8 +2689,23 @@ function selectionCenterBounds() {
   return bounds;
 }
 
+function syncEmptyState() {
+  const card = document.getElementById('empty-state');
+  if (!card) return;
+  const block = isBlockDiagram(circuit);
+  const empty = block
+    ? !circuit.blocks.size && !circuit.labels.size
+    : !circuit.components.size && !circuit.labels.size && !circuit.nets.size;
+  card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode;
+  if (card.hidden) return;
+  card.querySelector('.empty-state-title').textContent = block ? 'Empty block diagram' : 'Empty schematic';
+  card.querySelector('[data-empty-action="wire"] .empty-state-text').textContent = block ? 'Draw a connector' : 'Draw a wire';
+  card.querySelector('[data-empty-action="place"] .empty-state-text').textContent = block ? 'Place a block' : 'Insert a component';
+}
+
 function render() {
   syncDocumentSurface();
+  syncEmptyState();
   if (isBlockDiagram(circuit)) {
     persistDraft();
     updateStyleControls();
@@ -2682,6 +2714,7 @@ function render() {
     netsListEl.replaceChildren();
     detailEl.replaceChildren();
     checkSummaryBodyEl.replaceChildren();
+    renderedCheckReport = undefined;
     renderBlockPanels();
     renderSaveState();
     renderStatus();
@@ -2708,6 +2741,7 @@ function render() {
     renderDetail();
   }
   renderCheckSummary();
+  syncAnalysisDock();
   renderStatus();
   renderSaveState();
   updateInsertMenu();
@@ -2828,7 +2862,6 @@ function renderedLabelTextBounds(group) {
   } catch { return null; }
 }
 
-let measuredLabelBBoxes = new Map();
 // Equation annotations are initially positioned with the model estimate. Once
 // MathML dimensions are available, the layout is recalculated below the figure.
 let equationAnnotationLayout = null;
@@ -2896,7 +2929,6 @@ function reflowEquationAnnotations() {
 
 function syncRenderedLabelMetrics() {
   if (!canvasSvgEl) return false;
-  measuredLabelBBoxes = new Map();
   const groups = new Map([...canvasSvgEl.querySelectorAll('[data-label-id]')]
     .map((group) => [group.getAttribute('data-label-id'), group]));
   let changed = false;
@@ -2905,11 +2937,10 @@ function syncRenderedLabelMetrics() {
     const group = groups.get(label.id);
     const bounds = renderedLabelTextBounds(group);
     if (!bounds) continue;
-    measuredLabelBBoxes.set(label.id, bounds);
-    // A measured bbox is a one-time model resize for the current text. Keep
-    // drawing the live tight rectangle, but do not feed a later container-size
-    // measurement back into the model or a foreignObject can resize itself
-    // forever. Text edits clear this runtime metric and allow one fresh pass.
+    // A measured bbox is a one-time model resize for the current text. Do not
+    // feed a later container-size measurement back into the model or a
+    // foreignObject can resize itself forever. Text edits clear this runtime
+    // metric and allow one fresh pass.
     if (!label._renderedTextBounds) changed = label.setRenderedTextBounds(bounds.w, bounds.h) || changed;
   }
   return reflowEquationAnnotations() || changed;
@@ -3004,6 +3035,7 @@ function renderCanvas(modelKey) {
       terminals: false,
       junctions: false,
       background: true,
+      emptyHint: false,
       viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
       ghostRefs,
       ghostLabels,
@@ -3106,7 +3138,6 @@ function renderCanvas(modelKey) {
     selLabels: [...new Set([...selLabels, ...diagnosticSelection.labels])],
     nets,
     previewSelection,
-    labelBBoxes: showLabelBBoxes,
     // Keep the committed clicks visible while a line is being drafted.
     annotationPreview: labelMode === 'line' && (annotationPoints.length || drag?.mode === 'annotationlineplace')
       ? { kind: 'line', points: [...annotationPoints, ...(drag?.previewEnd ? [drag.previewEnd] : [cursor])] }
@@ -3130,21 +3161,6 @@ function renderCanvas(modelKey) {
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
   overlayEl.innerHTML = overlay;
-  if (showLabelBBoxes) {
-    for (const [id, bounds] of measuredLabelBBoxes) {
-      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      rect.setAttribute('class', 'label-bbox-tight');
-      rect.setAttribute('x', String(bounds.x));
-      rect.setAttribute('y', String(bounds.y));
-      rect.setAttribute('width', String(bounds.w));
-      rect.setAttribute('height', String(bounds.h));
-      rect.setAttribute('pointer-events', 'none');
-      rect.setAttribute('vector-effect', 'non-scaling-stroke');
-      rect.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'title'));
-      rect.firstChild.textContent = `Tight rendered bounds ${Math.round(bounds.w)} × ${Math.round(bounds.h)} units`;
-      overlayEl.appendChild(rect);
-    }
-  }
 }
 
 // ----- mouse ------------------------------------------------------------
@@ -4238,6 +4254,11 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
 
 function canvasMouseDown(ev) {
   const blockDocument = isBlockDiagram(circuit);
+  if (analysisPick && ev.button === 0 && !blockDocument) {
+    ev.preventDefault();
+    completeAnalysisPick(clientToWorld(ev.clientX, ev.clientY));
+    return;
+  }
   if (blockDocument && ev.button === 0) return;
   if (document.activeElement === cmdInput) cmdInput.blur();
   const b = ev.button;
@@ -6392,16 +6413,23 @@ function analysisNetText(net) {
   return `${net.name || '(unnamed)'} — ${net.id}`;
 }
 
+function portNetIds(nets, type, role) {
+  return nets
+    .filter((net) => net.terminals?.some((terminal) => {
+      const component = circuit.components.get(terminal.comp);
+      return component?.type === type || component?.analysis?.role === role;
+    }))
+    .map((net) => net.id);
+}
+
 function fillAnalysisDialog(targetNetId) {
   if (!analysisTarget || !analysisReference) return;
   const nets = visibleNets();
-  const componentInputNetIds = nets
-    .filter((net) => net.terminals?.some((terminal) => {
-      const component = circuit.components.get(terminal.comp);
-      return component?.type === 'input' || component?.analysis?.role === 'input';
-    }))
-    .map((net) => net.id);
-  const defaults = analysisFormDefaults(nets, { targetNetId, componentInputNetIds });
+  const defaults = analysisFormDefaults(nets, {
+    targetNetId,
+    componentInputNetIds: portNetIds(nets, 'input', 'input'),
+    componentOutputNetIds: portNetIds(nets, 'output', 'output'),
+  });
   analysisTarget.replaceChildren();
   for (const net of nets) {
     const option = document.createElement('option');
@@ -6631,7 +6659,10 @@ function renderAnalysisResult(report) {
       }
       analysisEquation.setAttribute('aria-label', text);
     } else {
-      analysisEquation.textContent = `Unsupported: ${report.error || 'analysis unavailable'}`;
+      const unavailable = document.createElement('div');
+      unavailable.className = 'analysis-equation-unavailable analysis-error';
+      unavailable.textContent = report.error || 'Analysis unavailable.';
+      analysisEquation.appendChild(unavailable);
       analysisEquation.removeAttribute('aria-label');
     }
   }
@@ -6667,12 +6698,101 @@ function openAnalysisDialog(targetNetId) {
   const defaults = fillAnalysisDialog(targetNetId);
   const restored = restoreAnalysisForm(defaults);
   prefillAnalysisAttributes();
+  if (!restored) groundUnusedInputPorts(null, analysisInput?.value);
+  analysisInputPrevious = analysisInput?.value || '';
   if (!restored && targetNetId && analysisTarget && [...analysisTarget.options].some((option) => option.value === targetNetId)) analysisTarget.value = targetNetId;
   persistAnalysisForm();
   renderAnalysisResult(latestAnalysisReport);
   if (analysisAnnotate) analysisAnnotate.hidden = !latestAnalysisReport?.ok;
-  if (!analysisDialog.open) analysisDialog.showModal();
+  const context = document.getElementById('analysis-bias-context');
+  if (context && (analysisAcGrounds?.value || analysisDeviceRegions?.value)) context.open = true;
+  analysisDockRevision = modelRevision;
+  analysisDialog.hidden = false;
+  analysisButton?.setAttribute('aria-pressed', 'true');
   analysisInput?.focus();
+}
+
+let analysisInputPrevious = '';
+
+/** A differential stage is driven from one input port; the other input port is AC ground. */
+function groundUnusedInputPorts(previousInput, nextInput) {
+  if (!analysisAcGrounds) return;
+  const nets = visibleNets();
+  const inputPorts = new Set(portNetIds(nets, 'input', 'input'));
+  if (inputPorts.size < 2) return;
+  const nameOf = (id) => {
+    const net = circuit.nets.get(id);
+    return net ? net.name || net.id : '';
+  };
+  let values = parseAnalysisList(analysisAcGrounds.value);
+  const next = nameOf(nextInput);
+  values = values.filter((value) => value !== next && value !== nextInput);
+  const additions = previousInput
+    ? (inputPorts.has(previousInput) ? [nameOf(previousInput)] : [])
+    : [...inputPorts].filter((id) => id !== nextInput).map(nameOf);
+  for (const value of additions) if (value && !values.includes(value)) values.push(value);
+  analysisAcGrounds.value = values.join(', ');
+}
+
+function isAnalysisDockOpen() {
+  return !!analysisDialog && !analysisDialog.hidden;
+}
+
+function closeAnalysisDock() {
+  if (!isAnalysisDockOpen()) return;
+  setAnalysisPick(null);
+  analysisDialog.hidden = true;
+  analysisButton?.setAttribute('aria-pressed', 'false');
+  canvasEl.focus();
+}
+
+let analysisDockRevision = null;
+let analysisReportRevision = null;
+let analysisPick = null;
+
+/** Keep dock selects in step with model edits while it stays open. */
+function syncAnalysisDock() {
+  if (!isAnalysisDockOpen() || analysisDockRevision === modelRevision) return;
+  analysisDockRevision = modelRevision;
+  const kept = [analysisInput, analysisTarget, analysisReference].map((el) => el?.value);
+  fillAnalysisDialog();
+  [analysisInput, analysisTarget, analysisReference].forEach((el, index) => {
+    if (el && [...el.options].some((option) => option.value === kept[index])) el.value = kept[index];
+  });
+  const stale = document.getElementById('analysis-stale');
+  if (stale) stale.hidden = !latestAnalysisReport || analysisReportRevision === modelRevision;
+}
+
+function setAnalysisPick(selectId) {
+  analysisPick = selectId && document.getElementById(selectId) ? selectId : null;
+  for (const button of document.querySelectorAll('[data-analysis-pick]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.analysisPick === analysisPick));
+  }
+  canvasEl.classList.toggle('mode-analysis-pick', !!analysisPick);
+  renderStatus();
+}
+
+/** Resolve a canvas click to a net for the armed analysis field. */
+function completeAnalysisPick(world) {
+  const select = document.getElementById(analysisPick);
+  if (!select) return setAnalysisPick(null);
+  const terminal = nearestTerminal(world);
+  const net = terminal
+    ? circuit.netOfTerminal(`${terminal.refdes}.${terminal.term}`)
+    : pickWire(world)?.net;
+  const optionNet = net && [...select.options].find((option) => option.value === net.id)
+    ? net
+    : net && visibleNets().find((candidate) => referenceGroupNets(candidate).some((member) => member.id === net.id));
+  if (!optionNet) {
+    logLine('Click a wire or a connected pin to choose a net.', 'error');
+    return;
+  }
+  select.value = optionNet.id;
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  logLine(`${select.labels?.[0]?.textContent || 'Analysis node'}: ${optionNet.name || optionNet.id}`, 'status');
+  setAnalysisPick(null);
+  selectedNets = new Set(referenceGroupNets(optionNet).map((member) => member.id));
+  render();
 }
 
 analysisForm?.addEventListener('submit', (ev) => {
@@ -6714,11 +6834,21 @@ analysisForm?.addEventListener('submit', (ev) => {
     report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
   }
   latestAnalysisReport = report;
+  analysisReportRevision = modelRevision;
+  const stale = document.getElementById('analysis-stale');
+  if (stale) stale.hidden = true;
   renderAnalysisResult(report);
   if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
+  requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
   logLine(report.complete ? 'derived input impedance, output impedance, and voltage transfer' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
   for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
   for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
+});
+
+analysisInput?.addEventListener('change', () => {
+  if (analysisInput.value === analysisInputPrevious) return;
+  groundUnusedInputPorts(analysisInputPrevious, analysisInput.value);
+  analysisInputPrevious = analysisInput.value;
 });
 
 for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole]) {
@@ -6828,11 +6958,10 @@ function annotateAnalysisResult() {
 
 analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 
+/** An explicit selection hints the output; otherwise the form defaults decide. */
 function suggestedAnalysisTarget() {
   const selectedNet = [...selectedNets][0];
   if (selectedNet && circuit.nets.has(selectedNet)) return selectedNet;
-  const markedOutput = visibleNets().find((net) => net.analysis?.role === 'output');
-  if (markedOutput) return markedOutput.id;
   const component = selected && circuit.components.get(selected);
   if (component) {
     for (const term of ['d', 'o', 'y', 'a', 'b']) {
@@ -6840,10 +6969,13 @@ function suggestedAnalysisTarget() {
       if (net) return net.id;
     }
   }
-  return visibleNets()[0]?.id || '';
+  return '';
 }
 
-analysisButton?.addEventListener('click', () => openAnalysisDialog(suggestedAnalysisTarget()));
+analysisButton?.addEventListener('click', () => {
+  if (isAnalysisDockOpen()) closeAnalysisDock();
+  else openAnalysisDialog(suggestedAnalysisTarget());
+});
 
 const SMALL_SIGNAL_TRANSISTOR_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 const SMALL_SIGNAL_RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
@@ -6889,32 +7021,17 @@ function applyNetAnalysis(target, attrs) {
 }
 
 
-analysisCancel?.addEventListener('click', () => analysisDialog?.close());
-let analysisDialogPress = null;
-analysisDialog?.addEventListener('pointerdown', (ev) => {
-  analysisDialogPress = { target: ev.target, x: ev.clientX, y: ev.clientY };
+analysisCancel?.addEventListener('click', closeAnalysisDock);
+for (const button of document.querySelectorAll('[data-analysis-pick]')) {
+  button.addEventListener('click', () => setAnalysisPick(analysisPick === button.dataset.analysisPick ? null : button.dataset.analysisPick));
+}
+analysisDialog?.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (analysisPick) setAnalysisPick(null);
+  else closeAnalysisDock();
 });
-analysisDialog?.addEventListener('click', (ev) => {
-  const press = analysisDialogPress;
-  analysisDialogPress = null;
-  if (ev.target !== analysisDialog) return;
-  // A modal backdrop click is only a close gesture when it started on the
-  // backdrop itself. Selecting text or dragging a control outside the dialog
-  // must never turn the eventual mouseup/click into an accidental close.
-  if (press?.target !== analysisDialog) return;
-  if (press && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > 6) return;
-  analysisDialog.close();
-});
-window.addEventListener('pointerup', () => {
-  if (!analysisDialogPress) return;
-  const press = analysisDialogPress;
-  // The click event, when present, runs before this timer. If the pointer was
-  // released outside the document and no click is synthesized, clear the
-  // stale press before the next interaction.
-  setTimeout(() => {
-    if (analysisDialogPress === press) analysisDialogPress = null;
-  }, 0);
-}, true);
 
 function contextNet(target) {
   return target?.kind === 'wire' ? target.value.net : target?.kind === 'net' ? target.value : null;
@@ -6942,10 +7059,17 @@ function selectContextNet(target, { namedGroup = false, segment = false } = {}) 
   render();
 }
 
-function appendContextItem(parent, label, action, { disabled = false, active = false, mixed = false } = {}) {
+function appendContextItem(parent, label, action, { disabled = false, active = false, mixed = false, shortcut = '', danger = false } = {}) {
   const item = document.createElement('button');
   item.type = 'button';
   item.textContent = label;
+  if (danger) item.classList.add('context-item-danger');
+  if (shortcut) {
+    const hint = document.createElement('kbd');
+    hint.className = 'context-item-shortcut';
+    hint.textContent = shortcut;
+    item.appendChild(hint);
+  }
   item.setAttribute('role', active || mixed ? 'menuitemradio' : 'menuitem');
   if (active || mixed) {
     item.classList.add(active ? 'context-item-active' : 'context-item-mixed');
@@ -7004,6 +7128,10 @@ function appendContextSubmenu(parent, label, build) {
   const open = () => {
     closeSiblings();
     submenu.classList.add('open');
+    // Open level with the trigger row, then shift up only as far as needed to stay on screen.
+    submenu.style.top = `${trigger.offsetTop - 5}px`;
+    const overflow = submenu.getBoundingClientRect().bottom - (window.innerHeight - 8);
+    if (overflow > 0) submenu.style.top = `${trigger.offsetTop - 5 - overflow}px`;
     componentContextSubmenu = submenu;
     trigger.setAttribute('aria-expanded', 'true');
     trigger.classList.add('context-item-open');
@@ -7158,18 +7286,87 @@ function openComponentContextMenu(target, x, y) {
       ? analysisNetTargets(contextNetwork).length
       : 1;
   const scopeSuffix = scopeCount > 1 ? ` (${scopeCount} selected)` : '';
-  heading.textContent = contextComponent
-    ? `${contextComponent.refdes} · ${contextComponent.type}${scopeSuffix}`
-    : contextNetwork
-      ? `${contextNetwork.name || '(unnamed net)'} · ${contextNetwork.id}${scopeSuffix}`
-      : target.kind === 'wire' ? 'Wire segment' : 'Selection';
+  if (contextComponent) appendMarkupText(heading, componentDisplayName(contextComponent));
+  else if (contextNetwork) appendMarkupText(heading, contextNetwork.name || '(unnamed net)');
+  else heading.textContent = target.kind === 'label' ? 'Label' : 'Selection';
+  const headingMeta = contextComponent ? contextComponent.type : contextNetwork ? contextNetwork.id : '';
+  const meta = [headingMeta, scopeSuffix.trim()].filter(Boolean).join(' ');
+  if (meta) heading.append(` · ${meta}`);
   menu.appendChild(heading);
+  appendContextActions(menu, target);
   appendContextSelectionMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(menu, 'Close', closeComponentContextMenu);
   }
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
   menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+/** Right-clicking an unselected object makes it the selection, so menu actions have one clear scope. */
+function selectContextTarget(target) {
+  if (target.kind === 'component') {
+    if (multi.has(target.value.refdes)) return;
+    setSelection([target.value.refdes]);
+    setLabelSelection([], null, true);
+    selectedNets = new Set();
+  } else if (target.kind === 'label') {
+    if (selLabels.has(target.value.id)) return;
+    setSelection([]);
+    setLabelSelection([target.value.id]);
+  } else if (target.kind === 'net' || target.kind === 'wire') {
+    const net = contextNet(target);
+    if (!net || selectedNets.has(net.id)) return;
+    setSelection([]);
+    setLabelSelection([]);
+    selectedNets = new Set(referenceGroupNets(net).map((member) => member.id));
+  }
+}
+
+function renameFromPanel(listEl, selector, start) {
+  const section = listEl.closest('.panel-group');
+  if (section?.classList.contains('collapsed')) setPanelCollapsed(section.dataset.panel, false);
+  let row = listEl.querySelector(selector);
+  if (!row && panelFilterEl?.value) {
+    panelFilterEl.value = '';
+    panelFilterEl.dispatchEvent(new Event('input'));
+    row = listEl.querySelector(selector);
+  }
+  const ref = row?.querySelector('.ref');
+  if (!ref) return;
+  row.scrollIntoView({ block: 'nearest' });
+  start(ref);
+}
+
+function appendContextActions(menu, target) {
+  if (isBlockDiagram(circuit)) return;
+  const group = document.createElement('div');
+  group.className = 'context-menu-group';
+  const later = (fn) => () => setTimeout(fn, 0);
+  if (target.kind === 'component') {
+    const comp = target.value;
+    const renamable = !isReferenceMarker(comp) && comp.type !== 'block' && comp.type !== 'solder';
+    if (renamable) {
+      appendContextItem(group, 'Rename…', later(() => renameFromPanel(componentsListEl, `[data-refdes="${CSS.escape(comp.refdes)}"]`, (ref) => startComponentRename(comp, ref))), { shortcut: 'dbl-click' });
+    }
+    appendContextItem(group, 'Rotate', () => selectedTransform('rotate'), { shortcut: 'R' });
+    appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
+    appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl+R' });
+  } else if (target.kind === 'label') {
+    if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 'T' });
+  } else if (target.kind === 'net' || target.kind === 'wire') {
+    const net = contextNet(target);
+    appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))), { shortcut: 'dbl-click' });
+  }
+  if (target.kind !== 'net' && target.kind !== 'wire') {
+    appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'M' });
+    appendContextItem(group, 'Copy', activateCopy, { shortcut: 'C' });
+    appendContextItem(group, 'Bring to front', () => restackSelected('front'), { shortcut: 'Shift+↑' });
+    appendContextItem(group, 'Send to back', () => restackSelected('back'), { shortcut: 'Shift+↓' });
+  }
+  appendContextItem(group, 'Delete', deleteSelection, { shortcut: 'Del', danger: true });
+  menu.appendChild(group);
 }
 
 canvasEl.addEventListener('contextmenu', (ev) => {
@@ -7203,8 +7400,11 @@ canvasEl.addEventListener('contextmenu', (ev) => {
           ? { kind: 'wire', value: { net: wire.net, branch: wire.branch, segment: wire.seg } }
           : null;
   ev.preventDefault();
-  if (target) openComponentContextMenu(target, ev.clientX, ev.clientY);
-  else closeComponentContextMenu();
+  if (target) {
+    selectContextTarget(target);
+    render();
+    openComponentContextMenu(target, ev.clientX, ev.clientY);
+  } else closeComponentContextMenu();
 });
 window.addEventListener('mousedown', (ev) => {
   if (componentContextMenuEl?.hidden || componentContextMenuEl.contains(ev.target)) return;
@@ -8865,16 +9065,53 @@ canvasEl.addEventListener(
   { passive: false }
 );
 
+let panelFilter = '';
+let lastRevealedRow = '';
+
+function panelFilterMatches(...values) {
+  if (!panelFilter) return true;
+  return values.some((value) => value && String(value).replace(/[_^{}]/g, '').toLowerCase().includes(panelFilter));
+}
+
+function setPanelCount(id, shown, total) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = shown === total ? String(total) : `${shown}/${total}`;
+}
+
+function componentDisplayName(comp) {
+  if (isReferenceMarker(comp)) return comp.refdes;
+  return circuit.labelOf(comp.refdes)?.text || componentLabelText(comp.refdes);
+}
+
+/** Render `_{…}`/`^{…}` label markup as sub/superscript DOM text. */
+function appendMarkupText(el, text) {
+  for (const run of parseLabelRuns(String(text))) {
+    const node = run.sub || run.super ? document.createElement(run.sub ? 'sub' : 'sup') : document.createTextNode(run.text);
+    if (run.sub || run.super) node.textContent = run.text;
+    el.appendChild(node);
+  }
+}
+
+/** Keep a newly selected row visible without jumping on unrelated re-renders. */
+function revealSelectedRow(row, key) {
+  if (key === lastRevealedRow) return;
+  lastRevealedRow = key;
+  requestAnimationFrame(() => row.isConnected && row.scrollIntoView({ block: 'nearest' }));
+}
+
 function renderComponents() {
   componentsListEl.innerHTML = '';
   componentsListEl.setAttribute('role', 'listbox');
   componentsListEl.setAttribute('aria-label', 'Components');
   componentsListEl.setAttribute('aria-multiselectable', 'true');
-  const comps = componentPaletteItems(sortedComps());
+  const allComps = componentPaletteItems(sortedComps());
+  const comps = allComps.filter((comp) => panelFilterMatches(componentDisplayName(comp), comp.refdes, comp.type));
+  setPanelCount('components-count', comps.length, allComps.length);
   if (comps.length === 0) {
-    componentsListEl.innerHTML = '<div class="no-items">No components</div>';
+    componentsListEl.innerHTML = `<div class="no-items">${allComps.length ? 'No matching components' : 'No components'}</div>`;
     return;
   }
+  const primaryRef = selected && multi.has(selected) ? selected : [...multi][0];
   for (const comp of comps) {
     const row = document.createElement('div');
     row.className = 'row' + (multi.has(comp.refdes) ? ' selected' : '');
@@ -8888,9 +9125,7 @@ function renderComponents() {
 
     const ref = document.createElement('span');
     ref.className = 'ref';
-    const ordinaryInstance = !isReferenceMarker(comp);
-    const instanceLabel = ordinaryInstance ? circuit.labelOf(comp.refdes) : null;
-    ref.textContent = instanceLabel?.text || (ordinaryInstance ? componentLabelText(comp.refdes) : comp.refdes);
+    appendMarkupText(ref, componentDisplayName(comp));
     ref.title = isReferenceMarker(comp)
       ? 'Double-click to edit its label'
       : comp.type === 'block'
@@ -8916,7 +9151,7 @@ function renderComponents() {
     remove.className = 'remove';
     remove.type = 'button';
     remove.textContent = '×';
-    remove.title = `Remove ${comp.refdes}`;
+    remove.title = `Delete ${comp.refdes}`;
     remove.setAttribute('aria-label', `Remove ${comp.refdes}`);
     remove.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -8940,6 +9175,8 @@ function renderComponents() {
     row.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
+      selectContextTarget({ kind: 'component', value: comp });
+      render();
       openComponentContextMenu({ kind: 'component', value: comp }, ev.clientX, ev.clientY);
     });
 
@@ -8999,6 +9236,7 @@ function renderComponents() {
     });
 
     componentsListEl.appendChild(row);
+    if (comp.refdes === primaryRef) revealSelectedRow(row, `component:${primaryRef}`);
   }
 }
 
@@ -9007,30 +9245,36 @@ function renderNets() {
   netsListEl.setAttribute('role', 'listbox');
   netsListEl.setAttribute('aria-label', 'Electrical nets');
   netsListEl.setAttribute('aria-multiselectable', 'true');
-  if (circuit.nets.size === 0) {
-    netsListEl.innerHTML = '<div class="no-items">No nets</div>';
+  const allNets = visibleNets();
+  const nets = allNets.filter((net) => panelFilterMatches(net.name, net.id));
+  setPanelCount('nets-count', nets.length, allNets.length);
+  if (nets.length === 0) {
+    netsListEl.innerHTML = `<div class="no-items">${allNets.length ? 'No matching nets' : 'No nets'}</div>`;
     return;
   }
-  for (const net of visibleNets()) {
+  const primaryNet = nets.find((net) => referenceGroupNets(net).some((candidate) => selectedNets.has(candidate.id)));
+  for (const net of nets) {
     const groupedNets = referenceGroupNets(net);
     const groupedIds = groupedNets.map((candidate) => candidate.id);
     const groupSelected = groupedIds.some((id) => selectedNets.has(id));
     const row = document.createElement('div');
     row.className = 'row' + (groupSelected ? ' selected' : '');
     row.setAttribute('role', 'option');
-    row.tabIndex = groupSelected || (!selectedNets.size && net.id === visibleNets()[0]?.id) ? 0 : -1;
+    row.tabIndex = groupSelected || (!selectedNets.size && net.id === nets[0]?.id) ? 0 : -1;
     row.id = `net-option-${CSS.escape(net.id)}`;
     row.setAttribute('aria-selected', String(groupSelected));
 
     const ref = document.createElement('span');
     ref.className = 'ref';
-    ref.textContent = net.name || net.id;
+    appendMarkupText(ref, net.name || net.id);
     ref.title = 'Double-click to rename';
 
     const meta = document.createElement('span');
     meta.className = 'meta';
-    const analysisTag = net.analysis?.acGround ? ' · DC bias / AC ground' : net.analysis?.role ? ` · ${net.analysis.role}` : '';
-    meta.textContent = `${net.terminals.length} term  ${net.length()}u  ${net.id}${analysisTag}`;
+    const pins = net.terminals.length;
+    const analysisTag = net.analysis?.acGround ? ' · AC ground' : net.analysis?.role ? ` · ${net.analysis.role}` : '';
+    meta.textContent = `${pins} ${pins === 1 ? 'pin' : 'pins'}${analysisTag}`;
+    row.title = `${net.id} · ${pins} ${pins === 1 ? 'terminal' : 'terminals'} · ${net.length()} units of wire${net.analysis?.acGround ? ' · DC bias / AC ground' : ''}`;
 
     row.appendChild(ref);
     row.appendChild(meta);
@@ -9038,6 +9282,8 @@ function renderNets() {
     row.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
+      selectContextTarget({ kind: 'net', value: net });
+      render();
       openComponentContextMenu({ kind: 'net', value: net }, ev.clientX, ev.clientY);
     });
 
@@ -9061,7 +9307,7 @@ function renderNets() {
         return;
       }
       if (ev.shiftKey) {
-        const ids = rangeValues(visibleNets(), netRangeAnchor, net.id, (item) => item.id);
+        const ids = rangeValues(nets, netRangeAnchor, net.id, (item) => item.id);
         const next = ev.ctrlKey || ev.metaKey ? new Set(selectedNets) : new Set();
         for (const id of (ids.length ? ids : [net.id])) {
           for (const grouped of referenceGroupNets(circuit.nets.get(id))) next.add(grouped.id);
@@ -9102,11 +9348,24 @@ function renderNets() {
     });
 
     netsListEl.appendChild(row);
+    if (net === primaryNet) revealSelectedRow(row, `net:${net.id}`);
   }
 }
 
 /** Open the inline refdes editor for a component row. Invalid or occupied
  * names are rejected before commit, leaving the model and selection untouched. */
+/** Ctrl/Cmd+, and Ctrl/Cmd+. toggle sub/superscript markup in a plain name field. */
+function bindMarkupShortcuts(input) {
+  input.addEventListener('keydown', (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey) || (ev.key !== ',' && ev.key !== '.')) return;
+    ev.preventDefault();
+    const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, ev.key === ',' ? '_' : '^');
+    if (!res) return;
+    input.value = res.text;
+    input.setSelectionRange(res.selStart, res.selEnd);
+  });
+}
+
 function startComponentRename(comp, ref) {
   if (!comp || inlineInput) return;
   const input = document.createElement('input');
@@ -9117,6 +9376,7 @@ function startComponentRename(comp, ref) {
   input.value = currentLabel?.text || (ordinaryInstance ? componentLabelText(comp.refdes) : comp.refdes);
   input.placeholder = input.value;
   input.spellcheck = false;
+  bindMarkupShortcuts(input);
   ref.replaceWith(input);
   inlineInput = input;
   input.focus();
@@ -9169,6 +9429,7 @@ function startNetRename(net, ref) {
   input.value = net.name || '';
   input.placeholder = net.id;
   input.spellcheck = false;
+  bindMarkupShortcuts(input);
   ref.replaceWith(input);
   input.focus();
   input.select();
@@ -9199,88 +9460,79 @@ function renderDetail() {
   detailEl.innerHTML = '';
   const label = selectedLabel();
   if (label) {
-    const meta = document.createElement('div');
-    meta.className = 'detail-meta';
-    const role = label.isNetLabel?.() ? `net label on ${label.netId}` : label.owner ? `instance label owned by ${label.owner}` : 'annotation';
-    meta.textContent = `${role} "${label.text}"  align: ${label.align}  — t / double-click edit, Tab cycle, Shift+Left/Right align`;
-    detailEl.appendChild(meta);
-
-    const table = document.createElement('table');
-    const row = document.createElement('tr');
     const a = label.anchorWorld();
-    const b = label.bbox();
-    for (const [k, v] of [
-      ['Text', label.text],
-      ['Role', label.isNetLabel?.() ? 'Electrical net label' : label.owner ? 'Instance label' : 'Annotation'],
-      ['Align', label.align],
-      ['Anchor', `${a.x},${a.y}`],
-      ['BBox', `${b.x},${b.y} ${b.w}x${b.h}`],
-      ['Owner', label.owner || '—'],
-      ['Net', label.netId || '—'],
-    ]) {
-      const th = document.createElement('td');
-      th.textContent = k;
-      th.style.fontWeight = '600';
-      const td = document.createElement('td');
-      td.textContent = v;
-      row.appendChild(th);
-      row.appendChild(td);
+    const role = label.isNetLabel?.() ? 'Net label' : label.owner ? 'Instance label' : 'Annotation';
+    const rows = [['Role', role], ['Align', label.align], ['Anchor', `${a.x}, ${a.y}`]];
+    if (label.owner) rows.push(['Owner', label.owner]);
+    if (label.netId) rows.push(['Net', circuit.nets.get(label.netId)?.name || label.netId]);
+    detailEl.appendChild(detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
+    const list = document.createElement('dl');
+    list.className = 'detail-props';
+    for (const [key, value] of rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = key;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      list.append(dt, dd);
     }
-    table.appendChild(row);
-    detailEl.appendChild(table);
+    detailEl.appendChild(list);
     return;
   }
 
   const comp = selectedComp();
   if (!comp) {
-    detailEl.innerHTML = '<div class="no-items">Select a component to see its terminals</div>';
+    detailEl.innerHTML = '<div class="no-items">Select a component or label to inspect it</div>';
     return;
   }
 
-  const meta = document.createElement('div');
-  meta.className = 'detail-meta';
-  meta.textContent = `${comp.refdes} (${comp.type})  value: ${comp.value || '-'}  —  Wire: managed or fixed; F3 selects new route shape`;
-  detailEl.appendChild(meta);
-
+  detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${comp.type} · ${comp.value}` : comp.type));
   const table = document.createElement('table');
   const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>Term</th><th>World</th><th>Grid</th><th>Net</th></tr>';
+  thead.innerHTML = '<tr><th>Pin</th><th>Net</th><th>Position</th></tr>';
   table.appendChild(thead);
-
   const tbody = document.createElement('tbody');
   for (const t of comp.worldTerminals()) {
     const tr = document.createElement('tr');
     const net = circuit.netOfTerminal(`${comp.refdes}.${t.name}`);
-
     const nameTd = document.createElement('td');
     nameTd.textContent = t.name;
-    nameTd.style.fontWeight = '600';
-
-    const posTd = document.createElement('td');
-    posTd.textContent = `${t.x},${t.y}`;
-
-    const gridTd = document.createElement('td');
-    const onGrid = t.x % 40 === 0 && t.y % 40 === 0;
-    gridTd.textContent = onGrid ? 'ok' : 'NO';
-    gridTd.className = onGrid ? 'on-grid' : 'off-grid';
-
+    nameTd.className = 'pin-name';
     const netTd = document.createElement('td');
     if (net) {
-      netTd.textContent = `N${net.id}${net.name ? ` ${net.name}` : ''}`;
+      appendMarkupText(netTd, net.name || net.id);
       netTd.className = 'net-label';
+      netTd.title = net.id;
     } else {
-      netTd.textContent = '—';
-      netTd.style.color = 'var(--danger)';
+      netTd.textContent = 'unconnected';
+      netTd.className = 'off-grid';
     }
-
-    tr.appendChild(nameTd);
-    tr.appendChild(posTd);
-    tr.appendChild(gridTd);
-    tr.appendChild(netTd);
+    const posTd = document.createElement('td');
+    posTd.textContent = `${t.x}, ${t.y}`;
+    if (t.x % GRID !== 0 || t.y % GRID !== 0) {
+      posTd.className = 'off-grid';
+      posTd.title = 'Off the placement grid';
+    }
+    tr.append(nameTd, netTd, posTd);
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
   detailEl.appendChild(table);
+}
+
+function detailHeader(name, kind) {
+  const header = document.createElement('div');
+  header.className = 'detail-header';
+  const title = document.createElement('span');
+  title.className = 'detail-name';
+  appendMarkupText(title, name);
+  header.appendChild(title);
+  if (kind) {
+    const meta = document.createElement('span');
+    meta.className = 'detail-kind';
+    meta.textContent = kind;
+    header.appendChild(meta);
+  }
+  return header;
 }
 
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
@@ -9442,11 +9694,41 @@ function transformPendingComponent(operation) {
   return true;
 }
 
+// Arrow-key highlight in the insert picker. It belongs to one query string, so
+// typing or deleting a character returns the highlight to the best match.
+let insertNav = { query: '', index: 0 };
+
+function insertHighlightIndex(entries = insertMenuEntries()) {
+  if (insertNav.query !== insertQuery || !entries.length) return 0;
+  return Math.min(insertNav.index, entries.length - 1);
+}
+
+/** Up/Down step through matches; Left/Right jump to the previous/next category. */
+function moveInsertHighlight(key) {
+  const groups = insertMenuGroups();
+  const entries = groups.flatMap((group) => group.entries);
+  if (!entries.length) return;
+  let index = insertHighlightIndex(entries);
+  if (key === 'ArrowDown') index = (index + 1) % entries.length;
+  else if (key === 'ArrowUp') index = (index - 1 + entries.length) % entries.length;
+  else {
+    const starts = [];
+    let offset = 0;
+    for (const group of groups) { starts.push(offset); offset += group.entries.length; }
+    const current = starts.findLastIndex((start) => start <= index);
+    if (key === 'ArrowRight') index = starts[(current + 1) % starts.length];
+    else if (index !== starts[current]) index = starts[current];
+    else index = starts[(current - 1 + starts.length) % starts.length];
+  }
+  insertNav = { query: insertQuery, index };
+}
+
 function selectInsertMatch() {
   const entries = insertMenuEntries();
   if (!entries.length) return false;
   const startWorld = { ...cursor };
-  const type = entries[0];
+  const type = entries[insertHighlightIndex(entries)];
+  insertNav = { query: '', index: 0 };
   pendingPlace = type === 'label'
     ? { kind: 'label', startWorld }
     : type === 'block' && isBlockDiagram(circuit)
@@ -9461,8 +9743,13 @@ function onInsertKey(key, shiftKey = false) {
     undo();
     return;
   }
-  // Arrow keys move the cursor and placement ghost.
+  // Arrow keys browse the picker; once a ghost exists they move the cursor and ghost.
   const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
+  if (arrow && !pendingPlace) {
+    moveInsertHighlight(key);
+    render();
+    return;
+  }
   if (arrow) {
     moveCursor(arrow[0], arrow[1]);
     render();
@@ -9502,6 +9789,7 @@ function onInsertKey(key, shiftKey = false) {
   if (key === 'Escape') {
     mode = 'normal';
     insertQuery = '';
+    insertNav = { query: '', index: 0 };
     render();
     return;
   }
@@ -10361,7 +10649,8 @@ function renderStatus() {
     : comp
       ? `${comp.refdes}${multi.size > 1 ? ` +${multi.size - 1}` : ''}`
       : '-';
-  const parts = [interaction.label, `sel ${sel}`, `@${cursor.x},${cursor.y}`];
+  const parts = [analysisPick ? 'PICK NET' : interaction.label, `sel ${sel}`, `@${cursor.x},${cursor.y}`];
+  if (analysisPick) parts.push('click a wire or pin for the analysis node · Esc cancel');
   if (visual) {
     parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
   }
@@ -10433,6 +10722,29 @@ function insertMenuGroups() {
   ));
 }
 
+const symbolPreviewCache = new Map();
+
+/** Small cached drawing of a placeable type for the insert menu. */
+function symbolPreviewSvg(type) {
+  if (symbolPreviewCache.has(type)) return symbolPreviewCache.get(type);
+  let svg = '';
+  if (type === 'label') {
+    svg = '<svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M8 19h8" fill="none" stroke="#111" stroke-width="2" stroke-linecap="round"/></svg>';
+  } else if (type === 'block') {
+    svg = '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="1" fill="none" stroke="#111" stroke-width="2"/></svg>';
+  } else {
+    try {
+      const preview = new Circuit();
+      preview.addComponent(type, { x: 0, y: 0, noLabel: true });
+      const b = preview.bounds(6);
+      svg = svgString(preview, { grid: false, terminals: false, junctions: false, background: false })
+        .replace(/viewBox="[^"]*"/, `viewBox="${b.x} ${b.y} ${b.w} ${b.h}" preserveAspectRatio="xMidYMid meet"`);
+    } catch { svg = ''; }
+  }
+  symbolPreviewCache.set(type, svg);
+  return svg;
+}
+
 function updateInsertMenu() {
   // The picker only needs to be visible when insert mode has no ghost selected;
   // once a placement (component/label) is pending it would just be in the way.
@@ -10442,6 +10754,7 @@ function updateInsertMenu() {
     return;
   }
   if (!insertMenu) {
+    insertNav = { query: '', index: 0 };
     insertMenu = document.createElement('div');
     insertMenu.id = 'insert-menu';
     insertMenu.className = 'insert-menu';
@@ -10461,26 +10774,41 @@ function updateInsertMenu() {
     none.textContent = 'no match';
     insertMenu.appendChild(none);
   }
+  const best = insertMenu._entries[insertHighlightIndex(insertMenu._entries)];
+  const body = document.createElement('div');
+  body.className = 'insert-menu-body';
+  insertMenu.appendChild(body);
   for (const group of groups) {
+    const section = document.createElement('div');
+    section.className = 'insert-menu-group';
     const heading = document.createElement('div');
     heading.className = 'insert-menu-category';
     heading.textContent = group.title;
-    insertMenu.appendChild(heading);
+    section.appendChild(heading);
     for (const type of group.entries) {
       const item = document.createElement('div');
-      item.className = 'insert-menu-item';
+      item.className = `insert-menu-item${type === best ? ' active' : ''}`;
+      const preview = document.createElement('span');
+      preview.className = 'insert-menu-preview';
+      preview.innerHTML = symbolPreviewSvg(type);
       const name = document.createElement('span');
       name.textContent = PLACEMENT_LABELS[type] || type;
-      item.appendChild(name);
-      insertMenu.appendChild(item);
+      item.append(preview, name);
+      if (type === best) {
+        const hint = document.createElement('kbd');
+        hint.textContent = 'Enter';
+        item.appendChild(hint);
+      }
+      section.appendChild(item);
     }
+    body.appendChild(section);
   }
   const p = worldToClient(cursor.x, cursor.y);
   insertMenu.style.display = 'block';
   const rect = insertMenu.getBoundingClientRect();
   let left = p.x + 14;
   let top = p.y - rect.height / 2;
-  if (left + 160 > window.innerWidth - 8) left = p.x - 160 - 14;
+  if (left + rect.width > window.innerWidth - 8) left = Math.max(8, p.x - rect.width - 14);
   top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, top));
   insertMenu.style.left = `${left}px`;
   insertMenu.style.top = `${top}px`;
@@ -10886,20 +11214,30 @@ function focusCheckIssue(issue) {
   render();
 }
 
+let renderedCheckReport;
+
 function renderCheckSummary() {
-  if (!checkSummaryBodyEl) return;
+  if (!checkSummaryBodyEl || renderedCheckReport === lastCheckReport) return;
+  renderedCheckReport = lastCheckReport;
   checkSummaryBodyEl.replaceChildren();
+  const countEl = document.getElementById('check-count');
   if (!lastCheckReport) {
+    if (countEl) countEl.textContent = '';
     checkSummaryBodyEl.textContent = 'Not checked yet.';
     return;
   }
   const issues = checkIssues(lastCheckReport);
+  if (countEl) {
+    countEl.textContent = issues.length ? String(issues.length) : '✓';
+    countEl.classList.toggle('issue', issues.length > 0);
+  }
   const result = document.createElement('div');
   result.className = issues.length ? 'check-issues' : 'check-pass';
   result.textContent = issues.length ? `Issues found: ${issues.length}` : 'Pass: no issues found';
   checkSummaryBodyEl.appendChild(result);
   for (const [key, label] of CHECK_CATEGORIES) {
     const count = (lastCheckReport[key] || []).length;
+    if (!count) continue;
     const row = document.createElement('div');
     row.className = count ? 'check-category issue' : 'check-category';
     row.textContent = `${label}: ${count}`;
@@ -10930,7 +11268,9 @@ function runCheck() {
     const report = evaluate(circuit);
     lastCheckReport = report;
     diagnosticFromReport(report);
+    setPanelCollapsed('check-summary', false);
     renderCheckSummary();
+    document.getElementById('check-summary')?.scrollIntoView({ block: 'nearest' });
     const hasProblems = report.ok === false || CHECK_CATEGORIES.map(([key]) => key)
       .some((key) => report[key]?.length);
     logLine(evaluationText(report), hasProblems ? 'error' : undefined);
@@ -11067,9 +11407,120 @@ function bindInteractionControls() {
 }
 
 bindInteractionControls();
-for (const [id, field] of [['style-color', 'color'], ['style-line', 'lineStyle'], ['style-width', 'width']]) {
+for (const [id, field] of [['style-line', 'lineStyle'], ['style-width', 'width']]) {
   document.getElementById(id)?.addEventListener('change', (ev) => applySelectedStyle(field, ev.target.value));
 }
+document.getElementById('style-text-row')?.addEventListener('click', (ev) => {
+  const button = ev.target.closest?.('button');
+  if (button?.dataset.styleAlign) setSelectedLabelAlign(button.dataset.styleAlign);
+  else if (button?.dataset.styleFont) setSelectedLabelFont(button.dataset.styleFont, button.getAttribute('aria-pressed') !== 'true');
+});
+document.getElementById('style-color')?.addEventListener('click', (ev) => {
+  const swatch = ev.target.closest?.('.swatch');
+  if (swatch) applySelectedStyle('color', swatch.dataset.value);
+});
+
+// ----- side panel: collapsible sections, filter, resizable width ------------
+
+const PANEL_COLLAPSED_KEY = 'schematic-spawner:panel-collapsed';
+const PANEL_WIDTH_KEY = 'schematic-spawner:panel-width';
+const collapsedPanels = new Set();
+try {
+  for (const name of JSON.parse(localStorage.getItem(PANEL_COLLAPSED_KEY) || '[]')) collapsedPanels.add(name);
+} catch { /* storage unavailable */ }
+
+function panelSection(name) {
+  return document.querySelector(`.side-panel [data-panel="${CSS.escape(name)}"]`);
+}
+
+function setPanelCollapsed(name, collapsed) {
+  const section = panelSection(name);
+  if (!section) return;
+  section.classList.toggle('collapsed', collapsed);
+  section.querySelector('.panel-toggle')?.setAttribute('aria-expanded', String(!collapsed));
+  if (collapsed) collapsedPanels.add(name); else collapsedPanels.delete(name);
+  try { localStorage.setItem(PANEL_COLLAPSED_KEY, JSON.stringify([...collapsedPanels])); } catch { /* storage unavailable */ }
+}
+
+for (const toggle of document.querySelectorAll('.side-panel .panel-toggle')) {
+  const section = toggle.closest('.panel-group');
+  if (!section.dataset.panel) section.dataset.panel = toggle.getAttribute('aria-controls');
+  const name = section.dataset.panel;
+  setPanelCollapsed(name, collapsedPanels.has(name));
+  toggle.addEventListener('click', () => setPanelCollapsed(name, !section.classList.contains('collapsed')));
+}
+
+const panelFilterEl = document.getElementById('panel-filter');
+panelFilterEl?.addEventListener('input', () => {
+  panelFilter = panelFilterEl.value.trim().replace(/[_^{}]/g, '').toLowerCase();
+  panelStateKey = '';
+  render();
+});
+panelFilterEl?.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (panelFilterEl.value) {
+    panelFilterEl.value = '';
+    panelFilterEl.dispatchEvent(new Event('input'));
+  } else {
+    canvasEl.focus();
+  }
+});
+
+/** Drag/keyboard width control on a panel's left edge, persisted per panel. */
+function bindPanelResizer(panel, handle, storageKey, cssVar, minWidth) {
+  if (!panel || !handle) return;
+  const setWidth = (width, persist = true) => {
+    if (width == null) {
+      panel.style.removeProperty(cssVar);
+      try { localStorage.removeItem(storageKey); } catch { /* storage unavailable */ }
+      return;
+    }
+    const max = Math.max(minWidth, Math.round(window.innerWidth * 0.6));
+    const next = Math.round(Math.min(max, Math.max(minWidth, width)));
+    panel.style.setProperty(cssVar, `${next}px`);
+    handle.setAttribute('aria-valuenow', String(next));
+    if (persist) {
+      try { localStorage.setItem(storageKey, String(next)); } catch { /* storage unavailable */ }
+    }
+  };
+  try {
+    const saved = Number(localStorage.getItem(storageKey));
+    if (saved) setWidth(saved, false);
+  } catch { /* storage unavailable */ }
+  handle.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    handle.setPointerCapture(ev.pointerId);
+    const startX = ev.clientX;
+    const startWidth = panel.getBoundingClientRect().width;
+    panel.classList.add('resizing');
+    const move = (moveEv) => setWidth(startWidth + startX - moveEv.clientX, false);
+    const end = () => {
+      panel.classList.remove('resizing');
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      setWidth(panel.getBoundingClientRect().width);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  });
+  handle.addEventListener('dblclick', () => setWidth(null));
+  handle.addEventListener('keydown', (ev) => {
+    const step = ev.shiftKey ? 64 : 16;
+    const width = panel.getBoundingClientRect().width;
+    if (ev.key === 'ArrowLeft') setWidth(width + step);
+    else if (ev.key === 'ArrowRight') setWidth(width - step);
+    else return;
+    ev.preventDefault();
+  });
+}
+
+bindPanelResizer(document.getElementById('side-panel'), document.getElementById('side-panel-resizer'), PANEL_WIDTH_KEY, '--side-panel-width', 180);
+bindPanelResizer(analysisDialog, document.getElementById('analysis-dock-resizer'), 'schematic-spawner:analysis-width', '--analysis-dock-width', 300);
 
 clearCheckButtonEl?.addEventListener('click', () => {
   clearCheckReport();
@@ -11115,46 +11566,56 @@ function startNewDocument(kind) {
   logLine(`Started a new ${kind === 'block' ? 'block diagram' : 'schematic'}. Enter a name and save to create its files.`);
 }
 
-function closeNewDocumentMenu(focusButton = false) {
-  if (!newDocumentMenu || newDocumentMenu.hidden) return;
-  newDocumentMenu.hidden = true;
-  newDocumentButton?.setAttribute('aria-expanded', 'false');
-  if (focusButton) newDocumentButton?.focus();
+const toolbarMenus = [
+  [newDocumentButton, newDocumentMenu],
+  [document.getElementById('btn-document-menu'), document.getElementById('document-menu')],
+].filter(([button, menu]) => button && menu);
+
+function closeToolbarMenu(button, menu, focusButton = false) {
+  if (menu.hidden) return;
+  menu.hidden = true;
+  button.setAttribute('aria-expanded', 'false');
+  if (focusButton) button.focus();
 }
 
-function openNewDocumentMenu() {
-  if (!newDocumentMenu) return;
-  newDocumentMenu.hidden = false;
-  newDocumentButton?.setAttribute('aria-expanded', 'true');
-  newDocumentMenu.querySelector('[role="menuitem"]')?.focus();
+for (const [button, menu] of toolbarMenus) {
+  button.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    if (!menu.hidden) { closeToolbarMenu(button, menu); return; }
+    for (const [otherButton, otherMenu] of toolbarMenus) closeToolbarMenu(otherButton, otherMenu);
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    menu.querySelector('[role="menuitem"]:not(:disabled)')?.focus();
+  });
+  menu.addEventListener('click', (ev) => {
+    if (ev.target.closest?.('[role="menuitem"]')) closeToolbarMenu(button, menu);
+  });
+  menu.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+    ev.preventDefault();
+    const items = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+    const next = items.indexOf(document.activeElement) + (ev.key === 'ArrowDown' ? 1 : -1);
+    items[(next + items.length) % items.length]?.focus();
+  });
 }
-
-newDocumentButton?.addEventListener('click', (ev) => {
-  ev.preventDefault();
-  if (newDocumentMenu?.hidden) openNewDocumentMenu();
-  else closeNewDocumentMenu();
-});
 newDocumentMenu?.addEventListener('click', (ev) => {
   const option = ev.target.closest?.('[data-new-document]');
-  if (!option) return;
-  closeNewDocumentMenu();
-  startNewDocument(option.dataset.newDocument);
+  if (option) startNewDocument(option.dataset.newDocument);
 });
-function dismissNewDocumentMenuOutside(ev) {
-  if (newDocumentMenu?.hidden || newDocumentMenu.contains(ev.target) || newDocumentButton?.contains(ev.target)) return;
-  closeNewDocumentMenu();
-}
-window.addEventListener('pointerdown', dismissNewDocumentMenuOutside, true);
-window.addEventListener('click', dismissNewDocumentMenuOutside, true);
-window.addEventListener('keydown', (ev) => {
-  if (newDocumentMenu?.hidden) return;
-  if (ev.key === 'Escape') {
-    ev.preventDefault();
-    closeNewDocumentMenu(true);
+function dismissToolbarMenusOutside(ev) {
+  for (const [button, menu] of toolbarMenus) {
+    if (!menu.contains(ev.target) && !button.contains(ev.target)) closeToolbarMenu(button, menu);
   }
+}
+window.addEventListener('pointerdown', dismissToolbarMenusOutside, true);
+window.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  const open = toolbarMenus.find(([, menu]) => !menu.hidden);
+  if (!open) return;
+  ev.preventDefault();
+  closeToolbarMenu(open[0], open[1], true);
 });
 
-document.getElementById('btn-load-circuit').addEventListener('click', () => requestCircuitLoad());
 deleteCircuitBtn?.addEventListener('click', askDeleteCircuit);
 exportCircuitBtn?.addEventListener('click', exportCircuit);
 exportCancel?.addEventListener('click', () => exportDialog?.close());
@@ -11174,6 +11635,23 @@ exportForm?.addEventListener('submit', (event) => {
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => requestCircuitLoad(circuitSelectEl.value));
 
+function openDocumentPicker() {
+  circuitSelectEl.focus();
+  try { circuitSelectEl.showPicker?.(); } catch { /* picker needs user activation in some engines */ }
+}
+
+document.getElementById('empty-state')?.addEventListener('click', (ev) => {
+  const action = ev.target.closest?.('[data-empty-action]')?.dataset.emptyAction;
+  const block = isBlockDiagram(circuit);
+  if (action === 'place') (block ? activateBlockPlace : activatePlace)();
+  else if (action === 'wire') (block ? activateBlockConnector : activateWire)();
+  else if (action === 'open') openDocumentPicker();
+  else if (action === 'help') showHelp();
+  if (action && action !== 'open' && action !== 'help') canvasEl.focus();
+});
+// Documents created by the CLI or another window appear without a manual reload.
+circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
+
 
 document.getElementById('btn-help').addEventListener('click', () => {
   showHelp();
@@ -11186,8 +11664,12 @@ const themeBtn = document.getElementById('btn-theme');
 
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
-  setButtonLabel(themeBtn, dark ? 'Light' : 'Dark');
-  if (themeBtn) themeBtn.title = dark ? 'Switch to light theme (D)' : 'Switch to dark theme (D)';
+  if (themeBtn) {
+    themeBtn.setAttribute('aria-pressed', String(dark));
+    themeBtn.title = dark ? 'Switch to light theme (D)' : 'Switch to dark theme (D)';
+    const icon = themeBtn.querySelector('.button-icon');
+    if (icon) icon.innerHTML = ICON_PATHS[dark ? 'sun' : 'moon'];
+  }
   try {
     localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
   } catch { /* storage unavailable */ }
@@ -11208,15 +11690,13 @@ if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
 // ----- grid toggle button --------------------------------------------
 
 const gridBtn = document.getElementById('btn-grid');
-const labelBBoxesBtn = document.getElementById('btn-label-bboxes');
 
 /** Turn the placement grid on/off; keeps the toolbar button and the '#'
  *  keybinding in sync. */
 function setGrid(on) {
   showGrid = on;
   if (gridBtn) {
-    gridBtn.classList.toggle('off', !showGrid);
-    setButtonLabel(gridBtn, showGrid ? 'Grid' : 'Grid off');
+    gridBtn.setAttribute('aria-pressed', String(showGrid));
     gridBtn.title = showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
   }
   render();
@@ -11225,26 +11705,8 @@ function setGrid(on) {
 
 if (gridBtn) {
   gridBtn.addEventListener('click', () => setGrid(!showGrid));
-  setButtonLabel(gridBtn, showGrid ? 'Grid' : 'Grid off');
+  gridBtn.setAttribute('aria-pressed', String(showGrid));
   gridBtn.title = showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
-}
-
-function setLabelBBoxes(on, announce = true) {
-  showLabelBBoxes = !!on;
-  if (labelBBoxesBtn) {
-    labelBBoxesBtn.classList.toggle('off', !showLabelBBoxes);
-    labelBBoxesBtn.setAttribute('aria-pressed', String(showLabelBBoxes));
-    setButtonLabel(labelBBoxesBtn, showLabelBBoxes ? 'Hide boxes' : 'Label boxes');
-    labelBBoxesBtn.title = showLabelBBoxes
-      ? 'Hide rounded and tight rendered label boxes'
-      : 'Show rounded and tight rendered label boxes';
-  }
-  render();
-  if (announce) logLine(showLabelBBoxes ? 'label boxes shown (blue rounded, green tight)' : 'label boxes hidden');
-}
-if (labelBBoxesBtn) {
-  labelBBoxesBtn.addEventListener('click', () => setLabelBBoxes(!showLabelBBoxes));
-  setLabelBBoxes(false, false);
 }
 
 // Crosshair visibility is independent from pointer presence: the pointer
@@ -11255,8 +11717,7 @@ function setCrosshair(on, announce = true) {
   crosshairVisible = !!on;
 
   if (crosshairBtn) {
-    crosshairBtn.classList.toggle('off', !crosshairVisible);
-    setButtonLabel(crosshairBtn, crosshairVisible ? 'Crosshair' : 'Crosshair off');
+    crosshairBtn.setAttribute('aria-pressed', String(crosshairVisible));
     crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
   }
   render();
@@ -11264,8 +11725,7 @@ function setCrosshair(on, announce = true) {
 }
 if (crosshairBtn) {
   crosshairBtn.addEventListener('click', () => setCrosshair(!crosshairVisible));
-  crosshairBtn.classList.toggle('off', !crosshairVisible);
-  setButtonLabel(crosshairBtn, crosshairVisible ? 'Crosshair' : 'Crosshair off');
+  crosshairBtn.setAttribute('aria-pressed', String(crosshairVisible));
   crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
 }
 
@@ -11279,6 +11739,20 @@ window.addEventListener('keydown', (ev) => {
     if (reloadApp) void reloadApp().catch(() => window.location.reload());
     else window.location.reload();
     return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'o' && !inlineInput) {
+    ev.preventDefault();
+    openDocumentPicker();
+    return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'f') {
+    const filter = document.getElementById('panel-filter');
+    if (filter && !filter.closest('[hidden]') && !inlineInput) {
+      ev.preventDefault();
+      filter.focus();
+      filter.select();
+      return;
+    }
   }
   if (isCloseWindowShortcut(ev) && window.schematicStorage?.closeWindow) {
     ev.preventDefault();
@@ -11304,11 +11778,9 @@ window.addEventListener('keydown', (ev) => {
       return;
     }
   }
-  if (analysisDialog?.open) {
-    if (ev.key === 'Escape') {
-      ev.preventDefault();
-      analysisDialog.close();
-    }
+  if (analysisPick && ev.key === 'Escape') {
+    ev.preventDefault();
+    setAnalysisPick(null);
     return;
   }
 

@@ -335,7 +335,7 @@ async function handleCircuitApi(req, res, url) {
         loadDocument(state); // Validate and ensure the current document can reload it.
         json(res, 200, { name, state }, circuitHeaders(revision));
       } catch (err) {
-        json(res, err.code === 'ENOENT' ? 404 : 400, { error: `could not load circuit: ${err.message}` });
+        json(res, err.code === 'ENOENT' ? 404 : 400, { error: err.code === 'ENOENT' ? `circuit "${name}" not found` : `could not load circuit: ${err.message}` });
       }
       return true;
     });

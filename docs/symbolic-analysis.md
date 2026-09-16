@@ -1,8 +1,9 @@
 # Symbolic circuit analysis
 
 Symbolic analysis derives small-signal gain and impedances without evaluating
-numerical values. Select the input and output nodes in the **Analyze** form;
-optionally select a reference, additional AC-ground nets, and triode devices.
+numerical values. Choose the input and output nodes in the **Analyze** panel
+(pick them from the dropdowns or with the crosshair button, then click a wire or
+pin); optionally select a reference, additional AC-ground nets, and triode devices.
 One analysis produces the complete report.
 
 ## Analysis model

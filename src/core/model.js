@@ -160,6 +160,9 @@ export function labelRunLines(text, opts = {}) {
 /** Tight height (world units) of a rendered label line (cap height). */
 export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
+/** Gap between left/right aligned text and its box edge: a quarter grid cell. */
+export const LABEL_ALIGN_INSET = GRID / 4;
+
 /**
  * Toggle subscript ('_') or superscript ('^') markup on the selected range of a
  * raw label string (used by the inline label editor's Ctrl+, / Ctrl+. ).
@@ -724,12 +727,13 @@ export class LabelInstance {
     const b = this.bbox();
     const centerX = b.x + b.w / 2;
     const centerY = b.y + b.h / 2;
+    const inset = this.alignInset();
     let x, anchor;
     if (this.align === 'left') {
-      x = b.x;
+      x = b.x + inset;
       anchor = 'start';
     } else if (this.align === 'right') {
-      x = b.x + b.w;
+      x = b.x + b.w - inset;
       anchor = 'end';
     } else {
       x = centerX;
@@ -765,6 +769,12 @@ export class LabelInstance {
     return this;
   }
 
+
+  /** Side gap for left/right text: a quarter cell, never pushing text past the far box edge. */
+  alignInset() {
+    if (this.align === 'center') return 0;
+    return Math.max(0, Math.min(LABEL_ALIGN_INSET, this.bbox().w - this.textWidth()));
+  }
 
   setAlign(a) {
     if (['center', 'left', 'right'].includes(a)) this.align = a;

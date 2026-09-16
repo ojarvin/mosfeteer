@@ -2,7 +2,7 @@ import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
 import { fontAttrs, resolveColor, strokeAttrs, styleAttrs } from './style.js';
-import { LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
+import { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 
 function escapeSvg(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -270,7 +270,9 @@ function mathLabelSvg(label, opacity = '') {
   const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
   const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
   const aria = escapeSvg(`Math label ${label.text}`);
-  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:6px;overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:500;pointer-events:none;`;
+  const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
+  const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
+  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:500;pointer-events:none;`;
   const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
   const lines = stripMathDelimiters(label.text).split(/\r?\n/)
     .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
@@ -322,11 +324,12 @@ function shapeAnnotationSvg(label, opacity = '') {
  * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
  * draw terminal dots / net junction dots. opts.background: white rect.
  * opts.netNames: label nets by name. opts.includeBBox: draw component bboxes.
+ * opts.emptyHint: draw the 'empty schematic' placeholder (default true).
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
  */
 export function svgString(circuit, opts = {}) {
-  const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, ...opts };
+  const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
   const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
   const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
   const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
@@ -364,7 +367,7 @@ export function svgString(circuit, opts = {}) {
 
   if (o.background) parts.push(`<rect x="${fmt(x0)}" y="${fmt(y0)}" width="${fmt(W)}" height="${fmt(H)}" fill="#fff"/>`);
 
-  if (empty) parts.push(textEl(x0 + W / 2, y0 + H / 2, 'empty schematic', 'middle', 16, '#999'));
+  if (empty && o.emptyHint) parts.push(textEl(x0 + W / 2, y0 + H / 2, 'empty schematic', 'middle', 16, '#999'));
 
   if (o.grid) {
     if (vp) {
@@ -571,7 +574,7 @@ export function editorOverlay(circuit, opts = {}) {
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + w)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + h)}" fill="none"/>`);
   }
   const halo = (r) =>
-    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#4f9cf9" stroke-width="2" rx="3"/>`;
+    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#4f9cf9" fill-opacity="0.1" stroke="#4f9cf9" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
 
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
@@ -591,17 +594,6 @@ export function editorOverlay(circuit, opts = {}) {
       ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
     ];
     parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
-  }
-
-  // Optional global label-box inspection. The dashed rectangle is the
-  // grid-rounded interaction/routing box; the web renderer adds a green
-  // rectangle for the tight browser-measured glyph bounds on top of it.
-  if (opts.labelBBoxes) {
-    for (const label of circuit.labels.values()) {
-      if (label.kind !== 'label') continue;
-      const b = label.bbox();
-      parts.push(`<rect class="label-bbox-rounded" x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#0ea5e9" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"><title>Rounded label box ${fmt(b.w)} × ${fmt(b.h)} units</title></rect>`);
-    }
   }
 
   // Selection centerlines are deliberately magenta and dashed so they read
