@@ -1,10 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { svgString } from '../src/core/render.js';
+import { svgString, texToMathML } from '../src/core/render.js';
 import { Circuit } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 
 import { strokeAttrs, setColorToken, resolveColor } from '../src/core/style.js';
+
+test('the shared analysis MathML renderer renders fractions and escapes literal input', () => {
+  const markup = texToMathML('A_v = -\\frac{g_m}{1 + g_m R_S} \\left(r_o \\parallel R_D\\right)');
+  assert.match(markup, /<mfrac>/);
+  assert.match(markup, /<msub>/);
+  assert.match(markup, /∥/);
+  assert.doesNotMatch(markup, /\\frac|\\parallel/);
+  const escaped = texToMathML('\\text{<img src=x onerror=alert(1)>}');
+  assert.doesNotMatch(escaped, /<img/);
+  assert.match(escaped, /&lt;img/);
+});
 
 test('grid lines use the ordinary style throughout', () => {
   const svg = svgString(new Circuit(), { grid: true, viewport: { x: -40, y: -40, w: 400, h: 400 } });

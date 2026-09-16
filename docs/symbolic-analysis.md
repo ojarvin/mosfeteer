@@ -58,6 +58,13 @@ the MNA system, and diagnostics remain in the Log tab. The Small-signal netlist
 tab shows the read-only model, including each controlled current and its actual
 control-voltage difference.
 
+The symbolic solver partitions unilateral stages and recursively combines
+independent branches at internal junctions before solving. Presentation keeps
+each stage's effective transconductance and parallel loaded output impedance,
+and combines stages as a product. Feedback remains coupled. See
+[Topological small-signal analysis](topological-small-signal.md) for the rules,
+examples, and textbook references.
+
 ## Presentation options
 
 These options are applied after the exact solve and affect only the displayed
@@ -66,13 +73,24 @@ result:
 | Option | Default | Effect |
 | --- | ---: | --- |
 | Ignore body effect (`g_{mb}=0`) | On | Removes body transconductance. |
-| Assume high intrinsic gain (`g_m r_o \gg 1`) | On | Keeps the dominant finite-`r_o` behavior. |
+| Assume high intrinsic gain (`g_m r_o \gg 1`) | On | Drops terms dominated by the selected devices' `g_m r_o` products, including cross-device interactions at comparable output-resistance scales; preserves independent load and degeneration dependencies. |
 | Ignore channel-length modulation (`r_o \to \infty`) | Off | Sets output conductance to zero. |
 | Use dominant-pole approximation | Off | Reduces a multi-pole AC denominator after cancellation. |
 
 An assumption is listed only when it changes a displayed expression. If
 `r_o \to \infty` applies to a device, its high-intrinsic-gain assumption is
 redundant and is not reported separately. The exact result is always retained.
+In particular, high intrinsic gain does not imply `g_m R_S \gg 1`, nor does it
+let the analyzer discard a finite resistor paralleled with a cascode load.
+
+Miller approximation is a separate pre-solve option, enabled by default
+(`millerApproximation: false` disables it). Private series/parallel feedback
+networks that open at DC, such as a capacitor or series RC bridge, are split
+into input/output shunts using the bridge-open DC gain. Conducting feedback
+networks remain in the solved model, preserving resistor loading and direct
+feedthrough. Exact Miller identities can still simplify their presentation.
+The netlist identifies each transformed feedback network and both `Y`
+admittance shunts; applied Miller assumptions are included in annotations.
 
 ## DC, poles, and zeros
 
@@ -114,4 +132,9 @@ displayed equations.
 
 Math labels use the editor's MathML-backed renderer and `_{...}` / `^{...}`
 markup. Parallel groups render with `||`, products follow textbook factor
-order, and fraction spacing is measured before final label placement.
+order with adjacent transistor `g_m r_o` pairs, and small resistive branch sums
+are flattened to avoid nested parentheses. Nested quotient and reciprocal
+identities compose into one fraction; multiplying factors in poles and zeros
+are collected in its numerator, while proven parallel branches remain visible. Fraction spacing is measured in
+consistent units before final label placement and remains stable across zoom
+and reload.

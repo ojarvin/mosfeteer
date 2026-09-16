@@ -4,6 +4,8 @@ import { buildExactAnalysisPipeline } from './pipeline.js';
 import { presentDiagnostics } from './diagnostics.js';
 import { describeSmallSignalNetlist } from './netlist.js';
 import { analyzeResponse } from './response.js';
+import { approximateTopology, buildTopologyIdentities } from './topology.js';
+import { compactRational } from './compact.js';
 import {
   integer,
   rational,
@@ -13,6 +15,9 @@ import {
 import {
   equivalenceTable,
   provenParallel,
+  provenProduct,
+  provenQuotient,
+  provenSum,
   renderQuantityEquation,
   renderRootEquation,
   infinity,
@@ -133,13 +138,9 @@ function normaliseOptions(options, circuit, symbolic, ops) {
       highIntrinsicGain: Boolean(intrinsic),
       gmb0: Boolean(body),
       roInfinity: Boolean(output),
-      // g_m r_o >> 1 only declares the gm*ro PRODUCT large relative to a bare
-      // constant (dropping a "+1" beside it); r_o itself keeps degree 0, so a
-      // finite r_o added to or paralleled with an unrelated symbol like R_D
-      // is never discarded — that would silently assume r_o -> infinity,
-      // a separate, off-by-default assumption. Only scaling gm/gmb here (not
-      // ro) is what makes any product containing gm dominate a gm-free term.
-      scaling: { symbols: { [`gm${suffix}`]: 1, [`gmb${suffix}`]: 1 } },
+      // A large gm*ro product does not license gm*RS >> 1 or an active
+      // branch's impedance >> RD. Preserve those independent dependencies.
+      intrinsicProduct: true,
       ...(devices[component.refdes] || {}),
     };
   }
@@ -240,6 +241,113 @@ function buildParallelEquivalenceProofs(networkReductionProofs, approximationOpt
     }
     return proofs;
   });
+}
+
+function buildTopologyProofs(topology, queries, approximations, approximationOptions) {
+  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
+  const proofs = [];
+  const identities = [
+    ...['inputImpedance', 'outputImpedance'].flatMap((key) => queries[key].equivalence ? [queries[key].equivalence] : []),
+    ...topology.identities, ...(topology.selectedIdentities || []),
+  ];
+  const multiply = (operands) => operands.reduce((a, b) => ops.mul(a, b), ops.one);
+  const addProof = (identity, equivalent, operands) => {
+    if (!equivalent || operands.some((value) => !value || value.kind === 'infinity')) return;
+    const product = identity.kind === 'product';
+    if (product) operands = operands.filter((value) => !ops.isZero(ops.sub(value, ops.one)));
+    if (operands.length < 2) return;
+    const combined = product ? multiply(operands) : combineParallel(operands, ops);
+    if (!ops.isZero(compactRational(ops.sub(combined, equivalent), ops)) || ops.budget.exceeded) return;
+    const response = canonicalResponseValue(equivalent, { variable: ops.variable });
+    const prove = product ? provenProduct : provenParallel;
+    proofs.push(prove(response.expression, ...operands));
+    const dcOperands = operands.map((value) => dcLimitOf(value, ops.variable));
+    // An infinite branch drops out of a parallel DC limit. In a product,
+    // zero times infinity needs a limit of the complete expression instead.
+    const finite = product ? dcOperands : dcOperands.filter(Boolean);
+    if (response.dc.kind === 'finite' && finite.length >= 2 && finite.every(Boolean)) {
+      const dcCombined = product ? multiply(finite) : combineParallel(finite, ops);
+      if (ops.isZero(ops.sub(dcCombined, response.dc.value))) proofs.push(prove(response.dc.value, ...finite));
+    }
+  };
+  try {
+    for (const identity of identities) {
+      addProof(identity, identity.equivalent, identity.operands);
+      const localOptions = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
+      const selected = applyApproximations(identity.equivalent, localOptions).selected;
+      const operands = identity.operands.map((value) => applyApproximations(value, localOptions).selected);
+      addProof(identity, selected, operands);
+    }
+    // Bind the top-level proof to the actual selected query (including a
+    // dominant-pole reduction), rather than assuming local reductions commute.
+    if (topology.stages.length === 1 && !topology.selectedIdentities?.length) {
+      const impedance = approximations.Zout.selected;
+      if (!ops.isZero(impedance) && impedance.kind !== 'infinity') addProof(
+        { kind: 'product' }, approximations.Av.selected,
+        [compactRational(ops.div(approximations.Av.selected, impedance), ops), impedance],
+      );
+    }
+  } catch {
+    return [];
+  }
+  return ops.budget.exceeded ? [] : proofs;
+}
+
+function buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions) {
+  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
+  const options = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
+  const proofs = [];
+  const addProof = (proof, combined) => {
+    if (!ops.isZero(compactRational(ops.sub(proof.equivalent, combined), ops))) return;
+    proofs.push(proof);
+    const response = canonicalResponseValue(compactRational(proof.equivalent, ops), { variable: ops.variable });
+    proofs.push({ ...proof, equivalent: response.expression });
+    const operands = proof.operands.map((value) => dcLimitOf(value, ops.variable));
+    if (response.dc.value && operands.every(Boolean)) proofs.push({ ...proof, equivalent: response.dc.value, operands });
+  };
+  try {
+    for (const stage of [...(pipeline.millerSubstitutions || []), ...(pipeline.retainedFeedbackNetworks || [])]) {
+      const { gain, outputImpedance: load, transadmittance: gm, loadOperands, feedbackImpedance: feedback } = stage;
+      if (loadOperands.length >= 2) addProof(provenParallel(load, ...loadOperands), combineParallel(loadOperands, ops));
+      addProof(provenProduct(gain, gm, load), ops.mul(gm, load));
+      const positiveGain = ops.neg(gain);
+      addProof(provenProduct(positiveGain, ops.neg(gm), load), ops.mul(ops.neg(gm), load));
+      const inverse = ops.div(ops.one, positiveGain);
+      addProof(provenQuotient(inverse, ops.one, positiveGain), ops.div(ops.one, positiveGain));
+      for (const term of [positiveGain, inverse]) {
+        const factor = ops.add(ops.one, term);
+        addProof(provenSum(factor, ops.one, term), ops.add(ops.one, term));
+        const admittance = ops.div(factor, feedback);
+        addProof(provenQuotient(admittance, factor, feedback), ops.div(factor, feedback));
+        const impedance = ops.div(feedback, factor);
+        addProof(provenQuotient(impedance, feedback, factor), ops.div(feedback, factor));
+        const selected = applyApproximations(impedance, options).selected;
+        const selectedFeedback = applyApproximations(feedback, options).selected;
+        const selectedFactor = applyApproximations(factor, options).selected;
+        if (!ops.isZero(ops.sub(selectedFactor, ops.one))) {
+          addProof(provenQuotient(selected, selectedFeedback, selectedFactor), ops.div(selectedFeedback, selectedFactor));
+        }
+      }
+      if (pipeline.retainedFeedbackNetworks?.includes(stage)
+        && stage.gate === pipeline.context.input.node && stage.drain === pipeline.context.output.node) {
+        // Resistive feedback: Zin = (Zfb + Ro)/(1 - Aopen), provided
+        // the actual input query proves this identity (additional gate
+        // loading or another feedback path may invalidate it).
+        const numerator = ops.add(feedback, load);
+        const denominator = ops.add(ops.one, positiveGain);
+        const zin = pipeline.queries.inputImpedance.value;
+        addProof(provenSum(numerator, feedback, load), ops.add(feedback, load));
+        addProof(provenQuotient(zin, numerator, denominator), ops.div(numerator, denominator));
+        const selectedZin = approximations.Zin.selected;
+        const selectedNumerator = applyApproximations(numerator, options).selected;
+        const selectedDenominator = applyApproximations(denominator, options).selected;
+        addProof(provenQuotient(selectedZin, selectedNumerator, selectedDenominator), ops.div(selectedNumerator, selectedDenominator));
+        const shortGm = topology.stages.length === 1 ? topology.stages[0].transadmittance : null;
+        if (shortGm) addProof(provenSum(shortGm, gm, ops.div(ops.one, feedback)), ops.add(gm, ops.div(ops.one, feedback)));
+      }
+    }
+  } catch { /* retain the exact identities already checked within budget */ }
+  return proofs;
 }
 
 function displayResponse(name, exact, approximation, options) {
@@ -441,7 +549,9 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
 
   const exact = {};
   for (const [name, value] of Object.entries(values)) {
-    exact[name] = canonicalResponseValue(value, withEquivalences(responseOptions(analysisOptions)));
+    const cleanupOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
+    const compact = compactRational(value, cleanupOps);
+    exact[name] = canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, withEquivalences(responseOptions(analysisOptions)));
     if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
   }
   if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
@@ -451,6 +561,28 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
       ? { exact: response.expression, selected: response.expression, changed: false, assumptions: [] }
       : applyApproximations(response.expression, approximationOptions);
     if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
+  }
+  const topology = buildTopologyIdentities(pipeline, analysisOptions);
+  // A dominant-pole reduction acts on the whole transfer function; stage
+  // factoring must not silently replace that explicitly selected reduction.
+  const topologicalApproximation = analysisOptions.dominantPoleApproximation ? null
+    : approximateTopology(topology, queries, approximationOptions);
+  if (topologicalApproximation) {
+    for (const [name, selected, assumptions] of [
+      ['Av', topologicalApproximation.selected, topologicalApproximation.assumptions],
+      ['Zout', topologicalApproximation.output.selected, topologicalApproximation.output.assumptions],
+    ]) {
+      const comparisonOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
+      const changed = !comparisonOps.isZero(compactRational(comparisonOps.sub(selected, exact[name].expression), comparisonOps));
+      approximations[name] = { ...approximations[name], selected, changed, assumptions: changed ? assumptions : [] };
+    }
+    topology.selectedIdentities = topologicalApproximation.identities;
+  }
+  for (const [key, proof] of equivalenceTable(buildTopologyProofs(topology, queries, approximations, approximationOptions))) {
+    equivalences.set(key, proof);
+  }
+  for (const [key, proof] of equivalenceTable(buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions))) {
+    equivalences.set(key, proof);
   }
   const displayed = {
     transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions))),
@@ -474,6 +606,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   if (ops.budget?.exceeded) return budgetFailureReport('pole and zero extraction', ops.budget, analysisOptions);
   const netlist = describeSmallSignalNetlist(pipeline.selected, {
     ...normalized,
+    equivalences,
     acGroundIds: pipeline.context.acGroundIds,
     nodeAliases: pipeline.context.nodeAliases,
     nodeNames: nodeNames(circuit),
@@ -484,6 +617,14 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     graph: pipeline.coupled,
     queries,
   });
+  const names = nodeNames(circuit);
+  const portName = (variable) => {
+    const node = variable.slice(2, -1);
+    return names.get(node) || node;
+  };
+  const topologyLog = topology.stages.map((stage, index) => (
+    `Stage ${index + 1}: ${portName(stage.from)} -> ${portName(stage.to)}; gain = signed transadmittance times loaded output impedance.`
+  ));
   return {
     ok: true,
     version: 2,
@@ -514,6 +655,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
       ...roots.map(({ equation }) => equation),
     ],
     details: {
+      topology,
       pipeline,
       queries,
       exact,
@@ -524,7 +666,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     netlist,
     smallSignalNetlist: netlist.text,
     diagnostics,
-    log: diagnostics.logText,
+    log: [diagnostics.logText, ...topologyLog].filter(Boolean).join('\n'),
   };
 }
 

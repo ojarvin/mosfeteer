@@ -5,6 +5,7 @@ const PASSTHROUGH_OPTIONS = Object.freeze([
   'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
   'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
   'budget', 'valueOf', 'resolveValue',
+  'topologicalSolve', 'topologicalPresentation',
 ]);
 
 function engineOptions(options) {

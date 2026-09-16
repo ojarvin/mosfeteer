@@ -27,7 +27,107 @@ function structuralKey(value) {
     return `q:${value.variable}:${structuralKey(value.numerator)}/${structuralKey(value.denominator)}`;
   }
   if (value?.kind === 'infinity') return `i:${value.sign < 0 ? -1 : 1}`;
+  if (value?.kind === 'multiply') return `m:${value.factors.map(structuralKey).join(',')}`;
+  if (value?.kind === 'add') return `a:${value.terms.map(structuralKey).join(',')}`;
+  if (value?.kind === 'power') return `p:${structuralKey(value.base)}^${value.exponent}`;
   return keyOf(value);
+}
+
+const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
+
+function displayProduct(factors) {
+  let coefficient = 1n;
+  const visible = factors.filter((factor) => {
+    if (isNumber(factor) && factor.denominator === 1n) {
+      coefficient *= factor.numerator;
+      return false;
+    }
+    return true;
+  });
+  if (coefficient !== 1n || !visible.length) visible.unshift({ ...ONE, numerator: coefficient });
+  return visible.length === 1 ? visible[0] : { kind: 'multiply', factors: visible };
+}
+
+/** Display-only fraction composition. Parallel identities remain indivisible
+ * factors; no circuit polynomial is expanded or approximated here. */
+function composedFraction(value, context, options) {
+  const usedProofs = new Set();
+  let visited = 0;
+  function parts(node, path = new Set()) {
+    if (++visited > 256) throw new RangeError('fraction presentation limit');
+    if (explicitParallel(node, options)) return { n: [node], d: [] };
+    const key = structuralKey(node);
+    const proof = !path.has(key) && options.equivalences?.get?.(key);
+    const nestedPath = new Set([...path, key]);
+    let kind = node.kind;
+    let operands;
+    if (proof?.proven && ['product', 'quotient', 'sum'].includes(proof.kind)) {
+      kind = proof.kind;
+      operands = proof.operands;
+      usedProofs.add(key);
+    }
+    if (kind === 'rational' || kind === 'quotient') {
+      const a = parts(operands?.[0] || node.numerator, nestedPath);
+      const b = parts(operands?.[1] || node.denominator, nestedPath);
+      return { n: [...a.n, ...b.d], d: [...a.d, ...b.n] };
+    }
+    if (kind === 'number') {
+      return { n: [{ ...ONE, numerator: node.numerator }], d: node.denominator === 1n ? [] : [{ ...ONE, numerator: node.denominator }] };
+    }
+    if (kind === 'multiply' || kind === 'product') {
+      const factors = (operands || node.factors).map((factor) => parts(factor, nestedPath));
+      return { n: factors.flatMap((factor) => factor.n), d: factors.flatMap((factor) => factor.d) };
+    }
+    if (kind === 'power') {
+      const base = parts(node.base, nestedPath);
+      const exponent = Math.abs(node.exponent);
+      const powered = (factors) => !factors.length ? [] : exponent === 1 ? factors : [{ kind: 'power', base: displayProduct(factors), exponent }];
+      if (node.exponent === 0) return { n: [ONE], d: [] };
+      return node.exponent < 0 ? { n: powered(base.d), d: powered(base.n) } : { n: powered(base.n), d: powered(base.d) };
+    }
+    if (kind === 'add' || kind === 'sum') {
+      const terms = (operands || node.terms).map((term) => parts(term, nestedPath));
+      if (!terms.some((term) => term.d.some((factor) => !isNumber(factor) || factor.numerator !== factor.denominator))) {
+        return { n: [operands ? { kind: 'add', terms: terms.map((term) => displayProduct(term.n)), ordered: true } : node], d: [] };
+      }
+      // Common denominator uses the largest multiplicity of each factor,
+      // avoiding repeated denominators in 1/a + 1/a without distributing sums.
+      const common = new Map();
+      const denominators = terms.map((term) => {
+        const counts = new Map();
+        for (const factor of term.d) {
+          if (isNumber(factor) && factor.numerator === 1n) continue;
+          const key = structuralKey(factor);
+          const entry = counts.get(key) || { factor, count: 0 };
+          entry.count++;
+          counts.set(key, entry);
+        }
+        for (const [key, entry] of counts) if ((common.get(key)?.count || 0) < entry.count) common.set(key, entry);
+        return counts;
+      });
+      const numerator = { kind: 'add', terms: terms.map((term, index) => displayProduct([
+        ...term.n,
+        ...[...common].flatMap(([key, entry]) => Array(entry.count - (denominators[index].get(key)?.count || 0)).fill(entry.factor)),
+      ])) };
+      return { n: [numerator], d: [...common.values()].flatMap((entry) => Array(entry.count).fill(entry.factor)) };
+    }
+    return { n: [node], d: [] };
+  }
+  try {
+    const { n, d } = parts(value);
+    const denominator = displayProduct(d);
+    if (isNumber(denominator) && denominator.numerator === 1n) return null;
+    const numerator = displayProduct(n);
+    const negative = isNegative(numerator) !== isNegative(denominator);
+    const equivalences = new Map(options.equivalences instanceof Map
+      ? options.equivalences : Object.entries(options.equivalences || {}));
+    usedProofs.forEach((key) => equivalences.delete(key));
+    const nested = { ...options, equivalences };
+    return `${negative ? '-' : ''}\\frac{${render(unsigned(numerator), 0, context, nested)}}{${render(unsigned(denominator), 0, context, nested)}}`;
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
 }
 
 function equivalent(left, right) {
@@ -115,8 +215,36 @@ function factorRank(value, context) {
 }
 
 function sortProductFactors(factors, context) {
-  return [...factors].sort((left, right) => factorRank(left, context) - factorRank(right, context)
+  const sorted = [...factors].sort((left, right) => factorRank(left, context) - factorRank(right, context)
     || structuralKey(left).localeCompare(structuralKey(right)));
+  // Put each transistor's gm*ro together before other resistance factors.
+  for (let i = 0; i < sorted.length; i++) {
+    const match = sorted[i]?.kind === 'symbol' && /^gm(.+)$/.exec(sorted[i].name);
+    if (!match) continue;
+    const j = sorted.findIndex((factor, index) => index > i && factor.kind === 'symbol' && factor.name === `ro${match[1]}`);
+    if (j > i + 1) sorted.splice(i + 1, 0, sorted.splice(j, 1)[0]);
+  }
+  return sorted;
+}
+
+// Algebra may factor ro*(gm*ro + 1) for cancellation. For presentation,
+// flatten small resistive sums without expanding frequency polynomials or
+// topology-proven gain/load products. This never changes the solver's AST.
+function flatResistiveSum(value) {
+  if (value?.kind !== 'multiply' || !value.factors.some((factor) => factor.kind === 'symbol' && /^ro.+$/.test(factor.name))) return null;
+  let terms = [[]];
+  for (const factor of value.factors) {
+    const choices = factor.kind === 'add' ? factor.terms : [factor];
+    if (terms.length * choices.length > 4) return null;
+    if (choices.some((choice) => choice.kind === 'rational' || choice.kind === 'add'
+      || (choice.kind === 'multiply' && choice.factors.some((part) => !['number', 'symbol', 'power'].includes(part.kind))))) return null;
+    terms = terms.flatMap((term) => choices.map((choice) => [...term, ...(choice.kind === 'multiply' ? choice.factors : [choice])]));
+  }
+  if (terms.length < 2 || terms.some((term) => term.some((factor) => factor.kind === 'symbol' && factor.name === 's'))) return null;
+  return { kind: 'add', terms: terms.map((factors) => {
+    factors = factors.filter((factor) => !isNumber(factor) || factor.numerator !== factor.denominator);
+    return factors.length === 1 ? factors[0] : { kind: 'multiply', factors };
+  }) };
 }
 
 function parenthesize(text) {
@@ -141,9 +269,11 @@ function renderPower(value, context, options) {
 }
 
 function renderProduct(value, context, options) {
-  const factors = sortProductFactors(value.factors, context);
-  const negative = isNegativeNumber(factors[0]);
-  const visible = negative ? factors.slice(1) : factors;
+  const fraction = composedFraction(value, context, options);
+  if (fraction) return fraction;
+  const negative = isNegative(value);
+  const positive = unsigned(value);
+  const visible = sortProductFactors(positive.kind === 'multiply' ? positive.factors : [positive], context);
   const body = visible.length
     ? visible.map((factor) => render(factor, PRECEDENCE.product, context, options)).join(' \\, ')
     : '1';
@@ -153,10 +283,11 @@ function renderProduct(value, context, options) {
 }
 
 function renderSum(value, context, options) {
-  const terms = sortSumTerms(value.terms, context);
+  const flat = value.terms.flatMap((term) => flatResistiveSum(term)?.terms || [term]);
+  const terms = options.orderedSum || value.ordered ? flat : sortSumTerms(flat, context);
   return terms.map((term, index) => {
     const negative = isNegative(term);
-    const body = render(unsigned(term), PRECEDENCE.sum, context, options);
+    const body = render(unsigned(term), negative || explicitParallel(term, options) ? PRECEDENCE.product : PRECEDENCE.sum, context, options);
     if (index === 0) return negative ? `-${body}` : body;
     return negative ? ` - ${body}` : ` + ${body}`;
   }).join('');
@@ -164,6 +295,8 @@ function renderSum(value, context, options) {
 
 function renderRational(value, context, options) {
   if (isZero(value.numerator)) return '0';
+  const composed = composedFraction(value, context, options);
+  if (composed) return composed;
   const numeratorNegative = isNegative(value.numerator);
   const denominatorNegative = isNegative(value.denominator);
   const negative = numeratorNegative !== denominatorNegative;
@@ -174,7 +307,7 @@ function renderRational(value, context, options) {
   const fraction = isNumber(denominator) && denominator.numerator === 1n && denominator.denominator === 1n
     ? numeratorText
     : `\\frac{${numeratorText}}{${denominatorText}}`;
-  return negative ? `-${fraction}` : fraction;
+  return negative ? `-${denominatorText === '1' && numerator.kind === 'add' ? parenthesize(fraction) : fraction}` : fraction;
 }
 
 function operandsOf(metadata) {
@@ -206,7 +339,14 @@ function explicitParallel(value, options) {
 function renderParallel(value, context, options) {
   const operands = explicitParallel(value, options);
   if (!operands) return null;
-  const body = operands.map((operand) => render(operand, PRECEDENCE.product, context, options)).join(' \\parallel ');
+  function flatten(operand, seen) {
+    const key = structuralKey(operand);
+    const nested = !seen.has(key) && explicitParallel(operand, options);
+    if (!nested) return [operand];
+    return nested.flatMap((branch) => flatten(branch, new Set([...seen, key])));
+  }
+  const flat = operands.flatMap((operand) => flatten(operand, new Set([structuralKey(value)])));
+  const body = flat.map((operand) => render(operand, PRECEDENCE.product, context, options)).join(' \\parallel ');
   return body;
 }
 
@@ -219,6 +359,29 @@ function precedence(value) {
 
 function render(value, parentPrecedence, context, options = {}) {
   let text;
+  const proof = options.equivalences?.get?.(structuralKey(value));
+  if (proof?.proven === true && ['quotient', 'sum'].includes(proof.kind)) {
+    const equivalences = new Map(options.equivalences);
+    equivalences.delete(structuralKey(value));
+    const nested = { ...options, equivalences };
+    if (proof.kind === 'quotient') return composedFraction(value, context, options)
+      || renderRational({ kind: 'rational', numerator: proof.operands[0], denominator: proof.operands[1] }, context, nested);
+    const body = renderSum({ kind: 'add', terms: proof.operands }, context, { ...nested, orderedSum: true });
+    return parentPrecedence > PRECEDENCE.sum ? parenthesize(body) : body;
+  }
+  if (proof?.proven === true && proof.kind === 'product') {
+    // Remove this identity while visiting its factors: a unit factor must
+    // never make a display proof recurse back into itself.
+    const equivalences = new Map(options.equivalences);
+    equivalences.delete(structuralKey(value));
+    const negative = proof.operands.filter(isNegative).length % 2 === 1;
+    const factors = proof.operands.map((factor) => {
+      const text = render(factor, PRECEDENCE.product, context, { ...options, equivalences });
+      return isNegative(factor) && text.startsWith('-') ? text.slice(1) : text;
+    });
+    const body = `${negative ? '-' : ''}${factors.join(' \\, ')}`;
+    return parentPrecedence > PRECEDENCE.product ? parenthesize(body) : body;
+  }
   if (value?.kind === 'infinity') return value.sign < 0 ? '-\\infty' : '\\infty';
   if (value?.kind === 'number') return renderNumber(value);
   if (value?.kind === 'symbol') return symbolText(value.name);
@@ -229,13 +392,19 @@ function render(value, parentPrecedence, context, options = {}) {
     text = renderPower(value, context, options);
   } else if (value?.kind === 'multiply') {
     const parallel = renderParallel(value, context, options);
+    const flat = !parallel && flatResistiveSum(value);
+    if (flat) return render(flat, parentPrecedence, context, options);
     text = parallel || renderProduct(value, context, options);
   } else if (value?.kind === 'add') {
     text = renderSum(value, context, options);
   } else {
     throw new TypeError(`unknown expression kind ${value?.kind}`);
   }
-  return precedence(value) < parentPrecedence ? parenthesize(text) : text;
+  const parallel = explicitParallel(value, options);
+  const rank = parallel ? PRECEDENCE.sum
+    : value?.kind === 'rational' && isNumber(value.denominator) && value.denominator.numerator === value.denominator.denominator
+      ? precedence(value.numerator) : precedence(value);
+  return rank < parentPrecedence ? parenthesize(text) : text;
 }
 
 /** Render an immutable rational AST as deterministic textbook TeX. */
@@ -293,6 +462,20 @@ export function provenParallel(equivalent, ...operands) {
     equivalent,
     operands: Object.freeze(operands),
   });
+}
+
+/** A factored identity established by the circuit's linear port model. */
+export function provenProduct(equivalent, ...operands) {
+  return Object.freeze({ kind: 'product', proven: true, equivalent, operands: Object.freeze(operands) });
+}
+
+/** Ratios and sums whose recombination the caller has checked exactly. */
+export function provenQuotient(equivalent, numerator, denominator) {
+  return Object.freeze({ kind: 'quotient', proven: true, equivalent, operands: Object.freeze([numerator, denominator]) });
+}
+
+export function provenSum(equivalent, ...operands) {
+  return Object.freeze({ kind: 'sum', proven: true, equivalent, operands: Object.freeze(operands) });
 }
 
 /** Render the exact infinity sentinel used by presentation-only callers. */

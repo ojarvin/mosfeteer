@@ -2165,6 +2165,23 @@ test('browser-measured label bounds round outward to even grid-cell dimensions',
   assert.equal(l.setRenderedTextBounds(81, 41), false);
   const restored = Circuit.fromJSON(c.toJSON()).labels.get(l.id);
   assert.equal(restored._renderedTextBounds, null, 'runtime browser metrics are not persisted');
+  assert.deepEqual(restored.bbox(), l.bbox(), 'the grid-sized math footprint is preserved before fresh measurement');
+  assert.deepEqual(l.toJSON().mathBox, { w: 160, h: 80 });
+  restored.setText('a different mathematical label');
+  assert.equal(restored._mathBox, null, 'text edits invalidate the saved footprint');
+});
+
+test('sub-pixel measurement noise at a grid boundary does not shift aligned label edges', () => {
+  const c = new Circuit();
+  const label = c.addLabel({ text: '\\text{Assumptions}', x: 400, y: 240, math: true, align: 'left' });
+  label.setRenderedTextBounds(320.00001, 160.00001);
+  const before = label.bbox();
+  assert.deepEqual(before, { x: 240, y: 160, w: 320, h: 160 });
+  const loaded = Circuit.fromJSON(c.toJSON()).labels.get(label.id);
+  loaded.setRenderedTextBounds(319.99999, 159.99999);
+  assert.deepEqual(loaded.bbox(), before);
+  loaded.setRenderedTextBounds(320.01, 160.01);
+  assert.deepEqual(loaded.bbox(), { x: 200, y: 120, w: 400, h: 240 }, 'real overflow still expands outward');
 });
 
 test('applyMarkup wraps, unwraps, and reverts mixed selections', () => {

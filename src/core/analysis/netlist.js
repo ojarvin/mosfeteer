@@ -1,4 +1,5 @@
 import { formatExpression } from './rational.js';
+import { renderExpression } from './present.js';
 
 const AC_GROUND_NAMES = new Set(['0', '@AC_GROUND', 'AC_GROUND', 'GND', 'VSS', 'VDD', 'VCM']);
 
@@ -9,6 +10,7 @@ const KIND_ORDER = new Map([
   ['voltage-source', 40],
   ['current-source', 50],
   ['conductance', 60],
+  ['admittance', 65],
   ['triode-resistance', 70],
   ['vccs', 80],
 ]);
@@ -188,7 +190,7 @@ function bulkNote(primitive, resolveNode) {
   return `* ${primitiveName(primitive)} bulk: implicit ${reference} is AC ground; v_{bs} = ${bulkNode}-${sourceNode}`;
 }
 
-function describePrimitive(primitive, resolveNode) {
+function describePrimitive(primitive, resolveNode, options = {}) {
   const kind = normalizedKind(primitive);
   const name = primitiveName(primitive);
   const a = resolveNode(nodeOf(primitive, 'a'));
@@ -222,6 +224,15 @@ function describePrimitive(primitive, resolveNode) {
       line: branchLine('GO', primitive, a, b, value),
       notes: [],
     };
+  }
+  if (kind === 'admittance') {
+    const metadata = primitive.metadata || {};
+    const format = (value) => value?.kind ? renderExpression(value, options) : textbookName(value);
+    const notes = metadata.millerBridge ? [
+      `* Miller bridge ${(metadata.feedbackComponents || [name]).join(', ')} replaced by two shunts: ${resolveNode(metadata.gate)} -> ${resolveNode(metadata.drain)}; Z_fb = ${format(metadata.feedbackImpedance)}; A_v0 = ${format(metadata.gain)} (bridge removed)`,
+      `* ${primitiveId(primitive)}: ${metadata.millerSide} shunt admittance from the Miller approximation`,
+    ] : [];
+    return { kind, id: primitiveId(primitive), line: `Y_${primitiveId(primitive)} ${a} ${b} ${format(primitive.value)}`, notes };
   }
   if (kind === 'vccs') {
     const data = vccsData(primitive, resolveNode);
@@ -266,7 +277,7 @@ function formatDetails(input, options = {}) {
   if (!Array.isArray(primitives)) throw new TypeError('small-signal primitives must be an array');
   const canonical = primitives.map(normalizePrimitive);
   const resolveNode = nodeResolver(options);
-  const entries = sortedPrimitives(canonical).map((primitive) => describePrimitive(primitive, resolveNode));
+  const entries = sortedPrimitives(canonical).map((primitive) => describePrimitive(primitive, resolveNode, options));
   const notes = [...new Set(entries.flatMap((entry) => entry.notes))];
   const lines = ['* Small-signal equivalent (symbolic; no numerical values)'];
   const queryNote = zeroedInputNote(options);

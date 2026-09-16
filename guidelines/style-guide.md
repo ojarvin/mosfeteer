@@ -536,10 +536,27 @@ cells of clearance. Use the order `Z_{in}(s)`, `Z_{in}(0)`, `Z_{out}(s)`,
 no information. AC rows, poles, and zeros appear only when reactive terms
 remain after cancellation.
 
-Render the shortest proven equivalent expression. Order powers of `s` from
+Prefer a proven expression that exposes the circuit's stages and loading:
+signed effective transconductance times parallel output impedances, and a
+product of gains at independent internal signal boundaries. Preserve finite
+load and degeneration terms unless an explicit assumption removes them.
+Use the shared MathML renderer in both the report and schematic annotations
+so fractions, subscripts, and parallel operators appear as mathematical notation.
+Feedback and reciprocal loading prevent an independent-stage split. Order powers of `s` from
 highest to lowest, combine repeated factors as powers, keep useful common
-factors, and remove redundant parentheses. List only assumptions that change a
-displayed equation. The complete exact result remains in the analysis report,
+factors in frequency expressions. Flatten small resistive branch sums, place
+each transistor’s `g_m r_o` factors together, and remove redundant parentheses.
+Compose nested fractions into one numerator and denominator, including
+reciprocal sums in Miller identities. Keep proven parallel impedances intact.
+Put all multiplying pole/zero factors in the numerator of the fraction.
+Measure individual MathML lines and convert padding to screen units; do not
+measure full-width multiline wrappers. Ignore sub-pixel measurement noise at
+grid boundaries so label edges and fraction centerlines stay fixed across
+zoom and reload. Persist the measured even-grid math footprint so the first
+frame after loading uses the same aligned box. List only assumptions that change a
+displayed equation, including any applied Miller modeling transform. Keep
+DC-conducting feedback in the solved model and expose its verified compact
+relations; do not invent resistor-loading or feedthrough assumptions. The complete exact result remains in the analysis report,
 not as extra prose on the drawing.
 
 ---

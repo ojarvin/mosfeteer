@@ -10,7 +10,8 @@
  * with two decoupled shunt impedances: `Z_fb/(1-A_v)` at the gate and
  * `Z_fb/(1-1/A_v)` at the drain. This module finds that bridge from the
  * primitive graph and performs exactly that substitution before anything
- * reaches `buildMNA`.
+ * reaches `buildMNA`, provided the bridge opens at DC. Conducting feedback
+ * remains in MNA to preserve DC loading and feedthrough.
  */
 import { AC_GROUND } from './context.js';
 import { isReduciblePassive, reduceTwoTerminalNetwork } from './reduce.js';
@@ -18,6 +19,8 @@ import { buildMNA } from './mna.js';
 import { coupledSubgraph } from './graph.js';
 import { solveMNA } from './solve.js';
 import { resolveValue, toMnaPrimitives } from './pipeline.js';
+import { compactRational } from './compact.js';
+import { integer, substituteRational } from './rational.js';
 
 function findGmBranches(primitives) {
   return primitives.filter((primitive) => primitive.kind === 'vccs' && String(primitive.id || '').endsWith('.gm'));
@@ -96,6 +99,8 @@ function localGain(primitives, bridge, gate, drain, context, options, ops) {
   let solution;
   try {
     system = buildMNA([...mnaPrimitives, excitation], { ops, ground: AC_GROUND, grounds: [...context.acGroundIds] });
+    const outputRow = system.unknowns.indexOf(`V(${drain})`);
+    system.B = system.B.map((row, index) => [row[0], index === outputRow ? ops.one : ops.zero]);
     solution = solveMNA(system, { ops });
   } catch {
     return null;
@@ -103,20 +108,35 @@ function localGain(primitives, bridge, gate, drain, context, options, ops) {
   if (!solution.ok) return null;
   const index = solution.variables.indexOf(`V(${drain})`);
   if (index < 0) return null;
-  return solution.columns[0][index];
+  try {
+    const gain = compactRational(solution.columns[0][index], ops);
+    const outputImpedance = compactRational(solution.columns[1][index], ops);
+    if (ops.isZero(gain) || ops.isZero(outputImpedance)) return null;
+    const loadOperands = resolved.flatMap((primitive) => {
+      const { a, b } = primitive.terminals;
+      const grounded = (node) => node === AC_GROUND || node === gate;
+      if (!((a === drain && grounded(b)) || (b === drain && grounded(a)))) return [];
+      if (primitive.kind === 'resistor') return [primitive.value];
+      if ((primitive.kind === 'conductance' || primitive.kind === 'admittance') && !ops.isZero(primitive.value)) return [ops.div(ops.one, primitive.value)];
+      return [];
+    });
+    return { gain, outputImpedance, transadmittance: compactRational(ops.div(gain, outputImpedance), ops), loadOperands };
+  } catch { return null; }
 }
 
 /**
  * Detect and substitute every gate/drain Miller bridge in `primitives`.
- * Returns `{ primitives, applied }`: a (possibly unchanged) primitive list
+ * Returns `{ primitives, applied, retained }`: a (possibly unchanged) primitive list
  * and the list of `{ device, gate, drain }` bridges actually replaced.
  * Never throws — any device whose bridge doesn't cleanly reduce, or whose
  * local gain can't be solved, is left with its exact primitives untouched.
  */
 export function applyMillerApproximation(primitives, context, options, ops) {
-  if (typeof ops.s !== 'function') return { primitives, applied: [] };
+  if (typeof ops.s !== 'function') return { primitives, applied: [], retained: [] };
   let current = primitives;
   const applied = [];
+  const retained = [];
+  const visitedBridges = new Set();
   for (const branch of findGmBranches(primitives)) {
     const gate = branch.control.a;
     const drain = branch.terminals.a;
@@ -124,13 +144,30 @@ export function applyMillerApproximation(primitives, context, options, ops) {
     const bridge = collectBridgeCandidates(current, gate, drain);
     if (!bridge || !bridge.length) continue;
     if (!bridgeIsPrivate(bridge, current, gate, drain)) continue;
+    const bridgeKey = bridge.map((primitive) => primitive.id).sort().join('|');
+    if (visitedBridges.has(bridgeKey)) continue;
+    visitedBridges.add(bridgeKey);
 
     const resolvedBridge = bridge.map((primitive) => resolvedCopy(primitive, options, ops));
     const reduced = reduceTwoTerminalNetwork(resolvedBridge, gate, drain, ops);
     if (!reduced.ok) continue;
 
-    const gain = localGain(current, bridge, gate, drain, context, options, ops);
-    if (gain === null) continue;
+    const local = localGain(current, bridge, gate, drain, context, options, ops);
+    if (local === null) continue;
+    const { gain } = local;
+    const feedbackComponents = [...new Set(bridge.map((primitive) => primitive.metadata?.component || primitive.id))];
+    // A bridge-open DC gain is appropriate only when the bridge actually
+    // opens at DC. Conducting feedback changes that gain and carries direct
+    // feedthrough; retain it in MNA instead of silently assuming weak loading.
+    let opensAtDC = false;
+    try {
+      const dc = substituteRational(ops.div(ops.one, reduced.impedance), new Map([[ops.variable || 's', integer(0)]]));
+      opensAtDC = ops.isZero(dc);
+    } catch { /* a short or singular DC bridge is retained */ }
+    if (!opensAtDC) {
+      retained.push({ device, gate, drain, ...local, feedbackComponents, feedbackImpedance: reduced.impedance });
+      continue;
+    }
     let gateAdmittance;
     let drainAdmittance;
     try {
@@ -142,18 +179,19 @@ export function applyMillerApproximation(primitives, context, options, ops) {
     if (ops.isZero(gateAdmittance) && ops.isZero(drainAdmittance)) continue;
 
     const withoutBridge = current.filter((primitive) => !bridge.includes(primitive));
+    const metadata = { component: device, millerBridge: true, feedbackComponents, gate, drain, gain, feedbackImpedance: reduced.impedance };
     const gateShunt = {
       kind: 'admittance', id: `${device}.miller-gate`,
       terminals: { a: gate, b: AC_GROUND }, value: gateAdmittance,
-      metadata: { component: device, millerBridge: true },
+      metadata: { ...metadata, millerSide: 'input' },
     };
     const drainShunt = {
       kind: 'admittance', id: `${device}.miller-drain`,
       terminals: { a: drain, b: AC_GROUND }, value: drainAdmittance,
-      metadata: { component: device, millerBridge: true },
+      metadata: { ...metadata, millerSide: 'output' },
     };
     current = [...withoutBridge, gateShunt, drainShunt];
-    applied.push({ device, gate, drain });
+    applied.push({ device, gate, drain, ...local, feedbackComponents, feedbackImpedance: reduced.impedance });
   }
-  return { primitives: current, applied };
+  return { primitives: current, applied, retained };
 }

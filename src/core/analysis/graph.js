@@ -1,7 +1,7 @@
 import { AC_GROUND } from './context.js';
 
 const PASSIVE_KINDS = new Set([
-  'resistor', 'capacitor', 'inductor', 'conductance',
+  'resistor', 'capacitor', 'inductor', 'conductance', 'admittance',
 ]);
 const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs']);
 
@@ -126,7 +126,7 @@ export function splitAtNode(primitives = [], node, options = {}) {
     groups.get(root).push(entry.index);
   }
 
-  if (groups.size < 2) return null;
+  if (groups.size + (options.includeShunts ? shunts.length : 0) < 2) return null;
   return {
     target,
     components: [...groups.entries()].map(([root, primitiveIndices]) => ({ root, primitiveIndices })),

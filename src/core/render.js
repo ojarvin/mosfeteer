@@ -124,7 +124,7 @@ function mathMlParallel(tall = false, requestedSize = null) {
 /** Convert the small TeX subset emitted by symbolic analysis into MathML.
  * MathML is rendered by the browser inside the live SVG through a
  * foreignObject; keeping this parser local avoids a runtime CDN dependency. */
-function texToMathML(source) {
+export function texToMathML(source) {
   const text = stripMathDelimiters(source).replace(/\s+/g, ' ').trim();
   const hasFraction = /\\frac\b/.test(text);
   let index = 0;
@@ -271,7 +271,7 @@ function mathLabelSvg(label, opacity = '') {
   const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
   const aria = escapeSvg(`Math label ${label.text}`);
   const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:6px;overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:500;pointer-events:none;`;
-  const lineStyle = `display:flex;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
+  const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
   const lines = stripMathDelimiters(label.text).split(/\r?\n/)
     .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
     .join('');

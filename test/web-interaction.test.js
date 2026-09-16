@@ -7,6 +7,50 @@ import { constrainAxis, isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimar
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
 
+test('MathML annotation measurements are independent of zoom on reload', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function renderedLabelTextBounds(');
+  const end = main.indexOf('\nlet measuredLabelBBoxes', start);
+  for (const scale of [0.08, 0.5, 1, 2]) {
+    const rect = { left: 100 * scale, top: 200 * scale, right: 400 * scale, bottom: 291 * scale, width: 300 * scale, height: 91 * scale };
+    const content = { getBoundingClientRect: () => rect };
+    const math = { querySelectorAll: () => [content], getBoundingClientRect: () => ({ width: 400 * scale }) };
+    const measure = vm.runInNewContext(`(${main.slice(start, end)})`, {
+      canvasSvgEl: { getScreenCTM: () => ({ a: scale, b: 0, c: 0, d: scale }) },
+      document: { createRange: () => ({ selectNodeContents() {}, getBoundingClientRect: () => rect }) },
+      getComputedStyle: () => ({ paddingLeft: '6px', paddingTop: '6px', paddingRight: '6px', paddingBottom: '6px' }),
+      clientRectToSvgBounds: (_, bounds) => ({ x: bounds.left / scale, y: bounds.top / scale, w: bounds.width / scale, h: bounds.height / scale }),
+    });
+    const result = measure({ querySelector: (selector) => selector === 'text' ? null : math });
+    assert.ok(Math.abs(result.w - 312) < 1e-9);
+    assert.ok(Math.abs(result.h - 103) < 1e-9);
+    assert.ok(Math.abs(result.y + result.h / 2 - 245.5) < 1e-9);
+  }
+});
+
+test('multiline assumptions measure their text independently of the restored container width', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function renderedLabelTextBounds(');
+  const end = main.indexOf('\nlet measuredLabelBBoxes', start);
+  for (const containerWidth of [240, 320, 400]) {
+    for (const scale of [0.08, 0.590074019, 1, 2]) {
+      const rect = (width, top) => ({ left: 100 * scale, right: (100 + width) * scale, top: top * scale, bottom: (top + 36) * scale, width: width * scale, height: 36 * scale });
+      const nodes = [rect(209, 200), rect(155, 248), rect(124, 296)].map((bounds) => ({ getBoundingClientRect: () => bounds }));
+      const math = { querySelectorAll: () => nodes, getBoundingClientRect: () => rect(containerWidth, 200) };
+      const measure = vm.runInNewContext(`(${main.slice(start, end)})`, {
+        canvasSvgEl: { getScreenCTM: () => ({ a: scale, b: 0, c: 0, d: scale }) },
+        document: { createRange: () => { throw new Error('must measure intrinsic lines, not the full-width wrapper'); } },
+        getComputedStyle: () => ({ paddingLeft: '6px', paddingTop: '6px', paddingRight: '6px', paddingBottom: '6px' }),
+        clientRectToSvgBounds: (_, bounds) => ({ x: bounds.left / scale, y: bounds.top / scale, w: bounds.width / scale, h: bounds.height / scale }),
+      });
+      const measured = measure({ querySelector: (selector) => selector === 'text' ? null : math });
+      assert.ok(Math.abs(measured.w - 221) < 1e-9);
+      assert.ok(Math.abs(measured.h - 144) < 1e-9);
+      assert.ok(Math.abs(measured.x - 94) < 1e-9);
+    }
+  }
+});
+
 test('close-window shortcuts are available to the Electron renderer', () => {
   assert.equal(isCloseWindowShortcut({ key: 'q', ctrlKey: true }), true);
   assert.equal(isCloseWindowShortcut({ key: 'w', metaKey: true }), true);
@@ -236,6 +280,7 @@ test('analysis annotations use structured canonical assumptions', () => {
     '\\text{Dominant-pole approximation}',
   ]);
   assert.deepEqual(Array.from(summarize({ analysisOptions: {} })), []);
+  assert.deepEqual(Array.from(summarize({ analysisOptions: {}, assumptions: ['Miller approximation (M1)'] })), ['\\text{Miller approximation (M1)}']);
 });
 
 test('committed inserts repair coincident connectivity and analysis menus support multi-selection', () => {

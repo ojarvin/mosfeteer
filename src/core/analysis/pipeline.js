@@ -14,6 +14,9 @@ import { applyMillerApproximation } from './miller.js';
 import { provenParallel } from './present.js';
 import { reduceNetwork } from './reduce.js';
 import { solveMNA } from './solve.js';
+import { createRationalOps } from './algebra-ops.js';
+import { compactRational } from './compact.js';
+import { solveByTopology } from './topological-solve.js';
 
 const INPUT_SOURCE = '@analysis-input';
 const OUTPUT_SOURCE = '@analysis-output';
@@ -118,9 +121,10 @@ function normalizeSymbolicQuery(value, ops) {
   }
   let numerator = common.size ? removeMonomialFactors(value.numerator, common) : value.numerator;
   let denominator = common.size ? removeMonomialFactors(value.denominator, common) : value.denominator;
-  if (allNegative(denominator)) {
+  const constant = (denominator.kind === 'add' ? denominator.terms : [denominator]).find((term) => term.kind === 'number');
+  if (allNegative(denominator) || constant?.numerator < 0n) {
     numerator = negateExpression(numerator);
-    denominator = negateExpression(denominator);
+    denominator = denominator.kind === 'add' ? addExpression(denominator.terms.map(negateExpression)) : negateExpression(denominator);
   }
   if (!common.size && numerator === value.numerator && denominator === value.denominator) return value;
   return rationalFunction(numerator, denominator, { variable: value.variable, budget: ops.budget });
@@ -355,46 +359,45 @@ function queryValues(solution, system, context, excitations, ops) {
  * When `node` is an articulation point of the coupled small-signal graph
  * (see `splitAtNode`), the impedance looking into it is provably the
  * parallel combination of each independent branch's own impedance, solved
- * on a much smaller system. `zeroedVoltageSourceNode` replicates the other
- * port's zeroed *voltage* source (a short) in whichever branch contains it;
+ * on a much smaller system. `zeroedVoltageSourceNode` treats the other
+ * port's zeroed *voltage* source as an AC-ground boundary in every branch;
  * a zeroed *current* source needs no replica since an absent branch already
  * behaves as the open circuit it represents. Returns `null` (never throws)
- * whenever the graph isn't separable, a shunt primitive would need special
- * handling, or any sub-solve fails, so callers can always fall back to the
- * single combined solve.
+ * whenever the graph isn't separable or any sub-solve fails. Direct shunts
+ * are solved alongside the branches; raw exact query values stay unchanged.
  */
 function trySplitImpedance(node, { selectedMna, context, ops, zeroedVoltageSourceNode }) {
+  // The imposed input voltage is ground for an output-impedance query.
+  // Treat it as a boundary in the topology too; otherwise a shared gate
+  // incorrectly glues independent output branches together.
+  const grounds = new Set([AC_GROUND, ...context.acGroundIds, ...(zeroedVoltageSourceNode ? [zeroedVoltageSourceNode] : [])]);
+  const canonical = (node) => grounds.has(node) ? AC_GROUND : context.nodeAliases.get(node) || node;
+  selectedMna = selectedMna.filter((primitive) => primitive.kind !== 'vccs'
+    || canonical(primitive.control.a) !== canonical(primitive.control.b));
   let split;
   try {
     split = splitAtNode(selectedMna, node, {
-      acGroundIds: context.acGroundIds,
+      acGroundIds: grounds,
       nodeAliases: context.nodeAliases,
+      includeShunts: true,
     });
   } catch {
     return null;
   }
-  if (!split || split.shunts.length) return null;
-  const shortRoot = zeroedVoltageSourceNode ? split.componentOf(zeroedVoltageSourceNode) : null;
+  if (!split) return null;
 
   const pieces = [];
-  for (const component of split.components) {
+  for (const component of [...split.components, ...split.shunts.map((index) => ({ primitiveIndices: [index] }))]) {
     const elements = component.primitiveIndices.map((index) => selectedMna[index]);
     const testId = uniqueName('@analysis-split-test', elements);
     const branchElements = [...elements, {
       kind: 'current-source', id: testId, name: testId,
       terminals: { a: AC_GROUND, b: node }, value: ops.one,
     }];
-    if (zeroedVoltageSourceNode && component.root === shortRoot) {
-      const shortId = uniqueName('@analysis-split-short', branchElements);
-      branchElements.push({
-        kind: 'voltage-source', id: shortId, name: shortId,
-        terminals: { a: zeroedVoltageSourceNode, b: AC_GROUND }, value: ops.zero,
-      });
-    }
     let system;
     let solution;
     try {
-      system = buildMNA(branchElements, { ops, ground: AC_GROUND, grounds: [...context.acGroundIds] });
+      system = buildMNA(branchElements, { ops, ground: AC_GROUND, grounds: [...grounds] });
       solution = solveMNA(system, { ops });
     } catch {
       return null;
@@ -402,7 +405,7 @@ function trySplitImpedance(node, { selectedMna, context, ops, zeroedVoltageSourc
     if (!solution.ok) return null;
     const voltage = solutionValue(solution, `V(${node})`, 0);
     if (voltage === undefined) return null;
-    pieces.push(queryDivide(voltage, ops.one, ops));
+    pieces.push(compactRational(queryDivide(voltage, ops.one, ops), ops));
   }
   if (pieces.length < 2) return null;
 
@@ -524,7 +527,10 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
   const mnaBudget = budgetFailure(ops, 'MNA construction');
   if (mnaBudget) return failure('budget', mnaBudget.error, mnaBudget);
 
-  const solution = solveMNA(system, { ops });
+  const solution = (options.topologicalSolve === false ? null : solveByTopology(system, excitations, context, ops, {
+    splitBranches: selectedMna.some((primitive) => primitive.kind === 'vccs'),
+  }))
+    || solveMNA(system, { ops });
   if (solution.code === 'operation-budget' || solution.code === 'solver-work-limit' || solution.code === 'matrix-size-limit') {
     return failure('budget', solution.error, {
       ...solution,
@@ -547,6 +553,7 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     exactPrimitives,
     mnaPrimitives,
     millerSubstitutions: miller.applied,
+    retainedFeedbackNetworks: miller.retained || [],
     networkReductionProofs: reduction.proofs,
     coupled,
     selected,
@@ -564,18 +571,24 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
 
 /**
  * Try the articulation-point split (see `trySplitImpedance`) for Zin and
- * Zout independently. Each is a self-contained, provably-correct swap of
- * the exact query value for one that keeps its natural parallel structure;
- * a failed or inapplicable split leaves that query's original value alone.
+ * Zout independently. Each records a proven parallel display and a compact
+ * branch value without replacing the original exact query. A failed or
+ * inapplicable split leaves that query alone.
  */
 function refineSeparableQueries(queries, solveContext) {
   const { context } = solveContext;
+  if (typeof solveContext.ops.s === 'function') solveContext = {
+    ...solveContext,
+    ops: createRationalOps({ variable: solveContext.ops.variable || 's', maxOperations: 12000 }),
+  };
   const outputSplit = trySplitImpedance(context.output.node, {
     ...solveContext,
     zeroedVoltageSourceNode: context.input.node,
   });
-  if (outputSplit) queries.outputImpedance = { ...queries.outputImpedance, ...outputSplit };
+  if (outputSplit) queries.outputImpedance = { ...queries.outputImpedance, branchValue: outputSplit.value,
+    equivalence: provenParallel(queries.outputImpedance.value, ...outputSplit.equivalence.operands) };
   const inputSplit = trySplitImpedance(context.input.node, solveContext);
-  if (inputSplit) queries.inputImpedance = { ...queries.inputImpedance, ...inputSplit };
+  if (inputSplit) queries.inputImpedance = { ...queries.inputImpedance, branchValue: inputSplit.value,
+    equivalence: provenParallel(queries.inputImpedance.value, ...inputSplit.equivalence.operands) };
   return queries;
 }

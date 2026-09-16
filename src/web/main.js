@@ -15,7 +15,7 @@ import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
-import { svgString, editorOverlay } from '../core/render.js';
+import { svgString, editorOverlay, texToMathML } from '../core/render.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { moveBlockArrowRun, routeBlockArrow } from '../core/block-router.js';
@@ -2783,25 +2783,39 @@ function renderedLabelTextBounds(group) {
   if (!math) return null;
   try {
     const mathNodes = [...math.querySelectorAll('math')];
-    const mathContent = mathNodes.length === 1 ? mathNodes[0] : math;
-    const range = document.createRange();
-    range.selectNodeContents(mathContent);
-    const rangeRect = range.getBoundingClientRect();
-    const client = mathNodes.length === 1
-      ? (mathContent.getBoundingClientRect?.() || rangeRect)
-      : rangeRect;
-    // Some engines report the flex container for a MathML range. Prefer the
-    // MathML element when it exposes a meaningful tight rectangle, otherwise
-    // fall back to the range's glyph bounds.
-    const tight = client.width > 0 && client.width < math.getBoundingClientRect().width * 0.98 ? client : rangeRect;
-    if (!(tight.width > 0) || !(tight.height > 0)) return null;
+    // Measure each line's intrinsic MathML contents. A Range around the
+    // multiline flex wrapper includes its full-width line containers, which
+    // feeds the old bbox back into the next measurement. Rounding can then
+    // add/remove two cells and move left-aligned assumptions by one cell.
+    const rects = mathNodes.map((node) => {
+      const client = node.getBoundingClientRect?.();
+      if (client?.width > 0 && client.height > 0) return client;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return range.getBoundingClientRect();
+    }).filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!rects.length) return null;
+    const tight = {
+      left: Math.min(...rects.map((rect) => rect.left)),
+      top: Math.min(...rects.map((rect) => rect.top)),
+      right: Math.max(...rects.map((rect) => rect.right)),
+      bottom: Math.max(...rects.map((rect) => rect.bottom)),
+    };
+    tight.width = tight.right - tight.left;
+    tight.height = tight.bottom - tight.top;
     // The foreignObject reserves six CSS pixels of padding around the math;
     // include that rendered inset so the measured box cannot clip the glyphs.
     const css = getComputedStyle(math);
-    const px = Number.parseFloat(css.paddingLeft) || 0;
-    const py = Number.parseFloat(css.paddingTop) || 0;
-    const pr = Number.parseFloat(css.paddingRight) || px;
-    const pb = Number.parseFloat(css.paddingBottom) || py;
+    // Computed padding is in foreignObject/world units; Range rectangles are
+    // in screen pixels. Convert before expanding, otherwise zoom changes the
+    // measured bbox (and a fraction's vertical position after reload).
+    const matrix = canvasSvgEl.getScreenCTM();
+    const scaleX = Math.hypot(matrix.a, matrix.b);
+    const scaleY = Math.hypot(matrix.c, matrix.d);
+    const px = (Number.parseFloat(css.paddingLeft) || 0) * scaleX;
+    const py = (Number.parseFloat(css.paddingTop) || 0) * scaleY;
+    const pr = (Number.parseFloat(css.paddingRight) || 0) * scaleX;
+    const pb = (Number.parseFloat(css.paddingBottom) || 0) * scaleY;
     const expanded = {
       left: tight.left - px,
       top: tight.top - py,
@@ -6573,13 +6587,8 @@ function renderEquationMath(container, equation) {
   container.replaceChildren();
   const normalized = equationForDiagram(equation);
   container.setAttribute('aria-label', normalized);
-  for (const run of parseLabelRuns(normalized)) {
-    const span = document.createElement('span');
-    span.textContent = run.text;
-    if (run.sub) span.className = 'math-sub';
-    else if (run.super) span.className = 'math-super';
-    container.appendChild(span);
-  }
+  // The shared parser escapes literal text and emits only MathML markup.
+  container.innerHTML = texToMathML(equation);
 }
 
 function renderAnalysisResult(report) {
@@ -6647,6 +6656,9 @@ function analysisAnnotationAssumptions(report) {
   if (options.neglectChannelLengthModulation) lines.push('r_{o} = \\infty');
   if (options.neglectBodyEffect) lines.push('g_{mb} = 0');
   if (options.dominantPoleApplied) lines.push('\\text{Dominant-pole approximation}');
+  for (const assumption of report?.assumptions || []) {
+    if (assumption.startsWith('Miller approximation')) lines.push(`\\text{${assumption}}`);
+  }
   return lines;
 }
 

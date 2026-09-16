@@ -178,6 +178,99 @@ function leadingRational(current, scales) {
   return rationalFunction(numerator.expression, denominator.expression, { variable: current.variable });
 }
 
+function monomial(value) {
+  const result = new Map();
+  for (const factor of value.kind === 'multiply' ? value.factors : [value]) {
+    if (factor.kind === 'number') {
+      if (factor.numerator !== factor.denominator) return null;
+      continue;
+    }
+    const base = factor.kind === 'power' ? factor.base : factor;
+    const exponent = factor.kind === 'power' ? factor.exponent : 1;
+    if (base.kind !== 'symbol' || exponent < 0) return null;
+    result.set(base.name, (result.get(base.name) || 0) + exponent);
+  }
+  return result;
+}
+
+function monomialTerms(value) {
+  // A factored positive sum, e.g. ro2*(gm1+gm2), can dominate 1 just
+  // like either summand. Inspect a bounded expansion for comparison only;
+  // preserve the useful original factors in the resulting expression.
+  function expand(node) {
+    if (node.kind === 'add') return node.terms.flatMap(expand);
+    if (node.kind !== 'multiply') return [node];
+    let terms = [integer(1)];
+    for (const factor of node.factors) {
+      const choices = expand(factor);
+      if (terms.length * choices.length > 64) throw new RangeError('intrinsic product comparison limit');
+      terms = terms.flatMap((term) => choices.map((choice) => multiply(term, choice)));
+    }
+    return terms;
+  }
+  try {
+    const terms = expand(value);
+    if (terms.length > 64) return null;
+    const powers = terms.map(monomial);
+    return powers.every(Boolean) ? powers : null;
+  } catch { return null; }
+}
+
+function intrinsicProductReduction(current, records, global, options) {
+  const selectedDevices = records.filter((device) => device.intrinsicProduct
+    && !deviceScaling(device, options).length
+    && booleanOption(device, global, ['gmroLarge', 'highIntrinsicGain', 'intrinsicGainLarge'])
+    && !booleanOption(device, global, ['roInfinity', 'ignoreChannelLengthModulation', 'go0']))
+    .map((device) => ({ device: device.id, gm: deviceParameter(device, 'gm', ['gmSymbol', 'gm']), ro: deviceParameter(device, 'ro', ['roSymbol', 'ro']) }));
+  // The textbook gm*ro assumption covers interactions between the selected
+  // devices as well (e.g. a cascode's gm2*ro1). External resistances are not
+  // output-resistance symbols, so gm*RS and gm*RD remain independent.
+  const pairs = selectedDevices.flatMap((transistor) => selectedDevices.map((load) => ({
+    device: transistor.device, gm: transistor.gm, ro: load.ro,
+  })));
+  const used = new Set();
+  function reduce(value) {
+    if (value.kind === 'multiply') return multiply(value.factors.map(reduce));
+    if (value.kind === 'power') return power(reduce(value.base), value.exponent);
+    if (value.kind !== 'add') return value;
+    const terms = value.terms.map(reduce);
+    const powers = terms.map(monomialTerms);
+    return add(terms.filter((_, i) => !powers.some((higherTerms, j) => {
+      const lowerTerms = powers[i];
+      if (i === j || !higherTerms || !lowerTerms) return false;
+      const usedHere = new Set();
+      const dominated = lowerTerms.every((lower) => higherTerms.some((higher) => {
+        const ratio = new Map(higher);
+        for (const [name, exponent] of lower) {
+          if ((ratio.get(name) || 0) < exponent) return false;
+          ratio.set(name, ratio.get(name) - exponent);
+        }
+        const devices = [];
+        for (const pair of pairs) {
+          const count = Math.min(ratio.get(pair.gm) || 0, ratio.get(pair.ro) || 0);
+          if (!count) continue;
+          ratio.set(pair.gm, ratio.get(pair.gm) - count);
+          ratio.set(pair.ro, ratio.get(pair.ro) - count);
+          devices.push(pair.device);
+        }
+        if (!devices.length || [...ratio.values()].some((exponent) => exponent !== 0)) return false;
+        devices.forEach((id) => usedHere.add(id));
+        return true;
+      }));
+      if (dominated) usedHere.forEach((id) => used.add(id));
+      return dominated;
+    })));
+  }
+  const numerator = reduce(current.numerator);
+  const denominator = reduce(current.denominator);
+  // Leading terms can cancel in an unreduced global expression. Keep the
+  // exact value here; the topological path can still simplify its local Gm
+  // and load branches without that cancellation.
+  if (equals(denominator, ZERO)) return { selected: current, assumptions: [] };
+  const selected = rationalFunction(numerator, denominator, { variable: current.variable });
+  return { selected, assumptions: [...used].map((id) => assumptionName('intrinsic', id)) };
+}
+
 function intrinsicScales(options, records, global) {
   const scales = new Map();
   let hasProof = false;
@@ -307,6 +400,12 @@ export function applyApproximations(input, options = {}) {
         if (local && !rationalEqual(local, before)) assumptions.push(assumptionName('output', device.id));
       }
     }
+  }
+
+  const products = intrinsicProductReduction(selected, records, global, options);
+  if (!rationalEqual(products.selected, selected)) {
+    selected = products.selected;
+    assumptions.push(...products.assumptions);
   }
 
   const scale = intrinsicScales(options, records, global);

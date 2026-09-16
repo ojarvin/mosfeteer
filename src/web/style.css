@@ -712,6 +712,14 @@ button:disabled {
 .analysis-equation-value {
   min-width: 0;
   text-align: center;
+  overflow-x: auto;
+  padding-block: 4px;
+}
+
+.analysis-equation-value math {
+  width: max-content;
+  margin-inline: auto;
+  padding-block: 4px;
 }
 
 .analysis-equation-unavailable {
