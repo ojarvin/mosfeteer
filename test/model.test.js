@@ -1145,7 +1145,7 @@ test('direct diagonal paths round-trip in fixed policy without orthogonalization
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 240, y: 80 }]);
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 240, y: 80 }], { fixed: true });
   assert.equal(n.routingMode, 'fixed');
   assert.deepEqual(n.paths(), [[
     { x: 160, y: 0 }, { x: 240, y: 80 }, { x: 400, y: 400 },
@@ -1159,59 +1159,72 @@ test('direct diagonal paths round-trip in fixed policy without orthogonalization
   assert.equal(c2.nets.get(n.id).length(), n.length());
 });
 
-test('authorized diagonal wireTo stays managed and survives round-trip', () => {
+test('a diagonal draft keeps legs between clicked points literal and routes pin legs', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireTo('R1.b', c.getComponent('R2').terminalWorld('a'), [], { routeStyle: 'diagonal' });
+  const n = c.wireTo('R1.b', c.getComponent('R2').terminalWorld('a'), [{ x: 240, y: 80 }, { x: 320, y: 320 }], { routeStyle: 'diagonal' });
   assert.equal(n.routingMode, 'managed');
   assert.equal(n.allowDiagonal, true);
   assert.equal(n.fixedPaths.length, 0);
-  assert.deepEqual(n.paths(), [[{ x: 160, y: 0 }, { x: 400, y: 400 }]]);
+  const [path] = n.paths();
+  assert.deepEqual(path[0], { x: 160, y: 0 });
+  assert.deepEqual(path.at(-1), { x: 400, y: 400 });
+  const diagonals = path.slice(1).map((p, i) => [path[i], p]).filter(([a, b]) => a.x !== b.x && a.y !== b.y);
+  assert.deepEqual(diagonals, [[{ x: 240, y: 80 }, { x: 320, y: 320 }]], 'only the clicked leg is diagonal; pin legs are routed');
 
-  const restored = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
-  const copy = restored.nets.get(n.id);
+  const copy = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON()))).nets.get(n.id);
   assert.equal(copy.routingMode, 'managed');
   assert.equal(copy.allowDiagonal, true);
-  assert.equal(copy.fixedPaths.length, 0);
   assert.deepEqual(copy.paths(), n.paths());
 });
 
-test('authorized diagonal managed wire can splice and grow to a third terminal', () => {
+test('an orthogonal wire can splice into a protected diagonal segment', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  c.addComponent('resistor', { refdes: 'R3', x: 320, y: 200 });
-  const n = c.wireTo('R1.b', { x: 400, y: 400 }, [], { routeStyle: 'diagonal' });
-  c.wireTo('R3.b', { x: 280, y: 200 }, [], { routeStyle: 'diagonal' });
+  c.addComponent('resistor', { refdes: 'R3', x: 560, y: 160 });
+  const n = c.wireTo('R1.b', c.getComponent('R2').terminalWorld('a'), [{ x: 240, y: 80 }, { x: 400, y: 240 }], { routeStyle: 'diagonal' });
+  const joined = c.wireTo('R3.a', { x: 320, y: 160 }, [], { routeStyle: 'orthogonal' });
 
-  assert.equal(n.routingMode, 'managed');
-  assert.equal(n.allowDiagonal, true);
+  assert.equal(joined, n);
   assert.equal(n.terminals.length, 3);
-  assert.ok(n.junctions.some((p) => p.x === 280 && p.y === 200));
-  assert.ok(n.paths().some((path) => path.some((p, i) => i && p.x !== path[i - 1].x && p.y !== path[i - 1].y)));
-  assert.equal(n.fixedPaths.length, 0);
+  assert.ok(n.junctions.some((p) => p.x === 320 && p.y === 160));
+  const segments = n.paths().flatMap((path) => path.slice(1).map((p, i) => `${path[i].x},${path[i].y}-${p.x},${p.y}`));
+  assert.ok(segments.includes('240,80-320,160') || segments.includes('320,160-240,80'), 'first diagonal half kept');
+  assert.ok(segments.includes('320,160-400,240') || segments.includes('400,240-320,160'), 'second diagonal half kept');
+  assert.equal(n.allowDiagonal, true);
 });
 
-test('orthogonal wire into a diagonal net preserves its authored geometry', () => {
+test('loading converts legacy fixed nets into managed nets with protected diagonals', async () => {
+  const { loadDocument } = await import('../src/core/document.js');
+  const legacy = new Circuit();
+  legacy.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  legacy.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
+  const fixed = legacy.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 240, y: 240 }], { fixed: true });
+  const json = JSON.parse(JSON.stringify(legacy.toJSON()));
+  assert.equal(json.nets[0].routingMode, 'fixed');
+
+  const loaded = loadDocument(json);
+  const net = loaded.nets.get(fixed.id);
+  assert.equal(net.routingMode, 'managed');
+  assert.equal(net.allowDiagonal, true);
+  assert.deepEqual(net.fixedPaths, []);
+  assert.deepEqual(net.paths(), [[{ x: 160, y: 0 }, { x: 240, y: 80 }, { x: 240, y: 240 }, { x: 400, y: 400 }]]);
+  assert.deepEqual(net.terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['R1.b', 'R2.a']);
+  assert.equal(Circuit.fromJSON(json).nets.get(fixed.id).routingMode, 'fixed', 'the core still reads fixed nets when asked directly');
+});
+
+test('the diagonal flag follows the drawn segments instead of spreading through joins', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  c.addComponent('resistor', { refdes: 'R3', x: 680, y: 200 });
-  const n = c.wireTo('R1.b', { x: 400, y: 400 }, [], { routeStyle: 'diagonal' });
-  const diagonal = n.paths()[0].map((p) => ({ ...p }));
-  const extended = c.wireTo('R3.a', { x: 280, y: 200 }, [], { routeStyle: 'orthogonal' });
-
-  assert.equal(extended, n);
-  assert.equal(extended.allowDiagonal, true);
-  assert.ok(extended.paths().some((path) =>
-    path.length === 2 && path[0].x === 160 && path[0].y === 0 &&
-    path[1].x === 280 && path[1].y === 200));
-  assert.ok(extended.paths().some((path) =>
-    path.length === 2 && path[0].x === 280 && path[0].y === 200 &&
-    path[1].x === 400 && path[1].y === 400));
-  assert.equal(extended.terminals.length, 3);
-  assert.ok(extended.paths().some((path) => path.some((p) => p.x === 600 && p.y === 200)));
+  const n = c.wireTo('R1.b', c.getComponent('R2').terminalWorld('a'), [{ x: 240, y: 80 }, { x: 320, y: 320 }], { routeStyle: 'diagonal' });
+  assert.equal(n.allowDiagonal, true);
+  const path = n.paths()[0];
+  const index = path.findIndex((p, i) => i > 0 && p.x !== path[i - 1].x && p.y !== path[i - 1].y);
+  c.deleteWireSegments(n.id, [{ branch: 0, segment: index }]);
+  for (const net of c.nets.values()) assert.equal(net.allowDiagonal, false, `${net.id} has no diagonal left`);
 });
 
 test('orthogonal terminal merge into a diagonal net skips whole-net optimization', () => {
@@ -1294,17 +1307,18 @@ test('moving an authorized diagonal endpoint through a blocker uses a safe repla
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   c.addComponent('resistor', { refdes: 'BLOCK', x: 280, y: 0 });
-  const n = c.wireTo('R1.b', { x: 400, y: 400 }, [{ x: 240, y: 80 }], { routeStyle: 'diagonal' });
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
+  assert.equal(n.routingMode, 'managed');
   c.moveComponent('R2', 480, 0);
   assert.equal(c.rerouteNet(n, new Map([['R2', { dx: 0, dy: -400 }]])), true);
 
-  assert.deepEqual(n.paths()[0].slice(0, 2), [{ x: 160, y: 0 }, { x: 240, y: 80 }]);
+  assert.deepEqual(n.paths()[0].slice(0, 2), [{ x: 160, y: 0 }, { x: 240, y: 80 }], 'the untouched diagonal stays put');
+  assert.deepEqual(n.paths()[0].at(-1), { x: 400, y: 0 });
   for (const path of n.paths()) for (let i = 1; i < path.length; i++) {
     for (const comp of c.components.values()) {
       if (comp.type !== 'solder') assert.equal(segThroughInterior(path[i - 1], path[i], comp.bboxWorld()), false);
     }
   }
-  assert.deepEqual(n.paths()[0].at(-1), { x: 400, y: 0 });
 });
 
 test('authorized diagonal re-anchor rejects an unsafe preserved suffix and rolls back', () => {
@@ -1326,7 +1340,7 @@ test('fixed geometry is protected from refresh and reduction but deletable liter
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a');
+  const n = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
   const before = n.paths();
   c.rerouteNet(n, 'refresh');
   c._reduceNet(n);
@@ -1339,7 +1353,7 @@ test('fixed middle cuts preserve literal diagonal pieces and anchors per island'
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 320, y: 240 }]);
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 320, y: 240 }], { fixed: true });
   const originalId = n.id;
   c.deleteWireSegments(n.id, [{ branch: 0, segment: 2 }]);
   const nets = [...c.nets.values()];
@@ -1363,7 +1377,7 @@ test('fixed first and last cuts drop only their original terminal anchors', () =
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 320, y: 240 }]);
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }, { x: 320, y: 240 }], { fixed: true });
   c.deleteWireSegments(n.id, [{ branch: 0, segment: 1 }, { branch: 0, segment: 3 }]);
   assert.equal(c.nets.size, 1);
   assert.deepEqual(c.nets.get(n.id).fixedPaths[0], {
@@ -1481,7 +1495,7 @@ test('fixed path, vertex, and junction edits preserve anchors without reduction'
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a');
+  const n = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
   n.junctions = [{ x: 240, y: 160 }];
   c.setFixedPath(n, 0, [
     { x: 160, y: 0 }, { x: 240, y: 160 }, { x: 400, y: 400 },
@@ -1506,7 +1520,7 @@ test('managed operations cannot add phantom terminals to fixed nets', () => {
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   c.addComponent('resistor', { refdes: 'R3', x: 880, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a');
+  const n = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
   assert.throws(() => c.connect('R1.b', 'R3.a'), /cannot grow a fixed net/);
   assert.throws(() => c.connectTo(n.id, 'R3.a'), /cannot grow a fixed net/);
   assert.equal(c.netOfTerminal('R3.a'), null);
@@ -1516,7 +1530,7 @@ test('distinct coincident direct anchors retain a degenerate path until separati
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 240, y: 0 });
-  const n = c.wireDirectTo('R1.b', 'R2.a');
+  const n = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
   assert.deepEqual(n.fixedPaths[0].points, [{ x: 160, y: 0 }, { x: 160, y: 0 }]);
   c.moveComponent('R2', 480, 0);
   c.rerouteNet(n, new Map([['R2', { dx: 240, dy: 0 }]]));
@@ -1527,7 +1541,7 @@ test('fixed authored vertices and anchors survive endpoint coincidence and reloa
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }], { fixed: true });
   c.moveComponent('R2', 320, 80);
   c.rerouteNet(n, new Map([['R2', { dx: -160, dy: -320 }]]));
   assert.deepEqual(n.fixedPaths[0].points, [
@@ -1653,7 +1667,7 @@ test('v2 loading sanitizes fixed anchors that are not net member terminals', () 
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a');
+  const n = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
   const state = c.toJSON();
   state.nets[0].fixedPaths[0].start = { comp: 'R99', term: 'a' };
   state.nets[0].fixedPaths[0].end = { comp: 'R2', term: 'not-a-term' };
@@ -1666,7 +1680,7 @@ test('disconnect and removal clear fixed terminal anchors', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a');
+  const n = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
   c.disconnect('R1.b');
   assert.equal(n.fixedPaths[0].start, null);
   c.removeComponent('R2');
@@ -1681,7 +1695,7 @@ test('promoting a managed net preserves explicit junctions and their solder mark
   const n = c.connect('R1.b', 'R2.a');
   n.route = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
   n.junctions = [{ x: 280, y: 0 }];
-  c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }]);
+  c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }], { fixed: true });
   assert.deepEqual(n.junctions, [{ x: 280, y: 0 }]);
   assert.equal([...c.components.values()].filter((x) => x.type === 'solder' && x.transform.x === 280 && x.transform.y === 0).length, 1);
   const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
@@ -1693,7 +1707,7 @@ test('reconnecting existing fixed members preserves paths, junctions, and solder
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
-  const n = c.wireDirectTo('R1.b', 'R2.a');
+  const n = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
   n.junctions = [{ x: 280, y: 0 }];
   c.syncJunctionSolders();
   const paths = n.paths();
@@ -1714,7 +1728,7 @@ test('direct wiring promotes joined managed nets while retaining their visible p
   c.addComponent('resistor', { refdes: 'R3', x: 880, y: 400 });
   const n = c.connect('R1.b', 'R2.a');
   n.route = [{ x: 160, y: 0 }, { x: 400, y: 0 }];
-  const joined = c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }]);
+  const joined = c.wireDirectTo('R1.b', 'R3.a', [{ x: 640, y: 80 }], { fixed: true });
   assert.equal(joined, n);
   assert.equal(joined.routingMode, 'fixed');
   assert.equal(joined.fixedPaths.length, 2);
@@ -1726,7 +1740,7 @@ test('fixed endpoints repair in place and rigid moves translate all geometry', (
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }]);
+  const n = c.wireDirectTo('R1.b', 'R2.a', [{ x: 240, y: 80 }], { fixed: true });
   c.moveComponent('R2', 480, 560);
   c.rerouteNet(n, new Map([['R2', { dx: 0, dy: 160 }]]));
   assert.deepEqual(n.paths()[0], [
@@ -1749,8 +1763,8 @@ test('crossing fixed paths remain separate and do not create a solder junction',
   c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
   c.addComponent('resistor', { refdes: 'R3', x: 80, y: 400 });
   c.addComponent('resistor', { refdes: 'R4', x: 480, y: 0 });
-  const a = c.wireDirectTo('R1.b', 'R2.a');
-  const b = c.wireDirectTo('R3.b', 'R4.a');
+  const a = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
+  const b = c.wireDirectTo('R3.b', 'R4.a', [], { fixed: true });
   assert.notEqual(a.id, b.id);
   assert.equal(c.nets.size, 2);
   assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
@@ -1761,22 +1775,20 @@ function mirroredMosPair(c, first = 'M1', second = 'M2', x = 0) {
   c.addComponent('nmos', { refdes: second, x: x + 280, y: 0, mirrorX: true, mirrorY: false });
 }
 
-test('managed reciprocal diagonal nets infer a fixed cross-coupled pair', () => {
+test('managed reciprocal diagonal nets infer a cross-coupled pair with protected diagonals', () => {
   const c = new Circuit();
   mirroredMosPair(c);
   const a = c.wireTo('M1.d', c.getComponent('M2').terminalWorld('s'));
   const b = c.wireTo('M1.s', c.getComponent('M2').terminalWorld('d'));
-  assert.equal(a.routingMode, 'fixed');
-  assert.equal(b.routingMode, 'fixed');
-  assert.equal(a.fixedPaths.length, 1);
-  assert.equal(b.fixedPaths.length, 1);
-  assert.deepEqual(a.fixedPaths[0].start, { comp: 'M1', term: 'd' });
-  assert.deepEqual(a.fixedPaths[0].end, { comp: 'M2', term: 's' });
-  assert.deepEqual(b.fixedPaths[0].start, { comp: 'M1', term: 's' });
-  assert.deepEqual(b.fixedPaths[0].end, { comp: 'M2', term: 'd' });
-  assert.deepEqual(a.fixedPaths[0].points, [
-    { x: 120, y: -80 }, { x: 280, y: 80 },
-  ]);
+  for (const net of [a, b]) {
+    assert.equal(net.routingMode, 'managed');
+    assert.equal(net.allowDiagonal, true);
+    assert.equal(net.fixedPaths.length, 0);
+    assert.equal(net.paths().length, 1);
+  }
+  assert.deepEqual(a.terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['M1.d', 'M2.s']);
+  assert.deepEqual(b.terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['M1.s', 'M2.d']);
+  assert.deepEqual(a.paths()[0], [{ x: 120, y: -80 }, { x: 280, y: 80 }]);
   assert.equal([...c.components.values()].filter((x) => x.type === 'solder').length, 0);
 });
 
@@ -1794,7 +1806,7 @@ test('cross-coupling inference rejects unmirrored component transforms', () => {
 test('cross-coupling inference never rewrites a fixed/manual net', () => {
   const c = new Circuit();
   mirroredMosPair(c);
-  const fixed = c.wireDirectTo('M1.d', 'M2.s', [{ x: 200, y: -120 }]);
+  const fixed = c.wireDirectTo('M1.d', 'M2.s', [{ x: 200, y: -120 }], { fixed: true });
   const managed = c.connect('M1.s', 'M2.d');
   assert.equal(fixed.routingMode, 'fixed');
   assert.equal(managed.routingMode, 'managed');
@@ -3172,4 +3184,39 @@ test('dangling branches with free endpoints are pruned after a reroute', () => {
   const flat = JSON.stringify(net.paths());
   assert.ok(!flat.includes('{"x":200,"y":200}'), 'floating stub pruned');
   assert.equal(net.wiringErrors().length, 0);
+});
+
+test('moveDiagonalSegment moves a diagonal rigidly and reroutes the orthogonal wire on each side', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
+  const n = c.wireTo('R1.b', c.getComponent('R2').terminalWorld('a'), [{ x: 240, y: 80 }, { x: 320, y: 320 }], { routeStyle: 'diagonal' });
+  const path = n.paths()[0];
+  const segment = path.findIndex((p, i) => i > 0 && p.x !== path[i - 1].x && p.y !== path[i - 1].y);
+  assert.equal(c.moveDiagonalSegment(n, 0, segment, { dx: 80, dy: -40 }), true);
+
+  const [moved] = n.paths();
+  assert.deepEqual(moved[0], { x: 160, y: 0 }, 'still starts at R1.b');
+  assert.deepEqual(moved.at(-1), { x: 400, y: 400 }, 'still ends at R2.a');
+  const diagonals = moved.slice(1).map((p, i) => [moved[i], p]).filter(([a, b]) => a.x !== b.x && a.y !== b.y);
+  assert.deepEqual(diagonals, [[{ x: 320, y: 40 }, { x: 400, y: 280 }]], 'same angle and length, shifted by the delta');
+  for (let i = 1; i < moved.length; i++) {
+    for (const comp of c.components.values()) {
+      if (comp.type !== 'solder') assert.equal(segThroughInterior(moved[i - 1], moved[i], comp.bboxWorld()), false);
+    }
+  }
+  assert.equal(c.moveDiagonalSegment(n, 0, 1, { dx: 40, dy: 0 }), false, 'an orthogonal segment is not a diagonal move');
+});
+
+test('moveDiagonalSegment is atomic when the moved diagonal would drill a component', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
+  c.addComponent('resistor', { refdes: 'BLOCK', x: 360, y: 200 });
+  const n = c.wireTo('R1.b', c.getComponent('R2').terminalWorld('a'), [{ x: 240, y: 80 }, { x: 240, y: 320 }], { routeStyle: 'orthogonal' });
+  const d = c.wireDirectTo({ x: 160, y: 160 }, { x: 240, y: 240 });
+  const before = JSON.stringify(c.toJSON());
+  assert.equal(c.moveDiagonalSegment(d, 0, 1, { dx: 200, dy: 0 }), false);
+  assert.equal(JSON.stringify(c.toJSON()), before);
+  assert.ok(n);
 });

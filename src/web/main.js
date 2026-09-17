@@ -10,7 +10,7 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
@@ -23,7 +23,7 @@ import { moveBlockArrowRun, routeBlockArrow } from '../core/block-router.js';
 import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
-import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
+import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
@@ -1411,12 +1411,75 @@ function validateSelectedWires() {
   if (!selectedWire) syncSelectedWire();
 }
 
-function diagonalWireKeys(net) {
-  return new Set(net.paths().flatMap((path, branch) =>
-    path.slice(1).map((point, index) => {
-      const prev = path[index];
-      return point.x !== prev.x && point.y !== prev.y ? `${net.id}:${branch}:${index + 1}` : null;
-    }).filter(Boolean)));
+function isDiagonalWireKey(key) {
+  const w = keyToWire(key);
+  const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
+  const a = path?.[w.segment - 1];
+  const b = path?.[w.segment];
+  return !!(a && b && a.x !== b.x && a.y !== b.y);
+}
+
+/** Start a rigid drag of one diagonal segment (see Circuit#moveDiagonalSegment).
+ * Returns false when the hit segment is not diagonal. */
+function diagonalSegmentDragAt(hit, startWorld, startClient, ev, { modal = false, doubleWireClick = false } = {}) {
+  const key = `${hit.net.id}:${hit.branch}:${hit.seg}`;
+  if (!isDiagonalWireKey(key)) return false;
+  const startSnapshot = snapshot();
+  beginPreviewTransaction(startSnapshot);
+  cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  drag = {
+    mode: 'diagonalseg', modal, key, netId: hit.net.id, branch: hit.branch, seg: hit.seg,
+    startWorld, startClient, startSnapshot, shift: ev.shiftKey, moved: false, delta: { dx: 0, dy: 0 },
+    tried: { dx: 0, dy: 0 }, doubleWireClick, rubber: null,
+  };
+  return true;
+}
+
+/** Re-apply the diagonal drag from the pre-drag document for the current delta. */
+function updateDiagonalSegmentDrag(world) {
+  const dx = snap(world.x) - snap(drag.startWorld.x);
+  const dy = snap(world.y) - snap(drag.startWorld.y);
+  if (dx === drag.tried?.dx && dy === drag.tried?.dy) return;
+  drag.tried = { dx, dy };
+  cursor = { x: snap(world.x), y: snap(world.y) };
+  const previous = circuit;
+  circuit = loadDocument(JSON.parse(drag.startSnapshot));
+  if (circuit.moveDiagonalSegment(drag.netId, drag.branch, drag.seg, { dx, dy })) {
+    drag.delta = { dx, dy };
+  } else {
+    // No safe route at this position: keep showing the last position that
+    // worked, so the segment stops instead of jumping back to its origin.
+    circuit = previous;
+  }
+  markModelChanged();
+}
+
+function finishDiagonalSegmentDrag() {
+  const { key, doubleWireClick } = drag;
+  if (!drag.moved || (!drag.delta.dx && !drag.delta.dy)) {
+    cancelPreviewTransaction();
+    drag = null;
+    setSelection([]);
+    if (doubleWireClick) selectedNets = new Set([keyToWire(key).netId]);
+    else {
+      selectedWires = new Set([key]);
+      selectedWire = keyToWire(key);
+    }
+    render();
+    return;
+  }
+  const collision = newCrossNetOverlap(drag.startSnapshot, new Set([drag.netId]));
+  if (collision) {
+    cancelPreviewTransaction();
+    logLine(`wire drag cancelled: the wire would overlap net ${collision}`, 'error');
+  } else if (snapshot() !== drag.startSnapshot) {
+    recordHistoryEntry(drag.startSnapshot, true, 'none');
+    commitPreviewTransaction();
+  } else {
+    cancelPreviewTransaction();
+  }
+  drag = null;
+  render();
 }
 
 function selectedLabels() {
@@ -2869,11 +2932,12 @@ function draftRoutePath(draft, to = cursor) {
   const sourceNetId = draft.source.netId ||
     (draft.source.refdes ? circuit.netOfTerminal(`${draft.source.refdes}.${draft.source.term}`)?.id : null);
   const env = circuit._netEnv(sourceNetId);
+  // Diagonal drafts use the model's own geometry: literal legs between clicked
+  // points, auto-routed legs at pins.
+  if (allowDiagonal) return diagonalDraftPath(circuit, endpoints, env) || undefined;
   const path = [endpoints[0]];
   for (let i = 1; i < endpoints.length; i++) {
-    const leg = allowDiagonal
-      ? clonePath([endpoints[i - 1], endpoints[i]], true)
-      : smartRoute(endpoints[i - 1], endpoints[i], { ...env, allowDiagonal: false });
+    const leg = smartRoute(endpoints[i - 1], endpoints[i], { ...env, allowDiagonal: false });
     if (!leg) return undefined;
     for (const point of leg.slice(1)) path.push({ ...point });
   }
@@ -4273,29 +4337,17 @@ function joinWireToNet(wireHit, selectedTarget = null) {
 
 
 function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) {
+  // A diagonal segment moves rigidly on its own; orthogonal runs keep the
+  // sideways run drag below and never carry selected diagonal segments.
+  if (diagonalSegmentDragAt(wireHit, startWorld, startClient, ev, { modal })) return true;
   const startSnapshot = snapshot();
   const sourceNetId = wireHit.net.id;
   const key = `${sourceNetId}:${wireHit.branch}:${wireHit.seg}`;
   const moveKeys = ev.shiftKey || selectedWires.has(key)
     ? new Set([...selectedWires, key])
     : new Set([key]);
+  for (const selectedKey of [...moveKeys]) if (isDiagonalWireKey(selectedKey)) moveKeys.delete(selectedKey);
   const runs = [];
-  const diagonalSelection = [...moveKeys].filter((selectedKey) => {
-    const selected = keyToWire(selectedKey);
-    const selectedNet = circuit.nets.get(selected.netId);
-    return selectedNet && diagonalWireKeys(selectedNet).has(selectedKey);
-  });
-  if (diagonalSelection.length) {
-    const required = new Set();
-    for (const selectedKey of diagonalSelection) {
-      const selected = keyToWire(selectedKey);
-      for (const diagonalKey of diagonalWireKeys(circuit.nets.get(selected.netId))) required.add(diagonalKey);
-    }
-    if ([...required].some((diagonalKey) => !moveKeys.has(diagonalKey))) {
-      logLine('connected move blocked: select the complete diagonal structure first');
-      return false;
-    }
-  }
   beginPreviewTransaction(startSnapshot);
   const net = circuit.nets.get(sourceNetId);
   if (!net) {
@@ -4894,24 +4946,18 @@ function canvasMouseDown(ev) {
     // Shift+click (or clicking a segment already in the selection) drags every
     // selected segment's run together; a plain click on an unselected segment
     // drags only that run (the selection resets on mouseup).
+    if (!isSelectionModifier(ev) && diagonalSegmentDragAt(wireHit, startWorld, startClient, ev, { doubleWireClick })) return;
     const moveKeys = isSelectionModifier(ev) || selectedWires.has(key)
       ? new Set([...selectedWires, key])
       : new Set([key]);
-    const diagonalSelection = [...moveKeys].filter((selectedKey) => {
-      const selected = keyToWire(selectedKey);
-      const selectedNet = circuit.nets.get(selected.netId);
-      return selectedNet && diagonalWireKeys(selectedNet).has(selectedKey);
-    });
-    if (diagonalSelection.length) {
-      const required = new Set();
-      for (const selectedKey of diagonalSelection) {
-        const selected = keyToWire(selectedKey);
-        for (const diagonalKey of diagonalWireKeys(circuit.nets.get(selected.netId))) required.add(diagonalKey);
-      }
-      if ([...required].some((diagonalKey) => !moveKeys.has(diagonalKey))) {
-        logLine('connected move blocked: select the complete diagonal structure first');
-        return;
-      }
+    for (const selectedKey of [...moveKeys]) if (isDiagonalWireKey(selectedKey)) moveKeys.delete(selectedKey);
+    if (!moveKeys.size) {
+      // Shift-clicking a diagonal toggles it in the selection without a drag.
+      if (selectedWires.has(key)) selectedWires.delete(key);
+      else selectedWires.add(key);
+      syncSelectedWire();
+      render();
+      return;
     }
     const runs = [];
     const seenRun = new Set();
@@ -5315,6 +5361,14 @@ function commitModalMove() {
     const world = constrainedWorld(drag.startWorld, cursor, drag.shift);
     return { world, client: worldToClient(world.x, world.y) };
   })();
+  if (drag.mode === 'diagonalseg') {
+    canvasMouseMove({ clientX: point.client.x, clientY: point.client.y, shiftKey: drag.shift });
+    drag.modal = false;
+    drag.moved = true;
+    finishDiagonalSegmentDrag();
+    movePending = false;
+    return true;
+  }
   if (drag.mode === 'wireseg' || drag.mode === 'fixedwire' || drag.mode === 'floatingwire') {
     drag.modal = false;
     canvasMouseUp({
@@ -5666,6 +5720,12 @@ function canvasMouseMove(ev) {
       drag.previewRevision = (drag.previewRevision || 0) + 1;
       renderCanvas(`${modelRevision}:blockresize:${drag.previewRevision}`);
     }
+    return;
+  }
+  if (drag.mode === 'diagonalseg') {
+    if (movedOut || drag.modal) drag.moved = drag.moved || movedOut;
+    if (drag.moved) updateDiagonalSegmentDrag(movedWorld);
+    scheduleInteractionRender();
     return;
   }
   if (drag.mode === 'wirepick' && drag.wireHit && movedOut) {
@@ -6024,6 +6084,14 @@ function canvasMouseUp(ev) {
     return;
   }
 
+  if (drag.mode === 'diagonalseg') {
+    if (drag.modal) {
+      render();
+      return;
+    }
+    finishDiagonalSegmentDrag();
+    return;
+  }
   if (drag.mode === 'zoom') {
     if (drag.moved) zoomToWorldRect(worldRect(drag.startWorld, w));
   } else if (drag.mode === 'wireseg') {

@@ -3,7 +3,10 @@
 ## Goals
 
 The managed wiring model is a topological graph with orthogonal, grid-aligned
-geometry. Fixed paths may preserve deliberate diagonal geometry. Electrical
+geometry. Deliberate diagonal segments are allowed inside managed nets and are
+protected one segment at a time: the autorouter never replaces them, while the
+orthogonal parts of the same net route normally. Legacy fixed nets (fully
+literal paths) are converted to this form when a document loads. Electrical
 connectivity is independent from component placement and from the visual route
 chosen for a net. A route may be changed without changing the terminal set, and
 a topology operation may preserve every existing path unless the user explicitly

@@ -58,14 +58,17 @@ export function queryWireHitIndex(index, raw, snapped, tolerance) {
     }
     for (const record of index.diagonals) add(record);
   }
-  return [...candidates.values()].sort((a, b) => a.order - b.order).map(record => ({
+  const records = [...candidates.values()].sort((a, b) => a.order - b.order);
+  const measure = (point) => records.map(record => ({
     net: record.net,
     branch: record.branch,
     seg: record.seg,
     pts: record.pts,
-    distance: Math.min(
-      distanceToSegment(raw, record.a, record.b),
-      distanceToSegment(snapped, record.a, record.b),
-    ),
+    distance: distanceToSegment(point, record.a, record.b),
   })).filter(candidate => candidate.distance < tolerance);
+  // The raw pointer decides between segments that meet at a grid point (for
+  // example a bend next to a diagonal). The snapped point is only a fallback
+  // when the raw pointer is not near any wire.
+  const rawHits = measure(raw);
+  return rawHits.length ? rawHits : measure(snapped);
 }

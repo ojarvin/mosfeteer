@@ -14,7 +14,14 @@ export function createDocument(kind = 'circuit') {
   if (kind === 'circuit' || kind === 'schematic') return new Circuit();
   throw new Error(`unknown document kind "${kind}"`);
 }
-export function loadDocument(data) { return documentKind(data) === 'block' ? BlockDiagram.fromJSON(data) : Circuit.fromJSON(data); }
+/** Load a saved document. Schematics are normalized to the app's single wire
+ * model: legacy fixed nets become managed nets with protected diagonals. */
+export function loadDocument(data) {
+  if (documentKind(data) === 'block') return BlockDiagram.fromJSON(data);
+  const circuit = Circuit.fromJSON(data);
+  circuit.convertFixedNets();
+  return circuit;
+}
 export function renderDocument(document, options = {}) { return isBlockDiagram(document) ? blockSvgString(document, options) : svgString(document, options); }
 export function saveDocument(document) { return document.toJSON(); }
 export function isDocument(value) { return value instanceof Circuit || value instanceof BlockDiagram; }

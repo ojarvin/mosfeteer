@@ -729,11 +729,13 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const existing = pairNets.flat();
     if (existing.some(Boolean)) {
       const samePath = (net, path, start, end) => {
-        if (!net || net.routingMode !== 'fixed' || net.fixedPaths.length !== 1) return false;
-        const entry = net.fixedPaths[0];
-        if (!entry.start || !entry.end || entry.start.comp !== start.comp || entry.start.term !== start.term ||
-            entry.end.comp !== end.comp || entry.end.term !== end.term || entry.points.length !== path.length) return false;
-        return entry.points.every((p, i) => p.x === path[i].x && p.y === path[i].y);
+        if (!net || net.terminals.length !== 2) return false;
+        const members = net.terminals.map((t) => `${t.comp}.${t.term}`);
+        if (!members.includes(`${start.comp}.${start.term}`) || !members.includes(`${end.comp}.${end.term}`)) return false;
+        const drawn = net.paths();
+        if (drawn.length !== 1 || drawn[0].length !== path.length) return false;
+        const same = (points) => points.every((p, i) => p.x === path[i].x && p.y === path[i].y);
+        return same(drawn[0]) || same([...drawn[0]].reverse());
       };
       const idempotent = pairNets[0][0] && pairNets[0][0] === pairNets[0][1] &&
         pairNets[1][0] && pairNets[1][0] === pairNets[1][1] && pairNets[0][0] !== pairNets[1][0] &&
@@ -748,7 +750,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
       circuit.wireDirectTo(refs[0], refs[1], paths[0].slice(1, -1)),
       circuit.wireDirectTo(refs[2], refs[3], paths[1].slice(1, -1)),
     ];
-    return result(`cross ${pos.join(' ')}: fixed nets ${nets[0].id}, ${nets[1].id}`, {
+    return result(`cross ${pos.join(' ')}: diagonal nets ${nets[0].id}, ${nets[1].id}`, {
       nets: nets.map((net) => net.toJSON()),
     }, true);
   }

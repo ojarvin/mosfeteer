@@ -1229,6 +1229,41 @@ export class Net {
   }
 }
 
+const isDiagonalSegment = (a, b) => a.x !== b.x && a.y !== b.y;
+
+/** True when a polyline contains an authored diagonal segment. */
+export function pathHasDiagonal(path = []) {
+  for (let i = 1; i < path.length; i++) if (isDiagonalSegment(path[i - 1], path[i])) return true;
+  return false;
+}
+
+/**
+ * The geometry of a diagonal-mode wire draft through `endpoints` (source,
+ * clicked points, target). Legs between clicked points are literal and may be
+ * diagonal; a leg that starts or ends on a component pin is auto-routed so it
+ * leaves and enters the pin like any managed wire. Returns null when a pin leg
+ * cannot be routed safely.
+ */
+export function diagonalDraftPath(circuit, endpoints, env) {
+  const points = endpoints.map((p) => snapPoint(p.x, p.y));
+  const pinAt = (p) => [...circuit.components.values()].some((c) => c.type !== 'solder' &&
+    c.terminalDefs.some((t) => {
+      const q = c.terminalWorld(t.name);
+      return q.x === p.x && q.y === p.y;
+    }));
+  const path = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (a.x === b.x && a.y === b.y) continue;
+    const pinLeg = (i === 1 && pinAt(a)) || (i === points.length - 1 && pinAt(b));
+    const leg = pinLeg ? smartRoute(a, b, { ...env, allowDiagonal: false }) : [a, b];
+    if (!leg) return null;
+    for (const point of leg.slice(1)) path.push({ x: point.x, y: point.y });
+  }
+  return clonePath(path, true);
+}
+
 function diagonalRouteRequested(options) {
   if (options === 'diagonal') return true;
   if (!options || typeof options !== 'object') return false;
@@ -2587,22 +2622,20 @@ export class Circuit {
       const translated = poly.map((p) => ({ x: p.x + a0.delta.dx, y: p.y + a0.delta.dy }));
       return automaticMovePathSafe(translated, env) ? translated : null;
     }
-    // An explicitly authorized diagonal branch is hand-authored geometry, not
-    // an autorouter hint. Preserve its existing diagonal body, but use the
-    // obstacle-aware router for every replacement pin leg. A direct replacement
-    // here would allow a moved endpoint to drill through a component body.
-    if (net.allowDiagonal && (a0 || a1)) {
-      const start = a0 && poly.length > 1 ? smartRoute(a0.cur, poly[1], env) : null;
-      const end = a1 && poly.length > 1 ? smartRoute(poly[poly.length - 2], a1.cur, env) : null;
-      if (a0 && !start || a1 && !end) return null;
-      if (a0 && a1) {
-        if (poly.length === 2) return safeCandidate(smartRoute(a0.cur, a1.cur, env));
-        return safeCandidate([...start.slice(0, -1), ...poly.slice(1, -1), ...end]);
-      }
-      if (a0) return safeCandidate([...start, ...poly.slice(2)]);
-      return safeCandidate([...poly.slice(0, -2), ...end]);
-    }
+    // Diagonal segments are authored geometry and protected one by one: the
+    // autorouter never replaces them. When a moved pin's own leg is diagonal,
+    // its end follows the pin (stretching the segment) if that stays clear of
+    // component bodies; otherwise the segment stays put and an orthogonal
+    // connector joins the pin to its old end. Orthogonal legs below are
+    // re-anchored like any managed wire.
     const endpointLeg = (oldEnd, bodyEnd, currentEnd, atStart) => {
+      if (isDiagonalSegment(oldEnd, bodyEnd)) {
+        const stretched = atStart ? [{ ...currentEnd }, { ...bodyEnd }] : [{ ...bodyEnd }, { ...currentEnd }];
+        if (safeCandidate(stretched)) return stretched;
+        const connector = atStart ? smartRoute(currentEnd, oldEnd, env) : smartRoute(oldEnd, currentEnd, env);
+        if (!connector) return null;
+        return atStart ? [...connector, { ...bodyEnd }] : [{ ...bodyEnd }, ...connector];
+      }
       const staysVertical = oldEnd.x === bodyEnd.x && currentEnd.x === bodyEnd.x;
       const staysHorizontal = oldEnd.y === bodyEnd.y && currentEnd.y === bodyEnd.y;
       if (staysVertical || staysHorizontal) {
@@ -2623,6 +2656,13 @@ export class Circuit {
         const end = endpointLeg(poly[n - 1], poly[n - 2], a1.cur, false);
         if (!start || !end) return null;
         return [...start.slice(0, -1), ...poly.slice(1, -1), ...end];
+      }
+      if (isDiagonalSegment(poly[0], poly[1])) {
+        const stretched = safeCandidate([{ ...a0.cur }, { ...a1.cur }]);
+        if (stretched) return stretched;
+        const start = smartRoute(a0.cur, poly[0], env);
+        const end = smartRoute(poly[1], a1.cur, env);
+        return start && end ? [...start, ...end] : null;
       }
       const leg = smartRoute({ x: a0.cur.x, y: a0.cur.y }, { x: a1.cur.x, y: a1.cur.y }, env);
       // A failed route must not be replaced with a straight segment: that
@@ -3278,6 +3318,119 @@ export class Circuit {
     }
   }
 
+  /**
+   * Install literal paths as ordinary managed geometry. Diagonal segments in
+   * them are authored and protected individually; orthogonal parts behave
+   * like any managed wire. The net's diagonal flag follows the geometry.
+   */
+  _installLiteralPaths(net, paths, junctions = []) {
+    this.invalidateRoutingCache();
+    const kept = paths.map((path) => cloneFixedPath(path || [])).filter((path) => path.length >= 2);
+    net.routingMode = 'managed';
+    net.fixedPaths = [];
+    net.allowDiagonal = kept.some(pathHasDiagonal);
+    net.branches = kept.length ? kept.map((path) => clonePath(path, net.allowDiagonal)) : null;
+    net.route = net.branches?.[0] ? clonePath(net.branches[0], net.allowDiagonal) : null;
+    const branches = net.branches || [];
+    net.junctions = [...this._netJunctions(net, branches), ...junctions.map((p) => snapPoint(p.x, p.y))]
+      .filter((p, index, all) => all.findIndex((q) => q.x === p.x && q.y === p.y) === index)
+      .filter((p) => branches.some((path) => pointOnPath(p, path)));
+  }
+
+  /**
+   * Move one diagonal segment rigidly by `delta` (angle and length kept).
+   * The orthogonal wire on each side reroutes: from the nearest fixed point
+   * (a pin, a junction, another branch's end, or another diagonal segment's
+   * end) to the moved segment end. A free wire end simply moves with it.
+   * Atomic: returns false and changes nothing when a route is unsafe.
+   */
+  moveDiagonalSegment(netOrId, branch, segment, delta) {
+    const net = this._resolveNet(netOrId);
+    if (net.routingMode !== 'managed') return false;
+    const paths = this._explicitBranches(net);
+    const path = paths[branch];
+    if (!path || segment < 1 || segment >= path.length) return false;
+    const A = path[segment - 1];
+    const B = path[segment];
+    if (!isDiagonalSegment(A, B)) return false;
+    const dx = snap(delta.dx);
+    const dy = snap(delta.dy);
+    if (!dx && !dy) return true;
+    const key = (p) => `${p.x},${p.y}`;
+    const anchors = new Set();
+    for (const p of net.terminalWorlds()) anchors.add(key(p));
+    for (const p of net.junctions) anchors.add(key(p));
+    paths.forEach((other, index) => {
+      if (index === branch) return;
+      for (const p of [other[0], other.at(-1)]) anchors.add(key(p));
+    });
+    const env = this._netEnv(net.id);
+    const moved = (p) => ({ x: p.x + dx, y: p.y + dy });
+    const clear = (a, b) => !env.rects.some((rect) => segThroughInterior(a, b, rect) && !gateBodyCrossingAllowed(a, b, rect, env));
+    // Reconnect a fixed point to a moved end: a still-aligned straight leg
+    // just stretches (existing pin legs keep their direction); otherwise the
+    // router finds an orthogonal connection.
+    const connect = (from, to) => ((from.x === to.x || from.y === to.y) && clear(from, to)
+      ? [{ ...from }, { ...to }]
+      : smartRoute(from, to, env));
+    const A2 = moved(A);
+    const B2 = moved(B);
+    // Walk from a segment end toward a path end until a fixed point.
+    const fixedIndex = (from, step) => {
+      let j = from;
+      while (j + step >= 0 && j + step < path.length && !anchors.has(key(path[j])) && !isDiagonalSegment(path[j], path[j + step])) j += step;
+      return j;
+    };
+    const left = (() => {
+      const j = fixedIndex(segment - 1, -1);
+      const freeEnd = j === 0 && !anchors.has(key(path[0])) && j === segment - 1;
+      if (freeEnd) return [A2];
+      const route = connect(path[j], A2);
+      return route ? [...path.slice(0, j), ...route] : null;
+    })();
+    const right = (() => {
+      const j = fixedIndex(segment, 1);
+      const freeEnd = j === path.length - 1 && !anchors.has(key(path[j])) && j === segment;
+      if (freeEnd) return [B2];
+      const route = connect(B2, path[j]);
+      return route ? [...route, ...path.slice(j + 1)] : null;
+    })();
+    if (!left || !right) return false;
+    if (!clear(A2, B2)) return false;
+    const next = clonePath([...left, ...right], true);
+    const branches = paths.map((other, index) => (index === branch ? next : other));
+    this.invalidateRoutingCache();
+    net.branches = branches;
+    net.route = clonePath(branches[0], true);
+    net.junctions = net.junctions.filter((p) => branches.some((other) => pointOnPath(p, other)));
+    for (const p of this._netJunctions(net, branches)) {
+      if (!net.junctions.some((q) => q.x === p.x && q.y === p.y)) net.junctions.push(p);
+    }
+    this.syncJunctionSolders();
+    return true;
+  }
+
+  /**
+   * Convert every legacy fixed net into managed geometry (see
+   * `_installLiteralPaths`). Documents entering the app pass through this, so
+   * the editor only ever works with one wire model. Returns the count.
+   */
+  convertFixedNets() {
+    let converted = 0;
+    for (const net of this.nets.values()) {
+      if (net.routingMode !== 'fixed') continue;
+      for (const entry of net.fixedPaths) {
+        for (const anchor of [entry.start, entry.end]) {
+          if (anchor && !net.terminals.some((t) => t.comp === anchor.comp && t.term === anchor.term)) net.terminals.push({ comp: anchor.comp, term: anchor.term });
+        }
+      }
+      this._installLiteralPaths(net, net.fixedPaths.map((entry) => entry.points), net.junctions);
+      converted++;
+    }
+    if (converted) this.syncJunctionSolders();
+    return converted;
+  }
+
   _setFixedPaths(net, entries, junctions = []) {
     this.invalidateRoutingCache();
     net.routingMode = 'fixed';
@@ -3786,18 +3939,20 @@ export class Circuit {
       start: { ...net.terminals[0] },
       end: { ...net.terminals[1] },
     });
-    this._setFixedPaths(a, [entry(a, paths[0])]);
-    this._setFixedPaths(b, [entry(b, paths[1])]);
+    this._installLiteralPaths(a, [entry(a, paths[0]).points]);
+    this._installLiteralPaths(b, [entry(b, paths[1]).points]);
     return true;
   }
 
   /**
-   * Commit one protected direct wire. `startRef` and `endRef` are terminal refs
+   * Commit one literal direct wire. `startRef` and `endRef` are terminal refs
    * (or `{x,y}` free points); `points` are intermediate points. Every point is
-   * snapped and only consecutive duplicates are dropped. Existing paths of
-   * either joined net remain as fixed paths, so crossings never create joins.
+   * snapped and only consecutive duplicates are dropped. The path is installed
+   * as managed geometry whose diagonal segments are protected; existing paths
+   * of either joined net are kept as drawn. `options.fixed` builds a legacy
+   * fixed net instead (the app no longer creates those).
    */
-  wireDirectTo(startRef, endRef, points = []) {
+  wireDirectTo(startRef, endRef, points = [], options = {}) {
     this.invalidateRoutingCache();
     const endpoint = (value) => {
       if (typeof value === 'string' || (value && value.comp && value.term)) {
@@ -3846,12 +4001,13 @@ export class Circuit {
       const t = endpointInfo.term;
       if (t && !net.terminals.some((q) => q.comp === t.comp && q.term === t.term)) net.terminals.push({ ...t });
     }
-    const direct = [start.point, ...(points || []), end.point];
-    this._setFixedPaths(net, [...entries, Net.fixedPathEntry({
-      points: direct,
-      start: start.term,
-      end: end.term,
-    }, true)], junctions);
+    const direct = [start.point, ...(points || []), end.point].map((p) => snapPoint(p.x, p.y));
+    if (options.fixed) {
+      // Legacy fixed-net construction; the app itself no longer creates these.
+      this._setFixedPaths(net, [...entries, Net.fixedPathEntry({ points: direct, start: start.term, end: end.term }, true)], junctions);
+    } else {
+      this._installLiteralPaths(net, [...entries.map((entry) => entry.points), direct], junctions);
+    }
     this._syncReferenceMarkerNetName(net);
     this._syncInterfacePinLabels(net, { enforceName: true });
     this.syncJunctionSolders();
@@ -3946,7 +4102,7 @@ export class Circuit {
       }
     }
     const newPath = allowDiagonal
-      ? clonePath([srcPos, ...waypoints, P], true)
+      ? diagonalDraftPath(this, [srcPos, ...waypoints, P], env)
       : waypoints.length
       ? clonePath([srcPos, ...waypoints, P])
       : routed || direct;
@@ -4065,7 +4221,7 @@ export class Circuit {
     // valid route.  A straight fallback here can cross a component body.
     const waypoints = points.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
     const newPath = allowDiagonal
-      ? clonePath([P0, ...waypoints, P], true)
+      ? diagonalDraftPath(this, [P0, ...waypoints, P], this._routingEnv(new Set([originNet?.id, targetNet?.id].filter(Boolean))))
       : waypoints.length
       ? clonePath([P0, ...waypoints, P])
       : smartRoute(P0, P, this._routingEnv(new Set([originNet?.id, targetNet?.id].filter(Boolean))));
@@ -4593,7 +4749,12 @@ export class Circuit {
    * Returns the newly added solders.
    */
   syncJunctionSolders() {
-    for (const net of this.nets.values()) this._repairNetLabels(net);
+    for (const net of this.nets.values()) {
+      this._repairNetLabels(net);
+      // Diagonal permission is a property of the drawn segments, not a sticky
+      // net-wide mode: joins or edits that leave no diagonal clear it.
+      if (net.routingMode === 'managed') net.allowDiagonal = this._explicitBranches(net).some(pathHasDiagonal);
+    }
     const at = (c) => `${c.transform.x},${c.transform.y}`;
     const solders = new Map();
     for (const c of this.components.values()) {
