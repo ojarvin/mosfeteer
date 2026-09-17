@@ -8,11 +8,11 @@
  *
  * The CLI sends commands to POST /api/circuits/<name>/cmd and generation
  * requests to POST /api/circuits/<name>/generate. Command mutations write
- * `circuits/<name>/circuit.json` + `circuit.svg`; generation preview is
- * non-mutating and commit writes the generated candidate. The browser polls
- * the active circuit and re-renders automatically.
+ * `<workspace>/<name>.schematic.json`; generation preview is non-mutating and
+ * commit writes the generated candidate. The browser polls the active circuit
+ * and re-renders automatically.
  *
- * Server is selected with SP_SERVER (default http://127.0.0.1:8080). The
+ * Server is selected with SP_SERVER (default http://127.0.0.1:47280). The
  * command language is the same one the in-browser command prompt uses; see
  * guidelines/CIRCUIT-AUTHOR.md for the reference.
  */
@@ -20,7 +20,7 @@
 import { createInterface } from 'node:readline';
 import { readFile } from 'node:fs/promises';
 
-const SERVER = process.env.SP_SERVER || 'http://127.0.0.1:8080';
+const SERVER = process.env.SP_SERVER || 'http://127.0.0.1:47280';
 
 function usage() {
   return [

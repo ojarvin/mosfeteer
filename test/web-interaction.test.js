@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { constrainAxis, isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -49,16 +49,6 @@ test('multiline assumptions measure their text independently of the restored con
       assert.ok(Math.abs(measured.x - 94) < 1e-9);
     }
   }
-});
-
-test('close-window shortcuts are available to the Electron renderer', () => {
-  assert.equal(isCloseWindowShortcut({ key: 'q', ctrlKey: true }), true);
-  assert.equal(isCloseWindowShortcut({ key: 'w', metaKey: true }), true);
-  assert.equal(isCloseWindowShortcut({ key: 'q', ctrlKey: true, altKey: true }), false);
-  assert.equal(isCloseWindowShortcut({ key: 'q' }), false);
-  assert.equal(shouldConfirmBeforeUnload({ dirty: true, desktop: false }), true);
-  assert.equal(shouldConfirmBeforeUnload({ dirty: true, desktop: true }), false);
-  assert.equal(shouldConfirmBeforeUnload({ dirty: false, desktop: false }), false);
 });
 
 test('selection extension uses one cross-platform modifier policy', () => {
@@ -110,25 +100,6 @@ test('annotation endpoints move, resize, and reject invalid shapes', () => {
   assert.deepEqual(line.points[1], { x: 160, y: 80 });
 });
 
-test('desktop preload exposes close and reload commands through IPC', async () => {
-  let exposed;
-  const calls = [];
-  vm.runInNewContext(readFileSync(new URL('../src/desktop/preload.cjs', import.meta.url), 'utf8'), {
-    require: (name) => name === 'electron' ? {
-      contextBridge: { exposeInMainWorld: (_, api) => { exposed = api; } },
-      ipcRenderer: { invoke: (channel, ...args) => { calls.push({ channel, args }); return Promise.resolve(); } },
-    } : require(name),
-    module: { exports: {} },
-    exports: {},
-  });
-  assert.equal(exposed.isDesktop, true);
-  await exposed.closeWindow();
-  await exposed.reloadApp();
-  assert.deepEqual(calls, [
-    { channel: 'window:close', args: [] },
-    { channel: 'app:reload', args: [] },
-  ]);
-});
 
 test('editor shell exposes keyboard canvas and live status surfaces', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
@@ -246,22 +217,18 @@ test('arrow-key nudging moves mixed selections atomically', () => {
   assert.match(main, /circuit\.validate\(\);\s*recordBlockHistory\(before\);/);
 });
 
-test('desktop startup overlaps document listing with last-document restoration', () => {
+test('startup paints before listing documents and restoring the requested document', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /const listPromise = refreshCircuitList\(\);/);
-  assert.match(main, /if \(name\) await loadCircuit\(name, true\);/);
-  assert.match(main, /fitView\(\);\s*restoreDesktopStartup\(\)/);
-  assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreDesktopStartup/);
+  assert.match(main, /if \(openPath && openPath !== currentDocumentPath\) requestCircuitLoad\(openPath\);/);
+  assert.match(main, /fitView\(\);\s*restoreStartup\(\)/);
+  assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreStartup/);
 });
 
 test('F5 reloads the application instead of entering the normal keymap', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /if \(ev\.key === 'F5'\)/);
-  assert.match(main, /ev\.preventDefault\(\);\s*flushDraft\(\);/);
-  assert.match(main, /reloadApp\(\)\.catch\(\(\) => window\.location\.reload\(\)\)/);
-  const desktop = readFileSync(new URL('../src/desktop/main.js', import.meta.url), 'utf8');
-  assert.match(desktop, /ipcMain\.handle\('app:reload'/);
-  assert.match(desktop, /app\.relaunch\(\);\s*app\.quit\(\);/);
+  assert.match(main, /ev\.preventDefault\(\);\s*flushDraft\(\);\s*window\.location\.reload\(\);/);
 });
 
 test('analysis annotations use structured canonical assumptions', () => {

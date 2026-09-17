@@ -1,30 +1,26 @@
-#!/usr/bin/env bash
-# schematic-spawner — start the web client and open it in your browser.
-# Usage: ./start.sh   (project root). Ctrl-C stops the server.
-set -euo pipefail
-cd "$(dirname "$0")"
+#!/bin/sh
+# Schematic Spawner — double-click or run ./start.sh. Needs Node.js 18+.
+# Finds Node even when a desktop session does not have your shell's PATH
+# (nvm, mise, volta, fnm, Homebrew), then hands over to launch.mjs.
+cd "$(dirname "$0")" || exit 1
 
-HOST="${HOST:-127.0.0.1}"
-PORT="${PORT:-8080}"
-URL="http://${HOST}:${PORT}/"
-
-open_url() {
-  if command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$URL" >/dev/null 2>&1 &
-  elif command -v open >/dev/null 2>&1; then
-    open "$URL" >/dev/null 2>&1 &
-  elif command -v sensible-browser >/dev/null 2>&1; then
-    sensible-browser "$URL" >/dev/null 2>&1 &
-  fi
+find_node() {
+  [ -n "$SCHEMATIC_SPAWNER_NODE" ] && [ -x "$SCHEMATIC_SPAWNER_NODE" ] && { echo "$SCHEMATIC_SPAWNER_NODE"; return; }
+  command -v node 2>/dev/null && return
+  for candidate in \
+    "$HOME/.local/share/mise/shims/node" \
+    "$HOME/.volta/bin/node" \
+    "$HOME/.local/share/fnm/aliases/default/bin/node" \
+    /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do
+    [ -x "$candidate" ] && { echo "$candidate"; return; }
+  done
+  latest=$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -n 1)
+  [ -n "$latest" ] && echo "$latest"
 }
 
-# If our server is already up, just open the browser.
-if curl -s -m 1 -o /dev/null -w '%{redirect_url}' "$URL" 2>/dev/null | grep -q 'src/web/index.html'; then
-  echo "schematic-spawner already running at $URL — opening browser."
-  open_url
-  exit 0
+NODE=$(find_node)
+if [ -z "$NODE" ]; then
+  echo "Schematic Spawner needs Node.js 18 or newer: https://nodejs.org/" >&2
+  exit 1
 fi
-
-echo "Starting schematic-spawner at $URL (Ctrl-C to stop)"
-(sleep 1; open_url) &
-exec node --watch src/web/serve.js
+exec "$NODE" launch.mjs "$@"

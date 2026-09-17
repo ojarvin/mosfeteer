@@ -1,71 +1,14 @@
 import { once } from 'node:events';
-import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BlockDiagram } from '../src/core/block-model.js';
+import { ROOT, serverTest, startServer } from './helpers/server.js';
 
-const ROOT = new URL('..', import.meta.url).pathname;
-const SERVER = join(ROOT, 'src/web/serve.js');
 const CLI = join(ROOT, 'src/cli/index.js');
 const fixture = (name) => JSON.parse(readFileSync(join(ROOT, 'fixtures/circuit-spec', `${name}.json`), 'utf8'));
-
-async function unusedPort() {
-  const probe = createServer();
-  await new Promise((resolve, reject) => {
-    const onError = (error) => {
-      probe.removeListener('error', onError);
-      reject(error);
-    };
-    probe.once('error', onError);
-    probe.listen(0, '127.0.0.1', () => {
-      probe.removeListener('error', onError);
-      resolve();
-    });
-  });
-  const port = probe.address().port;
-  await new Promise((resolve, reject) => probe.close((err) => err ? reject(err) : resolve()));
-  return port;
-}
-
-// Some restricted runners disallow loopback listeners entirely.  Report that
-// capability boundary as skipped tests instead of letting an unhandled server
-// error trip Node's native async-scope assertion.
-const LOOPBACK_ERROR = await unusedPort().then(() => null, (error) => error);
-const serverTest = LOOPBACK_ERROR
-  ? (name, fn) => test(name, { skip: `loopback unavailable${LOOPBACK_ERROR.code ? ` (${LOOPBACK_ERROR.code})` : ''}` }, fn)
-  : test;
-
-async function startServer() {
-  const root = await mkdtemp(join(tmpdir(), 'schematic-spawner-generation-'));
-  const circuits = join(root, 'circuits');
-  const data = join(root, 'data');
-  const port = await unusedPort();
-  const child = spawn(process.execPath, [SERVER], {
-    cwd: ROOT,
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), CIRCUITS_ROOT: circuits, DATA_ROOT: data, ACTIVE_FILE: join(data, 'active.json') },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let output = '';
-  const ready = new Promise((resolve, reject) => {
-    child.stdout.on('data', (chunk) => { output += chunk; if (output.includes('Schematic Spawner running')) resolve(); });
-    child.once('error', reject);
-    child.once('exit', (code, signal) => reject(new Error(`server exited (${code ?? signal})`)));
-  });
-  await ready;
-  return {
-    base: `http://127.0.0.1:${port}`,
-    circuits,
-    async stop() {
-      if (child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit'); }
-      await rm(root, { recursive: true, force: true });
-    },
-  };
-}
 
 async function generate(base, name, mode, spec) {
   let body = { mode, spec };
@@ -135,9 +78,8 @@ serverTest('generation commit persists a passing candidate under a new name', as
   assert.equal(data.mutated, true);
   const saved = await (await fetch(`${app.base}/api/circuits/generated`)).json();
   assert.deepEqual(saved.state, data.state);
-  assert.deepEqual(JSON.parse(await readFile(join(app.circuits, 'generated', 'circuit.json'), 'utf8')), data.state);
-  assert.equal(await readFile(join(app.circuits, 'generated', 'circuit.svg'), 'utf8'), data.artifacts.svg);
-  assert.deepEqual(await (await fetch(`${app.base}/api/active`)).json(), { active: 'generated' });
+  assert.deepEqual(JSON.parse(await readFile(app.file('generated'), 'utf8')), data.state);
+  assert.deepEqual(await (await fetch(`${app.base}/api/active`)).json(), { active: 'generated', path: app.file('generated') });
 });
 
 serverTest('generation reports malformed input and bounded candidate failures clearly', async (t) => {
@@ -198,36 +140,6 @@ serverTest('command API reports post-delete net state in each result', async (t)
   assert.equal(data.results[0].mutated, true);
   assert.equal(data.results[0].json, null);
   assert.equal(data.state.nets.length, 0);
-});
-
-serverTest('HTTP document creation and listing preserve the document kind', async (t) => {
-  const app = await startServer();
-  t.after(() => app.stop());
-  const created = await fetch(`${app.base}/api/circuits/overview`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'block' }),
-  });
-  assert.equal(created.status, 201);
-  assert.equal((await created.json()).kind, 'block');
-  const list = await (await fetch(`${app.base}/api/circuits`)).json();
-  assert.deepEqual(list.documents, [{ name: 'overview', kind: 'block' }]);
-  assert.equal((await (await fetch(`${app.base}/api/circuits/overview`)).json()).state.kind, 'block');
-});
-
-serverTest('HTTP persistence accepts and renders block documents', async (t) => {
-  const app = await startServer();
-  t.after(() => app.stop());
-  const state = new BlockDiagram().toJSON();
-  state.blocks.push({ id: 'B1', text: 'Input', rect: { x: 0, y: 0, w: 160, h: 80 }, terminals: [] });
-  const saved = await fetch(`${app.base}/api/circuits/block-doc`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state }),
-  });
-  assert.equal(saved.status, 200);
-  const loaded = await fetch(`${app.base}/api/circuits/block-doc`);
-  assert.equal(loaded.status, 200);
-  const data = await loaded.json();
-  assert.equal(data.state.kind, 'block');
-  const svg = await readFile(join(app.circuits, 'block-doc', 'circuit.svg'), 'utf8');
-  assert.match(svg, /<rect[^>]+width="160"/);
 });
 
 serverTest('CLI sends a spec file without shell-quoting JSON', async (t) => {

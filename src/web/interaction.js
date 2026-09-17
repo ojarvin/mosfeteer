@@ -47,14 +47,6 @@ export function moveAnnotationEndpoint(label, endpoint, p) {
   return !invalid;
 }
 
-export function isCloseWindowShortcut({ key, ctrlKey = false, metaKey = false, altKey = false } = {}) {
-  return (ctrlKey || metaKey) && !altKey && ['q', 'w'].includes(String(key).toLowerCase());
-}
-
-export function shouldConfirmBeforeUnload({ dirty, desktop } = {}) {
-  return !!dirty && !desktop;
-}
-
 /** Platform-neutral modifier policy shared by every selectable editor role. */
 export function isSelectionModifier({ shiftKey = false, ctrlKey = false, metaKey = false } = {}) {
   return !!(shiftKey || ctrlKey || metaKey);

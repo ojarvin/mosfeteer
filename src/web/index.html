@@ -4,21 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Schematic Spawner</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="boot-banner" class="boot-banner">
-    Loading schematic-spawner&hellip; If this stays visible, the app could not start. In browser mode,
-    open it through the development server (<code>npm run serve</code>).
+    Loading schematic-spawner&hellip; If this stays visible, the app could not start. Start it with
+    <code>node launch.mjs</code> (or <code>./start.sh</code>) instead of opening the HTML file directly.
   </div>
 
   <header class="toolbar">
     <div class="toolbar-cluster document-cluster" role="group" aria-label="Document">
       <div class="circuit-picker">
-        <select id="circuit-select" aria-label="Open a saved document" title="Open a saved document">
+        <select id="circuit-select" aria-label="Open a document" title="Open a document">
           <option value="">Open document…</option>
         </select>
-        <input id="circuit-name" type="text" placeholder="Untitled" autocomplete="off" spellcheck="false" aria-label="Document name" title="Name used when saving this document" />
+        <input id="circuit-name" type="text" placeholder="Untitled" autocomplete="off" spellcheck="false" aria-label="Document name" title="Name used when saving this document to the workspace folder" />
       </div>
     </div>
 
@@ -36,7 +37,12 @@
       <div class="toolbar-popover">
         <button id="btn-document-menu" class="icon-button" data-icon="more" aria-haspopup="menu" aria-expanded="false" aria-controls="document-menu" aria-label="More document actions" title="More document actions">More</button>
         <div id="document-menu" class="toolbar-menu" role="menu" aria-label="More document actions" hidden>
-          <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Permanently delete the saved current document" disabled>Delete document…</button>
+          <button id="btn-open-file" type="button" role="menuitem" data-icon="folder-open" title="Open a document file from any folder (Ctrl/Cmd+O)">Open file…</button>
+          <button id="btn-save-as" type="button" role="menuitem" data-icon="save" title="Save a copy in any folder under any name (Ctrl/Cmd+Shift+S)">Save as…</button>
+          <button id="btn-reveal-document" type="button" role="menuitem" data-icon="folder" title="Show the document file in your file manager" disabled>Show in folder</button>
+          <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace" title="Choose the folder the document list shows and new documents are saved into">Change workspace folder…</button>
+          <span class="toolbar-menu-separator" role="separator"></span>
+          <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Permanently delete the current document file" disabled>Delete document…</button>
         </div>
       </div>
     </div>
@@ -58,11 +64,11 @@
 
   <dialog id="delete-dialog" class="confirm-dialog" aria-labelledby="delete-dialog-title">
     <form method="dialog">
-      <h2 id="delete-dialog-title">Delete saved circuit?</h2>
+      <h2 id="delete-dialog-title">Delete document file?</h2>
       <p id="delete-dialog-message"></p>
       <div class="dialog-actions">
         <button value="cancel" data-icon="x-circle">Cancel</button>
-        <button id="confirm-delete" value="confirm" data-icon="trash" class="danger-action">Delete circuit</button>
+        <button id="confirm-delete" value="confirm" data-icon="trash" class="danger-action">Delete file</button>
       </div>
     </form>
   </dialog>
@@ -79,8 +85,19 @@
   <dialog id="export-dialog" class="confirm-dialog export-dialog" aria-labelledby="export-dialog-title">
     <form id="export-form">
       <h2 id="export-dialog-title">Export document</h2>
-      <p>Choose one or more formats. All selected files go to the same folder. PNG is rendered at 4× scale for high-resolution output.</p>
-      <fieldset>
+      <fieldset class="export-location">
+        <legend>Save to</legend>
+        <div class="export-folder-row">
+          <span id="export-folder" class="export-folder" title=""></span>
+          <button id="export-choose-folder" type="button" data-icon="folder-open">Choose…</button>
+        </div>
+        <label class="export-name-row">
+          <span>Name</span>
+          <input id="export-name" type="text" autocomplete="off" spellcheck="false" required />
+          <span id="export-extensions" class="export-extensions"></span>
+        </label>
+      </fieldset>
+      <fieldset class="export-formats">
         <legend>Formats</legend>
         <label><input type="checkbox" name="format" value="svg" checked /> SVG</label>
         <label><input type="checkbox" name="format" value="pdf" checked /> PDF</label>
@@ -93,7 +110,7 @@
       </fieldset>
       <div class="dialog-actions">
         <button id="export-cancel" type="button" data-icon="x-circle">Cancel</button>
-        <button type="submit" data-icon="download" class="confirm-action">Export selected</button>
+        <button id="export-submit" type="submit" data-icon="download" class="confirm-action">Export</button>
       </div>
     </form>
   </dialog>
@@ -347,6 +364,6 @@
     <pre class="log" id="log"></pre>
   </footer>
 
-  <script type="module" src="main.js?v=20"></script>
+  <script type="module" src="main.js?v=22"></script>
 </body>
 </html>

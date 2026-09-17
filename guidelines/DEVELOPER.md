@@ -53,21 +53,25 @@ src/
 │   ├── grid.js         GRID = 40; snap/ceilGrid.
 │   ├── geometry.js     bbox/transform helpers.
 │   └── style.js        Stroke roles (symbol/wire/emph/ground/supply) and font attrs.
+├── server/
+│   ├── app.js          Static files + HTTP API (documents, workspace, commands, generation).
+│   ├── serve.js        Development entry (`npm run serve`).
+│   ├── documents.js    Document files: names, atomic writes, listing, browsing.
+│   ├── settings.js     data/settings.json: workspace folder and recent files.
+│   ├── legacy-import.js  One-time import of pre-workspace circuits.
+│   └── request-guard.js  Loopback Host / same-origin checks.
 ├── web/
-│   ├── serve.js        Static + HTTP API (circuits, commands, generation).
-│   ├── persistence.js  Desktop preload or browser HTTP persistence adapter.
+│   ├── persistence.js  Browser adapter over the document API.
+│   ├── file-dialog.js  In-app Open / Save as / workspace folder browser.
 │   ├── index.html      Single-page app entry.
 │   ├── main.js         Editor (input, render, undo/redo, ghost, wire drag).
 │   └── style.css       Layout, dark mode, toolbars.
-├── desktop/
-│   ├── main.js         Electron app lifecycle and IPC handlers.
-│   ├── preload.cjs     Narrow renderer-to-main storage bridge.
-│   └── storage.js      Secure Linux/macOS native workspace storage.
 └── cli/
     └── index.js        Thin HTTP client over command and generation endpoints.
 test/                   Node test runner (`node --test`).
 fixtures/circuit-spec/  Topology-only CircuitSpec examples.
-circuits/<name>/        Saved user circuits (gitignored).
+launch.mjs              End-user launcher; start.sh / *.command / *.cmd wrap it.
+circuits/<name>/        Legacy saved circuits (gitignored; imported once into the workspace).
 guidelines/             Role docs + style guide.
 AGENTS.md               Current runtime behavior spec (live doc — maintain it).
 ```
@@ -181,10 +185,10 @@ When you fix a bug, write the failing test first, watch it fail, then fix.
    table.
 
 `Circuit.fromJSON` intentionally rejects types absent from the registry: the
-model and renderer require a real symbol definition. `npm start` and
-`npm run serve` run the server in Node watch mode, so changing the imported
-registry restarts it automatically. A server started directly with
-`node src/web/serve.js` must be restarted after symbol-source changes.
+model and renderer require a real symbol definition. `npm run serve` runs the
+server in Node watch mode, so changing the imported registry restarts it
+automatically. A server started with `npm start` or
+`node src/server/serve.js` must be restarted after symbol-source changes.
 
 ## Adding a new CLI command or HTTP route
 
@@ -195,11 +199,13 @@ The command language lives in `src/core/commands.js`. Every command:
 3. Has a test in `test/commands.test.js` covering the happy path + at least
    one error case.
 
-For a **new HTTP route** in `src/web/serve.js`, follow the existing patterns
-in `handleCircuitApi`: parse the URL, validate the path, read/write through
-`Circuit.fromJSON`/`toJSON`, return JSON. Reject anything that doesn't match
-the `^[A-Za-z0-9][A-Za-z0-9_-]*$` name pattern. Never serve files outside
-`ROOT`.
+For a **new HTTP route** in `src/server/app.js`, follow the existing patterns
+in `handleApi`: parse the URL, validate input (`absolutePath`,
+`validDocumentName`), read/write through `documents.js` and
+`loadDocument`/`toJSON`, and throw errors with a `status`. Every `/api/*` route
+is behind `request-guard.js`; keep static serving limited to `src/web/` and
+`src/core/`. Cover routes in `test/server-documents.test.js` with
+`test/helpers/server.js`.
 
 For a **new CLI flag**, edit `src/cli/index.js` and update the help text. CLI
 flags are the user's only view of the CLI surface — keep them honest.
@@ -211,7 +217,8 @@ The pattern is:
 
 ```js
 // 1. launch debug chromium on a unique port
-// 2. start the server on a unique port (PORT=... node src/web/serve.js)
+// 2. start the server on a unique port with temporary folders
+//    (PORT=... SCHEMATIC_WORKSPACE=... DATA_ROOT=... node src/server/serve.js)
 // 3. open one persistent CDP connection per session
 // 4. drive via Runtime.evaluate: window.__run('add nmos M1 --at 120 120')
 // 5. assert via window.__circuit() or DOM state
@@ -244,11 +251,11 @@ See `/tmp/opencode/` for existing examples (`mos_label_test.mjs`,
 
 ## Debugging
 
-- `node --inspect-brk src/web/serve.js` for the server.
+- `node --inspect-brk src/server/serve.js` for the server.
 - The editor exposes `window.__circuit()` (returns `{ comps, nets, labels }`)
   and `window.__run(cmd)` from the dev console.
 - `window.__load(state)` overwrites the visible circuit — useful for
-  reproducing a bug from a saved `circuit.json`.
+  reproducing a bug from a saved `.schematic.json` document.
 - The browser's revision-aware live sync polls every 500 ms while visible and
   applies changed external saves; see the authoritative behavior in
   `AGENTS.md`.

@@ -488,6 +488,200 @@ button:disabled {
   gap: 8px;
 }
 
+.export-dialog {
+  width: min(32rem, calc(100vw - 32px));
+}
+
+.export-dialog .export-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.export-folder-row,
+.export-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.export-folder {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+}
+
+.export-name-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+}
+
+.export-extensions {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.toolbar-menu-separator {
+  height: 1px;
+  margin: 3px 4px;
+  background: var(--border);
+}
+
+/* ----- file browser (Open / Save as / workspace folder) -------- */
+
+.file-dialog {
+  width: min(40rem, calc(100vw - 32px));
+}
+
+.file-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.file-dialog-form h2 {
+  margin-bottom: 2px;
+}
+
+.file-dialog-nav {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.file-dialog-nav .icon-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.file-dialog-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+}
+
+.file-dialog-list {
+  height: min(22rem, 50vh);
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+}
+
+.file-dialog-list:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.file-dialog-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 5px;
+  cursor: default;
+  user-select: none;
+}
+
+.file-dialog-entry:hover {
+  background: var(--bg-hover);
+}
+
+.file-dialog-entry[aria-selected="true"] {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+.file-dialog-entry .button-icon {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.file-dialog-entry.folder .button-icon,
+.file-dialog-entry.document .button-icon {
+  color: var(--accent);
+}
+
+.file-dialog-entry.json {
+  color: var(--text-dim);
+}
+
+.file-dialog-entry-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-dialog-entry input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+}
+
+.confirm-dialog .file-dialog-status {
+  min-height: 1.2em;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.confirm-dialog .file-dialog-status.error {
+  color: var(--danger);
+}
+
+.file-dialog-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.file-dialog-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+}
+
+.file-dialog-extension {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+}
+
+.file-dialog .dialog-actions {
+  align-items: center;
+}
+
+.file-dialog .dialog-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dialog-actions-spacer {
+  flex: 1 1 auto;
+}
+
 .help-dialog {
   width: min(64rem, calc(100vw - 32px));
   height: min(86vh, 56rem);

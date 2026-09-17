@@ -141,7 +141,7 @@ long and 36 units wide, using the final cardinal segment for orientation.
 `src/core/document.js` is the document boundary. It dispatches by `data.kind`
 (`block` selects `BlockDiagram.fromJSON()`, while a missing kind is treated as
 electrical state), validates through the selected model, and selects
-the matching SVG renderer. The HTTP server, desktop storage, browser load/sync
+the matching SVG renderer. The HTTP server, browser load/sync
 path, and SVG export all use this boundary, so block data never passes through
 `Circuit.fromJSON()` or electrical `evaluate()`.
 
@@ -150,8 +150,8 @@ path, and SVG export all use this boundary, so block data never passes through
 remove, annotation add/rename/move/remove, `svg`/`export`, and `save`.
 Electrical verbs remain isolated from `BlockDiagram`. Annotation commands accept
 labels, arrows, boxes, and multi-point lines; annotation text remains separate
-from block and connector text. The existing `/api/circuits/<name>` transport and
-`circuit.json`/`circuit.svg` filenames are shared by both document kinds. The
+from block and connector text. The document API, `/api/circuits/<name>` command transport, and
+`.schematic.json` files are shared by both document kinds. The
 browser exposes separate New schematic and New block diagram actions, labels
 the active type, and hides tools from the other domain. Click blocks to select
 them (Shift/Ctrl-click adds or toggles selection), then use Move, Copy, or

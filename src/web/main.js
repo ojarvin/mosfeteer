@@ -28,10 +28,11 @@ import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, comple
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
 import { componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare } from './toolbar.js';
-import { createPersistenceAdapter } from './persistence.js';
+import { createPersistenceAdapter, validDocumentName } from './persistence.js';
+import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { constrainAxis, isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
+import { constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -64,6 +65,7 @@ const circuitNameEl = document.getElementById('circuit-name');
 const newDocumentButton = document.getElementById('btn-new-document');
 const newDocumentMenu = document.getElementById('new-document-menu');
 const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
+const revealDocumentBtn = document.getElementById('btn-reveal-document');
 const exportCircuitBtn = document.getElementById('btn-export');
 const analysisButton = document.getElementById('btn-analysis');
 const deleteDialog = document.getElementById('delete-dialog');
@@ -136,6 +138,8 @@ setAnalysisResultTab();
 // Button text and existing aria labels remain the accessible names.
 const ICON_PATHS = {
   'folder-open': '<path d="M3 6.5h6l2 2h10v9H3z"/><path d="M3 6.5V5h7l2 2h9"/>',
+  folder: '<path d="M3 6.5h6l2 2h10v10H3z" fill="currentColor" fill-opacity=".16"/><path d="M3 6.5V5h7l2 2"/>',
+  workspace: '<path d="M4 5h16v14H4z" fill="currentColor" fill-opacity=".16"/><path d="M4 9h16"/>',
   'file-plus': '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M12 11v6M9 14h6"/>',
   trash: '<path d="M4 6.5h16M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5l1 13h9l1-13" fill="currentColor" fill-opacity=".16"/><path d="M10.5 10.5v6M13.5 10.5v6"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
@@ -189,14 +193,6 @@ installButtonIcons();
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
-
-function markLastOpened(name) {
-  if (persistence.mode !== 'desktop' || typeof persistence.markOpened !== 'function') return;
-  Promise.resolve(persistence.markOpened(name)).catch(() => {
-    // This is convenience metadata; a transient native-storage failure must
-    // never interrupt editing or saving.
-  });
-}
 
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
@@ -257,16 +253,20 @@ let pendingKey = null; // { key, at } for dd chord
 let showGrid = true; // '#' toggles the placement grid
 let history = []; // undo stack (JSON blobs)
 let future = []; // redo stack
-let pendingCircuitLoad = null;
 let zoom = 0.7; // px per world unit (a 40-unit cell renders as 28px)
 let view = { x: -640, y: -480, w: 1280, h: 960 }; // fixed world window (infinite canvas)
 let currentCircuitName = '';
+// Documents are files. A new, never-saved document has no path; saving it
+// by name puts it in the workspace folder.
+let currentDocumentPath = null;
+let currentDocumentDir = null;
+let workspaceState = null; // { workspace, documents, recent } from the server
 let lastSavedSnapshot = '';
 let draftReady = false;
 let draftRestored = false;
 let deleteInFlight = false;
 const DRAFT_KEY = 'schematic-spawner:draft';
-let restoredDraftName = null;
+let restoredDraftPath = null;
 let remoteConflictLogged = false;
 let lastSeenRevision = null;
 let lastCircuitTag = null;
@@ -599,6 +599,9 @@ function flushDraft() {
     const committed = previewTransaction?.baseCircuit || circuit;
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
       name: currentCircuitName,
+      path: currentDocumentPath,
+      dir: currentDocumentDir,
+      pendingName: circuitNameEl.value,
       state: committed.toJSON(),
       savedSnapshot: lastSavedSnapshot,
       view: { x: view.x, y: view.y, w: view.w, h: view.h },
@@ -620,85 +623,164 @@ function restoreDraft() {
     applyJson(JSON.stringify(draft.state));
     draftRestored = true;
     currentCircuitName = draft.name || '';
-    circuitNameEl.value = currentCircuitName;
+    currentDocumentPath = typeof draft.path === 'string' && draft.path ? draft.path : null;
+    currentDocumentDir = typeof draft.dir === 'string' && draft.dir ? draft.dir : null;
+    circuitNameEl.value = typeof draft.pendingName === 'string' ? draft.pendingName : currentCircuitName;
     const savedView = draft.view;
     if (savedView && [savedView.x, savedView.y, savedView.w, savedView.h].every(Number.isFinite) && savedView.w > 0 && savedView.h > 0) {
       view = { x: savedView.x, y: savedView.y, w: savedView.w, h: savedView.h };
     }
     lastSavedSnapshot = draft.savedSnapshot || snapshot();
-    restoredDraftName = /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(currentCircuitName)
-      ? currentCircuitName
-      : null;
-    if (restoredDraftName) markLastOpened(currentCircuitName);
+    restoredDraftPath = currentDocumentPath;
   } catch (err) {
     logLine(`Could not restore local draft: ${err.message}`, 'error');
     lastSavedSnapshot = snapshot();
   }
 }
 
+function displayPath(path) {
+  const home = workspaceState?.home;
+  return home && path && (path === home || path.startsWith(home + (workspaceState.sep || '/')))
+    ? `~${path.slice(home.length)}`
+    : path || '';
+}
+
+function documentNameForPath(path) {
+  const known = [...(workspaceState?.documents || []), ...(workspaceState?.recent || [])].find((document) => document.path === path);
+  if (known) return known.name;
+  return String(path).split(/[\\/]/).pop().replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
+}
+
+const PICKER_OPEN_FILE = '__open-file__';
+const PICKER_WORKSPACE = '__workspace__';
+
 async function refreshCircuitList() {
   try {
-    const data = await persistence.list();
-    const documents = data.documents || (data.circuits || []).map((name) => ({ name, kind: 'circuit' }));
-    const options = documents.map((document) => [document.kind === 'block' ? `${document.name} (block diagram)` : document.name, document.name]);
-    const current = [...circuitSelectEl.options].slice(1).map((option) => [option.text, option.value]);
-    if (JSON.stringify(options) !== JSON.stringify(current)) {
-      circuitSelectEl.replaceChildren(new Option('Open document…', ''), ...options.map(([text, value]) => new Option(text, value)));
-    }
-    if (currentCircuitName) circuitSelectEl.value = currentCircuitName;
+    workspaceState = await persistence.workspace();
   } catch (err) {
-    logLine(`Could not list circuits: ${err.message}`, 'error');
+    logLine(`Could not list documents: ${err.message}`, 'error');
+    return;
   }
+  const { documents = [], recent = [] } = workspaceState;
+  const label = (document) => document.kind === 'block' ? `${document.name} (block diagram)` : document.name;
+  const known = new Set([...documents, ...recent].map((document) => document.path));
+  const recentEntries = currentDocumentPath && !known.has(currentDocumentPath)
+    ? [{ name: currentCircuitName || documentNameForPath(currentDocumentPath), path: currentDocumentPath, kind: isBlockDiagram(circuit) ? 'block' : 'circuit' }, ...recent]
+    : recent;
+  const groups = [
+    [`Workspace · ${displayPath(workspaceState.workspace)}`, documents],
+    ['Recent elsewhere', recentEntries],
+  ];
+  const signature = JSON.stringify([groups.map(([name, items]) => [name, items.map((item) => [label(item), item.path])])]);
+  if (circuitSelectEl.dataset.signature !== signature) {
+    const children = [new Option(documents.length || recentEntries.length ? 'Open document…' : 'No documents yet', '')];
+    for (const [name, items] of groups) {
+      if (!items.length) continue;
+      const group = document.createElement('optgroup');
+      group.label = name;
+      for (const item of items) {
+        const option = new Option(label(item), item.path);
+        option.title = item.path;
+        group.append(option);
+      }
+      children.push(group);
+    }
+    const actions = document.createElement('optgroup');
+    actions.label = 'More';
+    actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE), new Option('Change workspace folder…', PICKER_WORKSPACE));
+    children.push(actions);
+    circuitSelectEl.replaceChildren(...children);
+    circuitSelectEl.dataset.signature = signature;
+  }
+  circuitSelectEl.value = currentDocumentPath || '';
+  circuitSelectEl.title = currentDocumentPath ? currentDocumentPath : `Open a document from ${workspaceState.workspace}`;
 }
 
-async function restoreDesktopStartup() {
-  // The document list and last-opened marker are independent native calls.
-  // Start the list scan immediately, but do not make loading the previous
-  // document wait for every saved circuit to be inspected first.
+async function restoreStartup() {
   const listPromise = refreshCircuitList();
-  // A valid local draft (including an intentionally empty new document) is
-  // more authoritative than the native last-opened marker. The marker is the
-  // fallback for Electron sessions where renderer localStorage is unavailable.
-  if (persistence.mode !== 'desktop' || draftRestored || typeof persistence.lastOpened !== 'function') {
-    await listPromise;
-    return;
-  }
-  let name = null;
-  try { name = await persistence.lastOpened(); } catch {
-    await listPromise;
-    return;
-  }
-  if (name) await loadCircuit(name, true);
+  const params = new URLSearchParams(window.location.search);
+  const openPath = params.get('open');
+  if (openPath) window.history.replaceState(null, '', window.location.pathname);
   await listPromise;
+  // Drafts written before documents were files carry only a name, which now
+  // lives in the workspace as <name>.schematic.json.
+  if (draftRestored && !currentDocumentPath && currentCircuitName) {
+    const match = workspaceState?.documents?.find((document) => document.name === currentCircuitName);
+    if (match) {
+      currentDocumentPath = match.path;
+      currentDocumentDir = workspaceState.workspace;
+      restoredDraftPath = match.path;
+      circuitSelectEl.value = match.path;
+    } else {
+      currentCircuitName = '';
+    }
+    renderSaveState();
+  }
+  if (openPath && openPath !== currentDocumentPath) requestCircuitLoad(openPath);
 }
 
-async function saveCircuit() {
-  const name = circuitNameEl.value.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) {
-    logLine('Circuit name must start with a letter or number and contain only letters, numbers, _ or -.', 'error');
+async function saveCircuit({ saveAs = false } = {}) {
+  let name = circuitNameEl.value.trim();
+  let target;
+  if (saveAs) {
+    const choice = await showFileDialog(persistence, {
+      mode: 'save',
+      dir: currentDocumentDir || workspaceState?.workspace || '',
+      name: validDocumentName(name) || currentCircuitName || '',
+    });
+    if (!choice) return;
+    ({ name } = choice);
+    target = choice;
+  } else if (currentDocumentPath && name === currentCircuitName) {
+    target = { path: currentDocumentPath };
+  } else {
+    target = { ...(currentDocumentDir ? { dir: currentDocumentDir } : {}), name };
+  }
+  if (!validDocumentName(name)) {
+    logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
     circuitNameEl.focus();
     return;
   }
   syncGeneration += 1;
   saveInFlight += 1;
-  const previousCircuitName = currentCircuitName;
+  renderSaveState();
+  const previousScope = analysisFormScope();
   try {
-    const data = await persistence.save(name, circuit.toJSON());
-    migrateAnalysisFormStorage(previousCircuitName, name);
-    currentCircuitName = name;
+    const state = circuit.toJSON();
+    let data;
+    try {
+      data = await persistence.save(target, state, { overwrite: !!target.path });
+    } catch (err) {
+      if (err.code !== 'exists') throw err;
+      const replace = await confirmChoice({
+        title: 'Replace existing document?',
+        message: `A document named "${name}" already exists in ${displayPath(target.dir || currentDocumentDir || workspaceState?.workspace)}. Replacing it overwrites its contents.`,
+        confirmLabel: 'Replace',
+        danger: true,
+      });
+      if (!replace) {
+        logLine('Save canceled.');
+        return;
+      }
+      data = await persistence.save(target, state, { overwrite: true });
+    }
+    currentCircuitName = data.name;
+    currentDocumentPath = data.path;
+    currentDocumentDir = data.dir;
+    migrateAnalysisFormStorage(previousScope, analysisFormScope());
+    circuitNameEl.value = data.name;
     lastSeenRevision = data.revision || null;
     lastCircuitTag = data.etag || null;
     lastSavedSnapshot = snapshot();
     persistDraft();
-    markLastOpened(name);
     await refreshCircuitList();
-    renderSaveState();
-    logLine(`Saved ${name} (${documentKindLabel(circuit)}, circuit.json and circuit.svg).`);
+    logLine(`Saved ${displayPath(data.path)}.`);
   } catch (err) {
-    logLine(`Could not save circuit: ${err.message}`, 'error');
+    logLine(`Could not save document: ${err.message}`, 'error');
   } finally {
     saveInFlight -= 1;
     syncGeneration += 1;
+    renderSaveState();
   }
 }
 
@@ -735,14 +817,6 @@ async function svgToPngDataUrl(svg, scale = 4) {
   return canvas.toDataURL('image/png');
 }
 
-function openPdfPrintWindow() {
-  try {
-    const popup = window.open('', 'schematic-spawner-pdf-export', 'width=900,height=700');
-    if (popup) popup.document.write('<!doctype html><title>Preparing PDF export…</title><p>Preparing PDF export…</p>');
-    return popup;
-  } catch { return null; }
-}
-
 function applyExportDarkTheme(svg) {
   // The editor's dark theme normally recolors the inline SVG with CSS. An
   // exported SVG is standalone, so bake the same palette into its attributes
@@ -758,62 +832,69 @@ function applyExportDarkTheme(svg) {
     .replace(/#111\b/gi, '#dde1e8');
 }
 
-async function runExport(formats, appearance = {}) {
-  const name = circuitNameEl.value.trim() || 'circuit';
+/**
+ * Render the document and have the local server write `<dir>/<name>.<format>`.
+ * The browser renders SVG and PNG (it measures equation labels); the server
+ * prints the PDF, falling back to the PNG when it has no headless browser.
+ */
+async function runExport({ dir, name, formats, grid = false, dark = false }) {
   const renderedSvg = renderDocument(circuit, {
-    grid: appearance.grid !== false,
+    grid,
     terminals: false,
     junctions: false,
     background: true,
     netNames: true,
   });
-  const svg = appearance.dark ? applyExportDarkTheme(renderedSvg) : renderedSvg;
+  const svg = dark ? applyExportDarkTheme(renderedSvg) : renderedSvg;
+  const request = { dir, name, formats, svg };
   try {
-    // Electron owns the filesystem export path. Send the whole batch in one
-    // request so the native dialog is shown once and every format lands in
-    // the same selected directory.
-    if (persistence.mode === 'desktop') {
-      const options = {
-        formats,
-        content: svg,
-        suggestedName: name,
-      };
-      if (formats.includes('png')) options.pngDataUrl = await svgToPngDataUrl(svg, 4);
-      const result = await persistence.export(options);
-      if (!result.canceled) {
-        const paths = result.paths || (result.path ? [result.path] : []);
-        logLine(`Exported ${paths.join(', ') || name}.`);
+    logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
+    if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, 4);
+    let result;
+    try {
+      result = await persistence.exportFiles(request);
+    } catch (err) {
+      if (err.code !== 'exists') throw err;
+      const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
+      const replace = await confirmChoice({
+        title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
+        message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(dir)}. Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`,
+        confirmLabel: 'Replace',
+        danger: true,
+      });
+      if (!replace) {
+        logLine('Export canceled.');
+        return;
       }
-      return;
+      result = await persistence.exportFiles({ ...request, overwrite: true });
     }
-
-    // Browsers cannot write arbitrary files into a user-selected directory
-    // without the File System Access API. Keep the established download/print
-    // fallback there, while reusing one rendered SVG and one PNG conversion.
-    const printWindow = formats.includes('pdf') ? openPdfPrintWindow() : null;
-    const pngDataUrl = formats.includes('png') ? await svgToPngDataUrl(svg, 4) : null;
-    const exported = [];
-    for (const format of formats) {
-      const options = {
-        format,
-        extension: format,
-        content: svg,
-        suggestedName: `${name}.${format}`,
-        ...(printWindow ? { printWindow } : {}),
-      };
-      if (format === 'png') options.dataUrl = pngDataUrl;
-      const result = await persistence.export(options);
-      if (!result.canceled) exported.push(result.path || `${name}.${format}`);
-    }
-    if (exported.length) logLine(`Exported ${exported.join(', ')}.`);
+    logLine(`Exported ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(result.dir)}.`);
+    for (const note of result.notes || []) logLine(note);
   } catch (err) {
-    logLine(`Could not export circuit: ${err.message}`, 'error');
+    logLine(`Could not export: ${err.message}`, 'error');
   }
 }
 
 const EXPORT_SETTINGS_KEY = 'schematic-spawner:export';
+let exportFolder = '';
 
-/** Exports default to print-ready output (light, no grid); the last choice is remembered. */
+function renderExportLocation() {
+  const folderEl = document.getElementById('export-folder');
+  if (folderEl) {
+    folderEl.textContent = displayPath(exportFolder) || 'Choose a folder';
+    folderEl.title = exportFolder;
+  }
+  const formats = [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => `.${input.value}`);
+  const extensions = document.getElementById('export-extensions');
+  if (extensions) extensions.textContent = formats.join(' ');
+  const submit = document.getElementById('export-submit');
+  if (submit) submit.disabled = !formats.length || !exportFolder || !validDocumentName(document.getElementById('export-name')?.value);
+}
+
+/**
+ * Exports default to print-ready output (light, no grid) next to the document.
+ * Formats, appearance, and a folder chosen for this document are remembered.
+ */
 function exportCircuit() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
@@ -822,21 +903,26 @@ function exportCircuit() {
   if (Array.isArray(saved?.formats)) {
     for (const input of exportForm.querySelectorAll('input[name="format"]')) input.checked = saved.formats.includes(input.value);
   }
+  const documentKey = currentDocumentPath || '';
+  exportFolder = (saved?.folders && saved.folders[documentKey]) || currentDocumentDir || workspaceState?.workspace || '';
+  const nameInput = document.getElementById('export-name');
+  if (nameInput) nameInput.value = validDocumentName(circuitNameEl.value) || currentCircuitName || 'circuit';
+  renderExportLocation();
   exportDialog?.showModal();
 }
 
-async function loadCircuit(name = circuitSelectEl.value, quiet = false, options = {}) {
-  if (!name) return false;
+async function loadCircuit(path, quiet = false, options = {}) {
+  if (!path) return false;
   const { syncGeneration: expectedGeneration, ...loadOptions } = options;
   try {
-    const data = await persistence.load(name, loadOptions);
+    const data = await persistence.load(path, loadOptions);
     if (expectedGeneration !== undefined && (saveInFlight || expectedGeneration !== syncGeneration)) return false;
     if (data.notModified) {
       if (data.revision) lastSeenRevision = data.revision;
       if (data.etag) lastCircuitTag = data.etag;
       return true;
     }
-    // A named document owns its undo history. Navigation must not make Undo
+    // A document owns its undo history. Navigation must not make Undo
     // restore a different document kind.
     history = [];
     future = [];
@@ -845,63 +931,128 @@ async function loadCircuit(name = circuitSelectEl.value, quiet = false, options 
     setSelection([]);
     cursor = { x: 0, y: 0 };
     currentCircuitName = data.name;
+    currentDocumentPath = data.path;
+    currentDocumentDir = data.dir;
     remoteConflictLogged = false;
     circuitNameEl.value = data.name;
-    circuitSelectEl.value = data.name;
     lastSavedSnapshot = snapshot();
     lastSeenRevision = data.revision || null;
     lastCircuitTag = data.etag || null;
     fitView();
-    markLastOpened(data.name);
-    logLine(`Loaded ${data.name}.`);
+    renderSaveState();
+    void refreshCircuitList();
+    logLine(`Opened ${displayPath(data.path)}.`);
     return true;
   } catch (err) {
     // A transient load failure (active circuit whose file does not exist yet)
     // is retried by syncActiveCircuit on the next poll — log only the first.
-    if (!quiet) logLine(`Could not load circuit: ${err.message}`, 'error');
+    if (!quiet) logLine(`Could not open document: ${err.message}`, 'error');
     return false;
   }
 }
 
-function hasUnsavedChanges() {
-  return snapshot() !== lastSavedSnapshot ||
-    (!currentCircuitName && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(circuitNameEl.value.trim()));
+/** Open document contents that have no file path (a dropped file). Saving puts it in the workspace. */
+function openUnsavedDocument(state, name) {
+  history = [];
+  future = [];
+  applyJson(JSON.stringify(state));
+  clearLatestAnalysisResult();
+  setSelection([]);
+  cursor = { x: 0, y: 0 };
+  currentCircuitName = '';
+  currentDocumentPath = null;
+  currentDocumentDir = null;
+  remoteConflictLogged = false;
+  lastSeenActive = null;
+  lastSeenRevision = null;
+  lastCircuitTag = null;
+  circuitNameEl.value = validDocumentName(name) || '';
+  circuitSelectEl.value = '';
+  lastSavedSnapshot = snapshot();
+  fitView();
+  renderSaveState();
+  persistDraft();
+  logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
 }
 
-function requestCircuitLoad(name = circuitSelectEl.value || circuitNameEl.value.trim()) {
-  if (!name) return;
+function hasUnsavedChanges() {
+  return snapshot() !== lastSavedSnapshot ||
+    (!currentDocumentPath && !!validDocumentName(circuitNameEl.value));
+}
+
+let pendingDocumentAction = null;
+
+/** Run an action that replaces the open document, asking first when that would discard unsaved changes. */
+function requestDocumentAction(description, run) {
   if (!hasUnsavedChanges()) {
-    loadCircuit(name);
+    run();
     return;
   }
-  pendingCircuitLoad = name;
+  pendingDocumentAction = run;
   if (switchDialogMessage) {
-    switchDialogMessage.textContent = `Loading "${name}" will discard the unsaved changes in "${currentCircuitName || 'this design'}".`;
+    switchDialogMessage.textContent = `${description} will discard the unsaved changes in "${currentCircuitName || circuitNameEl.value.trim() || 'this design'}".`;
   }
-  circuitSelectEl.value = currentCircuitName;
+  circuitSelectEl.value = currentDocumentPath || '';
   switchDialog?.showModal();
+}
+
+function requestCircuitLoad(path) {
+  if (!path) return;
+  requestDocumentAction(`Opening "${documentNameForPath(path)}"`, () => loadCircuit(path, false, { open: true }));
+}
+
+async function openDocumentDialog() {
+  const choice = await showFileDialog(persistence, { mode: 'open', dir: currentDocumentDir || workspaceState?.workspace || '' });
+  if (choice) requestCircuitLoad(choice.path);
+}
+
+async function chooseWorkspaceFolder() {
+  const choice = await showFileDialog(persistence, { mode: 'folder', dir: workspaceState?.workspace || '' });
+  if (!choice) return;
+  try {
+    workspaceState = await persistence.setWorkspace(choice.path);
+    circuitSelectEl.dataset.signature = '';
+    await refreshCircuitList();
+    logLine(`Workspace folder is now ${displayPath(workspaceState.workspace)}. New documents are saved there.`);
+  } catch (err) {
+    logLine(`Could not change the workspace folder: ${err.message}`, 'error');
+  }
+}
+
+async function revealCurrentDocument() {
+  if (!currentDocumentPath) return;
+  try {
+    await persistence.reveal(currentDocumentPath);
+  } catch (err) {
+    logLine(`Could not show the document folder: ${err.message}`, 'error');
+  }
 }
 
 function renderSaveState() {
   const dirty = hasUnsavedChanges();
-  if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentCircuitName || deleteInFlight;
+  if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentDocumentPath || deleteInFlight;
+  if (revealDocumentBtn) revealDocumentBtn.disabled = !currentDocumentPath;
+  circuitNameEl.title = currentDocumentPath
+    ? `${currentDocumentPath}\nRename and save to create a copy next to it.`
+    : 'Name used when saving this document to the workspace folder';
   const saveButton = document.getElementById('btn-save');
   if (saveButton) {
     saveButton.disabled = !dirty || saveInFlight > 0;
     saveButton.title = dirty
       ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+x)'
-      : currentCircuitName ? 'All changes saved' : 'Nothing to save yet';
+      : currentDocumentPath ? `All changes saved to ${currentDocumentPath}` : 'Nothing to save yet';
   }
 }
 
 
 async function deleteSavedCircuit() {
-  const name = currentCircuitName;
-  if (!name || deleteInFlight) return;
+  const path = currentDocumentPath;
+  if (!path || deleteInFlight) return;
   deleteInFlight = true;
   renderSaveState();
   try {
-    const data = await persistence.delete(name);
+    await persistence.delete(path);
+    const name = currentCircuitName;
 
     history = [];
     future = [];
@@ -931,6 +1082,8 @@ async function deleteSavedCircuit() {
     cursor = { x: 0, y: 0 };
     view = viewFromCenter(0, 0);
     currentCircuitName = '';
+    currentDocumentPath = null;
+    currentDocumentDir = null;
     circuitNameEl.value = '';
     circuitSelectEl.value = '';
     lastSavedSnapshot = snapshot();
@@ -938,15 +1091,14 @@ async function deleteSavedCircuit() {
     lastFailedActive = null;
     lastSeenRevision = null;
     lastCircuitTag = null;
-    restoredDraftName = null;
+    restoredDraftPath = null;
     remoteConflictLogged = false;
-    markLastOpened(null);
     try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
     render();
     await refreshCircuitList();
-    logLine(`Deleted document "${data.name || name}".`);
+    logLine(`Deleted "${name}" (${displayPath(path)}).`);
   } catch (err) {
-    logLine(`Could not delete circuit: ${err.message}`, 'error');
+    logLine(`Could not delete document: ${err.message}`, 'error');
   } finally {
     deleteInFlight = false;
     renderSaveState();
@@ -954,69 +1106,61 @@ async function deleteSavedCircuit() {
 }
 
 function askDeleteCircuit() {
-  const name = currentCircuitName;
-  if (!name || !deleteDialog) return;
+  const path = currentDocumentPath;
+  if (!path || !deleteDialog) return;
   deleteDialogMessage.textContent = hasUnsavedChanges()
-    ? `This permanently deletes "${name}" and discards its unsaved editor changes. This cannot be undone.`
-    : `This permanently deletes "${name}" and its saved files. This cannot be undone.`;
+    ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
+    : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
   deleteDialog.showModal();
 }
 
 let lastSeenActive = null;
-let lastFailedActive = null; // active circuit whose load failed (retry silently)
+let lastFailedActive = null; // active circuit path whose load failed (retry silently)
 async function syncActiveCircuitOnce() {
   if (!persistence.liveSync) return;
   const generation = syncGeneration;
-  // First, follow the server's "active circuit" — the agent drives it, the browser
-  // mirrors it. This lets the user open the page once and watch the agent's work
-  // appear automatically, without typing the circuit name or clicking Load.
-  // Only auto-load on a CHANGE of the server's active (lastSeenActive), not on
-  // every poll where active merely differs from currentCircuitName — otherwise
-  // a manual load gets clobbered by the next tick.
+  // First, follow the server's "active circuit" — the CLI drives it, the
+  // browser mirrors it. Only auto-load on a CHANGE of the server's active
+  // circuit (lastSeenActive), not on every poll where it merely differs from
+  // the open document — otherwise a manual open gets clobbered by the next tick.
   let active = null;
   let activeRevision = null;
   let activeResponseSucceeded = false;
   try {
-    const ar = await fetch('/api/active', { cache: 'no-store' });
-    if (ar.ok) {
-      const data = await ar.json();
-      if (typeof data.active === 'string') {
-        active = data.active;
-        activeRevision = ar.headers?.get('x-active-revision') || null;
-        activeResponseSucceeded = true;
-      }
+    const data = await persistence.active();
+    if (typeof data.active === 'string') {
+      active = data.active ? data.path : '';
+      activeRevision = data.revision || null;
+      activeResponseSucceeded = true;
     }
-  } catch (err) {
-    // network blip — keep going with the content sync below
+  } catch {
+    // server restart — keep going with the content sync below
   }
 
   if (saveInFlight || generation !== syncGeneration) return;
 
   // Seed the active revision without replacing the restored local draft.
-  if (activeResponseSucceeded && restoredDraftName && currentCircuitName === restoredDraftName) {
+  if (activeResponseSucceeded && restoredDraftPath && currentDocumentPath === restoredDraftPath) {
     lastSeenActive = active;
     lastSeenRevision = activeRevision;
-    restoredDraftName = null;
+    restoredDraftPath = null;
     return;
   }
-  if (activeResponseSucceeded && restoredDraftName && currentCircuitName !== restoredDraftName) {
-    restoredDraftName = null;
+  if (activeResponseSucceeded && restoredDraftPath && currentDocumentPath !== restoredDraftPath) {
+    restoredDraftPath = null;
   }
 
   if (active !== lastSeenActive) {
     // The server only sends a revision for an active circuit whose file exists.
     // Wait silently for a missing one (not yet written, or deleted) instead of
     // requesting it and reporting a load error on every poll.
-    if (active && active !== currentCircuitName && activeResponseSucceeded && !activeRevision) return;
-    if (active && active !== currentCircuitName) {
-      // A failed load (e.g. the agent marked a brand-new circuit active before
-      // its first file write) must NOT advance lastSeenActive — otherwise the
-      // poll would never retry and the user would need a manual refresh once
-      // the file appears. Retry on every tick (silently after the first error)
-      // until the circuit actually loads.
+    if (active && active !== currentDocumentPath && activeResponseSucceeded && !activeRevision) return;
+    if (active && active !== currentDocumentPath) {
+      // A failed load must NOT advance lastSeenActive — otherwise the poll
+      // would never retry once the file appears.
       const quietRetry = active === lastFailedActive;
       await loadCircuit(active, quietRetry, { syncGeneration: generation });
-      if (currentCircuitName === active) {
+      if (currentDocumentPath === active) {
         lastSeenActive = active;
         lastFailedActive = null;
       } else {
@@ -1026,13 +1170,11 @@ async function syncActiveCircuitOnce() {
     }
     lastSeenActive = active;
   }
-  if (!currentCircuitName) return;
-  // The active endpoint is intentionally tiny. Avoid a JSON GET and model parse
-  // when its revision has not changed. Older servers without the header still
-  // get the conditional GET fallback below.
-  if (active === currentCircuitName && activeRevision && activeRevision === lastSeenRevision) return;
+  if (!currentDocumentPath) return;
+  // Avoid a document GET and model parse when the active revision is unchanged.
+  if (active === currentDocumentPath && activeRevision && activeRevision === lastSeenRevision) return;
   try {
-    const data = await persistence.load(currentCircuitName, { ifNoneMatch: lastCircuitTag });
+    const data = await persistence.load(currentDocumentPath, { ifNoneMatch: lastCircuitTag });
     if (saveInFlight || generation !== syncGeneration) return;
     if (data.notModified) {
       if (data.revision) lastSeenRevision = data.revision;
@@ -1041,8 +1183,8 @@ async function syncActiveCircuitOnce() {
     }
     // The model normalizes loaded state (notably reducible net geometry), so
     // compare and record the canonical representation rather than the raw
-    // JSON returned by the server. Otherwise a clean design can become
-    // permanently dirty after the first poll of a normalized save.
+    // JSON on disk. Otherwise a clean design can become permanently dirty
+    // after the first poll of a normalized save.
     const remoteSnapshot = JSON.stringify(loadDocument(data.state).toJSON());
     const remoteRevision = data.revision || activeRevision;
     const remoteTag = data.etag || lastCircuitTag;
@@ -1052,7 +1194,7 @@ async function syncActiveCircuitOnce() {
     if (remoteSnapshot === currentSnapshot) return;
     if (currentSnapshot !== lastSavedSnapshot) {
       if (!remoteConflictLogged) {
-        logLine(`Remote changes to ${currentCircuitName} were not loaded because this circuit has unsaved local changes.`, 'error');
+        logLine(`${currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
         remoteConflictLogged = true;
       }
       return;
@@ -1061,9 +1203,9 @@ async function syncActiveCircuitOnce() {
     lastSavedSnapshot = snapshot();
     remoteConflictLogged = false;
     fitView();
-    logLine(`Updated ${currentCircuitName} from the live agent session.`);
+    logLine(`Reloaded ${currentCircuitName}: the file changed on disk.`);
   } catch {
-    // A transient server restart should not interrupt editing.
+    // A missing file or a server restart should not interrupt editing.
   }
 }
 
@@ -6751,13 +6893,24 @@ function migrateAnalysisFormStorage(previousName, nextName) {
   } catch { /* storage unavailable */ }
 }
 
+/** Analysis settings belong to one document file; an unsaved document uses the "new" scope. */
+function analysisFormScope() {
+  return currentDocumentPath || '';
+}
+
 function persistAnalysisForm() {
-  try { localStorage.setItem(analysisFormStorageKey(currentCircuitName), JSON.stringify(analysisFormValues())); } catch { /* storage unavailable */ }
+  try { localStorage.setItem(analysisFormStorageKey(analysisFormScope()), JSON.stringify(analysisFormValues())); } catch { /* storage unavailable */ }
 }
 
 function restoreAnalysisForm(defaults = {}) {
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(currentCircuitName)) || 'null'); } catch { /* storage unavailable */ }
+  try {
+    saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(analysisFormScope())) || 'null');
+    // Settings saved before documents were files are keyed by document name.
+    if (!saved && currentDocumentPath && currentCircuitName) {
+      saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(currentCircuitName)) || 'null');
+    }
+  } catch { /* storage unavailable */ }
   if (!saved) {
     const options = analysisOptionDefaults();
     if (analysisReference) analysisReference.value = '';
@@ -11942,10 +12095,10 @@ if (deleteDialog) {
 }
 if (switchDialog) {
   switchDialog.addEventListener('close', () => {
-    const name = pendingCircuitLoad;
-    pendingCircuitLoad = null;
-    if (switchDialog.returnValue === 'discard' && name) loadCircuit(name);
-    else circuitSelectEl.value = currentCircuitName;
+    const run = pendingDocumentAction;
+    pendingDocumentAction = null;
+    if (switchDialog.returnValue === 'discard' && run) run();
+    else circuitSelectEl.value = currentDocumentPath || '';
   });
 }
 
@@ -11957,7 +12110,8 @@ function startNewDocument(kind) {
   circuitNameEl.value = '';
   circuitSelectEl.value = '';
   currentCircuitName = '';
-  markLastOpened(null);
+  currentDocumentPath = null;
+  currentDocumentDir = null;
   history = [];
   future = [];
   applyJson(JSON.stringify(createDocument(kind).toJSON()));
@@ -11971,7 +12125,8 @@ function startNewDocument(kind) {
   view = viewFromCenter(0, 0);
   render();
   circuitNameEl.focus();
-  logLine(`Started a new ${kind === 'block' ? 'block diagram' : 'schematic'}. Enter a name and save to create its files.`);
+  renderSaveState();
+  logLine(`Started a new ${kind === 'block' ? 'block diagram' : 'schematic'}. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.`);
 }
 
 const toolbarMenus = [
@@ -12025,38 +12180,86 @@ window.addEventListener('keydown', (ev) => {
 });
 
 deleteCircuitBtn?.addEventListener('click', askDeleteCircuit);
+revealDocumentBtn?.addEventListener('click', revealCurrentDocument);
+document.getElementById('btn-open-file')?.addEventListener('click', openDocumentDialog);
+document.getElementById('btn-save-as')?.addEventListener('click', () => saveCircuit({ saveAs: true }));
+document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
 exportCircuitBtn?.addEventListener('click', exportCircuit);
 exportCancel?.addEventListener('click', () => exportDialog?.close());
+exportForm?.addEventListener('input', renderExportLocation);
+exportForm?.addEventListener('change', renderExportLocation);
+document.getElementById('export-choose-folder')?.addEventListener('click', async () => {
+  const choice = await showFileDialog(persistence, { mode: 'folder', dir: exportFolder, title: 'Choose export folder' });
+  if (!choice) return;
+  exportFolder = choice.path;
+  renderExportLocation();
+});
 exportForm?.addEventListener('submit', (event) => {
   event.preventDefault();
   const formats = [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => input.value);
-  if (!formats.length) {
-    logLine('Choose at least one export format.', 'error');
-    return;
-  }
+  const name = validDocumentName(document.getElementById('export-name')?.value);
+  if (!formats.length || !name || !exportFolder) return;
   exportDialog.close();
   const settings = { grid: exportGridInput?.checked === true, dark: exportDarkInput?.checked === true };
-  try { localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats })); } catch { /* storage unavailable */ }
-  runExport(formats, settings);
+  try {
+    const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
+    // Remember a folder only when it differs from the document's own folder.
+    const folders = { ...(saved.folders || {}) };
+    const documentKey = currentDocumentPath || '';
+    if (exportFolder === (currentDocumentDir || workspaceState?.workspace)) delete folders[documentKey];
+    else folders[documentKey] = exportFolder;
+    localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
+  } catch { /* storage unavailable */ }
+  runExport({ dir: exportFolder, name, formats, ...settings });
 });
 circuitNameEl.addEventListener('input', renderSaveState);
-circuitSelectEl.addEventListener('change', () => requestCircuitLoad(circuitSelectEl.value));
+circuitSelectEl.addEventListener('change', () => {
+  const value = circuitSelectEl.value;
+  circuitSelectEl.value = currentDocumentPath || '';
+  if (value === PICKER_OPEN_FILE) openDocumentDialog();
+  else if (value === PICKER_WORKSPACE) chooseWorkspaceFolder();
+  else requestCircuitLoad(value);
+});
 
-function openDocumentPicker() {
-  circuitSelectEl.focus();
-  try { circuitSelectEl.showPicker?.(); } catch { /* picker needs user activation in some engines */ }
+// Dropping a document file (for example, one received by email) opens a copy.
+function droppedFiles(ev) {
+  return [...(ev.dataTransfer?.types || [])].includes('Files');
 }
+window.addEventListener('dragover', (ev) => {
+  if (!droppedFiles(ev)) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'copy';
+});
+window.addEventListener('drop', async (ev) => {
+  if (!droppedFiles(ev)) return;
+  ev.preventDefault();
+  const file = [...ev.dataTransfer.files].find((candidate) => /\.json$/i.test(candidate.name));
+  if (!file) {
+    logLine('Drop a .schematic.json document file to open it.', 'error');
+    return;
+  }
+  let state;
+  try {
+    state = JSON.parse(await file.text());
+    loadDocument(state);
+  } catch (err) {
+    logLine(`Could not open ${file.name}: ${err.message}`, 'error');
+    return;
+  }
+  const name = file.name.replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
+  requestDocumentAction(`Opening "${file.name}"`, () => openUnsavedDocument(state, name));
+});
 
 document.getElementById('empty-state')?.addEventListener('click', (ev) => {
   const action = ev.target.closest?.('[data-empty-action]')?.dataset.emptyAction;
   const block = isBlockDiagram(circuit);
   if (action === 'place') (block ? activateBlockPlace : activatePlace)();
   else if (action === 'wire') (block ? activateBlockConnector : activateWire)();
-  else if (action === 'open') openDocumentPicker();
+  else if (action === 'open') openDocumentDialog();
   else if (action === 'help') showHelp();
   if (action && action !== 'open' && action !== 'help') canvasEl.focus();
 });
-// Documents created by the CLI or another window appear without a manual reload.
+// Documents created by the CLI, another window, or a file manager appear without a manual reload.
 circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
 
 
@@ -12142,14 +12345,17 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === 'F5') {
     ev.preventDefault();
     flushDraft();
-    const reloadApp = window.schematicStorage?.reloadApp;
-    if (reloadApp) void reloadApp().catch(() => window.location.reload());
-    else window.location.reload();
+    window.location.reload();
     return;
   }
   if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'o' && !inlineInput) {
     ev.preventDefault();
-    openDocumentPicker();
+    openDocumentDialog();
+    return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 's' && !inlineInput) {
+    ev.preventDefault();
+    saveCircuit({ saveAs: true });
     return;
   }
   if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'f') {
@@ -12160,12 +12366,6 @@ window.addEventListener('keydown', (ev) => {
       filter.select();
       return;
     }
-  }
-  if (isCloseWindowShortcut(ev) && window.schematicStorage?.closeWindow) {
-    ev.preventDefault();
-    flushDraft();
-    window.schematicStorage.closeWindow();
-    return;
   }
   if (helpDialog?.open) {
     if (ev.key === 'Escape') {
@@ -12494,6 +12694,19 @@ window.__circuit = () => isBlockDiagram(circuit)
       labels: [...circuit.labels.values()].map((l) => ({ ...l.toJSON(), world: l.anchorWorld() })),
     };
 
+/** Tell the local server this window is open; the launcher stops the server after the last one closes. */
+function startSessionHeartbeat() {
+  const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  const beat = () => persistence.heartbeat(id);
+  beat();
+  // Runs while hidden too; browsers throttle background timers to about once a minute.
+  window.setInterval(beat, 20_000);
+  window.addEventListener('pageshow', (ev) => { if (ev.persisted) beat(); });
+  window.addEventListener('pagehide', () => {
+    navigator.sendBeacon?.('/api/session', new Blob([JSON.stringify({ id, closing: true })], { type: 'application/json' }));
+  });
+}
+
 view = viewFromCenter(0, 0);
 window.__app ||= { renders: [] };
 
@@ -12504,7 +12717,8 @@ try {
   // document load continue in the background, so storage migration can never
   // leave the user staring at an unpainted/blank window.
   fitView();
-  restoreDesktopStartup().catch((err) => logLine(`Could not restore the last document: ${err.message}`, 'error'));
+  restoreStartup().catch((err) => logLine(`Could not restore the last document: ${err.message}`, 'error'));
+  startSessionHeartbeat();
   syncActiveCircuit(); // pick up the agent's active circuit immediately
   window.setInterval(syncActiveCircuit, 500);
   document.addEventListener('visibilitychange', () => {
@@ -12524,7 +12738,7 @@ if (bb) bb.remove();
 
 window.addEventListener('beforeunload', (ev) => {
   flushDraft();
-  if (!shouldConfirmBeforeUnload({ dirty: snapshot() !== lastSavedSnapshot, desktop: window.schematicStorage?.isDesktop })) return;
+  if (snapshot() === lastSavedSnapshot) return;
   ev.preventDefault();
   ev.returnValue = 'You have unsaved schematic changes.';
 });

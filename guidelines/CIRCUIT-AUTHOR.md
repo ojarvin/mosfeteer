@@ -14,8 +14,8 @@ modify the requested circuit and to inspect its saved state.
 **Allowed:**
 
 - read this guide, `style-guide.md`, `AGENTS.md` when an exact behavior matters,
-  and the requested circuit's `circuit.json`, `circuit.svg`, and
-  `learnings.md`;
+  the requested circuit's `<workspace>/<name>.schematic.json`, its rendering
+  from the `svg` command, and any `circuits/<name>/learnings.md`;
 - use `add`, `move`, `rotate`, `mirror`, `connect`, `net`, `disconnect`,
   `rename`, `value`, and `rm` against the requested circuit;
 - run `eval`, `state`, `bounds`, `nets`, and `list` as read-only checks;
@@ -202,11 +202,11 @@ sch> eval
 sch> quit
 ```
 
-The browser live-syncs changed active-circuit revisions while visible; CLI commands set the active circuit, and mutated commands persist `circuit.json` and `circuit.svg`. See `AGENTS.md` for the authoritative sync contract. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
+The browser live-syncs changed active-circuit revisions while visible; CLI commands set the active circuit, and mutated commands persist `<workspace>/<name>.schematic.json`. See `AGENTS.md` for the authoritative sync contract. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
 
 ## Start so the user sees you live
 
-1. Use an existing server/browser if present. Otherwise run `./start.sh`, or an isolated `PORT=<random-port> node src/web/serve.js` with Chromium on its own random debug port. Track and stop only processes you started; never launch a competing editor instance.
+1. Use an existing server/browser if present. Otherwise run `npm run serve`, or an isolated `PORT=<random-port> SCHEMATIC_WORKSPACE=<dir> node src/server/serve.js` with Chromium on its own random debug port. Track and stop only processes you started; never launch a competing editor instance.
 2. Have the user open `http://127.0.0.1:<port>/` once and leave it open. They do not type a circuit name, pick a document, click Save, or refresh; the active circuit loads automatically.
 3. Choose a circuit name (for example `analog-block` or `low-voltage-cascode`) and issue the first command. The server marks it active and the browser loads it on the next visible sync cycle.
 4. Drive placement, review, then routing through CLI or HTTP. Fit the view after each phase and after later edits that change drawing extents; never leave the final review zoomed away.
@@ -224,15 +224,15 @@ The browser live-syncs changed active-circuit revisions while visible; CLI comma
 ## Inspect existing circuits
 
 ```text
-GET /api/circuits
+GET /api/workspace
 GET /api/circuits/<name>
 POST /api/circuits/<name>/generate
 ```
 
-Each saved circuit lives in `circuits/<name>/` as `circuit.json` and
-`circuit.svg`, possibly with a `learnings.md`. Before creating a related
-design, load and inspect the existing JSON and its learnings file. Designs
-in `circuits/` are the only training material — don't go hunting through
+Each saved circuit is `<workspace>/<name>.schematic.json`; older notes may
+remain in `circuits/<name>/learnings.md`. Before creating a related design,
+load and inspect the existing JSON and its learnings file. Documents in the
+workspace are the only training material — don't go hunting through
 the codebase. Use your general knowledge of analog circuits to decide what a
 topology must contain, and check the style guide for how to draw it.
 
@@ -400,8 +400,8 @@ label remains visible and clear after fitting the view.
 
 ## Save and record verified notes
 
-Saving produces both `circuits/<name>/circuit.json` (source of truth) and
-`circuits/<name>/circuit.svg` (review/export artifact). The CLI / HTTP
+Saving writes `<workspace>/<name>.schematic.json` (source of truth); use the
+`svg` command or the editor's Export for a review image. The CLI / HTTP
 endpoint already saves on every mutated command. Do not make extra snapshots
 or create another circuit to preserve an unaccepted draft; the current
 requested circuit is the working draft and remains the only delivery.

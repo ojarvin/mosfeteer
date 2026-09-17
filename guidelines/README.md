@@ -33,23 +33,28 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
   behavior. Both roles skim it when a specific behavior matters; the developer
   keeps it accurate, the author doesn't edit it.
 - `guidelines/` — role-specific docs and the style guide (this directory).
-- `circuits/<name>/` — saved circuits (`circuit.json` + `circuit.svg` +
-  optional `learnings.md`); the circuit author's source of truth.
+- Documents are `<name>.schematic.json` files in the workspace folder (default
+  `~/Documents/Schematics`, set in the editor's ⋯ menu) or anywhere else.
+  The legacy `circuits/<name>/` folders (with `learnings.md`) are imported once
+  and otherwise unused.
 - `src/core/` — pure model and routing modules; see the detailed inventory in
   [DEVELOPER.md](./DEVELOPER.md#architecture).
-- `src/web/` — HTTP server (`serve.js`), persistence adapter, and the
-  in-browser editor (`index.html`, `main.js`, `style.css`).
-- `src/desktop/` — Electron main/preload boundary and native workspace storage.
+- `launch.mjs` — end-user launcher (start/reuse server, open window, `--install`).
+- `src/server/` — local HTTP server (`app.js`, dev entry `serve.js`), document
+  files, settings, legacy import, and the request guard.
+- `src/web/` — the in-browser editor (`index.html`, `main.js`, `style.css`),
+  persistence adapter, and file dialog.
 - `src/cli/index.js` — command and generation CLI; thin HTTP client over the server.
 - `test/` — Node test suite (`npm test`); current count is reported by the test runner.
 - `fixtures/circuit-spec/` — topology-only CircuitSpec examples.
 
 ## Headless server + browser
 
-- Desktop: `npm run desktop` (Linux and macOS; native per-user storage).
-- HTTP development and automation: `./start.sh` (HTTP at `127.0.0.1:8080`).
-- Isolated dev sessions: `PORT=<port> HOST=<host> node src/web/serve.js` plus
+- Users: `./start.sh` or `node launch.mjs` (opens the editor; stops when it closes).
+- Development: `npm run serve` (watch mode, HTTP at `127.0.0.1:47280`).
+- Isolated dev sessions: `PORT=<port> SCHEMATIC_WORKSPACE=<dir> DATA_ROOT=<dir> node src/server/serve.js` plus
   `chromium --remote-debugging-port=<port>` and CDP via `Runtime.evaluate`.
 - CLI commands set the active circuit and the browser auto-loads changed
-  revisions through live sync. Mutated commands persist `circuit.json` and
-  `circuit.svg`; see `AGENTS.md` for the sync and persistence contract.
+  revisions through live sync. Mutated commands persist
+  `<workspace>/<name>.schematic.json`; see `AGENTS.md` for the sync and
+  persistence contract.
