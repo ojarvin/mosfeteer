@@ -26,6 +26,7 @@ import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.j
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
+import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
 import { componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
@@ -437,7 +438,7 @@ function markModelChanged(wires = true) {
 }
 
 function commit(fn) {
-  recordHistoryEntry(snapshot());
+  recordHistoryEntry(snapshot(), true, 'defer');
   fn();
   markModelChanged();
 }
@@ -489,10 +490,100 @@ function rememberHistory(state, trim = true) {
   if (trim && history.length > HISTORY_LIMIT) history.shift();
 }
 
-function recordHistoryEntry(startSnapshot, trim = true) {
+/**
+ * Record an undoable edit. `feedback` says when the committed result can be
+ * compared with `startSnapshot`: 'now' for callers that record after mutating,
+ * 'defer' for callers that record before the mutation or gesture finishes, and
+ * 'none' for direct-manipulation wire drags, which get no flash.
+ */
+function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now') {
   if (!startSnapshot) return;
   rememberHistory(startSnapshot, trim);
   future.length = 0;
+  queueCommitFeedback(startSnapshot, feedback);
+}
+
+// ----- commit feedback ----------------------------------------------------
+// A brief green "landed" flash over whatever an undoable edit added or
+// changed (see commit-feedback.js). It lives in its own SVG layer so overlay
+// redraws do not restart it; a canvas rebuild remounts it mid-animation.
+
+const COMMIT_FEEDBACK_MS = 650;
+let pendingFeedbackSnapshot = null;
+let commitFeedbackBursts = [];
+let commitFeedbackSeq = 0;
+
+function queueCommitFeedback(startSnapshot, when) {
+  if (isBlockDiagram(circuit)) return;
+  if (when === 'none') {
+    // Wire drags already show the wire under the pointer the whole time; a
+    // flash on drop only flickers.
+    pendingFeedbackSnapshot = null;
+    return;
+  }
+  const base = pendingFeedbackSnapshot || startSnapshot;
+  if (when === 'defer') {
+    pendingFeedbackSnapshot = base;
+    return;
+  }
+  pendingFeedbackSnapshot = null;
+  playCommitFeedback(base);
+}
+
+function flushPendingCommitFeedback() {
+  if (!pendingFeedbackSnapshot || drag || previewTransaction) return;
+  const base = pendingFeedbackSnapshot;
+  pendingFeedbackSnapshot = null;
+  playCommitFeedback(base);
+}
+
+function playCommitFeedback(beforeSnapshot) {
+  if (isBlockDiagram(circuit)) return;
+  let diff;
+  try {
+    diff = commitFeedbackDiff(Circuit.fromJSON(JSON.parse(beforeSnapshot)), circuit);
+  } catch {
+    return; // feedback is decoration; never let it break a commit
+  }
+  if (isEmptyFeedback(diff)) return;
+  if (window.__commitFeedbackLog) window.__commitFeedbackLog.push(Object.fromEntries(Object.entries(diff).map(([key, list]) => [key, list.length])));
+  const burst = { id: ++commitFeedbackSeq, ...commitFeedbackSvg(diff), start: performance.now() };
+  commitFeedbackBursts.push(burst);
+  setTimeout(() => {
+    commitFeedbackBursts = commitFeedbackBursts.filter((b) => b !== burst);
+    for (const el of canvasSvgEl?.querySelectorAll(`[data-burst="${burst.id}"]`) || []) el.remove();
+  }, COMMIT_FEEDBACK_MS);
+  mountCommitFeedback(true);
+}
+
+function mountCommitFeedback(force = false) {
+  if (!canvasSvgEl) return;
+  let layer = canvasSvgEl.querySelector(':scope > .commit-feedback');
+  const underlay = canvasSvgEl.querySelector(':scope > .editor-underlay');
+  if (layer && !force) {
+    // Keep it above the overlay, but never move it needlessly: re-inserting a
+    // node restarts its CSS animations, which flickered on every pointer move.
+    if (canvasSvgEl.lastElementChild !== layer) canvasSvgEl.appendChild(layer);
+    return;
+  }
+  if (!commitFeedbackBursts.length) {
+    layer?.remove();
+    underlay?.replaceChildren();
+    return;
+  }
+  if (!layer) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    layer.setAttribute('class', 'commit-feedback');
+    layer.setAttribute('aria-hidden', 'true');
+  }
+  // Negative delays resume each burst where it was if the canvas was rebuilt.
+  const now = performance.now();
+  const groups = (part) => commitFeedbackBursts
+    .map((b) => `<g data-burst="${b.id}" style="--landing-elapsed:${-Math.round(now - b.start)}ms">${b[part]}</g>`)
+    .join('');
+  layer.innerHTML = groups('over');
+  if (underlay) underlay.innerHTML = groups('under');
+  if (canvasSvgEl.lastElementChild !== layer) canvasSvgEl.appendChild(layer);
 }
 
 function persistDraft() {
@@ -985,6 +1076,8 @@ async function syncActiveCircuit() {
 
 function applyJson(blob) {
   if (previewTransaction) cancelPreviewTransaction();
+  // Loads, undo, and redo replace the document; they are not new commits.
+  pendingFeedbackSnapshot = null;
   // A draft endpoint belongs to the currently visible circuit. Never carry it
   // across loads, undo/redo, or remote replacement.
   directWire = null;
@@ -1853,7 +1946,7 @@ function moveGhostActive() {
 function recordMoveGhostMutation() {
   if (!drag || !moveGhostActive()) return;
   if (!drag.committed) {
-    recordHistoryEntry(drag.startSnapshot || snapshot());
+    recordHistoryEntry(drag.startSnapshot || snapshot(), true, 'defer');
     drag.committed = true;
   }
   drag.moved = true;
@@ -2563,8 +2656,13 @@ function placePending() {
     circuit.connectCoincident(comp.refdes);
     circuit.reconnectCoincidentNets();
     circuit.ensureUniqueTerminals([comp.refdes]);
-    circuit.syncJunctionSolders();
-    setSelection([comp.refdes]);
+    // A solder dot placed on a crossing shorts the nets there. With several
+    // given names the dot waits (unsynced) for the user's name choice.
+    const awaitingName = comp.type === 'solder' && shortNetsAtPlacedSolder(comp);
+    if (!awaitingName) circuit.syncJunctionSolders();
+    // A committed placement is acknowledged by the landing flash; it does not
+    // take over the selection, so repeated placement never carries a halo.
+    setSelection([]);
     logLine(`placed ${comp.refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
   }
   if (pendingPlace) pendingPlace.startWorld = { ...cursor };
@@ -3040,10 +3138,12 @@ function renderCanvas(modelKey) {
   }
   const editingLabelId = inlineInput?.dataset.labelId || '';
   const canvasKey = `${modelKey}|${showGrid}|${view.x},${view.y},${view.w},${view.h}|${editingLabelId}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
-  if (canvasKey !== committedCanvasKey) {
+  const canvasRebuilt = canvasKey !== committedCanvasKey;
+  if (canvasRebuilt) {
     committedCanvasKey = canvasKey;
     canvasEl.innerHTML = svgString(circuit, {
       themeInk: true,
+      underlay: true,
       grid: showGrid,
       terminals: false,
       junctions: false,
@@ -3061,8 +3161,8 @@ function renderCanvas(modelKey) {
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
   }
-  const highlightedNetIds = new Set([...selectedNets, ...diagnosticSelection.nets]);
-  const nets = [...highlightedNetIds].map((id) => circuit.nets.get(id)).filter(Boolean);
+  // Design-check focus is drawn separately (error color); only real selection is blue.
+  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
   // Solder dots sitting on a highlighted net's junction points get a halo so
   // wire junctions on the net stand out (device bodies are deliberately NOT
   // highlighted — only wires + solder dots belong to a net's visual).
@@ -3114,7 +3214,8 @@ function renderCanvas(modelKey) {
   }
   const overlay = editorOverlay(circuit, {
     cursor,
-    selection: [...new Set([...multi, ...diagnosticSelection.components])],
+    selection: [...multi],
+    diagnostic: diagnosticSelection,
     resizeBlocks: [...multi].filter((ref) => {
       const component = circuit.components.get(ref);
       return component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY;
@@ -3146,9 +3247,7 @@ function renderCanvas(modelKey) {
       ? { x: cursor.x, y: cursor.y, junction: drag.junction >= 0 }
       : undefined,
     selLabel,
-    // Diagnostics are additive and use the renderer's normal label-selection
-    // overlay, leaving the user's selected label(s) intact.
-    selLabels: [...new Set([...selLabels, ...diagnosticSelection.labels])],
+    selLabels: [...selLabels],
     nets,
     previewSelection,
     // Keep the committed clicks visible while a line is being drafted.
@@ -3162,7 +3261,7 @@ function renderCanvas(modelKey) {
         : undefined,
     warnOverlaps: netWarnings,
     rubber: visual
-      ? { x0: Math.min(visual.x, cursor.x), y0: Math.min(visual.y, cursor.y), x1: Math.max(visual.x, cursor.x), y1: Math.max(visual.y, cursor.y), color: '#2e7d32' }
+      ? { x0: Math.min(visual.x, cursor.x), y0: Math.min(visual.y, cursor.y), x1: Math.max(visual.x, cursor.x), y1: Math.max(visual.y, cursor.y) }
       : drag && drag.rubber
         ? drag.rubber
         : undefined,
@@ -3175,6 +3274,8 @@ function renderCanvas(modelKey) {
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
   overlayEl.innerHTML = themeInkSvg(overlay);
+  flushPendingCommitFeedback();
+  mountCommitFeedback(canvasRebuilt);
 }
 
 // ----- mouse ------------------------------------------------------------
@@ -3199,6 +3300,31 @@ function dragMoved(startWorld, startClient, w, ev) {
   const world = Math.hypot(w.x - startWorld.x, w.y - startWorld.y);
   const client = Math.hypot(ev.clientX - startClient.x, ev.clientY - startClient.y);
   return world > GRID / 2 && client > DRAG_THRESH;
+}
+
+/** Name of a net that `touchedNetIds` newly overlap (collinearly) compared
+ * with the `beforeSnapshot` document, or null. Pre-existing overlaps are
+ * reported by Design check and do not block unrelated edits. */
+function newCrossNetOverlap(beforeSnapshot, touchedNetIds) {
+  const pairs = (doc) => {
+    const out = new Map();
+    const nets = [...doc.nets.values()].map((net) => ({ id: net.id, paths: net.paths() }));
+    for (const overlap of crossNetOverlaps(nets)) {
+      const a = overlap.key.split(':')[0];
+      const b = overlap.otherKey.split(':')[0];
+      if (!touchedNetIds.has(a) && !touchedNetIds.has(b)) continue;
+      out.set([a, b].sort().join('|'), touchedNetIds.has(a) ? b : a);
+    }
+    return out;
+  };
+  const before = pairs(Circuit.fromJSON(JSON.parse(beforeSnapshot)));
+  for (const [pair, other] of pairs(circuit)) {
+    if (!before.has(pair)) {
+      const net = circuit.nets.get(other);
+      return net?.name ? `${net.name} (${net.id})` : other;
+    }
+  }
+  return null;
 }
 
 /** Abort an in-progress mouse drag. A cancelled wire run is restored to its
@@ -3772,7 +3898,9 @@ function connectTwo(src, dst, points) {
   recordHistoryEntry(before, false);
   // Stay in wiring mode so the next click can start another connection.
   wire = newWireDraft();
-  setSelection([dst.refdes]);
+  // Like every wire commit, highlight the net; the target pin's component is
+  // not selected.
+  setSelection([]);
   selectedNets = new Set([net.id]);
   logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}; len=${net.length()}`);
 }
@@ -3830,7 +3958,7 @@ function commitDirectWire(dst) {
     recordHistoryEntry(before);
     markModelChanged();
     directWire = { source: null, points: [] };
-    setSelection([dst.refdes]);
+    setSelection([]);
     selectedNets = new Set([net.id]);
     logLine(`${directKind} wire committed on net ${net.id}`);
   } catch (err) {
@@ -5210,7 +5338,7 @@ function commitModalMove() {
   if (drag.moved) {
     finishMoveMutation(drag);
     if (previewTransaction) {
-      if (snapshot() !== drag.startSnapshot) recordHistoryEntry(drag.startSnapshot);
+      if (snapshot() !== drag.startSnapshot) recordHistoryEntry(drag.startSnapshot, true, 'none');
       commitPreviewTransaction();
     }
   } else {
@@ -5337,7 +5465,7 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
   }
   if (drag?.mode === 'blockmarquee') {
     if (dragMoved(drag.startWorld, drag.startClient, w, ev)) drag.moved = true;
-    if (drag.moved) drag.rubber = { ...worldRect(drag.startWorld, w), color: '#4f9cf9' };
+    if (drag.moved) drag.rubber = { ...worldRect(drag.startWorld, w) };
     scheduleInteractionRender();
     return;
   }
@@ -5624,7 +5752,7 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'zoom' || drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (movedOut) drag.moved = true;
     const r = worldRect(drag.startWorld, w);
-    drag.rubber = { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, color: drag.mode === 'zoom' ? '#a06b13' : '#4f9cf9' };
+    drag.rubber = { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, color: drag.mode === 'zoom' ? 'neutral' : undefined };
     if (!movedOut) drag.rubber = null;
     scheduleInteractionRender();
     return;
@@ -5744,7 +5872,7 @@ function canvasMouseMove(ev) {
           drag.labelId = selLabel;
           logLine('duplicated selection — dragging the copy');
         } else if (!drag.modal) {
-          recordHistoryEntry(snapshot());
+          recordHistoryEntry(snapshot(), true, 'defer');
         }
         drag.committed = true;
       }
@@ -5991,15 +6119,25 @@ function canvasMouseUp(ev) {
         }
       }
       circuit.syncJunctionSolders();
+      // Cross-net collinear overlap is an electrical violation that is never
+      // merged: a drop that creates one is rejected, not committed.
+      const collision = newCrossNetOverlap(drag.startSnapshot, touchedNets);
+      if (collision) throw new Error(`the wire would overlap net ${collision}`);
       if (snapshot() !== drag.startSnapshot) {
         markModelChanged(); // committed wire drag changed net geometry
-        recordHistoryEntry(drag.startSnapshot);
+        recordHistoryEntry(drag.startSnapshot, true, 'none');
         commitPreviewTransaction();
       } else {
         cancelPreviewTransaction();
       }
     } catch (err) {
-      cancelPreviewTransaction();
+      // Plain wire drags edit the live document (no preview clone), so
+      // discarding a preview alone would keep the rejected geometry.
+      if (previewTransaction) cancelPreviewTransaction();
+      else {
+        circuit = Circuit.fromJSON(JSON.parse(drag.startSnapshot));
+        markModelChanged();
+      }
       logLine(`wire drag cancelled: ${err.message}`, 'error');
       drag = null;
       render();
@@ -6065,7 +6203,7 @@ function canvasMouseUp(ev) {
       circuit.syncJunctionSolders();
       if (snapshot() !== drag.startSnapshot) {
         markModelChanged();
-        recordHistoryEntry(drag.startSnapshot);
+        recordHistoryEntry(drag.startSnapshot, true, 'none');
         commitPreviewTransaction();
       } else {
         cancelPreviewTransaction();
@@ -6091,7 +6229,7 @@ function canvasMouseUp(ev) {
     } else {
       if (snapshot() !== drag.startSnapshot) {
         circuit.syncJunctionSolders();
-        recordHistoryEntry(drag.startSnapshot);
+        recordHistoryEntry(drag.startSnapshot, true, 'none');
         markModelChanged();
         logLine(drag.junction >= 0 ? 'moved fixed junction dot' : 'moved fixed wire geometry');
         commitPreviewTransaction();
@@ -6131,7 +6269,7 @@ function canvasMouseUp(ev) {
         }
       }
       if (snapshot() !== drag.startSnapshot) {
-        recordHistoryEntry(drag.startSnapshot);
+        recordHistoryEntry(drag.startSnapshot, true, 'none');
         markModelChanged();
         logLine(target ? 'attached fixed endpoint' : 'moved fixed endpoint');
         commitPreviewTransaction();
@@ -6342,6 +6480,11 @@ let componentContextTarget = null;
 let componentContextSubmenu = null;
 
 function closeComponentContextMenu() {
+  // A menu that is a pending question (e.g. the solder net-name choice)
+  // treats any close without a pick as a cancellation.
+  const dismiss = contextMenuDismiss;
+  contextMenuDismiss = null;
+  if (dismiss) dismiss();
   componentContextTarget = null;
   componentContextSubmenu = null;
   if (componentContextMenuEl) {
@@ -10657,9 +10800,101 @@ function toolbarElements(action) {
   return [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
 }
 
+/** Short the nets crossing at a just-placed solder dot. Returns true when the
+ * short is waiting for a net-name choice (the picker opens after render). */
+function shortNetsAtPlacedSolder(comp) {
+  const point = { x: comp.transform.x, y: comp.transform.y };
+  try {
+    const net = circuit.shortNetsAt(point);
+    if (net) logLine(`solder joined nets at (${point.x},${point.y}) into ${net.name || net.id}`);
+    return false;
+  } catch (err) {
+    if (err.code !== 'net-name-choice') throw err;
+    pendingSolderNameChoice = { point, refdes: comp.refdes, names: err.names, historyLength: history.length };
+    requestAnimationFrame(openSolderNameMenu);
+    return true;
+  }
+}
+
+let pendingSolderNameChoice = null;
+let contextMenuDismiss = null;
+
+/** Ask which given name the shorted net keeps. Escape or an outside click
+ * cancels the whole placement, removing the dot. */
+function openSolderNameMenu() {
+  const choice = pendingSolderNameChoice;
+  if (!choice || !componentContextMenuEl) return;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  const at = worldToClient(choice.point.x, choice.point.y);
+  menu.style.left = `${Math.max(4, Math.min(at.x + 18, window.innerWidth - 220))}px`;
+  menu.style.top = `${Math.max(4, at.y - 12)}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  heading.textContent = 'Keep net name';
+  menu.appendChild(heading);
+  for (const name of choice.names) {
+    const item = appendContextItem(menu, '', () => {
+      contextMenuDismiss = null;
+      pendingSolderNameChoice = null;
+      const before = snapshot();
+      try {
+        const net = circuit.shortNetsAt(choice.point, { name });
+        markModelChanged();
+        playCommitFeedback(before);
+        logLine(`solder joined nets at (${choice.point.x},${choice.point.y}) into ${net?.name || net?.id}`);
+      } catch (err) {
+        logLine(`solder cancelled: ${err.message}`, 'error');
+        cancelSolderPlacement(choice);
+      }
+    });
+    const text = document.createElement('span');
+    appendMarkupText(text, name);
+    item.prepend(text);
+  }
+  contextMenuDismiss = () => {
+    pendingSolderNameChoice = null;
+    cancelSolderPlacement(choice);
+    logLine('solder cancelled: no net name chosen');
+    render();
+  };
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
+  menu.querySelector('button')?.focus();
+}
+
+function cancelSolderPlacement(choice) {
+  if (history.length === choice.historyLength) {
+    // The placement was the latest commit: undo it without a redo entry.
+    circuit = Circuit.fromJSON(JSON.parse(history.pop()));
+  } else {
+    circuit.components.delete(choice.refdes);
+    circuit.syncJunctionSolders();
+  }
+  markModelChanged();
+}
+
+/** Briefly pulse a rail button to confirm a tool or wire-shape change. */
+function flashToolButton(button) {
+  if (!button) return;
+  button.classList.remove('tool-flash');
+  void button.offsetWidth; // restart the animation when switching quickly
+  button.classList.add('tool-flash');
+  button.addEventListener('animationend', () => button.classList.remove('tool-flash'), { once: true });
+}
+
+let lastToolbarState = null;
+
 /** Apply all interaction affordances from one derived state. */
 function syncInteractionUI() {
   const state = interactionState();
+  if (lastToolbarState !== null && state.toolbar !== lastToolbarState) {
+    for (const el of toolbarElements(state.toolbar)) {
+      if (el.classList.contains('mode-control') && !el.hidden) flashToolButton(el);
+    }
+  }
+  lastToolbarState = state.toolbar;
   for (const action of Object.keys(TOOLBAR_IDS)) {
     const active = state.toolbar === action;
     for (const el of toolbarElements(action)) {
@@ -11418,10 +11653,7 @@ function syncWireButtonRouteMode(flash = false) {
   if (icon) icon.innerHTML = ICON_PATHS[routeMode === 'diagonal' ? 'wire-diagonal' : 'wire'];
   button.dataset.routeShape = routeMode;
   button.title = `Draw an electrical wire (w) · ${routeMode} shape · F3 or right-click to change`;
-  if (!flash) return;
-  button.classList.remove('route-flash');
-  void button.offsetWidth;
-  button.classList.add('route-flash');
+  if (flash) flashToolButton(button);
 }
 
 function openRouteModeMenu(x, y) {

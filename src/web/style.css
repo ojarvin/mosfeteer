@@ -12,7 +12,10 @@
   --text-dim: #5a6372;
   --accent: #1a56db;
   --accent-dim: #e3ebfc;
+  /* Semantic colors: accent = selection/focus/active tool, ok = success,
+     warn = needs attention, danger = error or destructive. */
   --danger: #c53030;
+  --warn: #b45309;
   --ok: #157347;
   --ink: #111111;
   --paper: #ffffff;
@@ -748,14 +751,10 @@ button:disabled {
 .analysis-stale {
   margin: 0;
   padding: 6px 8px;
-  color: #a16207;
-  background: color-mix(in srgb, #eab308 14%, transparent);
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
   border-radius: 6px;
   font-size: 0.75rem;
-}
-
-html.dark .analysis-stale {
-  color: #facc15;
 }
 
 .analysis-intro,
@@ -1142,10 +1141,10 @@ html.dark .analysis-stale {
 /* Placement/move target: intentionally lighter than selection and wire
    overlays, while still using the editor's established blue accent. */
 .editor-cursor-crosshair {
-  stroke: #2563eb;
+  stroke: var(--svg-faint);
   stroke-width: 1px;
   vector-effect: non-scaling-stroke;
-  opacity: 0.35;
+  opacity: 0.45;
   stroke-linecap: round;
   pointer-events: none;
 }
@@ -1573,7 +1572,7 @@ html.dark .analysis-stale {
 
 .row .remove:hover {
   color: var(--danger);
-  background: rgba(197, 48, 48, 0.08);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .no-items {
@@ -1802,21 +1801,20 @@ html.dark .analysis-stale {
   color: var(--text-dim);
 }
 
-.status.insert {
-  color: var(--ok);
+/* An active tool is shown in the accent color, like the pressed rail button;
+   only the destructive delete tool uses the danger color. */
+.status:not(.normal) {
+  color: var(--accent);
   font-weight: 600;
 }
 
-.status.wire {
-  color: #b45309;
-  font-weight: 600;
+.status.delete {
+  color: var(--danger);
 }
 
 .status.direct-wire {
-  color: #6d28d9;
-  font-weight: 700;
-  background: color-mix(in srgb, #7c3aed 8%, var(--bg-panel));
-  border-bottom-color: color-mix(in srgb, #7c3aed 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
+  border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }
 
 .canvas.direct-wire-mode svg {
@@ -1863,6 +1861,10 @@ html.dark .analysis-stale {
 
 .log .cmd {
   color: var(--accent);
+}
+
+.log .error {
+  color: var(--danger);
 }
 
 /* ----- insert-mode dropdown menu ------------------------------- */
@@ -2137,6 +2139,7 @@ html.dark {
   --accent: #6c9cff;
   --accent-dim: #26304a;
   --danger: #f07178;
+  --warn: #fbbf24;
   --ok: #4ade80;
   --paper: #15171c;
   --svg-ink: #dde1e8;
@@ -2168,11 +2171,10 @@ html.dark .boot-banner.error {
    fills and grid lines are the remaining semantic hooks. */
 html.dark .canvas svg [fill="#fff"] { fill: var(--paper); }
 html.dark .canvas svg .net-name { fill: var(--svg-faint); }
-/* The blue cursor is intentionally subtle on paper; amber keeps it legible
-   against the dark canvas without changing selection or wire overlay colors. */
+/* The crosshair is a neutral navigation aid in both themes: it must not
+   borrow the selection (blue) or warning (amber) colors. */
 html.dark .editor-cursor-crosshair {
-  stroke: #f59e0b;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 html.dark .primary-action:not(:disabled) {
@@ -2291,7 +2293,7 @@ button.off {
 @media (prefers-reduced-motion: reduce) {
   .mode-toolbar .mode-control,
   .mode-toolbar .mode-control[aria-pressed="true"] .button-icon,
-  .mode-toolbar #btn-mode-wire.route-flash {
+  .mode-toolbar .mode-control.tool-flash {
     transition: none;
     animation: none;
   }
@@ -2312,12 +2314,19 @@ button.off {
   opacity: 0.55;
 }
 
-.mode-toolbar #btn-mode-wire.route-flash {
-  animation: route-flash 700ms ease-out;
+/* A tool change (or a wire-shape change) pulses the active rail button once,
+   so a keyboard switch is confirmed in peripheral vision. */
+.mode-toolbar .mode-control.tool-flash {
+  --tool-flash: var(--accent);
+  animation: tool-flash 600ms ease-out;
 }
 
-@keyframes route-flash {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 80%, transparent); background: color-mix(in srgb, var(--accent) 45%, var(--bg-panel)); color: var(--accent); }
+.mode-toolbar .mode-control[data-action="delete"].tool-flash {
+  --tool-flash: var(--danger);
+}
+
+@keyframes tool-flash {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tool-flash) 80%, transparent); background: color-mix(in srgb, var(--tool-flash) 45%, var(--bg-panel)); color: var(--tool-flash); }
   100% { box-shadow: 0 0 0 10px transparent; }
 }
 
@@ -2401,4 +2410,127 @@ button.off {
     border-left: 0;
     border-top: 1px solid var(--border);
   }
+}
+
+/* ----- commit feedback ------------------------------------------------
+   A short flash where an undoable edit landed (commit-feedback.js). Nothing
+   moves. The committed objects' own shapes are repainted as a thick green
+   outline behind the drawing, new wires glow along their route, and each new
+   connection gets a small ripple. Deleted objects vanish at once and leave a
+   brief red halo of their shape. */
+
+.commit-feedback,
+.editor-underlay {
+  pointer-events: none;
+}
+
+.commit-feedback > g > *,
+.editor-underlay > g > * {
+  animation-delay: var(--landing-elapsed, 0ms);
+  animation-fill-mode: both;
+}
+
+/* Traced shapes carry their normal presentation attributes (and optional
+   inline styles), so these overrides must win over both. */
+.landing-glow {
+  opacity: 0;
+  animation: landing-flash 600ms ease-out;
+}
+
+.landing-glow * {
+  stroke: var(--ok) !important;
+  stroke-width: 14px !important;
+  stroke-opacity: 0.5 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  vector-effect: none !important;
+  fill: var(--ok) !important;
+  fill-opacity: 0.5 !important;
+}
+
+.landing-glow [fill="none"] {
+  fill: none !important;
+}
+
+.landing-glow .landing-box {
+  stroke-width: 2px !important;
+  fill-opacity: 0.14 !important;
+  vector-effect: non-scaling-stroke !important;
+}
+
+.landing-wire {
+  fill: none;
+  stroke: var(--ok);
+  stroke-opacity: 0.45;
+  stroke-width: 20;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: landing-flash 600ms ease-out;
+}
+
+.landing-dot {
+  fill: var(--ok);
+  animation: landing-flash 480ms ease-out;
+}
+
+.landing-ripple {
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 2.5px;
+  vector-effect: non-scaling-stroke;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: landing-ripple 460ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.landing-removed {
+  opacity: 0;
+  animation: landing-trail 260ms ease-out;
+}
+
+/* Deleted objects vanish at once; a soft red halo of their shape trails off. */
+.landing-removed * {
+  stroke: var(--danger) !important;
+  stroke-width: 14px !important;
+  stroke-opacity: 0.45 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  vector-effect: none !important;
+  fill: var(--danger) !important;
+  fill-opacity: 0.35 !important;
+}
+
+.landing-removed [fill="none"] {
+  fill: none !important;
+}
+
+.landing-removed .landing-box {
+  stroke-width: 2px !important;
+  fill-opacity: 0.12 !important;
+  vector-effect: non-scaling-stroke !important;
+}
+
+@keyframes landing-flash {
+  0% { opacity: 0; }
+  14% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes landing-ripple {
+  0% { opacity: 0.95; transform: scale(0.4); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+@keyframes landing-trail {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes landing-out {
+  0% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-ripple { animation-name: landing-out; }
 }

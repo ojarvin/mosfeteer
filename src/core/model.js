@@ -3568,6 +3568,109 @@ export class Circuit {
     net.junctions = this._netJunctions(net, net.branches);
   }
 
+  /**
+   * Short the nets (managed or fixed) whose drawn wires pass through `point` (a crossing
+   * or a wire end resting on another wire) into one physical net, with a
+   * junction there. This is what placing a solder dot on a crossing means.
+   *
+   * Name choice: nets with only automatic names keep the first net's
+   * identity; a single given name wins. With several given names and no
+   * `options.name`, nothing changes and an error with
+   * `code === 'net-name-choice'` and `names` is thrown so the caller can ask.
+   * Returns the surviving net, or null when fewer than three wire arms meet at
+   * the point (nothing to short, e.g. a dot on a plain straight wire).
+   */
+  shortNetsAt(point, options = {}) {
+    const p = snapPoint(point.x, point.y);
+    const same = (a, b) => a.x === b.x && a.y === b.y;
+    const onInterior = (a, b) => (b.x - a.x) * (p.y - a.y) === (b.y - a.y) * (p.x - a.x) &&
+      p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) &&
+      p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y) && !same(a, p) && !same(b, p);
+    // Arms meeting at p per net: a wire passing through adds two, a wire end
+    // or a terminal adds one.
+    const nets = [];
+    let arms = 0;
+    for (const net of this.nets.values()) {
+      let netArms = 0;
+      for (const path of this._explicitBranches(net)) {
+        path.forEach((q, i) => { if (same(q, p)) netArms += (i > 0 ? 1 : 0) + (i < path.length - 1 ? 1 : 0); });
+        for (let i = 1; i < path.length; i++) if (onInterior(path[i - 1], path[i])) netArms += 2;
+      }
+      if (!netArms) continue;
+      nets.push(net);
+      arms += netArms;
+    }
+    if (!nets.length || arms < 3) return null;
+    if (nets.length === 1 && this._netJunctions(nets[0], this._explicitBranches(nets[0])).some((q) => same(q, p))) return nets[0];
+
+    const names = this._namedNetNames(nets);
+    let name = names[0] || '';
+    if (options.name !== undefined) {
+      name = canonicalNetName(options.name);
+      if (names.length && !names.includes(name)) throw new Error(`"${options.name}" is not one of the shorted net names: ${names.join(', ')}`);
+    } else if (names.length > 1) {
+      const error = new Error(`choose a net name: ${names.join(', ')}`);
+      error.code = 'net-name-choice';
+      error.names = names;
+      throw error;
+    }
+    this.invalidateRoutingCache();
+    const primary = nets.find((net) => name && canonicalNetName(net.name) === name) || nets[0];
+    const others = nets.filter((net) => net !== primary);
+    const allowDiagonal = nets.some((net) => net.allowDiagonal);
+    // Like attachWireEndpoint: joining any fixed net keeps every path literal
+    // (cloneFixedPath); an all-managed short normalizes its branches.
+    const fixed = nets.some((net) => net.routingMode === 'fixed');
+    const splitAtPoint = (path) => {
+      const pieces = [];
+      let current = [path[0]];
+      for (let i = 1; i < path.length; i++) {
+        if (onInterior(path[i - 1], path[i])) {
+          current.push({ ...p });
+          pieces.push(current);
+          current = [{ ...p }];
+        }
+        current.push(path[i]);
+        if (same(path[i], p) && i < path.length - 1) {
+          pieces.push(current);
+          current = [{ ...p }];
+        }
+      }
+      pieces.push(current);
+      return pieces.filter((piece) => piece.length >= 2)
+        .map((piece) => (fixed ? cloneFixedPath(piece) : clonePath(piece, allowDiagonal)));
+    };
+    const junctions = nets.flatMap((net) => net.junctions);
+    const uniquePoints = (points) => points.filter((q, index, all) => all.findIndex((other) => same(other, q)) === index);
+    const entries = fixed
+      ? nets.flatMap((net) => this._fixedPathEntries(net)).flatMap((entry) => {
+        const pieces = splitAtPoint(entry.points).map((points) => ({ points, start: null, end: null }));
+        if (pieces.length) {
+          pieces[0].start = entry.start || null;
+          pieces[pieces.length - 1].end = entry.end || null;
+        }
+        return pieces;
+      })
+      : null;
+    const branches = fixed ? null : nets.flatMap((net) => this._explicitBranches(net)).flatMap(splitAtPoint);
+    this._mergeNets(primary, others, null, { allowNameConflict: true });
+    primary.name = name;
+    if (fixed) {
+      this._setFixedPaths(primary, entries, uniquePoints([...junctions, p]));
+    } else {
+      primary.allowDiagonal = allowDiagonal;
+      primary.branches = branches;
+      primary.route = branches.length ? clonePath(branches[0], allowDiagonal) : null;
+      primary.junctions = uniquePoints([...this._netJunctions(primary, branches), ...junctions, p]);
+    }
+    this._syncReferenceMarkerNetName(primary);
+    this._syncAnalysisAttributes(primary);
+    this._syncInterfacePinLabels(primary, { enforceName: true });
+    this._inferCrossCoupling(new Set([primary]));
+    this.syncJunctionSolders();
+    return primary;
+  }
+
   /** Junction points of a net's branches, counting each terminal as an arm. */
   _netJunctions(net, paths) {
     const terminals = net.terminals.map((t) => this.getComponent(t.comp)?.terminalWorld(t.term)).filter(Boolean);

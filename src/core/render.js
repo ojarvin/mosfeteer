@@ -320,12 +320,38 @@ function shapeAnnotationSvg(label, opacity = '') {
   return `<path d="${shaftPath} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${escapeSvg(resolveColor(label.style?.color || '#111'))}" stroke="none"${opacity}/>`;
 }
 /**
+ * Bare drawable geometry of one component (body graphics plus symbol text),
+ * without ids, labels, or accessibility wrappers. Editor effects restyle it
+ * with CSS, e.g. the commit-feedback glow that traces the symbol itself.
+ */
+export function componentShapeSvg(c) {
+  const t = c.transform;
+  const body = c.type === 'block'
+    ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
+    : c.def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
+  const text = c.def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
+  return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
+}
+
+/**
+ * Bare drawable geometry of one label: its text, or the line/arrow/box of a
+ * visual annotation. Math labels are HTML (foreignObject) and return null.
+ */
+export function labelShapeSvg(label) {
+  if (['box', 'arrow', 'line'].includes(label.kind)) return shapeAnnotationSvg(label);
+  if (label.math) return null;
+  const t = label.textPos();
+  return labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
+}
+
+/**
  * Render a Circuit to an SVG string.
  * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
  * draw terminal dots / net junction dots. opts.background: white rect.
  * opts.netNames: label nets by name. opts.includeBBox: draw component bboxes.
  * opts.emptyHint: draw the 'empty schematic' placeholder (default true).
  * opts.themeInk: emit default ink as currentColor for theme-aware editor views.
+ * opts.underlay: emit an empty editor-underlay group above the grid for effects.
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
  */
@@ -387,6 +413,8 @@ export function svgString(circuit, opts = {}) {
       }
     }
   }
+  // Editor-only slot for transient effects that should glow behind the drawing.
+  if (o.underlay) parts.push('<g class="editor-underlay"></g>');
   // The crosshair is a navigation aid, not an object highlight. Render it
   // before components, wires, and labels so those objects remain readable.
   if (o.cursor && o.cursorCrosshair) {
@@ -567,6 +595,16 @@ export function svgString(circuit, opts = {}) {
  * opts.wireMode: show all component terminals, colored by net membership.
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
  */
+// Editor overlay colors are semantic and theme-aware (style.css tokens):
+// SELECT (accent blue) = selection, focus, and previews of pending edits;
+// WARN (amber) = needs attention, e.g. an unconnected pin while wiring;
+// DANGER (red) = errors such as cross-net overlaps and focused check issues.
+// Magenta center guides are measurement aids and deliberately separate.
+const SELECT = 'var(--accent, #2563eb)';
+const WARN = 'var(--warn, #b45309)';
+const DANGER = 'var(--danger, #c53030)';
+const NEUTRAL = 'var(--svg-faint, #7a7d85)';
+
 export function editorOverlay(circuit, opts = {}) {
   const parts = [];
   if (opts.cursor && opts.cursorCrosshair) {
@@ -575,7 +613,9 @@ export function editorOverlay(circuit, opts = {}) {
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + w)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + h)}" fill="none"/>`);
   }
   const halo = (r) =>
-    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#4f9cf9" fill-opacity="0.1" stroke="#4f9cf9" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
+    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${SELECT}" fill-opacity="0.1" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
+  const dangerHalo = (r) =>
+    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${DANGER}" fill-opacity="0.1" stroke="${DANGER}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
 
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
@@ -622,14 +662,14 @@ export function editorOverlay(circuit, opts = {}) {
       const c = circuit.components.get(ref);
       if (c) {
         const r = c.bboxWorld();
-        parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#2e7d32" stroke-width="2" stroke-dasharray="5 3" rx="3" opacity="0.9"/>`);
+        parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="3" opacity="0.9"/>`);
       }
     }
     for (const id of opts.previewSelection.labels || []) {
       const label = circuit.labels.get(id);
       if (!label) continue;
       const r = label.bbox();
-      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#2e7d32" stroke-width="2" stroke-dasharray="5 3" rx="2" opacity="0.9"/>`);
+      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="2" opacity="0.9"/>`);
     }
     for (const id of opts.previewSelection.nets || []) {
       const net = circuit.nets.get(id);
@@ -637,19 +677,19 @@ export function editorOverlay(circuit, opts = {}) {
       for (const pts of net.paths()) {
         if (!pts || pts.length < 2) continue;
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path d="${d}" fill="none" stroke="#2e7d32" stroke-width="7" opacity="0.32" stroke-dasharray="8 5" stroke-linecap="round"/>`);
+        parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="7" opacity="0.32" stroke-dasharray="8 5" stroke-linecap="round"/>`);
       }
     }
     for (const { a, b } of opts.previewWireSegments || []) {
-      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="#2e7d32" stroke-width="8" opacity="0.55" stroke-dasharray="8 5" stroke-linecap="round"/>`);
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="8" opacity="0.55" stroke-dasharray="8 5" stroke-linecap="round"/>`);
     }
   }
 
   // Solder dots on a highlighted net get a halo so wire junctions stand out.
   if (opts.netSolder && opts.netSolder.length) {
     for (const p of opts.netSolder) {
-      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="13" fill="none" stroke="#2563eb" stroke-width="2" opacity="0.7"/>`);
-      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#2563eb"/>`);
+      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="13" fill="none" stroke="${SELECT}" stroke-width="2" opacity="0.7"/>`);
+      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="${SELECT}"/>`);
     }
   }
 
@@ -659,16 +699,16 @@ export function editorOverlay(circuit, opts = {}) {
       if (!label) continue;
       const b = label.bbox();
       const a = label.anchorWorld();
-      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#e3970b" stroke-width="2" rx="2"/>`);
-      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="#e3970b"/>`);
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
+      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
     }
   } else if (opts.selLabel) {
     const label = circuit.labels.get(opts.selLabel);
     if (label) {
       const b = label.bbox();
       const a = label.anchorWorld();
-      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#e3970b" stroke-width="2" rx="2"/>`);
-      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="#e3970b"/>`);
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
+      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
     }
   }
 
@@ -677,27 +717,48 @@ export function editorOverlay(circuit, opts = {}) {
     for (const pts of paths) {
       if (!pts || pts.length < 2) continue;
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="12" opacity="0.45" stroke-linecap="round" stroke-linejoin="round"/>`);
-      parts.push(`<path d="${d}" fill="none" stroke="#2563eb" stroke-width="2.4"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="12" opacity="0.35" stroke-linecap="round" stroke-linejoin="round"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2.4"/>`);
+    }
+  }
+
+  // Design-check focus: the objects behind the selected issue, in the error color.
+  if (opts.diagnostic) {
+    for (const ref of opts.diagnostic.components || []) {
+      const c = circuit.components.get(ref);
+      if (c) parts.push(dangerHalo(c.bboxWorld()));
+    }
+    for (const id of opts.diagnostic.labels || []) {
+      const label = circuit.labels.get(id);
+      if (label) parts.push(dangerHalo(label.bbox()));
+    }
+    for (const id of opts.diagnostic.nets || []) {
+      const net = circuit.nets.get(id);
+      for (const pts of net?.paths?.() || []) {
+        if (!pts || pts.length < 2) continue;
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="12" opacity="0.3" stroke-linecap="round" stroke-linejoin="round"/>`);
+        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="2.4"/>`);
+      }
     }
   }
 
   // Cross-net collinear overlaps (a wire dragged on top of another net's wire).
   if (opts.warnOverlaps && opts.warnOverlaps.length) {
     for (const o of opts.warnOverlaps) {
-      parts.push(`<line x1="${fmt(o.x0)}" y1="${fmt(o.y0)}" x2="${fmt(o.x1)}" y2="${fmt(o.y1)}" stroke="#dc2626" stroke-width="9" opacity="0.55" stroke-linecap="round"/>`);
+      parts.push(`<line x1="${fmt(o.x0)}" y1="${fmt(o.y0)}" x2="${fmt(o.x1)}" y2="${fmt(o.y1)}" stroke="${DANGER}" stroke-width="9" opacity="0.55" stroke-linecap="round"/>`);
     }
   }
 
   if (opts.wireSegments && opts.wireSegments.length) {
     for (const { a, b } of opts.wireSegments) {
-      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="#f59e0b" stroke-width="8" opacity="0.7" stroke-linecap="round"/>`);
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="9" opacity="0.6" stroke-linecap="round"/>`);
     }
   }
 
   if (opts.fixedDrag) {
     const { x, y, junction } = opts.fixedDrag;
-    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${junction ? 14 : 10}" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-dasharray="4 3"/>`);
+    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${junction ? 14 : 10}" fill="none" stroke="${SELECT}" stroke-width="2.5" stroke-dasharray="4 3"/>`);
   }
 
   if (opts.wireMode) {
@@ -706,12 +767,13 @@ export function editorOverlay(circuit, opts = {}) {
       for (const terminal of comp.worldTerminals()) {
         const connected = circuit.netOfTerminal({ comp: comp.refdes, term: terminal.name });
         const isSource = src && src.refdes === comp.refdes && src.term === terminal.name;
-        const color = connected ? '#2563eb' : '#dc2626';
+        // Connected pins are quiet; open pins still need a wire (attention).
+        const color = connected ? NEUTRAL : WARN;
         if (isSource) {
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="11" fill="#d97706" opacity="0.16"/>`);
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="#d97706" stroke="#fff" stroke-width="2"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="11" fill="${SELECT}" opacity="0.18"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="${SELECT}" stroke="var(--paper, #fff)" stroke-width="2"/>`);
         } else {
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="#fff" stroke="${color}" stroke-width="2.5"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="var(--paper, #fff)" stroke="${color}" stroke-width="2.5"/>`);
         }
       }
     }
@@ -723,7 +785,7 @@ export function editorOverlay(circuit, opts = {}) {
     const y = Math.min(r.y0, r.y1);
     const w = Math.abs(r.x1 - r.x0);
     const h = Math.abs(r.y1 - r.y0);
-    const color = escapeSvg(r.color || '#4f9cf9');
+    const color = r.color === 'neutral' ? NEUTRAL : SELECT;
     parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
   }
 
@@ -732,13 +794,13 @@ export function editorOverlay(circuit, opts = {}) {
     const pts = opts.wirePreview.pts || autoRoute([{ x: from.x, y: from.y }, { x: opts.wirePreview.to.x, y: opts.wirePreview.to.y }]);
     if (pts && pts.length >= 2) {
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="#4f9cf9" stroke-width="2" stroke-dasharray="6 5"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="6 5"/>`);
     }
-    parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="#4f9cf9"/>`);
+    parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="${SELECT}"/>`);
   }
   if (opts.annotationPreview) {
     const { kind, a, b, points } = opts.annotationPreview;
-    const attrs = 'stroke="#4f9cf9" stroke-width="6" stroke-dasharray="10 7" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+    const attrs = `stroke="${SELECT}" stroke-width="6" stroke-dasharray="10 7" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
     if (kind === 'line') {
       const d = points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
       parts.push(`<path d="${d}" ${attrs}/>`);
@@ -750,7 +812,7 @@ export function editorOverlay(circuit, opts = {}) {
       const start = route.at(-2) || a;
       const { shaft, left, right } = annotationArrowPoints(start, route.at(-1));
       const d = route.slice(0, -1).map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-      parts.push(`<path d="${d} L ${pt(shaft.x, shaft.y)}" ${attrs}/><polygon points="${pt(route.at(-1).x, route.at(-1).y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="#4f9cf9" stroke="none" opacity=".8"/>`);
+      parts.push(`<path d="${d} L ${pt(shaft.x, shaft.y)}" ${attrs}/><polygon points="${pt(route.at(-1).x, route.at(-1).y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${SELECT}" stroke="none" opacity=".8"/>`);
     }
   }
 
@@ -758,14 +820,14 @@ export function editorOverlay(circuit, opts = {}) {
     const { from, pts } = opts.directWirePreview;
     if (from && pts && pts.length >= 2) {
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path class="direct-wire-preview" d="${d}" fill="none" stroke="#7c3aed" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>`);
-      for (const p of pts.slice(1, -1)) parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="5" fill="#fff" stroke="#7c3aed" stroke-width="2"/>`);
+      parts.push(`<path class="direct-wire-preview" d="${d}" fill="none" stroke="${SELECT}" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>`);
+      for (const p of pts.slice(1, -1)) parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="5" fill="var(--paper, #fff)" stroke="${SELECT}" stroke-width="2"/>`);
     }
   }
 
   if (opts.cursor) {
     const { x, y } = opts.cursor;
-    const color = opts.directWirePreview ? '#7c3aed' : opts.wireMode ? '#d97706' : '#7a7d85';
+    const color = opts.directWirePreview || opts.wireMode ? SELECT : '#7a7d85';
     const radius = opts.wireMode ? 8 : 4;
     parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${radius}" fill="none" stroke="${color}" stroke-width="${opts.wireMode ? 2 : 1.5}"/>`);
     if (opts.wireMode && !opts.wirePreview && !opts.directWirePreview) {

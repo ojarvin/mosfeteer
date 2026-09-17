@@ -179,7 +179,7 @@ export function blockSvgString(diagram, options = {}) {
     if (label.kind !== 'label' || (!selectedLabels.has(label.id) && options.editingLabel !== label.id)) continue;
     const box = label.bbox();
     const anchor = label.anchorWorld ? label.anchorWorld() : label.anchor;
-    out.push(`<g class="block-label-bbox"><rect x="${n(box.x)}" y="${n(box.y)}" width="${n(box.w)}" height="${n(box.h)}" rx="2" fill="none" stroke="#e3970b" stroke-width="2"/><circle cx="${n(anchor.x)}" cy="${n(anchor.y)}" r="3.5" fill="#e3970b"/></g>`);
+    out.push(`<g class="block-label-bbox"><rect x="${n(box.x)}" y="${n(box.y)}" width="${n(box.w)}" height="${n(box.h)}" rx="2" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2"/><circle cx="${n(anchor.x)}" cy="${n(anchor.y)}" r="3.5" fill="#e3970b"/></g>`);
   }
   const ghostLabels = options.ghostLabels || [];
   for (const label of ghostLabels) {
