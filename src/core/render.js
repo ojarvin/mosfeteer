@@ -1,7 +1,7 @@
 import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
-import { fontAttrs, resolveColor, strokeAttrs, styleAttrs } from './style.js';
+import { fontAttrs, resolveColor, strokeAttrs, styleAttrs, themeInkSvg } from './style.js';
 import { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 
 function escapeSvg(value) {
@@ -325,6 +325,7 @@ function shapeAnnotationSvg(label, opacity = '') {
  * draw terminal dots / net junction dots. opts.background: white rect.
  * opts.netNames: label nets by name. opts.includeBBox: draw component bboxes.
  * opts.emptyHint: draw the 'empty schematic' placeholder (default true).
+ * opts.themeInk: emit default ink as currentColor for theme-aware editor views.
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
  */
@@ -553,7 +554,7 @@ export function svgString(circuit, opts = {}) {
   }
 
   parts.push('</svg>');
-  return parts.join('\n');
+  return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
 }
 
 /**

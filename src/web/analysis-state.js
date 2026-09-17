@@ -6,6 +6,16 @@
  * conservative when a schematic has been edited since the last analysis.
  */
 
+import { parseLabelRuns } from '../core/model.js';
+
+/** Native <option> text cannot render sub/superscripts, so node choices show
+ * the net name without `_{…}`/`^{…}` markup, followed by its physical id. */
+export function analysisNetOptionText(net) {
+  const name = net?.name ? parseLabelRuns(net.name).map((run) => run.text).join('') : '';
+  if (!name) return `(unnamed) — ${net.id}`;
+  return name === net.id ? name : `${name} — ${net.id}`;
+}
+
 export const ANALYSIS_FORM_KEY = 'schematic-spawner:analysis-form';
 
 export function analysisFormStorageKey(documentName = '') {

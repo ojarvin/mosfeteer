@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analysisFormDefaults, analysisFormStorageKey, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from '../src/web/analysis-state.js';
+import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from '../src/web/analysis-state.js';
 
 const nets = [
   { id: 'N1', name: 'VIN', terminals: [{ comp: 'P1', term: 'p' }], analysis: { role: 'input' } },
@@ -51,4 +51,11 @@ test('analysis defaults prefer output ports and the non-inverting input port ove
   assert.equal(defaults.target, 'N4');
   assert.equal(defaults.input, 'N3');
   assert.equal(analysisFormDefaults(ports.slice(0, 1).concat({ id: 'N9', name: 'Vout', analysis: {} })).target, 'N9');
+});
+
+test('analysis node options show net names without label markup', () => {
+  assert.equal(analysisNetOptionText({ id: 'N15', name: 'V_{IN}' }), 'VIN — N15');
+  assert.equal(analysisNetOptionText({ id: 'N6', name: 'V_{OUT}^{+}' }), 'VOUT+ — N6');
+  assert.equal(analysisNetOptionText({ id: 'N3', name: 'N3' }), 'N3');
+  assert.equal(analysisNetOptionText({ id: 'N4', name: '' }), '(unnamed) — N4');
 });

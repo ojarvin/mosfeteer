@@ -1,7 +1,7 @@
 import { blockArrowGeometry, blockConnectorJunctions } from './block-router.js';
 import { GRID } from './grid.js';
 import { LABEL_FONT_SIZE, parseLabelRuns } from './model.js';
-import { resolveColor, styleAttrs } from './style.js';
+import { resolveColor, styleAttrs, themeInkSvg } from './style.js';
 
 const esc = (s) => String(s).replace(/[&<>\"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 const n = (v) => Number.isInteger(v) ? v : Number(v.toFixed(2));
@@ -197,6 +197,6 @@ export function blockSvgString(diagram, options = {}) {
     const r = ghost.rect;
     out.push(`<g class="block-ghost"><rect x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/><text x="${n(r.x + r.w / 2)}" y="${n(r.y + r.h / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="bold">${esc(ghost.text || 'Block')}</text></g>`);
   }
-  out.push('</svg>'); return out.join('\n');
+  out.push('</svg>'); return options.themeInk ? themeInkSvg(out.join('\n')) : out.join('\n');
 }
 export const renderBlockDiagram = blockSvgString;

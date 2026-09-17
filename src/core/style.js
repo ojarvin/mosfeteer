@@ -51,6 +51,12 @@ export function resolveColor(value) {
   const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
   return legacyToken ? COLOR_PALETTE[legacyToken] : value;
 }
+/** Editor rendering: default ink follows the page theme through CSS `color`.
+ * Standalone exports keep literal colors and never use this. */
+export function themeInkSvg(svg) {
+  return String(svg).replace(/\b(stroke|fill)="(?:#111|#111111|#292929|#333)"/gi, '$1="currentColor"');
+}
+
 export function setColorToken(token, value) {
   if (!Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) throw new Error(`unknown color token "${token}"`);
   if (typeof value !== 'string' || !value) throw new Error('color token value must be a CSS color');

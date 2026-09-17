@@ -517,3 +517,15 @@ test('renderer draws every fixed path after managed promotion', () => {
   assert.ok(svg.includes('M 160 0 L 400 0'), 'promoted managed path is rendered');
   assert.ok(svg.includes('M 160 0 L 640 80 L 800 400'), 'new fixed path is rendered');
 });
+
+test('themeInk renders default ink as currentColor while exports keep literal colors', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { x: 0, y: 0 });
+  circuit.addComponent('capacitor', { x: 400, y: 0, style: { color: '#d96c75' } });
+  const exported = svgString(circuit, { terminals: false, junctions: false });
+  const themed = svgString(circuit, { terminals: false, junctions: false, themeInk: true });
+  assert.match(exported, /(stroke|fill)="#111"/);
+  assert.doesNotMatch(themed, /(stroke|fill)="#111"/);
+  assert.match(themed, /stroke="currentColor"/);
+  assert.match(themed, /#d96c75/);
+});

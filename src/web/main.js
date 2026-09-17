@@ -16,6 +16,7 @@ import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/com
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { svgString, editorOverlay, texToMathML } from '../core/render.js';
+import { themeInkSvg } from '../core/style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { moveBlockArrowRun, routeBlockArrow } from '../core/block-router.js';
@@ -25,10 +26,10 @@ import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.j
 import { crossNetOverlaps, clonePath, pointOnPath } from '../core/wiring.js';
 import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
-import { componentPaletteItems, editorKeymapText, layerActionForKey, naturalCompare } from './toolbar.js';
+import { componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare } from './toolbar.js';
 import { createPersistenceAdapter } from './persistence.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
-import { analysisFormDefaults, analysisFormStorageKey, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
+import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { constrainAxis, isCloseWindowShortcut, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldConfirmBeforeUnload, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
@@ -135,7 +136,7 @@ setAnalysisResultTab();
 const ICON_PATHS = {
   'folder-open': '<path d="M3 6.5h6l2 2h10v9H3z"/><path d="M3 6.5V5h7l2 2h9"/>',
   'file-plus': '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M12 11v6M9 14h6"/>',
-  trash: '<path d="M5 7h14M10 11v6M14 11v6M8 7l1-3h6l1 3m-11 0 1 14h10l1-14"/>',
+  trash: '<path d="M4 6.5h16M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5l1 13h9l1-13" fill="currentColor" fill-opacity=".16"/><path d="M10.5 10.5v6M13.5 10.5v6"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
   analysis: '<path d="M4 19h16M6 16l4-5 3 3 5-7"/><path d="M6 19V5m6 14V9m6 10V4"/>',
   save: '<path d="M5 4h12l3 3v13H4V4zM8 4v6h8V4M8 20v-6h8v6"/>',
@@ -150,20 +151,21 @@ const ICON_PATHS = {
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
   'route-orthogonal': '<path d="M4 18h8V6h8"/>',
   'route-diagonal': '<path d="M4 18h5l6-12h5"/>',
-  cursor: '<path d="m5 3 4 17 3-7 7-3z"/>',
-  plus: '<path d="M12 4v16M4 12h16"/>',
-  wire: '<path d="M3 17h5l4-10h5l4 6"/>',
-  'box-select': '<path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/>',
-  move: '<path d="M12 3v18m0-18-3 3m3-3 3 3M12 21l-3-3m3 3 3-3M3 12h18m-18 0 3-3m-3 3 3 3m15-3-3-3m3 3-3 3"/>',
-  detach: '<path d="M5 5h7m0 0v7m0-7L5 12M19 19h-7m0 0v-7m0 7 7-7"/>',
-  copy: '<path d="M8 8h11v12H8zM5 16H4V4h12v1"/>',
-  tag: '<path d="M4 5v6l9 9 7-7-9-9H4zM8 8h.01"/>',
-  text: '<path d="M5 5h14M12 5v14M8 19h8"/>',
-  arrow: '<path d="M4 18 18 6m0 0h-7m7 0v7"/>',
-  rectangle: '<rect x="4" y="5" width="16" height="14" rx="1"/>',
-  line: '<path d="M5 19 19 5"/>',
-  front: '<rect x="4" y="4" width="11" height="11" rx="1.5" stroke-dasharray="2.5 2"/><rect x="9" y="9" width="11" height="11" rx="1.5" fill="currentColor" fill-opacity="0.35"/>',
-  back: '<rect x="9" y="9" width="11" height="11" rx="1.5" stroke-dasharray="2.5 2"/><rect x="4" y="4" width="11" height="11" rx="1.5" fill="currentColor" fill-opacity="0.35"/>',
+  cursor: '<path d="M6 3.5 18.5 12l-5.8 1.4L9.5 19.5z" fill="currentColor" fill-opacity=".16"/>',
+  plus: '<rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="currentColor" fill-opacity=".16"/><path d="M12 8v8M8 12h8"/>',
+  'wire-diagonal': '<path d="M5 18h4l6-12h4"/><circle cx="5" cy="18" r="2.2" fill="currentColor" stroke="none"/><circle cx="19" cy="6" r="2.2" fill="currentColor" stroke="none"/>',
+  wire: '<path d="M5 18h6V6h8"/><circle cx="5" cy="18" r="2.2" fill="currentColor" stroke="none"/><circle cx="19" cy="6" r="2.2" fill="currentColor" stroke="none"/>',
+  'box-select': '<rect x="3.5" y="3.5" width="14" height="14" rx="2" stroke-dasharray="3 2.4"/><path d="m12.5 12.5 8 3-3.4 1.2-1.2 3.4z" fill="currentColor" stroke="none"/>',
+  move: '<path d="M12 5v14M5 12h14"/><path d="m12 2 3.2 3.8H8.8zM12 22l-3.2-3.8h6.4zM2 12l3.8-3.2v6.4zM22 12l-3.8 3.2V8.8z" fill="currentColor" stroke="none"/>',
+  detach: '<rect x="8" y="6.5" width="8" height="11" rx="1.8" fill="currentColor" fill-opacity=".16"/><path d="M2.5 12H5M19 12h2.5"/><path d="m5.5 9-1 6M19.5 9l-1 6"/>',
+  copy: '<rect x="3.5" y="3.5" width="11" height="11" rx="2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".16"/>',
+  tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
+  text: '<path d="M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6"/>',
+  arrow: '<path d="M5 19 16 8"/><path d="M20 4l-1.6 9-7.4-7.4z" fill="currentColor" stroke="none"/>',
+  rectangle: '<rect x="3.5" y="5.5" width="17" height="13" rx="2" fill="currentColor" fill-opacity=".16"/>',
+  line: '<path d="M6 18 18 6"/><circle cx="5" cy="19" r="2" fill="currentColor" stroke="none"/><circle cx="19" cy="5" r="2" fill="currentColor" stroke="none"/>',
+  front: '<rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
+  back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
 };
@@ -718,8 +720,17 @@ async function runExport(formats, appearance = {}) {
   }
 }
 
+const EXPORT_SETTINGS_KEY = 'schematic-spawner:export';
+
+/** Exports default to print-ready output (light, no grid); the last choice is remembered. */
 function exportCircuit() {
-  if (exportDarkInput) exportDarkInput.checked = document.documentElement.classList.contains('dark');
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
+  if (exportGridInput) exportGridInput.checked = saved?.grid === true;
+  if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  if (Array.isArray(saved?.formats)) {
+    for (const input of exportForm.querySelectorAll('input[name="format"]')) input.checked = saved.formats.includes(input.value);
+  }
   exportDialog?.showModal();
 }
 
@@ -2999,6 +3010,7 @@ function renderCanvas(modelKey) {
         : { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor };
     }
     canvasEl.innerHTML = renderDocument(circuit, {
+      themeInk: true,
       background: true,
       grid: showGrid,
       terminals: !!blockConnector || blockDrag?.mode === 'blockarrowendpoint',
@@ -3031,6 +3043,7 @@ function renderCanvas(modelKey) {
   if (canvasKey !== committedCanvasKey) {
     committedCanvasKey = canvasKey;
     canvasEl.innerHTML = svgString(circuit, {
+      themeInk: true,
       grid: showGrid,
       terminals: false,
       junctions: false,
@@ -3160,7 +3173,8 @@ function renderCanvas(modelKey) {
     ghost,
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
-  overlayEl.innerHTML = overlay;
+  // Ghosts and previews use the same theme-aware ink as the committed drawing.
+  overlayEl.innerHTML = themeInkSvg(overlay);
 }
 
 // ----- mouse ------------------------------------------------------------
@@ -6409,10 +6423,6 @@ function selectSameTarget(criterion) {
   render();
 }
 
-function analysisNetText(net) {
-  return `${net.name || '(unnamed)'} — ${net.id}`;
-}
-
 function portNetIds(nets, type, role) {
   return nets
     .filter((net) => net.terminals?.some((terminal) => {
@@ -6434,7 +6444,7 @@ function fillAnalysisDialog(targetNetId) {
   for (const net of nets) {
     const option = document.createElement('option');
     option.value = net.id;
-    option.textContent = analysisNetText(net);
+    option.textContent = analysisNetOptionText(net);
     analysisTarget.appendChild(option);
   }
   if (defaults.target) analysisTarget.value = defaults.target;
@@ -6447,7 +6457,7 @@ function fillAnalysisDialog(targetNetId) {
   for (const net of nets) {
     const option = document.createElement('option');
     option.value = net.id;
-    option.textContent = analysisNetText(net);
+    option.textContent = analysisNetOptionText(net);
     analysisReference.appendChild(option);
   }
 
@@ -6456,7 +6466,7 @@ function fillAnalysisDialog(targetNetId) {
     for (const net of nets) {
       const option = document.createElement('option');
       option.value = net.id;
-      option.textContent = analysisNetText(net);
+      option.textContent = analysisNetOptionText(net);
       analysisInput.appendChild(option);
     }
     if (defaults.input) analysisInput.value = defaults.input;
@@ -10123,30 +10133,89 @@ function onNormalKey(key, shiftKey = false) {
   }
 }
 
-function keymapText() {
-  return editorKeymapText(isBlockDiagram(circuit) ? 'block' : 'schematic');
-}
+let helpCommandText = '';
 
-let helpText = '';
+function helpKeyNodes(keys) {
+  const container = document.createElement('span');
+  container.className = 'help-keys';
+  keys.split(' / ').forEach((alternative, index) => {
+    if (index) container.append(document.createTextNode(' / '));
+    const note = alternative.match(/^(.*?)\s+(\([^)]*\))$/);
+    const combo = note ? note[1] : alternative;
+    // Named gestures and console commands read as text; key combinations get caps.
+    if (/\s/.test(combo) && !/^(Arrow keys)$/.test(combo)) {
+      const code = document.createElement('code');
+      code.textContent = combo;
+      container.append(code);
+    } else {
+      combo.split(/\+(?=.)/).forEach((part, partIndex) => {
+        if (partIndex) container.append(document.createTextNode('+'));
+        const kbd = document.createElement('kbd');
+        kbd.textContent = part;
+        container.append(kbd);
+      });
+    }
+    if (note) container.append(document.createTextNode(` ${note[2]}`));
+  });
+  return container;
+}
 
 function renderHelpSearch() {
   if (!helpDialogContent) return;
   const query = helpSearch?.value.trim().toLowerCase() || '';
-  if (!query) {
-    helpDialogContent.textContent = helpText;
-    return;
+  const matches = (...parts) => !query || parts.some((part) => part.toLowerCase().includes(query));
+  helpDialogContent.replaceChildren();
+  const grid = document.createElement('div');
+  grid.className = 'help-sections';
+  let count = 0;
+  for (const [section, entries] of editorKeymap(isBlockDiagram(circuit) ? 'block' : 'schematic')) {
+    const rows = entries.filter(([keys, description]) => matches(keys, description, section));
+    if (!rows.length) continue;
+    const block = document.createElement('section');
+    block.className = 'help-section';
+    const title = document.createElement('h3');
+    title.textContent = section;
+    block.appendChild(title);
+    for (const [keys, description] of rows) {
+      const row = document.createElement('div');
+      row.className = 'help-row';
+      const text = document.createElement('span');
+      text.className = 'help-description';
+      text.textContent = description;
+      row.append(helpKeyNodes(keys), text);
+      block.appendChild(row);
+      count++;
+    }
+    grid.appendChild(block);
   }
-  const matches = helpText.split('\n').filter((line) => line.toLowerCase().includes(query));
-  helpDialogContent.textContent = matches.length ? matches.join('\n') : `No help entries match "${helpSearch.value.trim()}"`;
+  if (grid.childElementCount) helpDialogContent.appendChild(grid);
+  const commandLines = helpCommandText.split('\n').filter((line) => matches(line));
+  if (commandLines.length) {
+    const commands = document.createElement('details');
+    commands.className = 'help-commands';
+    commands.open = !!query;
+    const summary = document.createElement('summary');
+    summary.textContent = 'Console commands';
+    const pre = document.createElement('pre');
+    pre.textContent = commandLines.join('\n');
+    commands.append(summary, pre);
+    helpDialogContent.appendChild(commands);
+    count += commandLines.length;
+  }
+  if (!count) {
+    const empty = document.createElement('p');
+    empty.className = 'help-empty';
+    empty.textContent = `Nothing matches "${helpSearch.value.trim()}".`;
+    helpDialogContent.appendChild(empty);
+  }
 }
 
 function showHelp() {
   if (!helpDialog) return;
-  helpText = keymapText();
   try {
-    helpText += `\n\n${isBlockDiagram(circuit) ? blockCommandHelp() : commandHelp()}`;
+    helpCommandText = isBlockDiagram(circuit) ? blockCommandHelp() : commandHelp();
   } catch (err) {
-    helpText += `\n\n${String(err.message || err)}`;
+    helpCommandText = String(err.message || err);
   }
   if (helpSearch) helpSearch.value = '';
   renderHelpSearch();
@@ -10729,15 +10798,15 @@ function symbolPreviewSvg(type) {
   if (symbolPreviewCache.has(type)) return symbolPreviewCache.get(type);
   let svg = '';
   if (type === 'label') {
-    svg = '<svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M8 19h8" fill="none" stroke="#111" stroke-width="2" stroke-linecap="round"/></svg>';
+    svg = '<svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M8 19h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
   } else if (type === 'block') {
-    svg = '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="1" fill="none" stroke="#111" stroke-width="2"/></svg>';
+    svg = '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
   } else {
     try {
       const preview = new Circuit();
       preview.addComponent(type, { x: 0, y: 0, noLabel: true });
       const b = preview.bounds(6);
-      svg = svgString(preview, { grid: false, terminals: false, junctions: false, background: false })
+      svg = svgString(preview, { grid: false, terminals: false, junctions: false, background: false, themeInk: true })
         .replace(/viewBox="[^"]*"/, `viewBox="${b.x} ${b.y} ${b.w} ${b.h}" preserveAspectRatio="xMidYMid meet"`);
     } catch { svg = ''; }
   }
@@ -11336,9 +11405,48 @@ function setRouteMode(next, announce = true) {
   }
   const select = ['routing-mode', 'route-mode', 'route-mode-select', 'route-choice']
     .map((id) => document.getElementById(id)).find((el) => el?.tagName === 'SELECT');
+  syncWireButtonRouteMode(announce);
   if (announce) logLine(`route mode: ${wanted}${hasWireDraft() ? ' (active wire draft updated)' : ''}`);
   render();
 }
+
+/** The Wire tool button shows the active wire shape; a change briefly highlights it. */
+function syncWireButtonRouteMode(flash = false) {
+  const button = document.getElementById('btn-mode-wire');
+  if (!button) return;
+  const icon = button.querySelector('.button-icon');
+  if (icon) icon.innerHTML = ICON_PATHS[routeMode === 'diagonal' ? 'wire-diagonal' : 'wire'];
+  button.dataset.routeShape = routeMode;
+  button.title = `Draw an electrical wire (w) · ${routeMode} shape · F3 or right-click to change`;
+  if (!flash) return;
+  button.classList.remove('route-flash');
+  void button.offsetWidth;
+  button.classList.add('route-flash');
+}
+
+function openRouteModeMenu(x, y) {
+  if (!componentContextMenuEl) return;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 220))}px`;
+  menu.style.top = `${Math.max(4, y)}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  heading.textContent = 'Wire shape';
+  menu.appendChild(heading);
+  appendContextItem(menu, 'Orthogonal', () => setRouteMode('orthogonal'), { active: routeMode === 'orthogonal', shortcut: 'F3' });
+  appendContextItem(menu, 'Diagonal', () => setRouteMode('diagonal'), { active: routeMode === 'diagonal', shortcut: 'F3' });
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
+  menu.querySelector('.context-item-active')?.focus() || menu.querySelector('button')?.focus();
+}
+
+document.getElementById('btn-mode-wire')?.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  const rect = ev.currentTarget.getBoundingClientRect();
+  openRouteModeMenu(rect.right + 6, rect.top);
+});
 
 function toggleRouteMode() {
   exposeRouteChoice();
@@ -11627,10 +11735,9 @@ exportForm?.addEventListener('submit', (event) => {
     return;
   }
   exportDialog.close();
-  runExport(formats, {
-    grid: exportGridInput?.checked !== false,
-    dark: exportDarkInput?.checked === true,
-  });
+  const settings = { grid: exportGridInput?.checked === true, dark: exportDarkInput?.checked === true };
+  try { localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats })); } catch { /* storage unavailable */ }
+  runExport(formats, settings);
 });
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => requestCircuitLoad(circuitSelectEl.value));

@@ -67,7 +67,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 14px;
+  font-size: 0.875rem;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -85,7 +85,7 @@ body {
   border: 1px solid #fcd34d;
   border-radius: 8px;
   color: #7c2d12;
-  font-size: 13px;
+  font-size: 0.8125rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
@@ -93,7 +93,7 @@ body {
   background: #fef3c7;
   padding: 1px 5px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .boot-banner.error {
@@ -196,6 +196,7 @@ button:focus-visible {
     width: 30px;
     padding: 0;
     justify-content: center;
+    gap: 0;
     font-size: 0;
   }
 }
@@ -204,7 +205,7 @@ button:focus-visible {
 .toolbar select,
 .toolbar input {
   height: 30px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .toolbar button {
@@ -215,6 +216,7 @@ button:focus-visible {
   width: 30px;
   padding: 0 !important;
   justify-content: center;
+  gap: 0 !important;
   font-size: 0 !important;
 }
 
@@ -341,7 +343,7 @@ button:focus-visible {
 .mode-control kbd {
   color: var(--text-dim);
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 10px;
+  font-size: 0.625rem;
   font-weight: 700;
 }
 
@@ -372,7 +374,7 @@ button:focus-visible {
    semantic accents make the electrical/free-text distinction readable at a
    glance. */
 .label-control {
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .net-label-control {
@@ -442,7 +444,7 @@ button:disabled {
 
 .confirm-dialog h2 {
   margin: 0 0 8px;
-  font-size: 17px;
+  font-size: 1.0625rem;
 }
 
 .confirm-dialog p {
@@ -474,7 +476,7 @@ button:disabled {
 .export-dialog legend {
   padding: 0 5px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .export-dialog label {
@@ -484,8 +486,8 @@ button:disabled {
 }
 
 .help-dialog {
-  width: min(48rem, calc(100vw - 32px));
-  height: min(80vh, 48rem);
+  width: min(64rem, calc(100vw - 32px));
+  height: min(86vh, 56rem);
   padding: 20px;
   overflow: hidden;
   box-sizing: border-box;
@@ -510,24 +512,105 @@ button:disabled {
 .help-dialog h2 {
   flex: 0 0 auto;
   margin: 0 0 12px;
-  font-size: 17px;
+  font-size: 1.0625rem;
 }
 
 .help-dialog input {
   flex: 0 0 auto;
   width: 100%;
+  height: 32px;
   margin: 0 0 12px;
   box-sizing: border-box;
 }
 
-.help-dialog pre {
+.help-content {
   flex: 1 1 auto;
   min-height: 0;
-  margin: 0;
   overflow: auto;
+  padding-right: 4px;
+}
+
+.help-sections {
+  columns: 2 22rem;
+  column-gap: 28px;
+}
+
+.help-section {
+  break-inside: avoid;
+  margin: 0 0 16px;
+}
+
+.help-section h3 {
+  margin: 0 0 6px;
+  padding-bottom: 4px;
   color: var(--text-dim);
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.help-row {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 42%) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 0.8125rem;
+}
+
+.help-keys {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.help-keys kbd,
+.help-keys code {
+  display: inline-block;
+  padding: 0 5px;
+  color: var(--text);
+  font: 600 0.6875rem/1.5 ui-monospace, Menlo, Consolas, monospace;
+}
+
+.help-keys kbd {
+  min-width: 1.4em;
+  text-align: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+.help-keys code {
+  padding: 0;
+  font-weight: 500;
+}
+
+.help-description {
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.help-commands summary {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.help-commands pre {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font: 0.75rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
+}
+
+.help-empty {
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 .help-dialog .dialog-actions {
@@ -610,7 +693,7 @@ button:disabled {
 
 .analysis-dock h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .analysis-dock .dialog-actions {
@@ -653,7 +736,7 @@ button:disabled {
 
 .analysis-context summary {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 
@@ -668,7 +751,7 @@ button:disabled {
   color: #a16207;
   background: color-mix(in srgb, #eab308 14%, transparent);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 html.dark .analysis-stale {
@@ -695,7 +778,7 @@ html.dark .analysis-stale {
 .analysis-dock label,
 .analysis-dock legend {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .analysis-dock label {
@@ -760,7 +843,7 @@ html.dark .analysis-stale {
 
 .analysis-dock .field-hint {
   margin-top: -4px;
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 
 .analysis-result {
@@ -794,7 +877,7 @@ html.dark .analysis-stale {
   color: var(--text-dim);
   background: transparent;
   cursor: pointer;
-  font: 700 11px/1.2 ui-sans-serif, system-ui, sans-serif;
+  font: 700 0.6875rem/1.2 ui-sans-serif, system-ui, sans-serif;
 }
 
 .analysis-tabs button:hover,
@@ -831,7 +914,7 @@ html.dark .analysis-stale {
   padding: 4px 2px;
   color: var(--text);
   font-family: "Latin Modern Math", "Computer Modern", "CMU Serif", "STIX Two Math", "Cambria Math", "DejaVu Serif", serif;
-  font-size: 19px;
+  font-size: 1.1875rem;
   line-height: 1.35;
   text-align: center;
   overflow-wrap: anywhere;
@@ -849,7 +932,7 @@ html.dark .analysis-stale {
 .analysis-equation-label {
   margin-bottom: 2px;
   color: var(--muted);
-  font: 700 11px/1.2 ui-sans-serif, system-ui, sans-serif;
+  font: 700 0.6875rem/1.2 ui-sans-serif, system-ui, sans-serif;
   letter-spacing: 0.05em;
   text-align: left;
   text-transform: uppercase;
@@ -870,7 +953,7 @@ html.dark .analysis-stale {
 
 .analysis-equation-unavailable {
   color: var(--muted);
-  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 0.75rem/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   text-align: left;
 }
 
@@ -896,7 +979,7 @@ html.dark .analysis-stale {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   border-radius: 6px;
-  font: 12px/1.45 system-ui, sans-serif;
+  font: 0.75rem/1.45 system-ui, sans-serif;
 }
 
 .analysis-dock .math-inline {
@@ -907,17 +990,17 @@ html.dark .analysis-stale {
   margin: 0;
   padding: 0;
   color: var(--text);
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 0.75rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
 }
 
 .analysis-netlist {
   margin: 0;
   padding: 0;
-  font-size: 12px;
+  font-size: 0.75rem;
   overflow: auto;
   color: var(--text);
-  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 0.6875rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
 }
 
@@ -969,6 +1052,15 @@ html.dark .analysis-stale {
   box-shadow: 0 1px 3px rgba(20, 24, 34, 0.08);
   cursor: crosshair;
   touch-action: none;
+}
+
+.canvas svg,
+.insert-menu-preview svg {
+  color: var(--svg-ink);
+}
+
+.canvas svg .grid-line {
+  stroke: var(--grid);
 }
 
 .canvas:focus-visible {
@@ -1043,7 +1135,7 @@ html.dark .analysis-stale {
 
 .block-info {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.45;
 }
 
@@ -1079,7 +1171,7 @@ html.dark .analysis-stale {
 .empty-state-title {
   margin: 0 0 6px 6px;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1110,7 +1202,7 @@ html.dark .analysis-stale {
   border: 1px solid var(--border);
   border-bottom-width: 2px;
   border-radius: 4px;
-  font: 600 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  font: 600 0.6875rem/1.4 ui-monospace, Menlo, Consolas, monospace;
 }
 
 /* ----- side panel ---------------------------------------------- */
@@ -1140,12 +1232,12 @@ html.dark .analysis-stale {
 
 .style-row-label {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .style-row select {
   height: 26px;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .style-text-controls {
@@ -1167,7 +1259,7 @@ html.dark .analysis-stale {
   border: 0;
   border-radius: 5px;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1;
 }
 
@@ -1262,7 +1354,7 @@ html.dark .analysis-stale {
 .panel-filter input {
   width: 100%;
   height: 28px;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 /* Sections share the column: each shrinks toward its own scrolling list
@@ -1316,7 +1408,7 @@ html.dark .analysis-stale {
   gap: 6px;
   min-height: 26px;
   margin: 0;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1365,7 +1457,7 @@ html.dark .analysis-stale {
   color: var(--text-dim);
   background: var(--bg-elevated);
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 0.625rem;
   font-weight: 600;
   letter-spacing: 0;
 }
@@ -1382,7 +1474,7 @@ html.dark .analysis-stale {
 .check-clear {
   height: 22px;
   padding: 0 6px;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
@@ -1403,7 +1495,7 @@ html.dark .analysis-stale {
   border-radius: 4px;
   border: 1px solid transparent;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.4;
 }
 
@@ -1437,7 +1529,7 @@ html.dark .analysis-stale {
 .row .rename-input {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--accent);
@@ -1449,7 +1541,7 @@ html.dark .analysis-stale {
 
 .row .meta {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 0.6875rem;
   flex: 1;
   min-width: 0;
   text-align: right;
@@ -1486,12 +1578,12 @@ html.dark .analysis-stale {
 
 .no-items {
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-style: italic;
 }
 
 .detail {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .detail-header {
@@ -1515,7 +1607,7 @@ html.dark .analysis-stale {
 
 .detail-kind {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 
 .detail-props {
@@ -1523,7 +1615,7 @@ html.dark .analysis-stale {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 2px 10px;
   margin: 0;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .detail-props dt {
@@ -1549,7 +1641,7 @@ html.dark .analysis-stale {
   text-align: left;
   padding: 2px 4px;
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1574,7 +1666,7 @@ html.dark .analysis-stale {
 
 .check-summary-body {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .check-summary-empty {
@@ -1629,7 +1721,7 @@ html.dark .analysis-stale {
   border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
   border-radius: 4px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: 0.6875rem;
   line-height: 1.35;
   text-align: left;
   text-overflow: ellipsis;
@@ -1697,7 +1789,7 @@ html.dark .analysis-stale {
 
 .status {
   padding: 5px 16px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-dim);
   border-bottom: 1px solid var(--border);
   font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -1762,7 +1854,7 @@ html.dark .analysis-stale {
   padding: 8px 16px 12px;
   overflow-y: auto;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.5;
   color: var(--text-dim);
   white-space: pre-wrap;
@@ -1785,7 +1877,7 @@ html.dark .analysis-stale {
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(20, 24, 34, 0.18);
   padding: 4px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   pointer-events: none;
   user-select: none;
 }
@@ -1819,8 +1911,6 @@ html.dark .analysis-stale {
   overflow: visible;
 }
 
-.insert-menu-preview svg [stroke="#111"] { stroke: currentColor; }
-.insert-menu-preview svg [fill="#111"] { fill: currentColor; }
 .insert-menu-preview svg [fill="#fff"] { fill: none; }
 
 .insert-menu-item kbd {
@@ -1829,7 +1919,7 @@ html.dark .analysis-stale {
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
   border-radius: 4px;
-  font: 600 10px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  font: 600 0.625rem/1.5 ui-monospace, Menlo, Consolas, monospace;
 }
 
 .insert-menu-item {
@@ -1844,7 +1934,7 @@ html.dark .analysis-stale {
 .insert-menu-category {
   padding: 7px 8px 3px;
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 0.625rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   line-height: 1.2;
@@ -1890,7 +1980,7 @@ html.dark .analysis-stale {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(20, 24, 34, 0.24);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .component-context-menu[hidden] { display: none; }
@@ -1941,7 +2031,7 @@ html.dark .analysis-stale {
 .context-item-shortcut {
   margin-left: 18px;
   color: var(--text-dim);
-  font: 11px/1 ui-monospace, Menlo, Consolas, monospace;
+  font: 0.6875rem/1 ui-monospace, Menlo, Consolas, monospace;
 }
 
 .component-context-menu button.context-item-danger {
@@ -1972,7 +2062,7 @@ html.dark .analysis-stale {
 .context-menu-note {
   padding: 5px 8px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 
 .context-menu-heading {
@@ -2073,21 +2163,11 @@ html.dark .boot-banner.error {
   color: #ffb4b4;
 }
 
-/* Recolor the inline SVG ink so symbols read as light-on-dark. The renderer
-   writes presentational attributes (stroke="#111" fill="#fff" ...) which CSS
-   rules override, so we target the exact attribute values and leave colored
-   overlays (blue selection halos, amber wire source, etc.) untouched. */
-html.dark .canvas svg [stroke="#111"] { stroke: #dde1e8; }
-html.dark .canvas svg [stroke="#292929"] { stroke: #dde1e8; }
-html.dark .canvas svg [stroke="#333"] { stroke: #dde1e8; }
-html.dark .canvas svg [stroke="#666"] { stroke: #9aa3b2; }
-html.dark .canvas svg [stroke="#e9e9e9"] { stroke: var(--grid); }
-html.dark .canvas svg [fill="#111"] { fill: #dde1e8; }
-html.dark .canvas svg [fill="#292929"] { fill: #dde1e8; }
-html.dark .canvas svg [fill="#333"] { fill: #dde1e8; }
-html.dark .canvas svg [fill="#666"] { fill: #9aa3b2; }
+/* Editor renders default ink as currentColor (themeInk), so symbols, wires,
+   and text follow --svg-ink in every theme without per-color overrides. Paper
+   fills and grid lines are the remaining semantic hooks. */
 html.dark .canvas svg [fill="#fff"] { fill: var(--paper); }
-html.dark .canvas svg .net-name { fill: #9aa3b2; }
+html.dark .canvas svg .net-name { fill: var(--svg-faint); }
 /* The blue cursor is intentionally subtle on paper; amber keeps it legible
    against the dark canvas without changing selection or wire overlay colors. */
 html.dark .editor-cursor-crosshair {
@@ -2117,12 +2197,12 @@ button.off {
   z-index: 5;
   top: 8px;
   left: 8px;
-  width: 38px;
+  width: 44px;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
+  align-items: center;
+  gap: 2px;
   padding: 4px;
   background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
   border: 1px solid var(--border);
@@ -2139,21 +2219,30 @@ button.off {
 }
 
 .mode-toolbar .mode-control {
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
   padding: 0;
   justify-content: center;
+  gap: 0;
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
   font-size: 0;
   line-height: 1;
-  border-radius: 5px;
+  border-radius: 7px;
+}
+
+.mode-toolbar .mode-control:hover {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 .mode-separator {
   flex: none;
-  width: 20px;
+  width: 24px;
   height: 1px;
-  margin: 2px auto;
+  margin: 3px auto;
   background: var(--border);
 }
 
@@ -2161,12 +2250,80 @@ button.off {
   display: none;
 }
 .mode-toolbar .mode-control .button-icon {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
 }
 
 .mode-toolbar .mode-control[aria-pressed="true"] {
-  box-shadow: 0 0 0 1px var(--accent), 0 2px 6px color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-color: transparent;
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.mode-toolbar .mode-control[data-action="delete"][aria-pressed="true"] {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent);
+}
+
+/* Tool selection feedback: colors ease in, a press dips, and the newly
+   active tool's icon gives one small pop. */
+.mode-toolbar .mode-control {
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 90ms ease;
+}
+
+.mode-toolbar .mode-control:active {
+  transform: scale(0.92);
+}
+
+.mode-toolbar .mode-control[aria-pressed="true"] .button-icon {
+  animation: tool-pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes tool-pop {
+  0% { transform: scale(0.8); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-toolbar .mode-control,
+  .mode-toolbar .mode-control[aria-pressed="true"] .button-icon,
+  .mode-toolbar #btn-mode-wire.route-flash {
+    transition: none;
+    animation: none;
+  }
+}
+
+/* A small corner mark tells that the Wire tool has a shape menu. */
+.mode-toolbar #btn-mode-wire {
+  position: relative;
+}
+
+.mode-toolbar #btn-mode-wire::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  border-left: 4px solid transparent;
+  border-bottom: 4px solid currentColor;
+  opacity: 0.55;
+}
+
+.mode-toolbar #btn-mode-wire.route-flash {
+  animation: route-flash 700ms ease-out;
+}
+
+@keyframes route-flash {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 80%, transparent); background: color-mix(in srgb, var(--accent) 45%, var(--bg-panel)); color: var(--accent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+
+.mode-toolbar .mode-control:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
 }
 
 .layout {
@@ -2187,7 +2344,7 @@ button.off {
   }
 
   .mode-toolbar .mode-control {
-    flex: 0 0 28px;
+    flex: 0 0 34px;
   }
 
   .mode-separator {

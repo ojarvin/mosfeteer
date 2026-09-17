@@ -47,11 +47,6 @@
       <button id="btn-analysis" data-icon="analysis" title="Open small-signal analysis (persistent context)">Analyze</button>
     </div>
 
-    <div class="toolbar-cluster segmented" id="wire-shape-controls" role="group" aria-label="Wire shape (F3)" data-doc-kind="schematic">
-      <button type="button" class="icon-button" data-icon="route-orthogonal" data-route-mode="orthogonal" aria-pressed="true" aria-label="Orthogonal wires" title="Orthogonal wires (F3 toggles)">Orthogonal</button>
-      <button type="button" class="icon-button" data-icon="route-diagonal" data-route-mode="diagonal" aria-pressed="false" aria-label="Diagonal wires" title="Diagonal wires (F3 toggles)">Diagonal</button>
-    </div>
-
     <div class="toolbar-cluster view-cluster" role="group" aria-label="View">
       <button id="btn-grid" class="icon-button" data-icon="grid" aria-pressed="true" aria-label="Grid" title="Show or hide the placement grid (#)">Grid</button>
       <button id="btn-crosshair" class="icon-button" data-icon="crosshair" aria-pressed="true" aria-label="Crosshair" title="Show or hide the crosshair (C)">Crosshair</button>
@@ -93,7 +88,7 @@
       </fieldset>
       <fieldset>
         <legend>Appearance</legend>
-        <label><input type="checkbox" name="grid" checked /> Include grid</label>
+        <label><input type="checkbox" name="grid" /> Include grid</label>
         <label><input type="checkbox" name="dark" /> Dark mode</label>
       </fieldset>
       <div class="dialog-actions">
@@ -106,8 +101,8 @@
   <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
     <form method="dialog">
       <h2 id="help-dialog-title">Keyboard and command help</h2>
-      <input id="help-search" type="search" placeholder="Search help" aria-label="Search help" autocomplete="off" spellcheck="false" />
-      <pre id="help-dialog-content"></pre>
+      <input id="help-search" type="search" placeholder="Search shortcuts and commands" aria-label="Search help" autocomplete="off" spellcheck="false" />
+      <div id="help-dialog-content" class="help-content"></div>
       <div class="dialog-actions">
         <button value="cancel" data-icon="x-circle">Close <kbd>Esc</kbd></button>
       </div>
@@ -122,7 +117,7 @@
         <button id="btn-mode-select" class="mode-control" data-icon="cursor" data-mode="select" aria-pressed="true" title="Select and edit objects (Esc)" aria-label="Select and edit objects">Select <kbd>Esc</kbd></button>
         <button id="btn-mode-place" class="mode-control" data-icon="plus" data-mode="place" data-doc-kind="schematic" aria-pressed="false" title="Place a schematic component or label (i)" aria-label="Place a schematic component or label">Place <kbd>i</kbd></button>
         <button id="btn-mode-place-block" class="mode-control" data-icon="plus" data-action="place-block" data-doc-kind="block" hidden aria-pressed="false" title="Place a block (i)" aria-label="Place a block">Block <kbd>i</kbd></button>
-        <button id="btn-mode-wire" class="mode-control" data-icon="wire" data-mode="wire" data-doc-kind="schematic" aria-pressed="false" title="Draw an electrical wire using the selected shape (w)" aria-label="Draw an electrical wire">Wire <kbd>w</kbd></button>
+        <button id="btn-mode-wire" class="mode-control" data-icon="wire" data-mode="wire" data-doc-kind="schematic" aria-pressed="false" title="Draw an electrical wire (w) · orthogonal shape · F3 or right-click to change" aria-label="Draw an electrical wire" aria-haspopup="menu">Wire <kbd>w</kbd></button>
         <button id="btn-mode-connector" class="mode-control" data-icon="wire" data-action="connector" data-doc-kind="block" hidden aria-pressed="false" title="Draw a block connector with an arrowhead (w)" aria-label="Draw a block connector">Connector <kbd>w</kbd></button>
         <button id="btn-mode-visual" class="mode-control" data-icon="box-select" data-mode="visual" aria-pressed="false" title="Select everything completely inside a box (v)" aria-label="Box select">Box select <kbd>v</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>

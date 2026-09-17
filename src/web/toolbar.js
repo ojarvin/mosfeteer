@@ -9,56 +9,64 @@ export const naturalCompare = new Intl.Collator(undefined, { numeric: true, sens
 // The editor's keyboard reference is data, not a second hand-written list in
 // the dialog. Keep this registry alongside the keyboard-facing toolbar.
 export const EDITOR_KEYMAP = Object.freeze([
-  ['normal', [
+  ['draw', [
+    ['i / I / A', 'insert mode (fuzzy-search component and label placement)'],
+    ['w', 'wire mode: click terminals or points; Enter commits'],
+    ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
+    ['terminal letters', 'pick or complete a terminal connection while wiring'],
+    ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
     ['L', 'persistent electrical net-label placement'],
-    ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
-    ['U / Ctrl/Cmd+Y', 'redo'],
     ['Shift+N', 'place one free annotation, then return to selection'],
     ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place a multi-point arrow; click vertices and press Enter'],
     ['b', 'place one two-point box, then return to selection'],
     ['l', 'persistent multi-point line annotation placement'],
-    ['t', 'edit the primary selected label (no-op otherwise)'],
+  ]],
+  ['edit', [
+    ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
+    ['U / Ctrl/Cmd+Y', 'redo'],
     ['Arrow keys', 'nudge selected objects or move the cursor (counts apply)'],
     ['r', 'rotate selected objects 90° clockwise'],
     ['Shift+r', 'mirror selected horizontally'],
     ['Ctrl/Cmd+r', 'mirror selected vertically'],
-    ['Ctrl/Cmd+i', 'toggle italic on selected labels'],
-    ['Ctrl/Cmd+b', 'toggle bold on selected labels'],
-    ['C', 'toggle crosshair visibility'],
-    ['x / Shift+x', 'check / save without checking'],
-    ['Ctrl/Cmd+S', 'save'],
-    ['Ctrl/Cmd+O', 'open a saved document'],
     ['m', 'move selected objects with connectivity; stays armed'],
     ['Shift+m', 'move selected objects without connected nets; stays armed'],
     ['c', 'copy a selected object or set; stays armed'],
     ['y / Ctrl/Cmd+C', 'copy the selected objects'],
+    ['p / Ctrl/Cmd+V', 'paste the copied set at the cursor'],
+    ['Ctrl/Cmd+Shift+V', 'paste style from one copied object'],
     ['Delete', 'persistent delete; click objects while armed'],
     ['dd', 'delete the selected object set'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
-    ['p / Ctrl/Cmd+V', 'paste the copied set at the cursor'],
-    ['Ctrl/Cmd+Shift+V', 'paste style from one copied object'],
-    ['D', 'toggle dark mode'],
-    ['w', 'wire mode: click terminals or points; Enter commits'],
-    ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
-    ['terminal letters', 'pick or complete a terminal connection while wiring'],
-    ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
-    ['Tab / Shift+Tab (selection)', 'cycle a selected component or label forward / backward'],
-    ['Ctrl/Cmd+A', 'select all components, labels, and non-empty nets'],
+    ['t', 'edit the primary selected label (no-op otherwise)'],
+    ['Ctrl/Cmd+i', 'toggle italic on selected labels'],
+    ['Ctrl/Cmd+b', 'toggle bold on selected labels'],
+  ]],
+  ['select', [
     ['Enter', 'select the label or component under the cursor'],
-    ['Tab / Shift+Tab (focus)', 'focus semantic canvas objects; Enter/Space selects one'],
-    ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
-    ['F / f', 'fit view to contents'],
-    ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],
-    ['F5', 'reload the application'],
-    ['#', 'toggle the placement grid'],
+    ['Ctrl/Cmd+A', 'select all components, labels, and non-empty nets'],
     ['v', 'visual mode: arrow keys grow a box; Enter selects; Esc cancels'],
-    ['i / I / A', 'insert mode (fuzzy-search component and label placement)'],
+    ['Tab / Shift+Tab (selection)', 'cycle a selected component or label forward / backward'],
+    ['Tab / Shift+Tab (focus)', 'focus semantic canvas objects; Enter/Space selects one'],
+    ['Esc', 'cancel the active interaction'],
+  ]],
+  ['view', [
+    ['F / f', 'fit view to contents'],
+    ['#', 'toggle the placement grid'],
+    ['C', 'toggle crosshair visibility'],
+    ['D', 'toggle dark mode'],
+    ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
+  ]],
+  ['file and console', [
+    ['Ctrl/Cmd+S', 'save'],
+    ['Ctrl/Cmd+O', 'open a saved document'],
+    ['x / Shift+x', 'check / save without checking'],
+    ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],
     [':', 'command line (for example, :connect R1.a R2.a)'],
     ['explain eval', 'group design-check issues with repair hints'],
     ['explain connect A.t B.t', 'dry-run a route and report path/bends/pin escapes'],
+    ['F5', 'reload the application'],
     ['?', 'show this help'],
-    ['Esc', 'cancel the active interaction'],
   ]],
   ['insert', [
     ['type', 'fuzzy-search names and aliases'],
@@ -133,8 +141,12 @@ const BLOCK_EDITOR_KEYMAP = Object.freeze([
   ]],
 ]);
 
+export function editorKeymap(kind = 'all') {
+  return kind === 'block' ? BLOCK_EDITOR_KEYMAP : EDITOR_KEYMAP;
+}
+
 export function editorKeymapText(kind = 'all') {
-  const keymap = kind === 'block' ? BLOCK_EDITOR_KEYMAP : EDITOR_KEYMAP;
+  const keymap = editorKeymap(kind);
   return keymap.flatMap(([section, entries]) => [
     `-- ${section} --`,
     ...entries.map(([key, description]) => `${key.padEnd(24)}${description}`),

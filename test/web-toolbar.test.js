@@ -35,7 +35,8 @@ test('keyboard help is generated from current bindings without Vim movement keys
   const help = editorKeymapText();
   assert.match(help, /Arrow keys/);
   assert.match(help, /console separator/);
-  assert.match(help, /normal --\n/);
+  assert.match(help, /-- draw --\n/);
+  assert.match(help, /-- file and console --\n/);
   assert.doesNotMatch(help, /\\n/);
   assert.match(help, /l\s+.*line annotation/);
   assert.match(help, /e\s+.*LaTeX equation label/);
