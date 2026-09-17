@@ -412,7 +412,7 @@ test('svgString renders bulk MOS terminal and channel connection', () => {
   const c = new Circuit();
   c.addComponent('nmosb', { x: 520, y: 0 });
   const svg = svgString(c);
-  assert.match(svg, /M -54\.65 0 L 0 0/, 'bulk graphic joins the channel at its terminal');
+  assert.match(svg, /M -56\.98 0 L 0 0/, 'bulk graphic starts inside the channel bar and runs to its terminal');
   assert.match(svg, /<text[^>]*>M/, 'bulk MOS owned label renders');
 });
 test('textbook symbols render (sources, opamp, gates, ports)', () => {
@@ -528,4 +528,27 @@ test('themeInk renders default ink as currentColor while exports keep literal co
   assert.doesNotMatch(themed, /(stroke|fill)="#111"/);
   assert.match(themed, /stroke="currentColor"/);
   assert.match(themed, /#d96c75/);
+});
+
+test('pin seam patches only join identical strokes, sized to the thinnest one', () => {
+  const patches = (circuit) => [...svgString(circuit, { terminals: false, junctions: false })
+    .matchAll(/<path class="pin-contact" d="M ([^ ]+) ([^ ]+) [^"]*" fill="([^"]+)"/g)]
+    .map((m) => ({ at: `${Number(m[1]) + 0.6},${Number(m[2])}`, fill: m[3] }));
+
+  const c = new Circuit();
+  c.addComponent('nmos', { x: 400, y: 0 });
+  c.addComponent('input', { x: 280, y: 0 }); // its pin lands on the gate at (280,0)
+  c.addComponent('resistor', { x: 800, y: 0 });
+  c.addComponent('resistor', { x: 800, y: 400 });
+  c.addComponent('resistor', { x: 1600, y: 0 }); // unconnected
+  const wired = c.connect('R1.b', 'R2.b');
+  const plain = patches(c).map((patch) => patch.at).sort();
+  assert.deepEqual(plain, ['280,-3', '880,-3', '880,397'].sort(), 'one patch per connected point, half the default width tall');
+
+  c.components.get('VI1').style = { color: 'yellow' };
+  assert.ok(!patches(c).some((patch) => patch.at === '280,-3'), 'a yellow pin on a black gate gets no patch');
+
+  wired.style = { width: 'thin' };
+  const thin = patches(c).filter((patch) => patch.at.startsWith('880,'));
+  assert.deepEqual(thin.map((patch) => patch.at).sort(), ['880,-1.5', '880,398.5'], 'thin wire: the patch fits the 3-unit stroke');
 });

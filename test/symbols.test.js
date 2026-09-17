@@ -118,7 +118,7 @@ test('MOS symbols expose channel geometry and bulk variants', () => {
     assert.equal(def.defaultMirrorY, type.startsWith('pmos') ? true : undefined, `${type} default mirror`);
     const sourceLead = def.graphics.find((g) => g.kind === 'path' && g.d.endsWith('L 0 80'));
     assert.ok(sourceLead, `${type} source lead reaches its terminal`);
-    const bulkPath = def.graphics.find((g) => g.kind === 'path' && g.d === 'M -54.65 0 L 0 0');
+    const bulkPath = def.graphics.find((g) => g.kind === 'path' && g.d === 'M -56.98 0 L 0 0');
     assert.equal(Boolean(bulkPath), bulk, `${type} bulk path reaches its terminal`);
   }
 });

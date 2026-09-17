@@ -14,10 +14,12 @@ function mosGraphics(sourceArrow, bulk) {
     { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
     { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
     { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
-    { kind: 'path', d: 'M -54.65 27.91 L 0 27.91 L 0 80', style: 'symbol' },
+    // Channel-side stubs start inside the channel bar (like the drain), so the
+    // butt end never meets the bar edge and leaves an anti-aliased seam.
+    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
     sourceArrow,
   ];
-  if (bulk) graphics.push({ kind: 'path', d: 'M -54.65 0 L 0 0', style: 'symbol' });
+  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
   return graphics;
 }
 

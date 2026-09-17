@@ -1,7 +1,7 @@
 import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
-import { fontAttrs, resolveColor, strokeAttrs, styleAttrs, themeInkSvg } from './style.js';
+import { fontAttrs, resolveColor, strokeAttrs, styleAttrs, SYMBOL, themeInkSvg } from './style.js';
 import { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 
 function escapeSvg(value) {
@@ -455,6 +455,13 @@ export function svgString(circuit, opts = {}) {
   // Middle layer: wires deliberately sit behind components and labels. Their
   // rounded caps still overlap terminal leads at the exact electrical point.
   const nets = [...circuit.nets.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
+  // Style of every drawn wire end, keyed by point, for the pin seam patches.
+  const wireEnds = new Map();
+  const noteWireEnd = (p, style) => {
+    const key = `${p.x},${p.y}`;
+    if (!wireEnds.has(key)) wireEnds.set(key, []);
+    wireEnds.get(key).push(style);
+  };
   for (const net of nets) {
     // Fixed paths are already the complete authored geometry. Keep the legacy
     // managed fallback below so multi-terminal managed nets retain their old
@@ -469,6 +476,8 @@ export function svgString(circuit, opts = {}) {
     const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
     for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
+      noteWireEnd(pts[0], net.wireStyles?.[`${branch}:1`] || net.style);
+      noteWireEnd(pts[pts.length - 1], net.wireStyles?.[`${branch}:${pts.length - 1}`] || net.style);
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
       const wireHelp = net.routingMode === 'fixed'
         ? 'Fixed/direct wire — drag vertices, segments, or junctions'
@@ -507,6 +516,39 @@ export function svgString(circuit, opts = {}) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
     }
+  }
+
+  // A connected pin's lead ends with a butt cap exactly at its terminal, where
+  // a wire or another pin's lead begins; the two anti-aliased ends leave a
+  // faint seam across the stroke. Where every stroke meeting there looks the
+  // same (one color, solid), a thin plus-shaped patch covers that seam in
+  // either axis, sized to the thinnest stroke so it never shows outside it.
+  // Different colors meet at a visible boundary anyway, so they get no patch.
+  // The patch is deliberately thin: any overlap brightens the shared stroke
+  // edges, and a stroke-sized square outlined a visible box.
+  const strokeWidth = (style) => (style?.width === 'thin' ? 3 : style?.width === 'thick' ? 9 : SYMBOL.width);
+  const contacts = new Map();
+  for (const net of circuit.nets.values()) {
+    for (const { comp, term } of net.terminals) {
+      const c = circuit.components.get(comp);
+      if (!c || c.type === 'solder') continue;
+      const p = c.terminalWorld(term);
+      const key = `${p.x},${p.y}`;
+      if (!contacts.has(key)) contacts.set(key, { p, styles: [], ghost: true });
+      const contact = contacts.get(key);
+      contact.styles.push(c.style);
+      contact.ghost = contact.ghost && (ghostRefs.has(c.refdes) || ghostNets.has(net.id));
+    }
+  }
+  const bar = 0.6;
+  for (const [key, { p, styles: pinStyles, ghost }] of contacts) {
+    const styles = [...pinStyles, ...(wireEnds.get(key) || [])];
+    if (styles.length < 2) continue;
+    const colors = new Set(styles.map((style) => resolveColor(style?.color || '#111').toLowerCase()));
+    if (colors.size !== 1 || styles.some((style) => style?.lineStyle && style.lineStyle !== 'solid')) continue;
+    const arm = Math.min(...styles.map(strokeWidth)) / 2;
+    const d = `M ${fmt(p.x - bar)} ${fmt(p.y - arm)} h ${fmt(2 * bar)} v ${fmt(arm - bar)} h ${fmt(arm - bar)} v ${fmt(2 * bar)} h ${fmt(bar - arm)} v ${fmt(arm - bar)} h ${fmt(-2 * bar)} v ${fmt(bar - arm)} h ${fmt(bar - arm)} v ${fmt(-2 * bar)} h ${fmt(arm - bar)} Z`;
+    parts.push(`<path class="pin-contact" d="${d}" fill="${escapeSvg(resolveColor(styles[0]?.color || '#111'))}" stroke="none"${ghost ? ' opacity="0.34"' : ''}/>`);
   }
 
   // Junction dots are placed by the routing algorithm as actual `solder`
