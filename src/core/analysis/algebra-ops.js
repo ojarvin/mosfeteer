@@ -18,7 +18,7 @@ import {
   symbol as makeSymbol,
 } from './rational.js';
 
-const DEFAULT_MAX_OPERATIONS = 50000;
+const DEFAULT_MAX_OPERATIONS = 200000;
 const INFINITY_NAMES = new Set(['inf', 'infinity', 'infty', '∞', '\\infty']);
 
 function isRational(value) {

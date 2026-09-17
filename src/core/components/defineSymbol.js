@@ -11,7 +11,31 @@ import { GRID } from '../grid.js';
  */
 export function defineSymbol(def) {
   validateSymbol(def);
-  return Object.freeze({ ...def, terminals: Object.freeze(def.terminals.map(Object.freeze)) });
+  return Object.freeze({
+    ...def,
+    terminals: Object.freeze(def.terminals.map(Object.freeze)),
+    graphics: markTerminalLeads(def.graphics || [], def.terminals),
+  });
+}
+
+/**
+ * An open absolute path that starts or ends on a terminal is a pin lead. The
+ * renderer draws leads in the same single ink path as wires, so a lead and
+ * the wire meeting it at the terminal are rasterized once, without a seam or
+ * doubled anti-aliased edges.
+ */
+export function markTerminalLeads(graphics, terminals) {
+  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
+  return graphics.map((g) => {
+    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
+    const d = String(g.d || '').trim();
+    // Only absolute move/line/cubic paths: their first and last numbers are points.
+    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
+    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+    if (numbers.length < 4) return g;
+    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
+    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
+  });
 }
 
 export function validateSymbol(def) {

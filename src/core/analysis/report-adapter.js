@@ -345,8 +345,8 @@ function equationEntries(reports) {
   if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
   add('DC gain', reports.transfer.dcGain);
   const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', { ok: true, equation: frequency.poles.map((root) => root.equation).join('\n') });
-  if (frequency?.zeros?.length) add('Zeros', { ok: true, equation: frequency.zeros.map((root) => root.equation).join('\n') });
+  if (frequency?.poles?.length) add('Poles', { ok: true, equation: frequency.poles.map((root) => root.equation).join(',\\quad ') });
+  if (frequency?.zeros?.length) add('Zeros', { ok: true, equation: frequency.zeros.map((root) => root.equation).join(',\\quad ') });
   return entries;
 }
 

@@ -455,6 +455,11 @@ function failure(stage, error, details = {}) {
  * Run the exact numeric/symbolic v2 pipeline. The returned values are raw
  * solved query values; reduction, assumptions, and presentation belong later.
  */
+function deviceOption(devices, refdes, name) {
+  const device = devices instanceof Map ? devices.get(refdes) : devices?.[refdes];
+  return device?.[name] === true;
+}
+
 export function buildExactAnalysisPipeline(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   const ops = validateMnaOps(options.ops || numberOps());
@@ -468,9 +473,20 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     diagnostics: converted.diagnostics,
   });
 
+  // Ignoring channel-length modulation (r_o -> infinity) is an open circuit:
+  // the selected devices' output resistances are left out of the model.
+  const omittedOutputResistances = [];
+  const primitives = converted.primitives.filter((primitive) => {
+    const match = primitive.kind === 'resistor' && primitive.metadata?.device === 'mos'
+      && /^(.*)\.ro$/.exec(String(primitive.id));
+    if (!match || !deviceOption(options.deviceAssumptions, match[1], 'roInfinity')) return true;
+    omittedOutputResistances.push(match[1]);
+    return false;
+  });
+
   const miller = options.millerApproximation === false
-    ? { primitives: converted.primitives, applied: [] }
-    : applyMillerApproximation(converted.primitives, context, options, ops);
+    ? { primitives, applied: [] }
+    : applyMillerApproximation(primitives, context, options, ops);
   const exactPrimitives = miller.primitives;
   let mnaPrimitives;
   try {
@@ -553,6 +569,7 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     exactPrimitives,
     mnaPrimitives,
     millerSubstitutions: miller.applied,
+    omittedOutputResistances,
     retainedFeedbackNetworks: miller.retained || [],
     networkReductionProofs: reduction.proofs,
     coupled,

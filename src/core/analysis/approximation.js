@@ -1,3 +1,4 @@
+import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import {
   add,
   equals,
@@ -339,15 +340,17 @@ function outputScales(options, records, global) {
   return { scales, hasProof };
 }
 
-function firstOrderDenominator(current, options) {
+function firstOrderDenominator(input, options) {
+  // Truncate the true denominator, not one inflated by a shared factor.
+  const current = cancelCommonPolynomialFactor(input, { variable: input.variable });
   const coefficients = polynomialCoefficients(current.denominator, current.variable, options.rational || {});
-  if (!coefficients || coefficients.length === 0 || coefficients[0].power <= 1) return null;
+  if (!coefficients || coefficients.length === 0 || coefficients[0].power <= 1) return current === input ? null : current;
   const kept = coefficients.filter(({ power: exponent }) => exponent <= 1);
   if (!kept.length) return null;
   const denominator = add(kept.map(({ power: exponent, coefficient }) => (
     exponent === 0 ? coefficient : multiply(coefficient, power(symbol(current.variable), exponent))
   )));
-  if (equals(denominator, current.denominator)) return null;
+  if (equals(denominator, current.denominator)) return current === input ? null : current;
   return rationalFunction(current.numerator, denominator, { variable: current.variable });
 }
 

@@ -18,7 +18,7 @@ const MOS_CURRENT_SOURCE_MODELS = new Set([
 ]);
 const TRIODE_MODELS = new Set(['triode', 'rds', 'r-ds', 'resistor']);
 const IGNORED_TYPES = new Set([
-  'ground', 'supply', 'vcm', 'port', 'port_filled',
+  'ground', 'supply', 'vcm', 'port',
   'input', 'output', 'inputoutput', 'solder',
 ]);
 

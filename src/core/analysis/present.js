@@ -357,7 +357,18 @@ function precedence(value) {
   return PRECEDENCE.atom;
 }
 
+function renderQuadraticFormula(value, context, options) {
+  const linear = value.numerator?.linear;
+  const root = `\\sqrt{${render(value.discriminant, 0, context, options)}}`;
+  const sign = value.sign < 0 ? '-' : '+';
+  const numerator = isZero(linear)
+    ? `${sign === '-' ? '-' : ''}${root}`
+    : `${render(linear, PRECEDENCE.sum, context, options)} ${sign} ${root}`;
+  return `\\frac{${numerator}}{${render(value.denominator, 0, context, options)}}`;
+}
+
 function render(value, parentPrecedence, context, options = {}) {
+  if (value?.kind === 'quadratic-formula') return renderQuadraticFormula(value, context, options);
   let text;
   const proof = options.equivalences?.get?.(structuralKey(value));
   if (proof?.proven === true && ['quotient', 'sum'].includes(proof.kind)) {

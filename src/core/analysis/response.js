@@ -135,39 +135,118 @@ function polynomialExpression(coefficients, variable) {
   )));
 }
 
+function isZeroExpression(value) {
+  return value?.kind === 'number' && value.numerator === 0n;
+}
+
+function integerSquareRoot(value) {
+  if (value < 0n) return null;
+  if (value < 2n) return value;
+  let x = BigInt(Math.floor(Math.sqrt(Number(value))));
+  while (x * x > value) x -= 1n;
+  while ((x + 1n) * (x + 1n) <= value) x += 1n;
+  return x * x === value ? x : null;
+}
+
+/** Exact square root of a monomial with even exponents (e.g. `4 C_M^2 g_m^2`), or null. */
+function monomialSquareRoot(value) {
+  if (value.kind === 'number') {
+    const numerator = integerSquareRoot(value.numerator);
+    const denominator = integerSquareRoot(value.denominator);
+    return numerator === null || denominator === null ? null : rational(numerator, denominator);
+  }
+  if (value.kind === 'symbol') return null;
+  if (value.kind === 'power') {
+    return value.exponent % 2 === 0 && value.base.kind !== 'number' ? power(value.base, value.exponent / 2) : null;
+  }
+  if (value.kind === 'multiply') {
+    const roots = value.factors.map(monomialSquareRoot);
+    return roots.some((root) => root === null) ? null : multiply(roots);
+  }
+  return null;
+}
+
+/** Cancel common factors of a root fraction (as a rational function). */
+function rootValue(numerator, denominator, variable) {
+  return rationalFunction(numerator, denominator, { variable });
+}
+
+/** A root location expression from its cancelled fraction. */
+function rootExpression(numerator, denominator, variable) {
+  const value = rootValue(numerator, denominator, variable);
+  return isOneExpression(value.denominator) ? value.numerator : quotient(value.numerator, value.denominator);
+}
+
 function rootRecords(coefficients, role, variable) {
   if (!coefficients?.length) return [];
   const degree = coefficients[0].power;
   if (degree === 0) return [];
   const polynomial = polynomialExpression(coefficients, variable);
   const base = { role, order: degree, polynomial, coefficients };
+  // Roots at the origin are exact and need no formula: s^k * P(s).
+  const valuation = coefficients[coefficients.length - 1].power;
+  if (valuation > 0) {
+    const reduced = coefficients.map(({ power: exponent, coefficient }) => ({ power: exponent - valuation, coefficient }));
+    const origin = Array.from({ length: valuation }, () => ({ ...base, kind: 'root', root: ZERO }));
+    return [...origin, ...rootRecords(reduced, role, variable)]
+      .map((record, index) => ({ ...record, ...base, index }));
+  }
   if (degree === 1) {
     const linear = coefficientAt(coefficients, 1);
     const constant = coefficientAt(coefficients, 0);
-    return [{ ...base, index: 0, kind: 'root', root: quotient(negate(constant), linear) }];
+    return [{ ...base, index: 0, kind: 'root', root: rootExpression(negate(constant), linear, variable) }];
   }
   if (degree === 2) {
     const a = coefficientAt(coefficients, 2);
     const b = coefficientAt(coefficients, 1);
     const c = coefficientAt(coefficients, 0);
     const discriminant = add(multiply(b, b), negate(multiply(integer(4), a, c)));
-    return [-1, 1].map((sign, index) => ({
-      ...base,
-      index,
-      kind: 'quadratic-root',
-      root: {
-        kind: 'quadratic-formula',
-        sign,
-        numerator: { kind: 'quadratic-numerator', linear: negate(b), discriminant },
-        denominator: multiply(integer(2), a),
-        a,
-        b,
-        c,
-        discriminant,
-      },
-    }));
+    // Monic form s^2 + B s + C, B = b/a and C = c/a, both cancelled, so
+    // s = (-B_n +- sqrt(B_n^2 - 4 C B_d^2)) / (2 B_d).
+    const monicLinear = rootValue(b, a, variable);
+    const monicConstant = rootValue(c, a, variable);
+    const reducedDiscriminant = rootValue(
+      add(
+        multiply(monicLinear.numerator, monicLinear.numerator, monicConstant.denominator),
+        negate(multiply(integer(4), monicConstant.numerator, power(monicLinear.denominator, 2))),
+      ),
+      monicConstant.denominator,
+      variable,
+    );
+    const monic = isOneExpression(reducedDiscriminant.denominator);
+    const shownDiscriminant = monic ? reducedDiscriminant.numerator : discriminant;
+    const linear = monic ? negate(monicLinear.numerator) : negate(b);
+    const denominator = monic ? multiply(integer(2), monicLinear.denominator) : multiply(integer(2), a);
+    const squareRoot = monomialSquareRoot(shownDiscriminant);
+    return [-1, 1].map((sign, index) => {
+      if (squareRoot) {
+        return {
+          ...base, index, kind: 'root',
+          root: rootExpression(add(linear, sign < 0 ? negate(squareRoot) : squareRoot), denominator, variable),
+        };
+      }
+      return {
+        ...base,
+        index,
+        kind: 'quadratic-root',
+        root: {
+          kind: 'quadratic-formula',
+          sign,
+          numerator: { kind: 'quadratic-numerator', linear, discriminant: shownDiscriminant },
+          denominator,
+          a,
+          b,
+          c,
+          discriminant: shownDiscriminant,
+        },
+      };
+    });
   }
   return [{ ...base, index: 0, kind: 'polynomial' }];
+}
+
+function isOneExpression(value) {
+  return value?.kind === 'number' && value.numerator === 1n && value.denominator === 1n;
 }
 
 function responseRecord(value, options = {}) {

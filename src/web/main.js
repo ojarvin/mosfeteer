@@ -10,7 +10,7 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
@@ -7200,7 +7200,7 @@ analysisButton?.addEventListener('click', () => {
 
 const SMALL_SIGNAL_TRANSISTOR_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 const SMALL_SIGNAL_RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
-const SMALL_SIGNAL_PORT_TYPES = new Set(['input', 'output', 'inputoutput', 'port', 'port_filled']);
+const SMALL_SIGNAL_PORT_TYPES = INTERFACE_PIN_TYPES;
 
 /**
  * Resolve the component scope for a side-panel analysis menu. A context menu
@@ -9210,7 +9210,7 @@ function inlineEditLabel(label, options = {}) {
     } else if (applyText && v && v !== label.text) {
       const owner = label.owner ? circuit.components.get(label.owner) : null;
       const ordinaryOwner = owner && !isReferenceMarker(owner)
-        && !['input', 'output', 'inputoutput'].includes(owner.type)
+        && !INTERFACE_PIN_TYPES.has(owner.type)
         && !label.math;
       if (ordinaryOwner) {
         const canonical = normalizeComponentRefdes(v);
@@ -9836,7 +9836,7 @@ const PLACEMENT_LABELS = {
   npn: 'NPN transistor', pnp: 'PNP transistor',
   ground: 'Ground', vcm: 'VCM (Common potential)', supply: 'Supply (VDD/VCC)',
   input: 'Input port', output: 'Output port', inputoutput: 'Input/output port',
-  port: 'Port', port_filled: 'Filled port',
+  port: 'Port',
   current_source: 'Current source', voltage_source: 'Voltage source',
   opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', inverter: 'Inverter', buffer: 'Buffer',
   adc: 'ADC', dac: 'DAC',
@@ -9868,7 +9868,7 @@ const INSERT_CATEGORY_RULES = [
   ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
   ['Sources & power', /^(current_source|voltage_source|supply|ground|vcm)$/],
   ['Logic', /^(opamp|opamp_diff|inverter|buffer|.*_gate|adc|dac)$/],
-  ['Interfaces / ports', /^(input|output|inputoutput|port|port_filled)$/],
+  ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Blocks / shells', /^block$/],
 ];
 

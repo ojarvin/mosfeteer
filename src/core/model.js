@@ -3,7 +3,7 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
 import { balancedCrossCoupling, balancedPaths, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
-import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
+import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -434,6 +434,9 @@ export function normalizeMathSource(value) {
  * rename fields (`M_{1}`). Keep the identifier canonical while letting the
  * label renderer provide the subscript typography.
  */
+/** Interface pins: an owned name label that also names the pin's net. */
+export const INTERFACE_PIN_TYPES = new Set(['input', 'output', 'inputoutput', 'port']);
+
 export function normalizeComponentRefdes(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
@@ -1464,10 +1467,10 @@ export class Circuit {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) {
       throw new Error(`invalid refdes "${next}"`);
     }
-    const interfacePin = ['input', 'output', 'inputoutput'].includes(component.type);
+    const interfacePin = INTERFACE_PIN_TYPES.has(component.type);
     const interfaceNet = interfacePin ? this.netOfTerminal({ comp: current, term: 'p' }) : null;
     const interfacePinCount = interfaceNet
-      ? interfaceNet.terminals.filter(({ comp }) => ['input', 'output', 'inputoutput'].includes(this.components.get(comp)?.type)).length
+      ? interfaceNet.terminals.filter(({ comp }) => INTERFACE_PIN_TYPES.has(this.components.get(comp)?.type)).length
       : 0;
     const referenceMarker = isReferenceMarker(component);
     if (next === current) {
@@ -1801,7 +1804,7 @@ export class Circuit {
     // representations synchronized regardless of which context menu changed
     // them. Clearing a port role also clears the role on its attached net;
     // `setNetAnalysis` below propagates that clear to any sibling ports.
-    if (hasOwn('role') && ['input', 'output', 'inputoutput', 'port', 'port_filled'].includes(component.type)) {
+    if (hasOwn('role') && INTERFACE_PIN_TYPES.has(component.type)) {
       for (const terminal of component.terminalDefs) {
         const net = this.netOfTerminal({ comp: component.refdes, term: terminal.name });
         if (net) this.setNetAnalysis(net, {
@@ -1830,7 +1833,7 @@ export class Circuit {
       const syncedRole = net.analysis.role || (net.analysis.acGround ? 'dc-bias' : null);
       for (const terminal of net.terminals) {
         const component = this.components.get(terminal.comp);
-        if (!component || !['input', 'output', 'inputoutput', 'port', 'port_filled'].includes(component.type)) continue;
+        if (!component || !INTERFACE_PIN_TYPES.has(component.type)) continue;
         component.analysis = { ...component.analysis, role: syncedRole };
       }
     }
@@ -1970,7 +1973,7 @@ export class Circuit {
     const net = this._resolveNet(netOrId);
     const pins = net.terminals
       .map(({ comp }) => this.components.get(comp))
-      .filter((component) => component && ['input', 'output', 'inputoutput'].includes(component.type));
+      .filter((component) => component && INTERFACE_PIN_TYPES.has(component.type));
     if (!pins.length) return net;
     if (enforceName) {
       const firstLabel = this.labelOf(pins[0].refdes);
@@ -2000,7 +2003,7 @@ export class Circuit {
 
   _syncInterfacePinLabel(refdes, text) {
     const component = this.components.get(refdes);
-    if (!component || !['input', 'output', 'inputoutput'].includes(component.type)) return false;
+    if (!component || !INTERFACE_PIN_TYPES.has(component.type)) return false;
     const net = this.netOfTerminal({ comp: refdes, term: 'p' });
     if (!net) return false;
     const name = canonicalNetName(text);
@@ -3056,7 +3059,7 @@ export class Circuit {
 
   _syncAnalysisAttributes(net) {
     if (!net) return net;
-    const portTypes = new Set(['input', 'output', 'inputoutput', 'port', 'port_filled']);
+    const portTypes = INTERFACE_PIN_TYPES;
     const ports = net.terminals
       .map((terminal) => this.components.get(terminal.comp))
       .filter((component) => component && portTypes.has(component.type));
@@ -3688,7 +3691,18 @@ export class Circuit {
     const terminals = net.terminals
       .map((t) => this.getComponent(t.comp)?.terminalWorld(t.term))
       .filter(Boolean);
-    const styledSegments = Object.entries(net.wireStyles || {})
+    const styledSegments = this._styledSegments(net, paths);
+    const reductionAnchors = styledSegments.flatMap(({ a, b }) => [a, b]);
+    const reduced = reduceBranches(paths, [...terminals, ...reductionAnchors], net.allowDiagonal);
+    if (!reduced.length || samePolylineSet(paths, reduced)) return;
+    this._installRestyledBranches(net, reduced, styledSegments);
+    net.junctions = this._netJunctions(net, net.branches);
+  }
+
+  /** Styled segments of `paths`, keyed by their endpoints so styles survive
+   *  a change in how the same geometry is split into branches. */
+  _styledSegments(net, paths) {
+    return Object.entries(net.wireStyles || {})
       .map(([key, style], order) => {
         const match = key.match(/^(\d+):(\d+)$/);
         if (!match) return null;
@@ -3700,15 +3714,15 @@ export class Circuit {
       })
       .filter(Boolean)
       .sort((a, b) => a.branch - b.branch || a.segment - b.segment || a.order - b.order);
-    const reductionAnchors = styledSegments.flatMap(({ a, b }) => [a, b]);
-    const reduced = reduceBranches(paths, [...terminals, ...reductionAnchors], net.allowDiagonal);
-    if (!reduced.length || samePolylineSet(paths, reduced)) return;
+  }
+
+  _installRestyledBranches(net, paths, styledSegments) {
     const onSegment = (p, a, b) =>
       (b.x - a.x) * (p.y - a.y) === (b.y - a.y) * (p.x - a.x) &&
       p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) &&
       p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
     const rebuiltStyles = {};
-    reduced.forEach((path, branch) => {
+    paths.forEach((path, branch) => {
       for (let i = 1; i < path.length; i++) {
         const match = styledSegments.find(({ a, b }) =>
           onSegment(path[i - 1], a, b) && onSegment(path[i], a, b));
@@ -3716,8 +3730,25 @@ export class Circuit {
       }
     });
     net.wireStyles = rebuiltStyles;
-    net.branches = reduced.map((p) => clonePath(p, net.allowDiagonal));
-    net.route = clonePath(reduced[0], net.allowDiagonal);
+    net.branches = paths.map((p) => clonePath(p, net.allowDiagonal));
+    net.route = clonePath(paths[0], net.allowDiagonal);
+  }
+
+  /** Topology growth keeps authored branches, but a new branch that merely
+   *  continues an old one at a plain end point joins it, so piecewise wiring
+   *  does not leave short split stubs. */
+  _joinGrownBranches(net) {
+    const paths = this._explicitBranches(net);
+    if (paths.length < 2) return;
+    const styledSegments = this._styledSegments(net, paths);
+    const anchors = [
+      ...net.terminals.map((t) => this.getComponent(t.comp)?.terminalWorld(t.term)).filter(Boolean),
+      ...(net.junctions || []),
+      ...styledSegments.flatMap(({ a, b }) => [a, b]),
+    ];
+    const joined = joinBranchEnds(paths, anchors, net.allowDiagonal);
+    if (samePolylineSet(paths, joined)) return;
+    this._installRestyledBranches(net, joined, styledSegments);
     net.junctions = this._netJunctions(net, net.branches);
   }
 
@@ -4154,6 +4185,7 @@ export class Circuit {
     net.route = branches.length ? clonePath(branches[0], net.allowDiagonal) : null;
     net.junctions = this._netJunctions(net, branches);
     if (!preserveExistingGeometry) this._reduceNet(net);
+    else this._joinGrownBranches(net);
     if (mergingExisting && !this._pathsConnectedToTerminals(net)) {
       this._restoreNetTopology(topology);
       throw new Error('unable to route wire safely');
@@ -4267,6 +4299,7 @@ export class Circuit {
     net.route = branches.length ? clonePath(branches[0], net.allowDiagonal) : null;
     net.junctions = this._netJunctions(net, branches);
     if (!preserveExistingGeometry) this._reduceNet(net);
+    else this._joinGrownBranches(net);
     this._syncReferenceMarkerNetName(net);
     this._syncInterfacePinLabels(net, { enforceName: true });
     this._inferCrossCoupling(new Set([net]));
@@ -4858,7 +4891,8 @@ export class Circuit {
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit._loading = true;
     for (const c of data.components) {
-      circuit.addComponent(c.type, {
+      // The filled terminal marker was folded into the one labelled port.
+      circuit.addComponent(c.type === 'port_filled' ? 'port' : c.type, {
         refdes: c.refdes,
         value: c.value,
         x: c.transform.x,
@@ -4962,6 +4996,11 @@ export class Circuit {
       }
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
       if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld())) circuit.labels.delete(label.id);
+    }
+    // Ports predating their owned name label get one, like the boxed ports.
+    for (const component of circuit.components.values()) {
+      if (component.type !== 'port' || circuit.labelOf(component.refdes)) continue;
+      try { circuit._ensureComponentInstanceLabel(component); } catch { /* label id in use */ }
     }
     // Restore direct pin contacts that are not represented by wire geometry.
     if (!data.topologyOnly) circuit.connectCoincident();

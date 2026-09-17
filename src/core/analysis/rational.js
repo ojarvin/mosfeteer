@@ -1,7 +1,7 @@
 const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
 const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
 const MINUS_ONE = Object.freeze({ kind: 'number', numerator: -1n, denominator: 1n });
-const DEFAULT_MAX_OPERATIONS = 50000;
+const DEFAULT_MAX_OPERATIONS = 200000;
 
 function gcd(a, b) {
   let x = a < 0n ? -a : a;

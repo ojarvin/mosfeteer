@@ -1,4 +1,5 @@
 import { applyApproximations } from './approximation.js';
+import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { createRationalOps } from './algebra-ops.js';
 import { buildExactAnalysisPipeline } from './pipeline.js';
 import { presentDiagnostics } from './diagnostics.js';
@@ -99,8 +100,10 @@ function normaliseOptions(options, circuit, symbolic, ops) {
     : {};
   const body = firstDefined(
     options.ignoreBodyEffect,
+    options.neglectBodyEffect,
     options.gmb0,
     assumptions.ignoreBodyEffect,
+    assumptions.neglectBodyEffect,
     assumptions.gmb0,
     DEFAULTS.ignoreBodyEffect,
   );
@@ -113,9 +116,11 @@ function normaliseOptions(options, circuit, symbolic, ops) {
   );
   const output = firstDefined(
     options.ignoreChannelLengthModulation,
+    options.neglectChannelLengthModulation,
     options.roInfinity,
-    options.assumptions?.ignoreChannelLengthModulation,
-    options.assumptions?.roInfinity,
+    assumptions.ignoreChannelLengthModulation,
+    assumptions.neglectChannelLengthModulation,
+    assumptions.roInfinity,
     DEFAULTS.ignoreChannelLengthModulation,
   );
   const dominantPole = firstDefined(
@@ -130,14 +135,18 @@ function normaliseOptions(options, circuit, symbolic, ops) {
   for (const component of circuit.components.values()) {
     if (!MOS_TYPES.has(component.type)) continue;
     const suffix = String(component.refdes).replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
+    // Per-device overrides may use the canonical request names
+    // (neglectBodyEffect, highIntrinsicGain, neglectChannelLengthModulation);
+    // resolve them here so the engine's own flags never shadow them.
+    const override = devices[component.refdes] || {};
     devices[component.refdes] = {
       id: component.refdes,
       gm: `gm${suffix}`,
       gmb: `gmb${suffix}`,
       ro: `ro${suffix}`,
-      highIntrinsicGain: Boolean(intrinsic),
-      gmb0: Boolean(body),
-      roInfinity: Boolean(output),
+      highIntrinsicGain: Boolean(firstDefined(override.highIntrinsicGain, override.gmroLarge, intrinsic)),
+      gmb0: Boolean(firstDefined(override.gmb0, override.ignoreBodyEffect, override.neglectBodyEffect, body)),
+      roInfinity: Boolean(firstDefined(override.roInfinity, override.ignoreChannelLengthModulation, override.neglectChannelLengthModulation, output)),
       // A large gm*ro product does not license gm*RS >> 1 or an active
       // branch's impedance >> RD. Preserve those independent dependencies.
       intrinsicProduct: true,
@@ -184,9 +193,6 @@ function responseOptions(options) {
 }
 
 function renderRoot(root, kind, index, options) {
-  if (root.root?.kind === 'quadratic-formula') {
-    return `${kind}_{${index}}: roots of ${root.polynomial ? renderQuantityEquation('P', null, root.polynomial, options) : 'the denominator'}`;
-  }
   if (!root.root?.kind) return `${kind}_{${index}}: roots of the reported polynomial`;
   return renderRootEquation(kind, index, root.root, options);
 }
@@ -350,8 +356,44 @@ function buildMillerEquivalenceProofs(pipeline, topology, approximations, approx
   return proofs;
 }
 
-function displayResponse(name, exact, approximation, options) {
-  const selected = canonicalResponseValue(approximation.selected, options);
+/**
+ * A first-order root location with the selected post-solve assumptions
+ * (for example `g_m r_o >> 1`) applied to it as a quantity of its own: the
+ * root of an approximated response still carries every subdominant term.
+ */
+function approximatedRoot(root, approximationOptions) {
+  if (!approximationOptions || root.kind !== 'root' || !root.root?.kind || root.root.kind === 'number') return root;
+  try {
+    const approximated = applyApproximations(root.root, { ...approximationOptions, dominantPoleApproximation: false, dominantPole: false });
+    const { selected, changed } = approximated;
+    if (!changed || selected.budgetExceeded) return root;
+    const value = selected.denominator.kind === 'number' && selected.denominator.numerator === selected.denominator.denominator
+      ? selected.numerator
+      : { kind: 'rational', variable: selected.variable, numerator: selected.numerator, denominator: selected.denominator };
+    return { ...root, root: value, exactRoot: root.root, assumptions: approximated.assumptions };
+  } catch {
+    return root;
+  }
+}
+
+/** Poles, zeros, and degrees from the response with common factors cancelled. */
+function withCancelledRoots(response, value, options, approximationOptions) {
+  const cancelled = value?.kind === 'rational'
+    ? cancelCommonPolynomialFactor(value, { variable: options.variable || 's' })
+    : value;
+  const reduced = cancelled === value ? response : analyzeResponse(cancelled, options);
+  return {
+    ...response,
+    numeratorDegree: reduced.numeratorDegree,
+    denominatorDegree: reduced.denominatorDegree,
+    degrees: reduced.degrees,
+    poles: reduced.poles.map((root) => approximatedRoot(root, approximationOptions)),
+    zeros: reduced.zeros.map((root) => approximatedRoot(root, approximationOptions)),
+  };
+}
+
+function displayResponse(name, exact, approximation, options, approximationOptions = null) {
+  const selected = withCancelledRoots(canonicalResponseValue(approximation.selected, options), approximation.selected, options, approximationOptions);
   const exactResponse = canonicalResponseValue(exact, options);
   const argument = selected.hasFrequency ? 's' : null;
   const ac = selected.hasFrequency
@@ -513,11 +555,23 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     ops,
     devices: regions,
     deviceRegions: regions,
+    deviceAssumptions: normalized.devices,
     s: options.s === undefined
       ? (symbolic ? ops.s() : (typeof ops.s === 'function' ? ops.s() : ops.one))
       : (symbolic ? symbolicValue(options.s, {}, options, ops) : options.s),
   };
-  const pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);
+  let pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);
+  let retainedOutputResistance = false;
+  // Leaving r_o out can float a node driven only by current sources (an
+  // inverter's output). Then fall back to the exact model and take the
+  // post-solve r_o -> infinity limit, which shows how the result grows.
+  if (!pipeline.ok && pipeline.stage === 'solve' && Object.values(normalized.devices || {}).some((device) => device.roInfinity)) {
+    const retained = buildExactAnalysisPipeline(circuit, { ...pipelineOptions, deviceAssumptions: null });
+    if (retained.ok) {
+      pipeline = retained;
+      retainedOutputResistance = true;
+    }
+  }
   if (!pipeline.ok) return failureReport(pipeline, normalized);
   if (ops.budget?.exceeded) return budgetFailureReport('exact solve', ops.budget, analysisOptions);
 
@@ -585,21 +639,25 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     equivalences.set(key, proof);
   }
   const displayed = {
-    transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions))),
+    transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions)), approximationOptions),
     input: displayResponse('Zin', exact.Zin.expression, approximations.Zin, withEquivalences({
       ...responseOptions(analysisOptions),
       ...(queries.inputImpedance.equivalence ? { equivalence: queries.inputImpedance.equivalence } : {}),
-    })),
+    }), approximationOptions),
     output: displayResponse('Zout', exact.Zout.expression, approximations.Zout, withEquivalences({
       ...responseOptions(analysisOptions),
       ...(queries.outputImpedance.equivalence ? { equivalence: queries.outputImpedance.equivalence } : {}),
-    })),
+    }), approximationOptions),
   };
   if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
   const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
+  const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
   const assumptions = unique([
     ...millerAssumptions,
+    ...outputResistanceAssumptions,
     ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
+    ...Object.values(displayed).flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
+      .flatMap((root) => root.assumptions || []),
   ]);
   const transfer = displayed.transfer.response;
   const roots = rootRows(transfer, responseOptions(analysisOptions));
@@ -666,7 +724,13 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     netlist,
     smallSignalNetlist: netlist.text,
     diagnostics,
-    log: [diagnostics.logText, ...topologyLog].filter(Boolean).join('\n'),
+    log: [
+      diagnostics.logText,
+      ...(retainedOutputResistance
+        ? ['r_o -> infinity: removing r_o leaves a node with no conducting path (for example an output driven only by current sources), so r_o was kept and only its large-r_o limit applied.']
+        : []),
+      ...topologyLog,
+    ].filter(Boolean).join('\n'),
   };
 }
 

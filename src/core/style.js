@@ -15,9 +15,12 @@
 export const LINE = { stroke: '#111', width: 6, cap: 'flat', join: 'miter' };
 export const THICK = { stroke: '#111', width: Math.round(LINE.width * 1.5), cap: 'flat', join: 'flat' };
 export const SYMBOL = { stroke: '#111', width: 6, cap: 'butt', join: 'miter' };
-// Wires overlap their pin's terminal lead at the same coordinate. Round caps
-// hide the anti-aliased seam without changing the electrical path.
-export const WIRE = { stroke: '#111', width: 6, cap: 'round', join: 'miter' };
+// Wires use projecting square caps: at a terminal the half-width extension
+// overlaps the pin lead inside the shared ink path, and a wire meeting a lead
+// at a right angle fills the corner square.
+export const WIRE = { stroke: '#111', width: 6, cap: 'square', join: 'miter' };
+// Visual annotation lines/arrows and block-diagram connectors keep round ends.
+export const ANNOTATION = { stroke: '#111', width: 6, cap: 'round', join: 'miter' };
 export const EMPH = { stroke: '#111', width: 9.6, cap: 'butt', join: 'miter' };
 export const GROUND = { stroke: '#111', width: 11.6, cap: 'butt', join: 'miter' };
 export const SUPPLY = { stroke: '#111', width: 7.2, cap: 'butt', join: 'miter' };
@@ -66,7 +69,7 @@ export function setColorToken(token, value) {
 
 export const LEGACY_STYLE_COLORS = STYLE_COLORS;
 
-const STYLES = { thick: THICK, symbol: SYMBOL, wire: WIRE, emph: EMPH, ground: GROUND, supply: SUPPLY };
+const STYLES = { thick: THICK, symbol: SYMBOL, wire: WIRE, annotation: ANNOTATION, emph: EMPH, ground: GROUND, supply: SUPPLY };
 const escapeSvgAttr = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 export function strokeAttrs(styleName, miterLimit) {
   const s = STYLES[styleName] || LINE;

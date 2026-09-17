@@ -10,6 +10,7 @@ import {
   symbol,
 } from '../src/core/analysis/rational.js';
 import { analyzeResponse, processResponses } from '../src/core/analysis/response.js';
+import { renderRootEquation } from '../src/core/analysis/present.js';
 
 const s = symbol('s');
 const R = symbol('R');
@@ -72,10 +73,23 @@ test('reports a pole at infinity from the high-frequency degree excess', () => {
   assert.equal(formatExpression(response.infinity.coefficient), '1');
 });
 
-test('uses quadratic formula records for second-order poles', () => {
+test('solves a second-order denominator with a perfect-square discriminant exactly', () => {
   const response = analyzeResponse(rationalFunction(
     integer(1),
     add(multiply(s, s), multiply(integer(3), s), integer(2)),
+  ));
+
+  assert.deepEqual(response.poles.map(({ index, kind }) => ({ index, kind })), [
+    { index: 0, kind: 'root' },
+    { index: 1, kind: 'root' },
+  ]);
+  assert.deepEqual(response.poles.map(({ root }) => formatExpression(root)), ['-2', '-1']);
+});
+
+test('uses quadratic formula records for second-order poles', () => {
+  const response = analyzeResponse(rationalFunction(
+    integer(1),
+    add(multiply(R, C, s, s), multiply(integer(3), R, C, s), integer(1)),
   ));
 
   assert.equal(response.poles.length, 2);
@@ -83,9 +97,24 @@ test('uses quadratic formula records for second-order poles', () => {
     { index: 0, kind: 'quadratic-root' },
     { index: 1, kind: 'quadratic-root' },
   ]);
-  assert.equal(formatExpression(response.poles[0].root.discriminant), '1');
   assert.equal(response.poles[0].root.sign, -1);
   assert.equal(response.poles[1].root.sign, 1);
+  assert.equal(renderRootEquation('pole', 0, response.poles[0].root), 'p_{0} = \\frac{-3 \\, C \\, R - \\sqrt{C \\, R \\, \\left(9 \\, C \\, R - 4\\right)}}{2 \\, C \\, R}');
+});
+
+test('reports roots at the origin exactly and cancels common factors', () => {
+  const gm = symbol('g_m');
+  const CL = symbol('C_L');
+  const response = analyzeResponse(rationalFunction(
+    add(multiply(gm, s), multiply(gm, R)),
+    add(multiply(CL, C, s, s), multiply(gm, C, s)),
+  ));
+  assert.deepEqual(response.poles.map(({ index, kind }) => ({ index, kind })), [
+    { index: 0, kind: 'root' },
+    { index: 1, kind: 'root' },
+  ]);
+  assert.deepEqual(response.poles.map(({ root }) => formatExpression(root)), ['0', '-g_m*C_L^-1'], 'C cancels from the second pole');
+  assert.deepEqual(response.zeros.map(({ root }) => formatExpression(root)), ['-R'], 'g_m cancels from the zero');
 });
 
 test('falls back to one symbolic polynomial record above second order', () => {

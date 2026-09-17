@@ -469,6 +469,37 @@ test('all interface pin directions participate in net naming', () => {
   }
 });
 
+test('the circle port is an interface pin with an owned label that names its net', () => {
+  const c = new Circuit();
+  const pin = c.addComponent('port', { x: 0, y: 0 });
+  assert.equal(pin.refdes, 'P1');
+  const label = c.labelOf(pin.refdes);
+  assert.equal(label.text, 'P_{1}');
+  assert.deepEqual(label.offset, { x: -120, y: 0 });
+  const resistor = c.addComponent('resistor', { x: 240, y: 0 });
+  const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
+  assert.equal(net.name, 'P1');
+
+  label.setText('V_{BIAS}');
+  assert.equal(c.getComponent('VBIAS').refdes, 'VBIAS');
+  assert.equal(net.name, 'VBIAS');
+  c.renameNet(net, 'VREF');
+  assert.equal(c.labelOf('VBIAS').text, 'VREF');
+});
+
+test('legacy filled and unlabelled ports load as labelled ports', () => {
+  const c = new Circuit();
+  c.addComponent('port', { refdes: 'P1', x: 0, y: 0 });
+  c.addComponent('port', { refdes: 'P2', x: 0, y: 400 });
+  const data = c.toJSON();
+  data.components.find((component) => component.refdes === 'P2').type = 'port_filled';
+  data.labels = [];
+  const loaded = Circuit.fromJSON(data);
+  assert.equal(loaded.getComponent('P2').type, 'port');
+  assert.equal(loaded.labelOf('P1').text, 'P_{1}');
+  assert.equal(loaded.labelOf('P2').text, 'P_{2}');
+});
+
 test('interface pin names and owned labels stay synchronized with their single-owner net', () => {
   const c = new Circuit();
   const pin = c.addComponent('input', { x: 0, y: 0 });
@@ -2737,8 +2768,19 @@ test('wirePointTo can intentionally connect disconnected branches of one net', (
     ],
   });
   c.wirePointTo({ x: 80, y: 0 }, { x: 200, y: 0 }, [], net.id);
-  assert.equal(net.branches.length, 3);
-  assert.ok(net.branches.some((path) => path[0].x === 80 && path.at(-1).x === 200));
+  // The connecting wire continues both pieces at plain end points, so the
+  // run becomes one polyline instead of three abutting stubs.
+  assert.deepEqual(net.branches, [[{ x: 0, y: 0 }, { x: 280, y: 0 }]]);
+});
+
+test('wirePointTo keeps a branch split where a terminal or junction sits', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 }); // b=(80,0)
+  const net = c.wirePointTo({ x: 80, y: 0 }, { x: 240, y: 0 });
+  c.wirePointTo({ x: 240, y: 0 }, { x: 400, y: 0 }, [], net.id);
+  assert.deepEqual(net.branches, [[{ x: 80, y: 0 }, { x: 400, y: 0 }]], 'plain end point joins');
+  c.wirePointTo({ x: 240, y: 0 }, { x: 240, y: 160 }, [], net.id);
+  assert.equal(net.branches.length, 3, 'a T junction stays a branch boundary');
 });
 
 test('wirePointTo preserves an explicit target path at a same-net crossing', () => {

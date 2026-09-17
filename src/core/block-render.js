@@ -68,7 +68,7 @@ function annotationSvg(label, selected) {
 
 function arrowSvg(arrow, selected, omitHead = false, selectedSegments = new Set()) {
   const g = blockArrowGeometry(arrow.points);
-  const attrs = styleAttrs(arrow.style, 'wire');
+  const attrs = styleAttrs(arrow.style, 'annotation');
   const cls = selected ? ' selected' : '';
   const paths = [];
   for (let i = 1; i < g.shaftPoints.length; i++) {

@@ -287,13 +287,28 @@ test('reduceBranches preserves outer-terminal connectivity for a partial overlap
   ];
   const terminals = [{ x: 0, y: 0 }, { x: 400, y: 0 }];
   const reduced = reduceBranches(paths, terminals);
-  assert.deepEqual(reduced, [
-    [{ x: 0, y: 0 }, { x: 80, y: 0 }],
-    [{ x: 80, y: 0 }, { x: 320, y: 0 }],
-    [{ x: 320, y: 0 }, { x: 400, y: 0 }],
-  ]);
+  // Overlap boundaries are not vertices of the result: the pieces merge back
+  // into one wire instead of leaving short collinear stubs.
+  assert.deepEqual(reduced, [[{ x: 0, y: 0 }, { x: 400, y: 0 }]]);
   assert.equal(hasPositiveBranchOverlap(reduced), false);
   assert.deepEqual(junctionPoints(paths, terminals), [], 'overlap boundaries are not electrical junctions');
+  assert.deepEqual(reduceBranches(reduced, terminals), reduced, 'reduction is idempotent');
+});
+
+test('reduceBranches merges collinear pieces of an already-minimal net', () => {
+  // Wiring the same net several times can leave a straight run split at a
+  // point that is neither a terminal nor a junction (a stale branch end).
+  const paths = [
+    [{ x: 0, y: 0 }, { x: 40, y: 0 }],
+    [{ x: -400, y: 0 }, { x: 0, y: 0 }],
+    [{ x: 440, y: 0 }, { x: 40, y: 0 }],
+  ];
+  const terminals = [{ x: -400, y: 0 }, { x: 40, y: 0 }, { x: 440, y: 0 }];
+  const reduced = reduceBranches(paths, terminals);
+  assert.deepEqual(reduced, [
+    [{ x: -400, y: 0 }, { x: 40, y: 0 }],
+    [{ x: 440, y: 0 }, { x: 40, y: 0 }],
+  ]);
   assert.deepEqual(reduceBranches(reduced, terminals), reduced, 'reduction is idempotent');
 });
 

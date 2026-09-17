@@ -412,11 +412,11 @@ export function reduceBranches(paths = [], terminalPoints = [], allowDiagonal = 
   const sorted = [...edges].sort((e1, e2) => e1.cost - e2.cost || e1.bi - e2.bi || e1.si - e2.si);
   const kept = [];
   for (const e of sorted) if (union(e.a, e.b)) kept.push(e);
-  if (kept.length === edges.length) return open; // already minimal
 
-  // Reassemble the kept forest: runs meeting at a non-terminal degree-2 vertex
-  // (a point that ceased to branch) merge into one polyline, so no phantom
-  // junctions or redundant vertices survive. Terminal vertices stay branch
+  // Reassemble the kept forest — even when nothing was dropped: runs meeting
+  // at a non-terminal degree-2 vertex (a point that ceased to branch, a stale
+  // branch end, or an overlap boundary) merge into one polyline, so no phantom
+  // junctions, stub pieces, or redundant vertices survive. Terminal vertices stay branch
   // boundaries so wire legs re-anchor correctly when their component moves.
   const adj = new Map();
   const add = (v) => { if (!adj.has(v)) adj.set(v, []); };
@@ -453,11 +453,60 @@ export function reduceBranches(paths = [], terminalPoints = [], allowDiagonal = 
         cur = next.to;
         poly.push(...orient(next.e, shared).slice(1)); // next.pts starts at `shared`
       }
-      out.push({ poly: normalizePath(poly, allowDiagonal), bi: first.e.bi, si: first.e.si });
+      // Keep the stored direction of the run's first edge, so an unmerged
+      // branch comes back exactly as authored (e.g. pin-first escape legs).
+      const reversed = key(first.e.pts[0]) !== v;
+      out.push({ poly: normalizePath(reversed ? poly.reverse() : poly, allowDiagonal), bi: first.e.bi, si: first.e.si });
     }
   }
   out.sort((a, b) => a.bi - b.bi || a.si - b.si);
   return out.map((o) => o.poly);
+}
+
+/** Join branches whose ends meet at a plain point: exactly two branch ends,
+ *  no anchor (terminal, junction, styled-segment boundary), and no other wire
+ *  vertex or segment through it. Geometry is unchanged; only the split between
+ *  branches goes away, so a run grown piecewise becomes one polyline. The
+ *  earlier branch keeps its index and direction. */
+export function joinBranchEnds(paths = [], anchorPoints = [], allowDiagonal = false) {
+  const anchors = new Set(anchorPoints.map(pointKey));
+  let work = paths.map((p) => p.map((q) => ({ ...q })));
+  for (;;) {
+    const ends = new Map();
+    const blocked = new Set(anchors);
+    work.forEach((path, bi) => {
+      if (path.length < 2) return;
+      [0, path.length - 1].forEach((pi) => {
+        const k = pointKey(path[pi]);
+        if (!ends.has(k)) ends.set(k, []);
+        ends.get(k).push({ bi, head: pi === 0 });
+      });
+      for (let i = 1; i < path.length - 1; i++) blocked.add(pointKey(path[i]));
+    });
+    let join = null;
+    for (const [k, list] of ends) {
+      if (list.length !== 2 || blocked.has(k) || list[0].bi === list[1].bi) continue;
+      const [x, y] = k.split(',').map(Number);
+      const through = work.some((path) => path.some((a, i) => {
+        const b = path[i + 1];
+        if (!b) return false;
+        const cross = (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
+        return cross === 0 && between(x, a.x, b.x) && between(y, a.y, b.y) &&
+          !(x === a.x && y === a.y) && !(x === b.x && y === b.y);
+      }));
+      if (!through) { join = list; break; }
+    }
+    if (!join) return work;
+    const [first, second] = join[0].bi < join[1].bi ? join : [join[1], join[0]];
+    const a = work[first.bi];
+    const b = work[second.bi];
+    const bFromJoin = second.head ? b : b.slice().reverse();
+    const merged = first.head
+      ? [...bFromJoin.slice().reverse(), ...a.slice(1)]
+      : [...a, ...bFromJoin.slice(1)];
+    work = work.map((path, bi) => (bi === first.bi ? normalizePath(merged, allowDiagonal) : path))
+      .filter((_, bi) => bi !== second.bi);
+  }
 }
 
 /** Remove one editable segment and return normalized remaining paths. */

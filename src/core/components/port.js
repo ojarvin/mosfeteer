@@ -41,26 +41,21 @@ export const portInputOutput = boxedPort(
 
 
 /**
- * Textbook terminal markers: a small circle (open or filled) on a lead,
- * used as a generic node/pin stub (no label box).
+ * Textbook terminal marker: a small open circle on a lead. It is an interface
+ * pin like the boxed ports, with an owned name label that names its net.
  */
-const marker = (type, description, filled) =>
-  defineSymbol({
-    type,
-    description,
-    refPrefix: '',
-    terminals: [{ name: 'p', x: 0, y: 0, direction: 'port' }],
-    bbox: { x: -80, y: -40, w: 80, h: 80 },
-    graphics: [
-      filled
-        ? { kind: 'dot', cx: -68.35, cy: 0, r: 9.92 }
-        : { kind: 'circle', cx: -68.35, cy: 0, r: 9.92, style: 'symbol' },
-      { kind: 'path', d: 'M 0 0 L -58.4 0', style: 'symbol' },
-    ],
-    textPos: null,
-    refPos: null,
-    defaultValue: '',
-  });
-
-export const port = marker('port', 'Port (terminal)', false);
-export const port_filled = marker('port_filled', 'Port (filled terminal)', true);
+export const port = defineSymbol({
+  type: 'port',
+  description: 'Port',
+  refPrefix: 'P',
+  terminals: [{ name: 'p', x: 0, y: 0, direction: 'port' }],
+  bbox: { x: -80, y: -40, w: 80, h: 80 },
+  graphics: [
+    { kind: 'circle', cx: -68.35, cy: 0, r: 9.92, style: 'symbol' },
+    { kind: 'path', d: 'M 0 0 L -58.4 0', style: 'symbol' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: { x: -120, y: 0 },
+  defaultValue: '',
+});

@@ -1,7 +1,7 @@
 import { applyTransform, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, balancedPaths } from './router.js';
-import { fontAttrs, resolveColor, strokeAttrs, styleAttrs, SYMBOL, themeInkSvg } from './style.js';
+import { fontAttrs, resolveColor, strokeAttrs, styleAttrs, themeInkSvg } from './style.js';
 import { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 
 function escapeSvg(value) {
@@ -13,6 +13,62 @@ function fmt(n) {
 }
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
+}
+
+/**
+ * Map an absolute M/L/C path's coordinates through a component transform.
+ * `trim` pulls a straight first/last segment's ends in by that distance, so a
+ * butt-ended lead keeps its exact look inside a square-capped ink path.
+ */
+function transformPathD(d, t, trim = 0) {
+  const tokens = String(d).match(/[MLC]|-?\d*\.?\d+(?:e-?\d+)?/gi) || [];
+  const commands = [];
+  for (const token of tokens) {
+    if (/^[MLC]$/.test(token)) commands.push({ command: token, values: [] });
+    else commands.at(-1)?.values.push(Number(token));
+  }
+  const pull = (point, toward) => {
+    const dx = toward[0] - point[0];
+    const dy = toward[1] - point[1];
+    const length = Math.hypot(dx, dy);
+    if (!length || length <= 2 * trim) return point;
+    return [point[0] + dx / length * trim, point[1] + dy / length * trim];
+  };
+  if (trim > 0 && commands.length >= 2 && commands[0].command === 'M' && commands[1].command === 'L') {
+    const [x, y] = pull(commands[0].values.slice(0, 2), commands[1].values.slice(0, 2));
+    commands[0].values.splice(0, 2, x, y);
+  }
+  const last = commands.at(-1);
+  if (trim > 0 && commands.length >= 2 && last.command === 'L' && last.values.length === 2) {
+    const prev = commands.at(-2).values.slice(-2);
+    const [x, y] = pull(last.values, prev);
+    last.values.splice(0, 2, x, y);
+  }
+  const format = (n) => Number(n.toFixed(3));
+  return commands.map(({ command, values }) => {
+    const points = [];
+    for (let i = 0; i + 1 < values.length; i += 2) {
+      const p = applyTransform(t, values[i], values[i + 1]);
+      points.push(`${format(p.x)} ${format(p.y)}`);
+    }
+    return `${command} ${points.join(' ')}`;
+  }).join(' ');
+}
+
+/** Solid strokes merged into one path render without doubled anti-aliased edges. */
+function solidStyle(style) {
+  return !style?.lineStyle || style.lineStyle === 'solid';
+}
+
+function strokeWidthOf(style) {
+  return style?.width === 'thin' ? 3 : style?.width === 'thick' ? 9 : 6;
+}
+
+// One shared miter limit keeps merged wires and sharp resistor leads in one
+// group, and every ink subpath uses the wires' projecting square cap.
+const INK_MITER_LIMIT = 5;
+function inkAttrs(style) {
+  return styleAttrs(style, 'wire', INK_MITER_LIMIT);
 }
 
 function polygonPoints(g) {
@@ -306,7 +362,7 @@ function shapeAnnotationSvg(label, opacity = '') {
   const a = label.anchor; const b = label.end;
   if (label.kind === 'line') {
     const d = label.points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-    return `<path d="${d}" fill="none"${opacity} ${styleAttrs(label.style, 'wire')}/>`;
+    return `<path d="${d}" fill="none"${opacity} ${styleAttrs(label.style, 'annotation')}/>`;
   }
   const attrs = styleAttrs(label.style);
   if (label.kind === 'box') {
@@ -455,13 +511,25 @@ export function svgString(circuit, opts = {}) {
   // Middle layer: wires deliberately sit behind components and labels. Their
   // rounded caps still overlap terminal leads at the exact electrical point.
   const nets = [...circuit.nets.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
-  // Style of every drawn wire end, keyed by point, for the pin seam patches.
-  const wireEnds = new Map();
-  const noteWireEnd = (p, style) => {
-    const key = `${p.x},${p.y}`;
-    if (!wireEnds.has(key)) wireEnds.set(key, []);
-    wireEnds.get(key).push(style);
+  // Where a wire meets a pin lead (or another wire), two separately drawn
+  // strokes overlap and their anti-aliased edges add up into a visibly
+  // thicker joint. Solid wires and terminal leads of one stroke style are
+  // therefore drawn together as a single path ("ink"), rasterized once.
+  // Per-segment wire elements stay in place, unpainted, for hit targets and
+  // keyboard access; ghosts and dashed strokes keep their own elements.
+  const ink = new Map();
+  const addInk = (attrs, d) => {
+    if (!ink.has(attrs)) ink.set(attrs, []);
+    ink.get(attrs).push(d);
   };
+  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(c.style);
+  for (const c of comps) {
+    if (!inkLeads(c)) continue;
+    for (const g of c.def.graphics) {
+      if (g.terminalLead) addInk(inkAttrs(c.style), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
+    }
+  }
+  const UNPAINTED = ' stroke-opacity="0"';
   for (const net of nets) {
     // Fixed paths are already the complete authored geometry. Keep the legacy
     // managed fallback below so multi-terminal managed nets retain their old
@@ -476,8 +544,6 @@ export function svgString(circuit, opts = {}) {
     const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
     for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
-      noteWireEnd(pts[0], net.wireStyles?.[`${branch}:1`] || net.style);
-      noteWireEnd(pts[pts.length - 1], net.wireStyles?.[`${branch}:${pts.length - 1}`] || net.style);
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
       const wireHelp = net.routingMode === 'fixed'
         ? 'Fixed/direct wire — drag vertices, segments, or junctions'
@@ -485,16 +551,23 @@ export function svgString(circuit, opts = {}) {
       const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}><title>${escapeSvg(wireHelp)}</title></path>`);
+        const inked = !opacity && solidStyle(net.style);
+        if (inked) addInk(inkAttrs(net.style), d);
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         continue;
       }
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]; const b = pts[i];
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = net.wireStyles[`${branch}:${i}`] || net.style;
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}><title>${escapeSvg(wireHelp)}</title></path>`);
+        const inked = !opacity && solidStyle(segmentStyle);
+        if (inked) addInk(inkAttrs(segmentStyle), d);
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
       }
     }
+  }
+  for (const [attrs, ds] of ink) {
+    parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
   }
 
   // Top layer: components and their body/value graphics sit above wires.
@@ -508,7 +581,8 @@ export function svgString(circuit, opts = {}) {
       const r = c.blockSize;
       parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`);
     } else {
-      for (const g of bodyGraphics) parts.push(graphicsToSvg(g, '', c.style));
+      const leadsInked = inkLeads(c);
+      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', c.style));
     }
     parts.push('</g></g>');
     for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
@@ -516,39 +590,6 @@ export function svgString(circuit, opts = {}) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
     }
-  }
-
-  // A connected pin's lead ends with a butt cap exactly at its terminal, where
-  // a wire or another pin's lead begins; the two anti-aliased ends leave a
-  // faint seam across the stroke. Where every stroke meeting there looks the
-  // same (one color, solid), a thin plus-shaped patch covers that seam in
-  // either axis, sized to the thinnest stroke so it never shows outside it.
-  // Different colors meet at a visible boundary anyway, so they get no patch.
-  // The patch is deliberately thin: any overlap brightens the shared stroke
-  // edges, and a stroke-sized square outlined a visible box.
-  const strokeWidth = (style) => (style?.width === 'thin' ? 3 : style?.width === 'thick' ? 9 : SYMBOL.width);
-  const contacts = new Map();
-  for (const net of circuit.nets.values()) {
-    for (const { comp, term } of net.terminals) {
-      const c = circuit.components.get(comp);
-      if (!c || c.type === 'solder') continue;
-      const p = c.terminalWorld(term);
-      const key = `${p.x},${p.y}`;
-      if (!contacts.has(key)) contacts.set(key, { p, styles: [], ghost: true });
-      const contact = contacts.get(key);
-      contact.styles.push(c.style);
-      contact.ghost = contact.ghost && (ghostRefs.has(c.refdes) || ghostNets.has(net.id));
-    }
-  }
-  const bar = 0.6;
-  for (const [key, { p, styles: pinStyles, ghost }] of contacts) {
-    const styles = [...pinStyles, ...(wireEnds.get(key) || [])];
-    if (styles.length < 2) continue;
-    const colors = new Set(styles.map((style) => resolveColor(style?.color || '#111').toLowerCase()));
-    if (colors.size !== 1 || styles.some((style) => style?.lineStyle && style.lineStyle !== 'solid')) continue;
-    const arm = Math.min(...styles.map(strokeWidth)) / 2;
-    const d = `M ${fmt(p.x - bar)} ${fmt(p.y - arm)} h ${fmt(2 * bar)} v ${fmt(arm - bar)} h ${fmt(arm - bar)} v ${fmt(2 * bar)} h ${fmt(bar - arm)} v ${fmt(arm - bar)} h ${fmt(-2 * bar)} v ${fmt(bar - arm)} h ${fmt(bar - arm)} v ${fmt(-2 * bar)} h ${fmt(arm - bar)} Z`;
-    parts.push(`<path class="pin-contact" d="${d}" fill="${escapeSvg(resolveColor(styles[0]?.color || '#111'))}" stroke="none"${ghost ? ' opacity="0.34"' : ''}/>`);
   }
 
   // Junction dots are placed by the routing algorithm as actual `solder`

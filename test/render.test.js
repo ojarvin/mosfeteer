@@ -24,7 +24,7 @@ test('grid lines use the ordinary style throughout', () => {
   assert.match(svg, /class="grid-line"[^>]+x1="40"/);
 });
 
-test('wire rendering uses round caps without changing symbol stroke roles', () => {
+test('wires and pin leads share one square-capped ink path', () => {
   assert.match(strokeAttrs('unknown'), /stroke-linecap="flat"/);
   assert.match(strokeAttrs('unknown'), /stroke-linejoin="miter"/);
   const c = new Circuit();
@@ -34,15 +34,37 @@ test('wire rendering uses round caps without changing symbol stroke roles', () =
   assert.deepEqual(net.paths()[0], [{ x: 160, y: 0 }, { x: 400, y: 0 }]);
   const svg = svgString(c);
   const wire = svg.match(/<path class="wire-managed"[^>]+>/)?.[0] || '';
-  assert.match(wire, /stroke-linecap="round"/);
+  assert.match(wire, /stroke-linecap="square"/);
   assert.match(wire, /stroke-linejoin="miter"/);
-  assert.match(svg.match(/<path d="M -80 0 L -30 0[^>]+>/)?.[0] || '', /stroke-linecap="butt"/);
+  assert.match(wire, /stroke-opacity="0"/, 'the hit element is unpainted; the ink path draws the wire');
+  // Wires and pin leads share one square-capped ink path, so their overlap at
+  // a terminal is rasterized once (no doubled anti-aliased edges). Leads are
+  // pulled in by half the stroke width, so the cap ends exactly where the
+  // butt-ended lead did.
+  const ink = svg.match(/<path class="wire-ink"[^>]+>/)?.[0] || '';
+  assert.match(ink, /M 160 0 L 400 0/);
+  assert.match(ink, /M 3 0 L 50 0 L 55 20/, 'R1 lead in world coordinates');
+  assert.match(ink, /L 157 0/, 'R1 terminal-side lead end');
+  assert.match(ink, /stroke-linecap="square"/);
+  c.addComponent('capacitor', { refdes: 'C1', x: 80, y: 400 });
+  const plates = svgString(c);
+  assert.match(plates.match(/<path d="M -12.94 -32.2 L -12.94 32.2"[^>]+>/)?.[0] || '', /stroke-linecap="butt"/, 'body strokes keep butt caps');
+  assert.match(plates.match(/<path class="wire-ink"[^>]+>/)?.[0] || '', /M 3 400 L 64.06 400/);
+});
+
+test('ghosted and dashed strokes keep their own elements outside the ink path', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 0, style: { lineStyle: 'dashed' } });
+  const svg = svgString(c, { ghostRefs: ['R1'] });
+  assert.doesNotMatch(svg, /class="wire-ink"/);
+  assert.match(svg, /<path d="M -80 0 L -30 0[^>]+stroke-dasharray/);
 });
 
 test('symmetric resistor zigzag keeps sharp mitered corners', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
-  const path = svgString(c).match(/<path d="M -80 0 L -30 0[^>]+>/)?.[0] || '';
+  const path = svgString(c).match(/<path class="wire-ink"[^>]+M 3 0 L 50 0[^>]+>/)?.[0] || '';
   assert.match(path, /stroke-linejoin="miter"/);
   assert.match(path, /stroke-miterlimit="5"/);
 });
@@ -283,7 +305,7 @@ test('svgString renders net wires for connected terminals', () => {
   const r2 = c.addComponent('resistor', { x: 480, y: -120 });
   c.connect(`${r1.refdes}.a`, `${r2.refdes}.b`);
   const svg = svgString(c);
-  assert.ok(svg.includes('<path d="'), 'renders net paths');
+  assert.ok(svg.includes('class="wire-managed"'), 'renders net paths');
   assert.ok(svg.includes(`data-ref="${r1.refdes}"`));
   assert.ok(svg.includes(`data-ref="${r2.refdes}"`));
 });
@@ -396,12 +418,14 @@ test('MOS terminal-facing leads end at their rendered terminal coordinates', () 
   for (const type of ['nmos', 'pmos', 'nmosb', 'pmosb']) {
     const c = new Circuit();
     const component = c.addComponent(type, { x: 520, y: 0 });
-    const symbol = svgString(c).match(/<g class="sym"[^>]*>([\s\S]*?)<\/g><\/g>/)?.[1] || '';
-    const paths = [...symbol.matchAll(/<path d="([^"]+)"/g)].map((match) => endpoint(match[1]));
+    const ink = svgString(c).match(/<path class="wire-ink" d="([^"]+)"/)?.[1] || '';
+    const paths = ink.split(/(?=M )/).map((d) => endpoint(d.trim()));
 
     for (const terminal of component.def.terminals.filter(({ name }) => ['d', 's', 'b'].includes(name))) {
+      // Ink leads stop half a stroke short; the square cap reaches the terminal.
+      const world = component.terminalWorld(terminal.name);
       assert.ok(
-        paths.some((point) => point.x === terminal.x && point.y === terminal.y),
+        paths.some((point) => Math.hypot(point.x - world.x, point.y - world.y) === 3),
         `${type}.${terminal.name} lead reaches its terminal in rendered SVG`,
       );
     }
@@ -412,7 +436,7 @@ test('svgString renders bulk MOS terminal and channel connection', () => {
   const c = new Circuit();
   c.addComponent('nmosb', { x: 520, y: 0 });
   const svg = svgString(c);
-  assert.match(svg, /M -56\.98 0 L 0 0/, 'bulk graphic starts inside the channel bar and runs to its terminal');
+  assert.match(svg, /M 466\.02 0 L 517 0/, 'bulk graphic starts inside the channel bar and runs to its terminal');
   assert.match(svg, /<text[^>]*>M/, 'bulk MOS owned label renders');
 });
 test('textbook symbols render (sources, opamp, gates, ports)', () => {
@@ -422,7 +446,7 @@ test('textbook symbols render (sources, opamp, gates, ports)', () => {
   c.addComponent('opamp', { x: 600, y: 0 });
   c.addComponent('and_gate', { x: 900, y: 0 });
   c.addComponent('inverter', { x: 1200, y: 0 });
-  c.addComponent('port_filled', { x: 120, y: 0 });
+  c.addComponent('port', { x: 120, y: 0 });
   const svg = svgString(c);
   assert.ok(svg.includes('data-ref'), 'symbols render');
   assert.ok(svg.includes('<polygon'), 'current source arrow body present');
@@ -446,8 +470,8 @@ test('fully differential opamp shares the opamp footprint with two outputs', () 
   const svg = svgString(c);
   assert.ok(svg.includes('data-ref="U2"'), 'differential opamp rendered');
   // Two output leads (top row and bottom row).
-  const om = svg.match(/M 12\.8 -40 L 160 -40/g);
-  const op = svg.match(/M 12\.81 40 L 160 40/g);
+  const om = svg.match(/M 15\.8 -40 L 157 -40/g);
+  const op = svg.match(/M 15\.81 40 L 157 40/g);
   assert.ok(om && op, 'both output leads rendered');
   // Polarity marks are the SAME size as the input marks (28 units), aligned on
   // the same rows, and sit clear of the slanted edges: inputs at x=-76, outputs
@@ -530,25 +554,12 @@ test('themeInk renders default ink as currentColor while exports keep literal co
   assert.match(themed, /#d96c75/);
 });
 
-test('pin seam patches only join identical strokes, sized to the thinnest one', () => {
-  const patches = (circuit) => [...svgString(circuit, { terminals: false, junctions: false })
-    .matchAll(/<path class="pin-contact" d="M ([^ ]+) ([^ ]+) [^"]*" fill="([^"]+)"/g)]
-    .map((m) => ({ at: `${Number(m[1]) + 0.6},${Number(m[2])}`, fill: m[3] }));
-
+test('connected pins get no seam patches; wires end in square caps', () => {
   const c = new Circuit();
-  c.addComponent('nmos', { x: 400, y: 0 });
-  c.addComponent('input', { x: 280, y: 0 }); // its pin lands on the gate at (280,0)
   c.addComponent('resistor', { x: 800, y: 0 });
   c.addComponent('resistor', { x: 800, y: 400 });
-  c.addComponent('resistor', { x: 1600, y: 0 }); // unconnected
-  const wired = c.connect('R1.b', 'R2.b');
-  const plain = patches(c).map((patch) => patch.at).sort();
-  assert.deepEqual(plain, ['280,-3', '880,-3', '880,397'].sort(), 'one patch per connected point, half the default width tall');
-
-  c.components.get('VI1').style = { color: 'yellow' };
-  assert.ok(!patches(c).some((patch) => patch.at === '280,-3'), 'a yellow pin on a black gate gets no patch');
-
-  wired.style = { width: 'thin' };
-  const thin = patches(c).filter((patch) => patch.at.startsWith('880,'));
-  assert.deepEqual(thin.map((patch) => patch.at).sort(), ['880,-1.5', '880,398.5'], 'thin wire: the patch fits the 3-unit stroke');
+  c.connect('R1.b', 'R2.b');
+  const svg = svgString(c, { terminals: false, junctions: false });
+  assert.doesNotMatch(svg, /pin-contact/);
+  assert.match(svg, /class="wire-managed"[^>]*stroke-linecap="square"/);
 });

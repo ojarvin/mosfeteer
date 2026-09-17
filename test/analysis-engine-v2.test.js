@@ -221,6 +221,30 @@ test('r_o infinity takes precedence over high intrinsic gain', () => {
   assert.doesNotMatch(report.assumptions.join('\n'), /g_m r_o/);
 });
 
+test('r_o infinity from the GUI option names leaves r_o out of the model', () => {
+  const report = analyzeSmallSignalV2(inverter(), { neglectChannelLengthModulation: true });
+  assert.equal(report.ok, true, report.error);
+  // Both r_o removed float the inverter output, so r_o is kept with a note.
+  assert.match(report.log, /r_o was kept/);
+
+  const cs = analyzeSmallSignalV2(commonSource(), { neglectChannelLengthModulation: true });
+  assert.equal(cs.ok, true, cs.error);
+  assert.equal(cs.details.pipeline.selected.some(({ id }) => id === 'M1.ro'), false);
+  assert.deepEqual(cs.assumptions.filter((value) => value.startsWith('r_o')), ['r_o -> infinity (M1)']);
+  assert.doesNotMatch(expressionText(cs.transfer.response), /ro1/);
+  assert.doesNotMatch(cs.log, /r_o was kept/);
+});
+
+test('a per-device GUI override keeps r_o when the global r_o infinity is selected', () => {
+  const report = analyzeSmallSignalV2(commonSource(), {
+    neglectChannelLengthModulation: true,
+    devices: { M1: { neglectChannelLengthModulation: false } },
+  });
+  assert.equal(report.ok, true, report.error);
+  assert.equal(report.details.pipeline.selected.some(({ id }) => id === 'M1.ro'), true);
+  assert.match(expressionText(report.exact.Zout), /ro1/);
+});
+
 test('prunes disconnected reactive islands without adding AC rows', () => {
   const circuit = divider();
   circuit.addComponent('capacitor', { refdes: 'CISO', x: 800, y: 400 });
