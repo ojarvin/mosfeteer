@@ -10,13 +10,12 @@ import {
 } from '../src/server/documents.js';
 import { decodePngToRgb, pngToPdf } from '../src/server/pdf-raster.js';
 import { findChromium } from '../src/server/browser.js';
-import { importLegacyCircuits, legacyElectronCircuitsDir } from '../src/server/legacy-import.js';
 import { allowedHosts, checkRequest } from '../src/server/request-guard.js';
 import { createSettingsStore, defaultWorkspace } from '../src/server/settings.js';
 import { createPersistenceAdapter, validDocumentName as clientValidDocumentName } from '../src/web/persistence.js';
 
 async function tempDir(t, prefix) {
-  const dir = await mkdtemp(join(tmpdir(), `schematic-spawner-${prefix}-`));
+  const dir = await mkdtemp(join(tmpdir(), `mosfeteer-${prefix}-`));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -38,7 +37,6 @@ test('document names are portable file names and match on client and server', ()
   assert.throws(() => documentPathFor('/work', '../x'), /invalid document name/);
   assert.equal(documentNameFromPath('/work/amp.schematic.json'), 'amp');
   assert.equal(documentNameFromPath('/work/amp.json'), 'amp');
-  assert.equal(documentNameFromPath('/repo/circuits/cmos-nand/circuit.json'), 'cmos-nand');
 });
 
 test('atomic writes replace whole files and can refuse to overwrite', async (t) => {
@@ -75,32 +73,6 @@ test('workspace listing and folder browsing show documents, folders, and other J
   assert.deepEqual(await readDocumentFile(join(dir, 'b.schematic.json')), JSON.parse(state));
 });
 
-test('legacy circuits import once, newest copy first, without overwriting', async (t) => {
-  const root = await tempDir(t, 'legacy');
-  const repo = join(root, 'repo-circuits');
-  const electron = join(root, 'electron-circuits');
-  const workspace = join(root, 'workspace');
-  const write = async (base, name, grid, mtime) => {
-    await mkdir(join(base, name), { recursive: true });
-    const file = join(base, name, 'circuit.json');
-    await writeFile(file, JSON.stringify({ ...new Circuit().toJSON(), grid }));
-    await utimes(file, mtime, mtime);
-  };
-  await write(repo, 'amp', 40, 1000);
-  await write(electron, 'amp', 80, 2000);
-  await write(repo, 'only-repo', 40, 1000);
-  await write(electron, 'kept', 40, 1000);
-  await mkdir(workspace, { recursive: true });
-  await writeFile(join(workspace, 'kept.schematic.json'), 'mine');
-
-  assert.deepEqual(await importLegacyCircuits(workspace, [repo, electron, join(root, 'missing')]), ['amp', 'only-repo']);
-  assert.equal(JSON.parse(await readFile(join(workspace, 'amp.schematic.json'), 'utf8')).grid, 80);
-  assert.equal(await readFile(join(workspace, 'kept.schematic.json'), 'utf8'), 'mine');
-  assert.ok(await readFile(join(repo, 'amp', 'circuit.json')), 'originals stay in place');
-  assert.equal(legacyElectronCircuitsDir({ platform: 'linux', env: {}, home: '/home/u' }), '/home/u/.config/schematic-spawner/circuits');
-  assert.equal(legacyElectronCircuitsDir({ platform: 'darwin', env: {}, home: '/Users/u' }), '/Users/u/Library/Application Support/schematic-spawner/circuits');
-});
-
 test('settings remember the workspace and a bounded recent list', async (t) => {
   const dir = await tempDir(t, 'settings');
   const file = join(dir, 'data', 'settings.json');
@@ -121,8 +93,8 @@ test('settings remember the workspace and a bounded recent list', async (t) => {
 });
 
 test('browser discovery honors an explicit executable and ignores the launcher-only "default"', () => {
-  assert.equal(findChromium({ env: { SCHEMATIC_SPAWNER_BROWSER: '/opt/custom/chrome' } }), '/opt/custom/chrome');
-  assert.equal(findChromium({ platform: 'linux', env: { SCHEMATIC_SPAWNER_BROWSER: 'default', PATH: '' } }), null);
+  assert.equal(findChromium({ env: { MOSFETEER_BROWSER: '/opt/custom/chrome' } }), '/opt/custom/chrome');
+  assert.equal(findChromium({ platform: 'linux', env: { MOSFETEER_BROWSER: 'default', PATH: '' } }), null);
 });
 
 test('request guard accepts loopback editor requests only', () => {

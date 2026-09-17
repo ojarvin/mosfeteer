@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Thin HTTP client for schematic-spawner.
+ * Thin HTTP client for Mosfeteer.
  *
  *   node src/cli/index.js <circuit> "add nmos M1 --at 120 120"
  *   node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL\neval"
@@ -24,7 +24,7 @@ const SERVER = process.env.SP_SERVER || 'http://127.0.0.1:47280';
 
 function usage() {
   return [
-    'schematic-spawner CLI — thin HTTP client over the running server.',
+    'Mosfeteer CLI — thin HTTP client over the running server.',
     '',
     'Usage:',
     `  node src/cli/index.js <circuit> "<command>" [<command> ...]`,

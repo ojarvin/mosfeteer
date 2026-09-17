@@ -1,11 +1,11 @@
 #!/bin/sh
-# Schematic Spawner — double-click or run ./start.sh. Needs Node.js 18+.
+# Mosfeteer — double-click or run ./start.sh. Needs Node.js 18+.
 # Finds Node even when a desktop session does not have your shell's PATH
 # (nvm, mise, volta, fnm, Homebrew), then hands over to launch.mjs.
 cd "$(dirname "$0")" || exit 1
 
 find_node() {
-  [ -n "$SCHEMATIC_SPAWNER_NODE" ] && [ -x "$SCHEMATIC_SPAWNER_NODE" ] && { echo "$SCHEMATIC_SPAWNER_NODE"; return; }
+  [ -n "$MOSFETEER_NODE" ] && [ -x "$MOSFETEER_NODE" ] && { echo "$MOSFETEER_NODE"; return; }
   command -v node 2>/dev/null && return
   for candidate in \
     "$HOME/.local/share/mise/shims/node" \
@@ -20,7 +20,7 @@ find_node() {
 
 NODE=$(find_node)
 if [ -z "$NODE" ]; then
-  echo "Schematic Spawner needs Node.js 18 or newer: https://nodejs.org/" >&2
+  echo "Mosfeteer needs Node.js 18 or newer: https://nodejs.org/" >&2
   exit 1
 fi
 exec "$NODE" launch.mjs "$@"

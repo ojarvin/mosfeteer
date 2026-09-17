@@ -1,5 +1,5 @@
 /**
- * Local HTTP server for the schematic-spawner editor. Uses only Node built-ins.
+ * Local HTTP server for the Mosfeteer editor. Uses only Node built-ins.
  *
  * Static files: the editor (`/src/web`) and the shared core (`/src/core`).
  * Document API: files addressed by absolute path, plus a workspace folder that
@@ -25,7 +25,6 @@ import {
 } from './documents.js';
 import { findChromium, printSvgToPdf, svgPixelSize } from './browser.js';
 import { codeFingerprint } from './fingerprint.js';
-import { importLegacyCircuits, legacyElectronCircuitsDir } from './legacy-import.js';
 import { pngToPdf } from './pdf-raster.js';
 import { allowedHosts, checkRequest } from './request-guard.js';
 import { createSettingsStore, defaultWorkspace } from './settings.js';
@@ -99,7 +98,6 @@ export async function startApp({
   port = DEFAULT_PORT,
   dataRoot = join(APP_ROOT, 'data'),
   workspace: workspaceOverride = null,
-  legacySources = [join(APP_ROOT, 'circuits'), legacyElectronCircuitsDir()],
   pdfBrowser = findChromium(),
   exitWhenIdle = false,
   onIdle = () => process.exit(0),
@@ -111,12 +109,6 @@ export async function startApp({
   if (workspaceOverride) await settings.update({ workspace: resolve(workspaceOverride) });
   const workspace = () => settings.get().workspace || defaultWorkspace();
   await mkdir(workspace(), { recursive: true });
-
-  if (!settings.get().legacyImported && legacySources.length) {
-    const imported = await importLegacyCircuits(workspace(), legacySources);
-    if (imported.length) log(`Imported ${imported.length} earlier circuit(s) into ${workspace()}`);
-    await settings.update({ legacyImported: true });
-  }
 
   const locks = new Map();
   const withLock = (key, action) => {
@@ -188,7 +180,7 @@ export async function startApp({
     const method = req.method;
 
     if (pathname === '/api/health' && method === 'GET') {
-      json(res, 200, { app: 'schematic-spawner', root: APP_ROOT, pid: process.pid, version });
+      json(res, 200, { app: 'mosfeteer', root: APP_ROOT, pid: process.pid, version });
       return;
     }
 

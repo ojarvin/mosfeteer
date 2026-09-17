@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Schematic Spawner launcher. Needs only Node.js (>= 18); no `npm install`.
+ * Mosfeteer launcher. Needs only Node.js (>= 18); no `npm install`.
  *
  *   node launch.mjs                      start (or reuse) the app and open it
  *   node launch.mjs <folder>             use <folder> as the workspace
@@ -11,7 +11,7 @@
  *
  * The server stops by itself shortly after the last editor window closes.
  * Environment: PORT (default 47280), DATA_ROOT (settings and logs, default
- * `data/`), SCHEMATIC_SPAWNER_BROWSER ("default" to skip the app-style
+ * `data/`), MOSFETEER_BROWSER ("default" to skip the app-style
  * Chromium window, or a browser executable path).
  */
 
@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const DATA = resolve(process.env.DATA_ROOT || join(ROOT, 'data'));
 const LOG = join(DATA, 'launcher.log');
-const APP_NAME = 'Schematic Spawner';
+const APP_NAME = 'Mosfeteer';
 
 function log(line) {
   console.log(line);
@@ -43,7 +43,7 @@ if (major < 18) {
 
 // ----- desktop entry ----------------------------------------------------------
 
-const linuxDesktopFile = () => join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'applications', 'schematic-spawner.desktop');
+const linuxDesktopFile = () => join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'applications', 'mosfeteer.desktop');
 const macAppBundle = () => join(homedir(), 'Applications', `${APP_NAME}.app`);
 const quoteDesktopArg = (value) => `"${String(value).replace(/(["`$\\])/g, '\\$1')}"`;
 const quoteShell = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
@@ -61,7 +61,7 @@ async function install() {
       'Type=Application',
       `Name=${APP_NAME}`,
       'Comment=Draw and analyze circuit schematics',
-      `Exec=env SCHEMATIC_SPAWNER_NODE=${quoteDesktopArg(process.execPath)} ${quoteDesktopArg(startScript)} %f`,
+      `Exec=env MOSFETEER_NODE=${quoteDesktopArg(process.execPath)} ${quoteDesktopArg(startScript)} %f`,
       `Icon=${join(ROOT, 'src', 'web', 'icon.svg')}`,
       'Terminal=false',
       'Categories=Development;Electronics;Engineering;',
@@ -77,14 +77,14 @@ async function install() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>${APP_NAME}</string>
-  <key>CFBundleIdentifier</key><string>io.github.schematic-spawner</string>
-  <key>CFBundleExecutable</key><string>schematic-spawner</string>
+  <key>CFBundleIdentifier</key><string>io.github.mosfeteer</string>
+  <key>CFBundleExecutable</key><string>mosfeteer</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSUIElement</key><true/>
 </dict></plist>
 `);
-    const executable = join(bundle, 'Contents', 'MacOS', 'schematic-spawner');
-    await writeFile(executable, `#!/bin/sh\nSCHEMATIC_SPAWNER_NODE=${quoteShell(process.execPath)} exec ${quoteShell(startScript)} "$@"\n`);
+    const executable = join(bundle, 'Contents', 'MacOS', 'mosfeteer');
+    await writeFile(executable, `#!/bin/sh\nMOSFETEER_NODE=${quoteShell(process.execPath)} exec ${quoteShell(startScript)} "$@"\n`);
     await chmod(executable, 0o755);
     log(`Installed ${bundle}. Open it from Finder, Launchpad, or Spotlight.`);
   } else {
@@ -103,7 +103,7 @@ async function uninstall() {
 
 /** A Chromium-family browser can open the editor as a standalone app window. */
 async function chromiumBrowser() {
-  if (process.env.SCHEMATIC_SPAWNER_BROWSER === 'default') return null;
+  if (process.env.MOSFETEER_BROWSER === 'default') return null;
   const { findChromium } = await import('./src/server/browser.js');
   return findChromium();
 }
@@ -140,7 +140,7 @@ async function runningInstance(port) {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1000) });
     const data = await response.json();
-    return data.app === 'schematic-spawner' ? data : null;
+    return data.app === 'mosfeteer' ? data : null;
   } catch {
     return null;
   }

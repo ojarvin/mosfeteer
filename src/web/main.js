@@ -1,5 +1,5 @@
 /**
- * Schematic Spawner — keyboard-driven schematic editor.
+ * Mosfeteer — keyboard-driven schematic editor.
  *
  * Modes:
  *   NORMAL   arrows move (selected comp or cursor), l line annotation, r rotate, Shift+r mirror,
@@ -265,7 +265,7 @@ let lastSavedSnapshot = '';
 let draftReady = false;
 let draftRestored = false;
 let deleteInFlight = false;
-const DRAFT_KEY = 'schematic-spawner:draft';
+const DRAFT_KEY = 'mosfeteer:draft';
 let restoredDraftPath = null;
 let remoteConflictLogged = false;
 let lastSeenRevision = null;
@@ -702,20 +702,6 @@ async function restoreStartup() {
   const openPath = params.get('open');
   if (openPath) window.history.replaceState(null, '', window.location.pathname);
   await listPromise;
-  // Drafts written before documents were files carry only a name, which now
-  // lives in the workspace as <name>.schematic.json.
-  if (draftRestored && !currentDocumentPath && currentCircuitName) {
-    const match = workspaceState?.documents?.find((document) => document.name === currentCircuitName);
-    if (match) {
-      currentDocumentPath = match.path;
-      currentDocumentDir = workspaceState.workspace;
-      restoredDraftPath = match.path;
-      circuitSelectEl.value = match.path;
-    } else {
-      currentCircuitName = '';
-    }
-    renderSaveState();
-  }
   if (openPath && openPath !== currentDocumentPath) requestCircuitLoad(openPath);
 }
 
@@ -875,7 +861,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false }) {
   }
 }
 
-const EXPORT_SETTINGS_KEY = 'schematic-spawner:export';
+const EXPORT_SETTINGS_KEY = 'mosfeteer:export';
 let exportFolder = '';
 
 function renderExportLocation() {
@@ -6904,13 +6890,7 @@ function persistAnalysisForm() {
 
 function restoreAnalysisForm(defaults = {}) {
   let saved = null;
-  try {
-    saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(analysisFormScope())) || 'null');
-    // Settings saved before documents were files are keyed by document name.
-    if (!saved && currentDocumentPath && currentCircuitName) {
-      saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(currentCircuitName)) || 'null');
-    }
-  } catch { /* storage unavailable */ }
+  try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(analysisFormScope())) || 'null'); } catch { /* storage unavailable */ }
   if (!saved) {
     const options = analysisOptionDefaults();
     if (analysisReference) analysisReference.value = '';
@@ -11983,8 +11963,8 @@ document.getElementById('style-color')?.addEventListener('click', (ev) => {
 
 // ----- side panel: collapsible sections, filter, resizable width ------------
 
-const PANEL_COLLAPSED_KEY = 'schematic-spawner:panel-collapsed';
-const PANEL_WIDTH_KEY = 'schematic-spawner:panel-width';
+const PANEL_COLLAPSED_KEY = 'mosfeteer:panel-collapsed';
+const PANEL_WIDTH_KEY = 'mosfeteer:panel-width';
 const collapsedPanels = new Set();
 try {
   for (const name of JSON.parse(localStorage.getItem(PANEL_COLLAPSED_KEY) || '[]')) collapsedPanels.add(name);
@@ -12081,7 +12061,7 @@ function bindPanelResizer(panel, handle, storageKey, cssVar, minWidth) {
 }
 
 bindPanelResizer(document.getElementById('side-panel'), document.getElementById('side-panel-resizer'), PANEL_WIDTH_KEY, '--side-panel-width', 180);
-bindPanelResizer(analysisDialog, document.getElementById('analysis-dock-resizer'), 'schematic-spawner:analysis-width', '--analysis-dock-width', 300);
+bindPanelResizer(analysisDialog, document.getElementById('analysis-dock-resizer'), 'mosfeteer:analysis-width', '--analysis-dock-width', 300);
 
 clearCheckButtonEl?.addEventListener('click', () => {
   clearCheckReport();
@@ -12269,7 +12249,7 @@ document.getElementById('btn-help').addEventListener('click', () => {
 
 // ----- theme (dark mode) ---------------------------------------------
 
-const THEME_KEY = 'schematic-spawner:theme';
+const THEME_KEY = 'mosfeteer:theme';
 const themeBtn = document.getElementById('btn-theme');
 
 function applyTheme(dark) {
@@ -12724,7 +12704,7 @@ try {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) syncActiveCircuit();
   });
-  logLine('Schematic Spawner ready. Press ? for the keymap. Normal: i to insert, w to wire, u undo.');
+  logLine('Mosfeteer ready. Press ? for the keymap. Normal: i to insert, w to wire, u undo.');
 } catch (err) {
   const b = banner();
   if (b) {

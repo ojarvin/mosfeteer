@@ -16,7 +16,7 @@ export function analysisNetOptionText(net) {
   return name === net.id ? name : `${name} — ${net.id}`;
 }
 
-export const ANALYSIS_FORM_KEY = 'schematic-spawner:analysis-form';
+export const ANALYSIS_FORM_KEY = 'mosfeteer:analysis-form';
 
 export function analysisFormStorageKey(documentName = '') {
   const scope = String(documentName || 'new').trim() || 'new';

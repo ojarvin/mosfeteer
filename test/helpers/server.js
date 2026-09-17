@@ -32,7 +32,7 @@ export const serverTest = LOOPBACK_ERROR
 
 /** Start `src/server/serve.js` against a temporary workspace and data folder. */
 export async function startServer({ env = {} } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'schematic-spawner-server-'));
+  const root = await mkdtemp(join(tmpdir(), 'mosfeteer-server-'));
   const workspace = join(root, 'workspace');
   const data = join(root, 'data');
   const port = await unusedPort();
@@ -45,7 +45,7 @@ export async function startServer({ env = {} } = {}) {
   await new Promise((resolve, reject) => {
     child.stdout.on('data', (chunk) => {
       output += chunk;
-      if (output.includes('Schematic Spawner running')) resolve();
+      if (output.includes('Mosfeteer running')) resolve();
     });
     child.stderr.on('data', (chunk) => { output += chunk; });
     child.once('error', reject);

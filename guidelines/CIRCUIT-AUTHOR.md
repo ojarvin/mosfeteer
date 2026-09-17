@@ -70,7 +70,7 @@ preview. The exact CLI sequence is:
 ```sh
 # Build the explicit spec from the approved electrical contract. This temporary
 # input is not a circuit JSON file and must not be committed to the repository.
-cat > /tmp/schematic-spawner-spec.json <<'JSON'
+cat > /tmp/mosfeteer-spec.json <<'JSON'
 {
   "version": 1,
   "motif": "<motif>",
@@ -82,7 +82,7 @@ JSON
 
 # Preview only: no circuit is loaded, changed, saved, or activated.
 node src/cli/index.js <new-circuit-name> generate --preview \
-  --file /tmp/schematic-spawner-spec.json > /tmp/schematic-spawner-preview.json
+  --file /tmp/mosfeteer-spec.json > /tmp/mosfeteer-preview.json
 
 # Review the structured JSON report and its artifacts before asking approval.
 # It includes normalized CircuitSpec, candidate score/issues, semantic report,
@@ -90,7 +90,7 @@ node src/cli/index.js <new-circuit-name> generate --preview \
 
 # After explicit user approval, rerun the same spec as a new named circuit.
 node src/cli/index.js <new-circuit-name> generate --commit \
-  --file /tmp/schematic-spawner-spec.json
+  --file /tmp/mosfeteer-spec.json
 
 # Verify the committed files through the API, then use ordinary commands for
 # subsequent manual edits.

@@ -1,5 +1,5 @@
 {
-  "name": "schematic-spawner",
+  "name": "mosfeteer",
   "version": "0.1.0",
   "description": "Programmatic/agent-assisted circuit schematic generator. Connectivity-based model rendered to SVG.",
   "type": "module",

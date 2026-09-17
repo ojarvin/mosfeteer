@@ -145,7 +145,7 @@ serverTest('command API reports post-delete net state in each result', async (t)
 serverTest('CLI sends a spec file without shell-quoting JSON', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
-  const root = await mkdtemp(join(tmpdir(), 'schematic-spawner-cli-'));
+  const root = await mkdtemp(join(tmpdir(), 'mosfeteer-cli-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'spec.json');
   await writeFile(file, JSON.stringify(spec));

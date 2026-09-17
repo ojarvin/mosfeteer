@@ -166,7 +166,7 @@ test('small-signal analysis exposes the canonical v2 controls', () => {
 
 test('analysis form state is scoped and role metadata is restored from the active schematic', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
-  assert.match(main, /analysisFormStorageKey\(currentCircuitName\)/);
+  assert.match(main, /analysisFormStorageKey\(analysisFormScope\(\)\)/);
   assert.match(main, /Select an input node before deriving equations/);
   assert.match(main, /analysis failed: \$\{message\}/);
   assert.match(main, /migrateAnalysisFormState\(saved\)/);

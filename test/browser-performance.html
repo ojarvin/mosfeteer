@@ -44,7 +44,7 @@ const run = async () => {
   await wait(0);
   const panelUpdated = app.document.querySelector('#nets-list').textContent.includes('OUT');
   await wait(180);
-  const draftFlushed = !!app.localStorage.getItem('schematic-spawner:draft');
+  const draftFlushed = !!app.localStorage.getItem('mosfeteer:draft');
   if (!panelUpdated || !draftFlushed) throw new Error('panel invalidation or draft flush failed');
   output.textContent = JSON.stringify({
     pointerMs, renders: after - before, panelUpdated, draftFlushed,

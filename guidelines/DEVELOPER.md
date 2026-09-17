@@ -11,7 +11,7 @@ geometry, label model, router specifics, editor hotkeys), see `AGENTS.md`.
 
 ## Mission
 
-Make schematic-spawner better for the next agent on the same project — and the
+Make Mosfeteer better for the next agent on the same project — and the
 one after that. Your work should leave the codebase a little easier to
 understand and a little faster to use than you found it.
 
@@ -58,7 +58,6 @@ src/
 │   ├── serve.js        Development entry (`npm run serve`).
 │   ├── documents.js    Document files: names, atomic writes, listing, browsing.
 │   ├── settings.js     data/settings.json: workspace folder and recent files.
-│   ├── legacy-import.js  One-time import of pre-workspace circuits.
 │   └── request-guard.js  Loopback Host / same-origin checks.
 ├── web/
 │   ├── persistence.js  Browser adapter over the document API.
@@ -71,7 +70,6 @@ src/
 test/                   Node test runner (`node --test`).
 fixtures/circuit-spec/  Topology-only CircuitSpec examples.
 launch.mjs              End-user launcher; start.sh / *.command / *.cmd wrap it.
-circuits/<name>/        Legacy saved circuits (gitignored; imported once into the workspace).
 guidelines/             Role docs + style guide.
 AGENTS.md               Current runtime behavior spec (live doc — maintain it).
 ```

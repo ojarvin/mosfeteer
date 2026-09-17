@@ -25,10 +25,7 @@ export function validDocumentName(value) {
 export function documentNameFromPath(path) {
   const file = basename(path);
   if (file.toLowerCase().endsWith(DOCUMENT_EXTENSION)) return file.slice(0, -DOCUMENT_EXTENSION.length);
-  const stem = file.replace(/\.json$/i, '');
-  // Pre-workspace layout: circuits/<name>/circuit.json.
-  if (stem === 'circuit') return basename(dirname(path)) || stem;
-  return stem;
+  return file.replace(/\.json$/i, '');
 }
 
 export function documentPathFor(dir, name) {
@@ -78,7 +75,7 @@ export async function readDocumentFile(path) {
   try {
     loadDocument(state);
   } catch (error) {
-    throw Object.assign(new Error(`"${basename(path)}" is not a schematic-spawner document: ${error.message}`), { status: 422 });
+    throw Object.assign(new Error(`"${basename(path)}" is not a Mosfeteer document: ${error.message}`), { status: 422 });
   }
   return state;
 }

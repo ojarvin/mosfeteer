@@ -1,4 +1,4 @@
-# schematic-spawner — agent guidelines
+# Mosfeteer — agent guidelines
 
 Programmatic, agent-friendly schematic editor. Two distinct agent roles work
 here. Read only the doc that matches your role.
@@ -35,13 +35,11 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
 - `guidelines/` — role-specific docs and the style guide (this directory).
 - Documents are `<name>.schematic.json` files in the workspace folder (default
   `~/Documents/Schematics`, set in the editor's ⋯ menu) or anywhere else.
-  The legacy `circuits/<name>/` folders (with `learnings.md`) are imported once
-  and otherwise unused.
 - `src/core/` — pure model and routing modules; see the detailed inventory in
   [DEVELOPER.md](./DEVELOPER.md#architecture).
 - `launch.mjs` — end-user launcher (start/reuse server, open window, `--install`).
 - `src/server/` — local HTTP server (`app.js`, dev entry `serve.js`), document
-  files, settings, legacy import, and the request guard.
+  files, settings, PDF export, and the request guard.
 - `src/web/` — the in-browser editor (`index.html`, `main.js`, `style.css`),
   persistence adapter, and file dialog.
 - `src/cli/index.js` — command and generation CLI; thin HTTP client over the server.

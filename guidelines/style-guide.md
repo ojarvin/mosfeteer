@@ -1,6 +1,6 @@
 # Schematic Style Guide
 
-The visual and electrical standard every schematic-spawner drawing must meet. This is the canonical source for layout, visual geometry, naming, and label-authoring rules. `AGENTS.md` is authoritative for current runtime behavior and exact symbol geometry, terminals, routing, and editor UX; use it for implementation-specific details.
+The visual and electrical standard every Mosfeteer drawing must meet. This is the canonical source for layout, visual geometry, naming, and label-authoring rules. `AGENTS.md` is authoritative for current runtime behavior and exact symbol geometry, terminals, routing, and editor UX; use it for implementation-specific details.
 
 Companion docs:
 

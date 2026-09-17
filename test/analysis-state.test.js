@@ -9,8 +9,8 @@ const nets = [
 ];
 
 test('analysis form preferences are scoped to each named document', () => {
-  assert.equal(analysisFormStorageKey('ss-nmos'), 'schematic-spawner:analysis-form:ss-nmos');
-  assert.equal(analysisFormStorageKey('another-schematic'), 'schematic-spawner:analysis-form:another-schematic');
+  assert.equal(analysisFormStorageKey('ss-nmos'), 'mosfeteer:analysis-form:ss-nmos');
+  assert.equal(analysisFormStorageKey('another-schematic'), 'mosfeteer:analysis-form:another-schematic');
   assert.notEqual(analysisFormStorageKey('ss-nmos'), analysisFormStorageKey('another-schematic'));
   assert.match(analysisFormStorageKey('new design'), /new%20design$/);
 });

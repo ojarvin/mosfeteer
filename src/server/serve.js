@@ -3,8 +3,7 @@
  * `node src/server/serve.js`. End users start the app with `launch.mjs`.
  *
  * Environment: HOST, PORT, DATA_ROOT (settings and active circuit, default
- * `data/`), SCHEMATIC_WORKSPACE (workspace folder override; also disables the
- * one-time import of pre-workspace circuits).
+ * `data/`), SCHEMATIC_WORKSPACE (workspace folder override).
  */
 
 import { APP_ROOT, DEFAULT_PORT, startApp } from './app.js';
@@ -18,11 +17,10 @@ try {
     port: process.env.PORT === undefined ? DEFAULT_PORT : Number(process.env.PORT),
     dataRoot: resolve(process.env.DATA_ROOT || join(APP_ROOT, 'data')),
     workspace,
-    ...(workspace ? { legacySources: [] } : {}),
   });
-  console.log(`Schematic Spawner running at ${app.url}`);
+  console.log(`Mosfeteer running at ${app.url}`);
   console.log(`Workspace: ${app.workspace()}`);
 } catch (error) {
-  console.error(`Could not start Schematic Spawner: ${error.message}`);
+  console.error(`Could not start Mosfeteer: ${error.message}`);
   process.exitCode = 1;
 }

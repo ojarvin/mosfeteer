@@ -18,7 +18,7 @@ export function defaultWorkspace(home = homedir()) {
 }
 
 export function createSettingsStore(file) {
-  let settings = { workspace: null, recent: [], legacyImported: false };
+  let settings = { workspace: null, recent: [] };
   let writes = Promise.resolve();
 
   const persist = () => {
@@ -39,7 +39,6 @@ export function createSettingsStore(file) {
         settings = {
           workspace: typeof data.workspace === 'string' ? data.workspace : null,
           recent: Array.isArray(data.recent) ? data.recent.filter((path) => typeof path === 'string').slice(0, MAX_RECENT) : [],
-          legacyImported: data.legacyImported === true,
         };
       } catch (error) {
         if (error.code !== 'ENOENT') console.error(`warning: could not read ${file}: ${error.message}`);

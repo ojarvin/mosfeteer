@@ -484,7 +484,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
 
   // ---------- meta / state ----------
   if (cmd === 'help') return result(commandHelp(), null);
-  if (cmd === 'version') return result('schematic-spawner 0.1.0 (grid = 40)', null);
+  if (cmd === 'version') return result('Mosfeteer 0.1.0 (grid = 40)', null);
   if (cmd === 'clear') {
     circuit.components.clear();
     circuit.nets.clear();

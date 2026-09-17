@@ -67,16 +67,16 @@ serverTest('saving refuses to replace another file unless asked, and saves anywh
   assert.equal(relative.status, 400);
 });
 
-serverTest('any JSON document file opens, including the pre-workspace layout', async (t) => {
+serverTest('any JSON document file opens from any folder', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
-  const legacyDir = join(app.root, 'circuits', 'old-amp');
-  await mkdir(legacyDir, { recursive: true });
+  const otherDir = join(app.root, 'circuits', 'old-amp');
+  await mkdir(otherDir, { recursive: true });
   const state = new Circuit().toJSON();
-  await writeFile(join(legacyDir, 'circuit.json'), JSON.stringify(state));
-  const loaded = await app.request(`/api/document?path=${encodeURIComponent(join(legacyDir, 'circuit.json'))}&open=1`);
+  await writeFile(join(otherDir, 'amp.json'), JSON.stringify(state));
+  const loaded = await app.request(`/api/document?path=${encodeURIComponent(join(otherDir, 'amp.json'))}&open=1`);
   assert.equal(loaded.status, 200);
-  assert.equal((await loaded.json()).name, 'old-amp');
+  assert.equal((await loaded.json()).name, 'amp');
 
   await writeFile(join(app.root, 'not-a-document.json'), '{"hello": 1}');
   const rejected = await app.request(`/api/document?path=${encodeURIComponent(join(app.root, 'not-a-document.json'))}`);
@@ -185,7 +185,7 @@ serverTest('the server refuses cross-site and rebinding requests but serves the 
 
   const page = await app.request('/');
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /<title>Schematic Spawner<\/title>/);
+  assert.match(await page.text(), /<title>Mosfeteer<\/title>/);
   assert.equal((await app.request('/src/core/model.js')).status, 200);
   assert.equal((await app.request('/package.json')).status, 404);
   assert.equal((await app.request('/src/server/app.js')).status, 404);
@@ -216,7 +216,7 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
 const EXPORT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect width="200" height="100" fill="#fff"/><text x="20" y="60">R1</text></svg>';
 
 serverTest('export writes the chosen formats into a folder and asks before replacing', async (t) => {
-  const app = await startServer({ env: { SCHEMATIC_SPAWNER_BROWSER: '/nonexistent/chromium' } });
+  const app = await startServer({ env: { MOSFETEER_BROWSER: '/nonexistent/chromium' } });
   t.after(() => app.stop());
   const dir = join(app.root, 'exports', 'figures');
   const body = { dir, name: 'amp', formats: ['svg', 'png', 'pdf'], svg: EXPORT_SVG, png: TINY_PNG };

@@ -1,4 +1,4 @@
-# Schematic Spawner
+# Mosfeteer
 
 A keyboard-driven editor for textbook-style analog schematics and block diagrams, with auto-routed wires, symbolic small-signal analysis, and a CLI/HTTP interface for scripts and agents.
 
@@ -27,16 +27,16 @@ Press `?` in the editor for the full keyboard reference.
 The only requirement is [Node.js](https://nodejs.org/) 18 or newer. There are no packages to install.
 
 ```sh
-git clone https://github.com/ojarvin/schematic-spawner.git
-cd schematic-spawner
+git clone https://github.com/ojarvin/mosfeteer.git
+cd mosfeteer
 ./start.sh                  # or: node launch.mjs
 ```
 
 To start it by double-clicking instead:
 
-- **Linux:** run `node launch.mjs --install` once. *Schematic Spawner* then appears in your application launcher.
-- **macOS:** double-click `Schematic Spawner.command`, or run `node launch.mjs --install` once to add *Schematic Spawner* to `~/Applications`.
-- **Windows:** double-click `Schematic Spawner.cmd`.
+- **Linux:** run `node launch.mjs --install` once. *Mosfeteer* then appears in your application launcher.
+- **macOS:** double-click `Mosfeteer.command`, or run `node launch.mjs --install` once to add *Mosfeteer* to `~/Applications`.
+- **Windows:** double-click `Mosfeteer.cmd`.
 
 The launcher starts a small local server and opens the editor in an app-style Chromium window, or in your default browser if Chromium isn't installed. The server only accepts requests from the editor on your own machine. It stops by itself shortly after you close the last editor window. Launching again while it's running reuses the same server.
 
@@ -50,8 +50,6 @@ Each schematic or block diagram is one self-contained `.schematic.json` file. Yo
 - If a file changes on disk (for example, after `git pull` or an edit by a coworker on a shared drive), an open document with no unsaved changes reloads automatically.
 - `node launch.mjs path/to/amp.schematic.json` opens a document directly.
 - **Export** writes SVG, PDF, and 4× PNG files into a folder you choose (by default, the document's own folder). PDFs are vector files printed by a Chrome, Chromium, Edge, or Brave install found on your machine; without one, the PDF contains the high-resolution image instead.
-
-On first start, circuits from earlier versions of the app (`circuits/<name>/circuit.json` in this repository, and the former desktop app's user-data folder) are copied into the workspace. The originals are left in place.
 
 ## Development
 

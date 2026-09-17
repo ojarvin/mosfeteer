@@ -22,11 +22,11 @@ function onPath(names, env) {
 }
 
 /**
- * Path of an installed Chromium-family browser, or null. SCHEMATIC_SPAWNER_BROWSER
+ * Path of an installed Chromium-family browser, or null. MOSFETEER_BROWSER
  * may name an executable; the value "default" is a launcher preference only.
  */
 export function findChromium({ platform = process.platform, env = process.env } = {}) {
-  const configured = env.SCHEMATIC_SPAWNER_BROWSER;
+  const configured = env.MOSFETEER_BROWSER;
   if (configured && configured !== 'default') return configured;
   if (platform === 'darwin') {
     return ['Google Chrome', 'Chromium', 'Microsoft Edge', 'Brave Browser', 'Vivaldi']
@@ -59,7 +59,7 @@ export function svgPixelSize(svg) {
 export async function printSvgToPdf(svg, { browser = findChromium(), timeoutMs = 60_000 } = {}) {
   if (!browser) throw Object.assign(new Error('no Chromium-family browser found'), { code: 'no-browser' });
   const { width, height } = svgPixelSize(svg);
-  const work = await mkdtemp(join(tmpdir(), 'schematic-spawner-pdf-'));
+  const work = await mkdtemp(join(tmpdir(), 'mosfeteer-pdf-'));
   try {
     const page = join(work, 'page.html');
     const out = join(work, 'out.pdf');
