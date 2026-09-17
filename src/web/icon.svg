@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#1a56db"/>
-  <path d="M8 32h10l4-8 6 16 6-16 6 16 4-8h12" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>Mosfeteer</title>
+  <rect width="256" height="256" rx="56" fill="#1a56db"/>
+  <g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="#fff"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="#b8cbf5"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="#fff"/><circle cx="-138" cy="0" r="10" fill="none" stroke="#fff" stroke-width="6"/></g>
 </svg>

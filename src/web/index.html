@@ -15,6 +15,7 @@
 
   <header class="toolbar">
     <div class="toolbar-cluster document-cluster" role="group" aria-label="Document">
+      <span class="app-mark" role="img" aria-label="Mosfeteer" title="Mosfeteer"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></span>
       <div class="circuit-picker">
         <select id="circuit-select" aria-label="Open a document" title="Open a document">
           <option value="">Open document…</option>
@@ -153,7 +154,7 @@
         <button id="btn-send-back" class="mode-control layer-control" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send selected objects to the back (Shift+Down)" aria-label="Send selected objects to back">Send to back <kbd>Shift+↓</kbd></button>
       </div>
       <div id="empty-state" class="empty-state" hidden>
-        <div class="empty-state-title">Empty schematic</div>
+        <div class="empty-state-head"><span class="app-mark empty-state-mark" aria-hidden="true"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></span><div class="empty-state-title">Empty schematic</div></div>
         <button type="button" data-empty-action="place"><kbd>i</kbd><span class="empty-state-text">Insert a component</span></button>
         <button type="button" data-empty-action="wire"><kbd>w</kbd><span class="empty-state-text">Draw a wire</span></button>
         <button type="button" data-empty-action="open"><kbd>Ctrl+O</kbd><span class="empty-state-text">Open a document</span></button>
@@ -364,6 +365,6 @@
     <pre class="log" id="log"></pre>
   </footer>
 
-  <script type="module" src="main.js?v=22"></script>
+  <script type="module" src="main.js?v=23"></script>
 </body>
 </html>

@@ -24,6 +24,8 @@
   --svg-faint: #666666;
   --grid: #e9e9e9;
   --label-edit-bg: rgba(255, 255, 255, 0.9);
+  --logo-blade: #aeb7c4;
+  --logo-sheen: #dde2ea;
   color-scheme: light;
 }
 
@@ -1361,6 +1363,39 @@ button:disabled {
   box-shadow: 0 8px 28px rgba(20, 24, 34, 0.18);
 }
 
+/* App mark: the NMOS-hilted rapier. Ink follows the text color. */
+.app-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text);
+}
+
+.app-mark-art {
+  display: block;
+  width: 30px;
+  height: 30px;
+}
+
+.document-cluster > .app-mark {
+  margin-right: 4px;
+}
+
+.empty-state-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px 6px;
+}
+
+.empty-state-mark .app-mark-art {
+  width: 40px;
+  height: 40px;
+}
+
+.empty-state-head .empty-state-title {
+  margin: 0;
+}
+
 .empty-state-title {
   margin: 0 0 6px 6px;
   color: var(--text-dim);
@@ -2341,6 +2376,8 @@ html.dark {
   --svg-faint: #9aa3b2;
   --grid: #22262e;
   --label-edit-bg: rgba(25, 28, 36, 0.94);
+  --logo-blade: #8e99a8;
+  --logo-sheen: #c9d1dc;
   color-scheme: dark;
 }
 

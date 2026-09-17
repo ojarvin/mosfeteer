@@ -1,4 +1,6 @@
-# Mosfeteer
+<p align="center"><img src="docs/images/logo.svg" width="112" alt=""></p>
+
+<h1 align="center">Mosfeteer</h1>
 
 A keyboard-driven editor for textbook-style analog schematics and block diagrams, with auto-routed wires, symbolic small-signal analysis, and a CLI/HTTP interface for scripts and agents.
 
