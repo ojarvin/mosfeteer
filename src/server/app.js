@@ -34,6 +34,15 @@ export const APP_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url))
 export const DEFAULT_PORT = 47280;
 
 const STATIC_DIRS = [join(APP_ROOT, 'src', 'web') + sep, join(APP_ROOT, 'src', 'core') + sep];
+// The editor loads only its own module script and same-origin assets, so it can
+// run under a strict policy. Inline styles stay allowed: the page and the
+// rendered SVG both position elements with `style` attributes. `data:` images
+// are the PNG export's rasterization step.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'none'", "script-src 'self'", "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:", "font-src 'self'", "connect-src 'self'",
+  "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+].join('; ');
 const MAX_GENERATION_PREVIEWS = 32;
 const MIME = {
   '.js': 'text/javascript',
@@ -73,13 +82,17 @@ function matchesEtag(req, revision) {
 }
 
 async function requestBody(req, limit = 10_000_000) {
-  let body = '';
+  // Decode once at the end: a multi-byte character split across two chunks
+  // would be mangled by concatenating each chunk's own string conversion.
+  const chunks = [];
+  let size = 0;
   for await (const chunk of req) {
-    body += chunk;
-    if (body.length > limit) throw httpError('request body too large', 413);
+    size += chunk.length;
+    if (size > limit) throw httpError('request body too large', 413);
+    chunks.push(chunk);
   }
   try {
-    return JSON.parse(body || '{}');
+    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
   } catch {
     throw httpError('request body is not valid JSON');
   }
@@ -512,7 +525,12 @@ export async function startApp({
       return;
     }
     const type = MIME[extname(filePath).toLowerCase()] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, ...headers });
+    res.writeHead(200, {
+      'Content-Type': `${type}; charset=utf-8`,
+      'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+      'X-Content-Type-Options': 'nosniff',
+      ...headers,
+    });
     res.end(data);
   }
 

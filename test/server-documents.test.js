@@ -37,6 +37,37 @@ serverTest('documents save by name into the workspace and reopen by path', async
   assert.equal((await readdir(app.workspace)).some((file) => file.endsWith('.tmp')), false);
 });
 
+serverTest('a request body split mid-character keeps its multi-byte label text', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+
+  // Labels carry subscripts, \u221e and \u00b7. The body must be decoded as one
+  // UTF-8 stream: here the socket delivers a character's bytes in two reads.
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 200, y: 200 });
+  circuit.addLabel({ text: 'R_{1} \u2225 \u221e \u00b7', anchor: { x: 200, y: 280 } });
+  const state = circuit.toJSON();
+  const payload = Buffer.from(JSON.stringify({ name: 'split text', state }), 'utf8');
+  const marker = payload.indexOf(Buffer.from('\u2225', 'utf8'));
+  assert.ok(marker > 0, 'payload should contain the multi-byte label');
+
+  const { request } = await import('node:http');
+  const status = await new Promise((resolve, reject) => {
+    const req = request({
+      host: '127.0.0.1', port: app.port, path: '/api/document', method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length },
+    }, (res) => { res.resume(); resolve(res.statusCode); });
+    req.on('error', reject);
+    // Split inside the character, then let the first half land on its own.
+    req.write(payload.subarray(0, marker + 1));
+    setTimeout(() => req.end(payload.subarray(marker + 1)), 50);
+  });
+  assert.equal(status, 200);
+
+  const roundTripped = JSON.parse(await readFile(app.file('split text'), 'utf8'));
+  assert.deepEqual(roundTripped, state);
+});
+
 serverTest('saving refuses to replace another file unless asked, and saves anywhere', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
@@ -186,6 +217,13 @@ serverTest('the server refuses cross-site and rebinding requests but serves the 
   const page = await app.request('/');
   assert.equal(page.status, 200);
   assert.match(await page.text(), /<title>Mosfeteer<\/title>/);
+  // The API can read and write any file the user can, so a script injected
+  // through document content must never run in the editor's origin.
+  const policy = page.headers.get('content-security-policy');
+  assert.match(policy, /default-src 'none'/);
+  assert.match(policy, /script-src 'self'/);
+  assert.doesNotMatch(policy, /unsafe-eval|script-src[^;]*unsafe-inline/);
+  assert.equal(page.headers.get('x-content-type-options'), 'nosniff');
   assert.equal((await app.request('/src/core/model.js')).status, 200);
   assert.equal((await app.request('/package.json')).status, 404);
   assert.equal((await app.request('/src/server/app.js')).status, 404);

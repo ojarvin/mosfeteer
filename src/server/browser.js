@@ -63,7 +63,9 @@ export async function printSvgToPdf(svg, { browser = findChromium(), timeoutMs =
   try {
     const page = join(work, 'page.html');
     const out = join(work, 'out.pdf');
-    await writeFile(page, `<!doctype html><html><head><meta charset="utf-8"><style>@page{size:${width}px ${height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block;width:${width}px;height:${height}px}</style></head><body>${svg}</body></html>`);
+    // The SVG is rendered by a real browser, so the page denies scripts and
+    // every external load; only the inline drawing and its inline styles run.
+    await writeFile(page, `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>@page{size:${width}px ${height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block;width:${width}px;height:${height}px}</style></head><body>${svg}</body></html>`);
     await new Promise((resolve, reject) => {
       const child = spawn(browser, [
         '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
