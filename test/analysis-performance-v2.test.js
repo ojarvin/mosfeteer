@@ -5,7 +5,12 @@ import { buildExactAnalysisPipeline } from '../src/core/analysis/pipeline.js';
 import { numberOps } from '../src/core/analysis/mna.js';
 import { smallSignalGoldenCorpus } from './fixtures/small-signal-golden.js';
 
-const TIMING_MULTIPLIER = 8;
+// Wall clock is a smoke check against pathological slowdowns, not the real
+// guard -- the operation ceilings below are deterministic and unchanged. The
+// multiplier carries enough slack for a loaded machine: the suite runs its
+// files in parallel, and an exact solve of a compensated cascode now runs
+// beside these.
+const TIMING_MULTIPLIER = 12;
 const BASELINE_CEILINGS_MS = Object.freeze({ oneTransistor: 50, twoTransistor: 200 });
 const OPERATION_CEILINGS = Object.freeze({
   oneTransistor: 500,

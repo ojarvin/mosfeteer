@@ -217,6 +217,25 @@ function monomialTerms(value) {
   } catch { return null; }
 }
 
+/** The set of powers of the frequency variable a polynomial actually carries,
+ * or null when it is not a polynomial in it. */
+function frequencyPowers(value, variable) {
+  const coefficients = polynomialCoefficients(value, variable);
+  return coefficients ? new Set(coefficients.map((entry) => entry.power)) : null;
+}
+
+/** Dropping subleading terms inside a difference can annihilate one whole
+ * coefficient of `s` — two products that differed only by the dropped terms
+ * become equal and cancel. The reduced expression would then claim a pole or
+ * zero at the origin the circuit does not have, so a reduction that loses a
+ * power of `s` is not a valid approximation of this expression. */
+function retainsFrequencyPowers(before, after, variable) {
+  const original = frequencyPowers(before, variable);
+  const reduced = frequencyPowers(after, variable);
+  if (!original || !reduced) return true;
+  return [...original].every((power) => reduced.has(power));
+}
+
 function intrinsicProductReduction(current, records, global, options) {
   const selectedDevices = records.filter((device) => device.intrinsicProduct
     && !deviceScaling(device, options).length
@@ -268,6 +287,11 @@ function intrinsicProductReduction(current, records, global, options) {
   // exact value here; the topological path can still simplify its local Gm
   // and load branches without that cancellation.
   if (equals(denominator, ZERO)) return { selected: current, assumptions: [] };
+  const variable = current.variable || 's';
+  if (!retainsFrequencyPowers(current.numerator, numerator, variable)
+      || !retainsFrequencyPowers(current.denominator, denominator, variable)) {
+    return { selected: current, assumptions: [] };
+  }
   const selected = rationalFunction(numerator, denominator, { variable: current.variable });
   return { selected, assumptions: [...used].map((id) => assumptionName('intrinsic', id)) };
 }

@@ -559,9 +559,12 @@ export function rationalFunction(numerator, denominator = ONE, options = {}) {
       ]);
       const reducedNumeratorMap = cancelPolynomialContent(numeratorMap, content, budget);
       const reducedDenominatorMap = cancelPolynomialContent(denominatorMap, content, budget);
-      if (!reducedNumeratorMap || !reducedDenominatorMap) throw new BudgetExceeded();
-      const numeratorCoefficients = coefficientsFromMap(reducedNumeratorMap);
-      const denominatorCoefficients = coefficientsFromMap(reducedDenominatorMap);
+      // A content factor that does not divide every coefficient exactly is a
+      // structural outcome, not exhaustion: keep the uncancelled coefficients
+      // rather than failing the whole analysis as over budget.
+      const cancelled = reducedNumeratorMap && reducedDenominatorMap;
+      const numeratorCoefficients = coefficientsFromMap(cancelled ? reducedNumeratorMap : numeratorMap);
+      const denominatorCoefficients = coefficientsFromMap(cancelled ? reducedDenominatorMap : denominatorMap);
       budget.step(numeratorCoefficients.length + denominatorCoefficients.length);
       const normalizedNumerator = polynomialExpression(numeratorCoefficients, variable);
       const normalizedDenominator = polynomialExpression(denominatorCoefficients, variable);
