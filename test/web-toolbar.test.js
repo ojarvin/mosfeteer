@@ -62,3 +62,11 @@ test('insert search matches a symbol by id, display name, or alias', () => {
   assert.ok(placementSearchScore('bjt', 'npn') > 0, 'alias');
   assert.equal(placementSearchScore('zzzz', 'nmos'), -1);
 });
+
+test('image clipboard shortcut is discoverable once in each editor keymap', () => {
+  for (const kind of ['circuit', 'block']) {
+    const help = editorKeymapText(kind);
+    assert.equal(help.split('Ctrl/Cmd+Shift+C').length - 1, 1);
+    assert.match(help, /copy selection \(or whole drawing\) as an image for other apps/);
+  }
+});

@@ -15,18 +15,22 @@ import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
-import { editorOverlay, svgPixelSize, svgString, texToMathML } from '../core/render.js';
+import { editorOverlay, svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
+import { resolveCopySelection } from '../core/selection.js';
+import { DRAWING_EXPORT_OPTIONS, selectionDrawing } from '../core/selection-drawing.js';
+import { svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
+import { writeDrawingToClipboard } from './clipboard.js';
 import { distanceToSegment } from '../core/geometry.js';
 import { moveBlockArrowRun, orthogonalBlockRoute, routeBlockArrow } from '../core/block-router.js';
 import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
-import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
+import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
 import { PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare, placementSearchScore } from './toolbar.js';
@@ -861,82 +865,49 @@ async function saveCircuit({ saveAs = false } = {}) {
   }
 }
 
-async function svgToPngDataUrl(svg, scale = 4) {
-  const { width, height } = svgPixelSize(svg);
-  const image = new Image();
-  // A Blob URL gives SVGs an opaque origin. Chromium then taints the canvas
-  // when the SVG contains foreignObject/MathML equation labels. A data URL is
-  // origin-clean for this self-contained SVG and remains exportable.
-  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  await new Promise((resolve, reject) => {
-    image.onload = resolve;
-    image.onerror = () => reject(new Error('could not rasterize SVG for PNG export'));
-    image.src = url;
-  });
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.ceil(width * scale));
-  canvas.height = Math.max(1, Math.ceil(height * scale));
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('PNG export requires canvas support');
-  context.fillStyle = '#fff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/png');
+function copySelectionSource() {
+  const wireKeys = new Set(selectedWires);
+  if (selectedWire) wireKeys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
+  return {
+    refs: multi, labels: selectedLabels(), netIds: selectedNets, wireKeys,
+    blockIds: selectedBlocks, arrowIds: selectedArrows,
+  };
 }
 
-function applyExportDarkTheme(svg) {
-  // The editor's dark theme normally recolors the inline SVG with CSS. An
-  // exported SVG is standalone, so bake the same palette into its attributes
-  // without touching the live document or its theme state.
-  return String(svg)
-    .replace(/var\(--paper,\s*#fff\)/gi, '#15171c')
-    .replace(/var\(--grid,\s*#ddd\)/gi, '#22262e')
-    .replace(/var\(--text,\s*#111\)/gi, '#dde1e8')
-    .replace(/var\(--svg-ink,\s*#111\)/gi, '#dde1e8')
-    .replace(/#e9e9e9\b/gi, '#22262e')
-    .replace(/#eee\b/gi, '#22262e')
-    .replace(/#fff\b/gi, '#15171c')
-    .replace(/#111\b/gi, '#dde1e8');
+let clipboardNotice = '';
+let clipboardNoticeTimer = null;
+let imageCopyInFlight = false;
+
+function reportImageCopy(text, error = false) {
+  clipboardNotice = text;
+  clearTimeout(clipboardNoticeTimer);
+  logLine(text, error ? 'error' : 'status');
+  renderStatus();
+  clipboardNoticeTimer = setTimeout(() => { clipboardNotice = ''; renderStatus(); }, 8000);
 }
 
-/**
- * Render the document and have the local server write `<dir>/<name>.<format>`.
- * The browser renders SVG and PNG (it measures equation labels); the server
- * prints the PDF, falling back to the PNG when it has no headless browser.
- */
-// An exported drawing leaves this page: a standalone SVG, a PNG rasterized
-// from it, and the server's PDF print all lose the stylesheet that loads the
-// math font. Embedding the face makes exported equations look like the ones on
-// screen instead of falling back to a Times clone. Only drawings that actually
-// carry math pay the ~0.5 MB.
-let mathFontFaceCss = null;
-
-async function embeddedMathFontFace() {
-  if (mathFontFaceCss !== null) return mathFontFaceCss;
+async function copyAsImage() {
+  if (imageCopyInFlight) return;
+  imageCopyInFlight = true;
   try {
-    const bytes = new Uint8Array(await (await fetch('fonts/latinmodern-math.woff2')).arrayBuffer());
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    mathFontFaceCss = `@font-face{font-family:"Latin Modern Math";src:url(data:font/woff2;base64,${btoa(binary)}) format("woff2");font-weight:normal;font-style:normal}`;
-  } catch {
-    mathFontFaceCss = ''; // an export without the face still renders, in the fallback face
+    // Capture the selected model synchronously; ClipboardItem's promised
+    // payloads let the write start within this same user gesture.
+    const svg = selectionDrawing(circuit, copySelectionSource());
+    const write = writeDrawingToClipboard(svg);
+    reportImageCopy('Copying image…');
+    await write;
+    reportImageCopy('Copied image — paste into another app.');
+  } catch (err) {
+    reportImageCopy(`Could not copy image: ${err.message}`, true);
+  } finally {
+    imageCopyInFlight = false;
   }
-  return mathFontFaceCss;
-}
-
-async function withEmbeddedMathFont(svg) {
-  if (!svg.includes('schematic-math-label')) return svg;
-  const face = await embeddedMathFontFace();
-  return face ? svg.replace(/(<svg\b[^>]*>)/, `$1<style>${face}</style>`) : svg;
 }
 
 async function runExport({ dir, name, formats, grid = false, dark = false }) {
   const renderedSvg = renderDocument(circuit, {
+    ...DRAWING_EXPORT_OPTIONS,
     grid,
-    terminals: false,
-    junctions: false,
-    background: true,
-    netNames: true,
   });
   const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
   const request = { dir, name, formats, svg };
@@ -7846,13 +7817,27 @@ function openComponentContextMenu(target, x, y) {
 
 /** Right-clicking an unselected object makes it the selection, so menu actions have one clear scope. */
 function selectContextTarget(target) {
-  if (target.kind === 'component') {
+  if (target.kind === 'block') {
+    if (selectedBlocks.has(target.value.id)) return;
+    selectedBlocks = new Set([target.value.id]);
+    selectedArrows.clear();
+    setLabelSelection([], null, true);
+  } else if (target.kind === 'connector') {
+    if (selectedArrows.has(target.value.id)) return;
+    selectedBlocks.clear();
+    selectedArrows = new Set([target.value.id]);
+    setLabelSelection([], null, true);
+  } else if (target.kind === 'component') {
     if (multi.has(target.value.refdes)) return;
     setSelection([target.value.refdes]);
     setLabelSelection([], null, true);
     selectedNets = new Set();
   } else if (target.kind === 'label') {
     if (selLabels.has(target.value.id)) return;
+    if (isBlockDiagram(circuit)) {
+      selectedBlocks.clear();
+      selectedArrows.clear();
+    }
     setSelection([]);
     setLabelSelection([target.value.id]);
   } else if (target.kind === 'net' || target.kind === 'wire') {
@@ -7880,7 +7865,10 @@ function renameFromPanel(listEl, selector, start) {
 }
 
 function appendContextActions(menu, target) {
-  if (isBlockDiagram(circuit)) return;
+  if (isBlockDiagram(circuit)) {
+    appendContextItem(menu, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
+    return;
+  }
   const group = document.createElement('div');
   group.className = 'context-menu-group';
   const later = (fn) => () => setTimeout(fn, 0);
@@ -7902,9 +7890,11 @@ function appendContextActions(menu, target) {
   if (target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'M' });
     appendContextItem(group, 'Copy', activateCopy, { shortcut: 'C' });
+    appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
     appendContextItem(group, 'Bring to front', () => restackSelected('front'), { shortcut: 'Shift+↑' });
     appendContextItem(group, 'Send to back', () => restackSelected('back'), { shortcut: 'Shift+↓' });
   }
+  if (target.kind === 'net' || target.kind === 'wire') appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
   appendContextItem(group, 'Delete', deleteSelection, { shortcut: 'Del', danger: true });
   menu.appendChild(group);
 }
@@ -7920,8 +7910,11 @@ canvasEl.addEventListener('contextmenu', (ev) => {
       : segment ? { kind: 'connector', value: segment.arrow }
         : node?.dataset.blockId ? { kind: 'block', value: circuit.blocks.get(node.dataset.blockId) }
           : null;
-    if (target) openComponentContextMenu(target, ev.clientX, ev.clientY);
-    else closeComponentContextMenu();
+    if (target) {
+      selectContextTarget(target);
+      render();
+      openComponentContextMenu(target, ev.clientX, ev.clientY);
+    } else closeComponentContextMenu();
     return;
   }
   const world = clientToWorld(ev.clientX, ev.clientY);
@@ -10660,72 +10653,33 @@ function copySelection() {
     logLine('copied selected block style');
     return true;
   }
-  // Owned labels bring their component; a net label alone is copied as a
-  // floating annotation rather than expanding its physical net.
-  const labels = selectedLabels();
-  const copy = copySelectionParts({ labels, refs: multi, netIds: selectedNets });
-  const refs = copy.refs;
-  const copyNetIds = copy.netIds;
-  for (const id of copyNetIds) {
-    const net = circuit.nets.get(id);
-    for (const terminal of net?.terminals || []) refs.add(terminal.comp);
-  }
-  const comps = [...refs].map((refdes) => circuit.components.get(refdes)).filter(Boolean);
-  const selectedFreeLabels = copy.labels;
-  const parentIds = new Set(selectedFreeLabels.filter((l) => ['arrow', 'box', 'line'].includes(l.kind)).map((l) => l.id));
-  const freeLabels = [...new Map([...selectedFreeLabels, ...circuit.labels.values()]
-    .filter((l) => !l.owner && (selectedFreeLabels.includes(l) || (!l.isNetLabel?.() && parentIds.has(l.parent))))
-    .map((l) => [l.id, l])).values()];
-  const hasWholeTerminallessNet = [...copyNetIds].some((id) => {
-    const net = circuit.nets.get(id);
-    return net && net.terminals.length === 0 && net.paths().some((path) => path.length >= 2);
-  });
-  if (!comps.length && !freeLabels.length && !selectedWires.size && !selectedWire && !hasWholeTerminallessNet) {
+  const parts = resolveCopySelection(circuit, copySelectionSource());
+  const { comps, freeLabels } = parts;
+  if (!comps.length && !freeLabels.length && !parts.nets.length && !parts.fragments.length) {
     logLine('nothing selected to copy');
     return false;
   }
-  const wireKeys = new Set(selectedWires);
-  if (selectedWire) wireKeys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
-  const compRefs = new Set(comps.map((c) => c.refdes));
-  const nets = [];
-  const fragments = [];
-  for (const net of circuit.nets.values()) {
-    const ownKeys = [...wireKeys].filter((key) => keyToWire(key).netId === net.id);
-    const paths = net.paths();
-    const allKeys = paths.flatMap((p, branch) => p.slice(1).map((point, segment) => ({ point, previous: p[segment], segment }))
-      .filter(({ point, previous }) => point.x !== previous.x || point.y !== previous.y)
-      .map(({ segment }) => `${net.id}:${branch}:${segment + 1}`));
-    const internal = net.terminals.length && net.terminals.every((t) => compRefs.has(t.comp));
-    const completeTerminalless = !net.terminals.length &&
-      (copyNetIds.has(net.id) || (ownKeys.length > 0 && ownKeys.length === allKeys.length));
-    // A selected complete internal net is copied once as an ordinary net. A
-    // partial selection is extracted below and must not duplicate the net.
-    if ((internal && (!ownKeys.length || ownKeys.length === allKeys.length)) || completeTerminalless) {
-      nets.push({
-        id: net.id,
-        name: net.name,
-        routingMode: net.routingMode,
-        drawOrder: net.drawOrder,
-        terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
-        ...captureRouteGeometry(net),
-        fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
-        netLabels: circuit.netLabels(net).map((label) => ({
-          netId: net.id,
-          text: label.text,
-          align: label.align,
-          netSide: label.netSide,
-          x: label.anchorWorld().x,
-          y: label.anchorWorld().y,
-        })),
-      });
-    } else if (ownKeys.length) {
-      const selected = ownKeys.map((key) => { const w = keyToWire(key); return { branch: w.branch, segment: w.segment }; });
-      for (const island of extractWireFragments(paths, selected, net.junctions)) {
-        fragments.push({ name: net.name, routingMode: net.routingMode,
-          allowDiagonal: net.allowDiagonal, drawOrder: net.drawOrder, paths: island.paths, junctions: island.junctions });
-      }
-    }
-  }
+  const nets = parts.nets.map((net) => ({
+    id: net.id,
+    name: net.name,
+    routingMode: net.routingMode,
+    drawOrder: net.drawOrder,
+    terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
+    ...captureRouteGeometry(net),
+    fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
+    netLabels: circuit.netLabels(net).map((label) => ({
+      netId: net.id,
+      text: label.text,
+      align: label.align,
+      netSide: label.netSide,
+      x: label.anchorWorld().x,
+      y: label.anchorWorld().y,
+    })),
+  }));
+  const fragments = parts.fragments.map(({ net, paths, junctions }) => ({
+    name: net.name, routingMode: net.routingMode, allowDiagonal: net.allowDiagonal,
+    drawOrder: net.drawOrder, paths, junctions,
+  }));
   // Grid-snapped anchor = bbox centre of the selection, so paste re-centres it
   // at the cursor without drifting off the grid.
   let x0 = Infinity;
@@ -11213,6 +11167,7 @@ function renderStatus() {
     if (blockConnector) parts.push(blockConnector.source
       ? `CONNECTOR ${blockConnector.source.block}.${blockConnector.source.terminal} → click a terminal to commit · other clicks guide · Esc cancels`
       : 'CONNECTOR: click a block terminal to start · Esc cancel');
+    if (clipboardNotice) parts.unshift(clipboardNotice);
     statusEl.textContent = parts.join('  ·  ');
     statusEl.className = `status ${interaction.key}`;
     return;
@@ -11257,6 +11212,7 @@ function renderStatus() {
   }
   if (netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
   if (circuit.netNameWarnings?.length) parts.push('⚠ merged net names require reconciliation');
+  if (clipboardNotice) parts.unshift(clipboardNotice);
   statusEl.textContent = parts.join('  ·  ');
   statusEl.className = `status ${interaction.key}`;
   if (directWire) statusEl.classList.add('direct-wire');
@@ -12576,13 +12532,16 @@ window.addEventListener('keydown', (ev) => {
     && pendingKey?.key === 'd' && Date.now() - pendingKey.at < 800;
   if (ev.metaKey || ev.ctrlKey) {
     const k = ev.key.toLowerCase();
-    if (isBlockDiagram(circuit) && k === 'a') {
+    if (k === 'c' && ev.shiftKey) {
+      ev.preventDefault();
+      copyAsImage();
+    } else if (isBlockDiagram(circuit) && k === 'a') {
       ev.preventDefault();
       selectedBlocks = new Set(circuit.blocks.keys());
       selectedArrows = new Set(circuit.arrows.keys());
       setLabelSelection([...circuit.labels.keys()], undefined, true);
       render();
-    } else if (isBlockDiagram(circuit) && k === 'c') {
+    } else if (isBlockDiagram(circuit) && k === 'c' && !ev.shiftKey) {
       ev.preventDefault();
       copySelection();
     } else if (isBlockDiagram(circuit) && k === 'v') {
@@ -12624,7 +12583,7 @@ window.addEventListener('keydown', (ev) => {
           .map((n) => n.id)
       );
       render();
-    } else if (k === 'c') {
+    } else if (k === 'c' && !ev.shiftKey) {
       ev.preventDefault();
       copySelection();
     } else if (k === 'v' && ev.shiftKey) {

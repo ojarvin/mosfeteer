@@ -1,13 +1,4 @@
-/** Keep label-only copy sources separate from explicitly selected topology. */
-export function copySelectionParts({ labels = [], refs = [], netIds = [] } = {}) {
-  const copyRefs = new Set(refs);
-  for (const label of labels) if (label.owner) copyRefs.add(label.owner);
-  return {
-    refs: copyRefs,
-    netIds: new Set(netIds),
-    labels: labels.filter((label) => !label.owner),
-  };
-}
+export { copySelectionParts } from '../core/selection.js';
 
 /** Convert any standalone visual label, including a net label, to the
  * label-only clipboard shape. Deliberately omits owner/netId so the pasted

@@ -410,6 +410,13 @@ corresponding net branch.
 
 ---
 
+Clipboard images use the same print-ready appearance as file exports: white
+paper, no grid, editor overlays, cursor, or pin dots, and the embedded math font
+when equations are present. Copy as image renders only the selected objects
+(including their owned labels and complete nets), with one grid cell of padding;
+with nothing selected it uses the whole drawing. Editor theme and grid settings
+remain independent of this appearance.
+
 ## 6. Visual structure
 
 Unless circuit convention dictates otherwise, use supplies at the top, grounds or sinks at the bottom, inputs from the left, outputs to the right, grouped active loads/mirrors, and bias inputs near the devices they control. Leave whitespace for labels and future edits; never hide terminals or wires under labels; keep component IDs readable and unique.
