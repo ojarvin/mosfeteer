@@ -16,6 +16,7 @@ import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/com
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { editorOverlay, svgPixelSize, svgString, texToMathML } from '../core/render.js';
+import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -3574,6 +3575,7 @@ function renderCanvas(modelKey) {
   const overlay = editorOverlay(circuit, {
     cursor,
     selection: [...multi],
+    emphasis: equationEmphasis,
     diagnostic: diagnosticSelection,
     resizeBlocks: [...multi].filter((ref) => {
       const component = circuit.components.get(ref);
@@ -7071,13 +7073,87 @@ function analysisAnnotationEntries(report) {
   ));
 }
 
-function renderEquationMath(container, equation) {
+/**
+ * Tag each rendered sub-expression with the components it was derived from.
+ *
+ * `texToMathML` has already turned `present.js`'s provenance markers into
+ * `data-node` attributes; this resolves each node's symbol names through the
+ * report's `symbolProvenance` table. A node naming nothing on the canvas (a
+ * bare number, or `s`) is left undecorated and stays inert.
+ */
+function decorateEquationProvenance(container, provenance, table) {
+  if (!container || !provenance || !table) return;
+  const symbols = new Map(provenance.nodes.map((node) => [String(node.id), node.symbols]));
+  for (const element of container.querySelectorAll('[data-node]')) {
+    const components = componentsOfSymbols(symbols.get(element.dataset.node) || [], table);
+    if (components.length) element.dataset.components = components.join(' ');
+  }
+}
+
+function renderEquationMath(container, equation, provenance = null, table = null) {
   if (!container) return;
   container.replaceChildren();
   const normalized = equationForDiagram(equation);
   container.setAttribute('aria-label', normalized);
-  // The shared parser escapes literal text and emits only MathML markup.
-  container.innerHTML = texToMathML(equation);
+  // The shared parser escapes literal text and emits only MathML markup. The
+  // provenance render differs from the displayed one by markers alone, which
+  // `analysis-provenance-v2.test.js` asserts against the whole golden corpus,
+  // so rendering from it cannot change what the row looks like.
+  container.innerHTML = texToMathML(provenance?.tex || equation);
+  decorateEquationProvenance(container, provenance, table);
+}
+
+/**
+ * Equation to schematic highlighting. Hovering a term lights the devices it
+ * came from; clicking locks that highlight, and clicking the locked term again
+ * widens the selection to the enclosing sub-expression, so a term buried inside
+ * a fraction can still be grabbed whole.
+ */
+let equationEmphasis = [];
+let equationLockedTerm = null;
+
+function equationTermComponents(element) {
+  return element?.dataset?.components ? element.dataset.components.split(' ') : [];
+}
+
+function setEquationEmphasis(element, { locked = false } = {}) {
+  const root = analysisEquation;
+  if (!root) return;
+  if (locked) equationLockedTerm = element;
+  const active = element || equationLockedTerm;
+  for (const marked of root.querySelectorAll('.equation-term-hover, .equation-term-locked')) {
+    marked.classList.remove('equation-term-hover', 'equation-term-locked');
+  }
+  if (equationLockedTerm?.isConnected) equationLockedTerm.classList.add('equation-term-locked');
+  else equationLockedTerm = null;
+  if (active?.isConnected && active !== equationLockedTerm) active.classList.add('equation-term-hover');
+  const components = equationTermComponents(active?.isConnected ? active : equationLockedTerm);
+  const changed = components.length !== equationEmphasis.length
+    || components.some((ref, index) => ref !== equationEmphasis[index]);
+  equationEmphasis = components;
+  if (changed) render();
+}
+
+function clearEquationEmphasis() {
+  equationLockedTerm = null;
+  setEquationEmphasis(null);
+}
+
+if (analysisEquation) {
+  analysisEquation.addEventListener('pointermove', (event) => {
+    setEquationEmphasis(event.target.closest?.('[data-components]') || null);
+  });
+  analysisEquation.addEventListener('pointerleave', () => setEquationEmphasis(null));
+  analysisEquation.addEventListener('click', (event) => {
+    const term = event.target.closest?.('[data-components]');
+    if (!term) { clearEquationEmphasis(); return; }
+    // A second click on the locked term widens to the sub-expression that
+    // contains it, one level per click, up to the whole equation.
+    const next = term === equationLockedTerm
+      ? term.parentElement?.closest('[data-components]') || term
+      : term;
+    setEquationEmphasis(next, { locked: true });
+  });
 }
 
 function renderAnalysisResult(report) {
@@ -7095,6 +7171,7 @@ function renderAnalysisResult(report) {
   }
   const text = analysisReportText(report);
   if (analysisEquation) {
+    clearEquationEmphasis();
     analysisEquation.replaceChildren();
     const entries = analysisEquationEntries(report);
     if (entries.length) {
@@ -7108,7 +7185,7 @@ function renderAnalysisResult(report) {
         if (child?.ok && child.equation) {
           const equation = document.createElement('div');
           equation.className = 'analysis-equation-value';
-          renderEquationMath(equation, child.equation);
+          renderEquationMath(equation, child.equation, child.equationProvenance, report.symbolProvenance);
           row.appendChild(equation);
         } else {
           const unavailable = document.createElement('div');
@@ -7202,6 +7279,9 @@ function isAnalysisDockOpen() {
 function closeAnalysisDock() {
   if (!isAnalysisDockOpen()) return;
   setAnalysisPick(null);
+  // The equation-to-schematic highlight belongs to the dock: leaving it drawn
+  // over the canvas with nothing to explain it is just a stuck selection.
+  clearEquationEmphasis();
   analysisDialog.hidden = true;
   analysisButton?.setAttribute('aria-pressed', 'false');
   canvasEl.focus();

@@ -1,6 +1,12 @@
 import { OWN, firstDefined } from './shared.js';
 import { analyzeResponse } from './response.js';
-import { renderExpression, renderRootEquation } from './present.js';
+import {
+  joinProvenanceRenders,
+  renderExpression,
+  renderExpressionWithProvenance,
+  renderRootEquation,
+  renderRootEquationWithProvenance,
+} from './present.js';
 import { infinity } from './rational.js';
 
 const QUANTITIES = Object.freeze([
@@ -129,6 +135,23 @@ function equation(label, expression, approximate = false, options) {
   return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
 }
 
+/**
+ * The same equation rendered with provenance markers, so the GUI can map a
+ * clicked sub-expression back to the devices it came from.
+ *
+ * This is built here, beside the string it mirrors, for the reason AGENTS.md
+ * gives about `equivalenceOptions`: a row rendered anywhere else would have to
+ * reproduce this function's label, approximation flag, and equivalence options,
+ * and getting any of them wrong fails silently on that row alone.
+ */
+function equationProvenance(label, expression, approximate = false, options) {
+  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
+  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
+  // Mirrors `equation()` above exactly, including its relation symbol.
+  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
+  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
+}
+
 function dcValue(limit) {
   if (!limit) return undefined;
   if (limit.value !== undefined && limit.value !== null) return limit.value;
@@ -164,6 +187,7 @@ function dcResult(label, selected, exact, source) {
     ok: true,
     equation: equation(label, selectedValue, changed, options),
     exactEquation: equation(label, exactValue, false, options),
+    equationProvenance: equationProvenance(label, selectedValue, changed, options),
     expression: selectedValue,
     exactExpression: exactValue,
   };
@@ -171,6 +195,18 @@ function dcResult(label, selected, exact, source) {
 
 function rootValue(root) {
   return firstDefined(root?.root, root?.value, root?.expression, root?.location);
+}
+
+/**
+ * The provenance render of one pole or zero. It must mirror the
+ * `renderRootEquation` call beside it exactly, options included — a pole row
+ * rendered under different options would highlight terms the displayed row
+ * does not contain.
+ */
+function rootProvenance(kind, index, value) {
+  if (value === undefined || value === null || typeof value === 'string') return undefined;
+  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
+  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
 }
 
 function rootsOf(response, kind) {
@@ -181,7 +217,11 @@ function rootsOf(response, kind) {
       ...root,
       index,
       ...(value !== undefined
-        ? { root: value, equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value) }
+        ? {
+          root: value,
+          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
+          equationProvenance: rootProvenance(kind, index, value),
+        }
         : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
     };
   });
@@ -274,6 +314,9 @@ function adaptChild(combined, key, quantity) {
     ...(exactExpression !== undefined ? { exactExpression } : {}),
     ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
     ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
+    ...(selectedExpression !== undefined
+      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
+      : {}),
     ...details,
     assumptions: unique([combined?.assumptions, source?.assumptions]),
     approximations: unique([combined?.approximations, source?.approximations]),
@@ -293,6 +336,7 @@ function adaptChild(combined, key, quantity) {
       ok: result.ok,
       equation: result.equation,
       exactEquation: result.exactEquation,
+      equationProvenance: result.equationProvenance,
       expression: result.expression,
       exactExpression: result.exactExpression,
     };
@@ -329,6 +373,23 @@ function cleanChild(child) {
   return result;
 }
 
+const ROOT_SEPARATOR = ',\\quad ';
+
+/**
+ * One Poles or Zeros row: the roots' own equations shown together. The joined
+ * provenance render is kept only when every root has one, so the row's markers
+ * can never describe a different string than the one displayed.
+ */
+function rootRow(roots) {
+  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
+  const parts = roots.map((root) => root.equationProvenance);
+  return {
+    ok: true,
+    equation,
+    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
+  };
+}
+
 function equationEntries(reports) {
   const entries = [];
   const add = (title, result) => {
@@ -341,8 +402,8 @@ function equationEntries(reports) {
   if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
   add('DC gain', reports.transfer.dcGain);
   const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', { ok: true, equation: frequency.poles.map((root) => root.equation).join(',\\quad ') });
-  if (frequency?.zeros?.length) add('Zeros', { ok: true, equation: frequency.zeros.map((root) => root.equation).join(',\\quad ') });
+  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
+  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
   return entries;
 }
 

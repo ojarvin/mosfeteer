@@ -240,6 +240,129 @@ function parenthesize(text) {
   return `\\left(${text}\\right)`;
 }
 
+/**
+ * Provenance markers. `\pv{n}{…}` wraps one rendered sub-expression so the
+ * MathML it becomes can carry a `data-node` attribute back to the AST node it
+ * was rendered from. TeX stays the single source of truth for the displayed
+ * equation: markers appear only when a caller asks for provenance, and nothing
+ * persisted, exported, or edited as a label ever sees one.
+ *
+ * A few renderers post-process a child's rendered text (stripping a leading
+ * minus, comparing against `1`). They reach through the wrapper with the two
+ * helpers below, so a provenance render differs from an ordinary one by
+ * exactly the markers — which `analysis-present-v2.test.js` asserts directly.
+ */
+function unmark(text) {
+  if (!text.startsWith('\\pv{')) return null;
+  const idEnd = text.indexOf('}', 4);
+  if (idEnd < 0 || text[idEnd + 1] !== '{') return null;
+  let depth = 1;
+  for (let i = idEnd + 2; i < text.length; i += 1) {
+    if (text[i] === '{') depth += 1;
+    else if (text[i] === '}') {
+      depth -= 1;
+      // Only a marker spanning the whole string is this text's own wrapper;
+      // `\pv{1}{A} + \pv{2}{B}` is a sequence and must not be unwrapped.
+      if (depth === 0) return i === text.length - 1 ? { id: text.slice(4, idEnd), body: text.slice(idEnd + 2, i) } : null;
+    }
+  }
+  return null;
+}
+
+/** A child's rendered text with its own provenance wrapper removed. */
+function markedBody(text) {
+  return unmark(text)?.body ?? text;
+}
+
+/** Rewrite a child's rendered text while preserving its provenance wrapper. */
+function mapMarked(text, fn) {
+  const marked = unmark(text);
+  return marked ? `\\pv{${marked.id}}{${fn(marked.body)}}` : fn(text);
+}
+
+/**
+ * The symbol names in one subtree. The AST is immutable and shared, so
+ * identity memoization keeps a whole provenance pass linear in the tree
+ * instead of quadratic in its depth.
+ */
+const SYMBOL_NAMES = new WeakMap();
+function symbolNames(value) {
+  if (!value || typeof value !== 'object') return [];
+  const cached = SYMBOL_NAMES.get(value);
+  if (cached) return cached;
+  let names;
+  if (value.kind === 'symbol') names = [value.name];
+  else if (value.kind === 'rational') names = [...symbolNames(value.numerator), ...symbolNames(value.denominator)];
+  else if (value.kind === 'multiply') names = value.factors.flatMap(symbolNames);
+  else if (value.kind === 'add') names = value.terms.flatMap(symbolNames);
+  else if (value.kind === 'power') names = symbolNames(value.base);
+  else if (value.kind === 'quadratic-formula') {
+    names = [
+      ...symbolNames(value.numerator?.linear),
+      ...symbolNames(value.discriminant),
+      ...symbolNames(value.denominator),
+    ];
+  } else names = [];
+  const unique = Object.freeze([...new Set(names)]);
+  SYMBOL_NAMES.set(value, unique);
+  return unique;
+}
+
+function createProvenanceCollector() {
+  const symbols = new Map();
+  let next = 0;
+  return {
+    wrap(value, text) {
+      const id = (next += 1);
+      symbols.set(id, symbolNames(value));
+      return `\\pv{${id}}{${text}}`;
+    },
+    /**
+     * Only ids that survived into the rendered string are real: a speculative
+     * render the presenter then discards (`composedFraction` probing a shape
+     * it rejects) allocates an id that never appears in the output.
+     */
+    resolve(tex) {
+      const used = new Set();
+      for (const match of String(tex).matchAll(/\\pv\{(\d+)\}/g)) used.add(Number(match[1]));
+      return [...used].sort((a, b) => a - b)
+        .map((id) => ({ id, symbols: [...(symbols.get(id) || [])] }));
+    },
+  };
+}
+
+/**
+ * Strip every provenance marker, leaving exactly the TeX an ordinary render
+ * would have produced. A balanced scan, because a marker's body contains
+ * arbitrary nested braces.
+ */
+export function stripProvenanceMarkers(tex) {
+  const text = String(tex);
+  let out = '';
+  const markers = [];
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '\\') {
+      const marker = /^\\pv\{\d+\}\{/.exec(text.slice(i));
+      if (marker) {
+        markers.push(depth);
+        depth += 1;
+        i += marker[0].length - 1;
+        continue;
+      }
+    }
+    const char = text[i];
+    if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      // This closes the innermost open marker rather than a TeX group.
+      if (markers.length && markers[markers.length - 1] === depth) { markers.pop(); continue; }
+    }
+    out += char;
+  }
+  return out;
+}
+
 function renderNumber(value) {
   const numerator = value.numerator;
   const denominator = value.denominator;
@@ -296,7 +419,7 @@ function renderRational(value, context, options) {
   const fraction = isNumber(denominator) && denominator.numerator === 1n && denominator.denominator === 1n
     ? numeratorText
     : `\\frac{${numeratorText}}{${denominatorText}}`;
-  return negative ? `-${denominatorText === '1' && numerator.kind === 'add' ? parenthesize(fraction) : fraction}` : fraction;
+  return negative ? `-${markedBody(denominatorText) === '1' && numerator.kind === 'add' ? parenthesize(fraction) : fraction}` : fraction;
 }
 
 function operandsOf(metadata) {
@@ -356,7 +479,7 @@ function renderQuadraticFormula(value, context, options) {
   return `\\frac{${numerator}}{${render(value.denominator, 0, context, options)}}`;
 }
 
-function render(value, parentPrecedence, context, options = {}) {
+function renderNode(value, parentPrecedence, context, options = {}) {
   if (value?.kind === 'quadratic-formula') return renderQuadraticFormula(value, context, options);
   let text;
   const proof = options.equivalences?.get?.(structuralKey(value));
@@ -377,7 +500,9 @@ function render(value, parentPrecedence, context, options = {}) {
     const negative = proof.operands.filter(isNegative).length % 2 === 1;
     const factors = proof.operands.map((factor) => {
       const text = render(factor, PRECEDENCE.product, context, { ...options, equivalences });
-      return isNegative(factor) && text.startsWith('-') ? text.slice(1) : text;
+      return isNegative(factor)
+        ? mapMarked(text, (body) => (body.startsWith('-') ? body.slice(1) : body))
+        : text;
     });
     const body = `${negative ? '-' : ''}${factors.join(' \\, ')}`;
     return parentPrecedence > PRECEDENCE.product ? parenthesize(body) : body;
@@ -407,9 +532,64 @@ function render(value, parentPrecedence, context, options = {}) {
   return rank < parentPrecedence ? parenthesize(text) : text;
 }
 
+/**
+ * Render one node. With `options.provenance` set, the result is wrapped in a
+ * `\pv{…}` marker naming the AST node it came from; without it this is a
+ * direct call through to `renderNode` and costs nothing.
+ */
+function render(value, parentPrecedence, context, options = {}) {
+  const text = renderNode(value, parentPrecedence, context, options);
+  return options.provenance ? options.provenance.wrap(value, text) : text;
+}
+
 /** Render an immutable rational AST as deterministic textbook TeX. */
 export function renderExpression(value, options = {}) {
   return render(value, 0, { variable: options.variable || 's' }, options);
+}
+
+/**
+ * Render as `renderExpression` does, but with every sub-expression wrapped in a
+ * provenance marker, and return the node table alongside the TeX. Each entry is
+ * `{id, symbols}`; resolving those symbol names to circuit objects is
+ * `provenance.js`'s job, and turning the markers into `data-node` attributes is
+ * `texToMathML`'s.
+ */
+export function renderExpressionWithProvenance(value, options = {}) {
+  const provenance = createProvenanceCollector();
+  const tex = render(value, 0, { variable: options.variable || 's' }, { ...options, provenance });
+  return { tex, nodes: provenance.resolve(tex) };
+}
+
+/** `renderEquation` with provenance markers, for the same reason. */
+export function renderEquationWithProvenance(label, value, options = {}) {
+  const { tex, nodes } = renderExpressionWithProvenance(value, options);
+  return { tex: `${label} = ${tex}`, nodes };
+}
+
+/** `renderRootEquation` with provenance markers, for the same reason. */
+export function renderRootEquationWithProvenance(kind, index, value, options = {}) {
+  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
+  return renderEquationWithProvenance(`${prefix}_{${index}}`, value, options);
+}
+
+/**
+ * Join several provenance renders into one, renumbering so node ids stay
+ * unique across the result. A pole or zero row is several root equations shown
+ * together, each rendered on its own; without renumbering the second root's
+ * nodes would collide with the first's and highlight the wrong devices.
+ */
+export function joinProvenanceRenders(parts, separator = '') {
+  const pieces = [];
+  const nodes = [];
+  let offset = 0;
+  for (const part of parts) {
+    if (!part) continue;
+    const shift = offset;
+    pieces.push(String(part.tex).replace(/\\pv\{(\d+)\}/g, (match, id) => `\\pv{${Number(id) + shift}}`));
+    for (const node of part.nodes) nodes.push({ id: node.id + shift, symbols: [...node.symbols] });
+    offset += part.nodes.reduce((highest, node) => Math.max(highest, node.id), 0);
+  }
+  return { tex: pieces.join(separator), nodes };
 }
 
 /** Render an equation with an already formatted left-hand label. */

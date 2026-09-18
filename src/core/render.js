@@ -183,7 +183,14 @@ const GREEK_UPPER = {
 // changes only the reported box, so the glyph itself is untouched.
 const SINGLE_CHARACTER = /^<m[in](?: [^>]*)?>(?:[^<&]|&[a-z]+;|&#\d+;)<\/m[in]>$/;
 
+// A provenance wrapper (see the `\pv` branch below) must not hide the nucleus
+// it groups: the padding belongs on the character, the `data-node` attribute
+// outside it, so a provenance render lays out exactly like an ordinary one.
+const PROVENANCE_ROW = /^(<mrow data-node="\d+">)([\s\S]*)(<\/mrow>)$/;
+
 function mathMlNucleus(base, metric) {
+  const wrapped = PROVENANCE_ROW.exec(base);
+  if (wrapped) return `${wrapped[1]}${mathMlNucleus(wrapped[2], metric)}${wrapped[3]}`;
   return SINGLE_CHARACTER.test(base) ? `<mpadded ${metric}="0">${base}</mpadded>` : base;
 }
 
@@ -278,6 +285,17 @@ export function texToMathML(source) {
     }
     return parseAtom();
   };
+  // A marker argument is read literally: `present.js` writes only digits here
+  // and its contents are an AST node id, not math to typeset.
+  const parseRawArgument = () => {
+    skipSpaces();
+    if (text[index] !== '{') return '';
+    index += 1;
+    let raw = '';
+    while (index < text.length && text[index] !== '}') raw += text[index++];
+    if (text[index] === '}') index += 1;
+    return raw;
+  };
   const parseTextArgument = () => {
     skipSpaces();
     if (text[index] !== '{') return parseArgument();
@@ -319,6 +337,18 @@ export function texToMathML(source) {
       return `<mfrac>${numerator}${denominator}</mfrac>`;
     }
     if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
+    if (name === 'pv') {
+      // Provenance marker from `present.js`: the first group is the AST node
+      // id, the second is the sub-expression rendered from it. The wrapper is
+      // an <mrow>, MathML's own grouping element, so it carries the attribute
+      // without changing layout. Ordinary renders emit no markers, so nothing
+      // persisted, exported, or edited as a label ever reaches this branch.
+      const id = parseRawArgument().replace(/[^0-9]/g, '');
+      skipSpaces();
+      if (text[index] !== '{') return `<mrow data-node="${id}">${parseAtom()}</mrow>`;
+      index += 1;
+      return `<mrow data-node="${id}">${parseSequence('}')}</mrow>`;
+    }
     // \left is transparent: the delimiter after it starts a fenced group like
     // any other. \right and \middle are dropped without consuming their
     // delimiter, so the enclosing group closes on it exactly once.
@@ -777,6 +807,15 @@ export function editorOverlay(circuit, opts = {}) {
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
     if (c) parts.push(halo(c.bboxWorld()));
+  }
+
+  // Equation to schematic highlight: the devices one hovered or locked
+  // sub-expression of a derived equation was built from. Their own geometry is
+  // retraced and restyled by CSS, the way commit feedback traces a committed
+  // shape. Interaction only — the overlay never reaches an export.
+  for (const ref of opts.emphasis || []) {
+    const c = circuit.components.get(ref);
+    if (c) parts.push(`<g class="equation-emphasis">${componentShapeSvg(c)}</g>`);
   }
 
   // Resizable schematic blocks use the same eight-handle affordance as block

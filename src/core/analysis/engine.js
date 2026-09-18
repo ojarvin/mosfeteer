@@ -2,6 +2,7 @@ import { MOS_TYPES, firstDefined } from './shared.js';
 import { applyApproximations } from './approximation.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { createRationalOps } from './algebra-ops.js';
+import { symbolProvenance } from './provenance.js';
 import { buildExactAnalysisPipeline } from './pipeline.js';
 import { presentDiagnostics } from './diagnostics.js';
 import { describeSmallSignalNetlist } from './netlist.js';
@@ -719,6 +720,12 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     },
     netlist,
     smallSignalNetlist: netlist.text,
+    // Where each symbol in the equations above came from. The solved primitive
+    // set describes the model that produced them, and the conversion set fills
+    // in symbols whose own primitive left the model but whose name survived
+    // into an equation — a Miller-absorbed feedback capacitor, or an r_o the
+    // engine had to keep. See `provenance.js`.
+    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives),
     diagnostics,
     log: [
       diagnostics.logText,

@@ -2780,3 +2780,50 @@ button.off {
 @media (prefers-reduced-motion: reduce) {
   .landing-ripple { animation-name: landing-out; }
 }
+
+/* ----- equation to schematic highlight --------------------------------
+   Hovering or locking a sub-expression in the Analyze dock retraces the
+   devices it was derived from (editorOverlay `emphasis`). Traced shapes carry
+   their normal presentation attributes, so these overrides must win over both
+   those and any inline style, exactly as the commit-feedback glow does. */
+
+.equation-emphasis {
+  pointer-events: none;
+}
+
+.equation-emphasis * {
+  stroke: var(--accent) !important;
+  stroke-width: 10px !important;
+  stroke-opacity: 0.4 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  vector-effect: none !important;
+  fill: var(--accent) !important;
+  fill-opacity: 0.35 !important;
+}
+
+.equation-emphasis [fill="none"] {
+  fill: none !important;
+}
+
+/* A term in a derived equation that resolves to something on the canvas. The
+   whole row stays selectable text; only the resolvable groups light up. */
+.analysis-equation-value [data-node][data-components] {
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.analysis-equation-value [data-node].equation-term-hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.analysis-equation-value [data-node].equation-term-locked {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .analysis-equation-value [data-node] {
+    transition: background 90ms ease-out;
+  }
+}
