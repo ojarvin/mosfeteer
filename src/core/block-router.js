@@ -444,6 +444,22 @@ export function blockArrowGeometry(points, options = {}) {
   };
 }
 
+/** Build an orthogonal connector path from `source` to `target`, bending at
+ *  each guide point. Consecutive duplicate points are dropped. */
+export function orthogonalBlockRoute(source, target, guides = []) {
+  const out = [{ ...source }];
+  for (const guide of guides) {
+    const point = { x: snap(guide.x), y: snap(guide.y) };
+    const last = out.at(-1);
+    if (last.x !== point.x && last.y !== point.y) out.push({ x: point.x, y: last.y });
+    if (out.at(-1).x !== point.x || out.at(-1).y !== point.y) out.push(point);
+  }
+  const last = out.at(-1);
+  if (last.x !== target.x && last.y !== target.y) out.push({ x: target.x, y: last.y });
+  if (out.at(-1).x !== target.x || out.at(-1).y !== target.y) out.push({ ...target });
+  return out;
+}
+
 export function routeIsOrthogonal(points) {
   return Array.isArray(points) && points.length >= 2 && orthogonal(points);
 }

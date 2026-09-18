@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BlockDiagram } from '../src/core/block-model.js';
-import { BLOCK_ARROWHEAD_HALF_WIDTH, BLOCK_ARROWHEAD_LENGTH, blockArrowGeometry, blockConnectorJunctions, conformBlockArrowEndpoints, moveBlockArrowRun, pruneBlockArrowEndpointLoops, routeBlockArrow, routeIsOrthogonal } from '../src/core/block-router.js';
+import { BLOCK_ARROWHEAD_HALF_WIDTH, BLOCK_ARROWHEAD_LENGTH, blockArrowGeometry, blockConnectorJunctions, conformBlockArrowEndpoints, moveBlockArrowRun, orthogonalBlockRoute, pruneBlockArrowEndpointLoops, routeBlockArrow, routeIsOrthogonal } from '../src/core/block-router.js';
 
 function diagramWithTerminals(sourceSide, targetSide, source = { x: 0, y: 0 }, target = { x: 480, y: 0 }) {
   const diagram = new BlockDiagram();
@@ -168,4 +168,24 @@ test('fixed routes are refreshed against the two-cell aura after a block move', 
   diagram.moveBlock('T', 480, 160);
   assert.deepEqual(arrow.points, [{ x: 160, y: 40 }, { x: 320, y: 40 }, { x: 320, y: 200 }, { x: 480, y: 200 }]);
   assert.equal(routeBlockArrow(diagram, arrow)[0].x, 160);
+});
+
+test('orthogonalBlockRoute bends at each guide and keeps only distinct points', () => {
+  // A plain L: one bend, taken on the source's axis first.
+  assert.deepEqual(orthogonalBlockRoute({ x: 0, y: 0 }, { x: 120, y: 80 }), [
+    { x: 0, y: 0 }, { x: 120, y: 0 }, { x: 120, y: 80 },
+  ]);
+  // Already aligned: no bend is inserted.
+  assert.deepEqual(orthogonalBlockRoute({ x: 0, y: 0 }, { x: 200, y: 0 }), [
+    { x: 0, y: 0 }, { x: 200, y: 0 },
+  ]);
+  // A guide forces the path through that point, still orthogonally.
+  const guided = orthogonalBlockRoute({ x: 0, y: 0 }, { x: 200, y: 200 }, [{ x: 80, y: 120 }]);
+  assert.ok(routeIsOrthogonal(guided));
+  assert.ok(guided.some((p) => p.x === 80 && p.y === 120), 'passes through the guide');
+  assert.deepEqual(guided.at(-1), { x: 200, y: 200 });
+  // A guide already on the running point adds nothing.
+  assert.deepEqual(orthogonalBlockRoute({ x: 0, y: 0 }, { x: 0, y: 160 }, [{ x: 0, y: 0 }]), [
+    { x: 0, y: 0 }, { x: 0, y: 160 },
+  ]);
 });

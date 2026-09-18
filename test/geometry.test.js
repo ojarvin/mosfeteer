@@ -7,6 +7,8 @@ import {
   rectFromPoints,
   rectUnion,
   rectsOverlap,
+  distanceToSegment,
+  fmt,
   segmentCrossesRect,
   pt,
   midSnap,
@@ -111,4 +113,22 @@ test('pt formats a point', () => {
 
 test('midSnap returns the unrounded midpoint', () => {
   assert.deepEqual(midSnap({ x: 0, y: 0 }, { x: 80, y: 40 }), { x: 40, y: 20 });
+});
+
+test('distanceToSegment clamps to the segment endpoints', () => {
+  const a = { x: 0, y: 0 };
+  const b = { x: 100, y: 0 };
+  assert.equal(distanceToSegment({ x: 50, y: 30 }, a, b), 30, 'perpendicular drop inside the span');
+  assert.equal(distanceToSegment({ x: 50, y: 0 }, a, b), 0, 'on the segment');
+  assert.equal(distanceToSegment({ x: -40, y: 0 }, a, b), 40, 'clamped past the start');
+  assert.equal(distanceToSegment({ x: 140, y: 0 }, a, b), 40, 'clamped past the end');
+  // A degenerate segment is just its point, never a divide-by-zero.
+  assert.equal(distanceToSegment({ x: 3, y: 4 }, a, a), 5);
+});
+
+test('fmt keeps integers exact and rounds others to two decimals', () => {
+  assert.equal(fmt(40), '40');
+  assert.equal(fmt(-120), '-120');
+  assert.equal(fmt(0), '0');
+  assert.equal(fmt(12.3456), '12.35');
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { componentPaletteItems, editorKeymapText, layerActionForKey } from '../src/web/toolbar.js';
+import { componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, placementSearchScore } from '../src/web/toolbar.js';
 
 test('component palette omits generated solder dots but keeps real components', () => {
   const items = componentPaletteItems([
@@ -41,4 +41,24 @@ test('keyboard help is generated from current bindings without Vim movement keys
   assert.match(help, /l\s+.*line annotation/);
   assert.match(help, /e\s+.*LaTeX equation label/);
   assert.doesNotMatch(help, /h j k|h j k l|hjkl/i);
+});
+
+test('fuzzy ranking prefers prefix, then substring, then subsequence', () => {
+  const prefix = fuzzyScore('res', 'resistor');
+  const substring = fuzzyScore('sist', 'resistor');
+  const subsequence = fuzzyScore('rstr', 'resistor');
+  assert.ok(prefix > substring, 'prefix outranks substring');
+  assert.ok(substring > subsequence, 'substring outranks subsequence');
+  assert.equal(fuzzyScore('zzz', 'resistor'), -1);
+  assert.equal(fuzzyScore('', 'resistor'), 0);
+  // Within one tier the shorter name wins.
+  assert.ok(fuzzyScore('n', 'nmos') > fuzzyScore('n', 'nmosb'));
+});
+
+test('insert search matches a symbol by id, display name, or alias', () => {
+  assert.ok(placementSearchScore('nmos', 'nmos') > 0);
+  assert.ok(placementSearchScore('transistor', 'nmos') > 0, 'display name "NMOS transistor"');
+  assert.ok(placementSearchScore('pot', 'variable_resistor') > 0, 'alias "potentiometer"');
+  assert.ok(placementSearchScore('bjt', 'npn') > 0, 'alias');
+  assert.equal(placementSearchScore('zzzz', 'nmos'), -1);
 });

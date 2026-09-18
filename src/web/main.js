@@ -20,7 +20,7 @@ import { themeInkSvg } from '../core/style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { distanceToSegment } from '../core/geometry.js';
-import { moveBlockArrowRun, routeBlockArrow } from '../core/block-router.js';
+import { moveBlockArrowRun, orthogonalBlockRoute, routeBlockArrow } from '../core/block-router.js';
 import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
@@ -28,7 +28,7 @@ import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copySelectionParts, copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
-import { componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare } from './toolbar.js';
+import { PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare, placementSearchScore } from './toolbar.js';
 import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
@@ -1031,7 +1031,6 @@ function renderSaveState() {
   }
 }
 
-
 async function deleteSavedCircuit() {
   const path = currentDocumentPath;
   if (!path || deleteInFlight) return;
@@ -1468,7 +1467,6 @@ function compUnderCursor() {
   const hit = matchAt(cursor.x, cursor.y);
   return hit && circuit.components.has(hit.refdes) ? circuit.components.get(hit.refdes) : null;
 }
-
 
 function selectedComp() {
   return selected && circuit.components.has(selected) ? circuit.components.get(selected) : null;
@@ -3904,7 +3902,6 @@ function netInBox(net, box) {
   return true;
 }
 
-
 function zoomToWorldRect(r) {
   const pad = 60;
   const aspect = view.w / view.h;
@@ -4446,7 +4443,6 @@ function joinWireToNet(wireHit, selectedTarget = null) {
   selectedNets = new Set([net.id]);
   logLine(`joined into net ${net.id} at (${P.x},${P.y})`);
 }
-
 
 function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) {
   // A diagonal segment moves rigidly on its own; orthogonal runs keep the
@@ -7329,7 +7325,6 @@ function applyNetAnalysis(target, attrs) {
   logLine(`applied analysis attributes to ${nets.length} net${nets.length === 1 ? '' : 's'}`, 'status');
 }
 
-
 analysisCancel?.addEventListener('click', closeAnalysisDock);
 for (const button of document.querySelectorAll('[data-analysis-pick]')) {
   button.addEventListener('click', () => setAnalysisPick(analysisPick === button.dataset.analysisPick ? null : button.dataset.analysisPick));
@@ -8215,20 +8210,6 @@ function activateBlockConnector() {
   visual = null;
   logLine('CONNECTOR: click a block terminal to start');
   render();
-}
-
-function orthogonalBlockRoute(source, target, guides = []) {
-  const out = [{ ...source }];
-  for (const guide of guides) {
-    const point = { x: snap(guide.x), y: snap(guide.y) };
-    const last = out.at(-1);
-    if (last.x !== point.x && last.y !== point.y) out.push({ x: point.x, y: last.y });
-    if (out.at(-1).x !== point.x || out.at(-1).y !== point.y) out.push(point);
-  }
-  const last = out.at(-1);
-  if (last.x !== target.x && last.y !== target.y) out.push({ x: target.x, y: last.y });
-  if (out.at(-1).x !== target.x || out.at(-1).y !== target.y) out.push({ ...target });
-  return out;
 }
 
 function blockConnectorPreviewRoute() {
@@ -9863,39 +9844,8 @@ const PLACEMENT = {
   a: 'solder',
 };
 
-
 // Human-facing names keep the picker useful at a glance. Aliases stay out of
 // the menu while the underlying type remains the stable placement value.
-const PLACEMENT_LABELS = {
-  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode',
-  nmos: 'NMOS transistor', pmos: 'PMOS transistor',
-  nmosb: 'NMOS transistor with bulk', pmosb: 'PMOS transistor with bulk',
-  npn: 'NPN transistor', pnp: 'PNP transistor',
-  ground: 'Ground', vcm: 'VCM (Common potential)', supply: 'Supply (VDD/VCC)',
-  input: 'Input port', output: 'Output port', inputoutput: 'Input/output port',
-  port: 'Port',
-  current_source: 'Current source', voltage_source: 'Voltage source',
-  opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', inverter: 'Inverter', buffer: 'Buffer',
-  adc: 'ADC', dac: 'DAC',
-  and_gate: 'AND gate', nand_gate: 'NAND gate', or_gate: 'OR gate', nor_gate: 'NOR gate',
-  xor_gate: 'XOR gate', xnor_gate: 'XNOR gate',
-  variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
-  solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
-};
-
-const PLACEMENT_ALIASES = {
-  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'],
-  nmos: ['mos', 'n-channel'], pmos: ['mos', 'p-channel'],
-  nmosb: ['mos', 'body', 'bulk', 'n-channel'], pmosb: ['mos', 'body', 'bulk', 'p-channel'],
-  npn: ['bjt'], pnp: ['bjt'],
-  supply: ['vdd', 'vcc', 'power'], vcm: ['common', 'potential', 'vcm'], input: ['in'], output: ['out'], inputoutput: ['io'],
-  current_source: ['idc', 'current'], voltage_source: ['vdc', 'voltage'],
-  opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
-  variable_resistor: ['potentiometer', 'pot'], variable_capacitor: ['var cap'], variable_inductor: ['var coil'],
-  switch_open: ['switch', 'open'], switch_closed: ['switch', 'closed'], solder: ['junction', 'dot'],
-  label: ['annotation', 'text'], block: ['block', 'rectangle', 'node'],
-};
-
 // The registry is the single source of truth for insertable components.
 // Grouping is derived from the type name, so adding a symbol to symbolTypes
 // automatically adds it to the appropriate menu section.
@@ -9913,28 +9863,6 @@ const INSERT_CATEGORY_RULES = [
  *  Returns a score >= 0 for a match (higher = better) or -1 for no match.
  *  Prefix hits beat substring hits, which beat pure subsequences; shorter
  *  names win ties. */
-function fuzzyScore(q, name) {
-  const s = String(name).toLowerCase();
-  const query = String(q).toLowerCase();
-  if (!query) return 0;
-  if (s.startsWith(query)) return 100 - s.length;
-  if (s.includes(query)) return 80 - s.length;
-  let i = 0;
-  for (const ch of s) {
-    if (ch === query[i]) i++;
-    if (i === query.length) return 60 - s.length;
-  }
-  return -1;
-}
-
-function placementSearchScore(query, type) {
-  return Math.max(
-    fuzzyScore(query, type),
-    fuzzyScore(query, PLACEMENT_LABELS[type] || type),
-    ...(PLACEMENT_ALIASES[type] || []).map((alias) => fuzzyScore(query, alias)),
-  );
-}
-
 function transformPendingComponent(operation) {
   if (!pendingPlace || pendingPlace.kind !== 'component') return false;
   const def = getSymbol(pendingPlace.type);
@@ -10164,7 +10092,6 @@ function onNormalKey(key, shiftKey = false) {
     else runCheck();
     return;
   }
-
 
   if (key === 'L') {
     activateNetLabel();
@@ -12141,7 +12068,6 @@ document.getElementById('empty-state')?.addEventListener('click', (ev) => {
 });
 // Documents created by the CLI, another window, or a file manager appear without a manual reload.
 circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
-
 
 document.getElementById('btn-help').addEventListener('click', () => {
   showHelp();
