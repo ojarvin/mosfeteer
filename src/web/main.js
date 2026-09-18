@@ -176,6 +176,94 @@ const ICON_PATHS = {
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
 };
 
+// The canvas pointer is the select arrow, badged with the active tool's rail
+// icon so the current mode reads where the eye already is. Cursors are data
+// URIs built from the same ICON_PATHS the rail draws, cached per icon/theme.
+const CURSOR_ARROW = 'M1.5 1 1.5 18.5 6.1 14.3 9 20.6 11.9 19.2 9.1 13.2 15 12.7Z';
+
+const TOOL_CURSOR_ICONS = {
+  normal: null,
+  place: 'plus',
+  'place-block': 'plus',
+  connector: 'wire',
+  visual: 'box-select',
+  move: 'move',
+  'detached-move': 'detach',
+  copy: 'copy',
+  delete: 'trash',
+  'net-label': 'tag',
+  annotation: 'text',
+  equation: 'text',
+  arrow: 'arrow',
+  box: 'rectangle',
+  line: 'line',
+};
+
+const toolCursorCache = new Map();
+
+/** One `cursor` value: arrow plus optional tool badge, outlined so it stays
+ * legible on light paper, dark paper, and over drawn ink. */
+function toolCursorValue(icon, { dark = false, danger = false } = {}) {
+  const key = `${icon || ''}|${dark}|${danger}`;
+  const cached = toolCursorCache.get(key);
+  if (cached) return cached;
+  const ink = dark ? '#f4f5f7' : '#16181d';
+  const halo = dark ? '#16181d' : '#ffffff';
+  const badgeInk = danger ? (dark ? '#ff8f85' : '#c33b2e') : ink;
+  const glyph = ICON_PATHS[icon] || '';
+  const badge = glyph
+    ? `<g transform="translate(14 14) scale(.7)" fill="none" stroke-linecap="round" stroke-linejoin="round">`
+      + `<g style="color:${halo}" stroke="${halo}" stroke-width="4.8">${glyph}</g>`
+      + `<g style="color:${badgeInk}" stroke="${badgeInk}" stroke-width="2.2">${glyph}</g></g>`
+    : '';
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">'
+    + `<path d="${CURSOR_ARROW}" fill="${ink}" stroke="${halo}" stroke-width="1.4" stroke-linejoin="round"/>`
+    + `${badge}</svg>`;
+  // The hotspot is the arrow tip, so the pointer still picks the exact grid point.
+  const value = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 2 1, default`;
+  toolCursorCache.set(key, value);
+  preloadToolCursorImage(value);
+  return value;
+}
+
+function cursorIconFor(state) {
+  if (state.key === 'wire') return routeMode === 'diagonal' ? 'wire-diagonal' : 'wire';
+  return TOOL_CURSOR_ICONS[state.key] ?? null;
+}
+
+let appliedToolCursor = null;
+
+/** Point `.canvas` at the cursor for the live tool; CSS inherits it into the SVG. */
+function syncToolCursor(state = interactionState()) {
+  const dark = document.documentElement.classList.contains('dark');
+  const value = toolCursorValue(cursorIconFor(state), { dark, danger: state.key === 'delete' });
+  if (value === appliedToolCursor) return; // every render calls this; only real changes touch style
+  appliedToolCursor = value;
+  canvasEl?.style.setProperty('--tool-cursor', value);
+}
+
+// Chromium paints an image cursor only once its bitmap has loaded, so every
+// variant is fetched up front and its Image kept alive to hold the decoded
+// bitmap in the memory cache: a swap never waits on a fetch. This does not
+// make a tool change visible under a parked pointer — the compositor repaints
+// the cursor on the next pointer motion — which is out of the page's reach.
+const toolCursorImages = [];
+
+function preloadToolCursorImage(value) {
+  const image = new Image();
+  image.src = value.slice(value.indexOf('"') + 1, value.lastIndexOf('"'));
+  toolCursorImages.push(image);
+}
+
+/** Build (and so fetch) every cursor the editor can switch to, in both themes. */
+function preloadToolCursors() {
+  const icons = new Set([...Object.values(TOOL_CURSOR_ICONS), 'wire', 'wire-diagonal']);
+  for (const dark of [false, true]) {
+    for (const icon of icons) toolCursorValue(icon, { dark });
+    toolCursorValue(TOOL_CURSOR_ICONS.delete, { dark, danger: true });
+  }
+}
+
 function installButtonIcons() {
   for (const button of document.querySelectorAll('button[data-icon]')) {
     const path = ICON_PATHS[button.dataset.icon];
@@ -191,6 +279,7 @@ function installButtonIcons() {
 }
 
 installButtonIcons();
+preloadToolCursors();
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
@@ -9902,8 +9991,13 @@ function moveInsertHighlight(key) {
 function selectInsertMatch() {
   const entries = insertMenuEntries();
   if (!entries.length) return false;
+  return pickInsertType(entries[insertHighlightIndex(entries)]);
+}
+
+/** Arm the ghost for one picked entry.  Shared by Enter/Tab and menu clicks. */
+function pickInsertType(type) {
+  if (!type) return false;
   const startWorld = { ...cursor };
-  const type = entries[insertHighlightIndex(entries)];
   insertNav = { query: '', index: 0 };
   pendingPlace = type === 'label'
     ? { kind: 'label', startWorld }
@@ -10938,6 +11032,7 @@ function syncInteractionUI() {
   canvasEl.classList.add(state.canvasClass);
   if (wire) canvasEl.classList.add('wire-mode');
   if (directWire) canvasEl.classList.add('direct-wire-mode');
+  syncToolCursor(state);
   return state;
 }
 
@@ -11012,10 +11107,12 @@ function renderStatus() {
 }
 
 // ----- insert-mode menu ----------------------------------------------------
-// A read-only, non-interactive dropdown next to the cursor (shown in insert
-// mode) listing every placable component by name. `pointer-events: none` keeps
-// it from intercepting clicks/drags.
+// A dropdown listing every placable component, shown in insert mode until a
+// ghost is armed. It is anchored where insert mode opened rather than dragged
+// along by the pointer, so the mouse can reach it: hovering highlights an
+// entry and clicking arms it, exactly like the keyboard highlight and Enter.
 let insertMenu = null;
+let insertMenuAnchor = null; // world point the menu hangs from
 // Every registered symbol type appears in the menu automatically; the list is
 // fuzzy-filtered by the live `insertQuery` while typing.
 function insertMenuEntries() {
@@ -11077,6 +11174,7 @@ function updateInsertMenu() {
   }
   if (!insertMenu) {
     insertNav = { query: '', index: 0 };
+    insertMenuAnchor = { ...cursor };
     insertMenu = document.createElement('div');
     insertMenu.id = 'insert-menu';
     insertMenu.className = 'insert-menu';
@@ -11096,10 +11194,11 @@ function updateInsertMenu() {
     none.textContent = 'no match';
     insertMenu.appendChild(none);
   }
-  const best = insertMenu._entries[insertHighlightIndex(insertMenu._entries)];
+  const highlight = insertHighlightIndex(insertMenu._entries);
   const body = document.createElement('div');
   body.className = 'insert-menu-body';
   insertMenu.appendChild(body);
+  const items = [];
   for (const group of groups) {
     const section = document.createElement('div');
     section.className = 'insert-menu-group';
@@ -11108,29 +11207,41 @@ function updateInsertMenu() {
     heading.textContent = group.title;
     section.appendChild(heading);
     for (const type of group.entries) {
+      const index = items.length;
       const item = document.createElement('div');
-      item.className = `insert-menu-item${type === best ? ' active' : ''}`;
+      item.className = `insert-menu-item${index === highlight ? ' active' : ''}`;
       const preview = document.createElement('span');
       preview.className = 'insert-menu-preview';
       preview.innerHTML = symbolPreviewSvg(type);
       const name = document.createElement('span');
       name.textContent = PLACEMENT_LABELS[type] || type;
-      item.append(preview, name);
-      if (type === best) {
-        const hint = document.createElement('kbd');
-        hint.textContent = 'Enter';
-        item.appendChild(hint);
-      }
+      const hint = document.createElement('kbd');
+      hint.textContent = 'Enter';
+      item.append(preview, name, hint);
+      // Hovering moves the same highlight the arrow keys move, in place: a
+      // rebuild under the pointer would restart hover on every mouse move.
+      item.addEventListener('mousemove', () => {
+        if (insertNav.query === insertQuery && insertNav.index === index) return;
+        insertNav = { query: insertQuery, index };
+        for (const [i, el] of items.entries()) el.classList.toggle('active', i === index);
+      });
+      item.addEventListener('mousedown', (ev) => {
+        ev.preventDefault(); // keep the canvas focused so keys still reach the editor
+        if (!pickInsertType(type)) return;
+        render();
+      });
+      items.push(item);
       section.appendChild(item);
     }
     body.appendChild(section);
   }
-  const p = worldToClient(cursor.x, cursor.y);
+  const p = worldToClient(insertMenuAnchor?.x ?? cursor.x, insertMenuAnchor?.y ?? cursor.y);
   insertMenu.style.display = 'block';
   const rect = insertMenu.getBoundingClientRect();
   let left = p.x + 14;
   let top = p.y - rect.height / 2;
-  if (left + rect.width > window.innerWidth - 8) left = Math.max(8, p.x - rect.width - 14);
+  if (left + rect.width > window.innerWidth - 8) left = p.x - rect.width - 14;
+  left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
   top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, top));
   insertMenu.style.left = `${left}px`;
   insertMenu.style.top = `${top}px`;
@@ -12070,6 +12181,7 @@ const themeBtn = document.getElementById('btn-theme');
 
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
+  syncToolCursor();
   if (themeBtn) {
     themeBtn.setAttribute('aria-pressed', String(dark));
     themeBtn.title = dark ? 'Switch to light theme (D)' : 'Switch to dark theme (D)';

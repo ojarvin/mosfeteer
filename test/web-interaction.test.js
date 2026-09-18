@@ -7,6 +7,46 @@ import { constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelect
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
 
+test('tool cursors badge the select arrow per tool, theme, and danger', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function toolCursorValue(');
+  const end = main.indexOf('\nfunction cursorIconFor(', start);
+  const build = vm.runInNewContext(`(${main.slice(start, end)})`, {
+    ICON_PATHS: { trash: '<path d="M4 6h16"/>' },
+    toolCursorCache: new Map(),
+    CURSOR_ARROW: 'M1 1 1 9 5 5Z',
+    preloadToolCursorImage: () => {},
+  });
+  const decode = (value) => decodeURIComponent(value.match(/url\("data:image\/svg\+xml,([^"]+)"\)/)[1]);
+  const plain = build(null, {});
+  assert.match(plain, /\) 2 1, default$/); // the hotspot stays on the arrow tip
+  assert.ok(!decode(plain).includes('M4 6h16'));
+  const badged = decode(build('trash', {}));
+  // The glyph is drawn twice: a halo pass under the ink pass keeps it legible.
+  assert.equal(badged.split('M4 6h16').length - 1, 2);
+  assert.ok(!badged.includes('#c33b2e'));
+  assert.ok(decode(build('trash', { danger: true })).includes('#c33b2e'));
+  assert.notEqual(build('trash', {}), build('trash', { dark: true }));
+  assert.equal(build('trash', {}), build('trash', {})); // cached per icon/theme
+});
+
+test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function preloadToolCursors(');
+  const end = main.indexOf('\nfunction installButtonIcons(', start);
+  const built = [];
+  const preload = vm.runInNewContext(`(${main.slice(start, end)})`, {
+    TOOL_CURSOR_ICONS: { normal: null, wire: 'wire', delete: 'trash' },
+    toolCursorValue: (icon, opts) => built.push(`${icon}|${opts.dark}|${!!opts.danger}`),
+  });
+  preload();
+  // Both themes, both wire shapes, the bare arrow, and Delete's danger badge.
+  for (const key of ['null|false|false', 'null|true|false', 'wire|false|false', 'wire-diagonal|false|false',
+    'wire-diagonal|true|false', 'trash|true|false', 'trash|false|true', 'trash|true|true']) {
+    assert.ok(built.includes(key), `missing preloaded cursor ${key}`);
+  }
+});
+
 test('MathML annotation measurements are independent of zoom on reload', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function renderedLabelTextBounds(');

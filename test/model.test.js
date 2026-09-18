@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
 import { GRID, snap, onGrid } from '../src/core/grid.js';
 import { segThroughInterior } from '../src/core/router.js';
+import { svgString } from '../src/core/render.js';
 
 test('parseTermRef parses REFDES.TERM and rejects malformed', () => {
   assert.deepEqual(parseTermRef('R1.a'), { comp: 'R1', term: 'a' });
@@ -600,6 +601,39 @@ test('reference marker child labels make the marker local and rename its net', (
   assert.equal(ground.value, 'LOCAL_RETURN');
   assert.equal(label.text, 'LOCAL_RETURN');
   assert.equal(resistor.refdes, 'R1');
+});
+
+test('deleting a marker child label restores the global rail and leaves no value text', () => {
+  for (const [type, terminal, global, offset] of [['supply', 'p', 'VDD', -120], ['ground', 'gnd', 'VSS', 120], ['vcm', 'vcm', 'VCM', 120]]) {
+    const c = new Circuit();
+    c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+    const marker = c.addComponent(type, { refdes: 'M1', x: -80, y: 0 });
+    const net = c.connect('R1.a', `M1.${terminal}`);
+    const label = c.addLabel({ text: '', owner: 'M1', offset: { x: 0, y: offset } });
+    label.setText('LOCAL_RAIL');
+    assert.equal(net.name, 'LOCAL_RAIL');
+    c.removeLabel(label.id);
+    assert.equal(marker.value, '', `${type} keeps no orphaned value text`);
+    assert.equal(net.name, global);
+    assert.ok(!svgString(c, { grid: false }).includes('LOCAL_RAIL'));
+  }
+});
+
+test('deleting one marker label keeps a name another local marker still owns', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('ground', { refdes: 'GND1', x: -80, y: 0 });
+  c.addComponent('ground', { refdes: 'GND2', x: -80, y: 200 });
+  const net = c.connect('R1.a', 'GND1.gnd');
+  c.connect('GND2.gnd', 'GND1.gnd');
+  const first = c.addLabel({ text: '', owner: 'GND1', offset: { x: 0, y: 120 } });
+  first.setText('LOCAL_GND');
+  const second = c.addLabel({ text: '', owner: 'GND2', offset: { x: 0, y: 120 } });
+  second.setText('LOCAL_GND');
+  assert.equal(net.name, 'LOCAL_GND');
+  c.removeLabel(first.id);
+  assert.equal(c.components.get('GND1').value, '');
+  assert.equal(net.name, 'LOCAL_GND');
 });
 
 test('terminalWorld applies transform and stays on grid', () => {

@@ -1245,7 +1245,8 @@ button:disabled {
   background: var(--paper);
   border: 1px solid var(--border);
   box-shadow: 0 1px 3px rgba(20, 24, 34, 0.08);
-  cursor: crosshair;
+  /* The tool cursor (select arrow + tool badge) is built in main.js. */
+  cursor: var(--tool-cursor, default);
   touch-action: none;
 }
 
@@ -1258,9 +1259,11 @@ button:disabled {
   stroke: var(--grid);
 }
 
+/* Keyboard focus on the drawing area is a quiet hairline: the canvas fills the
+   window, so a heavy ring reads as an alert rather than as focus. */
 .canvas:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: -3px;
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -1px;
 }
 
 .canvas svg [tabindex="0"]:focus {
@@ -2046,14 +2049,6 @@ button:disabled {
   border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }
 
-.canvas.direct-wire-mode svg {
-  cursor: crosshair;
-}
-
-.canvas.wire-mode svg {
-  cursor: crosshair;
-}
-
 .console-row {
   display: flex;
   gap: 8px;
@@ -2109,7 +2104,6 @@ button:disabled {
   box-shadow: 0 4px 16px rgba(20, 24, 34, 0.18);
   padding: 4px;
   font-size: 0.8125rem;
-  pointer-events: none;
   user-select: none;
 }
 
@@ -2144,7 +2138,9 @@ button:disabled {
 
 .insert-menu-preview svg [fill="#fff"] { fill: none; }
 
+/* The Enter hint marks the entry Enter would pick, so it follows the highlight. */
 .insert-menu-item kbd {
+  display: none;
   margin-left: auto;
   padding: 0 5px;
   color: var(--accent);
@@ -2160,6 +2156,7 @@ button:disabled {
   padding: 2px 8px 2px 4px;
   border-radius: 5px;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .insert-menu-category {
@@ -2196,6 +2193,10 @@ button:disabled {
   background: var(--accent-dim);
   outline: 1px solid var(--accent);
   outline-offset: -1px;
+}
+
+.insert-menu-item.active kbd {
+  display: block;
 }
 
 .component-context-menu {

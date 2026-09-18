@@ -2248,11 +2248,34 @@ export class Circuit {
   removeLabel(id) {
     this.invalidateRoutingCache();
     const key = typeof id === 'string' ? id : id?.id;
+    const owner = this.labels.get(key)?.owner;
     const removed = this.labels.delete(key);
     if (removed) {
       for (const [childId, label] of this.labels) if (label.parent === key) this.labels.delete(childId);
+      const marker = owner ? this.components.get(owner) : null;
+      if (isReferenceMarker(marker) && !this.labelOf(marker.refdes)) this._clearReferenceMarkerName(marker);
     }
     return removed;
+  }
+
+  /** Deleting a marker's owned label drops its local-rail identity: the value
+   * must go with it (an orphaned value renders as legacy marker text), and the
+   * net returns to the global rail name the label had taken it away from. */
+  _clearReferenceMarkerName(component) {
+    const previous = canonicalNetName(component.value);
+    component.value = '';
+    if (!previous) return;
+    const info = referenceMarkerInfo(component.type);
+    const net = this.netOfTerminal({ comp: component.refdes, term: info.terminal });
+    if (!net || net.name !== previous) return;
+    // Another local marker or an explicit net label still owns this name.
+    if (this.netLabels(net).length) return;
+    if (net.terminals.some(({ comp, term }) => {
+      const other = this.components.get(comp);
+      return other !== component && isReferenceMarker(other) &&
+        term === referenceMarkerInfo(other.type).terminal && referenceMarkerName(other);
+    })) return;
+    this.renameNet(net, info.globalName);
   }
 
   /** The instance label owned by a component, if any. */
