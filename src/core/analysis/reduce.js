@@ -15,8 +15,7 @@
  * needs a star-mesh/Y-Δ transform to reduce further (a bridge/lattice
  * topology) is left as-is rather than guessed at.
  */
-
-const PASSIVE_KINDS = new Set(['resistor', 'capacitor', 'inductor', 'conductance', 'admittance']);
+import { PASSIVE_KINDS } from './shared.js';
 
 /** Whether a primitive is a plain two-terminal passive this module understands. */
 export function isReduciblePassive(primitive) {

@@ -125,8 +125,9 @@ export function segmentCrossesRect(a, b, r) {
   return false; // route is always orthogonal
 }
 
-export function rectOffset(r, dx, dy) {
-  return { x: r.x + dx, y: r.y + dy, w: r.w, h: r.h };
+/** Format a coordinate for SVG: integers stay exact, others get two decimals. */
+export function fmt(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
 }
 
 /** Point-free helper: format a point for SVG. */

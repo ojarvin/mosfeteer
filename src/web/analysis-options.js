@@ -216,6 +216,3 @@ export function migrateAnalysisFormState(value = {}) {
     diagnostics,
   };
 }
-
-export const defaultAnalysisOptions = analysisOptionDefaults;
-export const migrateAnalysisOptions = migrateAnalysisFormState;

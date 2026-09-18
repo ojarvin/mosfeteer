@@ -414,17 +414,6 @@ export function routeBlockDiagram(diagram, options = {}) {
   return routes;
 }
 
-/** Apply all automatic routes at one explicit commit boundary. */
-export function rerouteBlockDiagram(diagram, options = {}) {
-  const routes = routeBlockDiagram(diagram, options);
-  if (!routes) return false;
-  for (const [id, points] of routes) {
-    const arrow = diagram.arrows instanceof Map ? diagram.arrows.get(id) : diagram.arrows.find((item) => item.id === id);
-    arrow.points = points.map((point) => ({ ...point }));
-  }
-  return true;
-}
-
 /**
  * Exact filled head geometry for a route whose last point is the target
  * terminal. The tip is never extended past that terminal.

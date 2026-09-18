@@ -1,9 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  equation,
+  renderEquation,
   equivalenceTable,
-  infinity,
   provenParallel,
   provenQuotient,
   provenSum,
@@ -12,6 +11,7 @@ import {
   renderQuantityEquation,
   renderRootEquation,
 } from '../src/core/analysis/present.js';
+import { infinity } from '../src/core/analysis/rational.js';
 import {
   add,
   integer,
@@ -89,7 +89,7 @@ test('renders standard quantity and zero-based root labels', () => {
   assert.equal(quantityLabel('Zin', 's'), 'Z_{in}(s)');
   assert.equal(quantityLabel('Zout', 0), 'Z_{out}(0)');
   assert.equal(renderQuantityEquation('Av', 's', gm1), 'A_v(s) = g_{m1}');
-  assert.equal(equation('Z_{in}(0)', infinity()), 'Z_{in}(0) = \\infty');
+  assert.equal(renderEquation('Z_{in}(0)', infinity()), 'Z_{in}(0) = \\infty');
   assert.equal(renderRootEquation('pole', 0, multiply(integer(-1), symbol('p1'))), 'p_{0} = -p_{1}');
   assert.equal(renderRootEquation('zero', 0, integer(0)), 'z_{0} = 0');
 });

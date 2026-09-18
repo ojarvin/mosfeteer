@@ -4,16 +4,6 @@ import { Circuit } from './model.js';
 import { checkSemantics } from './semantic.js';
 
 export const CIRCUIT_SPEC_VERSION = 1;
-export const HARD_CONSTRAINTS = Object.freeze([
-  'terminal ownership must be valid and unambiguous',
-  'required topology must be satisfiable',
-  'component and net identifiers must be unique',
-]);
-export const SOFT_CONSTRAINTS = Object.freeze([
-  'prefer compact placement',
-  'prefer readable signal flow',
-  'prefer balanced symmetry',
-]);
 export const CANDIDATE_SCORE_FIELDS = Object.freeze([
   'hardViolations', 'topologyViolations', 'wireCrossings',
   'componentClearance', 'labelClearance', 'pinConformity', 'turns', 'length',
@@ -283,11 +273,6 @@ export function normalizeCircuitSpec(input) {
   };
 }
 
-export const validateCircuitSpec = normalizeCircuitSpec;
-export { checkSemantics };
-export const evaluateSemantics = checkSemantics;
-export const semanticChecks = checkSemantics;
-
 function topologyState(spec) {
   const refdes = new Map(spec.components.map((component) => [component.id, component.refdes || component.id]));
   return {
@@ -342,8 +327,6 @@ export function tryGenerateCircuit(input, maybeCircuit) {
   try { return generateCircuit(input, maybeCircuit); }
   catch (error) { return { ok: false, success: false, report: { ok: false, errors: [error.message] }, error }; }
 }
-
-export const compileCircuitSpec = generateCircuit;
 
 /** Canonical candidate score. */
 export function candidateScore(candidate = {}) {

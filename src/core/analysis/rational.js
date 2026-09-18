@@ -1,7 +1,7 @@
 const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
-const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
+export const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
 const MINUS_ONE = Object.freeze({ kind: 'number', numerator: -1n, denominator: 1n });
-const DEFAULT_MAX_OPERATIONS = 200000;
+export const DEFAULT_MAX_OPERATIONS = 200000;
 
 function gcd(a, b) {
   let x = a < 0n ? -a : a;
@@ -31,11 +31,11 @@ function exactNumber(numerator, denominator = 1n) {
   return Object.freeze({ kind: 'number', numerator: n, denominator: d });
 }
 
-function isNumber(value) {
+export function isNumber(value) {
   return value?.kind === 'number';
 }
 
-function isZero(value) {
+export function isZero(value) {
   return isNumber(value) && value.numerator === 0n;
 }
 
@@ -299,16 +299,6 @@ export function power(base, exponent) {
 /** Create the exact additive inverse. */
 export function negate(value) {
   return multiply(MINUS_ONE, asExpression(value));
-}
-
-/** Create an exact difference. */
-export function subtract(left, right) {
-  return add(left, negate(right));
-}
-
-/** Create an exact quotient as a rational function with the default variable. */
-export function divide(left, right) {
-  return rationalFunction(left, right);
 }
 
 /** Substitute exact expressions by symbol name without mutating the source. */
@@ -759,6 +749,9 @@ export function keyOf(value) {
   return expressionKey(asExpression(value));
 }
 
+/** Text spellings accepted and rendered for the infinity sentinel. */
+export const INFINITY_NAMES = new Set(['inf', 'infinity', 'infty', '∞', '\\infty']);
+
 /** Return an exact signed infinity sentinel. */
 export function infinity(sign = 1) {
   return Object.freeze({ kind: 'infinity', sign: sign < 0 ? -1 : 1 });
@@ -773,16 +766,3 @@ export function isInfinite(value) {
 export function createOperationBudget(limit = DEFAULT_MAX_OPERATIONS) {
   return new OperationBudget(limit);
 }
-
-/** Return whether a shared exact-analysis budget has been exhausted. */
-export function isBudgetExceeded(budget) {
-  return Boolean(budget?.exceeded);
-}
-
-export const int = integer;
-export const sym = symbol;
-export const mul = multiply;
-export const addRational = rationalAdd;
-export const mulRational = rationalMultiply;
-export const divRational = rationalDivide;
-export const normalizeRational = rationalFunction;

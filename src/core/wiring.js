@@ -521,30 +521,6 @@ export function deleteWireSegment(paths, branch, segment) {
   return next;
 }
 
-/** Group terminal points connected by the remaining wire geometry. */
-export function connectedTerminalGroups(paths, terminals) {
-  const points = new Map();
-  const parent = new Map();
-  const add = (p) => { const k = pointKey(p); if (!parent.has(k)) parent.set(k, k); points.set(k, { x: snap(p.x), y: snap(p.y) }); return k; };
-  const find = (k) => { let p = parent.get(k); while (p !== parent.get(p)) p = parent.get(p); let q = k; while (parent.get(q) !== q) { const n = parent.get(q); parent.set(q, p); q = n; } return p; };
-  const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent.set(a, b); };
-  const on = (p, a, b) => a.x === b.x ? p.x === a.x && between(p.y, a.y, b.y) : p.y === a.y && between(p.x, a.x, b.x);
-  for (const path of paths) for (const p of path) add(p);
-  for (const path of paths) for (let i = 1; i < path.length; i++) {
-    const a = path[i - 1]; const b = path[i];
-    for (const [k, p] of points) if (on(p, a, b)) union(add(a), k);
-  }
-  const groups = new Map();
-  for (const t of terminals) {
-    const p = t.point;
-    const candidates = [...points.values()].filter((q) => q.x === p.x && q.y === p.y);
-    const root = candidates.length ? find(pointKey(candidates[0])) : `terminal:${t.comp}.${t.term}`;
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root).push(t);
-  }
-  return [...groups.values()];
-}
-
 /** Partition terminals and branches into connected components. A branch whose
  *  points do not touch any terminal is dropped. Returns
  *  [{ terminals: [{comp,term,point}], paths: [[...]] }]. */

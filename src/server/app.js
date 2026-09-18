@@ -17,7 +17,8 @@ import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCommand } from '../core/commands.js';
 import { createDocument, documentKind, loadDocument } from '../core/document.js';
-import { generateCircuit, routeCircuit } from '../core/generator.js';
+import { generateCircuit } from '../core/circuitSpec.js';
+import { routeCircuit } from '../core/routing.js';
 import { svgString } from '../core/render.js';
 import {
   absolutePath, browseFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,

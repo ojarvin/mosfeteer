@@ -382,6 +382,3 @@ export function checkSemantics(spec) {
     clarifications: issues.filter((item) => item.clarification),
   };
 }
-
-export const evaluateSemantics = checkSemantics;
-export const semanticChecks = checkSemantics;

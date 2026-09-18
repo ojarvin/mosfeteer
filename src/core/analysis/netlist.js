@@ -1,3 +1,4 @@
+import { firstDefined } from './shared.js';
 import { formatExpression } from './rational.js';
 import { renderExpression } from './present.js';
 
@@ -14,10 +15,6 @@ const KIND_ORDER = new Map([
   ['triode-resistance', 70],
   ['vccs', 80],
 ]);
-
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null);
-}
 
 function lookup(map, key) {
   if (!map || key == null) return undefined;

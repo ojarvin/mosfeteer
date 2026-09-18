@@ -1,5 +1,7 @@
+import { OWN, firstDefined } from './shared.js';
 import { analyzeResponse } from './response.js';
-import { infinity, renderExpression, renderRootEquation } from './present.js';
+import { renderExpression, renderRootEquation } from './present.js';
+import { infinity } from './rational.js';
 
 const QUANTITIES = Object.freeze([
   ['input', 'Zin', 'input-impedance', 'Z_{in}'],
@@ -12,12 +14,6 @@ const SOURCE_NAMES = Object.freeze({
   Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
   Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
 });
-
-const OWN = Object.prototype.hasOwnProperty;
-
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null);
-}
 
 function asArray(value) {
   if (value === undefined || value === null) return [];
@@ -415,6 +411,3 @@ export function adaptCombinedReport(report) {
   } else delete base.acTransfer;
   return base;
 }
-
-export const adaptV2Report = adaptCombinedReport;
-export const toLegacyReport = adaptCombinedReport;

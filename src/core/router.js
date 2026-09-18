@@ -650,19 +650,6 @@ export function steinerRoute(terminals, env) {
 }
 
 /**
- * Renderable branch paths for a multi-terminal net — the exact Steiner minimum
- * tree honoring the routing environment. Kept as a compatibility wrapper.
- */
-export function balancedPaths(points, env) {
-  return steinerBranches(points, env);
-}
-
-/** Single-polyline form of the Steiner minimum tree (see steinerRoute). */
-export function balancedRoute(points, env) {
-  return steinerRoute(points, env);
-}
-
-/**
  * Validate and preserve two matched diagonal paths for a mirrored feedback
  * pair. Each input is a two-point endpoint pair; the four endpoints must be
  * the four corners of one non-degenerate, grid-aligned rectangle and the pairs
@@ -711,9 +698,6 @@ export function balancedCrossCoupling(pairA, pairB) {
   // retain each path's terminal anchors.
   return [a, b].map((path) => path.map((p) => ({ ...p })));
 }
-
-/** Short alias for callers that describe the result as route templates. */
-export const crossCoupledRoutes = balancedCrossCoupling;
 
 /** True if segments (a->b) and (c->d) cross at an interior point (both x- and y-spans). */
 export function segmentsCross(a, b, c, d) {

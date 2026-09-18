@@ -1,3 +1,4 @@
+import { firstDefined } from './shared.js';
 import { AC_GROUND, resolveAnalysisContext } from './context.js';
 import { convertCircuitToPrimitives } from './devices.js';
 import { coupledSubgraph, splitAtNode } from './graph.js';
@@ -20,10 +21,6 @@ import { solveByTopology } from './topological-solve.js';
 
 const INPUT_SOURCE = '@analysis-input';
 const OUTPUT_SOURCE = '@analysis-output';
-
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null);
-}
 
 function lookupValue(values, key) {
   if (!values || key == null) return undefined;

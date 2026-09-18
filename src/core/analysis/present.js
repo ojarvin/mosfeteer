@@ -1,16 +1,7 @@
-import { keyOf } from './rational.js';
+import { INFINITY_NAMES, ONE, isNumber, isZero, keyOf } from './rational.js';
 
 const PRECEDENCE = Object.freeze({ sum: 10, product: 20, power: 30, atom: 40 });
 const PARALLEL_KINDS = new Set(['parallel', 'parallel-resistance']);
-const INFINITY_NAMES = new Set(['inf', 'infinity', 'infty', '∞', '\\infty']);
-
-function isNumber(value) {
-  return value?.kind === 'number';
-}
-
-function isZero(value) {
-  return isNumber(value) && value.numerator === 0n;
-}
 
 function isNegativeNumber(value) {
   return isNumber(value) && value.numerator < 0n;
@@ -32,8 +23,6 @@ function structuralKey(value) {
   if (value?.kind === 'power') return `p:${structuralKey(value.base)}^${value.exponent}`;
   return keyOf(value);
 }
-
-const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
 
 function displayProduct(factors) {
   let coefficient = 1n;
@@ -489,11 +478,3 @@ export function provenSum(equivalent, ...operands) {
   return Object.freeze({ kind: 'sum', proven: true, equivalent, operands: Object.freeze(operands) });
 }
 
-/** Render the exact infinity sentinel used by presentation-only callers. */
-export function infinity(sign = 1) {
-  return Object.freeze({ kind: 'infinity', sign: sign < 0 ? -1 : 1 });
-}
-
-export const tex = renderExpression;
-export const equation = renderEquation;
-export const rootEquation = renderRootEquation;

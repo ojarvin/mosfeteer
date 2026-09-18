@@ -1,3 +1,4 @@
+import { MOS_TYPES, firstDefined } from './shared.js';
 import { applyApproximations } from './approximation.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { createRationalOps } from './algebra-ops.js';
@@ -8,6 +9,7 @@ import { analyzeResponse } from './response.js';
 import { approximateTopology, buildTopologyIdentities } from './topology.js';
 import { compactRational } from './compact.js';
 import {
+  infinity,
   integer,
   rational,
   rationalFunction,
@@ -21,20 +23,14 @@ import {
   provenSum,
   renderQuantityEquation,
   renderRootEquation,
-  infinity,
 } from './present.js';
 
-const MOS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 const DEFAULTS = Object.freeze({
   ignoreBodyEffect: true,
   gmroLarge: true,
   ignoreChannelLengthModulation: false,
   dominantPoleApproximation: false,
 });
-
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null);
-}
 
 function lookup(values, key) {
   if (!values || key == null) return undefined;
@@ -733,5 +729,3 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     ].filter(Boolean).join('\n'),
   };
 }
-
-export const analyzeSmallSignal = analyzeSmallSignalV2;

@@ -293,6 +293,3 @@ export function processResponses(responses = {}, options = {}) {
   }
   return Object.freeze(result);
 }
-
-export const canonicalResponse = analyzeResponse;
-export const canonicalResponses = processResponses;

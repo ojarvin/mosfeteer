@@ -1,29 +1,32 @@
 /**
  * Centralized schematic line styles.
  *
- * LINE  — legacy/default fallback for wiring and component linework. Flat
- *         caps and miter joins keep fallback strokes aligned with the textbook
- *         look. Rendered managed wires use WIRE instead.
- * THICK — heavier linework (~1.5x the default) for selected features of some
- *         symbols (e.g. a MOSFET gate bar, bold power/ground rails).
+ * Symbols and wires select a stroke role via `style`. Roles differ only in
+ * width, cap, and join; filled body shapes use polygon fill instead.
  *
- * Textbook symbol roles (butt caps / miter joins for the crisp classic
- * look). Symbols select a role via `style`: 'symbol' (normal), 'wire',
- * 'emph' (emphasis), 'ground', or 'supply'. Filled body shapes use polygon
- * fill.
+ *   line       legacy/default fallback (flat caps, miter joins)
+ *   thick      heavier legacy linework (~1.5x default)
+ *   symbol     normal textbook linework
+ *   wire       projecting square caps, so the half-width extension at a
+ *              terminal overlaps the pin lead inside the shared ink path and a
+ *              wire meeting a lead at a right angle fills the corner square
+ *   annotation visual lines/arrows and block-diagram connectors (round ends)
+ *   emph       emphasis (MOSFET gate bar, BJT base bar)
+ *   ground     ground bars
+ *   supply     power slabs
  */
-export const LINE = { stroke: '#111', width: 6, cap: 'flat', join: 'miter' };
-export const THICK = { stroke: '#111', width: Math.round(LINE.width * 1.5), cap: 'flat', join: 'flat' };
-export const SYMBOL = { stroke: '#111', width: 6, cap: 'butt', join: 'miter' };
-// Wires use projecting square caps: at a terminal the half-width extension
-// overlaps the pin lead inside the shared ink path, and a wire meeting a lead
-// at a right angle fills the corner square.
-export const WIRE = { stroke: '#111', width: 6, cap: 'square', join: 'miter' };
-// Visual annotation lines/arrows and block-diagram connectors keep round ends.
-export const ANNOTATION = { stroke: '#111', width: 6, cap: 'round', join: 'miter' };
-export const EMPH = { stroke: '#111', width: 9.6, cap: 'butt', join: 'miter' };
-export const GROUND = { stroke: '#111', width: 11.6, cap: 'butt', join: 'miter' };
-export const SUPPLY = { stroke: '#111', width: 7.2, cap: 'butt', join: 'miter' };
+const STROKES = {
+  line: { width: 6, cap: 'flat', join: 'miter' },
+  thick: { width: 9, cap: 'flat', join: 'flat' },
+  symbol: { width: 6, cap: 'butt', join: 'miter' },
+  wire: { width: 6, cap: 'square', join: 'miter' },
+  annotation: { width: 6, cap: 'round', join: 'miter' },
+  emph: { width: 9.6, cap: 'butt', join: 'miter' },
+  ground: { width: 11.6, cap: 'butt', join: 'miter' },
+  supply: { width: 7.2, cap: 'butt', join: 'miter' },
+};
+
+const DEFAULT_INK = '#111';
 
 /** Named semantic colors. Values are intentionally mutable so a theme can
  * update a token and already-loaded drawings immediately pick it up. */
@@ -40,20 +43,16 @@ export const COLOR_PALETTE = {
   slate: '#9aa7b8',
   gray: '#7a7d85',
 };
-// Public aliases make the palette useful to callers without coupling them to
-// the UI's control names.
-export const SEMANTIC_COLORS = COLOR_PALETTE;
-export const COLOR_TOKENS = COLOR_PALETTE;
-export const STYLE_COLORS = Object.freeze(Object.values(COLOR_PALETTE));
 
 const LEGACY_COLORS = new Map(Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]));
 export function resolveColor(value) {
-  if (typeof value !== 'string' || !value) return '#111';
+  if (typeof value !== 'string' || !value) return DEFAULT_INK;
   const token = value.startsWith('$') ? value.slice(1) : value;
   if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return COLOR_PALETTE[token];
   const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
   return legacyToken ? COLOR_PALETTE[legacyToken] : value;
 }
+
 /** Editor rendering: default ink follows the page theme through CSS `color`.
  * Standalone exports keep literal colors and never use this. */
 export function themeInkSvg(svg) {
@@ -67,34 +66,39 @@ export function setColorToken(token, value) {
   return value;
 }
 
-export const LEGACY_STYLE_COLORS = STYLE_COLORS;
+/** Escape a value for use in SVG text or a quoted attribute. */
+export const escapeSvg = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
-const STYLES = { thick: THICK, symbol: SYMBOL, wire: WIRE, annotation: ANNOTATION, emph: EMPH, ground: GROUND, supply: SUPPLY };
-const escapeSvgAttr = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-export function strokeAttrs(styleName, miterLimit) {
-  const s = STYLES[styleName] || LINE;
+function strokeParts(styleName, miterLimit, color = DEFAULT_INK, width) {
+  const s = STROKES[styleName] || STROKES.line;
   const limit = Number.isFinite(miterLimit) && miterLimit > 0 ? ` stroke-miterlimit="${miterLimit}"` : '';
-  return `stroke="${escapeSvgAttr(s.stroke)}" stroke-width="${s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"${limit}`;
+  return `stroke="${escapeSvg(color)}" stroke-width="${width ?? s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"${limit}`;
 }
+
+export function strokeAttrs(styleName, miterLimit) {
+  return strokeParts(styleName, miterLimit);
+}
+
+/** Text styles for schematic labels, keyed by `fontAttrs` kind. */
+const FONTS = {
+  instance: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
+  label: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
+};
+
 export function fontAttrs(kind) {
-  const f = kind === 'instance' ? INSTANCE_FONT : kind === 'label' ? LABEL_FONT : null;
+  const f = FONTS[kind];
   if (!f) return '';
-  const parts = [`font-size="${f.size}"`, `fill="${escapeSvgAttr(resolveColor(f.fill))}"`];
+  const parts = [`font-size="${f.size}"`, `fill="${escapeSvg(resolveColor(f.fill))}"`];
   if (f.weight) parts.push(`font-weight="${f.weight}"`);
   if (f.italic) parts.push(`font-style="italic"`);
   return parts.join(' ');
 }
+
 export function styleAttrs(style = {}, base = 'symbol', miterLimit) {
-  let attrs = strokeAttrs(base, miterLimit).replace(`stroke="${escapeSvgAttr('#111')}"`, `stroke="${escapeSvgAttr(resolveColor(style.color || '#111'))}"`);
-  if (style.width === 'thin' || style.width === 'thick') {
-    attrs = attrs.replace(/stroke-width="[^"]+"/, `stroke-width="${style.width === 'thin' ? 3 : 9}"`);
-  }
+  const width = style.width === 'thin' ? 3 : style.width === 'thick' ? 9 : undefined;
+  const attrs = strokeParts(base, miterLimit, resolveColor(style.color || DEFAULT_INK), width);
   const dash = style.lineStyle && style.lineStyle !== 'solid'
     ? { dashed: '12 12', 'dash-dot': '14 10 3 10', dotted: '2 10' }[style.lineStyle]
     : null;
   return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
 }
-
-/** Text styles for schematic labels. */
-export const INSTANCE_FONT = { size: 38, fill: '#111', weight: 'bold', italic: true };
-export const LABEL_FONT = { size: 38, fill: '#111', weight: 'bold', italic: true };

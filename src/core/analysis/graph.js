@@ -1,8 +1,6 @@
+import { PASSIVE_KINDS } from './shared.js';
 import { AC_GROUND } from './context.js';
 
-const PASSIVE_KINDS = new Set([
-  'resistor', 'capacitor', 'inductor', 'conductance', 'admittance',
-]);
 const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs']);
 
 function asNode(value) {

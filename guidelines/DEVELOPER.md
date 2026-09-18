@@ -40,7 +40,6 @@ src/
 │   ├── render.js       SVG renderer (svgString, editorOverlay).
 │   ├── circuitSpec.js  Versioned generator-facing topology contract.
 │   ├── semantic.js     Pure checks for declared analog intent.
-│   ├── generator.js    Topology compiler and placement facades.
 │   ├── placement.js    Phase 2 deterministic analog placer.
 │   ├── routing.js      Phase 3 deterministic batch router.
 │   ├── block-model.js  Independent BlockDiagram model and persistence seam.

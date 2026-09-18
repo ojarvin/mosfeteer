@@ -264,7 +264,3 @@ export function solveMNA(system, options = {}) {
     variables: options.variables || system.unknowns,
   });
 }
-
-export const solve = solveLinearSystem;
-export const solveSystem = solveLinearSystem;
-export const solveMna = solveMNA;

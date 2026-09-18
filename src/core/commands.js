@@ -1,7 +1,7 @@
 import { Circuit, canonicalNetName, transformComponentWorld } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
-import { rectsOverlap, applyDir, applyTransform } from './geometry.js';
+import { applyDir, applyTransform, fmt, rectsOverlap } from './geometry.js';
 import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
@@ -13,7 +13,7 @@ import { analyzeSmallSignal } from './analysis/index.js';
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
  *  with mid-wire junctions are walked through every anchor in order.
  *  Delegates to the model's fresh-layout path so 3+ terminal nets get the
- *  multi-branch T-junction geometry (balancedPaths), not a single polyline. */
+ *  multi-branch T-junction geometry (steinerBranches), not a single polyline. */
 function routeNet(circuit, net) {
   if (circuit.rerouteNet(net, 'refresh') === false) throw new Error('unable to route wire safely');
 }
@@ -111,9 +111,6 @@ export function parseArgs(args) {
   return { pos, flags };
 }
 
-function fmt(n) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(2);
-}
 function pp(x, y) {
   return `(${fmt(x)},${fmt(y)})`;
 }

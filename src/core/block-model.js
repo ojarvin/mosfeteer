@@ -1100,20 +1100,6 @@ function refsEqual(a, b) {
   return a?.block === b?.block && a?.terminal === b?.terminal;
 }
 
-export function validateBlockDiagram(diagram) {
-  if (!(diagram instanceof BlockDiagram)) throw new Error('expected a BlockDiagram');
-  return diagram.validate();
-}
-
-export function blockTerminalPoint(rect, side, offset) {
-  return terminalPoint(rect, normalizeSide(side), offset);
-}
-
-export function blockTerminalDirection(side) {
-  const value = normalizeSide(side);
-  return { ...SIDE_DIRECTIONS[value] };
-}
-
 export function blockLabelPosition(rect) {
   const normalized = normalizeRect(rect);
   return { x: normalized.x + normalized.w / 2, y: normalized.y + normalized.h / 2, anchor: 'middle' };

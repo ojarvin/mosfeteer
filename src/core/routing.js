@@ -5,6 +5,7 @@ import { placeCircuit } from './placement.js';
 import { Circuit, componentLabelText } from './model.js';
 import { segmentsCross } from './router.js';
 import { crossNetOverlaps, pathSegments } from './wiring.js';
+import { rectsOverlap } from './geometry.js';
 import { GRID } from './grid.js';
 import { checkSemantics } from './semantic.js';
 
@@ -168,7 +169,7 @@ function rectIndexHits(index, rect) {
   const y1 = rectIndexCell(rect.y + Math.max(0, rect.h - 1));
   for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
     for (const hit of index.get(rectIndexKey(x, y)) || []) {
-      if (!hits.has(hit.item) && overlap(rect, hit.rect)) hits.set(hit.item, hit);
+      if (!hits.has(hit.item) && rectsOverlap(rect, hit.rect)) hits.set(hit.item, hit);
     }
   }
   return hits.values();
@@ -183,10 +184,6 @@ function labelOverlapScore(label, componentIndex, labelIndex) {
   }
   for (const { item } of rectIndexHits(labelIndex, box)) if (item !== label) labels++;
   return [component, labels];
-}
-
-function overlap(a, b) {
-  return !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
 }
 
 function addNetLabels(circuit, spec) {
@@ -424,6 +421,3 @@ export function tryRouteCircuit(input, placementOrOptions = {}, maybeOptions = {
   try { return routeCircuit(input, placementOrOptions, maybeOptions); }
   catch (error) { return { ok: false, success: false, report: { ok: false, version: ROUTING_VERSION, attempts: 0, errors: [error.message] }, error }; }
 }
-
-export const routePlacedCircuit = routeCircuit;
-export const tryRoutePlacedCircuit = tryRouteCircuit;

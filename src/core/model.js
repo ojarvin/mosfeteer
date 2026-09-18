@@ -1,7 +1,7 @@
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol } from './components/index.js';
-import { balancedCrossCoupling, balancedPaths, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
+import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 
@@ -2523,7 +2523,7 @@ export class Circuit {
       // renderer draws a clean centered T and the junction solder lands at the
       // shared point. Previously a single polyline was used, which collapsed
       // the three arms into one winding path and looked asymmetric.
-      const paths = balancedPaths(anchors, env);
+      const paths = steinerBranches(anchors, env);
       if (!paths || paths.length === 0) return false;
       net.branches = paths.map((p) => clonePath(p, net.allowDiagonal));
       net.route = paths[0] ? clonePath(paths[0], net.allowDiagonal) : null;
@@ -4805,7 +4805,7 @@ export class Circuit {
         for (const p of net.junctions) mark(`${p.x},${p.y}`, net);
         continue;
       }
-      const paths = net.branches && net.branches.length ? net.branches : net.terminals.length >= 3 ? balancedPaths(net.terminalWorlds(), this._netEnv(net.id)) : [];
+      const paths = net.branches && net.branches.length ? net.branches : net.terminals.length >= 3 ? steinerBranches(net.terminalWorlds(), this._netEnv(net.id)) : [];
       for (const p of this._netJunctions(net, paths)) mark(`${p.x},${p.y}`, net);
       // A terminal landing on the interior of an existing branch is also a
       // visible electrical junction, even when the net has only two terminals.

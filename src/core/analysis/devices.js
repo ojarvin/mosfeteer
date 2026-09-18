@@ -1,3 +1,4 @@
+import { MOS_TYPES } from './shared.js';
 // Primitive contract: terminals.a -> terminals.b is the branch direction;
 // VCCS control.a -> control.b is its voltage-control direction.
 const PASSIVE_TYPES = new Map([
@@ -9,7 +10,6 @@ const PASSIVE_TYPES = new Map([
   ['variable_inductor', 'inductor'],
 ]);
 
-const MOS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 const MOS_CURRENT_SOURCE_MODELS = new Set([
   'current-source',
   'current_source',

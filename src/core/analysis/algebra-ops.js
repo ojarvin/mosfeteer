@@ -16,10 +16,9 @@ import {
   createOperationBudget,
   isInfinite,
   symbol as makeSymbol,
+  DEFAULT_MAX_OPERATIONS,
+  INFINITY_NAMES,
 } from './rational.js';
-
-const DEFAULT_MAX_OPERATIONS = 200000;
-const INFINITY_NAMES = new Set(['inf', 'infinity', 'infty', '∞', '\\infty']);
 
 function isRational(value) {
   return value?.kind === 'rational';
@@ -133,6 +132,3 @@ export function createRationalOps(options = {}) {
   });
   return Object.freeze(ops);
 }
-
-export const rationalOps = createRationalOps;
-export const makeRationalOps = createRationalOps;

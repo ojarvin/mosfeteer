@@ -1,9 +1,8 @@
 import { blockArrowGeometry, blockConnectorJunctions } from './block-router.js';
 import { GRID } from './grid.js';
 import { LABEL_FONT_SIZE, parseLabelRuns } from './model.js';
-import { resolveColor, styleAttrs, themeInkSvg } from './style.js';
+import { escapeSvg, resolveColor, styleAttrs, themeInkSvg } from './style.js';
 
-const esc = (s) => String(s).replace(/[&<>\"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 const n = (v) => Number.isInteger(v) ? v : Number(v.toFixed(2));
 const point = (p) => `${n(p.x)} ${n(p.y)}`;
 const same = (a, b) => a.x === b.x && a.y === b.y;
@@ -23,12 +22,12 @@ function labelText(label, selected = false) {
     });
   }
   const renderRuns = (line) => line.map((run) => run.sub || run.super
-    ? `<tspan ${run.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"'} font-size="0.62em">${esc(run.text)}</tspan>`
-    : esc(run.text)).join('');
+    ? `<tspan ${run.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"'} font-size="0.62em">${escapeSvg(run.text)}</tspan>`
+    : escapeSvg(run.text)).join('');
   const body = lines.length === 1
     ? renderRuns(lines[0])
     : lines.map((line, lineIndex) => `<tspan x="${n(p.x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
-  return `<text data-label-id="${esc(label.id)}"${cls} x="${n(p.x)}" y="${n(p.y)}" text-anchor="${p.anchor || 'middle'}" dominant-baseline="middle" font-family="sans-serif" font-size="${style.width === 'thin' ? 32 : style.width === 'thick' ? 44 : 38}" font-weight="${style.bold === false ? 'normal' : 'bold'}" font-style="${style.italic === false ? 'normal' : 'italic'}" fill="${esc(resolveColor(style.color || '#111'))}">${body}</text>`;
+  return `<text data-label-id="${escapeSvg(label.id)}"${cls} x="${n(p.x)}" y="${n(p.y)}" text-anchor="${p.anchor || 'middle'}" dominant-baseline="middle" font-family="sans-serif" font-size="${style.width === 'thin' ? 32 : style.width === 'thick' ? 44 : 38}" font-weight="${style.bold === false ? 'normal' : 'bold'}" font-style="${style.italic === false ? 'normal' : 'italic'}" fill="${escapeSvg(resolveColor(style.color || '#111'))}">${body}</text>`;
 }
 
 function annotationHandles(label) {
@@ -41,7 +40,7 @@ function annotationHandles(label) {
           return [['corner:top-left', { x: x0, y: y0 }], ['corner:top-right', { x: x1, y: y0 }], ['corner:bottom-right', { x: x1, y: y1 }], ['corner:bottom-left', { x: x0, y: y1 }]];
         })()
       : [['start', label.anchor], ['end', label.end]];
-  return `<g class="block-annotation-handles" data-annotation-handle-id="${esc(label.id)}">${points.map(([name, p]) => `<circle data-annotation-endpoint="${esc(`${label.id}:${name}`)}" cx="${n(p.x)}" cy="${n(p.y)}" r="8" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`;
+  return `<g class="block-annotation-handles" data-annotation-handle-id="${escapeSvg(label.id)}">${points.map(([name, p]) => `<circle data-annotation-endpoint="${escapeSvg(`${label.id}:${name}`)}" cx="${n(p.x)}" cy="${n(p.y)}" r="8" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`;
 }
 
 function annotationSvg(label, selected) {
@@ -49,12 +48,12 @@ function annotationSvg(label, selected) {
   const cls = selected ? ' selected' : '';
   if (label.kind === 'line') {
     const d = label.points.map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ');
-    return `<path data-label-id="${esc(label.id)}" class="block-annotation block-line${cls}" d="${d}" fill="none" ${style}/>`;
+    return `<path data-label-id="${escapeSvg(label.id)}" class="block-annotation block-line${cls}" d="${d}" fill="none" ${style}/>`;
   }
   const a = label.anchor; const b = label.end;
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-    return `<rect data-label-id="${esc(label.id)}" class="block-annotation block-box${cls}" x="${n(x)}" y="${n(y)}" width="${n(Math.abs(b.x - a.x))}" height="${n(Math.abs(b.y - a.y))}" fill="none" ${style}/>`;
+    return `<rect data-label-id="${escapeSvg(label.id)}" class="block-annotation block-box${cls}" x="${n(x)}" y="${n(y)}" width="${n(Math.abs(b.x - a.x))}" height="${n(Math.abs(b.y - a.y))}" fill="none" ${style}/>`;
   }
   const route = label.points?.length ? label.points : [a, b];
   const start = route.at(-2) || a;
@@ -62,8 +61,8 @@ function annotationSvg(label, selected) {
   const shaft = { x: b.x - 32 * Math.cos(angle), y: b.y - 32 * Math.sin(angle) };
   const left = { x: shaft.x + 18 * Math.sin(angle), y: shaft.y - 18 * Math.cos(angle) };
   const right = { x: shaft.x - 18 * Math.sin(angle), y: shaft.y + 18 * Math.cos(angle) };
-  const color = esc(resolveColor(label.style?.color || '#111'));
-  return `<g data-label-id="${esc(label.id)}" class="block-annotation block-arrow${cls}"><path d="${route.slice(0, -1).map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ')} L ${point(shaft)}" fill="none" ${style}/><polygon points="${point(b)} ${point(left)} ${point(right)}" fill="${color}" stroke="none"/></g>`;
+  const color = escapeSvg(resolveColor(label.style?.color || '#111'));
+  return `<g data-label-id="${escapeSvg(label.id)}" class="block-annotation block-arrow${cls}"><path d="${route.slice(0, -1).map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ')} L ${point(shaft)}" fill="none" ${style}/><polygon points="${point(b)} ${point(left)} ${point(right)}" fill="${color}" stroke="none"/></g>`;
 }
 
 function arrowSvg(arrow, selected, omitHead = false, selectedSegments = new Set()) {
@@ -75,10 +74,10 @@ function arrowSvg(arrow, selected, omitHead = false, selectedSegments = new Set(
     const a = g.shaftPoints[i - 1]; const b = g.shaftPoints[i];
     if (same(a, b)) continue;
     const key = `${arrow.id}:${i}`;
-    paths.push(`<path data-arrow-segment="${esc(key)}"${selectedSegments.has(key) ? ' class="selected"' : ''} d="M ${point(a)} L ${point(b)}" fill="none" ${attrs}/>`);
+    paths.push(`<path data-arrow-segment="${escapeSvg(key)}"${selectedSegments.has(key) ? ' class="selected"' : ''} d="M ${point(a)} L ${point(b)}" fill="none" ${attrs}/>`);
   }
-  const color = esc(resolveColor(arrow.style?.color || '#111'));
-  return `<g data-arrow-id="${esc(arrow.id)}" class="block-connector${cls}">${paths.join('')}${omitHead ? '' : `<polygon points="${point(g.tip)} ${point(g.left)} ${point(g.right)}" fill="${color}" stroke="none"/>`}</g>`;
+  const color = escapeSvg(resolveColor(arrow.style?.color || '#111'));
+  return `<g data-arrow-id="${escapeSvg(arrow.id)}" class="block-connector${cls}">${paths.join('')}${omitHead ? '' : `<polygon points="${point(g.tip)} ${point(g.left)} ${point(g.right)}" fill="${color}" stroke="none"/>`}</g>`;
 }
 
 function blockShape(block) {
@@ -105,7 +104,7 @@ export function blockSvgString(diagram, options = {}) {
   }
   if (options.rubber) {
     const r = options.rubber;
-    out.push(`<rect class="editor-rubber-band" x="${n(r.x0)}" y="${n(r.y0)}" width="${n(r.x1 - r.x0)}" height="${n(r.y1 - r.y0)}" fill="none" stroke="${esc(r.color || 'var(--accent, #4f9cf9)')}" stroke-width="3" stroke-dasharray="8 6"/>`);
+    out.push(`<rect class="editor-rubber-band" x="${n(r.x0)}" y="${n(r.y0)}" width="${n(r.x1 - r.x0)}" height="${n(r.y1 - r.y0)}" fill="none" stroke="${escapeSvg(r.color || 'var(--accent, #4f9cf9)')}" stroke-width="3" stroke-dasharray="8 6"/>`);
   }
   const selectedArrows = options.selectedArrows instanceof Set ? options.selectedArrows : new Set(options.selectedArrows || []);
   const selectedBlocks = options.selectedBlocks instanceof Set ? options.selectedBlocks : new Set(options.selectedBlocks || []);
@@ -150,19 +149,19 @@ export function blockSvgString(diagram, options = {}) {
   }
   const showTerminals = options.terminals !== false;
   for (const block of [...diagram.blocks.values()].sort((a, b) => a.drawOrder - b.drawOrder)) {
-    const r = block.rect; const color = esc(resolveColor(block.style?.color || '#111'));
+    const r = block.rect; const color = escapeSvg(resolveColor(block.style?.color || '#111'));
     const selected = selectedBlocks.has(block.id);
-    out.push(`<g data-block-id="${esc(block.id)}">${blockShape(block).replace('class="block-node', `class="block-node${selected ? ' selected' : ''}`)}`);
+    out.push(`<g data-block-id="${escapeSvg(block.id)}">${blockShape(block).replace('class="block-node', `class="block-node${selected ? ' selected' : ''}`)}`);
     if (showTerminals) for (const terminal of block.terminals.values()) {
       const p = terminal.point(r);
-      out.push(`<circle data-block-terminal="${esc(`${block.id}.${terminal.id}`)}" cx="${n(p.x)}" cy="${n(p.y)}" r="6" fill="${color}"/>`);
+      out.push(`<circle data-block-terminal="${escapeSvg(`${block.id}.${terminal.id}`)}" cx="${n(p.x)}" cy="${n(p.y)}" r="6" fill="${color}"/>`);
     }
     const p = block.labelPosition(); const style = block.style || {};
     const lines = String(block.text).split('\n');
     const firstY = p.y - ((lines.length - 1) * 38) / 2;
     const textBody = lines.length === 1
-      ? esc(lines[0])
-      : lines.map((line, index) => `<tspan x="${n(p.x)}" dy="${index ? 38 : 0}">${esc(line)}</tspan>`).join('');
+      ? escapeSvg(lines[0])
+      : lines.map((line, index) => `<tspan x="${n(p.x)}" dy="${index ? 38 : 0}">${escapeSvg(line)}</tspan>`).join('');
     out.push(`<text x="${n(p.x)}" y="${n(firstY)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="${style.bold === false ? 'normal' : 'bold'}" font-style="${style.italic === false ? 'normal' : 'italic'}" fill="${color}">${textBody}</text>`);
     out.push('</g>');
     if (selected && options.resizeHandles !== false) {
@@ -171,7 +170,7 @@ export function blockSvgString(diagram, options = {}) {
         ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
         ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
       ];
-      out.push(`<g class="block-resize-handles" data-block-resize-id="${esc(block.id)}">${handles.map(([name, hx, hy]) => `<rect data-block-handle="${name}" x="${n(hx - 7)}" y="${n(hy - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
+      out.push(`<g class="block-resize-handles" data-block-resize-id="${escapeSvg(block.id)}">${handles.map(([name, hx, hy]) => `<rect data-block-handle="${name}" x="${n(hx - 7)}" y="${n(hy - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
     }
   }
   for (const label of labels.filter((item) => item.kind === 'label' && !item.parent)) out.push(labelText(label, selectedLabels.has(label.id)));
@@ -195,8 +194,7 @@ export function blockSvgString(diagram, options = {}) {
   const ghosts = options.ghostBlocks?.length ? options.ghostBlocks : options.ghostBlock ? [options.ghostBlock] : [];
   for (const ghost of ghosts) {
     const r = ghost.rect;
-    out.push(`<g class="block-ghost"><rect x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/><text x="${n(r.x + r.w / 2)}" y="${n(r.y + r.h / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="bold">${esc(ghost.text || 'Block')}</text></g>`);
+    out.push(`<g class="block-ghost"><rect x="${n(r.x)}" y="${n(r.y)}" width="${n(r.w)}" height="${n(r.h)}" fill="var(--paper, #fff)" stroke="var(--accent, #4f9cf9)" stroke-width="4" stroke-dasharray="8 6"/><text x="${n(r.x + r.w / 2)}" y="${n(r.y + r.h / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="38" font-weight="bold">${escapeSvg(ghost.text || 'Block')}</text></g>`);
   }
   out.push('</svg>'); return options.themeInk ? themeInkSvg(out.join('\n')) : out.join('\n');
 }
-export const renderBlockDiagram = blockSvgString;

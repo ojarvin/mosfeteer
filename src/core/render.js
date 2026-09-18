@@ -1,16 +1,9 @@
-import { applyTransform, transformToSvg } from './geometry.js';
+import { applyTransform, fmt, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
-import { autoRoute, balancedPaths } from './router.js';
-import { fontAttrs, resolveColor, strokeAttrs, styleAttrs, themeInkSvg } from './style.js';
+import { autoRoute, steinerBranches } from './router.js';
+import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, styleAttrs, themeInkSvg } from './style.js';
 import { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 
-function escapeSvg(value) {
-  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
-
-function fmt(n) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(2);
-}
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
 }
@@ -539,7 +532,7 @@ export function svgString(circuit, opts = {}) {
       : net.branches
         ? net.branches
         : !net.route && net.terminals.length >= 3
-          ? balancedPaths(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
+          ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
           : [net.points()];
     const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
     for (const [branch, pts] of paths.entries()) {

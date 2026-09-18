@@ -1,3 +1,4 @@
+import { MOS_TYPES } from './shared.js';
 import {
   canonicalNetName,
   isReferenceMarker,
@@ -7,7 +8,6 @@ import {
 } from '../model.js';
 
 export const AC_GROUND = '@AC_GROUND';
-const MOS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 const REFERENCE_NAMES = new Set(['GND', 'VSS', 'VDD', 'VCM']);
 
 function diagnostic(code, message, details = {}) {

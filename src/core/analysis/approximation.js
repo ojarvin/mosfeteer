@@ -1,3 +1,4 @@
+import { OWN } from './shared.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import {
   add,
@@ -12,7 +13,6 @@ import {
 } from './rational.js';
 
 const ZERO = integer(0);
-const OWN = Object.prototype.hasOwnProperty;
 
 function entries(value) {
   if (!value) return [];
@@ -448,6 +448,3 @@ export function applyApproximations(input, options = {}) {
     assumptions: Object.freeze(assumptions),
   });
 }
-
-export const applyPostSolveApproximations = applyApproximations;
-export const reduceApproximations = applyApproximations;
