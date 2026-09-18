@@ -263,6 +263,14 @@ button:focus-visible {
   background: var(--accent-dim);
 }
 
+/* Analyze is a toggle like the view switches: while its dock is open the
+   button reads as active. */
+.analysis-cluster button[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
 .segmented {
   gap: 0;
   padding: 2px;
