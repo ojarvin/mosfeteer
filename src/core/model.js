@@ -1485,7 +1485,11 @@ export class Circuit {
       : 0;
     const referenceMarker = isReferenceMarker(component);
     if (next === current) {
-      if (interfaceNet && interfacePinCount <= 1 && interfaceNet.name !== next) this.renameNet(interfaceNet, next);
+      if (interfaceNet && interfacePinCount <= 1) {
+        const interfaceLabel = this.labelOf(current);
+        const interfaceName = canonicalNetName(displayLabel ?? interfaceLabel?._text ?? next);
+        if (interfaceName && interfaceNet.name !== interfaceName) this.renameNet(interfaceNet, interfaceName);
+      }
       if (!isReferenceMarker(component)) {
         const label = this.labelOf(current);
         if (label && (displayLabel !== null || labelMatchesRefdes(label._text, current))) {
@@ -1537,12 +1541,13 @@ export class Circuit {
     }
     if (interfacePin && interfaceNet && interfacePinCount <= 1) {
       const renamedNet = this.netOfTerminal({ comp: next, term: 'p' });
-      if (renamedNet && renamedNet.name !== next) this.renameNet(renamedNet, next);
       const label = this.labelOf(next);
       if (label) {
         label._text = componentLabelText(next, displayLabel ?? label._text);
         label.clearRenderedTextBounds();
       }
+      const interfaceName = canonicalNetName(label?._text || next);
+      if (renamedNet && interfaceName && renamedNet.name !== interfaceName) this.renameNet(renamedNet, interfaceName);
     }
     this._ensureComponentInstanceLabel(component);
     return component;
@@ -1977,31 +1982,41 @@ export class Circuit {
 
   /** Interface symbols use their owned label as the physical net name.  The
    * first pin on a net is the deterministic authority when several pins share
-   * one net; all other pin labels follow that name. Numeric identity names are
-   * stored canonically (VI1/VO1/VIO1) while their owned labels retain
-   * textbook display markup (V_{I1}/V_{O1}/V_{IO1}). */
-  _syncInterfacePinLabels(netOrId, { enforceName = false } = {}) {
+   * one net; all other pin labels follow that name. Component identities stay
+   * canonical (VI1/VO1/VIO1), while authored textbook markup remains part of
+   * the physical net name when the port supplies it. */
+  _syncInterfacePinLabels(netOrId, { enforceName = false, preserveSource = false } = {}) {
     const net = this._resolveNet(netOrId);
     const pins = net.terminals
       .map(({ comp }) => this.components.get(comp))
       .filter((component) => component && INTERFACE_PIN_TYPES.has(component.type));
     if (!pins.length) return net;
+    if (preserveSource && !enforceName && net.name) {
+      const firstLabel = this.labelOf(pins[0].refdes);
+      const raw = firstLabel?._text || '';
+      // Older documents stored a compact net name alongside a formatted
+      // interface label. Promote that authored source during load so the
+      // label does not lose its subscript on the next synchronization.
+      if (raw && /[_^]\{/.test(raw)
+          && normalizeComponentRefdes(raw) === normalizeComponentRefdes(pins[0].refdes)
+          && normalizeComponentRefdes(net.name) === normalizeComponentRefdes(pins[0].refdes)) {
+        net.name = canonicalNetName(raw);
+      }
+    }
     if (enforceName) {
       const firstLabel = this.labelOf(pins[0].refdes);
       const raw = firstLabel?._text || pins[0].refdes;
-      // Explicit textbook markup is a display convention, not a physical
-      // net identifier. Flatten it only when the label still represents the
-      // pin's own refdes; deliberately named nets retain their source text.
-      const preferred = labelMatchesRefdes(raw, pins[0].refdes)
-        ? normalizeComponentRefdes(raw)
-        : canonicalNetName(raw);
+      // Keep authored subscript markup on the physical name. Connectivity
+      // still uses the component's compact refdes; net names are display
+      // sources and may carry the same textbook markup as their pin label.
+      const preferred = canonicalNetName(raw);
       if (preferred && net.name !== preferred) net.name = preferred;
     }
     const name = net.name;
     for (const pin of pins) {
       const label = this.labelOf(pin.refdes);
       // Preserve explicit formatting on an owned pin label during cloning.
-      const display = normalizeComponentRefdes(name) === normalizeComponentRefdes(pin.refdes)
+      const display = /[_^]\{/.test(name) && normalizeComponentRefdes(name) === normalizeComponentRefdes(pin.refdes)
         ? componentLabelText(pin.refdes, label?._text || name)
         : name;
       if (label && label._text !== display) {
@@ -5051,7 +5066,7 @@ export class Circuit {
     for (const net of circuit.nets.values()) {
       circuit._syncReferenceMarkerNetName(net);
       circuit._syncAnalysisAttributes(net);
-      circuit._syncInterfacePinLabels(net, { enforceName: !net.name });
+      circuit._syncInterfacePinLabels(net, { enforceName: !net.name, preserveSource: true });
     }
     // every junction is a real vertex, drop duplicate branches, and reduce each
     // net to a minimal connected structure (no parallel wires, no loops).

@@ -431,9 +431,10 @@ For a three-terminal shared node, route first to a centered junction, then split
 
 Signal names are lowercase-free, typed signal names with a leading
 voltage or current letter and a subscript for the rest: `V_{INP}`,
-`V_{INN}`, `V_{BIAS}`, `V_{OUT}`, `V_{DD}`, `I_{BIAS}`, `V_{REF}`. In JSON,
-net names and port refdes use the plain form (`VINP`, `VOUT`, `BIAS`);
-the label text carries the markup (`V_{INP}`). For digital or control signals
+`V_{INN}`, `V_{BIAS}`, `V_{OUT}`, `V_{DD}`, `I_{BIAS}`, `V_{REF}`. Port
+refdes use the plain connectivity form (`VINP`, `VOUT`, `BIAS`), while an
+interface pin's auto-named physical net preserves the authored label source
+(`V_{INP}`, `V_{OUT}`). For digital or control signals
 that are not naturally voltages or currents, use a concise plain name such as
 `CLK`, `RESET`, or `EN` consistently at both the port and net level.
 Differential suffixes such as `P` / `N` are preferred over mixing them with

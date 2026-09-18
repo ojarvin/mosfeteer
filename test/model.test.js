@@ -429,7 +429,7 @@ test('interface pins name their physical net and follow later renames', () => {
   const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
   const pinLabel = c.labelOf(pin.refdes);
 
-  assert.equal(net.name, pin.refdes);
+  assert.equal(net.name, pinLabel.text);
   assert.equal(pinLabel.text, 'V_{I1}');
 
   c.renameNet(net, 'VIN');
@@ -452,7 +452,19 @@ test('interface label restores a renamed single-pin net', () => {
 
   c.renameNet(net, 'OTHER');
   pinLabel.setText('V_{IN}');
-  assert.equal(net.name, 'VIN');
+  assert.equal(net.name, 'V_{IN}');
+  assert.equal(pinLabel.text, 'V_{IN}');
+});
+
+test('interface markup is retained when the port is labeled before connection', () => {
+  const c = new Circuit();
+  const pin = c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  const pinLabel = c.labelOf(pin.refdes);
+  pinLabel.setText('V_{IN}');
+  const resistor = c.addComponent('resistor', { x: 240, y: 0 });
+  const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
+
+  assert.equal(net.name, 'V_{IN}');
   assert.equal(pinLabel.text, 'V_{IN}');
 });
 
@@ -462,7 +474,7 @@ test('all interface pin directions participate in net naming', () => {
     const pin = c.addComponent(type, { x: 0, y: 0 });
     const resistor = c.addComponent('resistor', { x: 240, y: 0 });
     const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
-    assert.equal(net.name, pin.refdes, type);
+    assert.equal(net.name, c.labelOf(pin.refdes).text, type);
     const displayPrefix = type === 'output' ? 'O' : type === 'inputoutput' ? 'IO' : 'I';
     assert.equal(c.labelOf(pin.refdes).text, `V_{${displayPrefix}1}`, type);
     c.renameNet(net, 'RENAMED');
@@ -479,11 +491,11 @@ test('the circle port is an interface pin with an owned label that names its net
   assert.deepEqual(label.offset, { x: -120, y: 0 });
   const resistor = c.addComponent('resistor', { x: 240, y: 0 });
   const net = c.connect(`${pin.refdes}.p`, `${resistor.refdes}.a`);
-  assert.equal(net.name, 'P1');
+  assert.equal(net.name, label.text);
 
   label.setText('V_{BIAS}');
   assert.equal(c.getComponent('VBIAS').refdes, 'VBIAS');
-  assert.equal(net.name, 'VBIAS');
+  assert.equal(net.name, 'V_{BIAS}');
   c.renameNet(net, 'VREF');
   assert.equal(c.labelOf('VBIAS').text, 'VREF');
 });
@@ -511,11 +523,11 @@ test('interface pin names and owned labels stay synchronized with their single-o
   label.setText('V_{IN}');
   assert.equal(c.getComponent('VIN').refdes, 'VIN');
   assert.equal(label.text, 'V_{IN}');
-  assert.equal(net.name, 'VIN');
+  assert.equal(net.name, 'V_{IN}');
 
   c.renameComponent('VIN', 'V_{SOURCE}', { displayLabel: 'V_{SOURCE}' });
   assert.equal(c.labelOf('VSOURCE').text, 'V_{SOURCE}');
-  assert.equal(net.name, 'VSOURCE');
+  assert.equal(net.name, 'V_{SOURCE}');
 });
 
 test('formatted interface labels survive preview/load reconstruction', () => {
@@ -524,8 +536,11 @@ test('formatted interface labels survive preview/load reconstruction', () => {
   const resistor = c.addComponent('resistor', { x: 240, y: 0 });
   c.connect(`${output.refdes}.p`, `${resistor.refdes}.a`);
   c.renameComponent(output.refdes, 'VOUT', { displayLabel: 'V_{OUT}' });
-  const loaded = Circuit.fromJSON(c.toJSON());
+  const data = c.toJSON();
+  data.nets.find((net) => net.terminals.some((terminal) => terminal.comp === 'VOUT' && terminal.term === 'p')).name = 'VOUT';
+  const loaded = Circuit.fromJSON(data);
   assert.equal(loaded.labelOf('VOUT').text, 'V_{OUT}');
+  assert.equal(loaded.netOfTerminal('VOUT.p').name, 'V_{OUT}');
 });
 
 test('reference markers auto-name attached nets and preserve explicit names', () => {
