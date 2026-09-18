@@ -101,12 +101,11 @@ annotation.
 
 ### State vs. file I/O
 
-`runCommand` accepts an optional `io` object (`writeTextFile`, `readTextFile`,
-`rasterize`). The HTTP path passes nothing: the server does its own saving on
-every mutated result. The CLI also passes nothing; saving is the server's job.
-Local file I/O remains available for the standalone `node src/cli/index.js`
-tool only when explicitly given an `io` (rare — most operations should go
-through the server).
+`runCommand` accepts an optional `io` object (`writeTextFile`, `readTextFile`)
+used by `svg`, `save`, and `load`. Nothing in the app supplies one: the server
+saves every mutated result itself and the CLI is an HTTP client, so the seam
+exists only for an embedder that wants local file I/O. PNG export lives in the
+browser and `/api/export`, not here.
 
 ## Workflow
 

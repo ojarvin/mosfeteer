@@ -462,7 +462,6 @@ export function commandHelp() {
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
     '  svg [file] [--grid]            - export SVG (default data/preview.svg)',
-    '  png [file] [--grid]            - rasterize SVG to PNG (default data/preview.png)',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
   ].join('\n');
@@ -772,14 +771,6 @@ function dispatch(circuit, cmd, pos, flags, io) {
       return result(`wrote ${file} (${svg.length} bytes)`, null);
     }
     return result('(no file I/O) SVG below; use --json for the string', { svg });
-  }
-  if (cmd === 'png' || cmd === 'render') {
-    const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.png';
-    if (!io) return result('PNG export requires CLI (file I/O); use svg/--json instead', null);
-    const svgFile = file.replace(/\.png$/i, '') + '.svg';
-    io.writeTextFile(svgFile, svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true }));
-    const out = io.rasterize(svgFile, file);
-    return result(`wrote ${file} via ${out.tool}`, null);
   }
   if (cmd === 'save') {
     const file = flags.file ? flags.file[0] : pos[0];
