@@ -125,6 +125,14 @@ export function segmentCrossesRect(a, b, r) {
   return false; // route is always orthogonal
 }
 
+/** Shortest distance from point `p` to segment a-b (clamped to the segment). */
+export function distanceToSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+}
+
 /** Format a coordinate for SVG: integers stay exact, others get two decimals. */
 export function fmt(n) {
   return Number.isInteger(n) ? String(n) : n.toFixed(2);

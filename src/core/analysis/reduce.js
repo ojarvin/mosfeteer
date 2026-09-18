@@ -91,13 +91,11 @@ function mergeOneSeriesNode(edges, boundary, ops) {
 }
 
 // Series-merging a reactive element (L or C) hands Bareiss elimination a
-// pre-divided, `s`-dependent admittance where it previously saw only simple,
-// denominator-1 entries (each primitive's own plain admittance) — that
-// defeats Bareiss's fraction-free efficiency (it's specifically designed to
-// avoid exactly this kind of early division) and can cost more solver budget
-// than the smaller matrix saves. Series-merge is only safe to enable where
-// the result feeds a small, isolated sub-solve rather than the main system
-// (Miller's bridge collapse), never in the general network pre-reduction.
+// pre-divided, `s`-dependent admittance instead of the simple denominator-1
+// entries it expects, defeating its fraction-free efficiency for more solver
+// budget than the smaller matrix saves. Enable series-merge only where the
+// result feeds a small isolated sub-solve (Miller's bridge collapse), never
+// in the general network pre-reduction.
 function reduceToFixedPoint(edges, boundary, ops, proofs, { seriesMerge = true } = {}) {
   let changed = true;
   while (changed) {

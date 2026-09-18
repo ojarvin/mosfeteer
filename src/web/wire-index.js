@@ -1,11 +1,6 @@
-const CELL = 40;
+import { distanceToSegment } from '../core/geometry.js';
 
-function distanceToSegment(p, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
-  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
-}
+const CELL = 40;
 
 const cellKey = (x, y) => `${x},${y}`;
 const cell = value => Math.floor(value / CELL);

@@ -2521,8 +2521,7 @@ export class Circuit {
       // 3+ terminal net with no explicit junction: store the balanced T-junction
       // as multiple branches (external → junction → each pair terminal) so the
       // renderer draws a clean centered T and the junction solder lands at the
-      // shared point. Previously a single polyline was used, which collapsed
-      // the three arms into one winding path and looked asymmetric.
+      // shared point. One polyline instead would wind through all three arms.
       const paths = steinerBranches(anchors, env);
       if (!paths || paths.length === 0) return false;
       net.branches = paths.map((p) => clonePath(p, net.allowDiagonal));

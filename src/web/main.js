@@ -19,6 +19,7 @@ import { svgString, editorOverlay, texToMathML } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
+import { distanceToSegment } from '../core/geometry.js';
 import { moveBlockArrowRun, routeBlockArrow } from '../core/block-router.js';
 import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
@@ -1288,6 +1289,32 @@ function redo() {
 
 // ----- helpers ---------------------------------------------------------
 
+const clonePoint = (p) => ({ ...p });
+/** Copy a point list, optionally through a translation. */
+function clonePoints(points, move = clonePoint) {
+  return (points || []).map(move);
+}
+/** Copy fixed-path entries so a drag snapshot shares nothing with the live net. */
+function cloneFixedPaths(entries, move = clonePoint) {
+  return (entries || []).map((entry) => ({
+    points: clonePoints(entry.points, move),
+    start: entry.start ? { ...entry.start } : null,
+    end: entry.end ? { ...entry.end } : null,
+  }));
+}
+/** Fixed geometry of one net, detached from the live model. */
+function captureFixedGeometry(net) {
+  return { fixedPaths: cloneFixedPaths(net.fixedPaths), junctions: clonePoints(net.junctions) };
+}
+/** Managed route geometry of one net, detached from the live model. */
+function captureRouteGeometry(net, move = clonePoint) {
+  return {
+    route: net.route ? clonePoints(net.route, move) : null,
+    branches: net.branches ? net.branches.map((path) => clonePoints(path, move)) : null,
+    junctions: clonePoints(net.junctions, move),
+  };
+}
+
 function sortedComps() {
   if (!sortedCompsCache || sortedCompsCache.revision !== modelRevision) {
     sortedCompsCache = { revision: modelRevision, value: [...circuit.components.values()].sort((a, b) => naturalCompare(a.refdes, b.refdes)) };
@@ -1400,11 +1427,7 @@ function exactWireTargetAt(w, excludeNetId = null, sourceEndpoint = null) {
   const p = paneSize();
   const tol = 12 / (p ? view.w / p.w : 1);
   const candidates = [];
-  const onSegment = (a, b) => {
-    const cross = (point.x - a.x) * (b.y - a.y) - (point.y - a.y) * (b.x - a.x);
-    return cross === 0 && point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) &&
-      point.y >= Math.min(a.y, b.y) && point.y <= Math.max(a.y, b.y);
-  };
+  const onSegment = (a, b) => pointOnPath(point, [a, b]);
   for (const net of circuit.nets.values()) {
     if (net.id === excludeNetId) continue;
     for (let pathIndex = 0; pathIndex < net.paths().length; pathIndex++) {
@@ -1418,7 +1441,7 @@ function exactWireTargetAt(w, excludeNetId = null, sourceEndpoint = null) {
             segmentIndex === (sourceEndpoint.endpointIndex === 0 ? 1 : path.length - 1)) continue;
         const a = path[segmentIndex - 1];
         const b = path[segmentIndex];
-        if ((a.x === b.x && a.y === b.y) || !onSegment(a, b) || distToSegment(w.x, w.y, a, b) > tol) continue;
+        if ((a.x === b.x && a.y === b.y) || !onSegment(a, b) || distanceToSegment(w, a, b) > tol) continue;
         segments.push(segmentIndex);
       }
       if (segments.length) candidates.push({ netId: net.id, pathIndex, segmentIndex: segments[0], point });
@@ -1920,13 +1943,7 @@ function annotationTextAt(world) {
 
 function annotationGeometryAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
-  const near = (a, b) => {
-    const dx = b.x - a.x; const dy = b.y - a.y;
-    const len2 = dx * dx + dy * dy;
-    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
-    const q = { x: a.x + dx * t, y: a.y + dy * t };
-    return Math.hypot(p.x - q.x, p.y - q.y) <= GRID / 2;
-  };
+  const near = (a, b) => distanceToSegment(p, a, b) <= GRID / 2;
   for (const label of labels()) {
     if (label.kind === 'line' && label.points.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
     if (label.kind === 'arrow' && label.points?.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
@@ -1966,13 +1983,7 @@ function annotationEndpointAt(world) {
 
 function annotationSegmentAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
-  const near = (a, b) => {
-    const dx = b.x - a.x; const dy = b.y - a.y;
-    const len2 = dx * dx + dy * dy;
-    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
-    const q = { x: a.x + dx * t, y: a.y + dy * t };
-    return Math.hypot(p.x - q.x, p.y - q.y) <= GRID / 2;
-  };
+  const near = (a, b) => distanceToSegment(p, a, b) <= GRID / 2;
   for (const label of labels()) {
     if (!['arrow', 'line'].includes(label.kind)) continue;
     for (let i = 1; i < label.points.length; i++) {
@@ -2599,11 +2610,7 @@ function cycleLabelSelection(dir, fromId = selectedLabel()?.id) {
 function netLabelCandidatesAt(world) {
   const point = { x: snap(world.x), y: snap(world.y) };
   const candidates = new Map();
-  const onSegment = (a, b) => {
-    const cross = (point.x - a.x) * (b.y - a.y) - (point.y - a.y) * (b.x - a.x);
-    return cross === 0 && point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) &&
-      point.y >= Math.min(a.y, b.y) && point.y <= Math.max(a.y, b.y);
-  };
+  const onSegment = (a, b) => pointOnPath(point, [a, b]);
   for (const net of circuit.nets.values()) {
     for (const path of net.paths()) {
       for (let i = 1; i < path.length; i++) {
@@ -3475,6 +3482,21 @@ function renderCanvas(modelKey) {
 const DRAG_THRESH = 6; // px before a press becomes a drag
 let drag = null;
 let inlineInput = null; // the active inline-edit <input>, if any
+
+/** Standard inline-editor keys: Enter or blur commits, Escape cancels, and
+ *  Shift+Enter inserts a line break where the field accepts one. Extra keys
+ *  are handled first and may claim the event by returning true. */
+function bindInlineEditorKeys(input, done, { multiline = true, extraKeys = null } = {}) {
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (extraKeys?.(ev)) return;
+    if (multiline && ev.key === 'Enter' && ev.shiftKey) return;
+    if (ev.key === 'Enter') { ev.preventDefault(); done(true); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); done(false); }
+  });
+  input.addEventListener('blur', () => done(true));
+}
+
 let lastLabelClick = null; // { id, x, y, at } of the previous label click (for double-click fallback)
 let lastLineClick = null;
 let lastWireClick = null; // { key, x, y, at } of the previous wire click (for double-click fallback)
@@ -3579,12 +3601,8 @@ function cancelDrag() {
   }
   if (drag && drag.mode === 'fixedwire') {
     for (const [net, saved] of drag.fixedSnapshots) {
-      net.fixedPaths = saved.fixedPaths.map((entry) => ({
-        points: entry.points.map((p) => ({ ...p })),
-        start: entry.start ? { ...entry.start } : null,
-        end: entry.end ? { ...entry.end } : null,
-      }));
-      net.junctions = saved.junctions.map((p) => ({ ...p }));
+      net.fixedPaths = cloneFixedPaths(saved.fixedPaths);
+      net.junctions = clonePoints(saved.junctions);
     }
     circuit.syncJunctionSolders();
     markModelChanged();
@@ -3708,15 +3726,6 @@ function pickAt(w) {
   return null;
 }
 
-function distToSegment(px, py, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len2 = dx * dx + dy * dy || 1;
-  let t = ((px - a.x) * dx + (py - a.y) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
-}
-
 /** Pick the nearest net route within a forgiving screen-sized hit area.
  *  Considers EVERY drawn branch of a multi-way net, so a joined/connected wire
  *  is selectable and draggable anywhere along it. */
@@ -3765,14 +3774,7 @@ function fixedWireDragAt(hit, w, startClient, ev) {
   const fixedSnapshots = new Map();
   for (const net of circuit.nets.values()) {
     if (net.routingMode !== 'fixed') continue;
-    fixedSnapshots.set(net, {
-      fixedPaths: net.fixedPaths.map((entry) => ({
-        points: entry.points.map((p) => ({ ...p })),
-        start: entry.start ? { ...entry.start } : null,
-        end: entry.end ? { ...entry.end } : null,
-      })),
-      junctions: net.junctions.map((p) => ({ ...p })),
-    });
+    fixedSnapshots.set(net, captureFixedGeometry(net));
   }
   drag = {
     mode: 'fixedwire', net: hit.net, branch: hit.branch, seg: hit.seg,
@@ -3797,14 +3799,7 @@ function fixedEndpointDragAt(endpoint, startWorld, startClient) {
   }
   endpoint = { ...endpoint, netId: previewNet.id };
   const activeNet = previewNet;
-  const saved = {
-    fixedPaths: activeNet.fixedPaths.map((entry) => ({
-      points: entry.points.map((p) => ({ ...p })),
-      start: entry.start ? { ...entry.start } : null,
-      end: entry.end ? { ...entry.end } : null,
-    })),
-    junctions: activeNet.junctions.map((p) => ({ ...p })),
-  };
+  const saved = captureFixedGeometry(activeNet);
   drag = {
     mode: 'fixedendpoint', endpoint, net: activeNet, startWorld, startClient,
     moved: false, committed: false, startSnapshot, saved,
@@ -3820,14 +3815,7 @@ function commitFixedEndpointDraft(source, target, points, mode) {
   const before = snapshot();
   const net = circuit.nets.get(source.netId);
   if (!net) return false;
-  const saved = {
-    fixedPaths: net.fixedPaths.map((entry) => ({
-      points: entry.points.map((p) => ({ ...p })),
-      start: entry.start ? { ...entry.start } : null,
-      end: entry.end ? { ...entry.end } : null,
-    })),
-    junctions: net.junctions.map((p) => ({ ...p })),
-  };
+  const saved = captureFixedGeometry(net);
   try {
     const targetPoint = typeof target === 'string'
       ? (() => { const ref = circuit.resolveTerm(target); return circuit.components.get(ref.comp).terminalWorld(ref.term); })()
@@ -4541,9 +4529,7 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
     netSnapshots.set(r.net.id, {
       id: r.net.id,
       net: r.net,
-      route: r.net.route ? r.net.route.map((p) => ({ ...p })) : null,
-      branches: r.net.branches ? r.net.branches.map((b) => b.map((p) => ({ ...p }))) : null,
-      junctions: r.net.junctions.map((p) => ({ ...p })),
+      ...captureRouteGeometry(r.net),
     });
   }
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
@@ -5142,9 +5128,7 @@ function canvasMouseDown(ev) {
       netSnapshots.set(r.net.id, {
         id: r.net.id,
         net: r.net,
-        route: r.net.route ? r.net.route.map((p) => ({ ...p })) : null,
-        branches: r.net.branches ? r.net.branches.map((b) => b.map((p) => ({ ...p }))) : null,
-        junctions: r.net.junctions.map((p) => ({ ...p })),
+        ...captureRouteGeometry(r.net),
       });
     }
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
@@ -5364,14 +5348,8 @@ function detachMoveComponents(drag) {
 
 function captureNetGeometry(net) {
   return {
-    route: net.route ? net.route.map((p) => ({ ...p })) : null,
-    branches: net.branches ? net.branches.map((path) => path.map((p) => ({ ...p }))) : null,
-    fixedPaths: net.routingMode === 'fixed' ? net.fixedPaths.map((entry) => ({
-      points: entry.points.map((p) => ({ ...p })),
-      start: entry.start ? { ...entry.start } : null,
-      end: entry.end ? { ...entry.end } : null,
-    })) : null,
-    junctions: net.junctions.map((p) => ({ ...p })),
+    ...captureRouteGeometry(net),
+    fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
   };
 }
 function snappedDragDelta(startWorld, currentWorld) {
@@ -5381,19 +5359,10 @@ function snappedDragDelta(startWorld, currentWorld) {
   };
 }
 
-
 function translateNetGeometry(net, saved, dx, dy) {
   const move = (p) => ({ x: p.x + dx, y: p.y + dy });
-  net.route = saved.route?.map(move) || null;
-  net.branches = saved.branches?.map((path) => path.map(move)) || null;
-  if (net.routingMode === 'fixed' && saved.fixedPaths) {
-    net.fixedPaths = saved.fixedPaths.map((entry) => ({
-      points: entry.points.map(move),
-      start: entry.start ? { ...entry.start } : null,
-      end: entry.end ? { ...entry.end } : null,
-    }));
-  }
-  net.junctions = saved.junctions.map(move);
+  Object.assign(net, captureRouteGeometry(saved, move));
+  if (net.routingMode === 'fixed' && saved.fixedPaths) net.fixedPaths = cloneFixedPaths(saved.fixedPaths, move);
 }
 
 function armModalLabelMove(label, startWorld, startClient) {
@@ -6010,11 +5979,8 @@ function canvasMouseMove(ev) {
       const dx = snap(movedWorld.x) - snap(drag.startWorld.x);
       const dy = snap(movedWorld.y) - snap(drag.startWorld.y);
       for (const [net, saved] of drag.fixedSnapshots) {
-        net.fixedPaths = saved.fixedPaths.map((entry) => ({
-          ...entry,
-          points: entry.points.map((p) => ({ ...p })),
-        }));
-        net.junctions = saved.junctions.map((p) => ({ ...p }));
+        net.fixedPaths = cloneFixedPaths(saved.fixedPaths);
+        net.junctions = clonePoints(saved.junctions);
       }
       const net = drag.net;
       const movePoint = (p) => ({ x: p.x + dx, y: p.y + dy });
@@ -7877,7 +7843,7 @@ function blockArrowSegmentAt(world) {
     const points = arrow.points || [];
     for (let segment = 1; segment < points.length; segment++) {
       const a = points[segment - 1]; const b = points[segment];
-      const d = distToSegment(world.x, world.y, a, b);
+      const d = distanceToSegment(world, a, b);
       if (d <= tolerance && d < distance) {
         distance = d;
         best = { arrow, segment, a, b };
@@ -9101,12 +9067,7 @@ function inlineEditBlock(block) {
     }
     render();
   };
-  input.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter' && ev.shiftKey) { ev.stopPropagation(); return; }
-    if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); done(true); }
-    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done(false); }
-  });
-  input.addEventListener('blur', () => done(true));
+  bindInlineEditorKeys(input, done);
 }
 
 /** Edit the centered caption of a schematic block without changing its B<n>
@@ -9144,12 +9105,7 @@ function inlineEditSchematicBlock(component) {
     if (apply && text && text !== component.value) commit(() => circuit.setValue(component.refdes, text));
     render();
   };
-  input.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter' && ev.shiftKey) { ev.stopPropagation(); return; }
-    if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); done(true); }
-    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done(false); }
-  });
-  input.addEventListener('blur', () => done(true));
+  bindInlineEditorKeys(input, done);
 }
 
 // Double-click edits the active document's object. Components edit their owned
@@ -9380,25 +9336,22 @@ function inlineEditLabel(label, options = {}) {
     } else commit(() => renameLabelThroughModel(label, res.text));
     render();
   };
-  input.addEventListener('keydown', (ev) => {
-    ev.stopPropagation();
-    if (ev.key === 'Enter' && ev.shiftKey) return;
-    if (ev.key === 'Enter') { ev.preventDefault(); done(true); }
-    else if (ev.key === 'Escape') done(false);
-    else if (ev.key === 'Tab') {
-      ev.preventDefault();
-      done(true);
-      cycleLabelSelection(ev.shiftKey ? -1 : 1, label.id);
-    }
-    else if ((ev.ctrlKey || ev.metaKey) && ev.key === ',') {
-      ev.preventDefault();
-      toggleMarkup('_');
-    } else if ((ev.ctrlKey || ev.metaKey) && ev.key === '.') {
-      ev.preventDefault();
-      toggleMarkup('^');
-    }
+  bindInlineEditorKeys(input, done, {
+    extraKeys: (ev) => {
+      if (ev.key === 'Tab') {
+        ev.preventDefault();
+        done(true);
+        cycleLabelSelection(ev.shiftKey ? -1 : 1, label.id);
+        return true;
+      }
+      if ((ev.ctrlKey || ev.metaKey) && (ev.key === ',' || ev.key === '.')) {
+        ev.preventDefault();
+        toggleMarkup(ev.key === ',' ? '_' : '^');
+        return true;
+      }
+      return false;
+    },
   });
-  input.addEventListener('blur', () => done(true));
 }
 
 // ----- mouse wheel: zoom about the pointer ----------------------------------
@@ -9761,13 +9714,7 @@ function startComponentRename(comp, ref) {
     }
     render();
   };
-  input.addEventListener('keydown', (ev) => {
-    ev.stopPropagation();
-    if (ev.key === 'Enter' && ev.shiftKey) return;
-    if (ev.key === 'Enter') { ev.preventDefault(); done(true); }
-    else if (ev.key === 'Escape') done(false);
-  });
-  input.addEventListener('blur', () => done(true));
+  bindInlineEditorKeys(input, done);
 }
 
 /** Open the inline rename <input> for a net's row (Enter/blur commits, Esc
@@ -9802,12 +9749,7 @@ function startNetRename(net, ref) {
     });
     render();
   };
-  input.addEventListener('keydown', (ev) => {
-    ev.stopPropagation();
-    if (ev.key === 'Enter') done(true);
-    else if (ev.key === 'Escape') done(false);
-  });
-  input.addEventListener('blur', () => done(true));
+  bindInlineEditorKeys(input, done, { multiline: false });
 }
 
 function renderDetail() {
@@ -10634,12 +10576,8 @@ function copySelection() {
         routingMode: net.routingMode,
         drawOrder: net.drawOrder,
         terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
-        route: net.route ? net.route.map((p) => ({ ...p })) : null,
-        branches: net.branches ? net.branches.map((path) => path.map((p) => ({ ...p }))) : null,
-        junctions: net.junctions.map((p) => ({ ...p })),
-        fixedPaths: net.routingMode === 'fixed' ? net.fixedPaths.map((e) => ({
-          points: e.points.map((p) => ({ ...p })), start: e.start && { ...e.start }, end: e.end && { ...e.end },
-        })) : null,
+        ...captureRouteGeometry(net),
+        fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
         netLabels: circuit.netLabels(net).map((label) => ({
           netId: net.id,
           text: label.text,
