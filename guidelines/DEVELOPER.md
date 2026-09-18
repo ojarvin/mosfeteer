@@ -79,8 +79,11 @@ AGENTS.md               Current runtime behavior spec (live doc — maintain it)
 `owner` refdes and local `offset`; a persistent electrical label with a
 `netId`; or a free annotation with neither `owner` nor `netId`. A `netId` is a
 physical net identity. Equal canonical names are the deliberate virtual
-electrical connection for naming and reporting, while the physical geometry
-and terminal membership remain separate.
+electrical connection for naming, reporting, and small-signal analysis, while
+the physical geometry and terminal membership remain separate. A port's owned
+label is its component identity like any other instance label, so ports never
+share a name; the port additionally names its net while it is the only port on
+it, in both directions.
 
 Use `addNetLabel`, `renameNet`, and `renameNetLabel` for electrical-label and
 net-name changes; do not write `net.name` from editor code. Net-label text is

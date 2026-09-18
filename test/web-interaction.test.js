@@ -30,14 +30,18 @@ test('tool cursors badge the select arrow per tool, theme, and danger', () => {
   assert.equal(build('trash', {}), build('trash', {})); // cached per icon/theme
 });
 
-test('named port and net edits confirm virtual connections before committing', () => {
+test('named net edits confirm virtual connections, and port names never repeat', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /function namedConnectionConflicts\(/);
   assert.match(main, /function confirmNamedConnection\(/);
   assert.match(main, /cancelLabel: 'Keep separate'/);
-  assert.match(main, /function applySharedInterfaceName\(/);
   assert.match(main, /namedConnectionConflicts\(v, \{ netId: net\.id \}\)/);
   assert.match(main, /input\.focus\(\);\s*input\.select\(\);\s*return false;/);
+  // A port's label is its identity: a name another port carries is reported
+  // as a collision instead of being offered as a virtual connection.
+  assert.match(main, /function portNameConflict\(/);
+  assert.match(main, /function reportPortNameConflict\(/);
+  assert.doesNotMatch(main, /applySharedInterfaceName|sharedInterfaceNameTarget|setInterfacePinName/);
 });
 
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {

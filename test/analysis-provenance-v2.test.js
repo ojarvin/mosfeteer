@@ -116,7 +116,7 @@ test('markers become data-node attributes and change nothing else in the MathML'
 test('markers survive the whole golden corpus unchanged', () => {
   let checked = 0;
   for (const fixture of smallSignalGoldenCorpus) {
-    const report = analyzeSmallSignalV2(buildSmallSignalGolden(fixture.id), { input: 'IN.p', output: 'OUT.p' });
+    const report = analyzeSmallSignalV2(buildSmallSignalGolden(fixture.id), { input: 'VIN.p', output: 'VOUT.p' });
     if (!report.ok) continue;
     for (const part of [report.input, report.output, report.transfer]) {
       const expression = part?.expression;
@@ -134,7 +134,7 @@ test('markers survive the whole golden corpus unchanged', () => {
 });
 
 test('the v2 report carries a symbol provenance table for its own equations', () => {
-  const report = analyzeSmallSignalV2(buildSmallSignalGolden('nmos-common-source'), { input: 'IN.p', output: 'OUT.p' });
+  const report = analyzeSmallSignalV2(buildSmallSignalGolden('nmos-common-source'), { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true);
   const table = report.symbolProvenance;
   assert.equal(table.gm1.component, 'M1');
@@ -156,7 +156,7 @@ test('every displayed GUI row carries a provenance render of itself', () => {
   let rows = 0;
   for (const fixture of smallSignalGoldenCorpus) {
     const report = adaptCombinedReport(
-      analyzeSmallSignalV2(buildSmallSignalGolden(fixture.id), { input: 'IN.p', output: 'OUT.p' }),
+      analyzeSmallSignalV2(buildSmallSignalGolden(fixture.id), { input: 'VIN.p', output: 'VOUT.p' }),
     );
     for (const { title, result } of report.equationEntries || []) {
       const provenance = result.equationProvenance;
@@ -188,7 +188,7 @@ test('pole and zero rows carry provenance for every root they show', () => {
   let rows = 0;
   for (const id of ['rlc-first-order', 'rlc-second-order']) {
     const report = adaptCombinedReport(
-      analyzeSmallSignalV2(buildSmallSignalGolden(id), { input: 'IN.p', output: 'OUT.p' }),
+      analyzeSmallSignalV2(buildSmallSignalGolden(id), { input: 'VIN.p', output: 'VOUT.p' }),
     );
     for (const { title, result } of report.equationEntries || []) {
       if (title !== 'Poles' && title !== 'Zeros') continue;
@@ -227,24 +227,24 @@ function renameNetAt(circuit, terminal, name) {
  *  approximation applies and CGD's own primitive leaves the solved model. */
 function commonSourceWithFeedbackCapacitor() {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: -80 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: -80 });
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   circuit.addComponent('capacitor', { refdes: 'CGD', x: -80, y: -80 });
   circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
   circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -240 });
-  circuit.connect('IN.p', 'M1.g', 'CGD.a');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p', 'CGD.b');
+  circuit.connect('VIN.p', 'M1.g', 'CGD.a');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p', 'CGD.b');
   circuit.connect('M1.s', 'GND.gnd');
   circuit.connect('RD.b', 'VDD.p');
-  renameNetAt(circuit, 'IN.p', 'VIN');
-  renameNetAt(circuit, 'OUT.p', 'VOUT');
+  renameNetAt(circuit, 'VIN.p', 'VIN');
+  renameNetAt(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
 test('a Miller-absorbed feedback capacitor still resolves to its component', () => {
-  const raw = analyzeSmallSignalV2(commonSourceWithFeedbackCapacitor(), { input: 'IN.p', output: 'OUT.p' });
+  const raw = analyzeSmallSignalV2(commonSourceWithFeedbackCapacitor(), { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(raw.ok, true);
   assert.ok(
     (raw.assumptions || []).some((line) => /Miller/i.test(line)),

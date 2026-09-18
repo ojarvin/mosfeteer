@@ -468,20 +468,71 @@ test('interface markup is retained when the port is labeled before connection', 
   assert.equal(pinLabel.text, 'V_{IN}');
 });
 
-test('approved shared interface names keep distinct ports virtually connected', () => {
+test('two ports can never carry one name', () => {
   const c = new Circuit();
   const first = c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
   const second = c.addComponent('input', { refdes: 'VI2', x: 0, y: 400 });
-  const r1 = c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
-  const r2 = c.addComponent('resistor', { refdes: 'R2', x: 240, y: 400 });
-  const firstNet = c.connect(`${first.refdes}.p`, `${r1.refdes}.a`);
-  const secondNet = c.connect(`${second.refdes}.p`, `${r2.refdes}.a`);
-  c.setInterfacePinName(second.refdes, firstNet.name);
+  c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 240, y: 400 });
+  const firstNet = c.connect(`${first.refdes}.p`, 'R1.a');
+  const secondNet = c.connect(`${second.refdes}.p`, 'R2.a');
 
+  // A port label is the port's identity, so the collision is the ordinary
+  // component-name collision and nothing is mutated.
+  assert.throws(() => c.labelOf(second.refdes).setText(firstNet.name), /already in use/);
+  assert.equal(second.refdes, 'VI2');
+  assert.equal(c.labelOf('VI2').text, 'V_{I2}');
+  assert.equal(secondNet.name, 'V_{I2}');
+
+  // The deliberate virtual connection is made on the net. The port keeps its
+  // own identity, so its label never shows the other port's name.
+  c.renameNet(secondNet, firstNet.name);
   assert.notEqual(firstNet.id, secondNet.id);
-  assert.equal(secondNet.name, firstNet.name);
-  assert.equal(c.labelOf(second.refdes).text, firstNet.name);
   assert.equal(c.logicallyConnected(firstNet, secondNet), true);
+  assert.equal(second.refdes, 'VI2');
+  assert.equal(c.labelOf('VI2').text, 'V_{I2}');
+});
+
+test('several ports on one net keep their own identities', () => {
+  const c = new Circuit();
+  c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  c.addComponent('output', { refdes: 'VOUT', x: 800, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 400, y: 400 });
+  c.connect('VIN.p', 'R1.a');
+  c.connect('VOUT.p', 'R1.b');
+  const net = c.connect('VIN.p', 'VOUT.p');
+
+  // The net keeps one name; neither port is relabelled with the other's.
+  assert.equal(c.labelOf('VIN').text, 'VIN');
+  assert.equal(c.labelOf('VOUT').text, 'VOUT');
+  assert.equal(net.terminals.filter(({ comp }) => comp === 'VIN' || comp === 'VOUT').length, 2);
+  assert.equal(net.name, 'VIN');
+
+  // Dropping back to one port makes that port the net's name again.
+  c.removeComponent('VIN');
+  assert.equal(net.name, 'VOUT');
+  assert.equal(c.labelOf('VOUT').text, 'VOUT');
+});
+
+test('renaming a net renames the port that names it', () => {
+  const c = new Circuit();
+  const pin = c.addComponent('input', { x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
+  const net = c.connect(`${pin.refdes}.p`, 'R1.a');
+  assert.equal(pin.refdes, 'VI1');
+
+  c.renameNet(net, 'V_{REF}');
+  assert.equal(pin.refdes, 'VREF');
+  assert.equal(c.labelOf('VREF').text, 'V_{REF}');
+  assert.equal(net.name, 'V_{REF}');
+  assert.equal(c.components.has('VI1'), false);
+
+  // A name that cannot be a component identity stays on the net alone: the
+  // port simply does not name this net, and its label stays its own.
+  c.renameNet(net, 'N+');
+  assert.equal(net.name, 'N+');
+  assert.equal(pin.refdes, 'VREF');
+  assert.equal(c.labelOf('VREF').text, 'V_{REF}');
 });
 
 test('all interface pin directions participate in net naming', () => {
@@ -513,7 +564,9 @@ test('the circle port is an interface pin with an owned label that names its net
   assert.equal(c.getComponent('VBIAS').refdes, 'VBIAS');
   assert.equal(net.name, 'V_{BIAS}');
   c.renameNet(net, 'VREF');
-  assert.equal(c.labelOf('VBIAS').text, 'VREF');
+  assert.equal(c.components.has('VBIAS'), false);
+  assert.equal(c.getComponent('VREF').type, 'port');
+  assert.equal(c.labelOf('VREF').text, 'VREF');
 });
 
 test('legacy filled and unlabelled ports load as labelled ports', () => {

@@ -17,41 +17,41 @@ function net(circuit, name, ...refs) {
 
 function divider({ capacitor = false } = {}) {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: 0 });
   circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'R2', x: 240, y: 160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 400, y: 240 });
   if (capacitor) circuit.addComponent('capacitor', { refdes: 'C1', x: 480, y: 160 });
-  net(circuit, 'VIN', 'IN.p', 'R1.a');
-  net(circuit, 'VOUT', 'R1.b', 'R2.a', 'OUT.p', ...(capacitor ? ['C1.a'] : []));
+  net(circuit, 'VIN', 'VIN.p', 'R1.a');
+  net(circuit, 'VOUT', 'R1.b', 'R2.a', 'VOUT.p', ...(capacitor ? ['C1.a'] : []));
   net(circuit, 'VSS', 'R2.b', 'GND.gnd', ...(capacitor ? ['C1.b'] : []));
   return circuit;
 }
 
 function commonSource() {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: 0 });
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
-  net(circuit, 'VIN', 'IN.p', 'M1.g');
-  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g');
+  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'VOUT.p');
   net(circuit, 'VSS', 'M1.s', 'RD.b', 'GND.gnd');
   return circuit;
 }
 
 function sourceFollower() {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: 0 });
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RS', x: 240, y: 160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 400, y: 240 });
   circuit.addComponent('supply', { refdes: 'VDD', x: 0, y: -160 });
-  net(circuit, 'VIN', 'IN.p', 'M1.g');
-  net(circuit, 'VOUT', 'M1.s', 'RS.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g');
+  net(circuit, 'VOUT', 'M1.s', 'RS.a', 'VOUT.p');
   net(circuit, 'VSS', 'RS.b', 'GND.gnd');
   net(circuit, 'VDD', 'M1.d', 'VDD.p');
   return circuit;
@@ -172,16 +172,38 @@ test('single-quantity wrappers select rows from the combined report', () => {
   assert.equal(transfer.frequencyResponse.poles[0].index, 0);
 });
 
-test('missing or ambiguous ports return structured failures', () => {
+test('missing ports return structured failures', () => {
   const circuit = divider();
-  net(circuit, 'VIN', 'R2.b');
-  const report = analyzeSmallSignal(circuit, { input: 'VIN', output: 'VOUT' });
+  const report = analyzeSmallSignal(circuit, { input: 'VBIAS', output: 'VOUT' });
 
   assert.equal(report.ok, false);
-  assert.match(report.error, /multiple physical nets/);
+  assert.match(report.error, /unknown input net/);
   assert.equal(report.reports.input.ok, false);
   assert.equal(report.reports.output.ok, false);
   assert.equal(report.reports.transfer.ok, false);
+});
+
+test('physical nets sharing a name solve as one node', () => {
+  // The mid node is drawn as two separate physical nets carrying one name --
+  // the virtual connection a repeated net label makes. The solve must see the
+  // divider, not an open circuit.
+  const circuit = new Circuit();
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 480, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R2', x: 480, y: 160 });
+  circuit.addComponent('ground', { refdes: 'GND', x: 640, y: 240 });
+  net(circuit, 'VIN', 'VIN.p', 'R1.a');
+  net(circuit, 'MID', 'R1.b');
+  net(circuit, 'MID', 'R2.a', 'VOUT.p');
+  net(circuit, 'VSS', 'R2.b', 'GND.gnd');
+  const separate = [...circuit.nets.values()].filter((entry) => entry.name === 'MID');
+  assert.equal(separate.length, 2);
+
+  const report = analyzeSmallSignal(circuit, { input: 'VIN', output: 'MID' });
+  assert.equal(report.ok, true);
+  assert.equal(report.dcGain.equation, 'A_v(0) = \\frac{R_{2}}{R_{1} + R_{2}}');
+  assert.equal(report.dcInputImpedance.equation, 'Z_{in}(0) = R_{1} + R_{2}');
 });
 
 test('frequency detection understands canonical rational expressions', () => {

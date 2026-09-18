@@ -16,12 +16,12 @@ function net(circuit, name, ...refs) {
 
 function referenceCircuit() {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: 0, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 400, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 400, y: 0 });
   circuit.addComponent('ground', { refdes: 'GND1', x: 0, y: 200 });
   circuit.addComponent('supply', { refdes: 'VDD1', x: 400, y: -200 });
-  net(circuit, 'VIN', 'IN.p');
-  net(circuit, 'VOUT', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p');
+  net(circuit, 'VOUT', 'VOUT.p');
   net(circuit, 'VSS', 'GND1.gnd');
   net(circuit, 'VDD', 'VDD1.p');
   return circuit;

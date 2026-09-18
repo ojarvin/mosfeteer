@@ -11,8 +11,8 @@ function net(circuit, name, ...refs) {
 }
 
 function ports(circuit) {
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: 0 });
   return { input: 'VIN', output: 'VOUT' };
 }
 
@@ -22,8 +22,8 @@ function divider() {
   circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'R2', x: 240, y: 160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 320, y: 160 });
-  net(circuit, 'VIN', 'IN.p', 'R1.a');
-  net(circuit, 'VOUT', 'R1.b', 'R2.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'R1.a');
+  net(circuit, 'VOUT', 'R1.b', 'R2.a', 'VOUT.p');
   net(circuit, 'VSS', 'R2.b', 'GND.gnd');
   return circuit;
 }
@@ -35,8 +35,8 @@ function rcTransfer() {
   circuit.addComponent('resistor', { refdes: 'R2', x: 240, y: 160 });
   circuit.addComponent('capacitor', { refdes: 'C1', x: 480, y: 160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 640, y: 240 });
-  net(circuit, 'VIN', 'IN.p', 'R1.a');
-  net(circuit, 'VOUT', 'R1.b', 'R2.a', 'C1.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'R1.a');
+  net(circuit, 'VOUT', 'R1.b', 'R2.a', 'C1.a', 'VOUT.p');
   net(circuit, 'VSS', 'R2.b', 'C1.b', 'GND.gnd');
   return circuit;
 }
@@ -47,8 +47,8 @@ function commonSource() {
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
-  net(circuit, 'VIN', 'IN.p', 'M1.g');
-  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g');
+  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'VOUT.p');
   net(circuit, 'VSS', 'M1.s', 'RD.b', 'GND.gnd');
   return circuit;
 }
@@ -60,8 +60,8 @@ function inverter() {
   circuit.addComponent('pmos', { refdes: 'M2', x: 0, y: -160, mirrorY: false });
   circuit.addComponent('ground', { refdes: 'GND', x: -160, y: 320 });
   circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -320 });
-  net(circuit, 'VIN', 'IN.p', 'M1.g', 'M2.g');
-  net(circuit, 'VOUT', 'M1.d', 'M2.d', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g', 'M2.g');
+  net(circuit, 'VOUT', 'M1.d', 'M2.d', 'VOUT.p');
   net(circuit, 'VSS', 'M1.s', 'GND.gnd');
   net(circuit, 'VDD', 'M2.s', 'VDD.p');
   return circuit;
@@ -74,8 +74,8 @@ function sourceFollower() {
   circuit.addComponent('resistor', { refdes: 'RS', x: 240, y: 160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 320, y: 240 });
   circuit.addComponent('supply', { refdes: 'VDD', x: -160, y: -240 });
-  net(circuit, 'VIN', 'IN.p', 'M1.g');
-  net(circuit, 'VOUT', 'M1.s', 'RS.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g');
+  net(circuit, 'VOUT', 'M1.s', 'RS.a', 'VOUT.p');
   net(circuit, 'VSS', 'RS.b', 'GND.gnd');
   net(circuit, 'VDD', 'M1.d', 'VDD.p');
   return circuit;
@@ -163,8 +163,8 @@ test('renders every branch at a common-source-with-load-cap output node in one p
   circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
   circuit.addComponent('ground', { refdes: 'GND2', x: 320, y: -80 });
   circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -320 });
-  net(circuit, 'VIN', 'IN.p', 'M1.g');
-  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'CL.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g');
+  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'CL.a', 'VOUT.p');
   net(circuit, 'VSS', 'M1.s', 'GND.gnd');
   net(circuit, 'VDD', 'RD.b', 'VDD.p');
   net(circuit, 'VSS2', 'CL.b', 'GND2.gnd');
@@ -259,8 +259,8 @@ test('prunes disconnected reactive islands without adding AC rows', () => {
 test('returns structured singular diagnostics for a floating output', () => {
   const circuit = new Circuit();
   ports(circuit);
-  net(circuit, 'VIN', 'IN.p');
-  net(circuit, 'VOUT', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p');
+  net(circuit, 'VOUT', 'VOUT.p');
   const report = analyzeSmallSignalV2(circuit);
   assert.equal(report.ok, false);
   assert.equal(report.stage, 'solve');
@@ -295,16 +295,16 @@ function cascodeWithCascodeLoad() {
   circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -640 });
   circuit.addComponent('port', { refdes: 'BIASN', x: -160, y: -160 });
   circuit.addComponent('port', { refdes: 'BIASP', x: -160, y: -320 });
-  circuit.connect('IN.p', 'M1.g');
+  circuit.connect('VIN.p', 'M1.g');
   circuit.connect('M1.s', 'GND.gnd');
   circuit.connect('M1.d', 'M2.s');
   circuit.connect('M2.g', 'BIASN.p');
-  circuit.connect('M2.d', 'M3.d', 'OUT.p');
+  circuit.connect('M2.d', 'M3.d', 'VOUT.p');
   circuit.connect('M3.g', 'M4.g', 'BIASP.p');
   circuit.connect('M3.s', 'M4.d');
   circuit.connect('M4.s', 'VDD.p');
-  renameNetAt(circuit, 'IN.p', 'VIN');
-  renameNetAt(circuit, 'OUT.p', 'VOUT');
+  renameNetAt(circuit, 'VIN.p', 'VIN');
+  renameNetAt(circuit, 'VOUT.p', 'VOUT');
   renameNetAt(circuit, 'BIASN.p', 'VBIASN');
   renameNetAt(circuit, 'BIASP.p', 'VBIASP');
   return circuit;

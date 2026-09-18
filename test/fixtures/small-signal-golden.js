@@ -29,7 +29,7 @@ function add(circuit, type, refdes, x, y, options = {}) {
   return circuit.addComponent(type, { refdes, x, y, ...options });
 }
 
-function basicPorts(circuit, inputRef = 'IN', outputRef = 'OUT') {
+function basicPorts(circuit, inputRef = 'VIN', outputRef = 'VOUT') {
   add(circuit, 'input', inputRef, -240, 0);
   add(circuit, 'output', outputRef, 240, 0);
 }
@@ -47,13 +47,13 @@ function nmosCommonSource({ pmos = false, bulk = false } = {}) {
   add(circuit, pmos ? 'ground' : 'supply', 'LOAD', 80, pmos ? 320 : -320);
   add(circuit, pmos ? 'supply' : 'ground', 'RAIL', -160, pmos ? -160 : 160);
   basicPorts(circuit);
-  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p');
   circuit.connect('RD.b', railTerminal('LOAD', pmos, false));
   circuit.connect('M1.s', railTerminal('RAIL', pmos, true));
-  circuit.connect('M1.g', 'IN.p');
+  circuit.connect('M1.g', 'VIN.p');
   if (bulk) circuit.connect('M1.b', railTerminal('RAIL', pmos, true));
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -63,11 +63,11 @@ function passiveDivider() {
   add(circuit, 'resistor', 'R2', 240, 160);
   add(circuit, 'ground', 'GND', 320, 160);
   basicPorts(circuit);
-  circuit.connect('IN.p', 'R1.a');
-  circuit.connect('R1.b', 'R2.a', 'OUT.p');
+  circuit.connect('VIN.p', 'R1.a');
+  circuit.connect('R1.b', 'R2.a', 'VOUT.p');
   circuit.connect('R2.b', 'GND.gnd');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -77,11 +77,11 @@ function rlcFirstOrder() {
   add(circuit, 'capacitor', 'C1', 240, 160);
   add(circuit, 'ground', 'GND', 320, 240);
   basicPorts(circuit);
-  circuit.connect('IN.p', 'R1.a');
-  circuit.connect('R1.b', 'C1.a', 'OUT.p');
+  circuit.connect('VIN.p', 'R1.a');
+  circuit.connect('R1.b', 'C1.a', 'VOUT.p');
   circuit.connect('C1.b', 'GND.gnd');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -91,13 +91,13 @@ function rlcSecondOrder() {
   add(circuit, 'inductor', 'L1', 240, 0);
   add(circuit, 'capacitor', 'C1', 480, 160);
   add(circuit, 'ground', 'GND', 560, 240);
-  basicPorts(circuit, 'IN', 'OUT');
-  circuit.connect('IN.p', 'R1.a');
+  basicPorts(circuit, 'VIN', 'VOUT');
+  circuit.connect('VIN.p', 'R1.a');
   circuit.connect('R1.b', 'L1.a');
-  circuit.connect('L1.b', 'C1.a', 'OUT.p');
+  circuit.connect('L1.b', 'C1.a', 'VOUT.p');
   circuit.connect('C1.b', 'GND.gnd');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -109,15 +109,15 @@ function commonGate({ pmos = false } = {}) {
   add(circuit, pmos ? 'ground' : 'supply', 'LOAD', 80, pmos ? 320 : -320);
   add(circuit, pmos ? 'supply' : 'ground', 'RAIL', -160, pmos ? -160 : 160);
   add(circuit, 'port', 'BIAS', -240, 0);
-  add(circuit, 'input', 'IN', 240, 80);
-  add(circuit, 'output', 'OUT', 240, pmos ? 160 : -80);
+  add(circuit, 'input', 'VIN', 240, 80);
+  add(circuit, 'output', 'VOUT', 240, pmos ? 160 : -80);
   circuit.connect('M1.g', 'BIAS.p');
-  circuit.connect('M1.s', 'IN.p');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('M1.s', 'VIN.p');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p');
   circuit.connect('RD.b', railTerminal('LOAD', pmos, false));
   circuit.connect('BIAS.p', railTerminal('RAIL', pmos, true));
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -129,12 +129,12 @@ function commonDrain({ pmos = false } = {}) {
   add(circuit, pmos ? 'supply' : 'ground', 'RAIL', 320, pmos ? -320 : 320);
   add(circuit, pmos ? 'ground' : 'supply', 'DRAIN', -160, pmos ? 160 : -160);
   basicPorts(circuit);
-  circuit.connect('M1.g', 'IN.p');
-  circuit.connect('M1.s', 'RS.a', 'OUT.p');
+  circuit.connect('M1.g', 'VIN.p');
+  circuit.connect('M1.s', 'RS.a', 'VOUT.p');
   circuit.connect('RS.b', railTerminal('RAIL', pmos, true));
   circuit.connect('M1.d', railTerminal('DRAIN', pmos, false));
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -146,13 +146,13 @@ function sourceDegeneration() {
   add(circuit, 'ground', 'GND_D', 80, -160);
   add(circuit, 'ground', 'GND_S', 320, 240);
   basicPorts(circuit);
-  circuit.connect('M1.g', 'IN.p');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('M1.g', 'VIN.p');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p');
   circuit.connect('RD.b', 'GND_D.gnd');
   circuit.connect('M1.s', 'RS.a');
   circuit.connect('RS.b', 'GND_S.gnd');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -165,11 +165,11 @@ function diodeConnectedLoad() {
   basicPorts(circuit);
   circuit.connect('M1.s', 'GND.gnd');
   circuit.connect('M2.s', 'VDD.p');
-  circuit.connect('M1.d', 'M2.d', 'M2.g', 'OUT.p');
-  circuit.connect('M1.g', 'IN.p');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
-  net(circuit, 'M2.d', 'DIODE');
+  circuit.connect('M1.d', 'M2.d', 'M2.g', 'VOUT.p');
+  circuit.connect('M1.g', 'VIN.p');
+  net(circuit, 'VIN.p', 'VIN');
+  // M2.d is the output node itself; its port already names the net VOUT.
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -182,10 +182,10 @@ function cmosInverter() {
   basicPorts(circuit);
   circuit.connect('M1.s', 'GND.gnd');
   circuit.connect('M2.s', 'VDD.p');
-  circuit.connect('M1.d', 'M2.d', 'OUT.p');
-  circuit.connect('M1.g', 'M2.g', 'IN.p');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  circuit.connect('M1.d', 'M2.d', 'VOUT.p');
+  circuit.connect('M1.g', 'M2.g', 'VIN.p');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -197,18 +197,18 @@ function cascode({ pmos = false } = {}) {
   add(circuit, pmos ? 'supply' : 'ground', 'RAIL', -240, pmos ? -320 : 320);
   add(circuit, pmos ? 'ground' : 'supply', 'LOAD', 240, pmos ? 320 : -320);
   add(circuit, 'resistor', 'RD', 240, pmos ? 160 : -160);
-  add(circuit, 'input', 'IN', -240, pmos ? 80 : 0);
+  add(circuit, 'input', 'VIN', -240, pmos ? 80 : 0);
   add(circuit, 'port', 'BIAS', -240, pmos ? -160 : 160);
-  add(circuit, 'output', 'OUT', 240, pmos ? 80 : -80);
+  add(circuit, 'output', 'VOUT', 240, pmos ? 80 : -80);
   circuit.connect('M1.s', railTerminal('RAIL', pmos, true));
-  circuit.connect('M1.g', 'IN.p');
+  circuit.connect('M1.g', 'VIN.p');
   circuit.connect('M2.g', 'BIAS.p');
   circuit.connect('BIAS.p', railTerminal('RAIL', pmos, true));
   circuit.connect('M1.d', 'M2.s');
-  circuit.connect('M2.d', 'RD.a', 'OUT.p');
+  circuit.connect('M2.d', 'RD.a', 'VOUT.p');
   circuit.connect('RD.b', railTerminal('LOAD', pmos, false));
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   net(circuit, 'BIAS.p', 'VBIAS');
   return circuit;
 }
@@ -222,13 +222,13 @@ function currentMirrorLoad() {
   add(circuit, 'supply', 'VDD', 200, -320);
   basicPorts(circuit);
   circuit.connect('M1.s', 'GND.gnd');
-  circuit.connect('M1.g', 'IN.p');
+  circuit.connect('M1.g', 'VIN.p');
   circuit.connect('M1.d', 'M2.d', 'M2.g');
   circuit.connect('M2.s', 'M3.s', 'VDD.p');
   circuit.connect('M3.g', 'M2.g');
-  circuit.connect('M3.d', 'OUT.p');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  circuit.connect('M3.d', 'VOUT.p');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   net(circuit, 'M2.g', 'VBIAS');
   return circuit;
 }
@@ -242,14 +242,14 @@ function explicitBulkMovingSource() {
   add(circuit, 'ground', 'GND_B', -240, 160);
   add(circuit, 'ground', 'GND_D', 80, -160);
   basicPorts(circuit);
-  circuit.connect('M1.g', 'IN.p');
+  circuit.connect('M1.g', 'VIN.p');
   circuit.connect('M1.s', 'RS.a');
   circuit.connect('RS.b', 'GND_S.gnd');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p');
   circuit.connect('RD.b', 'GND_D.gnd');
   circuit.connect('M1.b', 'GND_B.gnd');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   net(circuit, 'M1.b', 'VB');
   return circuit;
 }
@@ -269,25 +269,25 @@ function pivotCrossCoupledPair() {
   add(circuit, 'nmos', 'M1', 0, 0);
   add(circuit, 'nmos', 'M2', 400, 0);
   add(circuit, 'ground', 'GND', 200, 160);
-  add(circuit, 'input', 'IN', 200, 240);
-  add(circuit, 'output', 'OUT', 200, -160);
+  add(circuit, 'input', 'VIN', 200, 240);
+  add(circuit, 'output', 'VOUT', 200, -160);
   circuit.connect('M1.s', 'M2.s', 'GND.gnd');
-  circuit.connect('M1.d', 'M2.g', 'OUT.p');
-  circuit.connect('M1.g', 'M2.d', 'IN.p');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  circuit.connect('M1.d', 'M2.g', 'VOUT.p');
+  circuit.connect('M1.g', 'M2.d', 'VIN.p');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
 function singularFloatingCircuit() {
   const circuit = new Circuit();
   add(circuit, 'resistor', 'R1', 0, 0);
-  add(circuit, 'input', 'IN', -240, 0);
-  add(circuit, 'output', 'OUT', 240, 0);
-  circuit.connect('IN.p', 'R1.a');
-  circuit.connect('R1.b', 'OUT.p');
-  net(circuit, 'IN.p', 'VIN');
-  net(circuit, 'OUT.p', 'VOUT');
+  add(circuit, 'input', 'VIN', -240, 0);
+  add(circuit, 'output', 'VOUT', 240, 0);
+  circuit.connect('VIN.p', 'R1.a');
+  circuit.connect('R1.b', 'VOUT.p');
+  net(circuit, 'VIN.p', 'VIN');
+  net(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -386,97 +386,97 @@ function fixtureCategory(id) {
 }
 
 export const smallSignalGoldenCorpus = Object.freeze([
-  fixture('passive-divider', 'Two-resistor voltage divider.', passiveDivider, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('passive-divider', 'Two-resistor voltage divider.', passiveDivider, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: 'R_{1} + R_{2}', outputImpedance: 'R_{1} \\|\\| R_{2}', transfer: '\\frac{R_{2}}{R_{1}+R_{2}}' },
     { inputImpedance: 'R_{1} + R_{2}', outputImpedance: 'R_{1} \\|\\| R_{2}', transfer: '\\frac{R_{2}}{R_{1}+R_{2}}' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { unchanged: true } }], samples.divider, { focus: ['divider ratio', 'source/load resistance'] },
   )),
-  fixture('rlc-first-order', 'Series resistor with a shunt capacitor.', rlcFirstOrder, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('rlc-first-order', 'Series resistor with a shunt capacitor.', rlcFirstOrder, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: 'R_{1} + \\frac{1}{s C_{1}}', outputImpedance: 'R_{1} \\|\\| \\frac{1}{s C_{1}}', transfer: '\\frac{1}{1+s R_{1} C_{1}}' },
     { inputImpedance: 'R_{1} + \\frac{1}{s C_{1}}', outputImpedance: 'R_{1} \\|\\| \\frac{1}{s C_{1}}', transfer: '\\frac{1}{1+s R_{1} C_{1}}' },
     [{ id: 'no-assumptions', options: {}, result: { unchanged: true } }], samples.rc, { focus: ['single pole', 'capacitive loading'] },
   )),
-  fixture('rlc-second-order', 'Series R-L path with a shunt capacitor.', rlcSecondOrder, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('rlc-second-order', 'Series R-L path with a shunt capacitor.', rlcSecondOrder, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: 'R_{1}+sL_{1}+\\frac{1}{sC_{1}}', outputImpedance: '(R_{1}+sL_{1}) \\|\\| \\frac{1}{sC_{1}}', transfer: '\\frac{1}{1+sR_{1}C_{1}+s^{2}L_{1}C_{1}}' },
     { inputImpedance: 'R_{1}+sL_{1}+\\frac{1}{sC_{1}}', outputImpedance: '(R_{1}+sL_{1}) \\|\\| \\frac{1}{sC_{1}}', transfer: '\\frac{1}{1+sR_{1}C_{1}+s^{2}L_{1}C_{1}}' },
     [{ id: 'dominant-pole', options: { dominantPoleApproximation: true }, result: { denominatorDegree: 1 } }], samples.rlc, { focus: ['two poles', 'series inductance'] },
   )),
-  fixture('nmos-common-source', 'NMOS common-source stage with resistive load.', () => nmosCommonSource(), { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('nmos-common-source', 'NMOS common-source stage with resistive load.', () => nmosCommonSource(), { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: '-g_{m1}(r_{o1} \\|\\| R_{D})' },
     { inputImpedance: '\\infty', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: '-g_{m1}(r_{o1} \\|\\| R_{D})' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { outputImpedance: 'R_{D}', transfer: '-g_{m1}R_{D}' } }], samples.cs, { focus: ['inverting gain', 'drain loading'] },
   )),
-  fixture('pmos-common-source', 'PMOS common-source stage with resistive load.', () => nmosCommonSource({ pmos: true }), { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('pmos-common-source', 'PMOS common-source stage with resistive load.', () => nmosCommonSource({ pmos: true }), { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: '-g_{m1}(r_{o1} \\|\\| R_{D})' },
     { inputImpedance: '\\infty', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: '-g_{m1}(r_{o1} \\|\\| R_{D})' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { outputImpedance: 'R_{D}', transfer: '-g_{m1}R_{D}' } }], samples.cs, { focus: ['inverting gain', 'source polarity'] },
   )),
-  fixture('nmos-common-gate', 'NMOS common-gate stage with source input.', () => commonGate(), { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('nmos-common-gate', 'NMOS common-gate stage with source input.', () => commonGate(), { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '1/(g_{m1}+(1-A_v)/r_{o1})', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: '(1+g_{m1}r_{o1})R_{D}/(R_{D}+r_{o1})' },
     { inputImpedance: '1/g_{m1}', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: 'g_{m1}(r_{o1} \\|\\| R_{D})' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { inputImpedance: '1/g_{m1}', transfer: 'g_{m1}R_{D}' } }], samples.cg, { focus: ['low input resistance', 'non-inverting gain'] },
   )),
-  fixture('pmos-common-gate', 'PMOS common-gate stage with source input.', () => commonGate({ pmos: true }), { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('pmos-common-gate', 'PMOS common-gate stage with source input.', () => commonGate({ pmos: true }), { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '1/(g_{m1}+(1-A_v)/r_{o1})', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: '(1+g_{m1}r_{o1})R_{D}/(R_{D}+r_{o1})' },
     { inputImpedance: '1/g_{m1}', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: 'g_{m1}(r_{o1} \\|\\| R_{D})' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { inputImpedance: '1/g_{m1}', transfer: 'g_{m1}R_{D}' } }], samples.cg, { focus: ['low input resistance', 'polarity symmetry'] },
   )),
-  fixture('nmos-common-drain', 'NMOS source follower.', () => commonDrain(), { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('nmos-common-drain', 'NMOS source follower.', () => commonDrain(), { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: '(R_{S} \\|\\| r_{o1})/(1+g_{m1}(R_{S} \\|\\| r_{o1}))', transfer: 'g_{m1}(R_{S} \\|\\| r_{o1})/(1+g_{m1}(R_{S} \\|\\| r_{o1}))' },
     { inputImpedance: '\\infty', outputImpedance: '(R_{S} \\|\\| r_{o1})/(1+g_{m1}(R_{S} \\|\\| r_{o1}))', transfer: 'g_{m1}(R_{S} \\|\\| r_{o1})/(1+g_{m1}(R_{S} \\|\\| r_{o1}))' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { transfer: 'g_{m1}R_{S}/(1+g_{m1}R_{S})' } }], samples.cd, { focus: ['buffer gain', 'low output resistance'] },
   )),
-  fixture('pmos-common-drain', 'PMOS source follower with reversed rails.', () => commonDrain({ pmos: true }), { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('pmos-common-drain', 'PMOS source follower with reversed rails.', () => commonDrain({ pmos: true }), { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: '(R_{S} \\|\\| r_{o1})/(1+g_{m1}(R_{S} \\|\\| r_{o1}))', transfer: 'g_{m1}(R_{S} \\|\\| r_{o1})/(1+g_{m1}(R_{S} \\|\\| r_{o1}))' },
     { inputImpedance: '\\infty', outputImpedance: '(R_{S} \\|\\| r_{o1})/(1+g_{m1}(R_{S} \\|\\| r_{o1}))', transfer: 'g_{m1}(R_{S} \\|\\| r_{o1})/(1+g_{m1}(R_{S} \\|\\| r_{o1}))' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { transfer: 'g_{m1}R_{S}/(1+g_{m1}R_{S})' } }], samples.cd, { focus: ['buffer gain', 'polarity symmetry'] },
   )),
-  fixture('source-degeneration', 'NMOS common-source with source degeneration.', sourceDegeneration, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('source-degeneration', 'NMOS common-source with source degeneration.', sourceDegeneration, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'R_{D} \\|\\| (r_{o1}+R_{S}+g_{m1}r_{o1}R_{S})', transfer: '-g_{m1}R_{D}r_{o1}/(R_{D}+r_{o1}+R_{S}+g_{m1}r_{o1}R_{S})' },
     { inputImpedance: '\\infty', outputImpedance: 'R_{D} \\|\\| (r_{o1}+R_{S}+g_{m1}r_{o1}R_{S})', transfer: '-g_{m1}R_{D}r_{o1}/(R_{D}+r_{o1}+R_{S}+g_{m1}r_{o1}R_{S})' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { transfer: '-g_{m1}R_{D}/(1+g_{m1}R_{S})', outputImpedance: 'R_{D} \\|\\| R_{S}' } }], samples.generic, { focus: ['degeneration feedback', 'gain reduction'] },
   )),
-  fixture('diode-connected-load', 'NMOS driver with diode-connected PMOS load.', diodeConnectedLoad, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('diode-connected-load', 'NMOS driver with diode-connected PMOS load.', diodeConnectedLoad, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: '1/(g_{m2}+g_{mb2}+1/r_{o1}+1/r_{o2})', transfer: '-g_{m1}/(g_{m2}+g_{mb2}+1/r_{o1}+1/r_{o2})' },
     { inputImpedance: '\\infty', outputImpedance: '1/(g_{m2}+1/r_{o1}+1/r_{o2})', transfer: '-g_{m1}/(g_{m2}+1/r_{o1}+1/r_{o2})' },
     [{ id: 'ignore-body-effect', options: { ignoreBodyEffect: true }, result: { outputImpedance: '1/(g_{m2}+1/r_{o1}+1/r_{o2})' } }], samples.diode, { focus: ['diode-connected conductance', 'active load'] },
   )),
-  fixture('cmos-inverter', 'Complementary MOS inverter at its small-signal operating point.', cmosInverter, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('cmos-inverter', 'Complementary MOS inverter at its small-signal operating point.', cmosInverter, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'r_{o1} \\|\\| r_{o2}', transfer: '-(g_{m1}+g_{m2})(r_{o1} \\|\\| r_{o2})' },
     { inputImpedance: '\\infty', outputImpedance: 'r_{o1} \\|\\| r_{o2}', transfer: '-(g_{m1}+g_{m2})(r_{o1} \\|\\| r_{o2})' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { outputImpedance: '0', transfer: '0' } }], samples.inverter, { focus: ['parallel transconductors', 'inverting gain'] },
   )),
-  fixture('nmos-cascode', 'Two-device NMOS cascode with a grounded gate bias.', () => cascode(), { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('nmos-cascode', 'Two-device NMOS cascode with a grounded gate bias.', () => cascode(), { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'R_{D} \\|\\| (r_{o1}+r_{o2}+g_{m2}r_{o1}r_{o2})', transfer: '-g_{m1}(R_{D} \\|\\| (r_{o1}+r_{o2}+g_{m2}r_{o1}r_{o2}))' },
     { inputImpedance: '\\infty', outputImpedance: 'R_{D} \\|\\| (r_{o1}+r_{o2}+g_{m2}r_{o1}r_{o2})', transfer: '-g_{m1}(R_{D} \\|\\| (r_{o1}+r_{o2}+g_{m2}r_{o1}r_{o2}))' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { outputImpedance: 'R_{D}', transfer: '-g_{m1}R_{D}' } }], samples.cascode, { focus: ['cascode output resistance', 'gain loading'] },
   )),
-  fixture('pmos-cascode', 'Two-device PMOS cascode with reversed rails.', () => cascode({ pmos: true }), { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('pmos-cascode', 'Two-device PMOS cascode with reversed rails.', () => cascode({ pmos: true }), { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'R_{D} \\|\\| (r_{o1}+r_{o2}+g_{m2}r_{o1}r_{o2})', transfer: '-g_{m1}(R_{D} \\|\\| (r_{o1}+r_{o2}+g_{m2}r_{o1}r_{o2}))' },
     { inputImpedance: '\\infty', outputImpedance: 'R_{D} \\|\\| (r_{o1}+r_{o2}+g_{m2}r_{o1}r_{o2})', transfer: '-g_{m1}(R_{D} \\|\\| (r_{o1}+r_{o2}+g_{m2}r_{o1}r_{o2}))' },
     [{ id: 'ro-infinity', options: { ignoreChannelLengthModulation: true }, result: { outputImpedance: 'R_{D}', transfer: '-g_{m1}R_{D}' } }], samples.cascode, { focus: ['cascode output resistance', 'polarity symmetry'] },
   )),
-  fixture('current-mirror-load', 'NMOS driver with a two-device PMOS current mirror load.', currentMirrorLoad, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('current-mirror-load', 'NMOS driver with a two-device PMOS current mirror load.', currentMirrorLoad, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'r_{o2} \\|\\| r_{o3} \\|\\| r_{o1}', transfer: '-g_{m1}(r_{o1} \\|\\| r_{o2} \\|\\| r_{o3})' },
     { inputImpedance: '\\infty', outputImpedance: 'r_{o2} \\|\\| r_{o3} \\|\\| r_{o1}', transfer: '-g_{m1}(r_{o1} \\|\\| r_{o2} \\|\\| r_{o3})' },
     [{ id: 'ignore-body-effect', options: { ignoreBodyEffect: true }, result: { unchanged: true } }], samples.mirror, { focus: ['mirror load', 'output resistance'] },
   )),
-  fixture('explicit-bulk-moving-source', 'Four-terminal NMOS with grounded bulk and moving source.', explicitBulkMovingSource, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('explicit-bulk-moving-source', 'Four-terminal NMOS with grounded bulk and moving source.', explicitBulkMovingSource, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'R_{D} \\|\\| (r_{o1}+R_{S}+(g_{m1}+g_{mb1})r_{o1}R_{S})', transfer: '-g_{m1}R_{D}r_{o1}/(R_{D}+r_{o1}+R_{S}+(g_{m1}+g_{mb1})r_{o1}R_{S})' },
     { inputImpedance: '\\infty', outputImpedance: 'R_{D} \\|\\| (r_{o1}+R_{S}+g_{m1}r_{o1}R_{S})', transfer: '-g_{m1}R_{D}r_{o1}/(R_{D}+r_{o1}+R_{S}+g_{m1}r_{o1}R_{S})' },
     [{ id: 'ignore-body-effect', options: { ignoreBodyEffect: true }, result: { transfer: 'source-degeneration form with g_{mb1}=0' } }], samples.generic, { focus: ['body effect', 'moving source'] },
   )),
-  fixture('disconnected-reactive-island', 'Common-source stage with an electrically disconnected capacitor.', disconnectedReactiveIsland, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('disconnected-reactive-island', 'Common-source stage with an electrically disconnected capacitor.', disconnectedReactiveIsland, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '\\infty', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: '-g_{m1}(r_{o1} \\|\\| R_{D})' },
     { inputImpedance: '\\infty', outputImpedance: 'r_{o1} \\|\\| R_{D}', transfer: '-g_{m1}(r_{o1} \\|\\| R_{D})' },
     [{ id: 'ignore-island', options: {}, result: { acOrder: 0 } }], samples.cs, { focus: ['relevance pruning', 'unchanged ports'] },
   )),
-  fixture('pivot-cross-coupled-pair', 'Cross-coupled two-NMOS network requiring a pivot row swap.', pivotCrossCoupledPair, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('pivot-cross-coupled-pair', 'Cross-coupled two-NMOS network requiring a pivot row swap.', pivotCrossCoupledPair, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: '1/(g_{m1}+g_{m2})', outputImpedance: '1/(g_{m1}+g_{m2})', transfer: 'undefined without a load' },
     { inputImpedance: '1/(g_{m1}+g_{m2})', outputImpedance: '1/(g_{m1}+g_{m2})', transfer: 'undefined without a load' },
     [{ id: 'ignore-body-effect', options: { ignoreBodyEffect: true }, result: { unchanged: true } }], samples.inverter, { focus: ['pivot stability', 'cross-coupled controls'] },
   )),
-  fixture('singular-floating', 'Floating resistor with no AC reference.', singularFloatingCircuit, { input: 'IN.p', output: 'OUT.p' }, expected(
+  fixture('singular-floating', 'Floating resistor with no AC reference.', singularFloatingCircuit, { input: 'VIN.p', output: 'VOUT.p' }, expected(
     { inputImpedance: 'singular', outputImpedance: 'singular', transfer: 'singular' },
     { inputImpedance: 'singular', outputImpedance: 'singular', transfer: 'singular' },
     [{ id: 'no-reference', options: {}, result: { status: 'singular' } }], samples.singular, { focus: ['diagnostic', 'missing reference'] },

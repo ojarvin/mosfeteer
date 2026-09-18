@@ -10,8 +10,8 @@ function net(circuit, name, ...refs) {
 }
 
 function ports(circuit) {
-  circuit.addComponent('input', { refdes: 'IN', x: 0, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 800, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 800, y: 0 });
   circuit.addComponent('ground', { refdes: 'GND1', x: 400, y: 400 });
   return {
     input: 'VIN', output: 'VOUT', ground: 'VSS',
@@ -19,8 +19,8 @@ function ports(circuit) {
 }
 
 function attachPorts(circuit) {
-  net(circuit, 'VIN', 'IN.p');
-  net(circuit, 'VOUT', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p');
+  net(circuit, 'VOUT', 'VOUT.p');
   net(circuit, 'VSS', 'GND1.gnd');
 }
 
@@ -35,8 +35,8 @@ function divider() {
   ports(circuit);
   circuit.addComponent('resistor', { refdes: 'R1', x: 200, y: 0 });
   circuit.addComponent('resistor', { refdes: 'R2', x: 600, y: 0 });
-  net(circuit, 'VIN', 'IN.p', 'R1.a');
-  net(circuit, 'VOUT', 'R1.b', 'R2.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'R1.a');
+  net(circuit, 'VOUT', 'R1.b', 'R2.a', 'VOUT.p');
   net(circuit, 'VSS', 'R2.b', 'GND1.gnd');
   return circuit;
 }
@@ -56,8 +56,8 @@ test('evaluates an RC transfer at the supplied s value', () => {
   ports(circuit);
   circuit.addComponent('resistor', { refdes: 'R1', x: 200, y: 0 });
   circuit.addComponent('capacitor', { refdes: 'C1', x: 600, y: 200, mirrorX: false });
-  net(circuit, 'VIN', 'IN.p', 'R1.a');
-  net(circuit, 'VOUT', 'R1.b', 'C1.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'R1.a');
+  net(circuit, 'VOUT', 'R1.b', 'C1.a', 'VOUT.p');
   net(circuit, 'VSS', 'C1.b', 'GND1.gnd');
   const report = analyze(circuit, { R1: 1000, C1: 1e-6 }, { s: 1000 });
   assert.equal(report.ok, true, report.error);
@@ -70,8 +70,8 @@ function commonSource() {
   ports(circuit);
   circuit.addComponent('nmos', { refdes: 'M1', x: 400, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 400, y: -240 });
-  net(circuit, 'VIN', 'IN.p', 'M1.g');
-  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g');
+  net(circuit, 'VOUT', 'M1.d', 'RD.a', 'VOUT.p');
   net(circuit, 'VSS', 'M1.s', 'RD.b', 'GND1.gnd');
   return circuit;
 }
@@ -100,8 +100,8 @@ function inverter() {
   ports(circuit);
   circuit.addComponent('nmos', { refdes: 'M1', x: 400, y: 160 });
   circuit.addComponent('pmos', { refdes: 'M2', x: 400, y: -160, mirrorY: false });
-  net(circuit, 'VIN', 'IN.p', 'M1.g', 'M2.g');
-  net(circuit, 'VOUT', 'M1.d', 'M2.d', 'OUT.p');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g', 'M2.g');
+  net(circuit, 'VOUT', 'M1.d', 'M2.d', 'VOUT.p');
   net(circuit, 'VSS', 'M1.s', 'GND1.gnd');
   net(circuit, 'VDD', 'M2.s');
   return circuit;

@@ -18,8 +18,8 @@ function smallCircuit() {
 
 function analysisCircuit({ capacitor = false } = {}) {
   const c = fresh();
-  c.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  c.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  c.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  c.addComponent('output', { refdes: 'VOUT', x: 240, y: 0 });
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 240, y: 160 });
   c.addComponent('ground', { refdes: 'GND', x: 400, y: 240 });
@@ -28,16 +28,16 @@ function analysisCircuit({ capacitor = false } = {}) {
     const net = c._createNet(name);
     net.terminals = refs.map((ref) => c.resolveTerm(ref));
   };
-  connect('VIN', 'IN.p', 'R1.a');
-  connect('VOUT', 'R1.b', 'R2.a', 'OUT.p', ...(capacitor ? ['C1.a'] : []));
+  connect('VIN', 'VIN.p', 'R1.a');
+  connect('VOUT', 'R1.b', 'R2.a', 'VOUT.p', ...(capacitor ? ['C1.a'] : []));
   connect('VSS', 'R2.b', 'GND.gnd', ...(capacitor ? ['C1.b'] : []));
   return c;
 }
 
 function triodeCircuit() {
   const c = fresh();
-  c.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  c.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  c.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  c.addComponent('output', { refdes: 'VOUT', x: 240, y: 0 });
   c.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   c.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   c.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
@@ -45,8 +45,8 @@ function triodeCircuit() {
     const net = c._createNet(name);
     net.terminals = refs.map((ref) => c.resolveTerm(ref));
   };
-  connect('VIN', 'IN.p', 'M1.g');
-  connect('VOUT', 'M1.d', 'RD.a', 'OUT.p');
+  connect('VIN', 'VIN.p', 'M1.g');
+  connect('VOUT', 'M1.d', 'RD.a', 'VOUT.p');
   connect('VSS', 'M1.s', 'RD.b', 'GND.gnd');
   return c;
 }

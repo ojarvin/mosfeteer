@@ -558,7 +558,6 @@ export class LabelInstance {
     else {
       const next = this.math ? normalizeMathSource(value) : String(value);
       if (this.owner && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
-      if (this.owner && this.circuit._syncInterfacePinLabel(this.owner, next)) return;
       if (this.owner && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
       this.circuit.invalidateRoutingCache();
@@ -767,7 +766,6 @@ export class LabelInstance {
     } else {
       const next = this.math ? normalizeMathSource(text) : String(text);
       if (this.owner && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
-      if (this.owner && this.circuit._syncInterfacePinLabel(this.owner, next)) return;
       if (this.owner && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
       this.clearRenderedTextBounds();
@@ -1860,15 +1858,22 @@ export class Circuit {
     this.invalidateRoutingCache();
     const c = this.getComponent(refdes);
     if (c.type === 'solder') this.suppressedJunctions.add(`${c.transform.x},${c.transform.y}`);
+    const touched = [];
     for (const net of this.nets.values()) {
       this._dropFixedAnchor(net, { comp: refdes });
+      const wasMember = net.terminals.some((t) => t.comp === refdes);
       net.terminals = net.terminals.filter((t) => t.comp !== refdes);
       if (net.terminals.length === 0 && (!net.preserveEmpty || !this._netHasGeometry(net))) {
         this.removeNet(net);
-      }
+      } else if (wasMember) touched.push(net);
     }
     for (const [id, l] of [...this.labels]) if (l.owner === refdes) this.labels.delete(id);
     this.components.delete(refdes);
+    // Removing one of several ports can leave a sole port behind, and a sole
+    // port names its net. Settle that here so the identity is never stale.
+    if (INTERFACE_PIN_TYPES.has(c.type)) {
+      for (const net of touched) this._syncInterfacePinLabels(net, { enforceName: true });
+    }
     this.syncJunctionSolders();
     return true;
   }
@@ -1980,90 +1985,85 @@ export class Circuit {
     return net;
   }
 
-  /** Interface symbols use their owned label as the physical net name.  The
-   * first pin on a net is the deterministic authority when several pins share
-   * one net; all other pin labels follow that name. Component identities stay
-   * canonical (VI1/VO1/VIO1), while authored textbook markup remains part of
-   * the physical net name when the port supplies it. */
+  /** A port's owned label is its identity, exactly like every other
+   * component's, so two ports can never carry one name.  A port additionally
+   * NAMES its physical net: while it is the only interface pin on that net,
+   * the net name and the port identity are one thing and renaming either
+   * renames both.  Several ports on one net keep their own identities and the
+   * net keeps a single name, and a net name that cannot be a component
+   * identity (not a valid refdes, or already taken) likewise leaves the port
+   * alone -- that port simply does not name this net.  Authored textbook
+   * markup (`V_{IN}`) remains the display source of both. */
   _syncInterfacePinLabels(netOrId, { enforceName = false, preserveSource = false } = {}) {
     const net = this._resolveNet(netOrId);
     const pins = net.terminals
       .map(({ comp }) => this.components.get(comp))
       .filter((component) => component && INTERFACE_PIN_TYPES.has(component.type));
     if (!pins.length) return net;
+    if (pins.length > 1) {
+      // Several ports share one physical net.  Each keeps its own identity;
+      // the net keeps one name and takes the first port's only when it has
+      // none of its own, the same first-wins rule net merges use.
+      if (!net.name) {
+        const firstLabel = this.labelOf(pins[0].refdes);
+        net.name = canonicalNetName(firstLabel?._text || pins[0].refdes);
+      }
+      return net;
+    }
+    const pin = pins[0];
+    const label = this.labelOf(pin.refdes);
     if (preserveSource && !enforceName && net.name) {
-      const firstLabel = this.labelOf(pins[0].refdes);
-      const raw = firstLabel?._text || '';
+      const raw = label?._text || '';
       // Older documents stored a compact net name alongside a formatted
       // interface label. Promote that authored source during load so the
       // label does not lose its subscript on the next synchronization.
       if (raw && /[_^]\{/.test(raw)
-          && normalizeComponentRefdes(raw) === normalizeComponentRefdes(pins[0].refdes)
-          && normalizeComponentRefdes(net.name) === normalizeComponentRefdes(pins[0].refdes)) {
+          && normalizeComponentRefdes(raw) === normalizeComponentRefdes(pin.refdes)
+          && normalizeComponentRefdes(net.name) === normalizeComponentRefdes(pin.refdes)) {
         net.name = canonicalNetName(raw);
       }
     }
-    if (enforceName) {
-      const firstLabel = this.labelOf(pins[0].refdes);
-      const raw = firstLabel?._text || pins[0].refdes;
+    if (enforceName || !net.name) {
       // Keep authored subscript markup on the physical name. Connectivity
       // still uses the component's compact refdes; net names are display
       // sources and may carry the same textbook markup as their pin label.
-      const preferred = canonicalNetName(raw);
+      const preferred = canonicalNetName(label?._text || pin.refdes);
       if (preferred && net.name !== preferred) net.name = preferred;
+    } else if (normalizeComponentRefdes(net.name) !== pin.refdes
+        && this._adoptNetNameAsPortIdentity(net, pin)) {
+      // The net was renamed from the net side; that renames its sole port so
+      // one identity remains.  When the name cannot be an identity the label
+      // below falls back to the port's own, so it never shows another
+      // component's name.
+      return net;
     }
-    const name = net.name;
-    for (const pin of pins) {
-      const label = this.labelOf(pin.refdes);
-      // Preserve explicit formatting on an owned pin label during cloning.
-      const display = /[_^]\{/.test(name) && normalizeComponentRefdes(name) === normalizeComponentRefdes(pin.refdes)
-        ? componentLabelText(pin.refdes, label?._text || name)
-        : name;
-      if (label && label._text !== display) {
-        label._text = display;
-        label.clearRenderedTextBounds();
-      }
+    const source = normalizeComponentRefdes(net.name) === normalizeComponentRefdes(pin.refdes)
+      ? net.name
+      : label?._text;
+    const display = componentLabelText(pin.refdes, source);
+    if (label && label._text !== display) {
+      label._text = display;
+      label.clearRenderedTextBounds();
     }
     return net;
   }
 
-  _syncInterfacePinLabel(refdes, text) {
-    const component = this.components.get(refdes);
-    if (!component || !INTERFACE_PIN_TYPES.has(component.type)) return false;
-    const net = this.netOfTerminal({ comp: refdes, term: 'p' });
-    if (!net) return false;
-    const name = canonicalNetName(text);
-    if (name !== net.name) this.renameNet(net, name);
-    else this._syncInterfacePinLabels(net);
+  /** Renaming a net renames the port that names it.  A name that cannot be a
+   * component identity is kept by the net alone: the rename is never lost and
+   * never silently duplicates another component's name. */
+  _adoptNetNameAsPortIdentity(net, pin) {
+    const source = canonicalNetName(net.name);
+    const next = normalizeComponentRefdes(source);
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next) || this.components.has(next)) return false;
+    this.renameComponent(pin.refdes, next, { displayLabel: source });
     return true;
-  }
-
-  /** Apply an intentionally shared interface name without renaming the port
-   * identity. The editor calls this only after the user approves a virtual
-   * connection to an existing named port or net. */
-  setInterfacePinName(refdes, text) {
-    const component = this.components.get(refdes);
-    if (!component || !INTERFACE_PIN_TYPES.has(component.type)) throw new Error(`unknown interface pin "${refdes}"`);
-    const name = canonicalNetName(text);
-    if (!name) throw new Error('interface pin name cannot be empty');
-    const net = this.netOfTerminal({ comp: refdes, term: 'p' });
-    if (net) this.renameNet(net, name);
-    else {
-      const label = this.labelOf(refdes);
-      if (label) {
-        label._text = name;
-        label.clearRenderedTextBounds();
-      }
-      this.invalidateRoutingCache();
-    }
-    return component;
   }
 
   /** Ordinary component instance labels are the presentation of the
  * component's canonical name, not independent child annotations. Editing
  * one therefore validates and renames the component atomically. Interface
- * pins use the same path unless `setInterfacePinName` has been chosen after
- * an explicit virtual-connection approval. */
+ * pins take the same path: their label is their identity, and renaming the
+ * component renames the net it names. */
   _syncComponentLabel(refdes, text) {
     const component = this.components.get(refdes);
     if (!component || isReferenceMarker(component)) return false;

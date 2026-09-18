@@ -14,19 +14,19 @@ function renameNetAt(circuit, terminal, name) {
 
 function commonSourceWithFeedback(feedbackKind = 'capacitor') {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: -80 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: -80 });
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   circuit.addComponent(feedbackKind, { refdes: 'CGD', x: -80, y: -80 });
   circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
   circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -240 });
-  circuit.connect('IN.p', 'M1.g', 'CGD.a');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p', 'CGD.b');
+  circuit.connect('VIN.p', 'M1.g', 'CGD.a');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p', 'CGD.b');
   circuit.connect('M1.s', 'GND.gnd');
   circuit.connect('RD.b', 'VDD.p');
-  renameNetAt(circuit, 'IN.p', 'VIN');
-  renameNetAt(circuit, 'OUT.p', 'VOUT');
+  renameNetAt(circuit, 'VIN.p', 'VIN');
+  renameNetAt(circuit, 'VOUT.p', 'VOUT');
   return circuit;
 }
 
@@ -42,12 +42,12 @@ function evaluate(node, values) {
 function resistiveFeedbackInverter({ capacitor = false } = {}) {
   const circuit = smallSignalGoldenCorpus.find((fixture) => fixture.id === 'cmos-inverter').build();
   circuit.addComponent('resistor', { refdes: 'R1', x: 800, y: 800 });
-  circuit.connect('R1.a', 'IN.p');
-  circuit.connect('R1.b', 'OUT.p');
+  circuit.connect('R1.a', 'VIN.p');
+  circuit.connect('R1.b', 'VOUT.p');
   if (capacitor) {
     circuit.addComponent('capacitor', { refdes: 'CFB', x: 800, y: 1040 });
-    circuit.connect('CFB.a', 'IN.p');
-    circuit.connect('CFB.b', 'OUT.p');
+    circuit.connect('CFB.a', 'VIN.p');
+    circuit.connect('CFB.b', 'VOUT.p');
   }
   return circuit;
 }
@@ -58,7 +58,7 @@ function close(actual, expected, message) {
 
 test('retains conducting feedback and matches exact port equations even for a small feedback resistor', () => {
   const circuit = resistiveFeedbackInverter();
-  const report = analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p', gmroLarge: false });
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p', gmroLarge: false });
   assert.equal(report.ok, true, report.error);
   assert.deepEqual(report.details.pipeline.millerSubstitutions, []);
   assert.equal(report.details.pipeline.retainedFeedbackNetworks.length, 1, 'shared NMOS/PMOS bridge is handled once');
@@ -78,7 +78,7 @@ test('retains conducting feedback and matches exact port equations even for a sm
 
 test('shows proven feedback relations and reduces the factored high-gain sum in the GUI', () => {
   const circuit = resistiveFeedbackInverter();
-  const report = analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p' });
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p' });
   const gui = adaptCombinedReport(report);
   assert.match(gui.dcInputImpedance.equation, /R_\{1\} \+ \\left\(r_\{o1\} \\parallel r_\{o2\}/);
   assert.doesNotMatch(gui.dcInputImpedance.equation, /\+ 1/);
@@ -90,12 +90,12 @@ test('shows proven feedback relations and reduces the factored high-gain sum in 
   const G = values.gm1 + values.gm2;
   const Ro = values.ro1 * values.ro2 / (values.ro1 + values.ro2);
   close(evaluate(report.input.expression, values), (values.R1 + Ro) / (G * Ro), 'selected Zin');
-  const exactGui = adaptCombinedReport(analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p', gmroLarge: false }));
+  const exactGui = adaptCombinedReport(analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p', gmroLarge: false }));
   assert.match(exactGui.dcInputImpedance.equation, /\\frac.*\}\{1 \+/);
 });
 
 test('keeps a parallel RC feedback bridge coupled when it conducts at DC', () => {
-  const report = analyzeSmallSignalV2(resistiveFeedbackInverter({ capacitor: true }), { input: 'IN.p', output: 'OUT.p', gmroLarge: false });
+  const report = analyzeSmallSignalV2(resistiveFeedbackInverter({ capacitor: true }), { input: 'VIN.p', output: 'VOUT.p', gmroLarge: false });
   assert.equal(report.ok, true, report.error);
   assert.deepEqual(report.details.pipeline.millerSubstitutions, []);
   assert.match(report.smallSignalNetlist, /R_R1 V_\{IN\} V_\{OUT\}/);
@@ -110,7 +110,7 @@ test('keeps a parallel RC feedback bridge coupled when it conducts at DC', () =>
 });
 
 test('netlist identifies the reactive feedback element and both supported Miller shunts', () => {
-  const report = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'IN.p', output: 'OUT.p', gmroLarge: false });
+  const report = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'VIN.p', output: 'VOUT.p', gmroLarge: false });
   assert.equal(report.ok, true, report.error);
   assert.match(report.smallSignalNetlist, /Miller bridge CGD replaced by two shunts/);
   assert.match(report.smallSignalNetlist, /Y_M1\.miller-gate V_\{IN\} 0/);
@@ -129,7 +129,7 @@ function transferAt(report, values, s) {
 }
 
 test('detects and lists a Miller substitution for a gate-drain feedback capacitor', () => {
-  const report = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'IN.p', output: 'OUT.p' });
+  const report = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true, report.error);
   assert.deepEqual(
     report.details.pipeline.millerSubstitutions.map(({ device }) => device),
@@ -139,7 +139,7 @@ test('detects and lists a Miller substitution for a gate-drain feedback capacito
 });
 
 test('preserves the finite parallel load and Miller correction without assuming gm RD is large', () => {
-  const report = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'IN.p', output: 'OUT.p' });
+  const report = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true, report.error);
   assert.match(report.transfer.ac.equation, /-g_\{m1\}.*r_\{o1\} \\parallel R_\{D\}/);
   assert.match(report.transfer.ac.equation, /g_\{m1\} \\, R_\{D\} \+ 1/);
@@ -153,9 +153,9 @@ test('preserves the finite parallel load and Miller correction without assuming 
 test('loaded Miller stage GUI equations have no stacked fractions and its pole has one complete numerator', () => {
   const circuit = commonSourceWithFeedback();
   circuit.addComponent('capacitor', { refdes: 'CLOAD', x: 400, y: 0 });
-  circuit.connect('CLOAD.a', 'OUT.p');
+  circuit.connect('CLOAD.a', 'VOUT.p');
   circuit.connect('CLOAD.b', 'GND.gnd');
-  const gui = adaptCombinedReport(analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p' }));
+  const gui = adaptCombinedReport(analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p' }));
   assert.equal(gui.ok, true, gui.error);
   for (const { result } of gui.equationEntries) {
     let depth = 0;
@@ -171,8 +171,8 @@ test('loaded Miller stage GUI equations have no stacked fractions and its pole h
 });
 
 test('matches the DC gain of the un-transformed exact circuit exactly (the bridge is open at s=0 either way)', () => {
-  const withMiller = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'IN.p', output: 'OUT.p' });
-  const withoutMiller = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'IN.p', output: 'OUT.p', millerApproximation: false });
+  const withMiller = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'VIN.p', output: 'VOUT.p' });
+  const withoutMiller = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'VIN.p', output: 'VOUT.p', millerApproximation: false });
   assert.equal(withMiller.ok, true, withMiller.error);
   assert.equal(withoutMiller.ok, true, withoutMiller.error);
   const values = { gm1: 0.02, ro1: 50000, RD: 5000, CGD: 2e-12, gmb1: 0 };
@@ -180,8 +180,8 @@ test('matches the DC gain of the un-transformed exact circuit exactly (the bridg
 });
 
 test('tracks the un-transformed exact circuit closely below the feedback pole and diverges above it', () => {
-  const withMiller = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'IN.p', output: 'OUT.p' });
-  const withoutMiller = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'IN.p', output: 'OUT.p', millerApproximation: false });
+  const withMiller = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'VIN.p', output: 'VOUT.p' });
+  const withoutMiller = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'VIN.p', output: 'VOUT.p', millerApproximation: false });
   const values = { gm1: 0.02, ro1: 50000, RD: 5000, CGD: 2e-12, gmb1: 0 };
   const low = 2 * Math.PI * 1e3;
   const near = withMiller, exact = withoutMiller;
@@ -194,39 +194,39 @@ test('tracks the un-transformed exact circuit closely below the feedback pole an
 
 test('leaves the exact model untouched when no gate-drain bridge is present', () => {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: 0 });
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
-  circuit.connect('IN.p', 'M1.g');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('VIN.p', 'M1.g');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p');
   circuit.connect('M1.s', 'RD.b', 'GND.gnd');
-  const report = analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p' });
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true, report.error);
   assert.deepEqual(report.details.pipeline.millerSubstitutions, []);
 });
 
 test('collapses a series R+C feedback network (not just a bare capacitor) to one Miller bridge', () => {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: -80 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: -80 });
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   circuit.addComponent('resistor', { refdes: 'RFB', x: -400, y: -80 });
   circuit.addComponent('capacitor', { refdes: 'CFB', x: -400, y: -240 });
   circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
   circuit.addComponent('supply', { refdes: 'VDD', x: 160, y: -240 });
-  circuit.connect('IN.p', 'M1.g');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('VIN.p', 'M1.g');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p');
   circuit.connect('M1.s', 'GND.gnd');
   circuit.connect('RD.b', 'VDD.p');
-  circuit.connect('IN.p', 'RFB.a');
-  circuit.connect('OUT.p', 'CFB.b');
+  circuit.connect('VIN.p', 'RFB.a');
+  circuit.connect('VOUT.p', 'CFB.b');
   circuit.connect('RFB.b', 'CFB.a');
-  renameNetAt(circuit, 'IN.p', 'VIN');
-  renameNetAt(circuit, 'OUT.p', 'VOUT');
-  const report = analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p' });
+  renameNetAt(circuit, 'VIN.p', 'VIN');
+  renameNetAt(circuit, 'VOUT.p', 'VOUT');
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true, report.error);
   assert.deepEqual(
     report.details.pipeline.millerSubstitutions.map(({ device }) => device),
@@ -236,8 +236,8 @@ test('collapses a series R+C feedback network (not just a bare capacitor) to one
 
 test('declines the bridge when its internal node is also used by an unrelated device', () => {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: -80 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: -80 });
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   circuit.addComponent('resistor', { refdes: 'RFB', x: -80, y: -40 });
@@ -248,15 +248,15 @@ test('declines the bridge when its internal node is also used by an unrelated de
   // the M1 feedback path — Miller substitution must not remove that node.
   circuit.addComponent('nmos', { refdes: 'M2', x: -240, y: -120 });
   circuit.addComponent('resistor', { refdes: 'RD2', x: -240, y: -280 });
-  circuit.connect('IN.p', 'M1.g', 'RFB.a');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p', 'CFB.b');
+  circuit.connect('VIN.p', 'M1.g', 'RFB.a');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p', 'CFB.b');
   circuit.connect('RFB.b', 'CFB.a', 'M2.g');
   circuit.connect('M1.s', 'M2.s', 'GND.gnd');
   circuit.connect('RD.b', 'RD2.b', 'VDD.p');
   circuit.connect('M2.d', 'RD2.a');
-  renameNetAt(circuit, 'IN.p', 'VIN');
-  renameNetAt(circuit, 'OUT.p', 'VOUT');
-  const report = analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p' });
+  renameNetAt(circuit, 'VIN.p', 'VIN');
+  renameNetAt(circuit, 'VOUT.p', 'VOUT');
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true, report.error);
   assert.deepEqual(report.details.pipeline.millerSubstitutions, []);
 });
@@ -267,7 +267,7 @@ test('still finds the Miller bridge when the gate also carries an unrelated bias
   circuit.addComponent('ground', { refdes: 'GND2', x: -160, y: 160 });
   circuit.connect('RBIAS.a', 'M1.g');
   circuit.connect('RBIAS.b', 'GND2.gnd');
-  const report = analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p' });
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true, report.error);
   // The bias branch itself is fine (it terminates at ground, so it's simply
   // excluded from the candidate bridge, not a privacy violation) — this

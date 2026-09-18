@@ -27,7 +27,7 @@ function close(actual, expected, label) {
 
 function symbolic(circuit, options = {}) {
   const ops = createRationalOps({ maxOperations: options.maxOperations || 50000 });
-  const pipeline = buildExactAnalysisPipeline(circuit, { input: 'IN.p', output: 'OUT.p', ops, s: ops.s(),
+  const pipeline = buildExactAnalysisPipeline(circuit, { input: 'VIN.p', output: 'VOUT.p', ops, s: ops.s(),
     valueOf: (value) => typeof value === 'string' ? ops.symbol(value) : value, millerApproximation: false, ...options });
   assert.equal(pipeline.ok, true, pipeline.error);
   return { pipeline, ops };
@@ -40,7 +40,7 @@ test('topological exact queries agree with a combined numeric solve across the g
     for (const sample of fixture.expected.samples) {
       const values = { ...sample.values };
       for (const name of Object.keys(values).filter((name) => /^gm/.test(name))) values[`gmb${name.slice(2)}`] ??= 0;
-      const numeric = buildExactAnalysisPipeline(fixture.build(), { input: 'IN.p', output: 'OUT.p',
+      const numeric = buildExactAnalysisPipeline(fixture.build(), { input: 'VIN.p', output: 'VOUT.p',
         values, s: sample.s, topologicalSolve: false, millerApproximation: false, ...options });
       assert.equal(numeric.ok, true, `${fixture.id}: ${numeric.error}`);
       for (const key of ['transfer', 'inputImpedance', 'outputImpedance']) close(
@@ -57,7 +57,7 @@ test('solves a long unilateral cascade in small blocks within a bounded budget',
   assert.ok(pipeline.solution.blocks.every((block) => block.length === 1));
   assert.equal(ops.budget.exceeded, false);
   const oldOps = createRationalOps({ maxOperations: 6000 });
-  const old = buildExactAnalysisPipeline(commonSourceCascade(8), { input: 'IN.p', output: 'OUT.p',
+  const old = buildExactAnalysisPipeline(commonSourceCascade(8), { input: 'VIN.p', output: 'VOUT.p',
     ops: oldOps, s: oldOps.s(), valueOf: (value) => typeof value === 'string' ? oldOps.symbol(value) : value,
     millerApproximation: false, topologicalSolve: false });
   assert.equal(old.ok, false);
@@ -79,14 +79,14 @@ test('recursively combines parallel active branches before solving their common 
 });
 
 test('keeps feedback across stages coupled and rejects a false cascade cut', () => {
-  const report = analyzeSmallSignalV2(commonSourceCascade(3, { feedback: true }), { input: 'IN.p', output: 'OUT.p', millerApproximation: false });
+  const report = analyzeSmallSignalV2(commonSourceCascade(3, { feedback: true }), { input: 'VIN.p', output: 'VOUT.p', millerApproximation: false });
   assert.equal(report.ok, true, report.error);
   assert.equal(report.details.topology.stages.length, 1);
   assert.ok(report.details.pipeline.solution.blocks.some((block) => block.length === 3));
 });
 
 test('preserves stage gains and parallel loading through the GUI adapter for a reactive cascade', () => {
-  const report = analyzeSmallSignalV2(commonSourceCascade(3, { reactive: true }), { input: 'IN.p', output: 'OUT.p' });
+  const report = analyzeSmallSignalV2(commonSourceCascade(3, { reactive: true }), { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true, report.error);
   assert.equal(report.details.topology.stages.length, 3);
   const gui = adaptCombinedReport(report);
@@ -99,7 +99,7 @@ test('preserves stage gains and parallel loading through the GUI adapter for a r
 
 test('preserves gm RS when high intrinsic gain is selected, including weak degeneration', () => {
   const fixture = smallSignalGoldenCorpus.find((fixture) => fixture.id === 'source-degeneration');
-  const report = analyzeSmallSignalV2(fixture.build(), { input: 'IN.p', output: 'OUT.p' });
+  const report = analyzeSmallSignalV2(fixture.build(), { input: 'VIN.p', output: 'VOUT.p' });
   const gui = adaptCombinedReport(report);
   assert.match(gui.dcGain.equation, /g_\{m1\}.*R_\{S\} \+ 1/);
   assert.match(gui.dcOutputImpedance.equation, /r_\{o1\}.*\\parallel R_\{D\}/);
@@ -111,7 +111,7 @@ test('preserves gm RS when high intrinsic gain is selected, including weak degen
 
 test('a large cascode intrinsic gain retains an independent finite drain load', () => {
   const fixture = smallSignalGoldenCorpus.find((fixture) => fixture.id === 'nmos-cascode');
-  const report = analyzeSmallSignalV2(fixture.build(), { input: 'IN.p', output: 'OUT.p', acGrounds: ['VBIAS'] });
+  const report = analyzeSmallSignalV2(fixture.build(), { input: 'VIN.p', output: 'VOUT.p', acGrounds: ['VBIAS'] });
   assert.match(report.output.dc.equation, /r_\{o2\}.*\\parallel R_\{D\}/);
   assert.match(report.transfer.dc.equation, /-g_\{m1\} \\,/);
   assert.doesNotMatch(report.transfer.dc.equation, /\\frac/);
@@ -119,7 +119,7 @@ test('a large cascode intrinsic gain retains an independent finite drain load', 
 });
 
 test('selected gm ro reduces cascode transconductance and keeps flat parallel loads in the GUI', () => {
-  const report = analyzeSmallSignalV2(cascodeBranches(), { input: 'IN.p', output: 'OUT.p', acGrounds: ['VBIASN', 'VBIASP'] });
+  const report = analyzeSmallSignalV2(cascodeBranches(), { input: 'VIN.p', output: 'VOUT.p', acGrounds: ['VBIASN', 'VBIASP'] });
   const gui = adaptCombinedReport(report);
   assert.match(gui.dcGain.equation, /-g_\{m1\} \\,/);
   assert.doesNotMatch(gui.dcGain.equation, /\\frac/);
@@ -131,7 +131,7 @@ test('selected gm ro reduces cascode transconductance and keeps flat parallel lo
 test('topological display remains exact when all approximations are disabled', () => {
   for (const id of ['nmos-common-gate', 'nmos-common-drain', 'source-degeneration', 'nmos-cascode', 'pivot-cross-coupled-pair']) {
     const fixture = smallSignalGoldenCorpus.find((fixture) => fixture.id === id);
-    const options = { input: 'IN.p', output: 'OUT.p', millerApproximation: false,
+    const options = { input: 'VIN.p', output: 'VOUT.p', millerApproximation: false,
       ignoreBodyEffect: false, gmroLarge: false, ...(id.includes('cascode') ? { acGrounds: ['VBIAS'] } : {}) };
     const report = analyzeSmallSignalV2(fixture.build(), options);
     assert.equal(report.ok, true, `${id}: ${report.error}`);

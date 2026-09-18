@@ -139,16 +139,16 @@ test('carries network-pre-reduction parallel notation through to the legacy shap
   // the `equivalences` table into it, so `\|` never reached the app despite
   // being present on `analyzeSmallSignalV2`'s own return value.
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -240, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 240, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -240, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 240, y: 0 });
   circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RD', x: 0, y: -160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 160, y: 160 });
-  circuit.connect('IN.p', 'M1.g');
-  circuit.connect('M1.d', 'RD.a', 'OUT.p');
+  circuit.connect('VIN.p', 'M1.g');
+  circuit.connect('M1.d', 'RD.a', 'VOUT.p');
   circuit.connect('M1.s', 'RD.b', 'GND.gnd');
 
-  const v2 = analyzeSmallSignalV2(circuit, { input: 'IN.p', output: 'OUT.p' });
+  const v2 = analyzeSmallSignalV2(circuit, { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(v2.ok, true, v2.error);
   const legacy = adaptCombinedReport(v2);
   assert.equal(legacy.dcOutputImpedance.equation, 'Z_{out}(0) = r_{o1} \\parallel R_{D}');

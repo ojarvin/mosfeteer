@@ -434,9 +434,12 @@ voltage or current letter and a subscript for the rest: `V_{INP}`,
 `V_{INN}`, `V_{BIAS}`, `V_{OUT}`, `V_{DD}`, `I_{BIAS}`, `V_{REF}`. Port
 refdes use the plain connectivity form (`VINP`, `VOUT`, `BIAS`), while an
 interface pin's auto-named physical net preserves the authored label source
-(`V_{INP}`, `V_{OUT}`). For digital or control signals
-that are not naturally voltages or currents, use a concise plain name such as
-`CLK`, `RESET`, or `EN` consistently at both the port and net level.
+(`V_{INP}`, `V_{OUT}`). A port name must therefore be spellable as a refdes
+(letters, digits, and `_`, after `_{...}` markup is flattened); a node that
+needs a freer name (`N+`, `CLK/2`) is named with a net label. For digital or
+control signals that are not naturally voltages or currents, use a concise
+plain name such as `CLK`, `RESET`, or `EN` consistently at both the port and
+net level.
 Differential suffixes such as `P` / `N` are preferred over mixing them with
 `+` / `-` notation. Name nets for their purpose
 (`TAIL`, `VSS`, `VDD`, `VOUT`, `DIODE`, `BIAS`) — a net's name appears in
@@ -445,7 +448,13 @@ the editor's net list, so it should tell the reader what the node does.
 `netId` identifies one physical net and its drawable geometry. Separate
 physical nets may share a canonical name for a virtual electrical connection
 and logical grouping even without a wire between them; their physical IDs and
-drawable geometry remain separate.
+drawable geometry remain separate, and small-signal analysis solves the group
+as one node.
+
+A port's label is its component identity, so **no two ports may carry the same
+name**. Draw the virtual connection on the nets instead: give each node a wire
+stub and a net label with the shared name. Renaming a net renames the single
+port that names it, so the two never drift apart.
 
 ---
 

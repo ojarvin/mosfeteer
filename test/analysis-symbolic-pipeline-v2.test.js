@@ -36,8 +36,8 @@ function symbolicPipeline(fixtureId, options = {}) {
   let report;
   try {
     report = buildExactAnalysisPipeline(fixture, {
-      input: 'IN.p',
-      output: 'OUT.p',
+      input: 'VIN.p',
+      output: 'VOUT.p',
       ops,
       s: ops.s(),
       valueOf,
@@ -67,13 +67,13 @@ function assertRational(actual, expected, message = '') {
 
 function sourceFollower() {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -400, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 400, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -400, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 400, y: 0 });
   circuit.addComponent('nmosb', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'RS', x: 240, y: 240 });
   circuit.addComponent('ground', { refdes: 'GND', x: 480, y: 400 });
-  net(circuit, 'VIN', 'IN.p', 'M1.g');
-  net(circuit, 'VOUT', 'OUT.p', 'M1.s', 'RS.a');
+  net(circuit, 'VIN', 'VIN.p', 'M1.g');
+  net(circuit, 'VOUT', 'VOUT.p', 'M1.s', 'RS.a');
   net(circuit, 'VSS', 'M1.d', 'M1.b', 'RS.b', 'GND.gnd');
   return circuit;
 }
@@ -140,13 +140,13 @@ test('canonicalizes an RC low-pass transfer and derives its s=0 limit', () => {
 
 test('reports an RL high-pass origin zero through the production response reducer', () => {
   const circuit = new Circuit();
-  circuit.addComponent('input', { refdes: 'IN', x: -400, y: 0 });
-  circuit.addComponent('output', { refdes: 'OUT', x: 400, y: 0 });
+  circuit.addComponent('input', { refdes: 'VIN', x: -400, y: 0 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 400, y: 0 });
   circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   circuit.addComponent('inductor', { refdes: 'L1', x: 240, y: 160 });
   circuit.addComponent('ground', { refdes: 'GND', x: 480, y: 320 });
-  net(circuit, 'VIN', 'IN.p', 'R1.a');
-  net(circuit, 'VOUT', 'OUT.p', 'R1.b', 'L1.a');
+  net(circuit, 'VIN', 'VIN.p', 'R1.a');
+  net(circuit, 'VOUT', 'VOUT.p', 'R1.b', 'L1.a');
   net(circuit, 'VSS', 'L1.b', 'GND.gnd');
 
   const ops = createRationalOps({ maxOperations: 100000 });

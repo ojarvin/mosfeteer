@@ -61,15 +61,9 @@ function netByValue(circuit, value, role) {
   }
 
   const matches = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
-  if (matches.length === 1) return { ok: true, net: matches[0], value: raw };
-  if (matches.length > 1) {
-    return {
-      ok: false,
-      diagnostic: diagnostic('ambiguous-port', `${role} name "${raw}" identifies multiple physical nets`, {
-        candidates: matches.map((net) => net.id),
-      }),
-    };
-  }
+  // Several physical nets carrying one name are one node (a virtual
+  // connection), so the first of them answers for the whole group.
+  if (matches.length) return { ok: true, net: matches[0], value: raw };
   return { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${raw}"`) };
 }
 
@@ -106,7 +100,17 @@ function roleCandidates(circuit, role) {
 
 export function resolveAnalysisPort(circuit, value, role) {
   if (value != null && value !== '') return netByValue(circuit, value, role);
-  const candidates = roleCandidates(circuit, role);
+  const all = roleCandidates(circuit, role);
+  // Candidates that share a name are one node, so they cannot be ambiguous.
+  const seenNames = new Set();
+  const candidates = all.filter((net) => {
+    const name = canonicalNetName(net.name);
+    if (!name || !seenNames.has(name)) {
+      if (name) seenNames.add(name);
+      return true;
+    }
+    return false;
+  });
   if (candidates.length === 1) {
     return { ok: true, net: candidates[0], value: candidates[0].id, inferred: true };
   }
@@ -155,11 +159,47 @@ export function collectAcGrounds(circuit, values = []) {
   return { ids, diagnostics };
 }
 
-function nodeForNet(netId, acGroundIds) {
-  return netId && acGroundIds.has(netId) ? AC_GROUND : netId;
+/** Physical nets that share a canonical name are one electrical node: a
+ * deliberate virtual connection drawn without a wire (a repeated net label, or
+ * a port and a label carrying the same name). Their drawable geometry stays
+ * separate, so the solve maps every member onto the first one it meets. The
+ * returned map holds only the members that are not the representative. */
+export function virtualNetAliases(circuit) {
+  const byName = new Map();
+  for (const net of circuit.nets.values()) {
+    const name = canonicalNetName(net.name);
+    if (!name) continue;
+    // Case-sensitive, like `Circuit#logicallyConnected` and the net list's
+    // own grouping: one spelling is one name.
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(net.id);
+  }
+  const aliases = new Map();
+  for (const ids of byName.values()) {
+    for (const id of ids.slice(1)) aliases.set(id, ids[0]);
+  }
+  return aliases;
 }
 
-export function resolveMosBulk(circuit, component, acGroundIds = new Set()) {
+/** A virtual connection to an AC-reference rail grounds every member of the
+ * group, so the alias never points at a node the solve has removed. */
+function expandGroundsThroughAliases(acGroundIds, aliases) {
+  for (const [member, representative] of aliases) {
+    if (acGroundIds.has(member) || acGroundIds.has(representative)) {
+      acGroundIds.add(member);
+      acGroundIds.add(representative);
+    }
+  }
+  return acGroundIds;
+}
+
+function nodeForNet(netId, acGroundIds, aliases = null) {
+  if (!netId) return netId;
+  if (acGroundIds.has(netId)) return AC_GROUND;
+  return aliases?.get(netId) ?? netId;
+}
+
+export function resolveMosBulk(circuit, component, acGroundIds = new Set(), aliases = null) {
   if (!component || !MOS_TYPES.has(component.type)) {
     return { ok: false, diagnostic: diagnostic('not-mos', 'bulk resolution requires a MOS component') };
   }
@@ -180,7 +220,7 @@ export function resolveMosBulk(circuit, component, acGroundIds = new Set()) {
       kind: 'explicit',
       reference: null,
       netId: net.id,
-      node: nodeForNet(net.id, acGroundIds),
+      node: nodeForNet(net.id, acGroundIds, aliases),
     };
   }
   const reference = component.type.startsWith('pmos') ? 'VDD' : 'VSS';
@@ -194,13 +234,13 @@ export function resolveMosBulk(circuit, component, acGroundIds = new Set()) {
   };
 }
 
-function normalizedPort(result, role, acGroundIds) {
+function normalizedPort(result, role, acGroundIds, aliases) {
   return {
     role,
     value: result.value,
     netId: result.net.id,
     name: canonicalNetName(result.net.name) || result.net.id,
-    node: nodeForNet(result.net.id, acGroundIds),
+    node: nodeForNet(result.net.id, acGroundIds, aliases),
     inferred: result.inferred === true,
   };
 }
@@ -254,11 +294,13 @@ export function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}
   ];
   const groundResult = collectAcGrounds(circuit, groundValues);
   diagnostics.push(...groundResult.diagnostics);
+  const virtualAliases = virtualNetAliases(circuit);
+  expandGroundsThroughAliases(groundResult.ids, virtualAliases);
 
-  const input = inputResult.ok ? normalizedPort(inputResult, 'input', groundResult.ids) : null;
-  const output = outputResult.ok ? normalizedPort(outputResult, 'output', groundResult.ids) : null;
-  if (input && output && input.netId === output.netId) {
-    diagnostics.push(diagnostic('same-port', 'input and output must be different physical nets', {
+  const input = inputResult.ok ? normalizedPort(inputResult, 'input', groundResult.ids, virtualAliases) : null;
+  const output = outputResult.ok ? normalizedPort(outputResult, 'output', groundResult.ids, virtualAliases) : null;
+  if (input && output && input.node === output.node) {
+    diagnostics.push(diagnostic('same-port', 'input and output must be different nodes', {
       input: input.netId,
       output: output.netId,
     }));
@@ -270,17 +312,20 @@ export function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}
   const bulks = new Map();
   for (const component of circuit.components.values()) {
     if (!MOS_TYPES.has(component.type)) continue;
-    const result = resolveMosBulk(circuit, component, groundResult.ids);
+    const result = resolveMosBulk(circuit, component, groundResult.ids, virtualAliases);
     if (result.ok) bulks.set(component.refdes, result);
     else diagnostics.push(result.diagnostic);
   }
 
-  const nodeAliases = new Map([...groundResult.ids].map((id) => [id, AC_GROUND]));
+  const nodeAliases = new Map([
+    ...virtualAliases,
+    ...[...groundResult.ids].map((id) => [id, AC_GROUND]),
+  ]);
   const terminalNodes = new Map();
   for (const component of circuit.components.values()) {
     for (const terminal of component.def?.terminals || []) {
       const net = componentTerminalNet(circuit, component, terminal.name);
-      if (net) terminalNodes.set(`${component.refdes}.${terminal.name}`, nodeForNet(net.id, groundResult.ids));
+      if (net) terminalNodes.set(`${component.refdes}.${terminal.name}`, nodeForNet(net.id, groundResult.ids, virtualAliases));
     }
   }
   const referenceNodes = new Map([
