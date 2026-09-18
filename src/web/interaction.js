@@ -47,6 +47,18 @@ export function moveAnnotationEndpoint(label, endpoint, p) {
   return !invalid;
 }
 
+/** A label's anchor is the center of its box, so re-measuring its text moves
+ * both edges by half the change. An aligned label's meaning is its own edge —
+ * an analysis annotation is placed flush with the figure's left edge — so
+ * return how far the anchor must move to leave that edge where it was. */
+export function alignedAnchorShift(align, beforeWidth, afterWidth) {
+  const delta = (Number(afterWidth) - Number(beforeWidth)) / 2;
+  if (!Number.isFinite(delta) || delta === 0) return 0;
+  if (align === 'left') return delta;
+  if (align === 'right') return -delta;
+  return 0;
+}
+
 /** Platform-neutral modifier policy shared by every selectable editor role. */
 export function isSelectionModifier({ shiftKey = false, ctrlKey = false, metaKey = false } = {}) {
   return !!(shiftKey || ctrlKey || metaKey);

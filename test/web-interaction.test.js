@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -45,6 +45,17 @@ test('every tool cursor is fetched up front so a keyboard tool change paints one
     'wire-diagonal|true|false', 'trash|true|false', 'trash|false|true', 'trash|true|true']) {
     assert.ok(built.includes(key), `missing preloaded cursor ${key}`);
   }
+});
+
+test('an aligned label keeps its own edge when its measured box changes', () => {
+  // The anchor is the box center, so half of a width change moves with it.
+  assert.equal(alignedAnchorShift('left', 560, 640), 40);
+  assert.equal(alignedAnchorShift('right', 560, 640), -40);
+  assert.equal(alignedAnchorShift('left', 640, 560), -40);
+  // A centered label stays centered, and an unchanged box never moves.
+  assert.equal(alignedAnchorShift('center', 560, 640), 0);
+  assert.equal(alignedAnchorShift('left', 560, 560), 0);
+  assert.equal(alignedAnchorShift('left', 560, Number.NaN), 0);
 });
 
 test('MathML annotation measurements are independent of zoom on reload', () => {

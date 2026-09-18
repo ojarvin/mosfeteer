@@ -33,7 +33,7 @@ import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
+import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -3357,11 +3357,25 @@ if (!mathFontReady) {
   const releaseMathMeasurement = () => {
     if (mathFontReady) return;
     mathFontReady = true;
-    for (const label of circuit.labels.values()) if (label.math) label.clearRenderedTextBounds();
+    for (const label of circuit.labels.values()) if (label.math) label.clearMeasuredTextBounds();
     scheduleMeasuredLabelRender();
   };
   // Release on failure too: a fallback-metric box beats never measuring.
   document.fonts.load(MATH_FONT_PROBE).then(releaseMathMeasurement, releaseMathMeasurement);
+}
+
+// A label's anchor is the center of its box, but for an aligned free
+// annotation the meaning is its aligned edge: analysis annotations are placed
+// flush with the figure's left edge. Re-measuring — a font change, new browser
+// metrics — then slides that edge by half the width change, which is what
+// makes a saved equation stack drift sideways when it is reopened. Box widths
+// are even cell multiples, so half a change stays on the grid.
+function keepAlignedEdge(label, before) {
+  if (label.netId || label.owner) return; // anchored to a wire or a component
+  const shift = alignedAnchorShift(label.align, before.w, label.bbox().w);
+  if (!shift) return;
+  const anchor = label.anchorWorld();
+  label.moveTo(anchor.x + shift, anchor.y);
 }
 
 function syncRenderedLabelMetrics() {
@@ -3379,7 +3393,11 @@ function syncRenderedLabelMetrics() {
     // feed a later container-size measurement back into the model or a
     // foreignObject can resize itself forever. Text edits clear this runtime
     // metric and allow one fresh pass.
-    if (!label._renderedTextBounds) changed = label.setRenderedTextBounds(bounds.w, bounds.h) || changed;
+    if (label._renderedTextBounds) continue;
+    const before = label.bbox();
+    if (!label.setRenderedTextBounds(bounds.w, bounds.h)) continue;
+    keepAlignedEdge(label, before);
+    changed = true;
   }
   return reflowEquationAnnotations() || changed;
 }

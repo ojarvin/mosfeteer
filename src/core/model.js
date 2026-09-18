@@ -680,6 +680,17 @@ export class LabelInstance {
     return true;
   }
 
+  /** Drop only the runtime browser measurement and keep the persisted math
+   * footprint. A label that must measure again (the math font has just
+   * arrived, say) still reports the saved box until it does, so the position
+   * it was aligned to stays the reference. */
+  clearMeasuredTextBounds() {
+    if (!this._renderedTextBounds) return false;
+    this._renderedTextBounds = null;
+    this.circuit.invalidateRoutingCache();
+    return true;
+  }
+
   clearRenderedTextBounds() {
     if (!this._renderedTextBounds && !this._mathBox) return false;
     this._renderedTextBounds = null;
