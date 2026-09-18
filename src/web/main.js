@@ -1415,14 +1415,25 @@ function referenceGroupNets(netOrInfo) {
   return [...circuit.nets.values()].filter((candidate) => unnamedReferenceInfoForNet(candidate)?.globalName === info.globalName);
 }
 
+function namedNetGroupKey(net) {
+  if (!net?.id) return '';
+  const info = unnamedReferenceInfoForNet(net);
+  return `name:${info?.globalName || net.name || net.id}`;
+}
+
+function namedGroupNets(net) {
+  if (!net?.id) return referenceGroupNets(net);
+  const key = namedNetGroupKey(net);
+  return [...circuit.nets.values()].filter((candidate) => namedNetGroupKey(candidate) === key);
+}
+
 function visibleNets() {
   if (!visibleNetsCache || visibleNetsCache.revision !== modelRevision) {
     const grouped = new Map();
     const nets = [...circuit.nets.values()]
       .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2));
     for (const net of nets) {
-      const info = unnamedReferenceInfoForNet(net);
-      const key = info ? `reference:${info.globalName}` : `net:${net.id}`;
+      const key = namedNetGroupKey(net);
       if (!grouped.has(key)) grouped.set(key, net);
     }
     visibleNetsCache = {
@@ -7365,7 +7376,7 @@ function completeAnalysisPick(world) {
     : pickWire(world)?.net;
   const optionNet = net && [...select.options].find((option) => option.value === net.id)
     ? net
-    : net && visibleNets().find((candidate) => referenceGroupNets(candidate).some((member) => member.id === net.id));
+    : net && visibleNets().find((candidate) => namedGroupNets(candidate).some((member) => member.id === net.id));
   if (!optionNet) {
     logLine('Click a wire or a connected pin to choose a net.', 'error');
     return;
@@ -7374,7 +7385,7 @@ function completeAnalysisPick(world) {
   select.dispatchEvent(new Event('change', { bubbles: true }));
   logLine(`${select.labels?.[0]?.textContent || 'Analysis node'}: ${optionNet.name || optionNet.id}`, 'status');
   setAnalysisPick(null);
-  selectedNets = new Set(referenceGroupNets(optionNet).map((member) => member.id));
+  selectedNets = new Set(namedGroupNets(optionNet).map((member) => member.id));
   render();
 }
 
@@ -7624,10 +7635,10 @@ function selectContextNet(target, { namedGroup = false, segment = false } = {}) 
   if (!net) return;
   const candidates = namedGroup && net.name
     ? [...circuit.nets.values()].filter((candidate) => candidate.name === net.name)
-    : referenceGroupNets(net);
+    : namedGroupNets(net);
   setSelection([], null, true);
   setLabelSelection([], null, true);
-  selectedNets = new Set(candidates.flatMap((candidate) => referenceGroupNets(candidate).map((item) => item.id)));
+  selectedNets = new Set(candidates.flatMap((candidate) => namedGroupNets(candidate).map((item) => item.id)));
   selectedWire = null;
   selectedWires.clear();
   if (segment && target.kind === 'wire') {
@@ -7916,7 +7927,7 @@ function selectContextTarget(target) {
     if (!net || selectedNets.has(net.id)) return;
     setSelection([]);
     setLabelSelection([]);
-    selectedNets = new Set(referenceGroupNets(net).map((member) => member.id));
+    selectedNets = new Set(namedGroupNets(net).map((member) => member.id));
   }
 }
 
@@ -9841,9 +9852,9 @@ function renderNets() {
     netsListEl.innerHTML = `<div class="no-items">${allNets.length ? 'No matching nets' : 'No nets'}</div>`;
     return;
   }
-  const primaryNet = nets.find((net) => referenceGroupNets(net).some((candidate) => selectedNets.has(candidate.id)));
+  const primaryNet = nets.find((net) => namedGroupNets(net).some((candidate) => selectedNets.has(candidate.id)));
   for (const net of nets) {
-    const groupedNets = referenceGroupNets(net);
+    const groupedNets = namedGroupNets(net);
     const groupedIds = groupedNets.map((candidate) => candidate.id);
     const groupSelected = groupedIds.some((id) => selectedNets.has(id));
     const row = document.createElement('div');
@@ -9860,10 +9871,13 @@ function renderNets() {
 
     const meta = document.createElement('span');
     meta.className = 'meta';
-    const pins = net.terminals.length;
-    const analysisTag = net.analysis?.acGround ? ' · AC ground' : net.analysis?.role ? ` · ${net.analysis.role}` : '';
+    const terminalKeys = new Set(groupedNets.flatMap((grouped) => grouped.terminals.map((terminal) => `${terminal.comp}.${terminal.term}`)));
+    const pins = terminalKeys.size;
+    const analysisNet = groupedNets.find((grouped) => grouped.analysis?.acGround || grouped.analysis?.role) || net;
+    const analysisTag = analysisNet.analysis?.acGround ? ' · AC ground' : analysisNet.analysis?.role ? ` · ${analysisNet.analysis.role}` : '';
     meta.textContent = `${pins} ${pins === 1 ? 'pin' : 'pins'}${analysisTag}`;
-    row.title = `${net.id} · ${pins} ${pins === 1 ? 'terminal' : 'terminals'} · ${net.length()} units of wire${net.analysis?.acGround ? ' · DC bias / AC ground' : ''}`;
+    const wireLength = groupedNets.reduce((total, grouped) => total + grouped.length(), 0);
+    row.title = `${groupedNets.map((grouped) => grouped.id).join(', ')} · ${pins} ${pins === 1 ? 'terminal' : 'terminals'} · ${wireLength} units of wire${analysisNet.analysis?.acGround ? ' · DC bias / AC ground' : ''}`;
 
     row.appendChild(ref);
     row.appendChild(meta);
@@ -9899,7 +9913,7 @@ function renderNets() {
         const ids = rangeValues(nets, netRangeAnchor, net.id, (item) => item.id);
         const next = ev.ctrlKey || ev.metaKey ? new Set(selectedNets) : new Set();
         for (const id of (ids.length ? ids : [net.id])) {
-          for (const grouped of referenceGroupNets(circuit.nets.get(id))) next.add(grouped.id);
+          for (const grouped of namedGroupNets(circuit.nets.get(id))) next.add(grouped.id);
         }
         selectedNets = next;
       } else if (ev.ctrlKey || ev.metaKey) {
