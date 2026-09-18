@@ -1640,7 +1640,9 @@ function selectedLabels() {
 function selectedLabel() {
   return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
 }
-function moveLabelOriginsOnce(origins, dx, dy) {
+/** Move each recorded label from its origin, parents before children; a
+ *  parent's move already carries its descendants, so skip those. */
+function moveLabelTree(origins, move) {
   const pending = new Map(origins);
   while (pending.size) {
     const entry = [...pending].find(([id]) => {
@@ -1651,7 +1653,7 @@ function moveLabelOriginsOnce(origins, dx, dy) {
     const [id, origin] = entry;
     const label = circuit.labels.get(id);
     if (label) {
-      moveLabelSafely(label, origin.x + dx, origin.y + dy);
+      move(label, origin);
       for (const [childId] of pending) {
         let parent = circuit.labels.get(childId)?.parent;
         while (parent) {
@@ -1662,6 +1664,10 @@ function moveLabelOriginsOnce(origins, dx, dy) {
     }
     pending.delete(id);
   }
+}
+
+function moveLabelOriginsOnce(origins, dx, dy) {
+  moveLabelTree(origins, (label, origin) => moveLabelSafely(label, origin.x + dx, origin.y + dy));
 }
 /** Text-bearing selection: labels (with the captions of selected shapes) plus, in block diagrams, blocks. */
 function selectedTextTargets() {
@@ -3711,19 +3717,9 @@ function hasSelectableObjectAt(world) {
     annotationTextAt(world) || annotationGeometryAt(world) || pickWire(world) || pickAt(world));
 }
 
+/** `matchAt` for an unsnapped world point. */
 function pickAt(w) {
-  const x = snap(w.x);
-  const y = snap(w.y);
-  for (const c of sortedComps()) {
-    for (const t of c.worldTerminals()) {
-      if (t.x === x && t.y === y) return { refdes: c.refdes, term: t.name };
-    }
-  }
-  for (const c of sortedComps()) {
-    const r = c.bboxWorld();
-    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return { refdes: c.refdes };
-  }
-  return null;
+  return matchAt(snap(w.x), snap(w.y));
 }
 
 /** Pick the nearest net route within a forgiving screen-sized hit area.
@@ -4523,15 +4519,7 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
     return false;
   }
   const dragRuns = runs.filter((r) => r.orient === primary.orient);
-  const netSnapshots = new Map();
-  for (const r of dragRuns) {
-    if (netSnapshots.has(r.net.id)) continue;
-    netSnapshots.set(r.net.id, {
-      id: r.net.id,
-      net: r.net,
-      ...captureRouteGeometry(r.net),
-    });
-  }
+  const netSnapshots = captureRunNetGeometry(dragRuns);
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
   drag = {
     mode: 'wireseg',
@@ -4586,7 +4574,7 @@ function canvasMouseDown(ev) {
     return;
   }
   if (b === 2) {
-    const hit = blockDocument ? null : matchAt(snap(startWorld.x), snap(startWorld.y));
+    const hit = blockDocument ? null : pickAt(startWorld);
     if (hit?.refdes && circuit.components.has(hit.refdes)) {
       ev.preventDefault();
       drag = null;
@@ -4817,7 +4805,7 @@ function canvasMouseDown(ev) {
       movePending = true;
       return;
     }
-    const moveHit = matchAt(snap(startWorld.x), snap(startWorld.y));
+    const moveHit = pickAt(startWorld);
     if (moveHit?.refdes && circuit.components.has(moveHit.refdes)) {
       cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
       armModalMove(moveHit, startWorld, startClient);
@@ -5122,15 +5110,7 @@ function canvasMouseDown(ev) {
     // shifts a run sideways). Same-orientation runs move as a group; selected
     // runs of the other orientation stay put (still selected, still deletable).
     const dragRuns = runs.filter((r) => r.orient === primary.orient);
-    const netSnapshots = new Map();
-    for (const r of dragRuns) {
-      if (netSnapshots.has(r.net.id)) continue;
-      netSnapshots.set(r.net.id, {
-        id: r.net.id,
-        net: r.net,
-        ...captureRouteGeometry(r.net),
-      });
-    }
+    const netSnapshots = captureRunNetGeometry(dragRuns);
     cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
     drag = {
       mode: 'wireseg',
@@ -5352,6 +5332,16 @@ function captureNetGeometry(net) {
     fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
   };
 }
+/** One route snapshot per distinct net behind a set of dragged wire runs. */
+function captureRunNetGeometry(runs) {
+  const snapshots = new Map();
+  for (const run of runs) {
+    if (snapshots.has(run.net.id)) continue;
+    snapshots.set(run.net.id, { id: run.net.id, net: run.net, ...captureRouteGeometry(run.net) });
+  }
+  return snapshots;
+}
+
 function snappedDragDelta(startWorld, currentWorld) {
   return {
     dx: snap(currentWorld.x - startWorld.x),
@@ -5525,7 +5515,7 @@ function beginCopySource(startWorld, startClient) {
     const label = pickLabel(startWorld);
     const annotation = annotationGeometryAt(startWorld);
     const wireHit = pickWire(startWorld);
-    const hit = matchAt(snap(startWorld.x), snap(startWorld.y));
+    const hit = pickAt(startWorld);
     if (annotation) {
       setLabelSelection([annotation.id]);
     } else if (label?.netId) {
@@ -5553,7 +5543,7 @@ function beginCopySource(startWorld, startClient) {
 function deleteAtPoint(world) {
   const label = pickLabel(world) || annotationGeometryAt(world);
   const hitWire = pickWire(world);
-  const hitComp = matchAt(snap(world.x), snap(world.y));
+  const hitComp = pickAt(world);
   if (label) {
     commit(() => circuit.removeLabel(label.id));
     clearCheckReport();
@@ -5720,12 +5710,7 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
       blockDrag.invalid = false;
       renderCanvas();
     } catch (err) {
-      circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
-      blockDrag.invalid = true;
-      blockDrag.invalidReason = err.message;
-      blockDrag.delta = { x: dx, y: dy };
-      blockDrag.moved = true;
-      renderCanvas();
+      rejectBlockDragPreview(err, dx, dy);
     }
     return;
   }
@@ -5746,13 +5731,18 @@ function blockCanvasMouseMove(ev, w, cursorChanged) {
     blockDrag.invalid = false;
     renderCanvas();
   } catch (err) {
-    circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
-    blockDrag.invalid = true;
-    blockDrag.invalidReason = err.message;
-    blockDrag.delta = { x: dx, y: dy };
-    blockDrag.moved = true;
-    renderCanvas();
+    rejectBlockDragPreview(err, dx, dy);
   }
+}
+
+/** An invalid block-drag preview keeps the pre-drag document and shows why. */
+function rejectBlockDragPreview(err, dx, dy) {
+  circuit = loadDocument(JSON.parse(blockDrag.startSnapshot));
+  blockDrag.invalid = true;
+  blockDrag.invalidReason = err.message;
+  blockDrag.delta = { x: dx, y: dy };
+  blockDrag.moved = true;
+  renderCanvas();
 }
 
 function updateCursorFromEvent(ev) {
@@ -6666,17 +6656,11 @@ function contextCandidates(target, criterion) {
     return criterion === 'type' ? all.filter((candidate) => candidate.kind === target.kind) : all;
   }
   if (criterion === 'color' || criterion === 'lineStyle') {
-    const candidates = [...circuit.components.values()].map((value) => ({ kind: 'component', value }));
-    candidates.push(...[...circuit.labels.values()].map((value) => ({ kind: 'label', value })));
-    for (const net of circuit.nets.values()) {
-      const paths = net.paths();
-      for (let branch = 0; branch < paths.length; branch++) {
-        for (let segment = 1; segment < paths[branch].length; segment++) {
-          candidates.push({ kind: 'wire', value: { net, branch, segment } });
-        }
-      }
-    }
-    return candidates;
+    return [
+      ...[...circuit.components.values()].map((value) => ({ kind: 'component', value })),
+      ...[...circuit.labels.values()].map((value) => ({ kind: 'label', value })),
+      ...wireCandidates(),
+    ];
   }
   if (target.kind === 'component') {
     return [...circuit.components.values()].map((value) => ({ kind: 'component', value }));
@@ -6687,6 +6671,11 @@ function contextCandidates(target, criterion) {
   if (target.kind === 'net') {
     return [...circuit.nets.values()].map((value) => ({ kind: 'net', value }));
   }
+  return wireCandidates();
+}
+
+/** Every drawn wire segment as a context-menu candidate. */
+function wireCandidates() {
   const candidates = [];
   for (const net of circuit.nets.values()) {
     const paths = net.paths();
@@ -7707,7 +7696,7 @@ canvasEl.addEventListener('contextmenu', (ev) => {
   const world = clientToWorld(ev.clientX, ev.clientY);
   const label = pickLabel(world);
   const annotation = annotationGeometryAt(world);
-  const hit = matchAt(snap(world.x), snap(world.y));
+  const hit = pickAt(world);
   const wire = pickWire(world);
   const labelNet = label?.netId ? circuit.nets.get(label.netId) : null;
   const target = label
@@ -8367,27 +8356,7 @@ function selectedBlockLabelOrigins() {
 }
 
 function moveBlockLabelOrigins(origins, dx, dy) {
-  const pending = new Map(origins);
-  while (pending.size) {
-    const entry = [...pending].find(([id]) => {
-      const label = circuit.labels.get(id);
-      return !label?.parent || !pending.has(label.parent);
-    });
-    if (!entry) break;
-    const [id, origin] = entry;
-    const label = circuit.labels.get(id);
-    if (label) {
-      label.moveTo(origin.anchor.x + dx, origin.anchor.y + dy);
-      for (const [childId] of pending) {
-        let parent = circuit.labels.get(childId)?.parent;
-        while (parent) {
-          if (parent === id) { pending.delete(childId); break; }
-          parent = circuit.labels.get(parent)?.parent;
-        }
-      }
-    }
-    pending.delete(id);
-  }
+  moveLabelTree(origins, (label, origin) => label.moveTo(origin.anchor.x + dx, origin.anchor.y + dy));
 }
 
 /** Nudge every selected object in a block diagram as one atomic operation.
@@ -9128,7 +9097,7 @@ canvasEl.addEventListener('dblclick', (ev) => {
   const label = pickLabel(w);
   if (label) inlineEditLabel(label);
   else {
-    const hit = matchAt(snap(w.x), snap(w.y));
+    const hit = pickAt(w);
     const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
     const wire = pickWire(w);
     if (component) openComponentChildLabelEditor(component);
@@ -9406,6 +9375,23 @@ function revealSelectedRow(row, key) {
   requestAnimationFrame(() => row.isConnected && row.scrollIntoView({ block: 'nearest' }));
 }
 
+/** Arrow keys walk a side-panel listbox; Enter and Space activate the row. */
+function bindListboxRowKeys(listEl, row) {
+  row.addEventListener('keydown', (ev) => {
+    const step = ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1
+      : ev.key === 'ArrowUp' || ev.key === 'ArrowLeft' ? -1 : 0;
+    if (step) {
+      const rows = [...listEl.querySelectorAll('[role="option"]')];
+      rows[(rows.indexOf(row) + step + rows.length) % rows.length]?.focus();
+      ev.preventDefault();
+      return;
+    }
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault();
+    row.click();
+  });
+}
+
 function renderComponents() {
   componentsListEl.innerHTML = '';
   componentsListEl.setAttribute('role', 'listbox');
@@ -9528,19 +9514,7 @@ function renderComponents() {
       else if (comp.type === 'block') inlineEditSchematicBlock(comp);
       else startComponentRename(comp, ref);
     });
-    row.addEventListener('keydown', (ev) => {
-      if (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' || ev.key === 'ArrowUp' || ev.key === 'ArrowLeft') {
-        const rows = [...componentsListEl.querySelectorAll('[role="option"]')];
-        const index = rows.indexOf(row);
-        const next = rows[(index + (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1 : -1) + rows.length) % rows.length];
-        next?.focus();
-        ev.preventDefault();
-        return;
-      }
-      if (ev.key !== 'Enter' && ev.key !== ' ') return;
-      ev.preventDefault();
-      row.click();
-    });
+    bindListboxRowKeys(componentsListEl, row);
 
     componentsListEl.appendChild(row);
     if (comp.refdes === primaryRef) revealSelectedRow(row, `component:${primaryRef}`);
@@ -9640,19 +9614,7 @@ function renderNets() {
       // detection above covers the row-replacing re-render case).
       startNetRename(net, ref);
     });
-    row.addEventListener('keydown', (ev) => {
-      if (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' || ev.key === 'ArrowUp' || ev.key === 'ArrowLeft') {
-        const rows = [...netsListEl.querySelectorAll('[role="option"]')];
-        const index = rows.indexOf(row);
-        const next = rows[(index + (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1 : -1) + rows.length) % rows.length];
-        next?.focus();
-        ev.preventDefault();
-        return;
-      }
-      if (ev.key !== 'Enter' && ev.key !== ' ') return;
-      ev.preventDefault();
-      row.click();
-    });
+    bindListboxRowKeys(netsListEl, row);
 
     netsListEl.appendChild(row);
     if (net === primaryNet) revealSelectedRow(row, `net:${net.id}`);
