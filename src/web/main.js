@@ -33,7 +33,7 @@ import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, worldAndCursorFromClient } from './interaction.js';
+import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -2617,6 +2617,18 @@ function deleteSelection() {
 
 function moveCursor(cellsX, cellsY) {
   cursor = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
+  followCursor();
+}
+
+/** Arrow keys can walk the cursor (and any ghost or selection riding it) past
+ * the edge of the view, so the view follows it out rather than leaving the
+ * work off-screen. Mouse-driven cursor moves need no help: the pointer cannot
+ * leave the canvas. */
+function followCursor() {
+  const origin = viewFollowingCursor(view, cursor, GRID);
+  if (!origin) return false;
+  view = { ...view, ...origin };
+  return true;
 }
 
 /** Fit the view to all contents (F), preserving the pane aspect ratio so the
@@ -10283,6 +10295,7 @@ function onNormalKey(key, shiftKey = false) {
       const a = labs.length ? labs[0].anchorWorld() : null;
       if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       else if (a) cursor = { x: a.x, y: a.y };
+      followCursor();
     } else {
       moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
     }

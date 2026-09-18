@@ -186,7 +186,7 @@ The agent/CLI workflow is on hold but kept working. A CLI circuit name maps to `
 - Delete: `dd`, Delete, or Backspace deletes the selected component/label/net/wire set. With no selection Delete/Backspace arms persistent Delete mode; clicks delete until Escape. In Wire mode Backspace removes the latest uncommitted vertex.
 - History: `u`/Ctrl+Z undo; `U`/Ctrl+Y redo. Insert-search typing treats `u` as query text. Undo while a ghost is active cancels an uncommitted ghost first; undo while Copy/Move is armed removes only the last action and re-arms the tool. Copy-ghost undo cancels the uncommitted ghost before undoing its last committed copy.
 - Paste/style/save: `p` / Ctrl/Cmd+V one-shot paste; `y` / Ctrl/Cmd+C copy aliases; Ctrl/Cmd+Shift+V style paste; Ctrl/Cmd+S save; Ctrl/Cmd+Shift+S save as; Ctrl/Cmd+O open file. The Save button is enabled only for local changes, including a valid name for a new empty circuit.
-- Cursor/view: arrow keys move the cursor where applicable; F fits; D toggles dark mode; `#` grid; C crosshair; `?` help (Escape closes). Ctrl+i toggles italic and Ctrl+b bold on selected labels. `Ctrl+Shift+r` is intentionally unbound.
+- Cursor/view: arrow keys move the cursor where applicable, and the view follows it out of frame — `interaction.js` `viewFollowingCursor` scrolls the minimum that leaves a one-cell margin, so holding a key walks the drawing past the edge steadily; a nudged selection carries the cursor and scrolls the same way, while mouse-driven cursor moves never scroll. F fits; D toggles dark mode; `#` grid; C crosshair; `?` help (Escape closes). Ctrl+i toggles italic and Ctrl+b bold on selected labels. `Ctrl+Shift+r` is intentionally unbound.
 
 ## Verification and test-environment facts
 

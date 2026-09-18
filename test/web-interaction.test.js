@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, viewFollowingCursor, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -56,6 +56,19 @@ test('an aligned label keeps its own edge when its measured box changes', () => 
   assert.equal(alignedAnchorShift('center', 560, 640), 0);
   assert.equal(alignedAnchorShift('left', 560, 560), 0);
   assert.equal(alignedAnchorShift('left', 560, Number.NaN), 0);
+});
+
+test('the view follows the cursor out of frame, minimally and with a margin', () => {
+  const view = { x: 0, y: 0, w: 400, h: 400 };
+  assert.equal(viewFollowingCursor(view, { x: 200, y: 200 }, 40), null, 'no scroll while inside');
+  assert.equal(viewFollowingCursor(view, { x: 360, y: 40 }, 40), null, 'the margin edge is still inside');
+  // Scrolling stops as soon as the cursor is one margin inside the frame.
+  assert.deepEqual(viewFollowingCursor(view, { x: 420, y: 200 }, 40), { x: 60, y: 0 });
+  assert.deepEqual(viewFollowingCursor(view, { x: 200, y: -80 }, 40), { x: 0, y: -120 });
+  assert.deepEqual(viewFollowingCursor(view, { x: -40, y: 440 }, 40), { x: -80, y: 80 });
+  // A margin wider than the view cannot pin the cursor mid-screen.
+  assert.deepEqual(viewFollowingCursor({ x: 0, y: 0, w: 80, h: 80 }, { x: 120, y: 40 }, 400), { x: 60, y: 0 });
+  assert.equal(viewFollowingCursor(null, { x: 0, y: 0 }, 40), null);
 });
 
 test('MathML annotation measurements are independent of zoom on reload', () => {

@@ -59,6 +59,24 @@ export function alignedAnchorShift(align, beforeWidth, afterWidth) {
   return 0;
 }
 
+/** Scroll the view just far enough to keep the keyboard cursor inside it,
+ * leaving a margin so the cursor never rides the frame. Returns the new view
+ * origin, or null when the cursor is already inside that margin. The scroll is
+ * minimal, so holding an arrow key walks the drawing past the edge steadily
+ * instead of jumping a page at a time. */
+export function viewFollowingCursor(view, cursor, margin = 0) {
+  if (!view || !cursor) return null;
+  const gap = Math.max(0, Math.min(margin, view.w / 4, view.h / 4));
+  const shift = (position, start, size) => {
+    if (position < start + gap) return position - gap - start;
+    if (position > start + size - gap) return position - (start + size - gap);
+    return 0;
+  };
+  const dx = shift(cursor.x, view.x, view.w);
+  const dy = shift(cursor.y, view.y, view.h);
+  return dx || dy ? { x: view.x + dx, y: view.y + dy } : null;
+}
+
 /** Platform-neutral modifier policy shared by every selectable editor role. */
 export function isSelectionModifier({ shiftKey = false, ctrlKey = false, metaKey = false } = {}) {
   return !!(shiftKey || ctrlKey || metaKey);
