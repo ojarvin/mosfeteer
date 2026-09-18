@@ -2733,6 +2733,77 @@ function renameLabelThroughModel(label, text) {
   return label.setText(text);
 }
 
+function interfacePortNet(component) {
+  if (!component || !INTERFACE_PIN_TYPES.has(component.type)) return null;
+  try { return circuit.netOfTerminal({ comp: component.refdes, term: 'p' }); }
+  catch { return null; }
+}
+
+function sameNamedConnection(left, right) {
+  const a = String(left ?? '').trim();
+  const b = String(right ?? '').trim();
+  return !!a && !!b && (a === b || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
+}
+
+/** Find named nets or interface ports that a new name would virtually join. */
+function namedConnectionConflicts(name, { netId = null, ownerRefdes = null } = {}) {
+  const wanted = String(name ?? '').trim();
+  if (!wanted) return [];
+  const owner = ownerRefdes ? circuit.components.get(ownerRefdes) : null;
+  const targetNet = netId ? circuit.nets.get(netId) : interfacePortNet(owner);
+  const targetMembers = new Set(targetNet?.terminals?.map((terminal) => terminal.comp) || []);
+  const conflicts = [];
+  const seen = new Set();
+  for (const component of circuit.components.values()) {
+    if (!INTERFACE_PIN_TYPES.has(component.type) || component.refdes === ownerRefdes) continue;
+    const label = circuit.labelOf(component.refdes);
+    const portName = label?.text || component.refdes;
+    if (!sameNamedConnection(portName, wanted)) continue;
+    const portNet = interfacePortNet(component);
+    if (targetNet && portNet?.id === targetNet.id) continue;
+    const key = `port:${component.refdes}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    conflicts.push({ kind: 'port', component, net: portNet });
+  }
+  for (const net of circuit.nets.values()) {
+    if (net.id === targetNet?.id || !net.name || !sameNamedConnection(net.name, wanted)) continue;
+    if (net.terminals.some((terminal) => targetMembers.has(terminal.comp))) continue;
+    const key = `net:${net.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    conflicts.push({ kind: 'net', net });
+  }
+  return conflicts;
+}
+
+function sharedInterfaceNameTarget(label, text, conflicts) {
+  const owner = label?.owner ? circuit.components.get(label.owner) : null;
+  if (!owner || !INTERFACE_PIN_TYPES.has(owner.type)) return false;
+  const next = normalizeComponentRefdes(text);
+  return conflicts.some((conflict) => conflict.kind === 'port'
+    && conflict.component
+    && normalizeComponentRefdes(conflict.component.refdes) === next);
+}
+
+async function confirmNamedConnection(name, conflicts) {
+  const port = conflicts.find((conflict) => conflict.kind === 'port')?.component;
+  const target = port ? `port ${port.refdes}` : 'an existing named net';
+  return confirmChoice({
+    title: 'Connect named nets?',
+    message: `The name ${name} is already used by ${target}. Connect this net virtually to the existing name?`,
+    confirmLabel: 'Connect',
+    cancelLabel: 'Keep separate',
+  });
+}
+
+function applySharedInterfaceName(label, text) {
+  const owner = label?.owner ? circuit.components.get(label.owner) : null;
+  if (!owner || !INTERFACE_PIN_TYPES.has(owner.type)) return false;
+  circuit.setInterfacePinName(owner.refdes, text);
+  return true;
+}
+
 function restoreProvisionalLabel(label, initialName = '') {
   const net = label?.netId ? circuit.nets.get(label.netId) : null;
   if (label && circuit.labels.has(label.id)) circuit.removeLabel(label.id);
@@ -9422,12 +9493,34 @@ function inlineEditLabel(label, options = {}) {
   if (equationDraft) input.setSelectionRange(Math.min(1, input.value.length), Math.min(1, input.value.length));
   else input.select();
   let closed = false;
-  const done = (applyText) => {
-    if (closed) return;
+  let prompting = false;
+  const done = async (applyText) => {
+    if (closed || prompting) return;
+    const v = input.value.trim();
+    const owner = label.owner ? circuit.components.get(label.owner) : null;
+    const namesNet = !!label.netId || !!(owner && INTERFACE_PIN_TYPES.has(owner.type));
+    let sharedInterface = false;
+    if (applyText && v && v !== label.text && namesNet) {
+      const targetNet = label.netId ? circuit.nets.get(label.netId) : interfacePortNet(owner);
+      const conflicts = namedConnectionConflicts(v, {
+        netId: targetNet?.id || null,
+        ownerRefdes: owner?.refdes || null,
+      });
+      if (conflicts.length) {
+        prompting = true;
+        const connect = await confirmNamedConnection(v, conflicts);
+        prompting = false;
+        if (!connect) {
+          input.focus();
+          input.select();
+          return false;
+        }
+        sharedInterface = sharedInterfaceNameTarget(label, v, conflicts);
+      }
+    }
     closed = true;
     inlineInput = null;
     measure.remove();
-    const v = input.value.trim();
     input.remove();
     if (provisional) {
       if (applyText && v) {
@@ -9459,7 +9552,10 @@ function inlineEditLabel(label, options = {}) {
     } else if (options.ownedLabelDraft) {
       if (applyText && v) {
         try {
-          if (v !== label.text) renameLabelThroughModel(label, v);
+          if (v !== label.text) {
+            if (sharedInterface) applySharedInterfaceName(label, v);
+            else renameLabelThroughModel(label, v);
+          }
           recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
           logLine(`component label edit cancelled: ${err.message}`, 'error');
@@ -9487,10 +9583,10 @@ function inlineEditLabel(label, options = {}) {
         } else if (canonical !== owner.refdes && circuit.components.has(canonical)) {
           logLine(`Component name "${canonical}" is already in use.`, 'error');
         } else {
-          commit(() => renameLabelThroughModel(label, v));
+          commit(() => sharedInterface ? applySharedInterfaceName(label, v) : renameLabelThroughModel(label, v));
         }
       } else {
-        commit(() => renameLabelThroughModel(label, v));
+        commit(() => sharedInterface ? applySharedInterfaceName(label, v) : renameLabelThroughModel(label, v));
       }
     }
     else if (options.removeOnEmpty && !v) commit(() => {
@@ -9498,6 +9594,7 @@ function inlineEditLabel(label, options = {}) {
       circuit.removeLabel(label.id);
     });
     render();
+    return true;
   };
   // Ctrl+, (comma) / Ctrl+. (period) wrap the selected text in subscript /
   // superscript markup `_{...}` / `^{...}`. Toggle off (un-wrap) by pressing
@@ -9519,8 +9616,9 @@ function inlineEditLabel(label, options = {}) {
     extraKeys: (ev) => {
       if (ev.key === 'Tab') {
         ev.preventDefault();
-        done(true);
-        cycleLabelSelection(ev.shiftKey ? -1 : 1, label.id);
+        done(true).then((committed) => {
+          if (committed) cycleLabelSelection(ev.shiftKey ? -1 : 1, label.id);
+        });
         return true;
       }
       if ((ev.ctrlKey || ev.metaKey) && (ev.key === ',' || ev.key === '.')) {
@@ -9861,27 +9959,49 @@ function startComponentRename(comp, ref) {
   input.focus();
   input.select();
   let closed = false;
-  const done = (applyText) => {
-    if (closed) return;
+  let prompting = false;
+  const done = async (applyText) => {
+    if (closed || prompting) return;
+    const value = input.value.trim();
+    const next = normalizeComponentRefdes(value);
+    const currentLabel = circuit.labelOf(comp.refdes);
+    let sharedInterface = false;
+    if (applyText && next && next !== comp.refdes && INTERFACE_PIN_TYPES.has(comp.type)) {
+      const conflicts = namedConnectionConflicts(value, { ownerRefdes: comp.refdes });
+      if (conflicts.length) {
+        prompting = true;
+        const connect = await confirmNamedConnection(value, conflicts);
+        prompting = false;
+        if (!connect) {
+          input.focus();
+          input.select();
+          return;
+        }
+        sharedInterface = sharedInterfaceNameTarget(currentLabel, value, conflicts);
+      }
+    }
     closed = true;
     inlineInput = null;
-    const next = normalizeComponentRefdes(input.value);
     input.replaceWith(ref);
     if (applyText && next && next !== comp.refdes &&
         /^[A-Za-z][A-Za-z0-9_]*$/.test(next) &&
-        !circuit.components.has(next)) {
+        (!circuit.components.has(next) || sharedInterface)) {
       const previous = comp.refdes;
-      const displayLabel = input.value.trim();
-      commit(() => circuit.renameComponent(previous, next, { displayLabel }));
-      if (componentRangeAnchor === previous) componentRangeAnchor = next;
-      if (selected === previous) selected = next;
-      if (multi.has(previous)) {
-        multi.delete(previous);
-        multi.add(next);
+      const displayLabel = value;
+      if (sharedInterface) {
+        commit(() => applySharedInterfaceName(currentLabel, value));
+      } else {
+        commit(() => circuit.renameComponent(previous, next, { displayLabel }));
+        if (componentRangeAnchor === previous) componentRangeAnchor = next;
+        if (selected === previous) selected = next;
+        if (multi.has(previous)) {
+          multi.delete(previous);
+          multi.add(next);
+        }
       }
     } else if (applyText && next && next !== comp.refdes) {
       logLine(!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)
-        ? `Invalid component name "${input.value.trim()}".`
+        ? `Invalid component name "${value}".`
         : `Component name "${next}" is already in use.`, 'error');
     }
     render();
@@ -9907,10 +10027,24 @@ function startNetRename(net, ref) {
   input.focus();
   input.select();
   let closed = false;
-  const done = (applyText) => {
-    if (closed) return;
-    closed = true;
+  let prompting = false;
+  const done = async (applyText) => {
+    if (closed || prompting) return;
     const v = input.value.trim();
+    if (applyText && v && v !== net.name) {
+      const conflicts = namedConnectionConflicts(v, { netId: net.id });
+      if (conflicts.length) {
+        prompting = true;
+        const connect = await confirmNamedConnection(v, conflicts);
+        prompting = false;
+        if (!connect) {
+          input.focus();
+          input.select();
+          return;
+        }
+      }
+    }
+    closed = true;
     input.replaceWith(ref);
     if (applyText && v && v !== net.name) commit(() => {
       circuit.renameNet(net.id, v);

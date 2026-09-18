@@ -468,6 +468,22 @@ test('interface markup is retained when the port is labeled before connection', 
   assert.equal(pinLabel.text, 'V_{IN}');
 });
 
+test('approved shared interface names keep distinct ports virtually connected', () => {
+  const c = new Circuit();
+  const first = c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  const second = c.addComponent('input', { refdes: 'VI2', x: 0, y: 400 });
+  const r1 = c.addComponent('resistor', { refdes: 'R1', x: 240, y: 0 });
+  const r2 = c.addComponent('resistor', { refdes: 'R2', x: 240, y: 400 });
+  const firstNet = c.connect(`${first.refdes}.p`, `${r1.refdes}.a`);
+  const secondNet = c.connect(`${second.refdes}.p`, `${r2.refdes}.a`);
+  c.setInterfacePinName(second.refdes, firstNet.name);
+
+  assert.notEqual(firstNet.id, secondNet.id);
+  assert.equal(secondNet.name, firstNet.name);
+  assert.equal(c.labelOf(second.refdes).text, firstNet.name);
+  assert.equal(c.logicallyConnected(firstNet, secondNet), true);
+});
+
 test('all interface pin directions participate in net naming', () => {
   for (const type of ['input', 'output', 'inputoutput']) {
     const c = new Circuit();

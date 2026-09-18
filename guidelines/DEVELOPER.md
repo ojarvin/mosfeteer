@@ -78,8 +78,9 @@ AGENTS.md               Current runtime behavior spec (live doc — maintain it)
 `LabelInstance` has exactly three roles: an owned instance label with an
 `owner` refdes and local `offset`; a persistent electrical label with a
 `netId`; or a free annotation with neither `owner` nor `netId`. A `netId` is a
-physical net identity. Equal canonical names group nets logically for naming
-and reporting, but do not connect their geometry or terminals.
+physical net identity. Equal canonical names are the deliberate virtual
+electrical connection for naming and reporting, while the physical geometry
+and terminal membership remain separate.
 
 Use `addNetLabel`, `renameNet`, and `renameNetLabel` for electrical-label and
 net-name changes; do not write `net.name` from editor code. Net-label text is

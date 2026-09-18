@@ -30,6 +30,16 @@ test('tool cursors badge the select arrow per tool, theme, and danger', () => {
   assert.equal(build('trash', {}), build('trash', {})); // cached per icon/theme
 });
 
+test('named port and net edits confirm virtual connections before committing', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /function namedConnectionConflicts\(/);
+  assert.match(main, /function confirmNamedConnection\(/);
+  assert.match(main, /cancelLabel: 'Keep separate'/);
+  assert.match(main, /function applySharedInterfaceName\(/);
+  assert.match(main, /namedConnectionConflicts\(v, \{ netId: net\.id \}\)/);
+  assert.match(main, /input\.focus\(\);\s*input\.select\(\);\s*return false;/);
+});
+
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function preloadToolCursors(');

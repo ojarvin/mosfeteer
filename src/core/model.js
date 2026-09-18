@@ -2038,10 +2038,32 @@ export class Circuit {
     return true;
   }
 
+  /** Apply an intentionally shared interface name without renaming the port
+   * identity. The editor calls this only after the user approves a virtual
+   * connection to an existing named port or net. */
+  setInterfacePinName(refdes, text) {
+    const component = this.components.get(refdes);
+    if (!component || !INTERFACE_PIN_TYPES.has(component.type)) throw new Error(`unknown interface pin "${refdes}"`);
+    const name = canonicalNetName(text);
+    if (!name) throw new Error('interface pin name cannot be empty');
+    const net = this.netOfTerminal({ comp: refdes, term: 'p' });
+    if (net) this.renameNet(net, name);
+    else {
+      const label = this.labelOf(refdes);
+      if (label) {
+        label._text = name;
+        label.clearRenderedTextBounds();
+      }
+      this.invalidateRoutingCache();
+    }
+    return component;
+  }
+
   /** Ordinary component instance labels are the presentation of the
  * component's canonical name, not independent child annotations. Editing
  * one therefore validates and renames the component atomically. Interface
- * pins use the same path; their single-owner net follows the new name. */
+ * pins use the same path unless `setInterfacePinName` has been chosen after
+ * an explicit virtual-connection approval. */
   _syncComponentLabel(refdes, text) {
     const component = this.components.get(refdes);
     if (!component || isReferenceMarker(component)) return false;

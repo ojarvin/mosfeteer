@@ -443,8 +443,9 @@ Differential suffixes such as `P` / `N` are preferred over mixing them with
 the editor's net list, so it should tell the reader what the node does.
 
 `netId` identifies one physical net and its drawable geometry. Separate
-physical nets may share a canonical name for logical grouping and reporting,
-but a shared name never connects them electrically.
+physical nets may share a canonical name for a virtual electrical connection
+and logical grouping even without a wire between them; their physical IDs and
+drawable geometry remain separate.
 
 ---
 
@@ -491,7 +492,9 @@ never turn them into annotations.
 
 **No font-12 value / refdes text.** Component identifiers are dedicated
 owned label objects. Every labeled symbol, including ports, keeps its
-component name and owned label synchronized. Ports auto-create their
+component name and owned label synchronized; an approved virtual connection
+may give an interface label a shared net name while preserving its unique
+component refdes. Ports auto-create their
 identifier label from the refdes (refPrefix `VI` / `VO` / `VIO`, so numeric
 defaults use explicit textbook markup such as `V_{I1}`). Do not set component
 `value` text to convey names.
