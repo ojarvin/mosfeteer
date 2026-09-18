@@ -148,8 +148,50 @@ function mathMlAtom(value, kind = 'mi', attrs = '') {
   return `<${kind}${attrs ? ` ${attrs}` : ''}>${escapeSvg(value)}</${kind}>`;
 }
 
-function mathMlDelimiter(value) {
-  return mathMlAtom(value, 'mo', 'fence="true" stretchy="true" minsize="1.2em"');
+function mathMlDelimiter(value, stretchy = true) {
+  // Fences stretch to their own <mrow> (see parseFenced), so no minimum size
+  // is imposed: a short group keeps LaTeX's text-size parenthesis. TeX sets
+  // no space between a fence and its content, so neither do we.
+  return mathMlAtom(value, 'mo', `fence="true" stretchy="${stretchy}" lspace="0em" rspace="0em"`);
+}
+
+// TeX typesets a leading sign as a prefix: `-g_m` is tight, while the `-` of
+// `a - b` keeps binary spacing. It also draws U+2212, which is wider and sits
+// higher than the ASCII hyphen.
+const MATH_SIGNS = { '-': '\u2212', '+': '+' };
+
+// TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
+// Greek upright, which needs the explicit variant.
+const GREEK_LOWER = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
+  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
+  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
+  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'ϕ',
+  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+};
+const GREEK_UPPER = {
+  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+};
+
+// TeX Appendix G rule 18a: when the nucleus is a single character, the script
+// shift ignores that character's own height and depth, so `g_m` and `r_o` set
+// their subscripts on one line. MathML instead drops a subscript clear of a
+// descender (the MATH table's SubscriptBaselineDropMin) and lifts a
+// superscript clear of a tall base, which parts those subscripts by 0.17 em.
+// Zeroing the metric each shift is measured from restores TeX's rule; mpadded
+// changes only the reported box, so the glyph itself is untouched.
+const SINGLE_CHARACTER = /^<m[in](?: [^>]*)?>(?:[^<&]|&[a-z]+;|&#\d+;)<\/m[in]>$/;
+
+function mathMlNucleus(base, metric) {
+  return SINGLE_CHARACTER.test(base) ? `<mpadded ${metric}="0">${base}</mpadded>` : base;
+}
+
+function mathMlSign(value, prefix) {
+  const glyph = MATH_SIGNS[value];
+  return prefix
+    ? mathMlAtom(glyph, 'mo', 'form="prefix" lspace="0em" rspace="0em"')
+    : mathMlAtom(glyph, 'mo', 'form="infix"');
 }
 
 function mathMlParallel(tall = false, requestedSize = null) {
@@ -192,6 +234,7 @@ export function texToMathML(source) {
   const commandSymbols = {
     parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
     infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→', gg: '≫',
+    ll: '≪', equiv: '≡', propto: '∝', partial: '∂',
   };
   let requestedParallelSize = null;
   const skipSpaces = () => { while (text[index] === ' ') index += 1; };
@@ -204,12 +247,28 @@ export function texToMathML(source) {
         index += 1;
         const script = parseArgument();
         const base = atoms.pop() || mathMlAtom('', 'mi');
-        atoms.push(token === '_' ? `<msub>${base}${script}</msub>` : `<msup>${base}${script}</msup>`);
+        atoms.push(token === '_'
+          ? `<msub>${mathMlNucleus(base, 'depth')}${script}</msub>`
+          : `<msup>${mathMlNucleus(base, 'height')}${script}</msup>`);
         continue;
       }
-      atoms.push(parseAtom());
+      atoms.push(parseAtom(atoms[atoms.length - 1]));
     }
     return atoms.join('');
+  };
+  // A fenced group is its own <mrow>, so its delimiters stretch to that group
+  // and nothing else — what LaTeX's \left…\right does. Without the wrapper
+  // every parenthesis stretches to the tallest thing on the line, so `A_v(s)`
+  // next to a fraction grows parentheses several lines tall.
+  const parseFenced = (open, close) => {
+    const body = parseSequence(close);
+    const closed = text[index - 1] === close;
+    // Only a group that is genuinely taller than one line gets stretched
+    // fences, the way a TeX author reaches for \left…\right there and plain
+    // parentheses everywhere else: a stretched glyph is also padded away from
+    // its content, which reads as a gap around short groups like `(s)`.
+    const tall = /<mfrac|<msqrt/.test(body);
+    return `<mrow>${mathMlDelimiter(open, tall)}${body}${closed ? mathMlDelimiter(close, tall) : ''}</mrow>`;
   };
   const parseArgument = () => {
     skipSpaces();
@@ -260,7 +319,11 @@ export function texToMathML(source) {
       return `<mfrac>${numerator}${denominator}</mfrac>`;
     }
     if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
-    if (name === 'left' || name === 'right' || name === 'middle') return parseAtom();
+    // \left is transparent: the delimiter after it starts a fenced group like
+    // any other. \right and \middle are dropped without consuming their
+    // delimiter, so the enclosing group closes on it exactly once.
+    if (name === 'left') return parseAtom();
+    if (name === 'right' || name === 'middle') return '';
     if (name === '|') {
       // The analysis engine emits the TeX-safe parallel spelling `\|\|`.
       // Consume both escaped bars as one compact operator so the second bar
@@ -289,11 +352,15 @@ export function texToMathML(source) {
     if (name === 'quad') return '<mspace width="1em"/>';
     if (name === 'qquad') return '<mspace width="2em"/>';
     if (name === '>') return mathMlAtom('>', 'mo');
+    if (GREEK_LOWER[name]) return mathMlAtom(GREEK_LOWER[name], 'mi');
+    if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
     if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
     if (name === ',' || name === ';' || name === '!') return '';
     return mathMlAtom(name, 'mi');
   };
-  const parseAtom = () => {
+  // An atom that follows nothing, or follows an operator, starts an
+  // expression: a sign there is TeX's prefix form.
+  const parseAtom = (previous = null) => {
     skipSpaces();
     if (index >= text.length) return '';
     // Be forgiving for hand-authored labels that use plain `||` rather than
@@ -313,7 +380,9 @@ export function texToMathML(source) {
     const char = text[index++];
     if (/[A-Za-z]/.test(char)) return mathMlAtom(char, 'mi');
     if (/[0-9]/.test(char)) return mathMlAtom(char, 'mn');
+    if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
     if ('()[]|'.includes(char)) return mathMlDelimiter(char);
+    if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));
     if (char === ' ' && text[index] === ' ') return '<mspace width="0.25em"/>';
     return mathMlAtom(char, 'mo');
   };
@@ -333,7 +402,7 @@ function mathLabelSvg(label, opacity = '') {
   const aria = escapeSvg(`Math label ${label.text}`);
   const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
   const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
-  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:500;pointer-events:none;`;
+  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;pointer-events:none;`;
   const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
   const lines = stripMathDelimiters(label.text).split(/\r?\n/)
     .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)

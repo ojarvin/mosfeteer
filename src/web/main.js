@@ -903,6 +903,32 @@ function applyExportDarkTheme(svg) {
  * The browser renders SVG and PNG (it measures equation labels); the server
  * prints the PDF, falling back to the PNG when it has no headless browser.
  */
+// An exported drawing leaves this page: a standalone SVG, a PNG rasterized
+// from it, and the server's PDF print all lose the stylesheet that loads the
+// math font. Embedding the face makes exported equations look like the ones on
+// screen instead of falling back to a Times clone. Only drawings that actually
+// carry math pay the ~0.5 MB.
+let mathFontFaceCss = null;
+
+async function embeddedMathFontFace() {
+  if (mathFontFaceCss !== null) return mathFontFaceCss;
+  try {
+    const bytes = new Uint8Array(await (await fetch('fonts/latinmodern-math.woff2')).arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    mathFontFaceCss = `@font-face{font-family:"Latin Modern Math";src:url(data:font/woff2;base64,${btoa(binary)}) format("woff2");font-weight:normal;font-style:normal}`;
+  } catch {
+    mathFontFaceCss = ''; // an export without the face still renders, in the fallback face
+  }
+  return mathFontFaceCss;
+}
+
+async function withEmbeddedMathFont(svg) {
+  if (!svg.includes('schematic-math-label')) return svg;
+  const face = await embeddedMathFontFace();
+  return face ? svg.replace(/(<svg\b[^>]*>)/, `$1<style>${face}</style>`) : svg;
+}
+
 async function runExport({ dir, name, formats, grid = false, dark = false }) {
   const renderedSvg = renderDocument(circuit, {
     grid,
@@ -911,7 +937,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false }) {
     background: true,
     netNames: true,
   });
-  const svg = dark ? applyExportDarkTheme(renderedSvg) : renderedSvg;
+  const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
   const request = { dir, name, formats, svg };
   try {
     logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
@@ -3318,6 +3344,26 @@ function reflowEquationAnnotations() {
   return moved;
 }
 
+// A math label is measured once per text, and its size comes from the math
+// font's metrics — so measuring before that webfont arrives locks in a box
+// built from the fallback (or from the invisible `font-display: block`
+// period), which then clips the glyphs for the rest of the session. Hold math
+// measurement until the face is ready, then let every math label measure
+// again. Without the Font Loading API, measure as before.
+const MATH_FONT_PROBE = `${LABEL_FONT_SIZE}px "Latin Modern Math"`;
+let mathFontReady = !document.fonts || document.fonts.check(MATH_FONT_PROBE);
+
+if (!mathFontReady) {
+  const releaseMathMeasurement = () => {
+    if (mathFontReady) return;
+    mathFontReady = true;
+    for (const label of circuit.labels.values()) if (label.math) label.clearRenderedTextBounds();
+    scheduleMeasuredLabelRender();
+  };
+  // Release on failure too: a fallback-metric box beats never measuring.
+  document.fonts.load(MATH_FONT_PROBE).then(releaseMathMeasurement, releaseMathMeasurement);
+}
+
 function syncRenderedLabelMetrics() {
   if (!canvasSvgEl) return false;
   const groups = new Map([...canvasSvgEl.querySelectorAll('[data-label-id]')]
@@ -3325,6 +3371,7 @@ function syncRenderedLabelMetrics() {
   let changed = false;
   for (const label of circuit.labels.values()) {
     if (label.kind !== 'label') continue;
+    if (label.math && !mathFontReady) continue;
     const group = groups.get(label.id);
     const bounds = renderedLabelTextBounds(group);
     if (!bounds) continue;

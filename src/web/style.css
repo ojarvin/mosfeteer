@@ -1,3 +1,17 @@
+/* Latin Modern Math is Computer Modern with an OpenType MATH table: shipping
+   it is what makes MathML equations lay out and look like LaTeX. No system
+   installs it, so without this the stack falls back to a Times clone with no
+   math metrics. See fonts/README.md for provenance and license. */
+@font-face {
+  font-family: "Latin Modern Math";
+  src: url("fonts/latinmodern-math.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  /* The equation layout depends on this font's metrics, so lay out once it is
+     here rather than reflowing from a fallback. */
+  font-display: block;
+}
+
 /* Mosfeteer — light scientific theme */
 
 [hidden] { display: none !important; }

@@ -175,7 +175,7 @@ test('svgString renders math labels as live MathML instead of literal TeX', () =
   const svg = svgString(c);
   assert.match(svg, /<foreignObject\b/);
   assert.match(svg, /<math xmlns="http:\/\/www\.w3\.org\/1998\/Math\/MathML"/);
-  assert.match(svg, /<msub><mi>Z<\/mi><mrow><mi>o<\/mi><mi>u<\/mi><mi>t<\/mi><\/mrow><\/msub>/);
+  assert.match(svg, /<msub><mpadded depth="0"><mi>Z<\/mi><\/mpadded><mrow><mi>o<\/mi><mi>u<\/mi><mi>t<\/mi><\/mrow><\/msub>/);
   assert.doesNotMatch(svg, /<text[^>]*>Z_\{out\}/);
   assert.doesNotMatch(svg, /<mrow>[^<]*\$\$Z/);
 });
@@ -185,12 +185,69 @@ test('math labels use scalable textbook parallel bars and fraction space', () =>
   c.addLabel({ text: '$$\\left(R_{1} \\|\\| R_{2}\\right)$$', x: 400, y: 120, math: true });
   const fraction = c.addLabel({ text: '$$\\frac{1}{R_{1}}$$', x: 400, y: 320, math: true });
   const svg = svgString(c);
-  assert.match(svg, /<mo fence="true" stretchy="true" minsize="1\.2em">\(<\/mo>/);
+  // A fenced group is its own <mrow> and, with nothing tall inside, keeps
+  // TeX's text-size parentheses tight against their content.
+  assert.match(svg, /<mrow><mo fence="true" stretchy="false" lspace="0em" rspace="0em">\(<\/mo>/);
+  assert.match(svg, /<mo fence="true" stretchy="false" lspace="0em" rspace="0em">\)<\/mo><\/mrow>/);
   assert.equal((svg.match(/<mo fence="false" stretchy="true" minsize="1\.2em" lspace="0\.15em" rspace="0\.15em">∥<\/mo>/g) || []).length, 1);
   assert.match(svg, /aria-label="Math label [^"]*\\\|\\\|/);
   assert.match(svg, /font-family:'Latin Modern Math','Computer Modern'/);
-  assert.match(svg, /font-weight:500/);
+  assert.match(svg, /font-weight:normal/);
   assert.equal(fraction.bbox().h, 240, 'fraction labels reserve extra vertical margin');
+});
+
+test('fences size to their own group, and signs use TeX prefix form', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$A_v(s) = -g_m \\frac{1}{s C_L}$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  // `(s)` sits next to a fraction: its fences must size to `s`, not the line.
+  assert.match(svg, /<mrow><mo fence="true" stretchy="false"[^>]*>\(<\/mo><mi>s<\/mi><mo fence="true" stretchy="false"[^>]*>\)<\/mo><\/mrow>/);
+  // A leading minus is a prefix operator drawn with U+2212, not a hyphen.
+  assert.match(svg, /<mo form="prefix" lspace="0em" rspace="0em">\u2212<\/mo>/);
+  assert.doesNotMatch(svg, /<mo[^>]*>-<\/mo>/);
+});
+
+test('a fence around tall content stretches, and \\left…\\right closes once', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$g_m \\left( r_o \\| \\frac{1}{s C_L} \\right)$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  assert.equal((svg.match(/<mo fence="true" stretchy="true"[^>]*>\(<\/mo>/g) || []).length, 1);
+  assert.equal((svg.match(/<mo fence="true" stretchy="true"[^>]*>\)<\/mo>/g) || []).length, 1);
+});
+
+test('a binary sign keeps infix spacing', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$R_1 - R_2 + R_3$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  assert.equal((svg.match(/<mo form="infix">\u2212<\/mo>/g) || []).length, 1);
+  assert.equal((svg.match(/<mo form="infix">\+<\/mo>/g) || []).length, 1);
+});
+
+test('Greek commands render as letters, uppercase upright like TeX', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$f_p = \\frac{1}{2 \\pi R C}, \\Delta \\omega$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  assert.match(svg, /<mi>\u03c0<\/mi>/);
+  assert.match(svg, /<mi>\u03c9<\/mi>/);
+  assert.match(svg, /<mi mathvariant="normal">\u0394<\/mi>/);
+  assert.doesNotMatch(svg, /<mi>p<\/mi><mi>i<\/mi>/);
+});
+
+test('a single-character nucleus keeps TeX script shifts off its own metrics', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$g_{m1} r_{o1} x^2$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  // TeX rule 18a: `g`'s descender must not drop its subscript below `r`'s.
+  assert.match(svg, /<msub><mpadded depth="0"><mi>g<\/mi><\/mpadded>/);
+  assert.match(svg, /<msub><mpadded depth="0"><mi>r<\/mi><\/mpadded>/);
+  assert.match(svg, /<msup><mpadded height="0"><mi>x<\/mi><\/mpadded>/);
+});
+
+test('a composite nucleus keeps its own metrics, as TeX does', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$\\frac{a}{b}^2$$', x: 400, y: 120, math: true });
+  const svg = svgString(c);
+  assert.doesNotMatch(svg, /<mpadded/);
 });
 
 test('parallel bars stretch to fraction height and prose in math text keeps spaces', () => {
