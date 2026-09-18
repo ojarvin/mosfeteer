@@ -44,6 +44,19 @@ test('named net edits confirm virtual connections, and port names never repeat',
   assert.doesNotMatch(main, /applySharedInterfaceName|sharedInterfaceNameTarget|setInterfacePinName/);
 });
 
+test('the small-signal figure owns Escape and hands the keyboard back', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf("modelDialog?.addEventListener('keydown'");
+  assert.ok(start > 0, 'the model dialog handles Escape itself');
+  const handlers = main.slice(start, start + 900);
+  // Stopped here, so the analysis dock's own Escape never fires behind it.
+  assert.match(handlers, /ev\.stopPropagation\(\);\s*modelDialog\.close\(\);/);
+  // Clicking beside the figure dismisses it, and closing returns focus to the
+  // drawing it was covering.
+  assert.match(handlers, /ev\.target === modelDialog/);
+  assert.match(handlers, /addEventListener\('close'[\s\S]*canvasEl\.focus\(\)/);
+});
+
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function preloadToolCursors(');
@@ -266,10 +279,14 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /adaptCombinedReport\(analyzeSmallSignalV2\(circuit, request\)\)/);
   assert.doesNotMatch(main, /analyzeInputImpedance|analyzeOutputImpedance|analyzeTransferFunction/);
   assert.doesNotMatch(main, /core\/analysis\/index\.js/);
-  assert.doesNotMatch(main, /analysisKind|analysisMode|analysisComplementary|analysisContext|analysisModels|analysisApproxMiller|analysisApproxCascode|dcOnly/);
+  // Whole identifiers: `analysisModelEl` (the drawn small-signal model) is
+  // not the removed `analysisMode` control.
+  assert.doesNotMatch(main, /\b(?:analysisKind|analysisMode|analysisComplementary|analysisContext|analysisModels|analysisApproxMiller|analysisApproxCascode|dcOnly)\b/);
   assert.match(main, /Array\.isArray\(report\?\.equationEntries\)/);
   assert.match(main, /for \(const \{ title, result: child \} of entries\)/);
-  assert.match(main, /const availableTab = selectedTab === 'netlist' && netlist/);
+  // A tab whose content this report has no data for falls back to Equations.
+  assert.match(main, /selectedTab === 'netlist' && !netlist/);
+  assert.match(main, /selectedTab === 'model' && !drawn/);
   assert.match(main, /const topGap = 2 \* GRID/);
   assert.match(main, /const bottomEdge = circuitBounds\.h > 0 \? circuitBounds\.y \+ circuitBounds\.h/);
   assert.match(main, /const leftEdge = circuitBounds\.w > 0 \? circuitBounds\.x/);

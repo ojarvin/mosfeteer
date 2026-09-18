@@ -15,6 +15,7 @@ import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
+import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { editorOverlay, svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
@@ -107,6 +108,13 @@ const analysisEquation = document.getElementById('analysis-equation');
 const analysisDetails = document.getElementById('analysis-details');
 const analysisNetlistPanel = document.getElementById('analysis-panel-netlist');
 const analysisNetlist = document.getElementById('analysis-netlist');
+const analysisModelPanel = document.getElementById('analysis-panel-model');
+const analysisModelEl = document.getElementById('analysis-model');
+const analysisModelOpen = document.getElementById('analysis-model-open');
+const modelDialog = document.getElementById('model-dialog');
+const modelDialogTitle = document.getElementById('model-dialog-title');
+const modelDialogFigure = document.getElementById('model-dialog-figure');
+const modelDialogNotes = document.getElementById('model-dialog-notes');
 const analysisTabButtons = [...document.querySelectorAll('[data-analysis-tab]')];
 const analysisTabPanels = new Map([...document.querySelectorAll('.analysis-tab-panel')]
   .map((panel) => [panel.id.replace(/^analysis-panel-/, ''), panel]));
@@ -7207,6 +7215,76 @@ if (analysisEquation) {
   });
 }
 
+let latestSmallSignalModel = null;
+
+/**
+ * Draw the small-signal model beside its equations. The primitives come from
+ * the pipeline after its pre-solve transforms, so the figure shows the circuit
+ * the displayed equations describe -- Miller shunts included -- rather than
+ * the schematic they were derived from.
+ */
+function renderSmallSignalModel(report) {
+  latestSmallSignalModel = null;
+  if (!analysisModelEl) return false;
+  analysisModelEl.replaceChildren();
+  if (!report?.ok) return false;
+  let model;
+  try { model = smallSignalSchematic(report, { circuit }); }
+  catch (error) { model = { ok: false, error: error.message }; }
+  if (!model?.ok) {
+    const message = document.createElement('div');
+    message.className = 'analysis-equation-unavailable';
+    message.textContent = model?.error || 'No small-signal model is available.';
+    analysisModelEl.appendChild(message);
+    return false;
+  }
+  latestSmallSignalModel = model;
+  const figure = document.createElement('div');
+  figure.className = 'analysis-model-figure';
+  figure.innerHTML = svgString(model.circuit, {
+    themeInk: true,
+    grid: false,
+    terminals: false,
+    junctions: true,
+    background: false,
+    emptyHint: false,
+  });
+  const svg = figure.querySelector('svg');
+  if (svg) {
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Small-signal equivalent circuit');
+  }
+  analysisModelEl.appendChild(figure);
+  for (const entry of model.legend || []) {
+    const row = document.createElement('div');
+    row.className = 'analysis-equation-row';
+    const heading = document.createElement('div');
+    heading.className = 'analysis-equation-label';
+    heading.textContent = entry.symbol.replace(/[_^]\{([^}]*)\}/g, '$1');
+    const value = document.createElement('div');
+    value.className = 'analysis-equation-value';
+    renderEquationMath(value, `${entry.symbol} = ${entry.value}`);
+    row.append(heading, value);
+    analysisModelEl.appendChild(row);
+  }
+  const notes = [...(model.notes || [])];
+  const count = model.correspondence?.size || 0;
+  if (count > 15) notes.unshift(`${count} branches: open it full size to read the figure.`);
+  if (notes.length) {
+    const list = document.createElement('ul');
+    list.className = 'analysis-model-notes';
+    for (const note of notes) {
+      const item = document.createElement('li');
+      item.textContent = note;
+      list.appendChild(item);
+    }
+    analysisModelEl.appendChild(list);
+  }
+  return true;
+}
+
 function renderAnalysisResult(report) {
   if (!analysisResult) return;
   analysisResult.hidden = !report;
@@ -7215,8 +7293,12 @@ function renderAnalysisResult(report) {
     if (analysisDetails) analysisDetails.textContent = '';
     if (analysisNetlist) analysisNetlist.textContent = '';
     if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
-    const netlistTab = document.getElementById('analysis-tab-netlist');
-    if (netlistTab) netlistTab.disabled = true;
+    renderSmallSignalModel(null);
+    if (analysisModelPanel) analysisModelPanel.hidden = true;
+    for (const id of ['analysis-tab-netlist', 'analysis-tab-model']) {
+      const tab = document.getElementById(id);
+      if (tab) tab.disabled = true;
+    }
     setAnalysisResultTab('equations');
     return;
   }
@@ -7264,9 +7346,14 @@ function renderAnalysisResult(report) {
     netlistTab.disabled = !netlist;
     if (!netlist && netlistTab.getAttribute('aria-selected') === 'true') setAnalysisResultTab('equations');
   }
+  const drawn = renderSmallSignalModel(report);
+  if (analysisModelPanel) analysisModelPanel.hidden = !drawn;
+  const modelTab = document.getElementById('analysis-tab-model');
+  if (modelTab) modelTab.disabled = !drawn;
+  if (analysisModelOpen) analysisModelOpen.disabled = !drawn;
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
-  const availableTab = selectedTab === 'netlist' && netlist ? 'netlist' : selectedTab;
-  setAnalysisResultTab(availableTab);
+  const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
+  setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
 }
 
 function analysisAnnotationAssumptions(report) {
@@ -12315,6 +12402,86 @@ function startNewDocument(kind) {
   renderSaveState();
   logLine(`Started a new ${kind === 'block' ? 'block diagram' : 'schematic'}. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.`);
 }
+
+/**
+ * Show the drawn small-signal model over the whole drawing area. It is a
+ * figure, not a document: closing it puts the schematic back exactly as it
+ * was, because nothing was ever replaced.
+ */
+/**
+ * Fitting a very wide model into the panel shrinks every symbol past reading.
+ * Past that point the figure fills the height and scrolls sideways instead.
+ */
+function isWideModelFigure(svg, container) {
+  const box = svg?.viewBox?.baseVal;
+  if (!box?.width || !box?.height) return false;
+  const area = container.getBoundingClientRect();
+  if (!area.width || !area.height) return false;
+  // Below a quarter scale a 160-unit symbol is under 40 px: past that the
+  // figure is better read by scrolling than by squinting.
+  return Math.min(area.width / box.width, area.height / box.height) < 0.25;
+}
+
+function openSmallSignalModelOverlay() {
+  const model = latestSmallSignalModel;
+  if (!model?.ok || !modelDialog) return;
+  if (modelDialogTitle) {
+    const name = currentCircuitName || circuitNameEl.value.trim();
+    modelDialogTitle.textContent = name ? `Small-signal model — ${name}` : 'Small-signal model';
+  }
+  if (modelDialogFigure) {
+    modelDialogFigure.innerHTML = svgString(model.circuit, {
+      themeInk: true,
+      grid: false,
+      terminals: false,
+      junctions: true,
+      background: false,
+      emptyHint: false,
+    });
+    const figure = modelDialogFigure.querySelector('svg');
+    if (figure) {
+      figure.removeAttribute('width');
+      figure.removeAttribute('height');
+      figure.setAttribute('role', 'img');
+      figure.setAttribute('aria-label', 'Small-signal equivalent circuit');
+    }
+  }
+  if (modelDialogNotes) {
+    modelDialogNotes.replaceChildren();
+    for (const note of model.notes || []) {
+      const item = document.createElement('li');
+      item.textContent = note;
+      modelDialogNotes.appendChild(item);
+    }
+    modelDialogNotes.hidden = !(model.notes || []).length;
+  }
+  if (!modelDialog.open) modelDialog.showModal();
+  // Measure after the dialog is on screen: a hidden panel has no size.
+  const svg = modelDialogFigure?.querySelector('svg');
+  modelDialogFigure?.classList.toggle('wide', isWideModelFigure(svg, modelDialogFigure));
+}
+
+analysisModelOpen?.addEventListener('click', openSmallSignalModelOverlay);
+
+// Escape closes the figure, and closes only the figure: the handler stops the
+// key here so it never reaches the analysis dock's own Escape behind it.
+// Native <dialog> already cancels on Escape; owning it explicitly keeps that
+// true whatever else is listening.
+modelDialog?.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape' || !modelDialog.open) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  modelDialog.close();
+});
+// A figure this size invites clicking beside it to dismiss it.
+modelDialog?.addEventListener('click', (ev) => {
+  if (ev.target === modelDialog) modelDialog.close();
+});
+// Hand the keyboard back to the drawing the figure was covering.
+modelDialog?.addEventListener('close', () => {
+  if (modelDialogFigure) modelDialogFigure.replaceChildren();
+  canvasEl.focus();
+});
 
 const toolbarMenus = [
   [newDocumentButton, newDocumentMenu],

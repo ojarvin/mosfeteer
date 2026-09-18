@@ -156,6 +156,9 @@ export function applyMillerApproximation(primitives, context, options, ops) {
     if (local === null) continue;
     const { gain } = local;
     const feedbackComponents = [...new Set(bridge.map((primitive) => primitive.metadata?.component || primitive.id))];
+    // The bridge's own element kinds: a drawing of the model needs them to
+    // know that a capacitive bridge becomes a Miller capacitance.
+    const feedbackKinds = [...new Set(bridge.map((primitive) => String(primitive.kind || '').toLowerCase()))];
     // A bridge-open DC gain is appropriate only when the bridge actually
     // opens at DC. Conducting feedback changes that gain and carries direct
     // feedthrough; retain it in MNA instead of silently assuming weak loading.
@@ -179,7 +182,7 @@ export function applyMillerApproximation(primitives, context, options, ops) {
     if (ops.isZero(gateAdmittance) && ops.isZero(drainAdmittance)) continue;
 
     const withoutBridge = current.filter((primitive) => !bridge.includes(primitive));
-    const metadata = { component: device, millerBridge: true, feedbackComponents, gate, drain, gain, feedbackImpedance: reduced.impedance };
+    const metadata = { component: device, millerBridge: true, feedbackComponents, feedbackKinds, gate, drain, gain, feedbackImpedance: reduced.impedance };
     const gateShunt = {
       kind: 'admittance', id: `${device}.miller-gate`,
       terminals: { a: gate, b: AC_GROUND }, value: gateAdmittance,

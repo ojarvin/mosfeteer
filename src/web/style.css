@@ -706,6 +706,68 @@ button:disabled {
   flex: 1 1 auto;
 }
 
+/* The small-signal model at full size: a figure over the whole drawing area,
+   closed with Escape or its own X, leaving the schematic untouched. */
+.model-dialog {
+  width: calc(100vw - 32px);
+  height: calc(100vh - 32px);
+  padding: 12px 16px 16px;
+  box-sizing: border-box;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(20, 24, 34, 0.28);
+}
+
+.model-dialog::backdrop {
+  background: rgba(10, 14, 22, 0.42);
+}
+
+.model-dialog form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
+
+.model-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-dialog-head h2 {
+  margin: 0;
+  font-size: 1.0625rem;
+}
+
+.model-dialog-figure {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  padding: 8px;
+}
+
+/* Fit the whole figure by default; a model too wide to stay legible that way
+   fills the height and scrolls sideways instead (`.wide`, set on measurement). */
+.model-dialog-figure svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  color: var(--svg-ink);
+}
+
+.model-dialog-figure.wide svg {
+  width: auto;
+  margin: auto;
+}
+
 .help-dialog {
   width: min(64rem, calc(100vw - 32px));
   height: min(86vh, 56rem);
@@ -1219,6 +1281,41 @@ button:disabled {
   color: var(--text);
   font: 0.6875rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
+}
+
+/* The drawn small-signal model: one figure, its legend, and its notes. */
+.analysis-model {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.analysis-model-figure {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  padding: 6px;
+}
+
+.analysis-model-figure svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 46vh;
+  color: var(--svg-ink);
+}
+
+.analysis-model-notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.analysis-model-actions {
+  justify-content: flex-start;
+  padding: 0;
 }
 
 @media (max-width: 760px) {

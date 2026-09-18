@@ -116,6 +116,17 @@
     </form>
   </dialog>
 
+  <dialog id="model-dialog" class="model-dialog" aria-labelledby="model-dialog-title">
+    <form method="dialog">
+      <div class="model-dialog-head">
+        <h2 id="model-dialog-title">Small-signal model</h2>
+        <button value="cancel" class="icon-button" data-icon="x-circle" aria-label="Close small-signal model" title="Close (Esc)">Close</button>
+      </div>
+      <div id="model-dialog-figure" class="model-dialog-figure"></div>
+      <ul id="model-dialog-notes" class="analysis-model-notes"></ul>
+    </form>
+  </dialog>
+
   <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
     <form method="dialog">
       <h2 id="help-dialog-title">Keyboard and command help</h2>
@@ -219,6 +230,7 @@
             <button id="analysis-tab-equations" type="button" role="tab" aria-selected="true" aria-controls="analysis-panel-equations" data-analysis-tab="equations">Equations</button>
             <button id="analysis-tab-log" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-log" data-analysis-tab="log">Log</button>
             <button id="analysis-tab-netlist" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-netlist" data-analysis-tab="netlist">Small-signal netlist</button>
+            <button id="analysis-tab-model" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-model" data-analysis-tab="model">Model</button>
           </div>
           <div class="analysis-tab-panels">
             <section id="analysis-panel-equations" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-equations">
@@ -229,6 +241,12 @@
             </section>
             <section id="analysis-panel-netlist" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-netlist" hidden>
               <pre id="analysis-netlist" class="analysis-netlist"></pre>
+            </section>
+            <section id="analysis-panel-model" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-model" hidden>
+              <div id="analysis-model" class="analysis-model"></div>
+              <div class="dialog-actions analysis-model-actions">
+                <button id="analysis-model-open" type="button" data-icon="analysis">Open full size</button>
+              </div>
             </section>
           </div>
         </div>
@@ -365,6 +383,6 @@
     <pre class="log" id="log"></pre>
   </footer>
 
-  <script type="module" src="main.js?v=25"></script>
+  <script type="module" src="main.js?v=26"></script>
 </body>
 </html>

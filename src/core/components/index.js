@@ -13,6 +13,7 @@ import { vcm } from './vcm.js';
 import { supply } from './supply.js';
 import { portInput, portOutput, portInputOutput, port } from './port.js';
 import { current_source, voltage_source } from './current.js';
+import { vccs } from './vccs.js';
 import { opamp, opampDiff, inverter, buffer, and_gate, nand_gate, or_gate, nor_gate, xor_gate, xnor_gate } from './logic.js';
 import { adc, dac } from './converter.js';
 import { variable_resistor, variable_capacitor, variable_inductor } from './variable.js';
@@ -41,6 +42,7 @@ export const symbolTypes = {
   port,
   current_source,
   voltage_source,
+  vccs,
   opamp,
   opamp_diff: opampDiff,
   inverter,
