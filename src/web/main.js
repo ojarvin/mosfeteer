@@ -15,7 +15,7 @@ import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, blockCommandHelp, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
-import { svgString, editorOverlay, texToMathML } from '../core/render.js';
+import { editorOverlay, svgPixelSize, svgString, texToMathML } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -771,18 +771,8 @@ async function saveCircuit({ saveAs = false } = {}) {
   }
 }
 
-function svgDimensions(svg) {
-  const root = String(svg).match(/<svg\b[^>]*>/i)?.[0] || '';
-  const width = Number(root.match(/\bwidth="([\d.]+)"/i)?.[1]);
-  const height = Number(root.match(/\bheight="([\d.]+)"/i)?.[1]);
-  return {
-    width: Number.isFinite(width) && width > 0 ? width : 1000,
-    height: Number.isFinite(height) && height > 0 ? height : 800,
-  };
-}
-
 async function svgToPngDataUrl(svg, scale = 4) {
-  const { width, height } = svgDimensions(svg);
+  const { width, height } = svgPixelSize(svg);
   const image = new Image();
   // A Blob URL gives SVGs an opaque origin. Chromium then taints the canvas
   // when the SVG contains foreignObject/MathML equation labels. A data URL is

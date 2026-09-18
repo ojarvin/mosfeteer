@@ -19,12 +19,12 @@ import { runCommand } from '../core/commands.js';
 import { createDocument, documentKind, loadDocument } from '../core/document.js';
 import { generateCircuit } from '../core/circuitSpec.js';
 import { routeCircuit } from '../core/routing.js';
-import { svgString } from '../core/render.js';
 import {
   absolutePath, browseFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,
   fileRevision, isJsonFile, listDocuments, readDocumentFile, serializeDocument, validDocumentName, writeFileAtomic,
 } from './documents.js';
-import { findChromium, printSvgToPdf, svgPixelSize } from './browser.js';
+import { findChromium, printSvgToPdf } from './browser.js';
+import { svgPixelSize, svgString } from '../core/render.js';
 import { codeFingerprint } from './fingerprint.js';
 import { pngToPdf } from './pdf-raster.js';
 import { allowedHosts, checkRequest } from './request-guard.js';

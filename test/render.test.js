@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { svgString, texToMathML } from '../src/core/render.js';
+import { svgString, texToMathML, svgPixelSize } from '../src/core/render.js';
 import { Circuit } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 
@@ -562,4 +562,18 @@ test('connected pins get no seam patches; wires end in square caps', () => {
   const svg = svgString(c, { terminals: false, junctions: false });
   assert.doesNotMatch(svg, /pin-contact/);
   assert.match(svg, /class="wire-managed"[^>]*stroke-linecap="square"/);
+});
+
+test('svgPixelSize reads the root size and falls back when it is missing', () => {
+  assert.deepEqual(svgPixelSize('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><g/></svg>'),
+    { width: 640, height: 480 });
+  assert.deepEqual(svgPixelSize('<svg width="12.5" height="7.25"/>'), { width: 12.5, height: 7.25 });
+  // Missing, zero, or non-numeric sizes fall back rather than producing a
+  // zero-sized PDF page or canvas.
+  assert.deepEqual(svgPixelSize('<svg viewBox="0 0 10 10"/>'), { width: 1000, height: 800 });
+  assert.deepEqual(svgPixelSize('<svg width="0" height="0"/>'), { width: 1000, height: 800 });
+  assert.deepEqual(svgPixelSize(''), { width: 1000, height: 800 });
+  // Only the root element counts, not a nested one.
+  assert.deepEqual(svgPixelSize('<svg width="200" height="100"><svg width="5" height="5"/></svg>'),
+    { width: 200, height: 100 });
 });

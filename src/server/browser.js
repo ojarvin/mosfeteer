@@ -9,6 +9,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { svgPixelSize } from '../core/render.js';
 
 function onPath(names, env) {
   const dirs = String(env.PATH || '').split(delimiter).filter(Boolean);
@@ -40,16 +41,6 @@ export function findChromium({ platform = process.platform, env = process.env } 
     return null;
   }
   return onPath(['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge', 'microsoft-edge-stable', 'brave', 'brave-browser', 'vivaldi'], env);
-}
-
-export function svgPixelSize(svg) {
-  const root = String(svg).match(/<svg\b[^>]*>/i)?.[0] || '';
-  const width = Number(root.match(/\bwidth="([\d.]+)"/i)?.[1]);
-  const height = Number(root.match(/\bheight="([\d.]+)"/i)?.[1]);
-  return {
-    width: Number.isFinite(width) && width > 0 ? width : 1000,
-    height: Number.isFinite(height) && height > 0 ? height : 800,
-  };
 }
 
 /**
