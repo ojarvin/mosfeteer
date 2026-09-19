@@ -7345,7 +7345,16 @@ function renderAnalysisResult(report) {
         if (child?.ok && child.equation) {
           const equation = document.createElement('div');
           equation.className = 'analysis-equation-value';
-          renderEquationMath(equation, child.equation, child.equationProvenance, report.symbolProvenance);
+          // A definition row states several things at once; stack them so the
+          // row reads down instead of scrolling sideways.
+          if (child.definition && Array.isArray(child.lines) && child.lines.length > 1) {
+            equation.classList.add('analysis-equation-lines');
+            for (const line of child.lines) {
+              const item = document.createElement('div');
+              renderEquationMath(item, line);
+              equation.appendChild(item);
+            }
+          } else renderEquationMath(equation, child.equation, child.equationProvenance, report.symbolProvenance);
           row.appendChild(equation);
         } else {
           const unavailable = document.createElement('div');

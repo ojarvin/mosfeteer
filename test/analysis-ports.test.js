@@ -29,10 +29,11 @@ test('any node can be the input, a supply rail included', () => {
 test('the report says which nodes each quantity was taken between', () => {
   const { circuit, ports } = commonSource();
   const report = analyzeSmallSignalV2(circuit, { input: 'VDD', output: ports.output, acGrounds: ['VIN'] });
+  // Each impedance carries the condition it holds under, on a tall bar.
   assert.deepEqual(report.portDefinitions, [
     { quantity: 'Av', tex: 'A_v = \\frac{V_{OUT}}{V_{DD}}' },
-    { quantity: 'Zin', tex: 'Z_{in} = \\frac{V_{DD}}{I_{DD}}' },
-    { quantity: 'Zout', tex: 'Z_{out} = \\frac{V_{OUT}}{I_{OUT}}' },
+    { quantity: 'Zin', tex: 'Z_{in} = \\frac{V_{DD}}{I_{DD}} \\Big\\vert_{I_{OUT} = 0}' },
+    { quantity: 'Zout', tex: 'Z_{out} = \\frac{V_{OUT}}{I_{OUT}} \\Big\\vert_{V_{DD} = 0}' },
   ]);
 
   // The GUI shows them as its first row, marked as a definition so nothing

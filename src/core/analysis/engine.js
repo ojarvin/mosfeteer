@@ -577,11 +577,14 @@ export function portDefinitions(context) {
   const output = context?.output;
   if (!input || !output) return [];
   const from = portSymbols(input.name || input.netId);
+  // Each impedance states the condition it was measured under, the way a
+  // textbook writes it: the output port carries no external current while the
+  // input drives, and the input is zeroed while the output port is driven.
   const to = portSymbols(output.name || output.netId);
   return [
     { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
-    { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}}` },
-    { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}}` },
+    { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}` },
+    { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}} \\Big\\vert_{${from.voltage} = 0}` },
   ];
 }
 

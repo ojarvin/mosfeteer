@@ -1296,6 +1296,15 @@ button:disabled {
 }
 
 /* The drawn small-signal model: one figure, its legend, and its notes. */
+/* A definition row reads down: one line per quantity, left-aligned so the
+   `=` signs sit under each other rather than scrolling off the row. */
+.analysis-equation-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
 .analysis-model {
   display: flex;
   flex-direction: column;

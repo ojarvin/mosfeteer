@@ -396,9 +396,10 @@ function portEntry(report) {
   if (!definitions.length) return null;
   // A definition, not a derived expression: it names nodes rather than device
   // parameters, so there is nothing to trace back to the canvas.
+  const lines = definitions.map(({ tex }) => tex);
   return {
     title: 'Ports',
-    result: { ok: true, definition: true, equation: definitions.map(({ tex }) => tex).join(' \\quad ') },
+    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
   };
 }
 

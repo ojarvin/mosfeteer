@@ -201,21 +201,31 @@ function mathMlSign(value, prefix) {
     : mathMlAtom(glyph, 'mo', 'form="infix"');
 }
 
+/** Size table shared by the parallel operator and the evaluation bar. */
+function fenceSize(tall, requestedSize) {
+  if (requestedSize === 'Bigg') return 'minsize="2.8em" maxsize="3.4em"';
+  if (requestedSize === 'bigg') return 'minsize="2.4em" maxsize="3.0em"';
+  if (requestedSize === 'Big') return 'minsize="2.0em" maxsize="2.5em"';
+  if (requestedSize === 'big') return 'minsize="1.6em" maxsize="2.0em"';
+  return tall ? 'minsize="2.2em" maxsize="2.8em"' : 'minsize="1.2em"';
+}
+
+/**
+ * A single tall bar, as in `Z_{out} = v/i \Big\vert_{v_{in}=0}`: the
+ * condition a quantity was evaluated under. It takes the same sizing as the
+ * parallel operator, and hugs its own subscript on the right.
+ */
+function mathMlEvaluationBar(tall = false, requestedSize = null) {
+  const attrs = `fence="true" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0em"`;
+  return mathMlAtom('|', 'mo', attrs);
+}
+
 function mathMlParallel(tall = false, requestedSize = null) {
   // Use the same single double-bar operator as LaTeX `\Vert`, rather than
   // two independent bars whose MathML operator spacing creates a large gap.
   // Explicit Big/Bigg commands win; a fraction on the line gets the compact
   // `\Big\Vert` treatment automatically.
-  const size = requestedSize === 'Bigg'
-    ? 'minsize="2.8em" maxsize="3.4em"'
-    : requestedSize === 'bigg'
-      ? 'minsize="2.4em" maxsize="3.0em"'
-      : requestedSize === 'Big'
-        ? 'minsize="2.0em" maxsize="2.5em"'
-        : requestedSize === 'big'
-          ? 'minsize="1.6em" maxsize="2.0em"'
-          : tall ? 'minsize="2.2em" maxsize="2.8em"' : 'minsize="1.2em"';
-  const attrs = `fence="false" stretchy="true" ${size} lspace="0.15em" rspace="0.15em"`;
+  const attrs = `fence="false" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0.15em"`;
   return mathMlAtom('∥', 'mo', attrs);
 }
 
@@ -363,7 +373,11 @@ export function texToMathML(source) {
       requestedParallelSize = null;
       return parallel;
     }
-    if (name === 'vert') return mathMlDelimiter('|');
+    if (name === 'vert') {
+      const bar = mathMlEvaluationBar(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return bar;
+    }
     if (name === 'Vert') {
       const parallel = mathMlParallel(hasFraction, requestedParallelSize);
       requestedParallelSize = null;
