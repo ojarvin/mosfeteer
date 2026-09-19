@@ -24,7 +24,7 @@ Press `?` in the editor for the full keyboard reference.
 
 The reference sheet includes the reset-free D flip-flops and latches alongside the existing symbol families.
 
-![Symbols reference sheet in light mode, highlighting the reset-free D flip-flop and latch variants](docs/images/symbols.png)
+![Complete symbols reference sheet in light mode](docs/images/symbols.png)
 
 ## Install and run
 
