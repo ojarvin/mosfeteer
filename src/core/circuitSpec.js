@@ -277,6 +277,7 @@ function topologyState(spec) {
   const refdes = new Map(spec.components.map((component) => [component.id, component.refdes || component.id]));
   return {
     version: 2,
+    sequentialVariantVersion: 2,
     topologyOnly: true,
     grid: 40,
     components: spec.components.map((component) => ({

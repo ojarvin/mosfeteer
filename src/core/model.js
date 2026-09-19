@@ -41,12 +41,22 @@ const LEGACY_COMPONENT_TYPE_RENAMES = Object.freeze({
   dff_clkn_rstn_qb: 'dff_clkb_rstb_qb',
 });
 
-function serializedComponentType(type) {
-  return LEGACY_COMPONENT_TYPE_RENAMES[type] || type;
+// Before reset-free variants existed, these four names in each family always
+// carried an RST pin. New documents mark the expanded name set explicitly.
+const LEGACY_SEQUENTIAL_RESET_TYPES = Object.freeze({
+  dff: 'dff_rst', dff_qb: 'dff_rst_qb',
+  dff_clkb: 'dff_clkb_rst', dff_clkb_qb: 'dff_clkb_rst_qb',
+  latch: 'latch_rst', latch_qb: 'latch_rst_qb',
+  latch_enb: 'latch_enb_rst', latch_enb_qb: 'latch_enb_rst_qb',
+});
+
+function serializedComponentType(type, sequentialVariantVersion) {
+  const normalized = LEGACY_COMPONENT_TYPE_RENAMES[type] || type;
+  return sequentialVariantVersion >= 2 ? normalized : (LEGACY_SEQUENTIAL_RESET_TYPES[normalized] || normalized);
 }
 
 function serializedTerminalName(type, term) {
-  if (!['dff_clkb', 'dff_clkb_qb', 'dff_clkb_rstb', 'dff_clkb_rstb_qb'].includes(type)
+  if (!['dff_clkb', 'dff_clkb_qb', 'dff_clkb_rst', 'dff_clkb_rst_qb', 'dff_clkb_rstb', 'dff_clkb_rstb_qb'].includes(type)
       && !['dff_rstb', 'dff_rstb_qb'].includes(type)) return term;
   if (term === 'CLKN') return 'CLKB';
   if (term === 'RSTN') return 'RSTB';
@@ -4998,6 +5008,7 @@ export class Circuit {
   toJSON() {
     return {
       version: 2,
+      sequentialVariantVersion: 2,
       grid: 40,
       components: [...this.components.values()].map((c) => c.toJSON()),
       nets: [...this.nets.values()].map((n) => n.toJSON()),
@@ -5018,7 +5029,7 @@ export class Circuit {
     circuit._loading = true;
     for (const c of data.components) {
       // The filled terminal marker was folded into the one labelled port.
-      circuit.addComponent(serializedComponentType(c.type === 'port_filled' ? 'port' : c.type), {
+      circuit.addComponent(serializedComponentType(c.type === 'port_filled' ? 'port' : c.type, data.sequentialVariantVersion), {
         refdes: c.refdes,
         value: c.value,
         x: c.transform.x,

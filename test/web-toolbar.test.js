@@ -94,14 +94,16 @@ test('multiplexer is named and searchable', () => {
 });
 
 test('D flip-flop variants are named and searchable in the sequential palette', () => {
-  assert.equal(PLACEMENT_LABELS.dff, 'D flip-flop (CLK, RST)');
+  assert.equal(PLACEMENT_LABELS.dff, 'D flip-flop (CLK, Q)');
+  assert.equal(PLACEMENT_LABELS.dff_rst, 'D flip-flop (CLK, RST)');
   assert.equal(PLACEMENT_LABELS.dff_clkb_rstb_qb, 'D flip-flop (CLKB, RSTB, Q, QB)');
   assert.ok(PLACEMENT_ALIASES.dff.includes('flip-flop'));
   assert.ok(placementSearchScore('sequential', 'dff_qb') > 0);
 });
 
 test('latch variants are named and searchable in the sequential palette', () => {
-  assert.equal(PLACEMENT_LABELS.latch, 'L latch (EN, RST)');
+  assert.equal(PLACEMENT_LABELS.latch, 'L latch (EN, Q)');
+  assert.equal(PLACEMENT_LABELS.latch_rst, 'L latch (EN, RST)');
   assert.equal(PLACEMENT_LABELS.latch_enb_rstb_qb, 'L latch (ENB, RSTB, Q, QB)');
   assert.ok(PLACEMENT_ALIASES.latch.includes('level sensitive'));
   assert.ok(placementSearchScore('latch', 'latch_qb') > 0);

@@ -95,7 +95,7 @@ function placementState(spec, placement, existing = null) {
     branches: null,
     junctions: [],
   }));
-  return { version: 2, grid: 40, components, nets, labels: [] };
+  return { version: 2, sequentialVariantVersion: 2, grid: 40, components, nets, labels: [] };
 }
 
 function addOwnedLabels(circuit) {

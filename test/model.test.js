@@ -266,6 +266,31 @@ test('fromJSON drops obsolete MOS current-source models without reinterpreting o
   assert.equal(saved.analysis.ignoreBodyEffect, false);
 });
 
+test('saved sequential symbols keep reset pins across the variant rename', () => {
+  const old = new Circuit();
+  old.addComponent('dff_rst', { refdes: 'U1', x: 0, y: 0 });
+  old.addComponent('latch_enb_rst', { refdes: 'U2', x: 480, y: 0 });
+  old.wireTo('U1.RST', old.getComponent('U2').terminalWorld('RST'));
+  const legacy = old.toJSON();
+  delete legacy.sequentialVariantVersion;
+  legacy.components[0].type = 'dff';
+  legacy.components[1].type = 'latch_enb';
+
+  const loaded = Circuit.fromJSON(legacy);
+  assert.equal(loaded.getComponent('U1').type, 'dff_rst');
+  assert.equal(loaded.getComponent('U2').type, 'latch_enb_rst');
+  assert.deepEqual(loaded.netOfTerminal({ comp: 'U1', term: 'RST' })?.terminals,
+    old.netOfTerminal({ comp: 'U1', term: 'RST' })?.terminals);
+
+  const fresh = new Circuit();
+  fresh.addComponent('dff', { refdes: 'U1' });
+  fresh.addComponent('latch', { refdes: 'U2', x: 480 });
+  const roundTrip = Circuit.fromJSON(fresh.toJSON());
+  assert.equal(roundTrip.getComponent('U1').type, 'dff');
+  assert.equal(roundTrip.getComponent('U2').type, 'latch');
+  assert.equal(roundTrip.getComponent('U1').terminalDefs.some(({ name }) => name === 'RST'), false);
+});
+
 test('resistor infinity attributes persist and can be cleared', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });

@@ -80,7 +80,7 @@ test('symbols generator covers every reference-sheet component and category', ()
   const adds = commands.filter((command) => command.startsWith('add '));
   const annotations = commands.filter((command) => command.startsWith('annotation add '));
   assert.equal(commands[0], 'clear');
-  assert.equal(adds.length, 63);
+  assert.equal(adds.length, 71);
   assert.equal(annotations.length, 10);
   assert.ok(annotations.every((command) => command.includes('--align right --right-edge -320')));
   assert.ok(adds.filter((command) => command.startsWith('add switch_')).every((command) => !command.includes('--rot')));
@@ -92,8 +92,8 @@ test('symbols generator covers every reference-sheet component and category', ()
     'inductor', 'variable_inductor', 'diode',
   ]);
   assert.deepEqual(adds.filter((command) => command.split(' ')[2]?.startsWith('U')).map((command) => command.split(' ')[2]),
-    Array.from({ length: 37 }, (_, index) => `U${index + 1}`));
-  for (const type of ['vccs', 'tristate_inverter', 'tristate_buffer', 'mux2', 'dff', 'dff_qb', 'dff_clkb_rstb_qb', 'latch', 'latch_enb_rstb_qb', 'and3_gate', 'xnor3_gate', 'block']) {
+    Array.from({ length: 45 }, (_, index) => `U${index + 1}`));
+  for (const type of ['vccs', 'tristate_inverter', 'tristate_buffer', 'mux2', 'dff', 'dff_qb', 'dff_rst', 'dff_clkb_rstb_qb', 'latch', 'latch_rst', 'latch_enb_rstb_qb', 'and3_gate', 'xnor3_gate', 'block']) {
     assert.ok(adds.some((command) => command.startsWith(`add ${type} `)), `${type} is present`);
   }
   assert.match(commands.at(-1), /^annotation add category_blocks Blocks /);
@@ -275,12 +275,16 @@ test('ADC and DAC symbols expose single-bit-bus terminals and centered labels', 
   }
 });
 
-test('D flip-flop variants expose polarity-specific clocks/resets and outputs', () => {
+test('D flip-flop variants expose optional reset, clock polarity, and outputs', () => {
   const variants = [
-    ['dff', ['D', 'CLK', 'Q', 'RST'], false, false],
-    ['dff_qb', ['D', 'CLK', 'Q', 'QB', 'RST'], false, true],
-    ['dff_clkb', ['D', 'CLKB', 'Q', 'RST'], true, false],
-    ['dff_clkb_qb', ['D', 'CLKB', 'Q', 'QB', 'RST'], true, true],
+    ['dff', ['D', 'CLK', 'Q'], false, false],
+    ['dff_qb', ['D', 'CLK', 'Q', 'QB'], false, true],
+    ['dff_clkb', ['D', 'CLKB', 'Q'], true, false],
+    ['dff_clkb_qb', ['D', 'CLKB', 'Q', 'QB'], true, true],
+    ['dff_rst', ['D', 'CLK', 'Q', 'RST'], false, false],
+    ['dff_rst_qb', ['D', 'CLK', 'Q', 'QB', 'RST'], false, true],
+    ['dff_clkb_rst', ['D', 'CLKB', 'Q', 'RST'], true, false],
+    ['dff_clkb_rst_qb', ['D', 'CLKB', 'Q', 'QB', 'RST'], true, true],
     ['dff_rstb', ['D', 'CLK', 'Q', 'RSTB'], false, false],
     ['dff_rstb_qb', ['D', 'CLK', 'Q', 'QB', 'RSTB'], false, true],
     ['dff_clkb_rstb', ['D', 'CLKB', 'Q', 'RSTB'], true, false],
@@ -292,8 +296,10 @@ test('D flip-flop variants expose polarity-specific clocks/resets and outputs', 
     assert.deepEqual(def.terminals.find(({ name }) => name === 'D'), { name: 'D', x: -80, y: -40, direction: 'input', dir: { x: -1, y: 0 } });
     assert.deepEqual(def.terminals.find(({ name }) => name === 'Q'), { name: 'Q', x: 80, y: -40, direction: 'output', dir: { x: 1, y: 0 } });
     if (complementaryOutput) assert.deepEqual(def.terminals.find(({ name }) => name === 'QB'), { name: 'QB', x: 80, y: 40, direction: 'output', dir: { x: 1, y: 0 } });
-    assert.deepEqual(def.terminals.at(-1), { name: names.at(-1), x: 0, y: 120, direction: 'input', dir: { x: 0, y: 1 } });
-    assert.deepEqual(def.bbox, { x: -80, y: -80, w: 160, h: 200 });
+    const hasReset = names.includes('RST') || names.includes('RSTB');
+    assert.equal(def.graphics.some((graphic) => graphic.d === 'M 0 80 L 0 120'), hasReset, `${type} reset lead`);
+    if (hasReset) assert.deepEqual(def.terminals.at(-1), { name: names.at(-1), x: 0, y: 120, direction: 'input', dir: { x: 0, y: 1 } });
+    assert.deepEqual(def.bbox, { x: -80, y: -80, w: 160, h: hasReset ? 200 : 160 });
     assert.deepEqual(def.labelOffset, { x: 0, y: -120 });
     assert.deepEqual(def.graphics.find((graphic) => graphic.kind === 'rect'), {
       kind: 'rect', x: -40, y: -80, w: 80, h: 160, style: 'emph',
@@ -320,10 +326,14 @@ test('D flip-flop variants expose polarity-specific clocks/resets and outputs', 
 
 test('latch variants use level-enable names, L text, and no clock marker', () => {
   const variants = [
-    ['latch', ['L', 'EN', 'Q', 'RST'], false, false],
-    ['latch_qb', ['L', 'EN', 'Q', 'QB', 'RST'], false, true],
-    ['latch_enb', ['L', 'ENB', 'Q', 'RST'], true, false],
-    ['latch_enb_qb', ['L', 'ENB', 'Q', 'QB', 'RST'], true, true],
+    ['latch', ['L', 'EN', 'Q'], false, false],
+    ['latch_qb', ['L', 'EN', 'Q', 'QB'], false, true],
+    ['latch_enb', ['L', 'ENB', 'Q'], true, false],
+    ['latch_enb_qb', ['L', 'ENB', 'Q', 'QB'], true, true],
+    ['latch_rst', ['L', 'EN', 'Q', 'RST'], false, false],
+    ['latch_rst_qb', ['L', 'EN', 'Q', 'QB', 'RST'], false, true],
+    ['latch_enb_rst', ['L', 'ENB', 'Q', 'RST'], true, false],
+    ['latch_enb_rst_qb', ['L', 'ENB', 'Q', 'QB', 'RST'], true, true],
     ['latch_rstb', ['L', 'EN', 'Q', 'RSTB'], false, false],
     ['latch_rstb_qb', ['L', 'EN', 'Q', 'QB', 'RSTB'], false, true],
     ['latch_enb_rstb', ['L', 'ENB', 'Q', 'RSTB'], true, false],
@@ -336,6 +346,9 @@ test('latch variants use level-enable names, L text, and no clock marker', () =>
       kind: 'text', x: 0, y: -40, text: 'L', anchor: 'middle', font: 'label', keepUpright: true,
     });
     assert.equal(def.graphics.some((graphic) => graphic.d === 'M -40 24 L -8 40 L -40 56'), false);
+    const hasReset = names.includes('RST') || names.includes('RSTB');
+    assert.equal(def.graphics.some((graphic) => graphic.d === 'M 0 80 L 0 120'), hasReset, `${type} reset lead`);
+    assert.deepEqual(def.bbox, { x: -80, y: -80, w: 160, h: hasReset ? 200 : 160 });
     assert.equal(def.graphics.filter((graphic) => graphic.kind === 'circle').length, Number(invertedEnable) + Number(type.includes('rstb')) + Number(complementaryOutput));
   }
 });
@@ -433,6 +446,10 @@ test('refdes prefixes by component type', () => {
     dff_qb: 'U',
     dff_clkb: 'U',
     dff_clkb_qb: 'U',
+    dff_rst: 'U',
+    dff_rst_qb: 'U',
+    dff_clkb_rst: 'U',
+    dff_clkb_rst_qb: 'U',
     dff_rstb: 'U',
     dff_rstb_qb: 'U',
     dff_clkb_rstb: 'U',
@@ -441,6 +458,10 @@ test('refdes prefixes by component type', () => {
     latch_qb: 'U',
     latch_enb: 'U',
     latch_enb_qb: 'U',
+    latch_rst: 'U',
+    latch_rst_qb: 'U',
+    latch_enb_rst: 'U',
+    latch_enb_rst_qb: 'U',
     latch_rstb: 'U',
     latch_rstb_qb: 'U',
     latch_enb_rstb: 'U',

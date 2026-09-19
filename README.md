@@ -4,25 +4,27 @@
 
 A keyboard-driven editor for textbook-style analog schematics and block diagrams, with auto-routed wires, symbolic small-signal analysis, and a CLI/HTTP interface for scripts and agents.
 
-![Editor with a folded-cascode OTA](docs/images/editor.png)
+![Fitted folded-cascode OTA in the editor, with a bottom-left to top-right diagonal separating light and dark themes](docs/images/editor.png)
 
 ## Symbolic small-signal analysis
 
 Pick input and output nets, and it derives `Z_in`, `Z_out`, `A_v`, poles, and zeros using textbook approximations. You can annotate the schematic with the results.
 
-![Small-signal analysis dock](docs/images/analysis.png)
+![Folded-cascode OTA and highlighted symbolic analysis equations in dark mode](docs/images/analysis.png)
 
 ## Fast editing
 
 | Fuzzy insert with symbol previews | Right-click actions and per-device overrides |
 | :---: | :---: |
-| ![Insert picker](docs/images/insert.png) | ![Context menu](docs/images/context-menu.png) |
+| ![Highlighted fuzzy insert picker with live MOS symbol previews in light mode](docs/images/insert.png) | ![Highlighted per-device small-signal actions on the folded-cascode OTA in dark mode](docs/images/context-menu.png) |
 
 Press `?` in the editor for the full keyboard reference.
 
 ## Symbols
 
-![All available symbols](docs/images/symbols.png)
+The reference sheet includes the reset-free D flip-flops and latches alongside the existing symbol families.
+
+![Symbols reference sheet in light mode, highlighting the reset-free D flip-flop and latch variants](docs/images/symbols.png)
 
 ## Install and run
 
