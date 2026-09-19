@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { svgString, texToMathML, svgPixelSize } from '../src/core/render.js';
 import { Circuit } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
+import { getSymbol } from '../src/core/components/index.js';
 
 import { strokeAttrs, setColorToken, resolveColor } from '../src/core/style.js';
 
@@ -501,13 +502,41 @@ test('textbook symbols render (sources, opamp, gates, ports)', () => {
   c.addComponent('current_source', { x: 400, y: 0 });
   c.addComponent('voltage_source', { x: 400, y: 160 });
   c.addComponent('opamp', { x: 600, y: 0 });
-  c.addComponent('and_gate', { x: 900, y: 0 });
+  c.addComponent('and2_gate', { x: 900, y: 0 });
   c.addComponent('inverter', { x: 1200, y: 0 });
   c.addComponent('port', { x: 120, y: 0 });
   const svg = svgString(c);
   assert.ok(svg.includes('data-ref'), 'symbols render');
   assert.ok(svg.includes('<polygon'), 'current source arrow body present');
   assert.ok(svg.includes('translate(400 -160)') || true, 'voltage source present');
+});
+
+test('OR-family gates share the tuned body geometry', () => {
+  const bodyPath = (type) => getSymbol(type).graphics.find((graphic) => graphic.kind === 'path' && graphic.d.endsWith('Z'))?.d;
+  const or = bodyPath('or2_gate');
+  const xor = bodyPath('xor2_gate');
+  assert.ok(or && xor, 'both gates expose a closed body path');
+  assert.equal(bodyPath('nor2_gate'), or, 'NOR reuses the OR body');
+  assert.equal(bodyPath('xnor2_gate'), xor, 'XNOR reuses the XOR body');
+
+  // XOR/XNOR use the same body translated right by 26.91 units so their
+  // additional rear curve can meet the input leads. Every corresponding point
+  // must therefore have the same y and a fixed x translation.
+  const orCoords = or.match(/-?\d+(?:\.\d+)?/g).map(Number);
+  const xorCoords = xor.match(/-?\d+(?:\.\d+)?/g).map(Number);
+  assert.equal(xorCoords.length, orCoords.length);
+  for (let i = 0; i < orCoords.length; i += 2) {
+    assert.ok(Math.abs((xorCoords[i] - orCoords[i]) - 26.91) < 1e-9);
+    assert.equal(xorCoords[i + 1], orCoords[i + 1]);
+  }
+  assert.match(xor, /M 72\.55 0 C 55\.5 18\.5 6\.5 70 -70\.09 70/, 'outer curve reaches the rear with a horizontal tangent');
+  assert.equal((xor.match(/\bC\b/g) || []).length, 4, 'the body has one smooth bezier per side');
+  assert.match(xor, /C -61\.5 58 -40\.75 35 -40\.75 0/, 'inner curve follows the extra rear curve without opening at the centre');
+  const orPaths = getSymbol('or2_gate').graphics.filter((graphic) => graphic.kind === 'path');
+  const xorPaths = getSymbol('xor2_gate').graphics.filter((graphic) => graphic.kind === 'path');
+  assert.equal(orPaths.filter((graphic) => graphic.d.endsWith('Z')).length, 1);
+  assert.equal(xorPaths.filter((graphic) => graphic.d.endsWith('Z')).length, 1);
+  assert.equal(xorPaths.length, orPaths.length + 1, 'XOR adds only its extra rear curve');
 });
 
 test('fully differential opamp shares the opamp footprint with two outputs', () => {

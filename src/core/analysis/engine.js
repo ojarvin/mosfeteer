@@ -10,6 +10,7 @@ import { analyzeResponse } from './response.js';
 import { approximateTopology, buildTopologyIdentities } from './topology.js';
 import { compactRational } from './compact.js';
 import {
+  formatExpression,
   infinity,
   integer,
   rational,
@@ -259,6 +260,10 @@ function buildTopologyProofs(topology, queries, approximations, approximationOpt
     const product = identity.kind === 'product';
     if (product) operands = operands.filter((value) => !ops.isZero(ops.sub(value, ops.one)));
     if (operands.length < 2) return;
+    // A product is worth showing factored only while the factors are the
+    // shorter read: once a load has collapsed to 1/g_m, `g_m (1/g_m)` says
+    // less than the 1 it multiplies out to.
+    if (product && symbolWeight(equivalent) <= operands.reduce((sum, value) => sum + symbolWeight(value), 0)) return;
     const combined = product ? multiply(operands) : combineParallel(operands, ops);
     if (!ops.isZero(compactRational(ops.sub(combined, equivalent), ops)) || ops.budget.exceeded) return;
     const response = canonicalResponseValue(equivalent, { variable: ops.variable });
@@ -464,6 +469,17 @@ function rootRows(transfer, options) {
   ];
 }
 
+/** How much symbol there is to read in an expression, counting occurrences. */
+function symbolWeight(value) {
+  if (!value || typeof value !== 'object') return 0;
+  if (value.kind === 'symbol') return 1;
+  if (value.kind === 'rational') return symbolWeight(value.numerator) + symbolWeight(value.denominator);
+  if (value.kind === 'add') return value.terms.reduce((sum, term) => sum + symbolWeight(term), 0);
+  if (value.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + symbolWeight(factor), 0);
+  if (value.kind === 'power') return symbolWeight(value.base);
+  return 0;
+}
+
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -527,12 +543,51 @@ function failureReport(pipeline, options, error = null) {
   };
 }
 
+/**
+ * The budget is a real size limit, not a timeout: an exact symbolic solve of a
+ * large reactive model grows faster than any budget worth waiting for. Say
+ * what can be made smaller, because the form has no budget control.
+ */
+/**
+ * What the three quantities are a ratio of, in the drawing's own node names.
+ * The quantity symbols stay canonical -- `A_v`, `Z_{in}`, `Z_{out}` -- and this
+ * says which nodes they were taken between, which is the whole answer for a
+ * query like "what does the supply do to the output": nothing about a rail is
+ * special, it is simply the node the input was taken at.
+ */
+function portSymbols(name) {
+  const raw = String(name || '');
+  const flat = raw.replace(/[_^]\{([^}]*)\}/g, '$1');
+  // A node already named as a voltage lends its subscript to the current, so
+  // the pair reads as one: V_{DD} with I_{DD}. A name written without markup
+  // is given the same textbook spelling rather than one of each.
+  if (/^V.+/.test(flat)) {
+    const subscript = flat.slice(1);
+    return { voltage: /[_^]\{/.test(raw) ? raw : `V_{${subscript}}`, current: `I_{${subscript}}` };
+  }
+  return { voltage: `v_{${flat}}`, current: `i_{${flat}}` };
+}
+
+export function portDefinitions(context) {
+  const input = context?.input;
+  const output = context?.output;
+  if (!input || !output) return [];
+  const from = portSymbols(input.name || input.netId);
+  const to = portSymbols(output.name || output.netId);
+  return [
+    { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
+    { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}}` },
+    { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}}` },
+  ];
+}
+
 function budgetFailureReport(stage, budget, options) {
   return failureReport({
     ok: false,
     stage: 'budget',
     code: 'operation-budget',
-    error: `symbolic operation budget exhausted during ${stage}`,
+    error: `symbolic operation budget exhausted during ${stage}: this model is too large to solve exactly. `
+      + 'Simplify it — fewer device capacitances, r_o → ∞ on bias devices, or analyze one stage at a time.',
     budget: { used: budget.used, limit: budget.limit },
   }, options);
 }
@@ -611,6 +666,10 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     approximations[name] = response.expression?.kind === 'infinity'
       ? { exact: response.expression, selected: response.expression, changed: false, assumptions: [] }
       : applyApproximations(response.expression, approximationOptions);
+    if (process.env.MOSFETEER_DEBUG_ENGINE) {
+      const fmt = (v) => v && v.numerator ? `${formatExpression(v.numerator)} / ${formatExpression(v.denominator)}` : String(v?.kind);
+      console.error('[approx]', name, fmt(response.expression), '->', fmt(approximations[name].selected), JSON.stringify(approximations[name].assumptions));
+    }
     if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
   }
   const topology = buildTopologyIdentities(pipeline, analysisOptions);
@@ -618,11 +677,19 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   // factoring must not silently replace that explicitly selected reduction.
   const topologicalApproximation = analysisOptions.dominantPoleApproximation ? null
     : approximateTopology(topology, queries, approximationOptions);
+  if (process.env.MOSFETEER_DEBUG_ENGINE) console.error('[topo] stages', topology.stages.length, '| approximation?', !!topologicalApproximation);
   if (topologicalApproximation) {
-    for (const [name, selected, assumptions] of [
+    for (const [name, composed, stageAssumptions] of [
       ['Av', topologicalApproximation.selected, topologicalApproximation.assumptions],
       ['Zout', topologicalApproximation.output.selected, topologicalApproximation.output.assumptions],
     ]) {
+      // The stages were reduced one at a time; run the selected assumptions
+      // over what they compose to as well. Without this the topological form
+      // silently replaced a stronger whole-expression reduction -- a diode
+      // load stayed 1/g_m2 || r_o1 || r_o2 where g_m r_o >> 1 says 1/g_m2.
+      const reduced = applyApproximations(composed, approximationOptions);
+      const selected = reduced.selected;
+      const assumptions = unique([...stageAssumptions, ...reduced.assumptions]);
       const comparisonOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
       const changed = !comparisonOps.isZero(compactRational(comparisonOps.sub(selected, exact[name].expression), comparisonOps));
       approximations[name] = { ...approximations[name], selected, changed, assumptions: changed ? assumptions : [] };
@@ -649,8 +716,16 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
   const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
   const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
+  // One global statement when the option is global: the model dropped every
+  // device's body-effect branch, and four identical per-device lines say
+  // nothing the single rule does not.
+  const omittedBody = pipeline.omittedBodyEffect || [];
+  const bodyEffectAssumptions = omittedBody.length
+    ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
+    : [];
   const assumptions = unique([
     ...millerAssumptions,
+    ...bodyEffectAssumptions,
     ...outputResistanceAssumptions,
     ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
     ...Object.values(displayed).flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
@@ -703,6 +778,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     zeros: transfer.zeros,
     roots,
     assumptions,
+    portDefinitions: portDefinitions(pipeline.context),
     equations: [
       ...displayed.input.equations,
       ...displayed.output.equations,

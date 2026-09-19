@@ -337,15 +337,16 @@ export function smallSignalSchematic(report, options = {}) {
     // is named here and stated in the legend instead.
     //
     // An upright branch wears its label on the left, where a textbook puts it;
-    // a branch lying along a row wears it above, clear of its own wires.
-    const width = estimateLabelWidth(label.text);
-    const world = upright ? { x: -(80 + width / 2), y: 0 } : { x: 0, y: -160 };
-    circuit.addLabel({
-      owner: refdes,
-      text: label.text,
-      align: 'center',
-      offset: localOffset(world.x, world.y, placement.rotation || 0),
-    });
+    // a branch lying along a row wears it above, clear of its own wires. The
+    // offset comes from the label's own measured box rather than the estimate
+    // the columns are spaced by, so the text sits against its symbol instead
+    // of drifting into the gap towards the next one.
+    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
+    const box = owned.bbox();
+    const reach = (extent) => 40 * Math.ceil((40 + extent / 2) / 40);
+    const world = upright ? { x: -reach(box.w), y: 0 } : { x: 0, y: -reach(box.h) };
+    owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
+    owned.clearRenderedTextBounds();
     if (label.legend) legend.push(label.legend);
     correspondence.set(refdes, { primitive: element.id, component: element.metadata?.component || null, role: element.kind });
     return component;
@@ -442,7 +443,12 @@ export function smallSignalSchematic(report, options = {}) {
 
   // Name the nodes on the drawing. A node with a port already reads its name
   // off that port, and the AC-ground rail is what the ground symbol says.
-  const boxes = [...circuit.components.values()].map((component) => component.bboxWorld());
+  // Clear of every symbol *and* every label already placed: a node name that
+  // lands on a branch's own label is as unreadable as one over a symbol.
+  const boxes = [
+    ...[...circuit.components.values()].map((component) => component.bboxWorld()),
+    ...[...circuit.labels.values()].map((label) => label.bbox()),
+  ];
   for (const node of nodes) {
     const net = wired.get(node);
     if (!net || portNodes.has(node) || !net.name) continue;

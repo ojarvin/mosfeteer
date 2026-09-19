@@ -63,6 +63,7 @@ test('public analysis performs one combined solve for all three quantities', () 
   assert.equal(report.ok, true, report.error);
   assert.equal(report.complete, true);
   assert.deepEqual(report.equationOrder, [
+    'Ports',
     'DC input impedance',
     'DC output impedance',
     'DC gain',
@@ -88,6 +89,7 @@ test('reactive analysis exposes AC, DC, poles, and zero-based indexing', () => {
   assert.equal(report.dcOutputImpedance.ok, true);
   assert.equal(report.frequencyResponse.poles[0].index, 0);
   assert.deepEqual(report.equationOrder, [
+    'Ports',
     'AC input impedance',
     'DC input impedance',
     'AC output impedance',

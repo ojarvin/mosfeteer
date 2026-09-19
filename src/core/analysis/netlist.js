@@ -141,8 +141,9 @@ function nodeResolver(options) {
     if (groundNodes.has(raw)) return '0';
     const mapped = firstDefined(...maps.map((map) => lookup(map, value) ?? lookup(map, raw)));
     if (mapped !== undefined && mapped !== null && String(mapped) !== raw) {
-      const mappedText = String(mapped);
-      return groundNodes.has(mappedText) ? '0' : textbookName(mappedText);
+      // Only the node decides, never its name: a rail chosen as the port under
+      // test is a live node that still happens to be called VDD.
+      return textbookName(String(mapped));
     }
     return textbookName(raw);
   };

@@ -744,18 +744,28 @@ button:disabled {
   font-size: 1.0625rem;
 }
 
+.model-dialog-hint {
+  margin: 0 auto 0 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
 .model-dialog-figure {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
   padding: 8px;
+  touch-action: none;
+  /* Dragging and double-clicking are view controls here, not text selection. */
+  user-select: none;
 }
 
-/* Fit the whole figure by default; a model too wide to stay legible that way
-   fills the height and scrolls sideways instead (`.wide`, set on measurement). */
+/* The whole figure, fitted; wheel, middle-drag and right-drag move the view
+   from there, so nothing needs to scroll. */
 .model-dialog-figure svg {
   display: block;
   width: 100%;
@@ -763,9 +773,11 @@ button:disabled {
   color: var(--svg-ink);
 }
 
-.model-dialog-figure.wide svg {
-  width: auto;
-  margin: auto;
+.model-dialog-rubber {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
 }
 
 .help-dialog {

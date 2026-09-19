@@ -120,9 +120,12 @@
     <form method="dialog">
       <div class="model-dialog-head">
         <h2 id="model-dialog-title">Small-signal model</h2>
+        <p class="model-dialog-hint">Scroll to zoom · middle-drag to pan · right-drag a box · double-click to fit</p>
         <button value="cancel" class="icon-button" data-icon="x-circle" aria-label="Close small-signal model" title="Close (Esc)">Close</button>
       </div>
-      <div id="model-dialog-figure" class="model-dialog-figure"></div>
+      <div id="model-dialog-figure" class="model-dialog-figure">
+        <div id="model-dialog-rubber" class="model-dialog-rubber" hidden></div>
+      </div>
       <ul id="model-dialog-notes" class="analysis-model-notes"></ul>
     </form>
   </dialog>
@@ -208,12 +211,18 @@
             </div>
           </div>
           <fieldset class="analysis-approximations">
-            <legend>Textbook approximations</legend>
-            <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</label>
+            <legend>Model simplifications</legend>
             <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</label>
+            <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</label>
+            <label><input id="analysis-approx-miller" name="approxMiller" type="checkbox" checked /> Miller approximation for gate–drain feedback</label>
+            <label><input id="analysis-parasitics" name="parasitics" type="checkbox" /> Include MOS device capacitances (<span class="math-inline">C<sub>gs</sub></span>, <span class="math-inline">C<sub>gd</sub></span>)</label>
+            <p class="field-hint">These change the model before it is solved: the branch is left out, so the small-signal netlist and the Model tab show what was actually solved.</p>
+          </fieldset>
+          <fieldset class="analysis-approximations">
+            <legend>Equation approximations</legend>
             <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></label>
             <label><input id="analysis-approx-dominant-pole" name="approxDominantPole" type="checkbox" /> Use dominant-pole approximation when multiple AC poles are present</label>
-            <p class="field-hint">These simplify the displayed equations. Exact equations remain in the Log tab.</p>
+            <p class="field-hint">These simplify the displayed equations only. Exact equations remain in the Log tab.</p>
           </fieldset>
           <details class="analysis-context" id="analysis-bias-context">
             <summary>Small-signal context</summary>
@@ -383,6 +392,6 @@
     <pre class="log" id="log"></pre>
   </footer>
 
-  <script type="module" src="main.js?v=26"></script>
+  <script type="module" src="main.js?v=28"></script>
 </body>
 </html>

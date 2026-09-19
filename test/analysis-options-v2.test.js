@@ -10,8 +10,10 @@ import {
 test('defaults select the concise textbook presentation', () => {
   assert.deepEqual(analysisOptionDefaults(), {
     neglectBodyEffect: true,
-    highIntrinsicGain: true,
     neglectChannelLengthModulation: false,
+    millerApproximation: true,
+    parasitics: false,
+    highIntrinsicGain: true,
     dominantPole: false,
   });
   assert.notEqual(analysisOptionDefaults(), ANALYSIS_OPTION_DEFAULTS);
@@ -24,7 +26,7 @@ test('normalization accepts only canonical option names and device regions', () 
     neglectChannelLengthModulation: false,
     dominantPole: true,
     ignoreBodyEffect: true,
-    millerApproximation: true,
+    millerApproximation: false,
     cascodeReduction: true,
     dcOnly: true,
     context: 'obsolete',
@@ -34,6 +36,8 @@ test('normalization accepts only canonical option names and device regions', () 
     neglectBodyEffect: false,
     highIntrinsicGain: false,
     neglectChannelLengthModulation: false,
+    millerApproximation: false,
+    parasitics: false,
     dominantPole: true,
     deviceRegions: { M2: { region: 'triode' } },
   });
@@ -47,6 +51,8 @@ test('channel-length omission supersedes high intrinsic gain', () => {
     neglectBodyEffect: true,
     highIntrinsicGain: false,
     neglectChannelLengthModulation: true,
+    millerApproximation: true,
+    parasitics: false,
     dominantPole: false,
   });
 });
@@ -62,6 +68,8 @@ test('canonical nested form state remains canonical during normalization', () =>
     neglectBodyEffect: false,
     highIntrinsicGain: true,
     neglectChannelLengthModulation: false,
+    millerApproximation: true,
+    parasitics: false,
     dominantPole: false,
     deviceRegions: { M1: { region: 'triode' } },
   });
@@ -95,6 +103,8 @@ test('persistence migration maps legacy aliases and drops removed fields', () =>
       neglectBodyEffect: false,
       highIntrinsicGain: false,
       neglectChannelLengthModulation: true,
+      millerApproximation: true,
+      parasitics: false,
       dominantPole: true,
     },
   });
@@ -117,6 +127,8 @@ test('canonical persisted values win over legacy aliases and lists', () => {
     neglectBodyEffect: false,
     highIntrinsicGain: false,
     neglectChannelLengthModulation: false,
+    millerApproximation: true,
+    parasitics: false,
     dominantPole: false,
   });
   assert.deepEqual(state.deviceRegions, { M1: { region: 'triode' } });

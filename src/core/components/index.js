@@ -14,12 +14,14 @@ import { supply } from './supply.js';
 import { portInput, portOutput, portInputOutput, port } from './port.js';
 import { current_source, voltage_source } from './current.js';
 import { vccs } from './vccs.js';
-import { opamp, opampDiff, inverter, buffer, and_gate, nand_gate, or_gate, nor_gate, xor_gate, xnor_gate } from './logic.js';
+import { opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } from './logic.js';
 import { adc, dac } from './converter.js';
+import { dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } from './flipflop.js';
 import { variable_resistor, variable_capacitor, variable_inductor } from './variable.js';
 import { solder } from './solder.js';
 import { switch_open, switch_closed } from './switch.js';
 import { block } from './block.js';
+import { mux2 } from './mux.js';
 
 /** All registered symbol definitions, keyed by type name. */
 export const symbolTypes = {
@@ -47,14 +49,39 @@ export const symbolTypes = {
   opamp_diff: opampDiff,
   inverter,
   buffer,
-  and_gate,
-  nand_gate,
-  or_gate,
-  nor_gate,
-  xor_gate,
-  xnor_gate,
+  tristate_inverter: tristateInverter,
+  tristate_buffer: tristateBuffer,
+  mux2,
+  and2_gate,
+  nand2_gate,
+  or2_gate,
+  nor2_gate,
+  xor2_gate,
+  xnor2_gate,
+  and3_gate,
+  nand3_gate,
+  or3_gate,
+  nor3_gate,
+  xor3_gate,
+  xnor3_gate,
   adc,
   dac,
+  dff,
+  dff_qb,
+  dff_clkb,
+  dff_clkb_qb,
+  dff_rstb,
+  dff_rstb_qb,
+  dff_clkb_rstb,
+  dff_clkb_rstb_qb,
+  latch,
+  latch_qb,
+  latch_enb,
+  latch_enb_qb,
+  latch_rstb,
+  latch_rstb_qb,
+  latch_enb_rstb,
+  latch_enb_rstb_qb,
   variable_resistor,
   variable_capacitor,
   variable_inductor,

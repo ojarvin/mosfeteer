@@ -76,6 +76,8 @@ const FLAG_ARITY = {
   output: 1,
   net: 1,
   file: 1,
+  align: 1,
+  'right-edge': 1,
   mirrorX: 0,
   mirrorY: 0,
   json: 0,
@@ -449,8 +451,8 @@ export function commandHelp() {
     '  netlabel convert LABEL NET    - convert an annotation to a net label',
     '  netlabel detach LABEL [TEXT]  - convert a net label to an annotation',
     '  netlabel list [NET]             - list net labels',
-    '  annotation (label/annotate) add [ID] TEXT X Y - place a free annotation',
-    '  annotation rename|move|rm ... - edit/remove an annotation label',
+    '  annotation (label/annotate) add [ID] TEXT X Y [--align ALIGN --right-edge X] - place a free annotation',
+    '  annotation rename|move|align|rm ... - edit/remove an annotation label',
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
@@ -758,7 +760,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return netLabelCommand(circuit, pos, result);
   }
   if (cmd === 'annotation' || cmd === 'annotate' || cmd === 'label') {
-    return annotationCommand(circuit, pos, result);
+    return annotationCommand(circuit, pos, result, flags);
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
 
@@ -1049,7 +1051,7 @@ function netLabelCommand(circuit, pos, result) {
   throw new Error('usage: netlabel add|rename|retarget|convert|detach|rm|list ...');
 }
 
-function annotationCommand(circuit, pos, result) {
+function annotationCommand(circuit, pos, result, flags = {}) {
   const op = pos[0];
   if (op === 'list') {
     const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.isNetLabel());
@@ -1065,7 +1067,15 @@ function annotationCommand(circuit, pos, result) {
     const y = Number(tail.at(-1));
     tail.splice(-2);
     const id = tail.length > 1 ? tail.shift() : undefined;
-    const label = circuit.addLabel({ id, text: tail.join(' '), x, y });
+    const align = flags.align?.[0];
+    if (align !== undefined && !['left', 'center', 'right'].includes(align)) throw new Error('annotation alignment must be left, center, or right');
+    const rightEdge = flags['right-edge'] === undefined ? null : Number(flags['right-edge'][0]);
+    if (rightEdge !== null && !Number.isFinite(rightEdge)) throw new Error('--right-edge expects a numeric X');
+    const label = circuit.addLabel({ id, text: tail.join(' '), x, y, ...(align ? { align } : {}) });
+    if (rightEdge !== null) {
+      if (label.align !== 'right') throw new Error('--right-edge requires --align right');
+      label.moveTo(rightEdge - label.bbox().w / 2, label.anchor.y);
+    }
     return result(`added annotation ${label.id}`, label.toJSON(), true);
   }
   if (op === 'rename') {
@@ -1086,13 +1096,22 @@ function annotationCommand(circuit, pos, result) {
     label.moveTo(x, y);
     return result(`moved annotation ${label.id}`, label.toJSON(), true);
   }
+  if (op === 'align') {
+    const label = circuit.labels.get(pos[1]);
+    const align = pos[2];
+    if (!label || label.owner || label.isNetLabel() || !['left', 'center', 'right'].includes(align)) {
+      throw new Error('usage: annotation align LABEL left|center|right');
+    }
+    label.setAlign(align);
+    return result(`aligned annotation ${label.id} ${align}`, label.toJSON(), true);
+  }
   if (op === 'rm' || op === 'remove') {
     const label = circuit.labels.get(pos[1]);
     if (!label || label.owner || label.isNetLabel()) throw new Error(`unknown annotation "${pos[1]}"`);
     circuit.removeLabel(label);
     return result(`removed annotation ${label.id}`, null, true);
   }
-  throw new Error('usage: annotation add|rename|move|rm|list ...');
+  throw new Error('usage: annotation add|rename|move|align|rm|list ...');
 }
 
 function netCommand(circuit, pos, result) {

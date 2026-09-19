@@ -159,6 +159,10 @@ test('every displayed GUI row carries a provenance render of itself', () => {
       analyzeSmallSignalV2(buildSmallSignalGolden(fixture.id), { input: 'VIN.p', output: 'VOUT.p' }),
     );
     for (const { title, result } of report.equationEntries || []) {
+    if (result.definition) continue;
+      // A definition row states which nodes the quantities were taken between.
+      // It names no device parameter, so it has nothing to highlight.
+      if (result.definition) continue;
       const provenance = result.equationProvenance;
       assert.ok(provenance, `${fixture.id} / ${title} has no provenance render`);
       assert.equal(stripProvenanceMarkers(provenance.tex), result.equation, `${fixture.id} / ${title}`);
@@ -262,6 +266,7 @@ test('a Miller-absorbed feedback capacitor still resolves to its component', () 
   const report = adaptCombinedReport(raw);
   let sawCapacitor = false;
   for (const { title, result } of report.equationEntries || []) {
+    if (result.definition) continue;
     const provenance = result.equationProvenance;
     assert.ok(provenance, `${title} has no provenance render`);
     assertEverySymbolResolves(provenance, report.symbolProvenance, title);

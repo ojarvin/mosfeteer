@@ -23,6 +23,36 @@ const REFERENCE_MARKER_INFO = Object.freeze({
 // Keep `GND` as a compatibility alias; new unnamed ground markers use `VSS`.
 const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.freeze(['GND']) });
 
+// Active-low sequential symbols used the `n` suffix before the terminal names
+// were standardized on `B`. Keep old documents loadable while the registered
+// component types and their new instances use the consistent spelling.
+const LEGACY_COMPONENT_TYPE_RENAMES = Object.freeze({
+  and_gate: 'and2_gate',
+  nand_gate: 'nand2_gate',
+  or_gate: 'or2_gate',
+  nor_gate: 'nor2_gate',
+  xor_gate: 'xor2_gate',
+  xnor_gate: 'xnor2_gate',
+  dff_clkn: 'dff_clkb',
+  dff_clkn_qb: 'dff_clkb_qb',
+  dff_rstn: 'dff_rstb',
+  dff_rstn_qb: 'dff_rstb_qb',
+  dff_clkn_rstn: 'dff_clkb_rstb',
+  dff_clkn_rstn_qb: 'dff_clkb_rstb_qb',
+});
+
+function serializedComponentType(type) {
+  return LEGACY_COMPONENT_TYPE_RENAMES[type] || type;
+}
+
+function serializedTerminalName(type, term) {
+  if (!['dff_clkb', 'dff_clkb_qb', 'dff_clkb_rstb', 'dff_clkb_rstb_qb'].includes(type)
+      && !['dff_rstb', 'dff_rstb_qb'].includes(type)) return term;
+  if (term === 'CLKN') return 'CLKB';
+  if (term === 'RSTN') return 'RSTB';
+  return term;
+}
+
 export function referenceMarkerInfo(type) {
   return REFERENCE_MARKER_INFO[type] || null;
 }
@@ -436,6 +466,9 @@ export function normalizeMathSource(value) {
  */
 /** Interface pins: an owned name label that also names the pin's net. */
 export const INTERFACE_PIN_TYPES = new Set(['input', 'output', 'inputoutput', 'port']);
+
+/** Symbols that carry a MOS small-signal model, and so device capacitances. */
+export const MOS_ANALYSIS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 
 export function normalizeComponentRefdes(value) {
   const raw = String(value ?? '').trim();
@@ -940,6 +973,7 @@ export class ComponentInstance {
       gmroLarge: opts.analysis?.gmroLarge ?? opts.analysis?.gmro ?? null,
       ignoreBodyEffect: opts.analysis?.ignoreBodyEffect
         ?? (String(opts.analysis?.bodyEffect || '').toLowerCase() === 'ignore' ? true : null),
+      parasitics: opts.analysis?.parasitics || null,
     };
     this.transform = {
       x: snapPoint(opts.x || 0, opts.y || 0).x,
@@ -1065,7 +1099,7 @@ export class ComponentInstance {
       type: this.type,
       value: this.value,
       ...(this.analysis.model || this.analysis.role || this.analysis.channelLengthModulation
-        || this.analysis.resistance
+        || this.analysis.resistance || this.analysis.parasitics
         || this.analysis.gmroLarge !== null || this.analysis.ignoreBodyEffect !== null
         ? { analysis: { ...this.analysis } }
         : {}),
@@ -1786,6 +1820,25 @@ export class Circuit {
       throw new Error(`unknown resistance override "${value}"`);
     };
     const normalizedResistance = normalizeResistance(resistanceValue);
+    // A device's own capacitances: 'include' or 'omit' override the request's
+    // global choice, null follows it.
+    const parasiticsValue = hasOwn('parasitics')
+      ? attrs.parasitics
+      : hasOwn('deviceCapacitances') ? attrs.deviceCapacitances : undefined;
+    const normalizeParasitics = (value) => {
+      if (value === undefined || value === null || value === '') return value;
+      if (value === true) return 'include';
+      if (value === false) return 'omit';
+      const normalized = String(value).trim().toLowerCase();
+      if (['include', 'included', 'on', 'yes'].includes(normalized)) return 'include';
+      if (['omit', 'omitted', 'off', 'no', 'ignore'].includes(normalized)) return 'omit';
+      throw new Error(`unknown parasitics override "${value}"`);
+    };
+    const normalizedParasitics = normalizeParasitics(parasiticsValue);
+    if (normalizedParasitics !== undefined && normalizedParasitics !== null
+      && !MOS_ANALYSIS_TYPES.has(component.type)) {
+      throw new Error(`parasitics overrides apply only to MOS components, not ${component.type}`);
+    }
     const normalizedModel = model === undefined ? undefined : normalizeSmallSignalDeviceModel(model);
     if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
       throw new Error(`unknown small-signal device role "${role}"`);
@@ -1813,6 +1866,9 @@ export class Circuit {
       ignoreBodyEffect: normalizedBodyEffect === undefined
         ? component.analysis?.ignoreBodyEffect ?? null
         : normalizedBodyEffect,
+      parasitics: normalizedParasitics === undefined
+        ? component.analysis?.parasitics ?? null
+        : (normalizedParasitics || null),
     };
     // Interface-port roles describe the electrical net, so keep the two
     // representations synchronized regardless of which context menu changed
@@ -4962,7 +5018,7 @@ export class Circuit {
     circuit._loading = true;
     for (const c of data.components) {
       // The filled terminal marker was folded into the one labelled port.
-      circuit.addComponent(c.type === 'port_filled' ? 'port' : c.type, {
+      circuit.addComponent(serializedComponentType(c.type === 'port_filled' ? 'port' : c.type), {
         refdes: c.refdes,
         value: c.value,
         x: c.transform.x,
@@ -4993,7 +5049,10 @@ export class Circuit {
         preserveEmpty: !!n.preserveEmpty || !n.terminals?.length,
       });
       net.id = n.id;
-      for (const t of n.terminals) net.terminals.push(t);
+      for (const t of n.terminals) {
+        const component = circuit.components.get(t.comp);
+        net.terminals.push({ ...t, term: serializedTerminalName(component?.type, t.term) });
+      }
       if (!fixed) {
         net.route = n.route ? clonePath(n.route, net.allowDiagonal) : null;
         if (Array.isArray(n.junctions)) net.junctions = n.junctions.map((p) => ({ x: p.x, y: p.y }));

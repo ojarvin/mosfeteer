@@ -117,6 +117,42 @@ test('a Miller-approximated bridge is drawn as its two shunt capacitances', () =
   assert.ok(model.notes.some((note) => note.includes('Miller approximation')));
 });
 
+test('an ignored body effect leaves no branch in the model', () => {
+  const { circuit, report } = fixture('source-degeneration');
+  // The default assumption drops the branch before the solve, so it is absent
+  // from the model, the netlist, and the symbols the drawing names.
+  assert.equal(report.details.pipeline.selected.some((entry) => /\.gmb$/.test(String(entry.id))), false);
+  assert.ok(report.assumptions.includes('g_mb = 0'));
+  const model = smallSignalSchematic(report, { circuit });
+  const labels = [...model.circuit.labels.values()].map((label) => label.text);
+  assert.equal(labels.some((text) => text.includes('g_{mb')), false);
+
+  // Keeping it puts the branch back, in the model and in the drawing.
+  const kept = analyzeSmallSignalV2(circuit, {
+    input: 'VIN.p', output: 'VOUT.p', neglectBodyEffect: false,
+  });
+  assert.equal(kept.ok, true, kept.error || '');
+  assert.ok(kept.details.pipeline.selected.some((entry) => /\.gmb$/.test(String(entry.id))));
+  const keptModel = smallSignalSchematic(kept, { circuit });
+  const keptLabels = [...keptModel.circuit.labels.values()].map((label) => label.text);
+  assert.ok(keptLabels.some((text) => text.includes('g_{mb')));
+});
+
+test('every branch label sits against its own symbol', () => {
+  const { circuit, report } = fixture('nmos-cascode');
+  const model = smallSignalSchematic(report, { circuit });
+  for (const label of model.circuit.labels.values()) {
+    if (!label.owner) continue;
+    const body = model.circuit.getComponent(label.owner).bboxWorld();
+    const box = label.bbox();
+    // One grid cell at most between the label box and the symbol it names, so
+    // it can never read as belonging to the next branch along.
+    const gapX = Math.max(body.x - (box.x + box.w), box.x - (body.x + body.w), 0);
+    const gapY = Math.max(body.y - (box.y + box.h), box.y - (body.y + body.h), 0);
+    assert.ok(Math.max(gapX, gapY) <= 40, `${label.text} sits ${Math.max(gapX, gapY)} from ${label.owner}`);
+  }
+});
+
 test('an analysis without primitives has no model to draw', () => {
   const result = smallSignalSchematic({ ok: false }, {});
   assert.equal(result.ok, false);

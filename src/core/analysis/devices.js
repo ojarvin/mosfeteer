@@ -195,6 +195,41 @@ function mosOrientation(type) {
   };
 }
 
+/**
+ * Whether this device contributes its own gate capacitances. They are part of
+ * the device's small-signal model exactly as `g_m` and `r_o` are -- nobody
+ * draws those either -- so they are opt-in per device, or globally from the
+ * analysis form, rather than symbols the user has to wire up by hand. A
+ * capacitor drawn in the schematic remains the user's own component and is
+ * modelled separately.
+ */
+function includesParasitics(component, context) {
+  const own = component.analysis?.parasitics;
+  if (own === 'include') return true;
+  if (own === 'omit') return false;
+  return context?.parasitics === true;
+}
+
+/** `C_gs` and `C_gd`: the two that set a stage's input pole and drive Miller. */
+function parasiticPrimitives(component, nodes, metadata) {
+  return [
+    {
+      kind: 'capacitor',
+      id: `${component.refdes}.cgs`,
+      terminals: { a: nodes.g, b: nodes.s },
+      value: parameterName('Cgs', component.refdes),
+      metadata: { ...metadata, parasitic: 'cgs' },
+    },
+    {
+      kind: 'capacitor',
+      id: `${component.refdes}.cgd`,
+      terminals: { a: nodes.g, b: nodes.d },
+      value: parameterName('Cgd', component.refdes),
+      metadata: { ...metadata, parasitic: 'cgd' },
+    },
+  ];
+}
+
 function mosPrimitives(component, nodes, model, metadata) {
   const names = {
     gm: parameterName('gm', component.refdes),
@@ -286,10 +321,22 @@ function convertMos(circuit, component, context) {
   const metadata = primitiveMetadata(component, context, model, override && typeof override === 'object'
     ? { deviceRegion: { ...override } }
     : {});
+  // A device's own capacitances belong to whichever region it is in.
+  const parasitics = includesParasitics(component, context)
+    ? parasiticPrimitives(component, nodes, { ...metadata, device: 'mos' })
+    : [];
   if (model && TRIODE_MODELS.has(model)) {
-    return { primitives: [triodePrimitive(component, nodes, metadata)], diagnostics, nodes: Object.values(nodes) };
+    return {
+      primitives: [triodePrimitive(component, nodes, metadata), ...parasitics],
+      diagnostics,
+      nodes: Object.values(nodes),
+    };
   }
-  return { primitives: mosPrimitives(component, nodes, 'saturation', metadata), diagnostics, nodes: Object.values(nodes) };
+  return {
+    primitives: [...mosPrimitives(component, nodes, 'saturation', metadata), ...parasitics],
+    diagnostics,
+    nodes: Object.values(nodes),
+  };
 }
 
 function convertOneComponent(circuit, component, context) {

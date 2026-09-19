@@ -1,7 +1,8 @@
 import { createRationalOps } from './algebra-ops.js';
+import { formatExpression } from './rational.js';
 import { solveMNA } from './solve.js';
 import { compactRational } from './compact.js';
-import { applyApproximations } from './approximation.js';
+import { applyApproximations, intrinsicallyDominates } from './approximation.js';
 
 function reachable(edges, start, excluded = -1) {
   const seen = new Set();
@@ -89,6 +90,18 @@ function shortCircuitTransadmittance(pipeline, index, previous, graph, ops) {
 }
 
 /** Apply the selected assumptions to each physical stage before recombining. */
+/** How much symbol there is to read in an expression, counting occurrences. */
+function symbolWeight(value) {
+  if (!value || typeof value !== 'object') return 0;
+  if (value.kind === 'symbol') return 1;
+  if (value.kind === 'number') return 0;
+  if (value.kind === 'rational') return symbolWeight(value.numerator) + symbolWeight(value.denominator);
+  if (value.kind === 'add') return value.terms.reduce((sum, term) => sum + symbolWeight(term), 0);
+  if (value.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + symbolWeight(factor), 0);
+  if (value.kind === 'power') return symbolWeight(value.base);
+  return 0;
+}
+
 export function approximateTopology(topology, queries, options) {
   if (!topology.stages.length) return null;
   const ops = createRationalOps({ variable: options.variable || 's', maxOperations: 12000 });
@@ -103,14 +116,52 @@ export function approximateTopology(topology, queries, options) {
         const branches = parallel.operands.map((branch) => applyApproximations(branch, localOptions));
         // Leave singular/infinite branches to the complete rational limit.
         if (branches.every((branch) => branch.selected.kind !== 'infinity')) {
-          const operands = branches.map((branch) => branch.selected);
+          const reduced = branches.map((branch) => branch.selected);
+          // The branches also compete with each other: a parallel combination
+          // is set by its smallest impedance, so `g_m r_o >> 1` drops an r_o
+          // branch beside a 1/g_m one. It never drops R_S or R_D, which that
+          // assumption says nothing about.
+          const dropped = new Set();
+          if (process.env.MOSFETEER_DEBUG_TOPO) {
+            console.error('[parallel] branches', reduced.length, reduced.map((b) => JSON.stringify(b).slice(0, 60)));
+          }
+          const devices = [];
+          reduced.forEach((branch, index) => {
+            const swamped = reduced.some((other, otherIndex) => {
+              if (index === otherIndex || dropped.has(otherIndex)) return false;
+              const verdict = intrinsicallyDominates(branch, other, localOptions);
+              if (verdict.dominated) devices.push(...verdict.devices);
+              return verdict.dominated;
+            });
+            if (swamped) dropped.add(index);
+          });
+          const operands = dropped.size && dropped.size < reduced.length
+            ? reduced.filter((_, index) => !dropped.has(index))
+            : reduced;
           const combined = operands.reduce((a, b) => a === null ? b : ops.div(ops.mul(a, b), ops.add(a, b)), null);
-          load = { ...load, selected: combined, assumptions: branches.flatMap((branch) => branch.assumptions) };
-          identities.push({ kind: 'parallel-resistance', equivalent: combined, operands });
+          load = {
+            ...load,
+            selected: combined,
+            assumptions: [
+              ...branches.flatMap((branch) => branch.assumptions),
+              ...(operands.length === reduced.length ? [] : devices.map((id) => `g_m r_o >> 1 (${id})`)),
+            ],
+          };
+          if (operands.length > 1) identities.push({ kind: 'parallel-resistance', equivalent: combined, operands });
         }
       }
+      if (process.env.MOSFETEER_DEBUG_TOPO) {
+        const fmt = (v) => v && v.numerator ? `${formatExpression(v.numerator)} / ${formatExpression(v.denominator)}` : String(v?.kind);
+        console.error('[stage]', index, 'gm', fmt(stage.transadmittance), '->', fmt(gm.selected),
+          '| Z', fmt(stage.impedance), '->', fmt(load.selected), '| parallel', !!parallel);
+      }
       const gain = compactRational(ops.mul(gm.selected, load.selected), ops);
-      identities.push({ kind: 'product', equivalent: gain, operands: [gm.selected, load.selected] });
+      // Keep the proven product only while the factored form is the shorter
+      // read. Once the load has collapsed to 1/g_m, `g_m (1/g_m)` says less
+      // than the 1 it multiplies out to.
+      if (symbolWeight(gain) > symbolWeight(gm.selected) + symbolWeight(load.selected)) {
+        identities.push({ kind: 'product', equivalent: gain, operands: [gm.selected, load.selected] });
+      }
       return { gain, gm, load };
     });
     const selected = stages.reduce((a, stage) => ops.mul(a, stage.gain), ops.one);

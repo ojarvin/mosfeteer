@@ -19,8 +19,7 @@ export const resistor = defineSymbol({
   ],
   textPos: { x: 0, y: -30, anchor: 'middle' },
   refPos: null,
-  // Instance label sits below the body (mirror the symbol so the label is above
-  // when there is open space above).
-  labelOffset: { x: 0, y: 80 },
+  // Instance label sits above the body by default.
+  labelOffset: { x: 0, y: -80 },
   defaultValue: '',
 });

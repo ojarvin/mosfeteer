@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, placementSearchScore } from '../src/web/toolbar.js';
+import { componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, placementSearchScore, PLACEMENT_ALIASES, PLACEMENT_LABELS } from '../src/web/toolbar.js';
 
 test('component palette omits generated solder dots but keeps real components', () => {
   const items = componentPaletteItems([
@@ -61,6 +61,50 @@ test('insert search matches a symbol by id, display name, or alias', () => {
   assert.ok(placementSearchScore('pot', 'variable_resistor') > 0, 'alias "potentiometer"');
   assert.ok(placementSearchScore('bjt', 'npn') > 0, 'alias');
   assert.equal(placementSearchScore('zzzz', 'nmos'), -1);
+});
+
+test('vccs is named and searchable in the insert palette', () => {
+  assert.equal(PLACEMENT_LABELS.vccs, 'VCCS (voltage-controlled current source)');
+  assert.ok(PLACEMENT_ALIASES.vccs.includes('transconductance'));
+  assert.ok(placementSearchScore('gm', 'vccs') > 0);
+});
+
+test('three-input logic gates are named and searchable', () => {
+  assert.equal(PLACEMENT_LABELS.and3_gate, '3-input AND gate');
+  assert.equal(PLACEMENT_LABELS.xnor3_gate, '3-input XNOR gate');
+  assert.ok(placementSearchScore('three input', 'and3_gate') > 0);
+});
+
+test('two-input logic gates use explicit arity names', () => {
+  assert.equal(PLACEMENT_LABELS.and2_gate, '2-input AND gate');
+  assert.equal(PLACEMENT_LABELS.xnor2_gate, '2-input XNOR gate');
+  assert.ok(placementSearchScore('two input', 'and2_gate') > 0);
+});
+
+test('tri-state logic gates are named and searchable', () => {
+  assert.equal(PLACEMENT_LABELS.tristate_inverter, 'Tri-state inverter');
+  assert.equal(PLACEMENT_LABELS.tristate_buffer, 'Tri-state buffer');
+  assert.ok(placementSearchScore('enable', 'tristate_inverter') > 0);
+});
+
+test('multiplexer is named and searchable', () => {
+  assert.equal(PLACEMENT_LABELS.mux2, '2:1 multiplexer');
+  assert.ok(PLACEMENT_ALIASES.mux2.includes('multiplexer'));
+  assert.ok(placementSearchScore('select', 'mux2') > 0);
+});
+
+test('D flip-flop variants are named and searchable in the sequential palette', () => {
+  assert.equal(PLACEMENT_LABELS.dff, 'D flip-flop (CLK, RST)');
+  assert.equal(PLACEMENT_LABELS.dff_clkb_rstb_qb, 'D flip-flop (CLKB, RSTB, Q, QB)');
+  assert.ok(PLACEMENT_ALIASES.dff.includes('flip-flop'));
+  assert.ok(placementSearchScore('sequential', 'dff_qb') > 0);
+});
+
+test('latch variants are named and searchable in the sequential palette', () => {
+  assert.equal(PLACEMENT_LABELS.latch, 'L latch (EN, RST)');
+  assert.equal(PLACEMENT_LABELS.latch_enb_rstb_qb, 'L latch (ENB, RSTB, Q, QB)');
+  assert.ok(PLACEMENT_ALIASES.latch.includes('level sensitive'));
+  assert.ok(placementSearchScore('latch', 'latch_qb') > 0);
 });
 
 test('image clipboard shortcut is discoverable once in each editor keymap', () => {

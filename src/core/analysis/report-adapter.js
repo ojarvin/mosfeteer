@@ -390,8 +390,22 @@ function rootRow(roots) {
   };
 }
 
-function equationEntries(reports) {
+/** What the quantities are ratios of, named by the nodes they were taken at. */
+function portEntry(report) {
+  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
+  if (!definitions.length) return null;
+  // A definition, not a derived expression: it names nodes rather than device
+  // parameters, so there is nothing to trace back to the canvas.
+  return {
+    title: 'Ports',
+    result: { ok: true, definition: true, equation: definitions.map(({ tex }) => tex).join(' \\quad ') },
+  };
+}
+
+function equationEntries(reports, report) {
   const entries = [];
+  const ports = portEntry(report);
+  if (ports) entries.push(ports);
   const add = (title, result) => {
     if (result?.ok && result.equation) entries.push({ title, result });
   };
@@ -427,7 +441,7 @@ export function adaptCombinedReport(report) {
   const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
   const details = detailsFor(report, report);
   const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
-  const entries = equationEntries(reports);
+  const entries = equationEntries(reports, report);
   const successful = Object.values(reports).filter((child) => child.ok);
   const context = report.context || {};
   const inputPort = firstDefined(context.input);

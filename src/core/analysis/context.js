@@ -193,6 +193,24 @@ function expandGroundsThroughAliases(acGroundIds, aliases) {
   return acGroundIds;
 }
 
+/**
+ * Take the chosen ports out of the AC-reference set, name group and all.
+ * Returns whether anything was released, so an analysis that just removed its
+ * own last reference can say so instead of solving a floating model.
+ */
+function releasePortsFromReference(acGroundIds, results, aliases) {
+  const representative = (id) => aliases?.get(id) ?? id;
+  const ports = new Set(results.filter((result) => result?.ok).map((result) => representative(result.net.id)));
+  if (!ports.size || !acGroundIds.size) return false;
+  let released = false;
+  for (const id of [...acGroundIds]) {
+    if (!ports.has(representative(id))) continue;
+    acGroundIds.delete(id);
+    released = true;
+  }
+  return released;
+}
+
 function nodeForNet(netId, acGroundIds, aliases = null) {
   if (!netId) return netId;
   if (acGroundIds.has(netId)) return AC_GROUND;
@@ -297,6 +315,15 @@ export function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}
   const virtualAliases = virtualNetAliases(circuit);
   expandGroundsThroughAliases(groundResult.ids, virtualAliases);
 
+  // A node chosen as a port is driven or observed there, so it is not the AC
+  // reference any more. That is what lets a supply rail answer as an input --
+  // a supply-rejection query is an ordinary transfer between two nodes, with
+  // no rule of its own -- and the rail's whole name group leaves with it.
+  const released = releasePortsFromReference(groundResult.ids, [inputResult, outputResult], virtualAliases);
+  if (released && !groundResult.ids.size) {
+    diagnostics.push(diagnostic('missing-reference', 'the selected ports are the only AC reference: mark another net as AC ground'));
+  }
+
   const input = inputResult.ok ? normalizedPort(inputResult, 'input', groundResult.ids, virtualAliases) : null;
   const output = outputResult.ok ? normalizedPort(outputResult, 'output', groundResult.ids, virtualAliases) : null;
   if (input && output && input.node === output.node) {
@@ -304,9 +331,6 @@ export function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}
       input: input.netId,
       output: output.netId,
     }));
-  }
-  if (input?.node === AC_GROUND || output?.node === AC_GROUND) {
-    diagnostics.push(diagnostic('reference-port', 'input and output must not be AC-reference rails'));
   }
 
   const bulks = new Map();
@@ -334,7 +358,22 @@ export function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}
     ['VDD', AC_GROUND],
     ['VCM', AC_GROUND],
   ]);
+  // An implicit bulk names its rail rather than a net. When that rail is the
+  // port under test it is a live node, and the bulks must follow it there.
+  for (const port of [input, output]) {
+    if (!port) continue;
+    const rail = canonicalNetName(port.name).replace(/[_^]\{([^}]*)\}/g, '$1').toUpperCase();
+    if (!referenceNodes.has(rail)) continue;
+    referenceNodes.set(rail, port.node);
+    if (rail === 'VSS') referenceNodes.set('GND', port.node);
+    if (rail === 'GND') referenceNodes.set('VSS', port.node);
+  }
   const deviceRegions = normalizeDeviceRegions(normalizedOptions);
+  // Device capacitances are opt-in: off unless the request asks for them, and
+  // a device's own attribute can still opt in or out on its own.
+  const parasitics = normalizedOptions.parasitics === true
+    || normalizedOptions.deviceCapacitances === true
+    || normalizedOptions.includeParasitics === true;
   const ok = diagnostics.length === 0;
   return {
     ok,
@@ -349,6 +388,7 @@ export function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}
     referenceNets: referenceNodes,
     rails: referenceNodes,
     deviceRegions,
+    parasitics,
     acGroundNode: AC_GROUND,
     bulks,
     diagnostics: { errors: diagnostics, warnings: [] },

@@ -470,15 +470,33 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     diagnostics: converted.diagnostics,
   });
 
-  // Ignoring channel-length modulation (r_o -> infinity) is an open circuit:
-  // the selected devices' output resistances are left out of the model.
+  // Both of these are model simplifications, not presentation ones, so they
+  // act here rather than on the solved expression. Ignoring channel-length
+  // modulation (r_o -> infinity) is an open circuit; ignoring the body effect
+  // (g_mb = 0) is a source that carries no current. Leaving them out saves the
+  // solver a symbol and a branch per device instead of cancelling them
+  // afterwards, and the netlist and the drawn model then show the circuit that
+  // was actually solved.
   const omittedOutputResistances = [];
+  const omittedBodyEffect = [];
   const primitives = converted.primitives.filter((primitive) => {
-    const match = primitive.kind === 'resistor' && primitive.metadata?.device === 'mos'
-      && /^(.*)\.ro$/.exec(String(primitive.id));
-    if (!match || !deviceOption(options.deviceAssumptions, match[1], 'roInfinity')) return true;
-    omittedOutputResistances.push(match[1]);
-    return false;
+    const id = String(primitive.id);
+    const output = primitive.kind === 'resistor' && primitive.metadata?.device === 'mos'
+      && /^(.*)\.ro$/.exec(id);
+    if (output && deviceOption(options.deviceAssumptions, output[1], 'roInfinity')) {
+      omittedOutputResistances.push(output[1]);
+      return false;
+    }
+    const body = primitive.kind === 'vccs' && /^(.*)\.gmb$/.exec(id);
+    if (body && deviceOption(options.deviceAssumptions, body[1], 'gmb0')) {
+      // A device whose bulk and source are the same node has no body-effect
+      // branch to drop, so dropping it is not an assumption worth listing.
+      const plus = primitive.control?.a ?? primitive.controlPlus;
+      const minus = primitive.control?.b ?? primitive.controlMinus;
+      if (plus !== minus) omittedBodyEffect.push(body[1]);
+      return false;
+    }
+    return true;
   });
 
   const miller = options.millerApproximation === false
@@ -567,6 +585,7 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     mnaPrimitives,
     millerSubstitutions: miller.applied,
     omittedOutputResistances,
+    omittedBodyEffect,
     retainedFeedbackNetworks: miller.retained || [],
     networkReductionProofs: reduction.proofs,
     coupled,

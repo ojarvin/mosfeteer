@@ -529,6 +529,15 @@ test('netlabel aliases and annotation commands are cohesive and require coordina
   assert.equal(c.labels.has('NOTE'), false);
 });
 
+test('annotation add can right-align text and its bbox to a shared edge', () => {
+  const c = fresh();
+  runCommand(c, 'annotation add CATEGORY Transistors 0 0 --align right --right-edge -240');
+  const label = c.labels.get('CATEGORY');
+  assert.equal(label.align, 'right');
+  assert.equal(label.bbox().x + label.bbox().w, -240);
+  assert.equal(label.textPos().anchor, 'end');
+});
+
 test('evaluation reports only live structured malformed net labels', () => {
   const c = fresh();
   const net = c.createWireNet({ name: 'SIG', route: [{ x: 0, y: 0 }, { x: 80, y: 0 }] });

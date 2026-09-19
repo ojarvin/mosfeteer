@@ -191,6 +191,11 @@ mirror flag to override that default.
 | supply | `p` (bottom edge) | x:-40..40, y:-80..0 |
 | input / output / inputoutput | `p` (circuit side) | boxed port, id label on circuit-outer side |
 | adc / dac | ADC: `ain` in, `d` out; DAC: `d` in, `aout` out | ADC point-to-flat left-to-right; DAC flat-to-point left-to-right; one diagonal slash marks the digital bus; centered `ADC` / `DAC` label |
+| `*2_gate` / `*3_gate` logic families | two-input gates use `a`, `b`, `y`; three-input variants use `a`, `b`, `c`, `y` in top-to-bottom order | `*3_gate` keeps the corresponding `*2_gate` body and adds the centered input lead |
+| `tristate_inverter` / `tristate_buffer` | `a` / `y` plus bottom `en` input | Exact inverter/buffer body copy with a vertical enable lead at x=0 |
+| `mux2` | `a`, `b` inputs, `y` output, bottom `s` select | 80-unit tapered body, six grid squares tall on the input side and four on the output side; upright `0`/`1` row labels |
+| dff family | `D` / `CLK` or `CLKB` inputs, `Q` (and optional inverted `QB`) outputs, `RST` or `RSTB` bottom input | 80×160 outlined body with `D` aligned to the D/Q row, a thin rising-edge clock marker, and inversion bubbles on active-low clock/reset and `QB` variants; owned component label sits above |
+| latch family | `L` / `EN` or `ENB` inputs, `Q` (and optional inverted `QB`) outputs, `RST` or `RSTB` bottom input | Same body and footprint as DFFs, with no clock marker and `L` aligned to the enable/output rows; owned component label sits above |
 | block | `T1`…`T12`, every non-corner grid slot per side | resizable schematic shell (default 160×160) with centered editable caption; selected blocks expose eight resize handles, preserve connected terminal identities, and unused terminals do not fail Design Check |
 
 Notes:
@@ -537,6 +542,11 @@ capacitor, or other part at the edge of the drawing gets its label on
 the outer side (mirror the symbol so the label flips outward). Small
 labels need no extra spacing — keep them close to the symbol; only a
 wide label or a body on the outer side calls for a bigger gap.
+
+Owned instance labels for passives, macros, and logic default above their
+body, with the symbol's own clear-space offset. Keep that placement when
+there is room; move or mirror the component only when the surrounding
+drawing requires a clearer side.
 
 Do not add extra descriptive text or component values by default. Unless
 the user asks for values or annotations, the only component text should

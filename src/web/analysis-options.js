@@ -1,9 +1,13 @@
 /** Canonical small-signal form options and the legacy persistence boundary. */
 
 export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
+  // Model simplifications: they change the small-signal model itself.
   neglectBodyEffect: true,
-  highIntrinsicGain: true,
   neglectChannelLengthModulation: false,
+  millerApproximation: true,
+  parasitics: false,
+  // Equation approximations: they change only the displayed expression.
+  highIntrinsicGain: true,
   dominantPole: false,
 });
 
@@ -16,6 +20,8 @@ const OPTION_ALIASES = Object.freeze({
   dominantPole: [
     'dominantPoleApproximation', 'dominantPoleReduction', 'approxDominantPole',
   ],
+  millerApproximation: ['miller', 'approxMiller', 'millerDecoupling'],
+  parasitics: ['deviceCapacitances', 'includeParasitics', 'approxParasitics'],
 });
 
 const LEGACY_LIST_FIELDS = Object.freeze({
@@ -144,6 +150,8 @@ function legacyOptions(source) {
     highIntrinsicGain: ['gmro-large', 'high-intrinsic-gain'],
     neglectChannelLengthModulation: ['ignore-channel-length-modulation', 'ignore-ro', 'ro-infinite'],
     dominantPole: ['dominant-pole', 'dominant-pole-approximation', 'dominant-pole-reduction'],
+    millerApproximation: ['miller', 'miller-approximation'],
+    parasitics: ['parasitics', 'device-capacitances'],
   };
   for (const [name, names] of Object.entries(listAliases)) {
     if (!has(result, name) && names.some((alias) => approximations.includes(alias))) result[name] = true;

@@ -18,6 +18,6 @@ export const inductor = defineSymbol({
   ],
   textPos: { x: 0, y: -30, anchor: 'middle' },
   refPos: null,
-  labelOffset: { x: 0, y: 80 },
+  labelOffset: { x: 0, y: -80 },
   defaultValue: '',
 });

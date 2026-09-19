@@ -3,6 +3,7 @@ import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import {
   add,
   equals,
+  formatExpression,
   integer,
   multiply,
   polynomialCoefficients,
@@ -188,7 +189,10 @@ function monomial(value) {
     }
     const base = factor.kind === 'power' ? factor.base : factor;
     const exponent = factor.kind === 'power' ? factor.exponent : 1;
-    if (base.kind !== 'symbol' || exponent < 0) return null;
+    // Reciprocals count: an admittance sum is where `g_m r_o >> 1` says that
+    // 1/r_o is negligible beside g_m, which is what makes a parallel
+    // combination collapse onto its smallest impedance.
+    if (base.kind !== 'symbol') return null;
     result.set(base.name, (result.get(base.name) || 0) + exponent);
   }
   return result;
@@ -236,7 +240,9 @@ function retainsFrequencyPowers(before, after, variable) {
   return [...original].every((power) => reduced.has(power));
 }
 
-function intrinsicProductReduction(current, records, global, options) {
+/** The devices whose `g_m r_o` the current selection licenses, and every
+ * product of one device's `g_m` with another's `r_o` that follows from it. */
+function intrinsicPairs(records, global, options) {
   const selectedDevices = records.filter((device) => device.intrinsicProduct
     && !deviceScaling(device, options).length
     && booleanOption(device, global, ['gmroLarge', 'highIntrinsicGain', 'intrinsicGainLarge'])
@@ -245,9 +251,55 @@ function intrinsicProductReduction(current, records, global, options) {
   // The textbook gm*ro assumption covers interactions between the selected
   // devices as well (e.g. a cascode's gm2*ro1). External resistances are not
   // output-resistance symbols, so gm*RS and gm*RD remain independent.
-  const pairs = selectedDevices.flatMap((transistor) => selectedDevices.map((load) => ({
+  return selectedDevices.flatMap((transistor) => selectedDevices.map((load) => ({
     device: transistor.device, gm: transistor.gm, ro: load.ro,
   })));
+}
+
+/**
+ * Whether `large` exceeds `small` by a product of those pairs -- the one test
+ * behind every `g_m r_o >> 1` simplification. It drops a subleading term from
+ * a sum here, and in `topology.js` it drops the branch of a parallel
+ * combination that the smallest branch swamps.
+ */
+function dominates(largeTerms, smallTerms, pairs) {
+  if (!largeTerms || !smallTerms) return { dominated: false, devices: [] };
+  const usedHere = new Set();
+  const dominated = smallTerms.every((lower) => largeTerms.some((higher) => {
+    const ratio = new Map(higher);
+    for (const [name, exponent] of lower) {
+      if ((ratio.get(name) || 0) < exponent) return false;
+      ratio.set(name, ratio.get(name) - exponent);
+    }
+    const devices = [];
+    for (const pair of pairs) {
+      const count = Math.min(ratio.get(pair.gm) || 0, ratio.get(pair.ro) || 0);
+      if (!count) continue;
+      ratio.set(pair.gm, ratio.get(pair.gm) - count);
+      ratio.set(pair.ro, ratio.get(pair.ro) - count);
+      devices.push(pair.device);
+    }
+    if (!devices.length || [...ratio.values()].some((exponent) => exponent !== 0)) return false;
+    devices.forEach((id) => usedHere.add(id));
+    return true;
+  }));
+  return { dominated, devices: dominated ? [...usedHere] : [] };
+}
+
+/**
+ * Public form of that test for two whole expressions: is `small` negligible
+ * beside `large` under the selected `g_m r_o >> 1`? Returns the devices whose
+ * assumption was used, so the caller can list them.
+ */
+export function intrinsicallyDominates(large, small, options = {}) {
+  const { global } = settingObjects(options);
+  const pairs = intrinsicPairs(deviceRecords(options), global, options);
+  if (!pairs.length) return { dominated: false, devices: [] };
+  return dominates(monomialTerms(large), monomialTerms(small), pairs);
+}
+
+function intrinsicProductReduction(current, records, global, options) {
+  const pairs = intrinsicPairs(records, global, options);
   const used = new Set();
   function reduce(value) {
     if (value.kind === 'multiply') return multiply(value.factors.map(reduce));
@@ -283,6 +335,12 @@ function intrinsicProductReduction(current, records, global, options) {
   }
   const numerator = reduce(current.numerator);
   const denominator = reduce(current.denominator);
+  if (process.env.MOSFETEER_DEBUG_APPROX) {
+    console.error('[reduce]', formatExpression(current.denominator), '->', formatExpression(denominator),
+      '| zero?', equals(denominator, ZERO),
+      '| retains?', retainsFrequencyPowers(current.denominator, denominator, current.variable || 's'),
+      '| used', [...used]);
+  }
   // Leading terms can cancel in an unreduced global expression. Keep the
   // exact value here; the topological path can still simplify its local Gm
   // and load branches without that cancellation.

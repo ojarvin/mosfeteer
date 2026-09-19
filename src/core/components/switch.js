@@ -25,7 +25,8 @@ function makeSwitch(type, description, bladeD, contact1X, contact2X) {
     ],
     textPos: { x: -20, y: -30, anchor: 'middle' },
     refPos: null,
-    labelOffset: { x: 0, y: 40 },
+    // Keep the label above the horizontal body without overlapping its bbox.
+    labelOffset: { x: 0, y: -80 },
     defaultValue: '',
   });
 }

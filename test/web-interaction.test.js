@@ -44,6 +44,15 @@ test('named net edits confirm virtual connections, and port names never repeat',
   assert.doesNotMatch(main, /applySharedInterfaceName|sharedInterfaceNameTarget|setInterfacePinName/);
 });
 
+test('insert categories keep switches and macros separate and include vccs with sources', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /\['Switches', \/\^switch_\//);
+  assert.match(main, /\['Sources & power', \/\^\(current_source\|voltage_source\|vccs\|supply\|ground\|vcm\)\$\//);
+  assert.match(main, /\['Macros', \/\^\(opamp\|opamp_diff\|adc\|dac\)\$\//);
+  assert.match(main, /\['Logic', \/\^\(inverter\|buffer\|tristate_\(inverter\|buffer\)\|mux2\|\.\*_gate\)\$\//);
+  assert.match(main, /\['Sequential', \/\^\(\?:dff\|latch\)\(\?:_\|\$\)\//);
+});
+
 test('the small-signal figure owns Escape and hands the keyboard back', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf("modelDialog?.addEventListener('keydown'");
@@ -55,6 +64,21 @@ test('the small-signal figure owns Escape and hands the keyboard back', () => {
   // drawing it was covering.
   assert.match(handlers, /ev\.target === modelDialog/);
   assert.match(handlers, /addEventListener\('close'[\s\S]*canvasEl\.focus\(\)/);
+});
+
+test('the full-size figure is a view over one drawing, driven like the canvas', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function bindModelFigureView(');
+  assert.ok(start > 0);
+  const view = main.slice(start, main.indexOf('bindModelFigureView(modelDialogFigure)', start));
+  // Wheel zooms about the pointer, the middle button pans, the right button
+  // drags a box (and zooms out on a click), and a double-click refits.
+  assert.match(view, /'wheel'[\s\S]*Math\.pow\(1\.0016, ev\.deltaY\)/);
+  assert.match(view, /ev\.button === 1 \? 'pan' : 'zoom'/);
+  assert.match(view, /if \(!drag\.moved\) \{\s*zoomModelFigure\(2, world\);/);
+  assert.match(view, /'dblclick'[\s\S]*fitModelFigure\(\)/);
+  // Nothing re-renders and nothing is mutated: it is the SVG's own viewBox.
+  assert.match(main, /function applyModelFigureView\(\)[\s\S]*setAttribute\('viewBox'/);
 });
 
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
@@ -117,6 +141,13 @@ test('MathML annotation measurements are independent of zoom on reload', () => {
     assert.ok(Math.abs(result.h - 103) < 1e-9);
     assert.ok(Math.abs(result.y + result.h / 2 - 245.5) < 1e-9);
   }
+});
+
+test('generated category labels keep their persisted grid metrics', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function syncRenderedLabelMetrics()');
+  const end = main.indexOf('\nfunction scheduleMeasuredLabelRender()', start);
+  assert.match(main.slice(start, end), /if \(label\.id\.startsWith\('category_'\)\) continue;/);
 });
 
 test('multiline assumptions measure their text independently of the restored container width', () => {
@@ -238,9 +269,15 @@ test('small-signal analysis exposes the canonical v2 controls', () => {
   assert.match(html, /id="analysis-approx-body"[^>]+type="checkbox"[^>]+checked/);
   assert.match(html, /id="analysis-approx-gmro"[^>]+type="checkbox"[^>]+checked/);
   assert.match(html, /id="analysis-approx-dominant-pole"[^>]+type="checkbox"/);
+  // The card separates what changes the model from what changes the equation.
+  // Miller decoupling belongs to the first group: it is the engine's own
+  // pre-solve transform, not the removed v1 "miller" presentation control.
+  assert.match(html, /id="analysis-approx-miller"[^>]+type="checkbox"[^>]+checked/);
+  assert.match(html, /<legend>Model simplifications<\/legend>[\s\S]*id="analysis-approx-miller"/);
+  assert.match(html, /<legend>Equation approximations<\/legend>[\s\S]*id="analysis-approx-dominant-pole"/);
   assert.doesNotMatch(html, /id="analysis-(?:kind|context|mode|complementary|models)"/);
-  assert.doesNotMatch(html, /id="analysis-approx-(?:dc|cascode|miller)"/);
-  assert.doesNotMatch(html, /current-source|Miller|cascode|Analyze DC topology only/i);
+  assert.doesNotMatch(html, /id="analysis-approx-(?:dc|cascode)"/);
+  assert.doesNotMatch(html, /current-source|cascode|Analyze DC topology only/i);
   assert.match(html, /<div class="analysis-scroll">[\s\S]*id="analysis-result"[\s\S]*<\/div>\s*<div class="dialog-actions">/);
   const style = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
   assert.match(html, /<section id="analysis-dialog" class="analysis-dock"[^>]*hidden/);
@@ -281,7 +318,7 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.doesNotMatch(main, /core\/analysis\/index\.js/);
   // Whole identifiers: `analysisModelEl` (the drawn small-signal model) is
   // not the removed `analysisMode` control.
-  assert.doesNotMatch(main, /\b(?:analysisKind|analysisMode|analysisComplementary|analysisContext|analysisModels|analysisApproxMiller|analysisApproxCascode|dcOnly)\b/);
+  assert.doesNotMatch(main, /\b(?:analysisKind|analysisMode|analysisComplementary|analysisContext|analysisModels|analysisApproxCascode|dcOnly)\b/);
   assert.match(main, /Array\.isArray\(report\?\.equationEntries\)/);
   assert.match(main, /for \(const \{ title, result: child \} of entries\)/);
   // A tab whose content this report has no data for falls back to Equations.

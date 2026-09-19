@@ -57,6 +57,7 @@ Each schematic or block diagram is one self-contained `.schematic.json` file. Yo
 
 ```sh
 npm run serve   # dev server with auto-restart on source changes (http://127.0.0.1:47280/)
+npm run symbols # regenerate the symbols reference document through the running server
 npm test
 ```
 

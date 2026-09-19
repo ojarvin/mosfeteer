@@ -22,7 +22,7 @@ function converter(type, description, text, terminals, body, signalMark) {
     ],
     textPos: null,
     refPos: null,
-    labelOffset: { x: 0, y: 160 },
+    labelOffset: { x: 0, y: -160 },
     defaultValue: '',
   });
 }

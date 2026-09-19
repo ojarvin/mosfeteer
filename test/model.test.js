@@ -582,6 +582,21 @@ test('legacy filled and unlabelled ports load as labelled ports', () => {
   assert.equal(loaded.labelOf('P2').text, 'P_{2}');
 });
 
+test('legacy two-input gate types load as explicit arity names', () => {
+  const c = new Circuit();
+  for (const [index, type] of ['and2_gate', 'nand2_gate', 'or2_gate', 'nor2_gate', 'xor2_gate', 'xnor2_gate'].entries()) {
+    c.addComponent(type, { refdes: `U${index + 1}`, x: index * 400, y: 0 });
+  }
+  const data = c.toJSON();
+  for (const [index, type] of ['and_gate', 'nand_gate', 'or_gate', 'nor_gate', 'xor_gate', 'xnor_gate'].entries()) {
+    data.components[index].type = type;
+  }
+  const loaded = Circuit.fromJSON(data);
+  assert.deepEqual([...loaded.components.values()].map((component) => component.type), [
+    'and2_gate', 'nand2_gate', 'or2_gate', 'nor2_gate', 'xor2_gate', 'xnor2_gate',
+  ]);
+});
+
 test('interface pin names and owned labels stay synchronized with their single-owner net', () => {
   const c = new Circuit();
   const pin = c.addComponent('input', { x: 0, y: 0 });
@@ -2502,7 +2517,7 @@ test('explicitly merging same-named physical nets inherits names and retargets l
   const b = c.connect('R2.a', 'R2.b');
   c.renameNet(a, 'SIG');
   c.renameNet(b, 'SIG');
-  c.addNetLabel(a, { id: 'SIG_A', x: 0, y: -80 });
+  c.addNetLabel(a, { id: 'SIG_A', x: 0, y: 80 });
   const p = c.getComponent('R2').terminalWorld('a');
   const merged = c.wireTo('R1.a', p, [], { routeStyle: 'diagonal' });
   assert.equal(c.nets.size, 1);

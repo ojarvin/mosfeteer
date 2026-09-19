@@ -101,6 +101,8 @@ const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
 const analysisDeviceRegions = document.getElementById('analysis-device-regions');
 const analysisApproxRo = document.getElementById('analysis-approx-ro');
 const analysisApproxBody = document.getElementById('analysis-approx-body');
+const analysisApproxMiller = document.getElementById('analysis-approx-miller');
+const analysisParasitics = document.getElementById('analysis-parasitics');
 const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
 const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
 const analysisResult = document.getElementById('analysis-result');
@@ -115,6 +117,7 @@ const modelDialog = document.getElementById('model-dialog');
 const modelDialogTitle = document.getElementById('model-dialog-title');
 const modelDialogFigure = document.getElementById('model-dialog-figure');
 const modelDialogNotes = document.getElementById('model-dialog-notes');
+const modelDialogRubber = document.getElementById('model-dialog-rubber');
 const analysisTabButtons = [...document.querySelectorAll('[data-analysis-tab]')];
 const analysisTabPanels = new Map([...document.querySelectorAll('.analysis-tab-panel')]
   .map((panel) => [panel.id.replace(/^analysis-panel-/, ''), panel]));
@@ -3457,6 +3460,11 @@ function syncRenderedLabelMetrics() {
   let changed = false;
   for (const label of circuit.labels.values()) {
     if (label.kind !== 'label') continue;
+    // Generated symbol-sheet category labels are already placed against a
+    // shared grid right edge. Their fallback boxes intentionally stay stable;
+    // replacing them with browser glyph metrics would make labels whose text
+    // crosses a cell boundary jump one square left on every reload.
+    if (label.id.startsWith('category_')) continue;
     if (label.math && !mathFontReady) continue;
     const group = groups.get(label.id);
     const bounds = renderedLabelTextBounds(group);
@@ -7002,6 +7010,8 @@ function clearLatestAnalysisResult() {
 function analysisFormOptions() {
   return normalizeAnalysisOptions({
     neglectBodyEffect: !!analysisApproxBody?.checked,
+    millerApproximation: !!analysisApproxMiller?.checked,
+    parasitics: !!analysisParasitics?.checked,
     highIntrinsicGain: !!analysisApproxGmRo?.checked,
     neglectChannelLengthModulation: !!analysisApproxRo?.checked,
     dominantPole: !!analysisApproxDominantPole?.checked,
@@ -7066,6 +7076,8 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisDeviceRegions) analysisDeviceRegions.value = '';
     if (analysisApproxRo) analysisApproxRo.checked = options.neglectChannelLengthModulation;
     if (analysisApproxBody) analysisApproxBody.checked = options.neglectBodyEffect;
+    if (analysisApproxMiller) analysisApproxMiller.checked = options.millerApproximation;
+    if (analysisParasitics) analysisParasitics.checked = options.parasitics;
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
     return false;
@@ -7089,6 +7101,8 @@ function restoreAnalysisForm(defaults = {}) {
   }
   if (analysisApproxRo) analysisApproxRo.checked = state.options.neglectChannelLengthModulation;
   if (analysisApproxBody) analysisApproxBody.checked = state.options.neglectBodyEffect;
+  if (analysisApproxMiller) analysisApproxMiller.checked = state.options.millerApproximation;
+  if (analysisParasitics) analysisParasitics.checked = state.options.parasitics;
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
   return true;
@@ -7120,6 +7134,19 @@ function analysisReportText(report) {
   const log = Array.isArray(report?.log) ? report.log.join('\n') : String(report?.log || '').trim();
   if (log) lines.push(log);
   return lines.join('\n');
+}
+
+/**
+ * Solver messages name nodes by physical net id (`V(N4)`), which says nothing
+ * to someone looking at a drawing. Give them back the net's own name so a
+ * floating node can be found and grounded.
+ */
+function analysisMessageWithNetNames(message) {
+  return String(message || '').replace(/\b([VI])\((N\d+)\)/g, (whole, quantity, id) => {
+    const net = circuit.nets.get(id);
+    const name = net?.name ? parseLabelRuns(net.name).map((run) => run.text).join('') : '';
+    return name ? `${quantity}(${name})` : whole;
+  });
 }
 
 function analysisEquationEntries(report) {
@@ -7332,7 +7359,7 @@ function renderAnalysisResult(report) {
     } else {
       const unavailable = document.createElement('div');
       unavailable.className = 'analysis-equation-unavailable analysis-error';
-      unavailable.textContent = report.error || 'Analysis unavailable.';
+      unavailable.textContent = analysisMessageWithNetNames(report.error) || 'Analysis unavailable.';
       analysisEquation.appendChild(unavailable);
       analysisEquation.removeAttribute('aria-label');
     }
@@ -7390,12 +7417,17 @@ function openAnalysisDialog(targetNetId) {
 
 let analysisInputPrevious = '';
 
-/** A differential stage is driven from one input port; the other input port is AC ground. */
+/**
+ * A stage is driven from one port; every other input port is held at AC
+ * ground. That covers a differential pair, and it covers taking the input
+ * somewhere else entirely -- a supply rail, say -- where every signal input
+ * has to be quiet for the answer to mean anything.
+ */
 function groundUnusedInputPorts(previousInput, nextInput) {
   if (!analysisAcGrounds) return;
   const nets = visibleNets();
   const inputPorts = new Set(portNetIds(nets, 'input', 'input'));
-  if (inputPorts.size < 2) return;
+  if (!inputPorts.size) return;
   const nameOf = (id) => {
     const net = circuit.nets.get(id);
     return net ? net.name || net.id : '';
@@ -7917,6 +7949,15 @@ function appendContextSmallSignalMenu(menu, target) {
         appendContextItem(bodyMenu, 'Retain body effect', () => applyComponentAnalysis(component, { ignoreBodyEffect: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.ignoreBodyEffect, false));
         appendContextItem(bodyMenu, 'Clear body-effect override', () => applyComponentAnalysis(component, { ignoreBodyEffect: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
           disabled: !transistorTargets.some((candidate) => candidate.analysis?.ignoreBodyEffect !== null && candidate.analysis?.ignoreBodyEffect !== undefined),
+        });
+      });
+      // The device's own capacitances, per device: the analysis form carries
+      // the same choice for the whole circuit.
+      appendContextSubmenu(submenu, 'Device capacitances', (capMenu) => {
+        appendContextItem(capMenu, 'Include C_gs and C_gd', () => applyComponentAnalysis(component, { parasitics: 'include' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.parasitics, 'include'));
+        appendContextItem(capMenu, 'Omit device capacitances', () => applyComponentAnalysis(component, { parasitics: 'omit' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.parasitics, 'omit'));
+        appendContextItem(capMenu, 'Follow the analysis form', () => applyComponentAnalysis(component, { parasitics: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+          disabled: !transistorTargets.some((candidate) => candidate.analysis?.parasitics),
         });
       });
     }
@@ -10317,7 +10358,7 @@ const PLACEMENT = {
   i: 'current_source',
   v: 'voltage_source',
   u: 'opamp',
-  A: 'and_gate',
+  A: 'and2_gate',
   b: 'buffer',
   I: 'input',
   o: 'output',
@@ -10332,10 +10373,13 @@ const PLACEMENT = {
 // automatically adds it to the appropriate menu section.
 const INSERT_COMPONENT_TYPES = [...symbolTypeNames];
 const INSERT_CATEGORY_RULES = [
-  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(diode|switch_)/],
+  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^diode$/],
   ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
-  ['Sources & power', /^(current_source|voltage_source|supply|ground|vcm)$/],
-  ['Logic', /^(opamp|opamp_diff|inverter|buffer|.*_gate|adc|dac)$/],
+  ['Switches', /^switch_/],
+  ['Sources & power', /^(current_source|voltage_source|vccs|supply|ground|vcm)$/],
+  ['Macros', /^(opamp|opamp_diff|adc|dac)$/],
+  ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
+  ['Sequential', /^(?:dff|latch)(?:_|$)/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Blocks / shells', /^block$/],
 ];
@@ -12408,19 +12452,167 @@ function startNewDocument(kind) {
  * figure, not a document: closing it puts the schematic back exactly as it
  * was, because nothing was ever replaced.
  */
-/**
- * Fitting a very wide model into the panel shrinks every symbol past reading.
- * Past that point the figure fills the height and scrolls sideways instead.
- */
-function isWideModelFigure(svg, container) {
-  const box = svg?.viewBox?.baseVal;
-  if (!box?.width || !box?.height) return false;
-  const area = container.getBoundingClientRect();
-  if (!area.width || !area.height) return false;
-  // Below a quarter scale a 160-unit symbol is under 40 px: past that the
-  // figure is better read by scrolling than by squinting.
-  return Math.min(area.width / box.width, area.height / box.height) < 0.25;
+// ----- the full-size figure's own view -------------------------------------
+// The figure reads like the canvas: wheel zooms about the pointer, the middle
+// button pans, and a right-drag zooms to a box (a right-click alone zooms
+// out). It is a view over one static drawing, so all of it is the SVG's own
+// viewBox -- nothing re-renders, and the model is never mutated.
+
+let modelFigureView = null;
+let modelFigureFit = null;
+let modelFigureDrag = null;
+
+function modelFigureSvg() {
+  return modelDialogFigure?.querySelector('svg') || null;
 }
+
+/** Client point in the figure's own world units, via its live transform. */
+function modelFigureWorld(clientX, clientY) {
+  const svg = modelFigureSvg();
+  const ctm = svg?.getScreenCTM?.();
+  if (!ctm) return null;
+  const point = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+  return { x: point.x, y: point.y };
+}
+
+function applyModelFigureView() {
+  const svg = modelFigureSvg();
+  if (!svg || !modelFigureView) return;
+  const { x, y, w, h } = modelFigureView;
+  svg.setAttribute('viewBox', `${x} ${y} ${w} ${h}`);
+}
+
+function readModelFigureView() {
+  const box = modelFigureSvg()?.viewBox?.baseVal;
+  modelFigureFit = box?.width && box?.height
+    ? { x: box.x, y: box.y, w: box.width, h: box.height }
+    : null;
+  modelFigureView = modelFigureFit ? { ...modelFigureFit } : null;
+  modelFigureDrag = null;
+}
+
+function fitModelFigure() {
+  if (!modelFigureFit) return;
+  modelFigureView = { ...modelFigureFit };
+  applyModelFigureView();
+}
+
+/** Zoom limits: never past a whole cell per pixel, never past the whole drawing. */
+function zoomModelFigure(factor, about) {
+  if (!modelFigureView || !modelFigureFit) return;
+  const min = Math.min(modelFigureFit.w / 64, 200);
+  const max = modelFigureFit.w * 4;
+  const width = Math.min(Math.max(modelFigureView.w * factor, min), max);
+  const scale = width / modelFigureView.w;
+  const anchor = about || {
+    x: modelFigureView.x + modelFigureView.w / 2,
+    y: modelFigureView.y + modelFigureView.h / 2,
+  };
+  modelFigureView = {
+    x: anchor.x - (anchor.x - modelFigureView.x) * scale,
+    y: anchor.y - (anchor.y - modelFigureView.y) * scale,
+    w: width,
+    h: modelFigureView.h * scale,
+  };
+  applyModelFigureView();
+}
+
+function zoomModelFigureToRect(rect) {
+  if (!modelFigureView || rect.w < 4 || rect.h < 4) return;
+  const aspect = modelFigureView.w / modelFigureView.h;
+  let w = rect.w;
+  let h = rect.h;
+  if (w / h > aspect) h = w / aspect;
+  else w = h * aspect;
+  modelFigureView = { x: rect.x + rect.w / 2 - w / 2, y: rect.y + rect.h / 2 - h / 2, w, h };
+  applyModelFigureView();
+}
+
+function modelFigureRubber(from, to) {
+  if (!modelDialogRubber) return;
+  const area = modelDialogFigure.getBoundingClientRect();
+  modelDialogRubber.hidden = !from || !to;
+  if (!from || !to) return;
+  modelDialogRubber.style.left = `${Math.min(from.clientX, to.clientX) - area.left}px`;
+  modelDialogRubber.style.top = `${Math.min(from.clientY, to.clientY) - area.top}px`;
+  modelDialogRubber.style.width = `${Math.abs(to.clientX - from.clientX)}px`;
+  modelDialogRubber.style.height = `${Math.abs(to.clientY - from.clientY)}px`;
+}
+
+function bindModelFigureView(container) {
+  if (!container) return;
+  container.addEventListener('wheel', (ev) => {
+    if (!modelFigureView) return;
+    ev.preventDefault();
+    zoomModelFigure(Math.pow(1.0016, ev.deltaY), modelFigureWorld(ev.clientX, ev.clientY));
+  }, { passive: false });
+
+  container.addEventListener('contextmenu', (ev) => ev.preventDefault());
+
+  container.addEventListener('pointerdown', (ev) => {
+    if (!modelFigureView || (ev.button !== 1 && ev.button !== 2)) return;
+    ev.preventDefault();
+    const world = modelFigureWorld(ev.clientX, ev.clientY);
+    if (!world) return;
+    container.setPointerCapture?.(ev.pointerId);
+    modelFigureDrag = {
+      mode: ev.button === 1 ? 'pan' : 'zoom',
+      pointerId: ev.pointerId,
+      startWorld: world,
+      startView: { ...modelFigureView },
+      start: { clientX: ev.clientX, clientY: ev.clientY },
+      moved: false,
+    };
+  });
+
+  container.addEventListener('pointermove', (ev) => {
+    const drag = modelFigureDrag;
+    if (!drag || drag.pointerId !== ev.pointerId) return;
+    if (Math.abs(ev.clientX - drag.start.clientX) > 3 || Math.abs(ev.clientY - drag.start.clientY) > 3) drag.moved = true;
+    if (drag.mode === 'pan') {
+      // The world point under the cursor stays there, so panning tracks the
+      // pointer exactly however the viewBox is currently letterboxed.
+      const world = modelFigureWorld(ev.clientX, ev.clientY);
+      if (!world) return;
+      modelFigureView.x += drag.startWorld.x - world.x;
+      modelFigureView.y += drag.startWorld.y - world.y;
+      applyModelFigureView();
+      return;
+    }
+    modelFigureRubber(drag.start, { clientX: ev.clientX, clientY: ev.clientY });
+  });
+
+  const finish = (ev) => {
+    const drag = modelFigureDrag;
+    if (!drag || drag.pointerId !== ev.pointerId) return;
+    modelFigureDrag = null;
+    container.releasePointerCapture?.(ev.pointerId);
+    modelFigureRubber(null, null);
+    if (drag.mode !== 'zoom') return;
+    const world = modelFigureWorld(ev.clientX, ev.clientY);
+    if (!world) return;
+    // A right-click that did not drag zooms out, as it does on the canvas.
+    if (!drag.moved) {
+      zoomModelFigure(2, world);
+      return;
+    }
+    zoomModelFigureToRect({
+      x: Math.min(drag.startWorld.x, world.x),
+      y: Math.min(drag.startWorld.y, world.y),
+      w: Math.abs(world.x - drag.startWorld.x),
+      h: Math.abs(world.y - drag.startWorld.y),
+    });
+  };
+  container.addEventListener('pointerup', finish);
+  container.addEventListener('pointercancel', (ev) => {
+    if (modelFigureDrag?.pointerId !== ev.pointerId) return;
+    modelFigureDrag = null;
+    modelFigureRubber(null, null);
+  });
+  container.addEventListener('dblclick', () => fitModelFigure());
+}
+
+bindModelFigureView(modelDialogFigure);
 
 function openSmallSignalModelOverlay() {
   const model = latestSmallSignalModel;
@@ -12430,7 +12622,11 @@ function openSmallSignalModelOverlay() {
     modelDialogTitle.textContent = name ? `Small-signal model — ${name}` : 'Small-signal model';
   }
   if (modelDialogFigure) {
-    modelDialogFigure.innerHTML = svgString(model.circuit, {
+    // Replace the drawing, not the container: the rubber-band element and the
+    // view handlers bound to it outlive every redraw.
+    modelDialogFigure.querySelector('svg')?.remove();
+    const holder = document.createElement('div');
+    holder.innerHTML = svgString(model.circuit, {
       themeInk: true,
       grid: false,
       terminals: false,
@@ -12438,12 +12634,13 @@ function openSmallSignalModelOverlay() {
       background: false,
       emptyHint: false,
     });
-    const figure = modelDialogFigure.querySelector('svg');
+    const figure = holder.querySelector('svg');
     if (figure) {
       figure.removeAttribute('width');
       figure.removeAttribute('height');
       figure.setAttribute('role', 'img');
       figure.setAttribute('aria-label', 'Small-signal equivalent circuit');
+      modelDialogFigure.prepend(figure);
     }
   }
   if (modelDialogNotes) {
@@ -12456,9 +12653,8 @@ function openSmallSignalModelOverlay() {
     modelDialogNotes.hidden = !(model.notes || []).length;
   }
   if (!modelDialog.open) modelDialog.showModal();
-  // Measure after the dialog is on screen: a hidden panel has no size.
-  const svg = modelDialogFigure?.querySelector('svg');
-  modelDialogFigure?.classList.toggle('wide', isWideModelFigure(svg, modelDialogFigure));
+  // The rendered viewBox is the fitted view the figure returns to.
+  readModelFigureView();
 }
 
 analysisModelOpen?.addEventListener('click', openSmallSignalModelOverlay);
@@ -12477,9 +12673,12 @@ modelDialog?.addEventListener('keydown', (ev) => {
 modelDialog?.addEventListener('click', (ev) => {
   if (ev.target === modelDialog) modelDialog.close();
 });
-// Hand the keyboard back to the drawing the figure was covering.
+// Hand the keyboard back to the drawing the figure was covering. The drawing
+// goes; the rubber band and its handlers stay with the container.
 modelDialog?.addEventListener('close', () => {
-  if (modelDialogFigure) modelDialogFigure.replaceChildren();
+  modelDialogFigure?.querySelector('svg')?.remove();
+  modelFigureView = null;
+  modelFigureDrag = null;
   canvasEl.focus();
 });
 
