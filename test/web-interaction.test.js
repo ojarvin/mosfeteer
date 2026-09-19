@@ -373,6 +373,20 @@ test('startup paints before listing documents and restoring the requested docume
   assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreStartup/);
 });
 
+test('fit reserves the axis the mode rail is thin along', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const fit = main.slice(main.indexOf('function fitView('), main.indexOf('function cycleSelection('));
+  // On a narrow window the rail is a horizontal strip across the top. Reserving
+  // its width there leaves a 1 px usable pane, so the fit clamps to the widest
+  // allowed view and the drawing disappears -- F looks like it stopped working.
+  assert.match(fit, /railIsColumn = railRect \? railRect\.width <= railRect\.height : false/);
+  assert.match(fit, /leftPx = railRect && railIsColumn/);
+  assert.match(fit, /topPx = railRect && !railIsColumn/);
+  // Whichever axis is reserved, the drawing centres in what is left of it.
+  assert.match(fit, /fitH = Math\.max\(1, usableH - marginPx \* 2\)/);
+  assert.match(fit, /view\.y = \(y0 \+ y1\) \/ 2 - th \* usableCenterPy \/ paneH/);
+});
+
 test('F5 reloads the application instead of entering the normal keymap', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /if \(ev\.key === 'F5'\)/);

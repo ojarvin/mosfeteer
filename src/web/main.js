@@ -2660,14 +2660,25 @@ function fitView() {
   const railRect = rail?.getBoundingClientRect();
   const paneW = paneRect?.width || 1;
   const paneH = paneRect?.height || 1;
-  const leftPx = railRect
-    ? Math.max(0, railRect.right - (paneRect?.left || 0))
+  // The rail floats over the canvas, so the drawing is fitted beside it. It is
+  // a vertical column at the left on a wide window but a horizontal strip
+  // across the top on a narrow one, so reserve the axis it is thin along:
+  // reserving width for a full-width strip leaves no usable pane at all and
+  // fits the drawing into a 1 px box, which reads as F having stopped working.
+  const railIsColumn = railRect ? railRect.width <= railRect.height : false;
+  const leftPx = railRect && railIsColumn
+    ? Math.max(0, Math.min(paneW - 1, railRect.right - (paneRect?.left || 0)))
+    : 0;
+  const topPx = railRect && !railIsColumn
+    ? Math.max(0, Math.min(paneH - 1, railRect.bottom - (paneRect?.top || 0)))
     : 0;
   const usableW = Math.max(1, paneW - leftPx);
+  const usableH = Math.max(1, paneH - topPx);
   const usableCenterPx = leftPx + usableW / 2;
+  const usableCenterPy = topPx + usableH / 2;
   const marginPx = 16;
   const fitW = Math.max(1, usableW - marginPx * 2);
-  const fitH = Math.max(1, paneH - marginPx * 2);
+  const fitH = Math.max(1, usableH - marginPx * 2);
   const rangeW = Math.max(1, x1 - x0);
   const rangeH = Math.max(1, y1 - y0);
   const scale = Math.min(fitW / rangeW, fitH / rangeH);
@@ -2686,7 +2697,7 @@ function fitView() {
   view.w = tw;
   view.h = th;
   view.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
-  view.y = (y0 + y1) / 2 - th / 2;
+  view.y = (y0 + y1) / 2 - th * usableCenterPy / paneH;
   render();
 }
 
