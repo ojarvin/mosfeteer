@@ -22,7 +22,7 @@ Press `?` in the editor for the full keyboard reference.
 
 ## Symbols
 
-The reference sheet includes the reset-free D flip-flops and latches alongside the existing symbol families.
+The built-in symbol library covers analog and digital circuits in a consistent textbook style.
 
 ![Complete symbols reference sheet in light mode](docs/images/symbols.png)
 
