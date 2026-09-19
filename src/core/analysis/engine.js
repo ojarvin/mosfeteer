@@ -10,7 +10,6 @@ import { analyzeResponse } from './response.js';
 import { approximateTopology, buildTopologyIdentities } from './topology.js';
 import { compactRational } from './compact.js';
 import {
-  formatExpression,
   infinity,
   integer,
   rational,
@@ -577,10 +576,10 @@ export function portDefinitions(context) {
   const output = context?.output;
   if (!input || !output) return [];
   const from = portSymbols(input.name || input.netId);
+  const to = portSymbols(output.name || output.netId);
   // Each impedance states the condition it was measured under, the way a
   // textbook writes it: the output port carries no external current while the
   // input drives, and the input is zeroed while the output port is driven.
-  const to = portSymbols(output.name || output.netId);
   return [
     { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
     { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}` },
@@ -673,10 +672,6 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     approximations[name] = response.expression?.kind === 'infinity'
       ? { exact: response.expression, selected: response.expression, changed: false, assumptions: [] }
       : applyApproximations(response.expression, approximationOptions);
-    if (process.env.MOSFETEER_DEBUG_ENGINE) {
-      const fmt = (v) => v && v.numerator ? `${formatExpression(v.numerator)} / ${formatExpression(v.denominator)}` : String(v?.kind);
-      console.error('[approx]', name, fmt(response.expression), '->', fmt(approximations[name].selected), JSON.stringify(approximations[name].assumptions));
-    }
     if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
   }
   const topology = buildTopologyIdentities(pipeline, analysisOptions);
@@ -684,7 +679,6 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   // factoring must not silently replace that explicitly selected reduction.
   const topologicalApproximation = analysisOptions.dominantPoleApproximation ? null
     : approximateTopology(topology, queries, approximationOptions);
-  if (process.env.MOSFETEER_DEBUG_ENGINE) console.error('[topo] stages', topology.stages.length, '| approximation?', !!topologicalApproximation);
   if (topologicalApproximation) {
     for (const [name, composed, stageAssumptions] of [
       ['Av', topologicalApproximation.selected, topologicalApproximation.assumptions],

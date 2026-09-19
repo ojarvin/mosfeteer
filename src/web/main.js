@@ -11654,8 +11654,21 @@ function updateInsertMenu() {
     }
     body.appendChild(section);
   }
-  const p = worldToClient(insertMenuAnchor?.x ?? cursor.x, insertMenuAnchor?.y ?? cursor.y);
+  // Keyboard navigation has to reach a column the panel had to clip on a
+  // small window, so the highlight always scrolls itself into view.
+  items[highlight]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+
+  // A multi-column body keeps its own box one column wide while the content
+  // flows into further columns, which then paint outside the panel and over
+  // whatever is behind it. Give it the width its columns actually need, so
+  // the panel wraps them and the clamp below sees the real size; on a narrow
+  // window the surplus scrolls horizontally instead.
   insertMenu.style.display = 'block';
+  body.style.width = '';
+  const roomForColumns = Math.max(180, window.innerWidth - 32);
+  body.style.width = `${Math.min(body.scrollWidth, roomForColumns)}px`;
+
+  const p = worldToClient(insertMenuAnchor?.x ?? cursor.x, insertMenuAnchor?.y ?? cursor.y);
   const rect = insertMenu.getBoundingClientRect();
   let left = p.x + 14;
   let top = p.y - rect.height / 2;

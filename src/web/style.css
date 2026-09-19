@@ -2247,12 +2247,16 @@ button:disabled {
   user-select: none;
 }
 
-/* Long unfiltered lists flow into columns instead of running off-screen. */
+/* Long unfiltered lists flow into columns instead of running off-screen. The
+   column width holds the longest entry name (a D flip-flop with every option
+   spelled out), and `updateInsertMenu` widens the body to the columns its
+   content actually needs so the panel wraps all of them. */
 .insert-menu-body {
-  column-width: 13.5rem;
-  column-gap: 4px;
+  column-width: 16.5rem;
+  column-gap: 8px;
   column-fill: auto;
-  max-height: calc(100vh - 64px);
+  max-height: calc(100vh - 96px);
+  overflow-x: auto;
 }
 
 .insert-menu-group {

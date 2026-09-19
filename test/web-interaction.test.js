@@ -81,6 +81,22 @@ test('the full-size figure is a view over one drawing, driven like the canvas', 
   assert.match(main, /function applyModelFigureView\(\)[\s\S]*setAttribute\('viewBox'/);
 });
 
+test('the insert menu sizes its panel to the columns its content needs', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  // A multi-column body keeps its own box one column wide, so without this the
+  // later columns paint outside the panel and over whatever is behind it.
+  assert.match(main, /body\.style\.width = `\$\{Math\.min\(body\.scrollWidth, roomForColumns\)\}px`/);
+  // Measured before the position clamp, so the clamp sees the real width.
+  const sized = main.indexOf('body.style.width = `${Math.min(body.scrollWidth');
+  const clamped = main.indexOf('insertMenu.style.left', sized);
+  assert.ok(sized > 0 && clamped > sized);
+  // A column the panel had to clip is still reachable from the keyboard.
+  assert.match(main, /items\[highlight\]\?\.scrollIntoView\(\{ block: 'nearest', inline: 'nearest' \}\)/);
+
+  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.insert-menu-body \{[^}]*overflow-x: auto/);
+});
+
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function preloadToolCursors(');
