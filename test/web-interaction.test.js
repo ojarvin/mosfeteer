@@ -81,20 +81,30 @@ test('the full-size figure is a view over one drawing, driven like the canvas', 
   assert.match(main, /function applyModelFigureView\(\)[\s\S]*setAttribute\('viewBox'/);
 });
 
-test('the insert menu sizes its panel to the columns its content needs', () => {
+test('the insert menu is one scrolling column led by the recent placements', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
-  // A multi-column body keeps its own box one column wide, so without this the
-  // later columns paint outside the panel and over whatever is behind it.
-  assert.match(main, /body\.style\.width = `\$\{Math\.min\(body\.scrollWidth, roomForColumns\)\}px`/);
-  // Measured before the position clamp, so the clamp sees the real width.
-  const sized = main.indexOf('body.style.width = `${Math.min(body.scrollWidth');
-  const clamped = main.indexOf('insertMenu.style.left', sized);
-  assert.ok(sized > 0 && clamped > sized);
-  // A column the panel had to clip is still reachable from the keyboard.
-  assert.match(main, /items\[highlight\]\?\.scrollIntoView\(\{ block: 'nearest', inline: 'nearest' \}\)/);
+  // Committed placements are what feed the Recent group, so an armed ghost the
+  // user escapes never claims a slot.
+  assert.match(main, /rememberInsertType\(pendingPlace\.type\)/);
+  assert.match(main, /rememberInsertType\('label'\)/);
+  assert.match(main, /rememberInsertType\('block'\)/);
+  // Session state only: nothing reads or writes it through the document or
+  // localStorage, so a reopened file never inherits someone else's shortcuts.
+  assert.doesNotMatch(main, /insertRecentTypes[\s\S]{0,200}localStorage/);
+  // The group leads the menu, and only while the list is being browsed: a
+  // query is answered by the fuzzy ranking alone.
+  assert.match(main, /\{ title: 'Recent', entries: recent \}, \.\.\.groups/);
+  const recentGroup = main.indexOf("title: 'Recent'");
+  assert.ok(recentGroup > 0 && main.lastIndexOf('if (!insertQuery) {', recentGroup) > 0);
+  // Most of the column is out of sight, so the highlight scrolls into view.
+  assert.match(main, /items\[highlight\]\?\.scrollIntoView\(\{ block: 'nearest' \}\)/);
 
   const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\.insert-menu-body \{[^}]*overflow-x: auto/);
+  const body = css.slice(css.indexOf('.insert-menu-body {'));
+  assert.match(body.slice(0, body.indexOf('}')), /overflow-y: auto/);
+  assert.match(body.slice(0, body.indexOf('}')), /overflow-x: hidden/);
+  // Columns would spread the list sideways over the drawing again.
+  assert.doesNotMatch(body.slice(0, body.indexOf('}')), /column-width/);
 });
 
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {

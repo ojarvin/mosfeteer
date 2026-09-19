@@ -2247,20 +2247,17 @@ button:disabled {
   user-select: none;
 }
 
-/* Long unfiltered lists flow into columns instead of running off-screen. The
-   column width holds the longest entry name (a D flip-flop with every option
-   spelled out), and `updateInsertMenu` widens the body to the columns its
-   content actually needs so the panel wraps all of them. */
+/* One scrolling column: the whole registry is too long to lay out at once, and
+   columns spread the list sideways over the drawing. The Recent group keeps
+   the entries actually in use within reach of the top. */
 .insert-menu-body {
-  column-width: 16.5rem;
-  column-gap: 8px;
-  column-fill: auto;
-  max-height: calc(100vh - 96px);
-  overflow-x: auto;
+  max-height: min(26rem, calc(100vh - 96px));
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .insert-menu-group {
-  break-inside: avoid;
   padding-bottom: 4px;
 }
 

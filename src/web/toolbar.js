@@ -99,6 +99,16 @@ export function placementSearchScore(query, type) {
   );
 }
 
+// How many placements the insert menu's Recent group offers.
+export const INSERT_RECENT_LIMIT = 5;
+
+/** Most-recently-used ordering: `type` moves to the front of `list`, appearing
+ *  once, and the list is trimmed to `limit`. */
+export function withRecentType(list, type, limit = INSERT_RECENT_LIMIT) {
+  if (!type) return [...list];
+  return [type, ...list.filter((entry) => entry !== type)].slice(0, limit);
+}
+
 /** Keep generated junction markers out of the user-facing component list. */
 export function componentPaletteItems(components) {
   return [...components].filter((component) => component.type !== 'solder');

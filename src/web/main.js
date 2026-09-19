@@ -34,7 +34,7 @@ import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
-import { PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare, placementSearchScore } from './toolbar.js';
+import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
 import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
@@ -3025,6 +3025,7 @@ function placePending() {
     selectedArrows.clear();
     setLabelSelection([]);
     logLine(`placed ${block.id} @ (${cursor.x},${cursor.y})`);
+    rememberInsertType('block');
     pendingPlace.startWorld = { ...cursor };
     return;
   }
@@ -3033,6 +3034,7 @@ function placePending() {
     setSelection([]);
     setLabelSelection([label.id]);
     logLine(`placed label @ (${label.anchor.x},${label.anchor.y})`);
+    rememberInsertType('label');
   } else {
     const comp = circuit.addComponent(pendingPlace.type, {
       x: cursor.x,
@@ -3057,6 +3059,7 @@ function placePending() {
     // take over the selection, so repeated placement never carries a halo.
     setSelection([]);
     logLine(`placed ${comp.refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
+    rememberInsertType(pendingPlace.type);
   }
   if (pendingPlace) pendingPlace.startWorld = { ...cursor };
 }
@@ -10392,15 +10395,18 @@ const PLACEMENT = {
 // Grouping is derived from the type name, so adding a symbol to symbolTypes
 // automatically adds it to the appropriate menu section.
 const INSERT_COMPONENT_TYPES = [...symbolTypeNames];
+// Browse order is analog first, digital second, with the interface ports kept
+// above both macros and the digital cells. A query reorders the groups by their
+// best match instead, so this is the order of the unfiltered list.
 const INSERT_CATEGORY_RULES = [
   ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^diode$/],
   ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
   ['Switches', /^switch_/],
   ['Sources & power', /^(current_source|voltage_source|vccs|supply|ground|vcm)$/],
+  ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Macros', /^(opamp|opamp_diff|adc|dac)$/],
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
-  ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Blocks / shells', /^block$/],
 ];
 
@@ -11543,6 +11549,15 @@ function renderStatus() {
 // entry and clicking arms it, exactly like the keyboard highlight and Enter.
 let insertMenu = null;
 let insertMenuAnchor = null; // world point the menu hangs from
+// The types most recently placed, newest first. It is session state, never
+// persisted and never part of a document: it follows what is being drawn right
+// now, so reopening a file does not inherit someone else's shortcuts.
+let insertRecentTypes = [];
+
+/** Record one committed placement at the head of the Recent group. */
+function rememberInsertType(type) {
+  insertRecentTypes = withRecentType(insertRecentTypes, type, INSERT_RECENT_LIMIT);
+}
 // Every registered symbol type appears in the menu automatically; the list is
 // fuzzy-filtered by the live `insertQuery` while typing.
 function insertMenuEntries() {
@@ -11557,7 +11572,14 @@ function insertMenuGroups() {
   }));
   if (!isBlockDiagram(circuit)) groups.push({ title: 'Annotations', entries: ['solder', 'label'] });
   if (isBlockDiagram(circuit)) groups.push({ title: 'Blocks', entries: ['block'] });
-  if (!insertQuery) return groups.filter((group) => group.entries.length);
+  if (!insertQuery) {
+    const placeable = new Set(groups.flatMap((group) => group.entries));
+    const recent = insertRecentTypes.filter((type) => placeable.has(type));
+    // The recents repeat their category entry rather than being moved out of
+    // it, so the list below stays the complete, stable index it is browsed as.
+    const listed = recent.length ? [{ title: 'Recent', entries: recent }, ...groups] : groups;
+    return listed.filter((group) => group.entries.length);
+  }
   for (const group of groups) {
     group.entries = group.entries
       .map((type) => [type, placementSearchScore(insertQuery, type)])
@@ -11665,19 +11687,10 @@ function updateInsertMenu() {
     }
     body.appendChild(section);
   }
-  // Keyboard navigation has to reach a column the panel had to clip on a
-  // small window, so the highlight always scrolls itself into view.
-  items[highlight]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-
-  // A multi-column body keeps its own box one column wide while the content
-  // flows into further columns, which then paint outside the panel and over
-  // whatever is behind it. Give it the width its columns actually need, so
-  // the panel wraps them and the clamp below sees the real size; on a narrow
-  // window the surplus scrolls horizontally instead.
   insertMenu.style.display = 'block';
-  body.style.width = '';
-  const roomForColumns = Math.max(180, window.innerWidth - 32);
-  body.style.width = `${Math.min(body.scrollWidth, roomForColumns)}px`;
+  // The body is one scrolling column, so most of the list is out of sight:
+  // the highlight scrolls itself into view to stay reachable by keyboard.
+  items[highlight]?.scrollIntoView({ block: 'nearest' });
 
   const p = worldToClient(insertMenuAnchor?.x ?? cursor.x, insertMenuAnchor?.y ?? cursor.y);
   const rect = insertMenu.getBoundingClientRect();

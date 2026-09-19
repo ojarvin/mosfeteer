@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, placementSearchScore, PLACEMENT_ALIASES, PLACEMENT_LABELS } from '../src/web/toolbar.js';
+import { INSERT_RECENT_LIMIT, componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, placementSearchScore, withRecentType, PLACEMENT_ALIASES, PLACEMENT_LABELS } from '../src/web/toolbar.js';
 
 test('component palette omits generated solder dots but keeps real components', () => {
   const items = componentPaletteItems([
@@ -113,4 +113,21 @@ test('image clipboard shortcut is discoverable once in each editor keymap', () =
     assert.equal(help.split('Ctrl/Cmd+Shift+C').length - 1, 1);
     assert.match(help, /copy selection \(or whole drawing\) as an image for other apps/);
   }
+});
+
+test('recent placements keep one entry each, newest first, within the limit', () => {
+  let recent = [];
+  for (const type of ['resistor', 'nmos', 'pmos']) recent = withRecentType(recent, type);
+  assert.deepEqual(recent, ['pmos', 'nmos', 'resistor']);
+  // Placing something again promotes it instead of listing it twice.
+  recent = withRecentType(recent, 'resistor');
+  assert.deepEqual(recent, ['resistor', 'pmos', 'nmos']);
+  // The oldest entry falls off the end rather than growing the group.
+  for (const type of ['capacitor', 'inductor', 'diode', 'ground']) recent = withRecentType(recent, type);
+  assert.equal(recent.length, INSERT_RECENT_LIMIT);
+  assert.deepEqual(recent, ['ground', 'diode', 'inductor', 'capacitor', 'resistor']);
+  // Nothing placed, nothing recorded; the caller's list is never mutated.
+  const before = [...recent];
+  assert.deepEqual(withRecentType(recent, null), before);
+  assert.deepEqual(recent, before);
 });
