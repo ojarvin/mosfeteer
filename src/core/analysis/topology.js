@@ -1,5 +1,4 @@
 import { createRationalOps } from './algebra-ops.js';
-import { formatExpression } from './rational.js';
 import { solveMNA } from './solve.js';
 import { compactRational } from './compact.js';
 import { applyApproximations, intrinsicallyDominates } from './approximation.js';
@@ -90,16 +89,20 @@ function shortCircuitTransadmittance(pipeline, index, previous, graph, ops) {
 }
 
 /** Apply the selected assumptions to each physical stage before recombining. */
-/** How much symbol there is to read in an expression, counting occurrences. */
-function symbolWeight(value) {
-  if (!value || typeof value !== 'object') return 0;
-  if (value.kind === 'symbol') return 1;
-  if (value.kind === 'number') return 0;
-  if (value.kind === 'rational') return symbolWeight(value.numerator) + symbolWeight(value.denominator);
-  if (value.kind === 'add') return value.terms.reduce((sum, term) => sum + symbolWeight(term), 0);
-  if (value.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + symbolWeight(factor), 0);
-  if (value.kind === 'power') return symbolWeight(value.base);
-  return 0;
+/**
+ * Whether an expression carries a sum. A product is worth showing factored
+ * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
+ * better than the ratio it expands to -- but two monomials multiplied are
+ * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`, and
+ * `g_m (1/g_m)` is 1.
+ */
+function carriesSum(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (value.kind === 'add') return true;
+  if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);
+  if (value.kind === 'multiply') return value.factors.some(carriesSum);
+  if (value.kind === 'power') return carriesSum(value.base);
+  return false;
 }
 
 export function approximateTopology(topology, queries, options) {
@@ -122,9 +125,6 @@ export function approximateTopology(topology, queries, options) {
           // branch beside a 1/g_m one. It never drops R_S or R_D, which that
           // assumption says nothing about.
           const dropped = new Set();
-          if (process.env.MOSFETEER_DEBUG_TOPO) {
-            console.error('[parallel] branches', reduced.length, reduced.map((b) => JSON.stringify(b).slice(0, 60)));
-          }
           const devices = [];
           reduced.forEach((branch, index) => {
             const swamped = reduced.some((other, otherIndex) => {
@@ -150,16 +150,11 @@ export function approximateTopology(topology, queries, options) {
           if (operands.length > 1) identities.push({ kind: 'parallel-resistance', equivalent: combined, operands });
         }
       }
-      if (process.env.MOSFETEER_DEBUG_TOPO) {
-        const fmt = (v) => v && v.numerator ? `${formatExpression(v.numerator)} / ${formatExpression(v.denominator)}` : String(v?.kind);
-        console.error('[stage]', index, 'gm', fmt(stage.transadmittance), '->', fmt(gm.selected),
-          '| Z', fmt(stage.impedance), '->', fmt(load.selected), '| parallel', !!parallel);
-      }
       const gain = compactRational(ops.mul(gm.selected, load.selected), ops);
       // Keep the proven product only while the factored form is the shorter
       // read. Once the load has collapsed to 1/g_m, `g_m (1/g_m)` says less
       // than the 1 it multiplies out to.
-      if (symbolWeight(gain) > symbolWeight(gm.selected) + symbolWeight(load.selected)) {
+      if (carriesSum(gm.selected) || carriesSum(load.selected)) {
         identities.push({ kind: 'product', equivalent: gain, operands: [gm.selected, load.selected] });
       }
       return { gain, gm, load };

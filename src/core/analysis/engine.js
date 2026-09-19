@@ -263,7 +263,7 @@ function buildTopologyProofs(topology, queries, approximations, approximationOpt
     // A product is worth showing factored only while the factors are the
     // shorter read: once a load has collapsed to 1/g_m, `g_m (1/g_m)` says
     // less than the 1 it multiplies out to.
-    if (product && symbolWeight(equivalent) <= operands.reduce((sum, value) => sum + symbolWeight(value), 0)) return;
+    if (product && !operands.some(carriesSum)) return;
     const combined = product ? multiply(operands) : combineParallel(operands, ops);
     if (!ops.isZero(compactRational(ops.sub(combined, equivalent), ops)) || ops.budget.exceeded) return;
     const response = canonicalResponseValue(equivalent, { variable: ops.variable });
@@ -469,15 +469,19 @@ function rootRows(transfer, options) {
   ];
 }
 
-/** How much symbol there is to read in an expression, counting occurrences. */
-function symbolWeight(value) {
-  if (!value || typeof value !== 'object') return 0;
-  if (value.kind === 'symbol') return 1;
-  if (value.kind === 'rational') return symbolWeight(value.numerator) + symbolWeight(value.denominator);
-  if (value.kind === 'add') return value.terms.reduce((sum, term) => sum + symbolWeight(term), 0);
-  if (value.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + symbolWeight(factor), 0);
-  if (value.kind === 'power') return symbolWeight(value.base);
-  return 0;
+/**
+ * Whether an expression carries a sum. A product is worth showing factored
+ * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
+ * better than the ratio it expands to -- but two monomials multiplied are
+ * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`.
+ */
+function carriesSum(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (value.kind === 'add') return true;
+  if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);
+  if (value.kind === 'multiply') return value.factors.some(carriesSum);
+  if (value.kind === 'power') return carriesSum(value.base);
+  return false;
 }
 
 function unique(values) {

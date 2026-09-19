@@ -3,7 +3,6 @@ import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import {
   add,
   equals,
-  formatExpression,
   integer,
   multiply,
   polynomialCoefficients,
@@ -335,12 +334,6 @@ function intrinsicProductReduction(current, records, global, options) {
   }
   const numerator = reduce(current.numerator);
   const denominator = reduce(current.denominator);
-  if (process.env.MOSFETEER_DEBUG_APPROX) {
-    console.error('[reduce]', formatExpression(current.denominator), '->', formatExpression(denominator),
-      '| zero?', equals(denominator, ZERO),
-      '| retains?', retainsFrequencyPowers(current.denominator, denominator, current.variable || 's'),
-      '| used', [...used]);
-  }
   // Leading terms can cancel in an unreduced global expression. Keep the
   // exact value here; the topological path can still simplify its local Gm
   // and load branches without that cancellation.
