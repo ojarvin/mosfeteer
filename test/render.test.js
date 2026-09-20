@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { svgString, texToMathML, svgPixelSize } from '../src/core/render.js';
+import { editorOverlay, svgString, texToMathML, svgPixelSize } from '../src/core/render.js';
 import { Circuit } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 import { getSymbol } from '../src/core/components/index.js';
@@ -662,4 +662,36 @@ test('svgPixelSize reads the root size and falls back when it is missing', () =>
   // Only the root element counts, not a nested one.
   assert.deepEqual(svgPixelSize('<svg width="200" height="100"><svg width="5" height="5"/></svg>'),
     { width: 200, height: 100 });
+});
+
+test('a mirrored pair is dimensioned from its axis in grid cells', () => {
+  const circuit = new Circuit();
+  const def = getSymbol('nmos');
+  const ghost = { def, x: 240, y: 0, rotation: 0, mirrorX: false, mirrorY: false };
+  const overlay = editorOverlay(circuit, {
+    ghost,
+    symmetryAxis: { operation: 'mirrorX', pin: { x: 0, y: 0 }, from: { x: 240, y: 0 } },
+  });
+  // Two equal intervals either side of the axis, so the pair's own pitch is
+  // readable as twice the number shown.
+  assert.match(overlay, /symmetry-offset/);
+  assert.equal(overlay.match(/>6 cells</g)?.length, 2);
+  // A ghost sitting on the axis places one component, so there is nothing to
+  // dimension.
+  const onAxis = editorOverlay(circuit, {
+    ghost: { ...ghost, x: 0 },
+    symmetryAxis: { operation: 'mirrorX', pin: { x: 0, y: 0 }, from: { x: 0, y: 0 } },
+  });
+  assert.match(onAxis, /symmetry-axis/);
+  assert.doesNotMatch(onAxis, /symmetry-offset/);
+});
+
+test('a symmetric wire draft is dimensioned along the axis it mirrors about', () => {
+  const circuit = new Circuit();
+  const overlay = editorOverlay(circuit, {
+    wirePreview: { from: { x: 0, y: 0 }, pts: [{ x: 0, y: 0 }, { x: 0, y: 160 }] },
+    symmetryAxis: { operation: 'mirrorY', pin: { x: 0, y: 0 }, from: { x: 0, y: 160 } },
+  });
+  assert.match(overlay, /symmetry-offset/);
+  assert.equal(overlay.match(/>4 cells</g)?.length, 2);
 });

@@ -6,8 +6,9 @@ operating manual.
 
 For the **circuit-author** role (drawing circuits), see
 [CIRCUIT-AUTHOR.md](./CIRCUIT-AUTHOR.md). For visual quality, see
-[style-guide.md](./style-guide.md). For current behavior details (symbol
-geometry, label model, router specifics, editor hotkeys), see `AGENTS.md`.
+[style-guide.md](./style-guide.md). For cross-cutting invariants, entry points,
+and verification rules, see `AGENTS.md`; exact behavior lives in the source
+modules, tests, and focused docs it links.
 
 ## Mission
 
@@ -22,9 +23,10 @@ understand and a little faster to use than you found it.
   language, API, or symbol set — don't fork a parallel interface.
 - **Tests travel with code.** A change without a test for the new behavior is
   not done. A change that breaks an existing test is not done.
-- **AGENTS.md is the live spec.** If you change a symbol, a routing rule, or
-  an editor behavior, update `AGENTS.md` in the same commit so future agents
-  see truth, not folklore.
+- **Keep the right source authoritative.** Update `AGENTS.md` when a durable
+  cross-cutting invariant changes. Update the relevant source, test, or focused
+  doc for symbol, routing, analysis, or editor details; do not duplicate long
+  implementation notes in the agent context.
 
 ## Architecture
 
@@ -70,7 +72,7 @@ test/                   Node test runner (`node --test`).
 fixtures/circuit-spec/  Topology-only CircuitSpec examples.
 launch.mjs              End-user launcher; start.sh / *.command / *.cmd wrap it.
 guidelines/             Role docs + style guide.
-AGENTS.md               Current runtime behavior spec (live doc — maintain it).
+AGENTS.md               Cross-cutting runtime invariants and agent context.
 ```
 
 ### Labels and physical nets
@@ -113,14 +115,17 @@ browser and `/api/export`, not here.
 
 ## Workflow
 
-1. **Read AGENTS.md first.** It's the spec. Out-of-date sections are bugs.
+1. **Read AGENTS.md first.** It identifies the relevant source of truth and the
+   invariants that must not be broken.
 2. **Read the relevant source.** Don't guess — open the file and the test.
 3. **Plan in one paragraph.** "I will change X by doing Y because Z."
 4. **Write the test first (or alongside) when adding behavior.**
 5. **Run `npm test`** and confirm green before commit.
 6. **Browser-verify when the change is user-visible.** The CDP harness lives
    in `/tmp/opencode/`; see "Headless verification" below.
-7. **Update AGENTS.md** if a symbol, command, or behavior changed.
+7. **Update the authoritative doc.** Touch `AGENTS.md` for cross-cutting
+   invariants; update focused docs for feature contracts and role-facing
+   behavior.
 8. **Update guidelines/** if the change shifts role expectations or the style
    guide. A new command goes in CIRCUIT-AUTHOR's command reference; a new
    layout rule goes in style-guide.md.
@@ -129,12 +134,12 @@ browser and `/api/export`, not here.
 
 | Change | Touch |
 |---|---|
-| Symbol geometry, terminal names, bbox | `AGENTS.md` + add/update component test |
+| Symbol geometry, terminal names, bbox | component definition + component test; update `AGENTS.md` only for a cross-cutting invariant |
 | Command language change | `CIRCUIT-AUTHOR.md` command reference + `commands.js#commandHelp()` |
 | New HTTP route or CLI flag | `CIRCUIT-AUTHOR.md` (where the user sees it) |
-| Routing rule or geometry rule | `AGENTS.md` (current behavior) + `style-guide.md` if it changes the visual standard |
+| Routing rule or geometry rule | source + focused routing/style docs; update `AGENTS.md` only for a cross-cutting invariant |
 | Workflow / role split change | The relevant role doc |
-| Editor hotkey | `AGENTS.md` ("Web UI" section) |
+| Editor hotkey | `main.js`/toolbar help + focused role doc; update `AGENTS.md` only if it affects the shared vocabulary |
 
 ## Tests
 
@@ -181,8 +186,8 @@ When you fix a bug, write the failing test first, watch it fail, then fix.
    `bboxWorld()` correct, terminals snap to grid, instance label auto-creates.
 5. Add a CDP smoke test in `/tmp/opencode/` if the symbol has user-visible
    quirks (e.g. mirror defaults).
-6. Update `AGENTS.md` symbol geometry table + `style-guide.md` reference
-   table.
+6. Update the component test and `style-guide.md` reference table; update
+   `AGENTS.md` only if the symbol changes a cross-cutting invariant.
 
 `Circuit.fromJSON` intentionally rejects types absent from the registry: the
 model and renderer require a real symbol definition. `npm run serve` runs the

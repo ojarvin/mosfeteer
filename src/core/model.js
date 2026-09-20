@@ -2588,7 +2588,43 @@ export class Circuit {
     // Partial set moves preserve unselected-side wire bodies and re-anchor
     // only their boundary legs. Branches wholly inside the moved set translate
     // in _reroutePolyline when both endpoint terminals share one delta.
+    // A junction the moved component's own arms hold in place belongs to it:
+    // when more than half of the arms meeting there lead to terminals that
+    // moved by one delta, that meeting point moved too. Its drawn shape is
+    // built around the old point, and re-anchoring every arm back onto it is
+    // what strands a solder dot and the wire reaching it at the device's old
+    // position -- so lay this net out again from the terminals it now has.
+    // Carrying the old bodies across instead doubles an arm back along a row
+    // another arm has just moved onto, which is a same-net overlap.
+    if (moved && moved !== 'refresh' && moved.size > 0 && this._junctionsFollowMove(net, moved)) {
+      const previous = {
+        branches: net.branches?.map((p) => clonePath(p, net.allowDiagonal)) || null,
+        route: net.route?.length >= 2 ? clonePath(net.route, net.allowDiagonal) : null,
+        junctions: net.junctions.map((p) => ({ ...p })),
+      };
+      net.branches = null;
+      net.route = null;
+      net.junctions = [];
+      if (this._layoutFresh(net, net.anchorWorlds(), env)) {
+        this._resyncJunctions(net);
+        this._repairNetLabels(net);
+        this._completeComponentEdit(net.id);
+        return true;
+      }
+      // Unroutable fresh: keep what was drawn and re-anchor it as before.
+      net.branches = previous.branches;
+      net.route = previous.route;
+      net.junctions = previous.junctions;
+    }
     if (net.branches && net.branches.length) {
+      // A junction is where the arms happen to meet, not a place the net is
+      // pinned to. Carrying the pre-move coordinates through a re-anchor makes
+      // every branch bend back to the old meeting point -- which is what
+      // strands a solder dot and the wire reaching it at the device's old
+      // position. Drop them and let the reroute find where the arms meet now;
+      // `_resyncJunctions` records that below. A branch whose endpoints both
+      // ride the moved component can then translate with it, as it should.
+      if (moved && moved !== 'refresh' && moved.size > 0) net.junctions = [];
       const rerouted = net.branches.map((b) => this._reroutePolyline(net, b, moved, env));
       if (rerouted.some((b) => !b)) {
         return this._rerouteFailure(net, moved);
@@ -2596,6 +2632,7 @@ export class Circuit {
       net.branches = rerouted.map((p) => clonePath(p, net.allowDiagonal));
       net.route = net.branches[0] ? clonePath(net.branches[0], net.allowDiagonal) : null;
       if (moved && moved.size > 0) this._pruneDanglingBranches(net);
+      this._resyncJunctions(net);
       this._repairNetLabels(net);
       this._completeComponentEdit(net.id);
       return true;
@@ -2607,6 +2644,7 @@ export class Circuit {
       }
       net.route = clonePath(rerouted, net.allowDiagonal);
       if (moved && moved.size > 0) this._pruneDanglingBranches(net);
+      this._resyncJunctions(net);
       this._repairNetLabels(net);
       this._completeComponentEdit(net.id);
       return true;
@@ -2871,6 +2909,67 @@ export class Circuit {
     net.branches = kept.map((p) => clonePath(p, net.allowDiagonal));
     net.route = clonePath(kept[0], net.allowDiagonal);
     net.junctions = this._netJunctions(net, kept);
+  }
+
+  /** A junction is where the drawn arms actually meet. Re-anchoring a net's
+   *  branches after a move can move that point, so derive the anchors from the
+   *  geometry again instead of carrying the pre-move coordinates.
+   *
+   *  A stale anchor is not cosmetic: `anchorWorlds` feeds it back into routing,
+   *  so the next edit routes to a point nothing occupies and leaves a solder
+   *  dot and the wire reaching it behind at the old position. The dots
+   *  themselves were already derived this way by `syncJunctionSolders`, so
+   *  this is what makes the model agree with the picture. `_pruneDanglingBranches`
+   *  does the same, but only on the paths it actually prunes. */
+  _resyncJunctions(net) {
+    if (net.routingMode === 'fixed') return;
+    const paths = net.branches && net.branches.length
+      ? net.branches
+      : net.route && net.route.length >= 2 ? [net.route] : [];
+    if (!paths.length) return;
+    net.junctions = this._netJunctions(net, paths);
+  }
+
+  /** Whether any junction of this net is held in place only by arms that have
+   *  moved. Each branch meeting the junction is one arm; follow it to its far
+   *  end and ask which terminal stood there *before* the move, since the
+   *  components have already been relocated by the time a net is rerouted.
+   *  More than half the arms ending on terminals that share one delta means
+   *  the node belongs to the moved set and travels with it. */
+  _junctionsFollowMove(net, moved) {
+    const paths = net.branches && net.branches.length ? net.branches : [];
+    if (!paths.length || !net.junctions.length) return false;
+    const deltaAt = new Map();
+    for (const terminal of net.terminals) {
+      const component = this.components.get(terminal.comp);
+      if (!component) continue;
+      const now = component.terminalWorld(terminal.term);
+      const delta = moved.get(terminal.comp) || null;
+      const before = delta ? { x: now.x - delta.dx, y: now.y - delta.dy } : now;
+      deltaAt.set(`${before.x},${before.y}`, delta);
+    }
+    for (const junction of net.junctions) {
+      let arms = 0;
+      let movedArms = 0;
+      let delta = null;
+      let consistent = true;
+      for (const path of paths) {
+        const head = path[0];
+        const tail = path[path.length - 1];
+        const far = head.x === junction.x && head.y === junction.y ? tail
+          : tail.x === junction.x && tail.y === junction.y ? head
+            : null;
+        if (!far) continue;
+        arms += 1;
+        const armDelta = deltaAt.get(`${far.x},${far.y}`);
+        if (!armDelta) continue;
+        movedArms += 1;
+        if (!delta) delta = armDelta;
+        else if (delta.dx !== armDelta.dx || delta.dy !== armDelta.dy) consistent = false;
+      }
+      if (arms >= 2 && consistent && delta && movedArms * 2 > arms) return true;
+    }
+    return false;
   }
 
   resolveTerm(ref) {

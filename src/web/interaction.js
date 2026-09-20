@@ -88,6 +88,15 @@ export function isPrimaryPointerEvent({ pointerType = '', button = 0 } = {}) {
   return button === 0 && (pointerType === 'mouse' || pointerType === 'pen' || pointerType === 'touch');
 }
 
+/** Whether a window-level pointer move should be forwarded to the canvas.
+ * Overlay controls which sit above the canvas own their pointer events; in
+ * particular, the insert menu must not cause a canvas repaint while it is
+ * being browsed, since repainting rebuilds its scrolling contents. */
+export function shouldForwardCanvasMove(target, canvasElement) {
+  if (canvasElement?.contains?.(target)) return false;
+  return !target?.closest?.('#insert-menu');
+}
+
 /** A blank touch press pans the canvas; a press on an object remains an edit
  * gesture.  Keeping this policy pure makes touch behavior testable without a
  * browser surface. */
@@ -110,6 +119,18 @@ export function worldAndCursorFromClient(clientX, clientY, rect, view) {
 }
 
 /** Lock a pointer displacement to its dominant axis. */
+/** The mirror a symmetric placement takes, read from the cursor's own
+ *  displacement out of the point symmetry was armed at: moving mostly sideways
+ *  reflects across a vertical line ('mirrorX'), mostly up or down across a
+ *  horizontal one. One at a time, and a cursor still sitting on the pin keeps
+ *  whatever was chosen last rather than flickering between the two. */
+export function symmetryOperation(pin, current, previous = null) {
+  const dx = current.x - pin.x;
+  const dy = current.y - pin.y;
+  if (dx === 0 && dy === 0) return previous;
+  return Math.abs(dx) >= Math.abs(dy) ? 'mirrorX' : 'mirrorY';
+}
+
 export function constrainAxis(start, current, enabled = true) {
   if (!enabled) return { ...current };
   const dx = current.x - start.x;

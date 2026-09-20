@@ -4,3 +4,5 @@ data/
 circuits/
 *.local.json
 .slim/deepwork/
+.lavish/
+.visualize/

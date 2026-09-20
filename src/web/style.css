@@ -1578,6 +1578,24 @@ button:disabled {
 
 /* ----- side panel ---------------------------------------------- */
 
+.align-panel {
+  flex: none;
+  margin-top: auto;
+  padding: 8px 12px 10px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+}
+
+.align-panel:not([hidden]) + .style-panel { margin-top: 0; }
+
+.align-controls { display: grid; gap: 7px; }
+.align-button-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.align-distribute-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.align-controls button { min-width: 0; padding: 4px 3px; font-size: 0.72rem; }
+.align-controls select { width: 100%; min-width: 0; height: 27px; font-size: 0.75rem; }
+.align-measure-label { color: var(--text-dim); font-size: 0.72rem; }
+.align-note { min-height: 1.1em; color: var(--text-dim); font-size: 0.72rem; line-height: 1.35; }
+
 .style-panel {
   flex: none;
   margin-top: auto;

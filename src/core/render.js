@@ -1,4 +1,4 @@
-import { applyTransform, fmt, transformToSvg } from './geometry.js';
+import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, steinerBranches } from './router.js';
 import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, styleAttrs, themeInkSvg } from './style.js';
@@ -823,6 +823,10 @@ export function editorOverlay(circuit, opts = {}) {
     if (c) parts.push(halo(c.bboxWorld()));
   }
 
+  for (const r of opts.layoutPreviewRects || []) {
+    parts.push(`<rect class="layout-preview" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="var(--accent)" fill-opacity="0.06" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7 5" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
+
   // Equation to schematic highlight: the devices one hovered or locked
   // sub-expression of a derived equation was built from. Their own geometry is
   // retraced and restyled by CSS, the way commit feedback traces a committed
@@ -863,6 +867,75 @@ export function editorOverlay(circuit, opts = {}) {
       `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
       `<rect x="${fmt(cx - 4)}" y="${fmt(cy - 4)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="2" transform="rotate(45 ${fmt(cx)} ${fmt(cy)})"/>` +
       `</g>`);
+  }
+
+  // Placement guides: the spacing and alignment relationships the object being
+  // placed or moved already stands in. Magenta, like the selection centerlines,
+  // because both are measurement aids rather than circuit or selection state.
+  // Every measurement is drawn between the two anchors it measures, with a
+  // leader from each anchor to the dimension line, so what is being compared is
+  // never in doubt; two equal intervals carry the same number side by side.
+  if (opts.placementGuide?.guides?.length) {
+    const { moving, guides } = opts.placementGuide;
+    // Two measurements, two colours, because they answer different questions:
+    // magenta is the centre of the parts, green the centre of the space they
+    // and everything drawn between them actually leave.
+    const ANCHOR_INK = '#d946ef';
+    const SPACE_INK = '#22c55e';
+    const tick = 9;
+    const dot = (p, solid, ink) => `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="4.5" fill="${p.moving && !p.synthetic && solid ? ink : 'var(--paper, #fff)'}" stroke="${ink}" stroke-width="2"/>`;
+    parts.push(`<g class="placement-guides" pointer-events="none" fill="none" stroke-width="2" vector-effect="non-scaling-stroke">`);
+    for (const guide of guides) {
+      const color = guide.basis === 'space' ? SPACE_INK : ANCHOR_INK;
+      const axis = guide.axis;
+      const along = axis === 'x' ? 'y' : 'x';
+      const pt = (p, a) => (a === 'x' ? p.x : p.y);
+      if (guide.kind === 'align') {
+        const lo = Math.min(...guide.points.map((p) => pt(p, along)));
+        const hi = Math.max(...guide.points.map((p) => pt(p, along)));
+        const line = (a, b) => axis === 'y'
+          ? `M ${fmt(a)} ${fmt(guide.value)} H ${fmt(b)}`
+          : `M ${fmt(guide.value)} ${fmt(a)} V ${fmt(b)}`;
+        parts.push(`<path d="${line(lo - GRID / 2, hi + GRID / 2)}" stroke="${color}" stroke-dasharray="9 6" stroke-opacity="0.85"/>`);
+        parts.push(guide.points.map((p) => dot(p, true, color)).join(''));
+        continue;
+      }
+      // One dimension line clear of every anchor and of the moving symbol, with
+      // a leader from each measured anchor out to it. A guide still being
+      // offered is drawn dashed, and its own point stands on the target rather
+      // than on the object, so the two intervals stay the ones being labelled.
+      const pending = !guide.exact;
+      const dash = pending ? ' stroke-dasharray="7 5"' : '';
+      const bboxEdge = axis === 'x' ? moving.bbox.y : moving.bbox.x;
+      const base = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along))) - GRID;
+      if (pending) {
+        // Where to land: the target column or row, across the moving symbol.
+        const lo = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along)));
+        const hi = Math.max(axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w,
+          ...guide.points.map((p) => pt(p, along)));
+        parts.push(`<path d="${axis === 'x'
+          ? `M ${fmt(guide.target)} ${fmt(lo - GRID / 2)} V ${fmt(hi + GRID / 2)}`
+          : `M ${fmt(lo - GRID / 2)} ${fmt(guide.target)} H ${fmt(hi + GRID / 2)}`}" stroke="${color}" stroke-dasharray="5 6" stroke-opacity="0.75"/>`);
+      }
+      const leader = (p) => (axis === 'x'
+        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
+        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
+      parts.push(`<path d="${guide.points.map(leader).join(' ')}" stroke="${color}" stroke-opacity="0.4" stroke-dasharray="4 4"/>`);
+      const span = (a, b) => (axis === 'x'
+        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(b.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(b.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
+        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(b.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(b.y)} H ${fmt(base + tick)}`);
+      const label = (a, b) => (axis === 'x'
+        ? `<text x="${fmt((a.x + b.x) / 2)}" y="${fmt(base - GRID / 3)}" fill="${color}" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`
+        : `<text x="${fmt(base - GRID / 3)}" y="${fmt((a.y + b.y) / 2 + 8)}" fill="${color}" stroke="none" text-anchor="end" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`);
+      for (let i = 0; i + 1 < guide.points.length; i += 1) {
+        const a = guide.points[i];
+        const b = guide.points[i + 1];
+        parts.push(`<path d="${span(a, b)}" stroke="${color}"${dash}/>`);
+        parts.push(label(a, b));
+      }
+      parts.push(guide.points.map((p) => dot(p, guide.exact, color)).join(''));
+    }
+    parts.push('</g>');
   }
 
   // A marquee/visual selection is only a preview until its gesture commits.
@@ -999,9 +1072,11 @@ export function editorOverlay(circuit, opts = {}) {
     parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
   }
 
-  if (opts.wirePreview) {
-    const from = opts.wirePreview.from;
-    const pts = opts.wirePreview.pts || autoRoute([{ x: from.x, y: from.y }, { x: opts.wirePreview.to.x, y: opts.wirePreview.to.y }]);
+  // The draft wire, and its mirror while symmetric wiring is held. The mirror
+  // draws exactly like the draft because it commits exactly like it.
+  for (const preview of [opts.wirePreview, opts.mirrorWirePreview].filter(Boolean)) {
+    const from = preview.from;
+    const pts = preview.pts || autoRoute([{ x: from.x, y: from.y }, { x: preview.to.x, y: preview.to.y }]);
     if (pts && pts.length >= 2) {
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
       parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="6 5"/>`);
@@ -1045,10 +1120,69 @@ export function editorOverlay(circuit, opts = {}) {
     }
   }
 
-  // Placement ghost: a faded preview of the component (or label) that will be
-  // placed at the snapped cursor once the user clicks or presses Enter.
-  if (opts.ghost) {
+  // Symmetric placement: the axis a mirrored pair is being placed about. A
+  // construction line, drawn in the measurement magenta and never geometry.
+  if (opts.symmetryAxis?.operation && (opts.ghost?.def || opts.wirePreview)) {
+    const { operation, pin } = opts.symmetryAxis;
     const g = opts.ghost;
+    // Long enough to read as an axis through whatever is being mirrored.
+    const b = g?.def
+      ? transformRect({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }, g.def.bbox)
+      : (() => {
+          const points = [...(opts.wirePreview?.pts || []), ...(opts.mirrorWirePreview?.pts || []), pin];
+          const xs = points.map((p) => p.x);
+          const ys = points.map((p) => p.y);
+          return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+        })();
+    const reach = operation === 'mirrorX'
+      ? Math.max(Math.abs(b.y - pin.y), Math.abs(b.y + b.h - pin.y)) + GRID
+      : Math.max(Math.abs(b.x - pin.x), Math.abs(b.x + b.w - pin.x)) + GRID;
+    const d = operation === 'mirrorX'
+      ? `M ${fmt(pin.x)} ${fmt(pin.y - reach)} V ${fmt(pin.y + reach)}`
+      : `M ${fmt(pin.x - reach)} ${fmt(pin.y)} H ${fmt(pin.x + reach)}`;
+    parts.push(`<g class="symmetry-axis" pointer-events="none" fill="none" stroke="#d946ef" stroke-width="2" vector-effect="non-scaling-stroke">` +
+      `<path d="${d}" stroke-dasharray="14 5 3 5"/>` +
+      `<circle cx="${fmt(pin.x)}" cy="${fmt(pin.y)}" r="4.5" fill="var(--paper, #fff)" stroke="#d946ef" stroke-width="2"/>` +
+      `</g>`);
+    // How far apart the pair is being pulled. Two equal intervals either side
+    // of the axis, dimensioned like a spacing guide, because the number that
+    // decides a differential pair's pitch is the one the gesture is setting.
+    // It sits on the far side of the symbol from the placement guides, which
+    // measure off the top/left edge, so the two readouts never collide.
+    const from = opts.symmetryAxis.from;
+    const axis = operation === 'mirrorX' ? 'x' : 'y';
+    const offset = from ? Math.abs(from[axis] - pin[axis]) : 0;
+    if (offset > 1e-6) {
+      const twin = { x: from.x, y: from.y, [axis]: 2 * pin[axis] - from[axis] };
+      const cells = Math.round((offset / GRID) * 100) / 100;
+      const text = `${cells} ${cells === 1 ? 'cell' : 'cells'}`;
+      const tick = 9;
+      const base = axis === 'x'
+        ? Math.max(b.y + b.h, pin.y, from.y) + GRID
+        : Math.max(b.x + b.w, pin.x, from.x) + GRID;
+      const leader = (p) => (axis === 'x'
+        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
+        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
+      const span = (a, c) => (axis === 'x'
+        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(c.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(c.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
+        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(c.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(c.y)} H ${fmt(base + tick)}`);
+      const label = (a, c) => (axis === 'x'
+        ? `<text x="${fmt((a.x + c.x) / 2)}" y="${fmt(base + GRID * 0.8)}" fill="#d946ef" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${text}</text>`
+        : `<text x="${fmt(base + GRID / 3)}" y="${fmt((a.y + c.y) / 2 + 8)}" fill="#d946ef" stroke="none" text-anchor="start" font-size="24" font-family="system-ui, sans-serif">${text}</text>`);
+      const at = (p) => ({ x: axis === 'x' ? p.x : base, y: axis === 'x' ? base : p.y });
+      parts.push(`<g class="symmetry-offset" pointer-events="none" fill="none" stroke="#d946ef" stroke-width="2" vector-effect="non-scaling-stroke">` +
+        `<path d="${[twin, pin, from].map(leader).join(' ')}" stroke-opacity="0.4" stroke-dasharray="4 4"/>` +
+        `<path d="${span(twin, pin)}"/><path d="${span(pin, from)}"/>` +
+        label(twin, pin) + label(pin, from) +
+        [twin, from].map((p) => `<circle cx="${fmt(at(p).x)}" cy="${fmt(at(p).y)}" r="4.5" fill="#d946ef" stroke="#d946ef" stroke-width="2"/>`).join('') +
+        `</g>`);
+    }
+  }
+
+  // Placement ghost: a faded preview of the component (or label) that will be
+  // placed at the snapped cursor once the user clicks or presses Enter. A
+  // symmetric placement previews its mirrored twin the same way.
+  for (const g of [opts.ghost, opts.ghostTwin].filter(Boolean)) {
     if (g.label) {
       // Use the same label model and renderer as the committed annotation so
       // markup, alignment, and the grid-sized footprint are previewed honestly.

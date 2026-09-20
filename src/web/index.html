@@ -56,6 +56,7 @@
 
     <div class="toolbar-cluster view-cluster" role="group" aria-label="View">
       <button id="btn-grid" class="icon-button" data-icon="grid" aria-pressed="true" aria-label="Grid" title="Show or hide the placement grid (#)">Grid</button>
+      <button id="btn-guides" class="icon-button" data-icon="guides" aria-pressed="true" aria-label="Placement guides" title="Show or hide the spacing and alignment guides (G)">Guides</button>
       <button id="btn-crosshair" class="icon-button" data-icon="crosshair" aria-pressed="true" aria-label="Crosshair" title="Show or hide the crosshair (C)">Crosshair</button>
       <button id="btn-theme" class="icon-button" data-icon="moon" aria-pressed="false" aria-label="Dark theme" title="Switch between light and dark themes (D)">Dark</button>
     </div>
@@ -321,6 +322,29 @@
         <h2 class="panel-heading">Block details</h2>
         <div class="detail block-info" id="block-detail">Select a block or connector.</div>
       </section>
+      <section class="panel-group align-panel" id="align-panel" data-doc-kind="schematic" aria-labelledby="align-heading" hidden>
+        <h2 class="panel-heading" id="align-heading">Align <span class="panel-count" id="align-count"></span></h2>
+        <div class="align-controls">
+          <div class="align-button-grid" role="group" aria-label="Align selected object bounding boxes">
+            <button type="button" data-layout-align="left" title="Align left edges to the selected set's leftmost edge">Left</button>
+            <button type="button" data-layout-align="center-x" title="Align horizontal centers to the selected set's center">Center X</button>
+            <button type="button" data-layout-align="right" title="Align right edges to the selected set's rightmost edge">Right</button>
+            <button type="button" data-layout-align="top" title="Align top edges to the selected set's topmost edge">Top</button>
+            <button type="button" data-layout-align="center-y" title="Align vertical centers to the selected set's center">Center Y</button>
+            <button type="button" data-layout-align="bottom" title="Align bottom edges to the selected set's bottommost edge">Bottom</button>
+          </div>
+          <label class="align-measure-label" for="align-measure">Space by</label>
+          <select id="align-measure" title="Outline gaps measure space between shapes; connection anchors measure spacing between their useful placement points">
+            <option value="gaps">Outline gaps</option>
+            <option value="anchors">Connection anchors</option>
+          </select>
+          <div class="align-distribute-grid" role="group" aria-label="Distribute selected objects">
+            <button type="button" data-layout-distribute="x" title="Distribute horizontally, keeping the outer objects fixed">Even horizontal</button>
+            <button type="button" data-layout-distribute="y" title="Distribute vertically, keeping the outer objects fixed">Even vertical</button>
+          </div>
+          <div class="align-note" id="align-note" aria-live="polite"></div>
+        </div>
+      </section>
       <section class="panel-group style-panel" id="style-panel" aria-labelledby="style-heading" hidden>
         <h2 class="panel-heading" id="style-heading">Style</h2>
         <div class="style-row style-row-swatches">
@@ -392,6 +416,6 @@
     <pre class="log" id="log"></pre>
   </footer>
 
-  <script type="module" src="main.js?v=32"></script>
+  <script type="module" src="main.js?v=41"></script>
 </body>
 </html>

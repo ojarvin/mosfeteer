@@ -39,7 +39,8 @@ import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldPanTouch, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
+import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
+import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -165,6 +166,7 @@ const ICON_PATHS = {
   download: '<path d="M12 3v12m0 0 5-5m-5 5-5-5M4 20h16"/>',
   grid: '<path d="M4 4h16v16H4zM4 10h16M4 16h16M10 4v16M16 4v16"/>',
   crosshair: '<circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>',
+  guides: '<path d="M5 4v16M12 4v16M19 4v16" stroke-dasharray="3 2.4"/><path d="M5 12h7M12 12h7"/><path d="M5 9.5v5M12 9.5v5M19 9.5v5"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   'align-left': '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>',
@@ -329,6 +331,18 @@ function clearCheckReport() {
 function clearDiagnosticFocus() {
   diagnosticSelection = { components: new Set(), nets: new Set(), labels: new Set() };
 }
+// Symmetric placement. While Ctrl is held with a component ghost armed, the
+// point it went down at becomes a mirror axis and a second, mirrored ghost
+// follows on the far side of it, so a differential pair or any other mirrored
+// structure is placed in one gesture. Releasing Ctrl drops the twin; nothing
+// about the primary ghost changes while it is held.
+let symmetry = null; // { pin:{x,y}, operation:'mirrorX'|'mirrorY'|null, settled }
+// An axis a pair was actually placed about is an axis of the drawing, so it
+// outlives the Ctrl press and is resumed by the next one. Dropping the ghost
+// forgets it. Without this, stepping off Ctrl for one transform -- the only
+// way to reach the vertical mirror while Ctrl is the hold key -- would lose
+// the axis the structure is being built about.
+let symmetryMemory = null; // { pin, operation } while the same ghost is armed
 let pendingPlace = null; // insert-mode ghost: { kind:'component', type, rotation, mirrorX, mirrorY } | { kind:'label' }
 let selected = null; // primary refdes
 let multi = new Set(); // all selected component refdes (always includes selected)
@@ -346,13 +360,28 @@ let netRangeAnchor = null; // last net row used as a range anchor
 let selectedNetSolders = new Set(); // solder components selected through net selection
 let selectedWire = null; // primary {netId, branch, segment} of the selected wire segment(s)
 let selectedWires = new Set(); // every selected wire segment, as "netId:branch:segment" keys (always includes selectedWire)
+let layoutPreviewRects = [];
+// The guides the last canvas paint drew, so the status line can name in words
+// what the dimension lines measure. Set by renderCanvas, read by renderStatus.
+let activePlacementGuides = [];
+// How far the mirrored pair the last paint dimensioned stands from its axis,
+// in grid cells. Set by renderCanvas beside the guides, read by renderStatus.
+let activeSymmetryCells = null;
 let cursor = { x: 0, y: 0 };
 let cursorInCanvas = false;
-let crosshairVisible = true;
+// Off by default: the placement guides now say where an object lines up, and
+// a full-window crosshair on top of them is more ink than help. `C` brings it
+// back for anyone who reads position off the rulers.
+let crosshairVisible = false;
+// Spacing and alignment guides. On by default; `G` and #btn-guides turn them
+// off for a drawing being laid out by hand, without touching the symmetry
+// axis, which is armed deliberately rather than offered.
+let guidesVisible = true;
 let visual = null; // visual mode: anchor grid point {x,y} the selection box starts from
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
 let wirePreview = null;
+let mirrorWirePreview = null;
 let directWire = null; // protected direct wire: { source:{refdes,term}, points:[] }
 let counts = 0;
 let pendingKey = null; // { key, at } for dd chord
@@ -378,6 +407,10 @@ let lastSeenRevision = null;
 let lastCircuitTag = null;
 let syncInFlight = null;
 let syncGeneration = 0;
+// An explicitly created/dropped unsaved document is a user-owned editing
+// session. Do not let the server's CLI active-document mirror replace it;
+// resume active syncing once it is saved or another document is opened.
+let activeSyncSuspended = false;
 let saveInFlight = false;
 let draftTimer = null;
 let renderFrame = null;
@@ -738,6 +771,7 @@ function restoreDraft() {
     }
     lastSavedSnapshot = draft.savedSnapshot || snapshot();
     restoredDraftPath = currentDocumentPath;
+    activeSyncSuspended = !currentDocumentPath;
   } catch (err) {
     logLine(`Could not restore local draft: ${err.message}`, 'error');
     lastSavedSnapshot = snapshot();
@@ -859,6 +893,7 @@ async function saveCircuit({ saveAs = false } = {}) {
     currentCircuitName = data.name;
     currentDocumentPath = data.path;
     currentDocumentDir = data.dir;
+    activeSyncSuspended = false;
     migrateAnalysisFormStorage(previousScope, analysisFormScope());
     circuitNameEl.value = data.name;
     lastSeenRevision = data.revision || null;
@@ -1008,6 +1043,7 @@ async function loadCircuit(path, quiet = false, options = {}) {
     currentCircuitName = data.name;
     currentDocumentPath = data.path;
     currentDocumentDir = data.dir;
+    activeSyncSuspended = false;
     remoteConflictLogged = false;
     circuitNameEl.value = data.name;
     lastSavedSnapshot = snapshot();
@@ -1037,6 +1073,7 @@ function openUnsavedDocument(state, name) {
   currentCircuitName = '';
   currentDocumentPath = null;
   currentDocumentDir = null;
+  activeSyncSuspended = true;
   remoteConflictLogged = false;
   lastSeenActive = null;
   lastSeenRevision = null;
@@ -1137,6 +1174,7 @@ async function deleteSavedCircuit() {
     resetCheckState();
     directWire = null;
     wire = null;
+    clearSymmetry();
     blockConnector = null;
     blockPlacement = false;
     drag = null;
@@ -1147,6 +1185,7 @@ async function deleteSavedCircuit() {
     copyPending = false;
     visual = null;
     pendingPlace = null;
+    clearSymmetry();
     labelMode = null;
     annotationPoints = [];
     setSelection([]);
@@ -1158,6 +1197,7 @@ async function deleteSavedCircuit() {
     currentCircuitName = '';
     currentDocumentPath = null;
     currentDocumentDir = null;
+    activeSyncSuspended = true;
     circuitNameEl.value = '';
     circuitSelectEl.value = '';
     lastSavedSnapshot = snapshot();
@@ -1212,6 +1252,18 @@ async function syncActiveCircuitOnce() {
   }
 
   if (saveInFlight || generation !== syncGeneration) return;
+
+  if (activeSyncSuspended) {
+    // Consume the current active identity while the explicit blank/dropped
+    // document owns the editor. This prevents the next poll from treating an
+    // already-active file as a change and replacing the unsaved document.
+    if (activeResponseSucceeded) {
+      lastSeenActive = active;
+      lastSeenRevision = activeRevision;
+      lastFailedActive = null;
+    }
+    return;
+  }
 
   // Seed the active revision without replacing the restored local draft.
   if (activeResponseSucceeded && restoredDraftPath && currentDocumentPath === restoredDraftPath) {
@@ -1298,6 +1350,7 @@ function applyJson(blob) {
   // across loads, undo/redo, or remote replacement.
   directWire = null;
   wire = null;
+  clearSymmetry();
   blockConnector = null;
   blockPlacement = false;
   drag = null;
@@ -2106,6 +2159,135 @@ function selectedComps() {
   return out;
 }
 
+/** The Align panel never silently drops a selected electrical object. Owned
+ * labels ride their component; net labels and wires need different movement
+ * semantics and therefore make the whole layout action unavailable. */
+function layoutSelection() {
+  const components = selectedComps();
+  const labels = selectedLabels().filter((label) => !label.owner || !multi.has(label.owner));
+  const eligibleLabels = labels.filter((label) => !label.owner && !label.netId && !label.parent);
+  const items = [
+    ...components.map(componentLayoutItem),
+    ...eligibleLabels.map(labelLayoutItem),
+  ];
+  const wireCount = selectedWires.size || (selectedWire ? 1 : 0);
+  const count = components.length + labels.length + selectedNets.size + wireCount;
+  const blocked = labels.length !== eligibleLabels.length || selectedNets.size > 0 || wireCount > 0;
+  return { items, count, blocked };
+}
+
+function layoutPlan(action, measure = 'gaps') {
+  const selection = layoutSelection();
+  if (selection.blocked) return { ok: false, reason: 'Select only components or free annotations; wires and net labels cannot be aligned this way.' };
+  return action === 'x' || action === 'y'
+    ? distributionPlan(selection.items, action, measure)
+    : alignmentPlan(selection.items, action);
+}
+
+function updateAlignControls() {
+  const panel = document.getElementById('align-panel');
+  if (!panel) return;
+  const selection = layoutSelection();
+  panel.hidden = isBlockDiagram(circuit) || selection.count < 2;
+  if (panel.hidden) { layoutPreviewRects = []; return; }
+  document.getElementById('align-count').textContent = `${selection.count} selected`;
+  const measure = document.getElementById('align-measure')?.value || 'gaps';
+  const note = document.getElementById('align-note');
+  note.textContent = selection.blocked
+    ? 'Wires, net labels, and owned labels cannot be moved by these controls.'
+    : selection.items.length < 3 ? 'Select three or more objects to distribute.'
+      : 'Outer objects stay fixed when distributing.';
+  for (const button of panel.querySelectorAll('[data-layout-align], [data-layout-distribute]')) {
+    const plan = layoutPlan(button.dataset.layoutAlign || button.dataset.layoutDistribute, measure);
+    button.disabled = !plan.ok;
+    if (!plan.ok) button.title = plan.reason;
+  }
+}
+
+function applyLayoutPlan(plan) {
+  if (!plan.ok) { logLine(plan.reason, 'error'); return false; }
+  const moves = plan.deltas.filter(({ dx, dy }) => dx || dy);
+  if (!moves.length) { logLine('selection is already aligned'); return false; }
+  const before = snapshot();
+  const original = circuit;
+  circuit = Circuit.fromJSON(JSON.parse(before));
+  try {
+    const refs = moves.filter(({ id }) => circuit.components.has(id)).map(({ id }) => id);
+    const touched = netsTouching(refs);
+    for (const { id, dx, dy } of moves) {
+      const component = circuit.components.get(id);
+      if (component) {
+        component.transform.x += dx;
+        component.transform.y += dy;
+      } else {
+        const label = circuit.labels.get(id);
+        if (label) {
+          const anchor = label.anchorWorld();
+          label.moveTo(anchor.x + dx, anchor.y + dy);
+        }
+      }
+    }
+    if (refs.length) {
+      circuit.connectCoincident(refs);
+      circuit.reconnectCoincidentNets();
+      circuit.ensureUniqueTerminals(refs);
+    }
+    for (const id of netsTouching(refs)) touched.add(id);
+    for (const id of touched) {
+      const net = circuit.nets.get(id);
+      if (net && circuit.rerouteNet(net, 'refresh') === false) throw new Error(`unable to reroute net ${id}`);
+    }
+    circuit.syncJunctionSolders();
+    circuit.invalidateRoutingCache();
+    recordHistoryEntry(before);
+    markModelChanged();
+    layoutPreviewRects = [];
+    logLine(plan.exact === false ? 'distributed on grid; adjacent intervals differ by at most one cell' : 'aligned selection');
+    render();
+    return true;
+  } catch (err) {
+    circuit = original;
+    layoutPreviewRects = [];
+    logLine(`alignment cancelled: ${err.message}`, 'error');
+    render();
+    return false;
+  }
+}
+
+function previewLayoutPlan(plan) {
+  const items = layoutSelection().items;
+  layoutPreviewRects = plan.ok ? plan.deltas.filter(({ dx, dy }) => dx || dy).map(({ id, dx, dy }) => {
+    const item = items.find((candidate) => candidate.id === id);
+    return item && { x: item.bbox.x + dx, y: item.bbox.y + dy, w: item.bbox.w, h: item.bbox.h };
+  }).filter(Boolean) : [];
+  renderCanvas(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision);
+}
+
+const alignPanelEl = document.getElementById('align-panel');
+alignPanelEl?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-layout-align], [data-layout-distribute]');
+  if (!button || button.disabled) return;
+  const action = button.dataset.layoutAlign || button.dataset.layoutDistribute;
+  const measure = document.getElementById('align-measure')?.value || 'gaps';
+  applyLayoutPlan(layoutPlan(action, measure));
+});
+alignPanelEl?.addEventListener('pointerover', (event) => {
+  const button = event.target.closest('[data-layout-align], [data-layout-distribute]');
+  if (!button || button.disabled) return;
+  previewLayoutPlan(layoutPlan(button.dataset.layoutAlign || button.dataset.layoutDistribute,
+    document.getElementById('align-measure')?.value || 'gaps'));
+});
+alignPanelEl?.addEventListener('pointerout', (event) => {
+  if (!event.target.closest('[data-layout-align], [data-layout-distribute]')) return;
+  layoutPreviewRects = [];
+  renderCanvas(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision);
+});
+alignPanelEl?.querySelector('#align-measure')?.addEventListener('change', () => {
+  layoutPreviewRects = [];
+  updateAlignControls();
+  render();
+});
+
 function selectedDrawTargets() {
   if (isBlockDiagram(circuit)) {
     const objects = selectedBlockObjects();
@@ -2649,10 +2831,12 @@ function fitView() {
     add(r.x + r.w, r.y + r.h);
   }
   if (!Number.isFinite(x0)) {
-    x0 = -120;
-    y0 = -120;
-    x1 = 120;
-    y1 = 120;
+    // An empty canvas has no content to fit. Give it a wider default window so
+    // the grid is useful for planning instead of opening at the zoom limit.
+    x0 = -600;
+    y0 = -600;
+    x1 = 600;
+    y1 = 600;
   }
   const pane = document.querySelector('.canvas-pane');
   const rail = document.querySelector('.mode-toolbar');
@@ -3017,6 +3201,84 @@ function placeNetLabelAt(world) {
  * Commit the current insert-mode ghost at the cursor. Stays on the same
  * pendingPlace so the user can place several of the same component in a row.
  */
+/** The world transform of the armed component ghost. */
+function pendingTransform() {
+  if (pendingPlace?.kind !== 'component') return null;
+  let def;
+  try { def = getSymbol(pendingPlace.type); } catch { return null; }
+  return {
+    x: cursor.x,
+    y: cursor.y,
+    rotation: pendingPlace.rotation || 0,
+    mirrorX: pendingPlace.mirrorX !== null ? !!pendingPlace.mirrorX : !!def.defaultMirrorX,
+    mirrorY: pendingPlace.mirrorY !== null ? !!pendingPlace.mirrorY : !!def.defaultMirrorY,
+  };
+}
+
+/** The mirrored twin of one ghost transform, or null when symmetry is not
+ *  armed, has no direction yet, or the ghost sits on the axis itself -- there
+ *  is no pair to place when both halves would land on the same square. */
+/** The axis in the drawing's own terms, e.g. `x=0`. */
+function symmetryAxisText() {
+  if (!symmetry?.operation) return '';
+  return symmetry.operation === 'mirrorX' ? `x=${symmetry.pin.x}` : `y=${symmetry.pin.y}`;
+}
+
+function symmetryTwin(base = pendingTransform()) {
+  if (!base || !symmetry?.operation) return null;
+  const twin = transformComponentWorld(base, symmetry.pin, symmetry.operation);
+  return twin.x === base.x && twin.y === base.y ? null : twin;
+}
+
+/** Point the mirror at whichever way the cursor has travelled since Ctrl went
+ *  down. Called from the render path, so it follows the cursor however it
+ *  moved -- pointer, arrow keys, or a view change.
+ *
+ *  Placing a pair settles it: a symmetric circuit has one axis, and the next
+ *  pair of a differential stage goes above or below the first -- which is
+ *  movement along the axis, and would otherwise turn the mirror ninety
+ *  degrees just as the second pair is being positioned. Until a pair is
+ *  committed it still follows the cursor, so a first move in the wrong
+ *  direction costs nothing. */
+function syncSymmetryOperation() {
+  if (!symmetry || symmetry.settled) return;
+  symmetry.operation = symmetryOperation(symmetry.pin, cursor, symmetry.operation);
+  // A wire's source, like a copy ghost's pasted set, is already committed, so
+  // the first move off the axis says where the mirror goes; a later turn must
+  // not swing it.
+  if (symmetry.operation && (wire?.source || drag?.mode === 'copyghost')) symmetry.settled = true;
+}
+
+/** Drop the mirrored ghost and forget the axis it was about. Releasing the
+ *  modifier only does the first half; this is for a dropped ghost. */
+function clearSymmetry() {
+  dropCopyGhostMirror();
+  symmetry = null;
+  symmetryMemory = null;
+}
+
+/** Arm or drop symmetric placement. It belongs to a component ghost only.
+ *  Releasing the modifier takes the twin away but keeps a settled axis, so a
+ *  transform between two pairs costs nothing: the next press resumes it. */
+function setSymmetry(on) {
+  const armed = (mode === 'insert' && pendingPlace?.kind === 'component')
+    || (!!wire?.source && !wire.source.fixed)
+    || drag?.mode === 'copyghost';
+  if (on && armed && !symmetry) {
+    symmetry = symmetryMemory
+      ? { pin: { ...symmetryMemory.pin }, operation: symmetryMemory.operation, settled: true }
+      : { pin: { ...cursor }, operation: null };
+    logLine(symmetryMemory
+      ? `symmetry axis resumed about ${symmetryAxisText()}`
+      : `symmetry axis at (${cursor.x},${cursor.y}) · move off it to mirror · release Ctrl to drop`);
+  } else if (!on && symmetry) {
+    dropCopyGhostMirror();
+    symmetry = null;
+  } else return false;
+  render();
+  return true;
+}
+
 function placePending() {
   if (!pendingPlace) return;
   if (pendingPlace.kind === 'block' && isBlockDiagram(circuit)) {
@@ -3036,29 +3298,39 @@ function placePending() {
     logLine(`placed label @ (${label.anchor.x},${label.anchor.y})`);
     rememberInsertType('label');
   } else {
-    const comp = circuit.addComponent(pendingPlace.type, {
-      x: cursor.x,
-      y: cursor.y,
-      rotation: pendingPlace.rotation || 0,
-      mirrorX: pendingPlace.mirrorX === null ? undefined : pendingPlace.mirrorX,
-      mirrorY: pendingPlace.mirrorY === null ? undefined : pendingPlace.mirrorY,
+    // One placement, or a mirrored pair while symmetry is armed. Both halves
+    // land in the same commit, so the pair is one undo.
+    const twin = symmetryTwin();
+    const placements = [pendingTransform(), ...(twin ? [twin] : [])].filter(Boolean);
+    const placed = placements.map((t) => circuit.addComponent(pendingPlace.type, {
+      x: t.x,
+      y: t.y,
+      rotation: t.rotation,
+      mirrorX: t.mirrorX,
+      mirrorY: t.mirrorY,
       noLabel: false,
-    });
+    }));
     // Treat a committed insertion exactly like a component move/copy that
     // lands on existing connectivity. `addComponent` joins coincident pins,
     // while the follow-up pass also attaches a new terminal to a wire endpoint
     // and repairs any split net pieces at the landing point.
-    circuit.connectCoincident(comp.refdes);
+    for (const comp of placed) circuit.connectCoincident(comp.refdes);
     circuit.reconnectCoincidentNets();
-    circuit.ensureUniqueTerminals([comp.refdes]);
+    circuit.ensureUniqueTerminals(placed.map((comp) => comp.refdes));
     // A solder dot placed on a crossing shorts the nets there. With several
     // given names the dot waits (unsynced) for the user's name choice.
-    const awaitingName = comp.type === 'solder' && shortNetsAtPlacedSolder(comp);
+    const awaitingName = placed.some((comp) => comp.type === 'solder' && shortNetsAtPlacedSolder(comp));
     if (!awaitingName) circuit.syncJunctionSolders();
     // A committed placement is acknowledged by the landing flash; it does not
     // take over the selection, so repeated placement never carries a halo.
     setSelection([]);
-    logLine(`placed ${comp.refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
+    if (placed.length > 1) {
+      symmetry.settled = true;
+      symmetryMemory = { pin: { ...symmetry.pin }, operation: symmetry.operation };
+    }
+    logLine(placed.length > 1
+      ? `placed ${placed.map((comp) => comp.refdes).join(' and ')} (${pendingPlace.type}) mirrored about ${symmetryAxisText()}`
+      : `placed ${placed[0].refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
     rememberInsertType(pendingPlace.type);
   }
   if (pendingPlace) pendingPlace.startWorld = { ...cursor };
@@ -3230,6 +3502,7 @@ function render() {
   // it vanish on the first pointer move after opening it.
   syncSelectedNetSolders();
   updateStyleControls();
+  updateAlignControls();
   validateSelectedWires();
   if (wiresDirty) {
     updateNetWarnings();
@@ -3277,10 +3550,49 @@ function draftRoutePath(draft, to = cursor) {
   return path;
 }
 
+/** Everything drawn that can narrow a gap: component bodies and wire runs, as
+ *  rectangles. Wires count because they are what makes the visual centre of a
+ *  gap differ from the centre of the parts around it. The moving set is left
+ *  out -- an object never narrows its own gap. */
+function drawnOccupancy(skipRefs = new Set()) {
+  const rects = [];
+  for (const component of circuit.components.values()) {
+    if (skipRefs.has(component.refdes) || component.type === 'solder') continue;
+    rects.push({ id: component.refdes, ...component.bboxWorld() });
+  }
+  const skipNets = new Set(netsTouching([...skipRefs]));
+  for (const net of circuit.nets.values()) {
+    if (skipNets.has(net.id)) continue;
+    for (const path of net.paths()) {
+      for (let i = 1; i < path.length; i += 1) {
+        const a = path[i - 1];
+        const b = path[i];
+        rects.push({
+          id: `${net.id}:${i}`,
+          x: Math.min(a.x, b.x),
+          y: Math.min(a.y, b.y),
+          w: Math.abs(b.x - a.x),
+          h: Math.abs(b.y - a.y),
+        });
+      }
+    }
+  }
+  return rects;
+}
+
 function draftWirePreview(draft) {
   const pts = draftRoutePath(draft, cursor);
   if (!pts) return undefined;
   return { from: pts[0], to: pts[pts.length - 1], pts };
+}
+
+/** The same preview for the mirrored draft, routed through the same autorouter
+ *  so what is previewed is what a commit would draw. */
+function mirroredWirePreview() {
+  const twin = mirroredWireDraft({ ...cursor });
+  if (!twin) return null;
+  const pts = draftRoutePath({ ...wire, source: twin.source, points: twin.points }, twin.point);
+  return pts ? { from: pts[0], to: pts.at(-1), pts } : null;
 }
 
 function clientRectToSvgBounds(svg, rect) {
@@ -3637,6 +3949,49 @@ function renderCanvas(modelKey) {
             }
           })()
       : undefined;
+  syncSymmetryOperation();
+  // After the axis is aimed, not before: on the first move after the modifier
+  // goes down the direction does not exist yet, and a preview built then would
+  // be missing for exactly the frame it is needed.
+  mirrorWirePreview = wire?.source ? mirroredWirePreview() : null;
+  const ghostTwin = ghost?.def ? (() => {
+    const twin = symmetryTwin();
+    return twin ? { ...ghost, ...twin } : null;
+  })() : null;
+  const movingLayoutItem = ghost?.def ? ghostLayoutItem(ghost)
+    : (drag?.mode === 'move' || drag?.mode === 'copyghost') && ghostRefs.size
+      ? (() => {
+          const ref = selected && ghostRefs.has(selected) ? selected : [...ghostRefs][0];
+          const component = circuit.components.get(ref);
+          return component ? componentLayoutItem(component) : null;
+        })()
+      : null;
+  // The axis carries the point it is measuring away from, so the overlay can
+  // dimension the pair while it is being pulled apart: a ghost measures from
+  // its layout anchor (a device's conduction column, not its bbox), a wire
+  // draft from the cursor, which is the end being mirrored.
+  const symmetryAxis = symmetry && (ghost?.def || wire?.source)
+    ? {
+        operation: symmetry.operation,
+        pin: symmetry.pin,
+        from: ghost?.def ? movingLayoutItem?.anchor : { ...cursor },
+      }
+    : null;
+  activeSymmetryCells = (() => {
+    if (!symmetryAxis?.operation || !symmetryAxis.from) return null;
+    const axis = symmetryAxis.operation === 'mirrorX' ? 'x' : 'y';
+    const offset = Math.abs(symmetryAxis.from[axis] - symmetryAxis.pin[axis]);
+    return offset > 1e-6 ? Math.round((offset / GRID) * 100) / 100 : null;
+  })();
+  const placementGuide = movingLayoutItem
+    ? {
+        moving: movingLayoutItem,
+        guides: guidesVisible ? placementGuides([...circuit.components.values()]
+          .filter((component) => !ghostRefs.has(component.refdes) && component.type !== 'solder')
+          .map(componentLayoutItem), movingLayoutItem, undefined, drawnOccupancy(ghostRefs)) : [],
+      }
+    : null;
+  activePlacementGuides = placementGuide?.guides || [];
   let previewSelection;
   const marqueeDrag = drag?.mode === 'marquee' || drag?.mode === 'deletemarquee';
   const previewBox = visual
@@ -3662,7 +4017,11 @@ function renderCanvas(modelKey) {
       const component = circuit.components.get(ref);
       return component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY;
     }),
-    centerGuides: selectionCenterBounds(),
+    ghostTwin,
+    symmetryAxis,
+    centerGuides: placementGuide?.guides.length ? null : selectionCenterBounds(),
+    layoutPreviewRects,
+    placementGuide,
     wireSegments: (() => {
       if (!selectedWires.size && !selectedWire) return [];
       const keys = selectedWires.size ? [...selectedWires] : [`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`];
@@ -3708,6 +4067,7 @@ function renderCanvas(modelKey) {
         ? drag.rubber
         : undefined,
     wirePreview: wire ? wirePreview : null,
+    mirrorWirePreview: wire ? mirrorWirePreview : null,
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
@@ -4589,6 +4949,78 @@ function commitWireAtCursor() {
     logLine(String(err.message || err));
   }
   render();
+}
+
+/** A point reflected across the armed mirror axis. */
+function mirrorPoint(point) {
+  if (!symmetry?.operation) return null;
+  return symmetry.operation === 'mirrorX'
+    ? { x: 2 * symmetry.pin.x - point.x, y: point.y }
+    : { x: point.x, y: 2 * symmetry.pin.y - point.y };
+}
+
+/** The wire draft reflected across the axis, and the commit point with it.
+ *
+ *  The source becomes the mirror device's terminal where one stands at the
+ *  reflected point -- which for a source ON the axis is that same terminal, so
+ *  a tail drain fans out both ways from one pin -- and otherwise a free point,
+ *  carrying the net it lands on. Returns null when the whole draft lies on the
+ *  axis, because that is one wire rather than two. */
+function mirroredWireDraft(point) {
+  if (!wire?.source || wire.source.fixed || !symmetry?.operation) return null;
+  const from = wireOrigin(wire.source);
+  if (!from) return null;
+  const mirroredFrom = mirrorPoint(from);
+  const mirroredPoint = mirrorPoint(point);
+  if (mirroredFrom.x === from.x && mirroredFrom.y === from.y
+    && mirroredPoint.x === point.x && mirroredPoint.y === point.y) return null;
+  const terminal = matchAt(mirroredFrom.x, mirroredFrom.y);
+  const onWire = terminal?.term ? null : pickWire(mirroredFrom);
+  return {
+    source: terminal?.term
+      ? { refdes: terminal.refdes, term: terminal.term }
+      : { x: mirroredFrom.x, y: mirroredFrom.y, netId: onWire?.net?.id },
+    points: (wire.points || []).map(mirrorPoint),
+    point: mirroredPoint,
+  };
+}
+
+/** Run one wire commit, then the same commit for its mirror, as one undo.
+ *  `run(point)` is the ordinary commit, so every path it can take -- onto a
+ *  terminal, into a net, or open-ended -- mirrors without being reimplemented.
+ *  The mirror only runs once the first commit has consumed the draft. */
+function withMirroredWire(run, point = { ...cursor }) {
+  const twin = mirroredWireDraft(point);
+  if (!twin) {
+    run(point);
+    return;
+  }
+  const style = wire.routeStyle;
+  const depth = history.length;
+  const before = snapshot();
+  run(point);
+  if (!wire?.source) {
+    const savedCursor = { ...cursor };
+    wire = { ...newWireDraft(), routeStyle: style, allowDiagonal: style === 'diagonal', source: twin.source, points: twin.points };
+    cursor = { ...twin.point };
+    try {
+      run(twin.point);
+    } catch (err) {
+      logLine(`mirrored wire: ${String(err.message || err)}`, 'error');
+    }
+    cursor = savedCursor;
+    // A mirror that could not commit leaves no half-drawn draft behind.
+    if (wire?.source) {
+      wire = { ...newWireDraft(), routeStyle: style, allowDiagonal: style === 'diagonal' };
+      logLine('mirrored wire: nothing to commit at the reflected point', 'error');
+    }
+  }
+  // Two commits, one edit: the pair undoes together, like a mirrored placement.
+  if (history.length > depth) {
+    history.length = depth;
+    rememberHistory(before);
+    future.length = 0;
+  }
 }
 
 /** Commit the draft wire onto a component terminal. Terminal-origin wires go
@@ -6707,7 +7139,11 @@ function canvasMouseUp(ev) {
       recordHistoryEntry(drag.startSnapshot);
     }
   } else if (drag.mode === 'wirepick') {
-    if (!movedOut) doWireClick(snap(w.x), snap(w.y), drag.terminalHit, drag.fixedEndpoint, drag.fixedTarget);
+    if (!movedOut) {
+      const clicked = { x: snap(w.x), y: snap(w.y) };
+      withMirroredWire((point) => doWireClick(point.x, point.y,
+        point === clicked ? drag.terminalHit : null, drag.fixedEndpoint, drag.fixedTarget), clicked);
+    }
   } else if (drag.mode === 'directpick') {
     if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y), drag.fixedEndpoint);
   } else if (drag.mode === 'annotationplace') {
@@ -6815,7 +7251,7 @@ window.addEventListener('pointercancel', (ev) => {
 // before the bubbling event reaches the canvas. Feed that event through the
 // same cursor/preview path used by both document kinds.
 function forwardCanvasMove(ev) {
-  if (canvasEl.contains(ev.target)) return;
+  if (!shouldForwardCanvasMove(ev.target, canvasEl)) return;
   const r = document.querySelector('.canvas-pane')?.getBoundingClientRect();
   if (!r || ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) return;
   canvasMouseMove(ev);
@@ -8189,6 +8625,12 @@ window.addEventListener('keydown', (ev) => {
 });
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
+// Releasing Ctrl drops the mirrored ghost; so does losing the window, since no
+// keyup arrives then and the twin would otherwise be stuck on screen.
+window.addEventListener('keyup', (ev) => {
+  if (ev.key === 'Control' || ev.key === 'Meta') setSymmetry(false);
+});
+window.addEventListener('blur', () => setSymmetry(false));
 
 // Block documents use a deliberately separate, small interaction path. They
 // never enter the electrical picker/drag state above.
@@ -8650,6 +9092,7 @@ function activateBlockPlace() {
   blockPlacement = true;
   mode = 'insert';
   pendingPlace = null;
+  clearSymmetry();
   insertQuery = '';
   moveMode = null;
   copyMode = false;
@@ -10322,8 +10765,13 @@ function detailHeader(name, kind) {
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 
 function onWireKey(key) {
-  if (key === 'Escape') {
+  if (key === 'Escape' && symmetry) {
+    // One layer at a time, as in insert mode: the axis, then the draft.
+    clearSymmetry();
+    logLine('symmetry axis cleared');
+  } else if (key === 'Escape') {
     wire = null;
+    clearSymmetry();
     selectedWire = null;
     selectedWires.clear();
     selectedNets.clear();
@@ -10338,7 +10786,10 @@ function onWireKey(key) {
       logLine('removed last wire vertex');
     }
   } else if (key === 'Enter') {
-    commitWireAtCursor();
+    withMirroredWire((point) => {
+      cursor = { ...point };
+      commitWireAtCursor();
+    });
   } else if (key === 'Tab') {
     // Wires and wire highlights are never part of Tab cycling.
     return;
@@ -10509,6 +10960,15 @@ function onInsertKey(key, shiftKey = false) {
     return;
   }
 
+  // Escape peels one layer at a time: the mirror axis first, so a new one can
+  // be started without losing the ghost, then the ghost, then insert mode.
+  if (symmetry && key === 'Escape') {
+    clearSymmetry();
+    logLine('symmetry axis cleared');
+    render();
+    return;
+  }
+
   // A placement ghost is pending: Enter/click commits it; Esc drops it back to
   // the search picker so a different component can be typed.
   if (pendingPlace) {
@@ -10517,6 +10977,7 @@ function onInsertKey(key, shiftKey = false) {
       render();
     } else if (key === 'Escape' || key === 'Backspace') {
       pendingPlace = null;
+      clearSymmetry();
       insertQuery = '';
       render();
     }
@@ -10548,6 +11009,24 @@ function onInsertKey(key, shiftKey = false) {
 }
 
 /** Arrow keys grow the selection box; Enter commits it and Escape cancels. */
+/** Looking at the drawing is not a mode. The grid, guides, crosshair, theme,
+ *  fit and help change what is on screen rather than what is in the document,
+ *  so they answer while a ghost is armed, a wire is half drawn, or a marquee
+ *  is open -- the editor should never make someone finish an edit to turn a
+ *  toggle. The one place they must not is insert mode before a ghost exists,
+ *  where every printable key is search text. Returns true when handled. */
+function viewKey(key, shiftKey = false) {
+  if (mode === 'insert' && !pendingPlace) return false;
+  if (key === 'F' || key === 'f') fitView();
+  else if (key === '#') setGrid(!showGrid);
+  else if (key === 'C' || (key === 'c' && shiftKey)) setCrosshair(!crosshairVisible);
+  else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
+  else if (key === 'D') toggleTheme();
+  else if (key === '?') showHelp();
+  else return false;
+  return true;
+}
+
 function onVisualKey(key) {
   const move = {
     ArrowLeft: [-1, 0],
@@ -10628,10 +11107,6 @@ function onNormalKey(key, shiftKey = false) {
   }
   if (key === 'l') {
     activateShapeAnnotation('line');
-    return;
-  }
-  if (key === 'C' || (key === 'c' && shiftKey)) {
-    setCrosshair(!crosshairVisible);
     return;
   }
 
@@ -10782,21 +11257,6 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === '?') {
-    showHelp();
-    return;
-  }
-
-  if (key === '#') {
-    setGrid(!showGrid);
-    return;
-  }
-
-  if (key === 'D') {
-    toggleTheme();
-    return;
-  }
-
   if (key === 'u') {
     if (drag?.mode === 'copyghost') cancelDrag();
     undo();
@@ -10840,11 +11300,6 @@ function onNormalKey(key, shiftKey = false) {
     } else {
       activateDelete();
     }
-    return;
-  }
-
-  if (key === 'F' || key === 'f') {
-    fitView();
     return;
   }
 
@@ -11145,26 +11600,107 @@ function moveCopyGhost(w) {
   } else {
     circuit = Circuit.fromJSON(JSON.parse(ghost.baseSnapshot));
   }
+  // Aim the axis from the new cursor and, the first time it has a direction,
+  // arm the mirror while the primary is still sitting at its base.
+  if (symmetry && !symmetry.settled) {
+    cursor = { x: snap(w.x), y: snap(w.y) };
+    syncSymmetryOperation();
+  }
+  if (symmetry?.operation && !ghost.mirror) armCopyGhostMirror();
   const dx = snap(w.x) - snap(drag.startWorld.x);
   const dy = snap(w.y) - snap(drag.startWorld.y);
   translateCopyGhost(ghost, dx, dy);
+  if (ghost.mirror) {
+    restoreCopyGhostGeometry(ghost.mirror);
+    // Reflecting a translated set is the same as translating the reflected
+    // one by the reflected delta, so the mirror never has to be rebuilt.
+    translateCopyGhost(ghost.mirror,
+      symmetry?.operation === 'mirrorY' ? dx : -dx,
+      symmetry?.operation === 'mirrorY' ? -dy : dy);
+  }
   restoreCopyGhostSelection(ghost);
   cursor = { x: snap(w.x), y: snap(w.y) };
+  markModelChanged();
+}
+
+/** Arm the mirrored half of a copy ghost: a second paste of the same
+ *  clipboard, reflected about the axis as one mixed-selection transform, which
+ *  is what flips the symbols as well as moving them. Keeping its own base
+ *  geometry means every later pointer move is only a translation, since
+ *  reflecting a translated set is the same as translating a reflected one by
+ *  the reflected delta. */
+function armCopyGhostMirror() {
+  const ghost = drag?.ghost;
+  if (!ghost || !symmetry?.operation || ghost.mirror || !clipboard) return false;
+  const beforeSnapshot = snapshot();
+  const existingNets = new Set(circuit.nets.keys());
+  const existingComps = new Set(circuit.components.keys());
+  const existingLabels = new Set(circuit.labels.keys());
+  const savedCursor = { ...cursor };
+  // Lay the second copy over the primary's own base placement, then reflect:
+  // one transform both carries it to the far side and mirrors every symbol.
+  // Basing it on the base rather than the current position is what lets every
+  // later pointer move be a plain reflected translation.
+  cursor = { ...(ghost.startWorld || cursor) };
+  pasteClipboard({ recordHistory: false, connect: false });
+  const mirror = {
+    refs: [...circuit.components.keys()].filter((ref) => !existingComps.has(ref)),
+    labels: [...circuit.labels.keys()].filter((id) => !existingLabels.has(id)),
+    netIds: [...circuit.nets.keys()].filter((id) => !existingNets.has(id)),
+    wireKeys: [],
+    beforeSnapshot,
+  };
+  if (!mirror.refs.length && !mirror.labels.length) {
+    circuit = Circuit.fromJSON(JSON.parse(beforeSnapshot));
+    cursor = savedCursor;
+    return false;
+  }
+  if (ghost.anchorShift) translateCopyGhost(mirror, ghost.anchorShift.x, ghost.anchorShift.y);
+  restoreCopyGhostSelection(mirror);
+  const moved = transformMixedSelection(symmetry.operation, { recordHistory: false, center: symmetry.pin });
+  cursor = savedCursor;
+  if (moved === false) {
+    circuit = Circuit.fromJSON(JSON.parse(beforeSnapshot));
+    restoreCopyGhostSelection(ghost);
+    logLine('mirrored copy: this selection cannot be reflected whole', 'error');
+    return false;
+  }
+  mirror.baseGeometry = captureCopyGhostGeometry(mirror);
+  ghost.mirror = mirror;
+  restoreCopyGhostSelection(ghost);
+  markModelChanged();
+  return true;
+}
+
+/** Drop the mirrored half, leaving the primary ghost exactly where it is: the
+ *  snapshot taken before the second paste already holds it at that position,
+ *  and the next pointer move re-translates it from its own base. */
+function dropCopyGhostMirror() {
+  const ghost = drag?.ghost;
+  if (!ghost?.mirror) return;
+  circuit = Circuit.fromJSON(JSON.parse(ghost.mirror.beforeSnapshot));
+  ghost.mirror = null;
+  restoreCopyGhostSelection(ghost);
   markModelChanged();
 }
 
 function commitCopyGhost() {
   if (!drag?.ghost) return false;
   const ghost = drag.ghost;
-  circuit.connectCoincident(ghost.refs);
+  // The mirror was pasted after `beforeSnapshot`, so both halves already sit
+  // inside the one history entry recorded below.
+  const refs = [...ghost.refs, ...(ghost.mirror?.refs || [])];
+  circuit.connectCoincident(refs);
   circuit.reconnectCoincidentNets();
-  circuit.ensureUniqueTerminals(ghost.refs);
+  circuit.ensureUniqueTerminals(refs);
   circuit.syncJunctionSolders();
   recordHistoryEntry(ghost.beforeSnapshot);
   const anchorShift = ghost.anchorShift;
+  const mirrored = !!ghost.mirror;
   drag = null;
   copyPending = false;
   startCopyGhost({ x: cursor.x, y: cursor.y }, { x: 0, y: 0 }, anchorShift);
+  if (mirrored && symmetry?.operation) armCopyGhostMirror();
   return true;
 }
 
@@ -11509,6 +12045,15 @@ function renderStatus() {
   if (mode === 'insert') {
     parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
   }
+  if (symmetry) {
+    const mirroring = wire?.source ? !!mirrorWirePreview
+      : drag?.mode === 'copyghost' ? !!drag.ghost?.mirror
+        : !!symmetryTwin();
+    parts.push(symmetry.operation
+      ? `SYMMETRY about ${symmetryAxisText()}${symmetry.settled ? ' (held)' : ''}${activeSymmetryCells ? ` · ${activeSymmetryCells} ${activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${activeSymmetryCells * 2} apart` : ''}${mirroring ? (wire?.source || drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
+      : `SYMMETRY armed at (${symmetry.pin.x},${symmetry.pin.y}) · move to mirror`);
+  }
+  if (activePlacementGuides.length) parts.push(describeGuides(activePlacementGuides));
   if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
   if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
   if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
@@ -11720,6 +12265,7 @@ function activateLabelPlacement(kind) {
   }
   mode = 'normal';
   pendingPlace = null;
+  clearSymmetry();
   insertQuery = '';
   visual = null;
   if (isBlockDiagram(circuit)) { blockPlacement = false; blockConnector = null; }
@@ -11772,6 +12318,7 @@ function activatePlace() {
   annotationPoints = [];
   mode = 'insert';
   pendingPlace = null;
+  clearSymmetry();
   insertQuery = '';
   render();
 }
@@ -11791,6 +12338,7 @@ function activateSelect() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction first'); return; }
   mode = 'normal';
   pendingPlace = null;
+  clearSymmetry();
   insertQuery = '';
   visual = null;
   labelMode = null;
@@ -12471,6 +13019,8 @@ function startNewDocument(kind) {
   // references from an earlier unnamed schematic; named documents keep their
   // own scoped preferences and are restored when reopened.
   try { localStorage.removeItem(analysisFormStorageKey('new')); } catch { /* storage unavailable */ }
+  syncGeneration += 1;
+  activeSyncSuspended = true;
   circuitNameEl.value = '';
   circuitSelectEl.value = '';
   currentCircuitName = '';
@@ -12932,6 +13482,23 @@ function setCrosshair(on, announce = true) {
   render();
   if (announce) logLine(crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
 }
+// Placement guides are advisory, so they are a view toggle like the grid and
+// the crosshair rather than anything the document carries.
+const guidesBtn = document.getElementById('btn-guides');
+function setGuides(on, announce = true) {
+  guidesVisible = !!on;
+  if (guidesBtn) {
+    guidesBtn.setAttribute('aria-pressed', String(guidesVisible));
+    guidesBtn.title = guidesVisible ? 'Hide the spacing and alignment guides (G)' : 'Show the spacing and alignment guides (G)';
+  }
+  render();
+  if (announce) logLine(guidesVisible ? 'placement guides shown' : 'placement guides hidden');
+}
+if (guidesBtn) {
+  guidesBtn.addEventListener('click', () => setGuides(!guidesVisible));
+  guidesBtn.setAttribute('aria-pressed', String(guidesVisible));
+}
+
 if (crosshairBtn) {
   crosshairBtn.addEventListener('click', () => setCrosshair(!crosshairVisible));
   crosshairBtn.setAttribute('aria-pressed', String(crosshairVisible));
@@ -13012,6 +13579,7 @@ window.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') {
       if (mode === 'insert' && pendingPlace) {
         pendingPlace = null;
+        clearSymmetry();
         insertQuery = '';
         render();
         ev.preventDefault();
@@ -13032,6 +13600,7 @@ window.addEventListener('keydown', (ev) => {
       blockPlacement = false;
       blockConnector = null;
       pendingPlace = null;
+      clearSymmetry();
       mode = 'normal';
       labelMode = null;
       annotationStart = null;
@@ -13107,8 +13676,24 @@ window.addEventListener('keydown', (ev) => {
   const isDeleteContinuation = ev.key === 'd' && !ev.ctrlKey && !ev.metaKey && !ev.altKey
     && mode === 'normal' && !visual && !wire && !directWire
     && pendingKey?.key === 'd' && Date.now() - pendingKey.at < 800;
-  if (ev.metaKey || ev.ctrlKey) {
+  // Symmetric placement is held down, so the keys that drive and commit the
+  // ghost have to survive the modifier branch below, which otherwise swallows
+  // everything it does not itself bind. Neither is bound with Ctrl.
+  // r/Shift+r would otherwise read as Ctrl+r and Ctrl+Shift+r here, so the
+  // ghost could not be rotated or flipped without letting go of the modifier.
+  // While symmetry is armed they mean what they mean in insert mode; the
+  // vertical mirror is the one transform that needs a momentary release,
+  // which a remembered axis makes free.
+  const drivingSymmetry = symmetry
+    && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key.startsWith('Arrow') || ev.key.toLowerCase() === 'r');
+  if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {
     const k = ev.key.toLowerCase();
+    // Ctrl held on its own arms symmetric placement; every other Ctrl chord
+    // keeps its meaning, and a transform applied now carries to both halves.
+    if (k === 'control' || k === 'meta') {
+      setSymmetry(true);
+      return;
+    }
     if (k === 'c' && ev.shiftKey) {
       ev.preventDefault();
       copyAsImage();
@@ -13236,6 +13821,11 @@ window.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       return;
     }
+  }
+
+  if (viewKey(key, ev.shiftKey)) {
+    ev.preventDefault();
+    return;
   }
 
   if (directWire) {

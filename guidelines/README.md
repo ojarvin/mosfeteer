@@ -29,9 +29,9 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
 
 ## Repo layout
 
-- `AGENTS.md` — current symbol geometry, label model, routing, editor
-  behavior. Both roles skim it when a specific behavior matters; the developer
-  keeps it accurate, the author doesn't edit it.
+- `AGENTS.md` — concise cross-cutting invariants, entry points, and verification
+  rules. Both roles skim it when a shared behavior matters; exact geometry and
+  feature contracts live in the source, tests, and focused docs it links.
 - `guidelines/` — role-specific docs and the style guide (this directory).
 - Documents are `<name>.schematic.json` files in the workspace folder (default
   `~/Documents/Schematics`, set in the editor's ⋯ menu) or anywhere else.

@@ -1,13 +1,17 @@
 # Schematic Style Guide
 
-The visual and electrical standard every Mosfeteer drawing must meet. This is the canonical source for layout, visual geometry, naming, and label-authoring rules. `AGENTS.md` is authoritative for current runtime behavior and exact symbol geometry, terminals, routing, and editor UX; use it for implementation-specific details.
+The visual and electrical standard every Mosfeteer drawing must meet. This is
+the canonical source for layout, visual geometry, naming, and label-authoring
+rules. `AGENTS.md` records cross-cutting runtime invariants; use the component
+definitions and tests for exact geometry and the focused docs for feature
+contracts.
 
 Companion docs:
 
 - [CIRCUIT-AUTHOR.md](./CIRCUIT-AUTHOR.md) — the workflow that produces a
   drawing meeting this standard.
-- `AGENTS.md` — current symbol geometry, terminal names, routing, and editor
-  behavior (the live spec, not this guide).
+- `AGENTS.md` — cross-cutting runtime invariants and agent workflow; the source
+  modules and tests are authoritative for exact implementation details.
 
 The reference aesthetic is the **classic textbook look**: ordered transistor
 arrays, straight rails, logical signal flow, zero redundant wiring. The

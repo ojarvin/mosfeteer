@@ -128,8 +128,8 @@ Companion docs:
 - [style-guide.md](./style-guide.md) — the visual / electrical standard your
   output must meet.
 - [README.md](./README.md) — repo layout and the developer-vs-author split.
-- `AGENTS.md` — current symbol geometry, terminal names, label model,
-  routing details; skim when you need an exact number.
+- `AGENTS.md` — cross-cutting symbol, label, net, and routing invariants;
+  consult the component definitions/tests when you need an exact number.
 
 ## Authoring workflow
 
@@ -313,8 +313,8 @@ an internal path from the channel edge to that pin. Their owned bulk label uses
 local offset `{x:40,y:-40}` (toward the local drain), so PMOS mirroring carries
 it toward the semantic drain. Three-terminal `nmos`/`pmos` keep `{x:40,y:0}`.
 
-Full per-symbol geometry is in `AGENTS.md`; the rules for how to lay them
-out are in `style-guide.md`.
+The component definitions and symbol tests are authoritative for full per-symbol
+geometry; the rules for how to lay them out are in `style-guide.md`.
 
 ### Schematic browser editing hotkeys and fixed paths
 

@@ -33,6 +33,10 @@ export function createMos(type, { pmos = false, bulk = false } = {}) {
       ...terminal,
       dir: { ...terminal.dir },
     })),
+    // The reusable layout guide measures the conduction column, not the
+    // asymmetric bbox that extends toward the gate. This is symbol metadata,
+    // not a MOS-specific branch in the editor's guide/distribute tools.
+    layoutAnchorTerminals: ['d', 's'],
     bbox: { ...BBOX },
     graphics: mosGraphics(
       pmos

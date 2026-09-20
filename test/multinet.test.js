@@ -194,3 +194,66 @@ test('loading stale overlapping branches splits them so dragging never loops or 
     assert.equal(dots(), loadDots, `dot count stable after C4@${x},${y}`);
   }
 });
+
+test('a partial move leaves no junction anchor behind at the old position', () => {
+  // A diode-connected device on a net that also reaches something stationary:
+  // the net cannot translate rigidly, so its branches re-anchor.
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: -400, rotation: 90 });
+  circuit.connect('M1.d', 'R1.b');
+  circuit.connect('M1.g', 'M1.d');
+  circuit.syncJunctionSolders();
+  const net = [...circuit.nets.values()][0];
+  assert.deepEqual(net.junctions, [{ x: 0, y: -120 }]);
+
+  const move = (to) => {
+    const moved = new Map([['M1', { dx: to - circuit.getComponent('M1').transform.x, dy: 0 }]]);
+    circuit.moveComponent('M1', to, 0);
+    for (const one of [...circuit.nets.values()]) circuit.rerouteNet(one, moved);
+    circuit.syncJunctionSolders();
+  };
+  const solderAt = () => [...circuit.components.values()]
+    .filter((component) => component.type === 'solder')
+    .map((component) => ({ x: component.transform.x, y: component.transform.y }));
+
+  move(120);
+  // The dot was always derived from the drawn geometry; the net's own anchor
+  // used to keep the pre-move coordinate, and `anchorWorlds` routes to it, so
+  // the next edit pulled a wire back to a point nothing occupies.
+  assert.deepEqual(solderAt(), [{ x: 120, y: -120 }]);
+  assert.deepEqual(net.junctions, [{ x: 120, y: -120 }]);
+
+  // Still true after a second move: staleness must not accumulate.
+  move(240);
+  assert.deepEqual(solderAt(), [{ x: 240, y: -120 }]);
+  assert.deepEqual(net.junctions, [{ x: 240, y: -120 }]);
+  assertNetClean(circuit, net, 1);
+});
+
+test('a junction held by a moved device travels with it, not with the drawing', () => {
+  // The editor sees this net already split into arms meeting at the junction:
+  // a preview clone reloads from JSON, which reduces the overlapping legs into
+  // a T. That is the shape the move has to handle.
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: -400, rotation: 90 });
+  circuit.connect('M1.d', 'R1.b');
+  circuit.connect('M1.g', 'M1.d');
+  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  reloaded.syncJunctionSolders();
+  const net = [...reloaded.nets.values()][0];
+  // The loop reaches out past the gate; its far edge is what must ride along.
+  const leftEdge = () => Math.min(...net.paths().flat().map((point) => point.x));
+  const before = leftEdge();
+  assert.ok(before < -120, `the diode loop reaches past the gate: ${before}`);
+
+  const moved = new Map([['M1', { dx: 120, dy: 0 }]]);
+  reloaded.moveComponent('M1', 120, 0);
+  for (const one of [...reloaded.nets.values()]) reloaded.rerouteNet(one, moved);
+  reloaded.syncJunctionSolders();
+
+  // It rides the device rather than staying behind at the old position.
+  assert.equal(leftEdge(), before + 120);
+  assertNetClean(reloaded, net, 1);
+});
