@@ -1,7 +1,7 @@
 import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, steinerBranches } from './router.js';
-import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, styleAttrs, themeInkSvg } from './style.js';
+import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 
@@ -54,8 +54,29 @@ function solidStyle(style) {
   return !style?.lineStyle || style.lineStyle === 'solid';
 }
 
-function strokeWidthOf(style) {
-  return style?.width === 'thin' ? 3 : style?.width === 'thick' ? 9 : 6;
+function strokeWidthOf(style, base = 'symbol') {
+  return strokeWidth(style, base);
+}
+
+/** Schematic block terminals land on the centerline of the block outline.
+ * Pull a filled arrowhead back by half that outline so its tip meets the
+ * visible outer edge rather than disappearing into the stroked body. */
+function blockTerminalInset(circuit, point) {
+  for (const component of circuit.components.values()) {
+    if (component.type !== 'block') continue;
+    if (component.terminalDefs.some((terminal) => {
+      const world = component.terminalWorld(terminal.name);
+      return world.x === point.x && world.y === point.y;
+    })) return strokeWidthOf(component.style, 'emph') / 2;
+  }
+  return 0;
+}
+
+function wireArrowheadOptions(circuit, points) {
+  return {
+    startInset: blockTerminalInset(circuit, points[0]),
+    endInset: blockTerminalInset(circuit, points.at(-1)),
+  };
 }
 
 // One shared miter limit keeps merged wires and sharp resistor leads in one
@@ -659,7 +680,7 @@ export function svgString(circuit, opts = {}) {
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
         const inked = !opacity && solidStyle(net.style);
-        const geometry = polylineArrowheads(pts, net.style?.arrowhead);
+        const geometry = polylineArrowheads(pts, net.style?.arrowhead, wireArrowheadOptions(circuit, pts));
         if (inked) addInk(inkAttrs(net.style), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, net.style?.color, opacity));
@@ -670,7 +691,7 @@ export function svgString(circuit, opts = {}) {
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = { ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) };
         const inked = !opacity && solidStyle(segmentStyle);
-        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead);
+        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
         if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));

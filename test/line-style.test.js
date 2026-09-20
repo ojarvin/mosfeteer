@@ -29,3 +29,9 @@ test('polyline arrowheads shorten only the decorated endpoints', () => {
   assert.equal(both.heads.length, 2);
   assert.deepEqual(both.heads.map((head) => head.tip), [{ x: 0, y: 0 }, { x: 240, y: 160 }]);
 });
+
+test('arrowhead tip insets pull the filled point back from a stroked target', () => {
+  const geometry = polylineArrowheads([{ x: 0, y: -240 }, { x: 0, y: -80 }], 'end', { endInset: 4.8 });
+  assert.deepEqual(geometry.heads[0].tip, { x: 0, y: -84.8 });
+  assert.deepEqual(geometry.heads[0].shaft, { x: 0, y: -116.8 });
+});

@@ -79,6 +79,15 @@ export function strokeAttrs(styleName, miterLimit) {
   return strokeParts(styleName, miterLimit);
 }
 
+/** Resolve the painted stroke width for a style role, including explicit
+ * thin/thick overrides. Consumers that position filled geometry next to a
+ * stroked body should use this instead of duplicating the role table. */
+export function strokeWidth(style = {}, base = 'line') {
+  if (style.width === 'thin') return 3;
+  if (style.width === 'thick') return 9;
+  return STROKES[base]?.width ?? STROKES.line.width;
+}
+
 /** Text styles for schematic labels, keyed by `fontAttrs` kind. */
 const FONTS = {
   instance: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },

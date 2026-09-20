@@ -532,6 +532,12 @@ test('smartRoute preserves legal perpendicular crossings of existing wires', () 
     `expected a legal perpendicular crossing, got ${JSON.stringify(route)}`);
 });
 
+test('smartRoute does not make a large detour just to avoid a legal crossing', () => {
+  const existing = [{ x: 400, y: -160 }, { x: 400, y: 160 }];
+  const route = smartRoute({ x: 0, y: 0 }, { x: 800, y: 0 }, { rects: [], pins: new Map(), wires: [existing] });
+  assert.deepEqual(route, [{ x: 0, y: 0 }, { x: 800, y: 0 }]);
+});
+
 test('smartRoute chooses a legal crossing over a wrong-side drain approach', () => {
   const body = { x: 0, y: -80, w: 120, h: 160 };
   const pins = new Map([

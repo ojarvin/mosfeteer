@@ -20,18 +20,19 @@ export function arrowheadEnds(value, fallback = 'none') {
 const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
 
 /** Filled arrowhead geometry for a segment whose tip is `b`. */
-export function arrowheadGeometry(a, b, length = 32, halfWidth = 18) {
+export function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const distance = Math.hypot(dx, dy);
   if (!distance) return null;
   const ux = dx / distance;
   const uy = dy / distance;
-  const base = { x: b.x - length * ux, y: b.y - length * uy };
+  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
+  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
   const normal = { x: uy, y: -ux };
   return {
     shaft: base,
-    tip: { x: b.x, y: b.y },
+    tip,
     left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
     right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
   };
@@ -61,21 +62,23 @@ export function polylineArrowheads(points = [], value = 'none', options = {}) {
   const sameSegment = first === last;
   const fullLength = options.length ?? 32;
   const halfWidth = options.halfWidth ?? 18;
+  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
+  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
   const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
   const length = sameSegment && ends.start && ends.end
-    ? Math.min(fullLength, segmentLength / 2)
+    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
     : fullLength;
   const heads = [];
   const shaftPoints = route.map((point) => ({ ...point }));
   if (ends.start) {
-    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth);
+    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
     if (head) {
       heads.push({ ...head, placement: 'start' });
       shaftPoints[0] = head.shaft;
     }
   }
   if (ends.end) {
-    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth);
+    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
     if (head) {
       heads.push({ ...head, placement: 'end' });
       shaftPoints[shaftPoints.length - 1] = head.shaft;

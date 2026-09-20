@@ -78,6 +78,20 @@ test('annotation arrowheads stay close to MOS source-arrow size', () => {
   assert.doesNotMatch(svg, /<polygon points="160 0 120 24 120 -24"/);
 });
 
+test('wire arrowheads stop at the visible edge of a schematic block', () => {
+  const c = new Circuit();
+  c.addComponent('block', { refdes: 'B1', x: 0, y: 0 });
+  const net = new Net(c, {
+    id: 'N1',
+    routingMode: 'fixed',
+    fixedPaths: [{ points: [{ x: 0, y: -240 }, { x: 0, y: -80 }], start: null, end: { comp: 'B1', term: 'T9' } }],
+    style: { arrowhead: 'end' },
+  });
+  c.nets.set(net.id, net);
+  const svg = svgString(c);
+  assert.match(svg, /<polygon points="0 -84\.80 18 -116\.80 -18 -116\.80"/);
+});
+
 test('line annotations render as rounded non-connectivity paths', () => {
   const c = new Circuit();
   c.addAnnotation('line', { points: [{ x: 0, y: 0 }, { x: 80, y: 40 }, { x: 160, y: 0 }], style: { color: '#d00', lineStyle: 'dashed' } });

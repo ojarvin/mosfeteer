@@ -744,14 +744,14 @@ export function segThroughInterior(a, b, r) {
 // (terminals/cursor). env: {
 //   rects   [{x,y,w,h}]  component bboxes whose STRICT INTERIOR blocks wires
 //   pins    Map "x,y" -> {x,y}  outward direction at each terminal pin
-//   wires   [[{x,y},...]]          existing net polylines (avoid crossing)
+//   wires   [[{x,y},...]]          existing net polylines (avoid overlap)
 // }
 // Preference order (lexicographic): fewest bbox interiors crossed, fewest
-// other-wire crossings, fewest collinear overlaps, most clearance (>= 1 grid
-// cell from every body, barring the pin legs), best straight-on pin access,
-// fewest bends, then shortest. If no enumerated candidate is hard-safe, A* is
-// used as a bounded fallback; failure to find a hard-safe route is reported as
-// null rather than returning an unsafe candidate.
+// collinear overlaps, most clearance (>= 1 grid cell from every body, barring
+// the pin legs), best straight-on pin access, fewest bends, shortest route,
+// then fewest legal crossings of other wires. If no enumerated candidate is
+// hard-safe, A* is used as a bounded fallback; failure to find a hard-safe
+// route is reported as null rather than returning an unsafe candidate.
 // ---------------------------------------------------------------------------
 
 const STEP = 40;
@@ -1028,11 +1028,12 @@ function cmpScore(a, b) {
 
 function scoreCandidate(pts, env) {
   const { cross, overlap } = wireConflicts(pts, env);
-  // Crossing is a legal visual operation; collinear overlap is not. Prefer
-  // separate wire channels before minimizing crossings. Labels are soft:
-  // component clearance is hard, label clearance steers. After spacing and
-  // pin-direction conformity, minimize visible bends, then route length.
-  return [bboxCrossings(pts, env), overlap, cross, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), bendCount(pts), routeLength(pts)];
+  // Crossing is a legal visual operation; collinear overlap is not. Prefer a
+  // compact, well-cleared route over a large detour merely to avoid crossing
+  // an existing wire. Labels are soft: component clearance is hard, label
+  // clearance steers. Crossing count is the final tie-break among otherwise
+  // comparable routes.
+  return [bboxCrossings(pts, env), overlap, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), bendCount(pts), routeLength(pts), cross];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */
