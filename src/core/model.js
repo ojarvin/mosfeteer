@@ -3996,6 +3996,55 @@ export class Circuit {
     net.junctions = this._netJunctions(net, net.branches);
   }
 
+  /** Split managed branches without letting segment-indexed styles follow the
+   * new branch numbers.  A style belongs to its original geometric segment;
+   * when that segment is cut, ordinary paint is copied to both pieces while
+   * an arrowhead stays on the corresponding original endpoint. */
+  _splitBranchesPreservingStyles(net, paths, splitPoints = []) {
+    const sourceStyles = { ...(net.wireStyles || {}) };
+    const same = (a, b) => a?.x === b?.x && a?.y === b?.y;
+    const onSegment = (p, a, b) =>
+      (b.x - a.x) * (p.y - a.y) === (b.y - a.y) * (p.x - a.x) &&
+      p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) &&
+      p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
+    const splitArrowhead = (style, originalStart, originalEnd, pieceStart, pieceEnd) => {
+      if (style.arrowhead === undefined) return { ...style };
+      const value = normalizeArrowhead(style.arrowhead);
+      const start = (value === 'start' || value === 'both') && same(pieceStart, originalStart);
+      const end = (value === 'end' || value === 'both') && same(pieceEnd, originalEnd);
+      return { ...style, arrowhead: start && end ? 'both' : start ? 'start' : end ? 'end' : 'none' };
+    };
+    const entries = [];
+    for (const [branch, path] of paths.entries()) {
+      const split = splitPoints
+        .map((point) => ({ point, pieces: splitBranchAt(path, point, net.allowDiagonal) }))
+        .find((candidate) => candidate.pieces);
+      const pieces = split?.pieces || [clonePath(path, net.allowDiagonal)];
+      const splitSegment = split
+        ? path.findIndex((point, index) => index > 0 && onSegment(split.point, path[index - 1], point) &&
+            !same(split.point, path[index - 1]) && !same(split.point, point))
+        : -1;
+      for (const points of pieces) {
+        const styles = {};
+        for (let segment = 1; segment < points.length; segment++) {
+          const a = points[segment - 1];
+          const b = points[segment];
+          const sourceSegment = path.findIndex((point, index) => index > 0 &&
+            onSegment(a, path[index - 1], point) && onSegment(b, path[index - 1], point));
+          const source = sourceStyles[`${branch}:${sourceSegment}`];
+          if (!source) continue;
+          styles[segment] = splitSegment === sourceSegment
+            ? splitArrowhead(source, path[sourceSegment - 1], path[sourceSegment], a, b)
+            : { ...source };
+        }
+        entries.push({ points, styles });
+      }
+    }
+    net.wireStyles = Object.fromEntries(entries.flatMap((entry, branch) =>
+      Object.entries(entry.styles).map(([segment, style]) => [`${branch}:${segment}`, style])));
+    return entries.map((entry) => entry.points);
+  }
+
   /**
    * Short the nets (managed or fixed) whose drawn wires pass through `point` (a crossing
    * or a wire end resting on another wire) into one physical net, with a
@@ -4415,13 +4464,9 @@ export class Circuit {
     // Existing paths are committed geometry. Adding a terminal appends only
     // the newly routed branch; it never triggers a whole-net Steiner refresh.
 
-    // Split any branch whose interior contains the meet point.
-    const branches = [];
-    for (const path of this._explicitBranches(net)) {
-      const split = splitBranchAt(path, P, net.allowDiagonal);
-      if (split) branches.push(...split.filter((h) => h.length >= 2));
-      else branches.push(clonePath(path, net.allowDiagonal));
-    }
+    // Split any branch whose interior contains the meet point, preserving
+    // segment styles and keeping arrowheads on the original endpoints.
+    const branches = this._splitBranchesPreservingStyles(net, this._explicitBranches(net), [P]);
     // Route the new branch from the terminal to the meet point.
     if (newPath) branches.push(clonePath(newPath, net.allowDiagonal));
 
@@ -4529,14 +4574,7 @@ export class Circuit {
       }
     }
 
-    const branches = [];
-    for (const path of this._explicitBranches(net)) {
-      const s0 = splitBranchAt(path, P0, net.allowDiagonal);
-      if (s0) { branches.push(...s0.filter((h) => h.length >= 2)); continue; }
-      const s = splitBranchAt(path, P, net.allowDiagonal);
-      if (s) branches.push(...s.filter((h) => h.length >= 2));
-      else branches.push(clonePath(path, net.allowDiagonal));
-    }
+    const branches = this._splitBranchesPreservingStyles(net, this._explicitBranches(net), [P0, P]);
     branches.push(clonePath(newPath, net.allowDiagonal));
 
     net.branches = branches;

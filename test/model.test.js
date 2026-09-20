@@ -2941,6 +2941,26 @@ test('wirePointTo keeps a branch split where a terminal or junction sits', () =>
   assert.equal(net.branches.length, 3, 'a T junction stays a branch boundary');
 });
 
+test('splitting a styled wire keeps arrowheads on the original endpoints', () => {
+  for (const [arrowhead, expected] of [
+    ['start', ['start', 'none']],
+    ['end', ['none', 'end']],
+    ['both', ['start', 'end']],
+  ]) {
+    const c = new Circuit();
+    const net = c.createWireNet({
+      preserveEmpty: true,
+      branches: [[{ x: 0, y: 0 }, { x: 0, y: 400 }]],
+      wireStyles: { '0:1': { color: '#d00', arrowhead } },
+    });
+    c.wirePointTo({ x: 160, y: 0 }, { x: 0, y: 200 }, [{ x: 160, y: 200 }], net.id);
+    assert.equal(net.wireStyles['0:1'].arrowhead, expected[0], `${arrowhead} tail split`);
+    assert.equal(net.wireStyles['1:1'].arrowhead, expected[1], `${arrowhead} head split`);
+    assert.equal(net.wireStyles['0:1'].color, '#d00');
+    assert.equal(net.wireStyles['1:1'].color, '#d00');
+  }
+});
+
 test('wirePointTo preserves an explicit target path at a same-net crossing', () => {
   const c = new Circuit();
   const net = c.createWireNet({
