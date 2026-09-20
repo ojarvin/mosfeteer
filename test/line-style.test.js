@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { arrowheadEnds, defaultArrowhead, normalizeArrowhead, polylineArrowheads } from '../src/core/line-style.js';
+import { arrowheadEnds, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValues, polylineArrowheads } from '../src/core/line-style.js';
 
 test('the shared arrowhead choice has one shape and four endpoint placements', () => {
   assert.deepEqual(arrowheadEnds('none'), { start: false, end: false });
@@ -28,6 +28,18 @@ test('polyline arrowheads shorten only the decorated endpoints', () => {
   assert.deepEqual(both.shaftPoints, [{ x: 0, y: 32 }, { x: 0, y: 160 }, { x: 208, y: 160 }]);
   assert.equal(both.heads.length, 2);
   assert.deepEqual(both.heads.map((head) => head.tip), [{ x: 0, y: 0 }, { x: 240, y: 160 }]);
+});
+
+test('a shared arrowhead choice skips polyline corner points', () => {
+  const route = [{ x: 0, y: 0 }, { x: 160, y: 0 }, { x: 160, y: 160 }];
+  assert.deepEqual(polylineArrowheadValues(route, 'start'), ['start', 'none']);
+  assert.deepEqual(polylineArrowheadValues(route, 'end'), ['none', 'end']);
+  assert.deepEqual(polylineArrowheadValues(route, 'both'), ['start', 'end']);
+  assert.deepEqual(polylineArrowheadValues([{ x: 0, y: 0 }, { x: 160, y: 0 }], 'both'), ['both']);
+  assert.deepEqual(polylineArrowheadStyles({ '0:1': { color: '#d00' } }, 0, route, 'end'), {
+    '0:1': { color: '#d00', arrowhead: 'none' },
+    '0:2': { arrowhead: 'end' },
+  });
 });
 
 test('arrowhead tip insets pull the filled point back from a stroked target', () => {

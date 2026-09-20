@@ -92,6 +92,24 @@ test('wire arrowheads stop at the visible edge of a schematic block', () => {
   assert.match(svg, /<polygon points="0 -84\.80 18 -116\.80 -18 -116\.80"/);
 });
 
+test('styled segments can place a shared wire arrowhead only at path endpoints', () => {
+  const c = new Circuit();
+  const net = new Net(c, {
+    id: 'N1',
+    routingMode: 'fixed',
+    fixedPaths: [{ points: [{ x: 0, y: 0 }, { x: 160, y: 0 }, { x: 160, y: 160 }] }],
+    wireStyles: {
+      '0:1': { arrowhead: 'start' },
+      '0:2': { arrowhead: 'end' },
+    },
+  });
+  c.nets.set(net.id, net);
+  const svg = svgString(c);
+  assert.match(svg, /<polygon points="0 0 32 18 32 -18"/);
+  assert.match(svg, /<polygon points="160 160 178 128 142 128"/);
+  assert.doesNotMatch(svg, /<polygon points="160 0/);
+});
+
 test('line annotations render as rounded non-connectivity paths', () => {
   const c = new Circuit();
   c.addAnnotation('line', { points: [{ x: 0, y: 0 }, { x: 80, y: 40 }, { x: 160, y: 0 }], style: { color: '#d00', lineStyle: 'dashed' } });

@@ -19,7 +19,7 @@ import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { editorOverlay, svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
-import { defaultArrowhead } from '../core/line-style.js';
+import { arrowheadEnds, defaultArrowhead, polylineArrowheadStyles } from '../core/line-style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { resolveCopySelection } from '../core/selection.js';
@@ -1893,6 +1893,7 @@ function styleDefaults(field) {
 
 function arrowheadKind(object) {
   if (object?.kind === 'arrow' || object?.kind === 'line') return object.kind;
+  if (object?.routingMode) return 'wire';
   if (isBlockDiagram(circuit) && object && Array.isArray(object.points) && ('from' in object || 'to' in object)) return 'connector';
   return null;
 }
@@ -1901,11 +1902,67 @@ function supportsArrowhead(object) {
   return !!arrowheadKind(object);
 }
 
+function singlePathArrowheadValue(net) {
+  const path = net?.paths?.()[0];
+  if (!path || path.length < 2) return defaultArrowhead('wire');
+  const inherited = net.style?.arrowhead;
+  const first = net.wireStyles?.['0:1']?.arrowhead ?? inherited;
+  const last = net.wireStyles?.[`0:${path.length - 1}`]?.arrowhead ?? inherited;
+  const start = arrowheadEnds(first).start;
+  const end = arrowheadEnds(last).end;
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
+}
+
+function wireStyleValue(net, key, field) {
+  const wire = keyToWire(`${net?.id || ''}:${key}`);
+  if (field === 'arrowhead' && net?.paths?.().length === 1 && wire.branch === 0) {
+    return singlePathArrowheadValue(net);
+  }
+  return net?.wireStyles?.[key]?.[field] ?? net?.style?.[field] ?? styleDefaults(field);
+}
+
 function objectStyleValue(object, field) {
   if (field === 'arrowhead' && supportsArrowhead(object)) {
+    if (object?.routingMode) {
+      return object.paths?.().length === 1
+        ? singlePathArrowheadValue(object)
+        : object.style?.arrowhead || defaultArrowhead('wire');
+    }
     return object.style?.arrowhead || defaultArrowhead(arrowheadKind(object));
   }
   return object?.style?.[field] || styleDefaults(field);
+}
+
+/** Put a shared arrowhead on the two endpoints of a one-path wire. */
+function setSinglePathArrowhead(net, value) {
+  const path = net?.paths?.()[0];
+  if (!path || path.length < 2) return false;
+  net.wireStyles = polylineArrowheadStyles(net.wireStyles, 0, path, value);
+  // Segment styles now carry the endpoint-only placement. Leaving a net-wide
+  // value here would make the renderer inherit it at every segment.
+  delete net.style.arrowhead;
+  return true;
+}
+
+function applyNetStyle(net, style) {
+  const next = { ...style };
+  if (next.arrowhead !== undefined && net.paths?.().length === 1) {
+    setSinglePathArrowhead(net, next.arrowhead);
+    delete next.arrowhead;
+  }
+  net.style = { ...(net.style || {}), ...next };
+}
+
+function applyWireTargetStyle(net, key, style) {
+  const wire = keyToWire(`${net.id}:${key}`);
+  const next = { ...style };
+  if (next.arrowhead !== undefined && net.paths?.().length === 1 && wire.branch === 0) {
+    setSinglePathArrowhead(net, next.arrowhead);
+    delete next.arrowhead;
+  }
+  if (Object.keys(next).length) {
+    net.wireStyles[key] = { ...(net.wireStyles[key] || {}), ...next };
+  }
 }
 
 function selectedBlockObjects() {
@@ -1935,13 +1992,25 @@ function selectedStyleSource() {
   if (total !== 1) return null;
   if (comps.length === 1) return { kind: 'object', style: { ...(comps[0].style || {}) } };
   if (labels.length === 1) return { kind: 'object', style: { ...(labels[0].style || {}) } };
-  if (nets.length === 1) return { kind: 'object', style: { ...(nets[0].style || {}) } };
+  if (nets.length === 1) {
+    const net = nets[0];
+    return {
+      kind: 'object',
+      style: {
+        ...(net.style || {}),
+        ...(net.paths?.().length === 1 ? { arrowhead: singlePathArrowheadValue(net) } : {}),
+      },
+    };
+  }
   const wire = keyToWire(wireKeys[0]);
   const net = circuit.nets.get(wire.netId);
   if (!net) return null;
   return {
     kind: 'wire',
-    style: { ...(net.wireStyles?.[`${wire.branch}:${wire.segment}`] || net.style || {}) },
+    style: {
+      ...(net.wireStyles?.[`${wire.branch}:${wire.segment}`] || net.style || {}),
+      arrowhead: wireStyleValue(net, `${wire.branch}:${wire.segment}`, 'arrowhead'),
+    },
   };
 }
 
@@ -1984,10 +2053,11 @@ function applyStyleToSelected(style) {
         }
       }
       if (style.color !== undefined && typeof obj.setColor === 'function') obj.setColor(style.color);
-      obj.style = { ...(obj.style || {}), ...next };
+      if (obj.routingMode) applyNetStyle(obj, next);
+      else obj.style = { ...(obj.style || {}), ...next };
     }
     for (const { net, key } of wireTargets) {
-      net.wireStyles[key] = { ...(net.wireStyles[key] || net.style || {}), ...style };
+      applyWireTargetStyle(net, key, style);
     }
   });
   render();
@@ -2032,10 +2102,11 @@ function applySelectedStyle(field, value) {
       if (field === 'lineStyle' && !['arrow', 'box', 'line'].includes(obj.kind) && !obj.routingMode) continue;
       if (field === 'arrowhead' && !supportsArrowhead(obj)) continue;
       if (field === 'color' && typeof obj.setColor === 'function') obj.setColor(next);
+      else if (obj.routingMode) applyNetStyle(obj, { [field]: next });
       else obj.style = { ...(obj.style || {}), [field]: next };
     }
     for (const { net, key } of wireTargets) {
-      net.wireStyles[key] = { ...(net.wireStyles[key] || net.style || {}), [field]: next };
+      applyWireTargetStyle(net, key, { [field]: next });
     }
   });
   render();
@@ -2097,7 +2168,7 @@ function updateStyleControls() {
   const hasArrowheadSelection = hasWireSelection || objects.some(supportsArrowhead);
   const pick = (field) => common([
     ...objects.map((o) => objectStyleValue(o, field)),
-    ...wireTargets.map(({ net, key }) => net.wireStyles?.[key]?.[field] || net.style?.[field] || styleDefaults(field)),
+    ...wireTargets.map(({ net, key }) => wireStyleValue(net, key, field)),
   ]);
   show(pick('color'), pick('lineStyle'), pick('arrowhead'), pick('width'), supportsLine, hasArrowheadSelection);
 }
@@ -7297,7 +7368,7 @@ canvasEl.addEventListener('mouseleave', () => {
 function contextStyleValue(target, field) {
   if (target?.kind === 'wire') {
     const { net, branch, segment } = target.value;
-    return net.wireStyles?.[`${branch}:${segment}`]?.[field] || net.style?.[field] || styleDefaults(field);
+    return wireStyleValue(net, `${branch}:${segment}`, field);
   }
   return target?.value?.style?.[field] || styleDefaults(field);
 }
