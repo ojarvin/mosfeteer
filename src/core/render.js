@@ -933,6 +933,17 @@ export function editorOverlay(circuit, opts = {}) {
         parts.push(`<path d="${span(a, b)}" stroke="${color}"${dash}/>`);
         parts.push(label(a, b));
       }
+      if (guide.halfway) {
+        const { from, at, cells } = guide.halfway;
+        const halfBase = base + tick + 8;
+        const reference = axis === 'x'
+          ? `M ${fmt(at.x)} ${fmt(at.y)} V ${fmt(base)} M ${fmt(from.x)} ${fmt(halfBase)} H ${fmt(at.x)}`
+          : `M ${fmt(at.x)} ${fmt(at.y)} H ${fmt(base)} M ${fmt(halfBase)} ${fmt(from.y)} V ${fmt(at.y)}`;
+        const text = axis === 'x'
+          ? `<text x="${fmt((from.x + at.x) / 2)}" y="${fmt(halfBase + 20)}" fill="${color}" stroke="none" text-anchor="middle" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`
+          : `<text x="${fmt(halfBase + 20)}" y="${fmt((from.y + at.y) / 2 + 7)}" fill="${color}" stroke="none" text-anchor="start" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`;
+        parts.push(`<g class="placement-halfway-reference" stroke="${color}" stroke-opacity="0.75" stroke-dasharray="3 4"><path d="${reference}"/></g>${text}`);
+      }
       parts.push(guide.points.map((p) => dot(p, guide.exact, color)).join(''));
     }
     parts.push('</g>');

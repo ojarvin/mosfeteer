@@ -695,3 +695,26 @@ test('a symmetric wire draft is dimensioned along the axis it mirrors about', ()
   assert.match(overlay, /symmetry-offset/);
   assert.equal(overlay.match(/>4 cells</g)?.length, 2);
 });
+
+test('a placement midpoint is referenced from the ghost to the full-pitch ruler', () => {
+  const overlay = editorOverlay(new Circuit(), {
+    placementGuide: {
+      moving: { anchor: { x: 720, y: 0 }, bbox: { x: 680, y: -40, w: 80, h: 80 } },
+      guides: [{
+        kind: 'spacing', axis: 'x', cells: 12, exact: false, target: 960,
+        points: [
+          { id: 'A', x: 0, y: 0, moving: false },
+          { id: 'B', x: 480, y: 0, moving: false },
+          { id: '__ghost__', x: 960, y: 0, moving: true },
+        ],
+        halfway: {
+          cells: 6,
+          from: { id: 'B', x: 480, y: 0, moving: false },
+          at: { id: '__ghost__', x: 720, y: 0, moving: true },
+        },
+      }],
+    },
+  });
+  assert.match(overlay, /class="placement-halfway-reference"/);
+  assert.match(overlay, />6 cells</);
+});

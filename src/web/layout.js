@@ -238,6 +238,23 @@ function spacingGuide(peers, moving, axis, grid) {
           moving: true,
         }));
   }
+  // A continuation guide can be long enough that the cursor naturally pauses
+  // halfway to its target. Mark that position on the existing ruler so the
+  // user can read the current six-cell progress against the twelve-cell pitch.
+  // This is a reference only: the moving point in `points` remains the target
+  // the guide offers, while `at` records where the ghost actually is.
+  let halfway;
+  if (best.repeat === 1 && best.side !== 0 && nearGrid(best.span / 2, grid)) {
+    const anchor = best.run[1];
+    const midpoint = anchor.anchor[axis] + (best.target - anchor.anchor[axis]) / 2;
+    if (nearGrid(midpoint, grid) && Math.abs(midpoint - m) < 1e-6) {
+      halfway = {
+        cells: best.span / (2 * grid),
+        from: realPoint(anchor),
+        at: { id: moving.id, x: moving.anchor.x, y: moving.anchor.y, moving: true },
+      };
+    }
+  }
   return {
     kind: 'spacing',
     axis,
@@ -247,6 +264,7 @@ function spacingGuide(peers, moving, axis, grid) {
     away: (best.target - m) / grid,
     target: best.target,
     points,
+    ...(halfway ? { halfway } : {}),
   };
 }
 

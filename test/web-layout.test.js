@@ -241,6 +241,24 @@ test('a repeated pitch remains visible after the first target is passed', () => 
   assert.equal(guide.points[2].synthetic, true);
 });
 
+test('a continuation guide marks a grid midpoint against its full pitch', () => {
+  const guide = placementGuides([item('A', 0, 0), item('B', 480, 0)], item('__ghost__', 720, 0))
+    .find((candidate) => candidate.kind === 'spacing' && candidate.axis === 'x');
+  assert.equal(guide.cells, 12);
+  assert.equal(guide.exact, false);
+  assert.deepEqual(guide.halfway, {
+    cells: 6,
+    from: { id: 'B', x: 480, y: 0, moving: false },
+    at: { id: '__ghost__', x: 720, y: 0, moving: true },
+  });
+  // A one-cell offset is no longer the halfway reference, and an odd pitch
+  // has no grid midpoint to mark.
+  assert.equal(placementGuides([item('A', 0, 0), item('B', 480, 0)], item('__ghost__', 680, 0))
+    .find((candidate) => candidate.kind === 'spacing' && candidate.axis === 'x')?.halfway, undefined);
+  assert.equal(placementGuides([item('A', 0, 0), item('B', 360, 0)], item('__ghost__', 540, 0))
+    .find((candidate) => candidate.kind === 'spacing' && candidate.axis === 'x')?.halfway, undefined);
+});
+
 test('layout suggestions are conservative and separate from electrical check', () => {
   assert.deepEqual(layoutSuggestions([item('A', 0, 0), item('B', 320, 0)]), []);
   const spacing = layoutSuggestions([item('A', 0, 0), item('B', 320, 0), item('C', 600, 0)]);
