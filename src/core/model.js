@@ -4,7 +4,7 @@ import { getSymbol } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
-import { defaultArrowhead, normalizeArrowhead } from './line-style.js';
+import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -2522,6 +2522,7 @@ export class Circuit {
     }
     const env = this._netEnv(net.id);
     const anchors = net.anchorWorlds();
+    const previousPaths = net.paths();
     // A non-translation transform (rotate/mirror) relocates terminals in a way
     // the drawn body cannot follow; lay the net out fresh from its terminals.
     if (moved === 'refresh') {
@@ -2541,6 +2542,7 @@ export class Circuit {
         net.junctions = previous.junctions;
         return this._rerouteFailure(net, moved);
       }
+      this._reanchorWireArrowheads(net, previousPaths, net.paths());
       this._repairNetLabels(net);
       this._completeComponentEdit(net.id);
       return true;
@@ -2589,6 +2591,7 @@ export class Circuit {
           x: p.x + delta.dx,
           y: p.y + delta.dy,
         }));
+        this._reanchorWireArrowheads(net, previousPaths, net.paths());
         this._repairNetLabels(net);
         this._completeComponentEdit(net.id);
         return true;
@@ -2616,6 +2619,7 @@ export class Circuit {
       net.junctions = [];
       if (this._layoutFresh(net, net.anchorWorlds(), env)) {
         this._resyncJunctions(net);
+        this._reanchorWireArrowheads(net, previousPaths, net.paths());
         this._repairNetLabels(net);
         this._completeComponentEdit(net.id);
         return true;
@@ -2641,6 +2645,7 @@ export class Circuit {
       net.branches = rerouted.map((p) => clonePath(p, net.allowDiagonal));
       net.route = net.branches[0] ? clonePath(net.branches[0], net.allowDiagonal) : null;
       if (moved && moved.size > 0) this._pruneDanglingBranches(net);
+      this._reanchorWireArrowheads(net, previousPaths, net.paths());
       this._resyncJunctions(net);
       this._repairNetLabels(net);
       this._completeComponentEdit(net.id);
@@ -2653,6 +2658,7 @@ export class Circuit {
       }
       net.route = clonePath(rerouted, net.allowDiagonal);
       if (moved && moved.size > 0) this._pruneDanglingBranches(net);
+      this._reanchorWireArrowheads(net, previousPaths, net.paths());
       this._resyncJunctions(net);
       this._repairNetLabels(net);
       this._completeComponentEdit(net.id);
@@ -2668,9 +2674,36 @@ export class Circuit {
     // No drawn shape to preserve: lay out fresh from the anchors.
     const laidOut = this._layoutFresh(net, anchors, env);
     if (!laidOut) return this._rerouteFailure(net, moved);
+    this._reanchorWireArrowheads(net, previousPaths, net.paths());
     this._repairNetLabels(net);
     this._completeComponentEdit(net.id);
     return true;
+  }
+
+  /** Keep segment-local arrowheads attached to a branch's logical endpoints
+   * when component movement inserts, removes, or reroutes bend segments. */
+  _reanchorWireArrowheads(net, previousPaths = [], nextPaths = []) {
+    const sourceStyles = net.wireStyles || {};
+    const rebuilt = { ...sourceStyles };
+    for (const [branch, previous] of previousPaths.entries()) {
+      const current = nextPaths[branch];
+      if (!previous || previous.length < 2 || !current || current.length < 2) continue;
+      const hasArrowheadStyle = Array.from({ length: previous.length - 1 }, (_, index) =>
+        sourceStyles[`${branch}:${index + 1}`]?.arrowhead !== undefined).some(Boolean);
+      if (!hasArrowheadStyle) continue;
+
+      for (const key of Object.keys(rebuilt)) {
+        if (key.startsWith(`${branch}:`)) delete rebuilt[key];
+      }
+      const branchStyles = {};
+      for (let index = 1; index < current.length; index++) {
+        const key = `${branch}:${index}`;
+        if (sourceStyles[key]) branchStyles[key] = { ...sourceStyles[key] };
+      }
+      const value = polylineArrowheadValue(sourceStyles, branch, previous, net.style?.arrowhead);
+      Object.assign(rebuilt, polylineArrowheadStyles(branchStyles, branch, current, value));
+    }
+    net.wireStyles = rebuilt;
   }
 
   /** Lay a net out from its terminals without consulting any existing route. */

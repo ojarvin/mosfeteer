@@ -2961,6 +2961,32 @@ test('splitting a styled wire keeps arrowheads on the original endpoints', () =>
   }
 });
 
+test('moving a wire endpoint keeps its arrowhead on the new logical endpoint', () => {
+  const c = new Circuit();
+  c.addComponent('block', { refdes: 'B1', x: 0, y: 0 });
+  c.addComponent('block', { refdes: 'B2', x: 0, y: 400 });
+  const net = c.createWireNet({
+    route: [{ x: 0, y: 80 }, { x: 0, y: 320 }],
+    wireStyles: { '0:1': { arrowhead: 'end' } },
+  });
+  net.terminals = [
+    { comp: 'B1', term: 'T11' },
+    { comp: 'B2', term: 'T9' },
+  ];
+
+  c.moveComponent('B2', 160, 400);
+  assert.equal(c.rerouteNet(net, new Map([['B2', { dx: 160, dy: 0 }]])), true);
+  assert.deepEqual(net.paths()[0], [
+    { x: 0, y: 80 }, { x: 0, y: 120 }, { x: 160, y: 120 }, { x: 160, y: 320 },
+  ]);
+  assert.equal(net.wireStyles['0:1'].arrowhead, 'none');
+  assert.equal(net.wireStyles['0:2'].arrowhead, 'none');
+  assert.equal(net.wireStyles['0:3'].arrowhead, 'end');
+  const svg = svgString(c);
+  assert.match(svg, /<polygon points="160 315\.20 178 283\.20 142 283\.20"/);
+  assert.doesNotMatch(svg, /<polygon points="0 120/);
+});
+
 test('wirePointTo preserves an explicit target path at a same-net crossing', () => {
   const c = new Circuit();
   const net = c.createWireNet({

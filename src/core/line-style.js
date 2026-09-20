@@ -46,6 +46,21 @@ export function polylineArrowheadValues(points = [], value = 'none') {
   return values;
 }
 
+/** Resolve segment-local arrowhead styles to the logical endpoints of a
+ * polyline. This also repairs older documents where an end head was left on
+ * an interior segment after a route gained a bend. */
+export function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
+  const values = [];
+  for (let index = 1; index < points.length; index++) {
+    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
+    if (value !== undefined) values.push(normalizeArrowhead(value));
+  }
+  if (!values.length) return normalizeArrowhead(inherited);
+  const start = values.some((value) => arrowheadEnds(value).start);
+  const end = values.some((value) => arrowheadEnds(value).end);
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
+}
+
 /** Return wireStyles with one shared arrowhead choice distributed across a
  * path's endpoint segments. Existing per-segment appearance is preserved. */
 export function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { arrowheadEnds, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValues, polylineArrowheads } from '../src/core/line-style.js';
+import { arrowheadEnds, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, polylineArrowheadValues, polylineArrowheads } from '../src/core/line-style.js';
 
 test('the shared arrowhead choice has one shape and four endpoint placements', () => {
   assert.deepEqual(arrowheadEnds('none'), { start: false, end: false });
@@ -40,6 +40,7 @@ test('a shared arrowhead choice skips polyline corner points', () => {
     '0:1': { color: '#d00', arrowhead: 'none' },
     '0:2': { arrowhead: 'end' },
   });
+  assert.equal(polylineArrowheadValue({ '0:1': { arrowhead: 'end' } }, 0, route), 'end');
 });
 
 test('arrowhead tip insets pull the filled point back from a stroked target', () => {

@@ -19,7 +19,7 @@ import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { editorOverlay, svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
-import { arrowheadEnds, defaultArrowhead, polylineArrowheadStyles } from '../core/line-style.js';
+import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from '../core/line-style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { resolveCopySelection } from '../core/selection.js';
@@ -1905,12 +1905,7 @@ function supportsArrowhead(object) {
 function singlePathArrowheadValue(net) {
   const path = net?.paths?.()[0];
   if (!path || path.length < 2) return defaultArrowhead('wire');
-  const inherited = net.style?.arrowhead;
-  const first = net.wireStyles?.['0:1']?.arrowhead ?? inherited;
-  const last = net.wireStyles?.[`0:${path.length - 1}`]?.arrowhead ?? inherited;
-  const start = arrowheadEnds(first).start;
-  const end = arrowheadEnds(last).end;
-  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
+  return polylineArrowheadValue(net.wireStyles, 0, path, net.style?.arrowhead);
 }
 
 function wireStyleValue(net, key, field) {
