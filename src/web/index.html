@@ -377,25 +377,29 @@
             </div>
           </div>
         </div>
-        <div class="style-row">
-          <label class="style-row-label" for="style-line">Line</label>
-          <select id="style-line" title="Apply line style where supported">
-            <option value="solid">Solid</option><option value="dashed">Dashed</option>
-            <option value="dash-dot">Dash-dot</option><option value="dotted">Dotted</option>
-          </select>
+        <div class="style-row" id="style-line-row">
+          <span class="style-row-label">Line</span>
+          <div class="segmented" role="group" aria-label="Line style and arrowheads">
+            <button type="button" class="icon-button" id="style-arrow-start" data-icon="arrow-start" data-arrow-end="start" aria-pressed="false" aria-label="Arrowhead at line start" title="Toggle an arrowhead at the line start"></button>
+            <div class="toolbar-popover">
+              <button type="button" class="icon-button" id="style-line-pattern" data-icon="line-solid" aria-haspopup="menu" aria-expanded="false" aria-controls="style-line-menu" aria-label="Line style" title="Choose a line style"></button>
+              <div id="style-line-menu" class="toolbar-menu style-line-menu" role="menu" aria-label="Line style" hidden>
+                <button type="button" role="menuitem" class="icon-button" data-icon="line-solid" data-line-style="solid" aria-label="Solid" title="Solid"></button>
+                <button type="button" role="menuitem" class="icon-button" data-icon="line-dashed" data-line-style="dashed" aria-label="Dashed" title="Dashed"></button>
+                <button type="button" role="menuitem" class="icon-button" data-icon="line-dash-dot" data-line-style="dash-dot" aria-label="Dash-dot" title="Dash-dot"></button>
+                <button type="button" role="menuitem" class="icon-button" data-icon="line-dotted" data-line-style="dotted" aria-label="Dotted" title="Dotted"></button>
+              </div>
+            </div>
+            <button type="button" class="icon-button" id="style-arrow-end" data-icon="arrow-end" data-arrow-end="end" aria-pressed="false" aria-label="Arrowhead at line end" title="Toggle an arrowhead at the line end"></button>
+          </div>
         </div>
-        <div class="style-row" id="style-arrowhead-row">
-          <label class="style-row-label" for="style-arrowhead">Arrowhead</label>
-          <select id="style-arrowhead" title="Apply the shared arrowhead to the start, end, or both ends">
-            <option value="none">None</option><option value="start">Start</option>
-            <option value="end">End</option><option value="both">Both</option>
-          </select>
-        </div>
-        <div class="style-row">
-          <label class="style-row-label" for="style-width">Width</label>
-          <select id="style-width" title="Apply stroke width to selected objects">
-            <option value="normal">Normal</option><option value="thin">Thin</option><option value="thick">Thick</option>
-          </select>
+        <div class="style-row" id="style-width-row">
+          <span class="style-row-label">Width</span>
+          <div class="segmented" role="group" aria-label="Stroke width">
+            <button type="button" class="icon-button" data-icon="width-thin" data-width="thin" aria-pressed="false" aria-label="Thin" title="Thin stroke"></button>
+            <button type="button" class="icon-button" data-icon="width-normal" data-width="normal" aria-pressed="false" aria-label="Normal" title="Normal stroke"></button>
+            <button type="button" class="icon-button" data-icon="width-thick" data-width="thick" aria-pressed="false" aria-label="Thick" title="Thick stroke"></button>
+          </div>
         </div>
       </section>
     </aside>

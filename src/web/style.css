@@ -25,7 +25,7 @@
   --text: #17181c;
   --text-dim: #5a6372;
   --accent: #1a56db;
-  --accent-dim: #e3ebfc;
+  --accent-dim: #c7dbfa;
   /* Semantic colors: accent = selection/focus/active tool, ok = success,
      warn = needs attention, danger = error or destructive. */
   --danger: #c53030;
@@ -260,14 +260,13 @@ button:focus-visible {
   background: var(--bg-hover);
 }
 
+/* One shared "pressed/active toggle" look across every toolbar: the view
+   switches, segmented controls (style panel, text alignment), and Analyze
+   (whose dock-open state is a toggle like the others). A border carries the
+   state as a crisp edge instead of relying on a background tint alone,
+   which reads poorly at small sizes in light mode. */
 .view-cluster .icon-button[aria-pressed="true"],
-.segmented .icon-button[aria-pressed="true"] {
-  color: var(--accent);
-  background: var(--accent-dim);
-}
-
-/* Analyze is a toggle like the view switches: while its dock is open the
-   button reads as active. */
+.segmented .icon-button[aria-pressed="true"],
 .analysis-cluster button[aria-pressed="true"] {
   color: var(--accent);
   border-color: var(--accent);
@@ -275,6 +274,9 @@ button:focus-visible {
 }
 
 .segmented {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
   gap: 0;
   padding: 2px;
   background: var(--bg-elevated);
@@ -1626,9 +1628,11 @@ button:disabled {
   font-size: 0.75rem;
 }
 
-.style-row select {
-  height: 26px;
-  font-size: 0.75rem;
+.style-line-menu {
+  flex-direction: row;
+  min-width: 0;
+  padding: 3px;
+  gap: 2px;
 }
 
 .style-text-controls {
@@ -1647,7 +1651,7 @@ button:disabled {
   padding: 0;
   color: var(--text-dim);
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 5px;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 0.875rem;
@@ -1661,6 +1665,7 @@ button:disabled {
 
 .text-toggle[aria-pressed="true"] {
   color: var(--accent);
+  border-color: var(--accent);
   background: var(--accent-dim);
 }
 

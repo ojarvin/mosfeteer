@@ -618,15 +618,18 @@ test('the placement guides are a view toggle beside the grid', () => {
   assert.match(keymap, /\['G', 'toggle the spacing and alignment guides'\]/);
 });
 
-test('the style menu exposes one shared arrowhead with endpoint placement choices', () => {
+test('the style menu exposes one shared arrowhead as independent start/end toggle buttons', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="style-arrowhead"/);
-  assert.match(html, /option value="none">None/);
-  assert.match(html, /option value="start">Start/);
-  assert.match(html, /option value="end">End/);
-  assert.match(html, /option value="both">Both/);
+  assert.match(html, /id="style-arrow-start"[^>]*data-arrow-end="start"/);
+  assert.match(html, /id="style-arrow-end"[^>]*data-arrow-end="end"/);
+  assert.match(html, /id="style-line-pattern"/);
+  assert.match(html, /data-line-style="solid"/);
+  assert.match(html, /data-line-style="dashed"/);
+  assert.match(html, /data-line-style="dash-dot"/);
+  assert.match(html, /data-line-style="dotted"/);
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
-  assert.match(main, /\['style-arrowhead', 'arrowhead'\]/);
+  assert.match(main, /function combineArrowheadEnds\(start, end\)/);
+  assert.match(main, /start && end \? 'both' : start \? 'start' : end \? 'end' : 'none'/);
   assert.match(main, /field !== 'arrowhead' \|\| supportsArrowhead/);
 });
 

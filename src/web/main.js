@@ -19,7 +19,7 @@ import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { editorOverlay, svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
-import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from '../core/line-style.js';
+import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { resolveCopySelection } from '../core/selection.js';
@@ -193,6 +193,17 @@ const ICON_PATHS = {
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
+  // Line-style choices are shown as the pattern itself, using the same
+  // dash ratios as styleAttrs() in core/style.js, scaled to the icon grid.
+  'line-solid': '<path d="M2 12h20"/>',
+  'line-dashed': '<path d="M2 12h20" stroke-dasharray="5 4"/>',
+  'line-dash-dot': '<path d="M2 12h20" stroke-dasharray="6 3 1 3"/>',
+  'line-dotted': '<path d="M2 12h20" stroke-linecap="round" stroke-dasharray="0.1 4"/>',
+  'width-thin': '<path d="M3 12h18" stroke-width="2"/>',
+  'width-normal': '<path d="M3 12h18" stroke-width="3.5"/>',
+  'width-thick': '<path d="M3 12h18" stroke-width="5.5"/>',
+  'arrow-start': '<path d="M20 12H7"/><path d="M4 12l5.5-4v8z" fill="currentColor" stroke="none"/>',
+  'arrow-end': '<path d="M4 12h13"/><path d="M20 12l-5.5-4v8z" fill="currentColor" stroke="none"/>',
 };
 
 // The canvas pointer is the select arrow, badged with the active tool's rail
@@ -1902,6 +1913,14 @@ function supportsArrowhead(object) {
   return !!arrowheadKind(object);
 }
 
+/** Combine the two independent start/end toggle buttons into the one shared
+ * arrowhead value the model stores. */
+function combineArrowheadEnds(start, end) {
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
+}
+
+const LINE_STYLE_ICONS = { solid: 'line-solid', dashed: 'line-dashed', 'dash-dot': 'line-dash-dot', dotted: 'line-dotted' };
+
 function singlePathArrowheadValue(net) {
   const path = net?.paths?.()[0];
   if (!path || path.length < 2) return defaultArrowhead('wire');
@@ -2125,21 +2144,28 @@ function syncTextStyleControls() {
 /** Reflect a (possibly mixed) selection style; the panel only exists while something is styleable. */
 function updateStyleControls() {
   const panel = document.getElementById('style-panel');
-  const line = document.getElementById('style-line');
-  const arrowhead = document.getElementById('style-arrowhead');
-  const width = document.getElementById('style-width');
+  const lineRow = document.getElementById('style-line-row');
+  const linePattern = document.getElementById('style-line-pattern');
+  const lineMenuButtons = [...document.querySelectorAll('#style-line-menu [data-line-style]')];
+  const arrowStart = document.getElementById('style-arrow-start');
+  const arrowEnd = document.getElementById('style-arrow-end');
+  const widthButtons = [...document.querySelectorAll('#style-width-row [data-width]')];
   const swatches = [...document.querySelectorAll('#style-color .swatch')];
-  if (!panel || !line || !arrowhead || !width) return;
+  if (!panel || !lineRow || !linePattern || !arrowStart || !arrowEnd) return;
   const show = (colorValue, lineValue, arrowheadValue, widthValue, supportsLine, supportsArrowhead) => {
     panel.hidden = false;
     syncTextStyleControls();
-    line.disabled = !supportsLine;
-    line.closest('.style-row').hidden = !supportsLine;
-    arrowhead.disabled = !supportsArrowhead;
-    arrowhead.closest('.style-row').hidden = !supportsArrowhead;
-    line.value = lineValue;
-    arrowhead.value = arrowheadValue;
-    width.value = widthValue;
+    lineRow.hidden = !supportsLine;
+    linePattern.disabled = !supportsLine;
+    arrowStart.hidden = arrowEnd.hidden = !supportsArrowhead;
+    arrowStart.disabled = arrowEnd.disabled = !supportsArrowhead;
+    const ends = arrowheadEnds(arrowheadValue);
+    arrowStart.setAttribute('aria-pressed', String(ends.start));
+    arrowEnd.setAttribute('aria-pressed', String(ends.end));
+    const icon = linePattern.querySelector('.button-icon');
+    if (icon) icon.innerHTML = ICON_PATHS[LINE_STYLE_ICONS[lineValue] || 'line-solid'];
+    for (const button of lineMenuButtons) button.setAttribute('aria-pressed', String(button.dataset.lineStyle === lineValue));
+    for (const button of widthButtons) button.setAttribute('aria-pressed', String(button.dataset.width === widthValue));
     for (const swatch of swatches) swatch.setAttribute('aria-checked', String(swatch.dataset.value === colorValue));
   };
   const common = (values) => (values.length && values.every((v) => v === values[0]) ? values[0] : '');
@@ -13000,9 +13026,24 @@ function bindInteractionControls() {
 }
 
 bindInteractionControls();
-for (const [id, field] of [['style-line', 'lineStyle'], ['style-arrowhead', 'arrowhead'], ['style-width', 'width']]) {
-  document.getElementById(id)?.addEventListener('change', (ev) => applySelectedStyle(field, ev.target.value));
-}
+document.getElementById('style-line-row')?.addEventListener('click', (ev) => {
+  const arrowButton = ev.target.closest?.('[data-arrow-end]');
+  if (arrowButton) {
+    if (arrowButton.disabled) return;
+    const startOn = document.getElementById('style-arrow-start')?.getAttribute('aria-pressed') === 'true';
+    const endOn = document.getElementById('style-arrow-end')?.getAttribute('aria-pressed') === 'true';
+    const start = arrowButton.dataset.arrowEnd === 'start' ? !startOn : startOn;
+    const end = arrowButton.dataset.arrowEnd === 'end' ? !endOn : endOn;
+    applySelectedStyle('arrowhead', combineArrowheadEnds(start, end));
+    return;
+  }
+  const lineStyleButton = ev.target.closest?.('[data-line-style]');
+  if (lineStyleButton) applySelectedStyle('lineStyle', lineStyleButton.dataset.lineStyle);
+});
+document.getElementById('style-width-row')?.addEventListener('click', (ev) => {
+  const widthButton = ev.target.closest?.('[data-width]');
+  if (widthButton && !widthButton.disabled) applySelectedStyle('width', widthButton.dataset.width);
+});
 document.getElementById('style-text-row')?.addEventListener('click', (ev) => {
   const button = ev.target.closest?.('button');
   if (button?.dataset.styleAlign) setSelectedLabelAlign(button.dataset.styleAlign);
@@ -13401,6 +13442,7 @@ modelDialog?.addEventListener('close', () => {
 const toolbarMenus = [
   [newDocumentButton, newDocumentMenu],
   [document.getElementById('btn-document-menu'), document.getElementById('document-menu')],
+  [document.getElementById('style-line-pattern'), document.getElementById('style-line-menu')],
 ].filter(([button, menu]) => button && menu);
 
 function closeToolbarMenu(button, menu, focusButton = false) {
