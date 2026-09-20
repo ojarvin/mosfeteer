@@ -27,7 +27,7 @@ notes here.
 - `src/cli/index.js` — thin HTTP client for scripted editing.
 - `test/` — Node test suite; `fixtures/` — CircuitSpec examples.
 - `guidelines/` — role and visual-quality instructions.
-- `docs/` — focused architecture, analysis, block-diagram, and generation docs.
+- `docs/` — focused architecture, analysis, and generation docs.
 - `launch.mjs`, `start.sh`, `Mosfeteer.command`, `Mosfeteer.cmd` — launchers.
 
 Useful commands:
