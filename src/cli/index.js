@@ -8,7 +8,7 @@
  *
  * The CLI sends commands to POST /api/circuits/<name>/cmd and generation
  * requests to POST /api/circuits/<name>/generate. Command mutations write
- * `<workspace>/<name>.schematic.json`; generation preview is non-mutating and
+ * `<workspace>/<name>.json`; generation preview is non-mutating and
  * commit writes the generated candidate. The browser polls the active circuit
  * and re-renders automatically.
  *

@@ -2,7 +2,6 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
-import { BlockDiagram } from '../src/core/block-model.js';
 import { evaluate } from '../src/core/commands.js';
 import { findChromium } from '../src/server/browser.js';
 import { serverTest, startServer } from './helpers/server.js';
@@ -86,7 +85,7 @@ serverTest('saving refuses to replace another file unless asked, and saves anywh
   const elsewhere = join(app.root, 'shared', 'project');
   const outside = await app.request('/api/document', { method: 'PUT', body: { dir: elsewhere, name: 'from coworker', state: empty } });
   assert.equal(outside.status, 200);
-  assert.equal((await outside.json()).path, join(elsewhere, 'from coworker.schematic.json'));
+  assert.equal((await outside.json()).path, join(elsewhere, 'from coworker.json'));
   const recent = (await (await app.request('/api/workspace')).json()).recent;
   assert.deepEqual(recent.map((document) => document.name), ['from coworker']);
 
@@ -94,7 +93,7 @@ serverTest('saving refuses to replace another file unless asked, and saves anywh
     const invalid = await app.request('/api/document', { method: 'PUT', body: { name, state: empty } });
     assert.equal(invalid.status, 400, name);
   }
-  const relative = await app.request('/api/document?path=relative.schematic.json');
+  const relative = await app.request('/api/document?path=relative.json');
   assert.equal(relative.status, 400);
 });
 
@@ -121,20 +120,6 @@ serverTest('any JSON document file opens from any folder', async (t) => {
     ['workspace', 'folder'],
     ['not-a-document.json', 'json'],
   ]);
-});
-
-serverTest('block documents keep their kind through save and list', async (t) => {
-  const app = await startServer();
-  t.after(() => app.stop());
-  const state = new BlockDiagram().toJSON();
-  state.blocks.push({ id: 'B1', text: 'Input', rect: { x: 0, y: 0, w: 160, h: 80 }, terminals: [] });
-  const saved = await app.request('/api/document', { method: 'PUT', body: { name: 'overview', state } });
-  assert.equal(saved.status, 200);
-  assert.equal((await saved.json()).kind, 'block');
-  const { documents } = await (await app.request('/api/workspace')).json();
-  assert.equal(documents[0].kind, 'block');
-  const loaded = await (await app.request(`/api/document?path=${encodeURIComponent(app.file('overview'))}`)).json();
-  assert.equal(loaded.state.kind, 'block');
 });
 
 serverTest('saves a circuit with check issues and explains an outdated symbol registry', async (t) => {

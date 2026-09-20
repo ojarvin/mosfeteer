@@ -4,7 +4,7 @@
  *
  *   node launch.mjs                      start (or reuse) the app and open it
  *   node launch.mjs <folder>             use <folder> as the workspace
- *   node launch.mjs <file.schematic.json>  open a document
+ *   node launch.mjs <file.json>  open a document
  *   node launch.mjs --install            add a desktop/application-menu entry
  *   node launch.mjs --uninstall          remove that entry
  *   node launch.mjs --no-browser         start the server without opening a window
@@ -149,7 +149,7 @@ async function runningInstance(port) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: node launch.mjs [folder | document.schematic.json] [--install | --uninstall | --no-browser]');
+    console.log('Usage: node launch.mjs [folder | document.json] [--install | --uninstall | --no-browser]');
     return;
   }
   if (args.includes('--install')) return install();

@@ -2,7 +2,7 @@
 
 <h1 align="center">Mosfeteer</h1>
 
-A keyboard-driven editor for textbook-style analog schematics and block diagrams, with auto-routed wires, symbolic small-signal analysis, and a CLI/HTTP interface for scripts and agents.
+A keyboard-driven editor for textbook-style analog schematics, with auto-routed wires, symbolic small-signal analysis, and a CLI/HTTP interface for scripts and agents.
 
 ![Fitted folded-cascode OTA in the editor, with a bottom-left to top-right diagonal separating light and dark themes](docs/images/editor.png)
 
@@ -46,13 +46,13 @@ The launcher starts a small local server and opens the editor in an app-style Ch
 
 ## Documents and sharing
 
-Each schematic or block diagram is one self-contained `.schematic.json` file. You can keep it anywhere and send it to anyone.
+Each schematic is one self-contained `.json` file. You can keep it anywhere and send it to anyone.
 
 - **Workspace folder:** the document list shows this folder, and new documents are saved into it. The default is `~/Documents/Schematics`. Change it from the **⋯** menu, or start with `node launch.mjs <folder>`.
 - **Open file…** (Ctrl/Cmd+O) and **Save as…** (Ctrl/Cmd+Shift+S) work with any folder, such as a project repository or a shared drive. Files opened from outside the workspace are listed under *Recent elsewhere*.
-- **Drop** a `.schematic.json` file (for example, an email attachment) onto the window to open a copy. Saving it puts the copy in your workspace.
+- **Drop** a `.json` file (for example, an email attachment) onto the window to open a copy. Saving it puts the copy in your workspace.
 - If a file changes on disk (for example, after `git pull` or an edit by a coworker on a shared drive), an open document with no unsaved changes reloads automatically.
-- `node launch.mjs path/to/amp.schematic.json` opens a document directly.
+- `node launch.mjs path/to/amp.json` opens a document directly.
 - **Export** writes SVG, PDF, and 4× PNG files into a folder you choose (by default, the document's own folder). PDFs are vector files printed by a Chrome, Chromium, Edge, or Brave install found on your machine; without one, the PDF contains the high-resolution image instead.
 
 ## Development
@@ -63,11 +63,10 @@ npm run symbols # regenerate the symbols reference document through the running 
 npm test
 ```
 
-Scripted editing goes through the CLI against a running server, for example `npm run cli -- amp "add nmos M1 --at 120 120"`. Here `amp` is `<workspace>/amp.schematic.json`.
+Scripted editing goes through the CLI against a running server, for example `npm run cli -- amp "add nmos M1 --at 120 120"`. Here `amp` is `<workspace>/amp.json`.
 
 ## More
 
 - [`AGENTS.md`](AGENTS.md): editor behavior and symbol specification
 - [`docs/circuit-spec.md`](docs/circuit-spec.md): deterministic circuit generation
 - [`docs/topological-small-signal.md`](docs/topological-small-signal.md): how the analysis works
-- [`docs/block-diagram.md`](docs/block-diagram.md): block diagrams

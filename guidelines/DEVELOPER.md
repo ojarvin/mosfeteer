@@ -44,8 +44,6 @@ src/
 │   ├── semantic.js     Pure checks for declared analog intent.
 │   ├── placement.js    Phase 2 deterministic analog placer.
 │   ├── routing.js      Phase 3 deterministic batch router.
-│   ├── block-model.js  Independent BlockDiagram model and persistence seam.
-│   ├── block-router.js Orthogonal block-arrow routing and arrowhead geometry.
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning
@@ -260,7 +258,7 @@ See `/tmp/opencode/` for existing examples (`mos_label_test.mjs`,
 - The editor exposes `window.__circuit()` (returns `{ comps, nets, labels }`)
   and `window.__run(cmd)` from the dev console.
 - `window.__load(state)` overwrites the visible circuit — useful for
-  reproducing a bug from a saved `.schematic.json` document.
+  reproducing a bug from a saved `.json` document.
 - The browser's revision-aware live sync polls every 500 ms while visible and
   applies changed external saves; see the authoritative behavior in
   `AGENTS.md`.

@@ -5,8 +5,7 @@ import { applyDir, applyTransform, fmt, rectsOverlap } from './geometry.js';
 import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
-import { BlockDiagram } from './block-model.js';
-import { renderDocument, saveDocument } from './document.js';
+import { renderDocument } from './document.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
@@ -470,7 +469,6 @@ export function commandHelp() {
 }
 
 export function runCommand(circuit, line, io) {
-  if (circuit instanceof BlockDiagram) return runBlockCommand(circuit, line, io);
   const { pos, flags } = parseArgs(splitArgs(line));
   const cmd = pos.shift() || 'help';
   return dispatch(circuit, cmd, pos, flags, io);
@@ -793,194 +791,6 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(`loaded state from ${file}`, fresh.toJSON(), true);
   }
 
-  throw new Error(`unknown command "${cmd}" (try: help)`);
-}
-
-export function blockCommandHelp() {
-  return [
-    'Block diagram commands',
-    '  block add ID TEXT X Y W H | add-block ID TEXT X Y W H',
-    '  block move|resize|rename|remove ... (or move-block etc.)',
-    '  terminal add BLOCK ID SIDE OFFSET | move-terminal BLOCK.ID SIDE OFFSET | rm-terminal BLOCK.ID',
-    '  connector add ID FROM TO | rm-connector ID',
-    '  netlabel add CONNECTOR [ID] TEXT X Y | netlabel rename ID TEXT | netlabel rm ID',
-    '  annotation add [label|arrow|box|line] ID TEXT X Y [X Y ...] | annotation rename ID TEXT | annotation move ID X Y | annotation rm ID',
-    '  list | state | bounds | svg/export [file] | save <file>',
-  ].join('\n');
-}
-
-function runBlockCommand(diagram, line, io) {
-  const { pos, flags } = parseArgs(splitArgs(line)); let cmd = pos.shift() || 'help';
-
-  // Keep the explicit command names used by existing scripts, while also
-  // accepting the namespaced vocabulary in the block-document contract. This
-  // normalization is local to BlockDiagram and can never affect electrical
-  // `add`, `move`, `connect`, or `net` commands.
-  const families = {
-    block: { add: 'add-block', move: 'move-block', resize: 'resize-block', rename: 'rename-block', remove: 'remove-block', rm: 'remove-block', help: 'help' },
-    terminal: { add: 'add-terminal', move: 'move-terminal', remove: 'remove-terminal', rm: 'remove-terminal', help: 'help' },
-    connector: { add: 'add-connector', remove: 'remove-connector', rm: 'remove-connector', help: 'help' },
-  };
-  if (families[cmd]) {
-    const familyName = cmd;
-    const operation = pos.shift() || 'help';
-    cmd = families[familyName][operation];
-    if (!cmd) throw new Error(`unknown ${familyName} operation "${operation}"`);
-  }
-  const result = (text, json = null, mutated = false) => ({ text, json, mutated });
-  if (cmd === 'help') return result(blockCommandHelp());
-  if (cmd === 'list') return result([
-    ...[...diagram.blocks.values()].map((b) => `${b.id} ${b.text}`),
-    ...[...diagram.arrows.values()].map((a) => a.detached
-      ? `${a.id} (detached visual connector)`
-      : `${a.id} ${a.from.block}.${a.from.terminal} -> ${a.to.block}.${a.to.terminal}`),
-  ].join('\n') || '(no blocks)');
-  if (cmd === 'state') return result(JSON.stringify(diagram.toJSON(), null, 2), diagram.toJSON());
-  if (cmd === 'bounds') return result(JSON.stringify(diagram.bounds()), diagram.bounds());
-  if (cmd === 'add-block') {
-    const [id, text, x, y, w, h] = pos;
-    if (!id || text === undefined || [x, y, w, h].some((value) => value === undefined || !Number.isFinite(Number(value)))) {
-      throw new Error('usage: add-block ID TEXT X Y W H');
-    }
-    const block = diagram.addBlock({ id, text, x: Number(x), y: Number(y), w: Number(w), h: Number(h) });
-    return result(`added ${block.id}`, block.toJSON(), true);
-  }
-  if (cmd === 'move-block') {
-    const block = diagram.moveBlock(pos[0], Number(pos[1]), Number(pos[2]));
-    return result(`moved ${block.id}`, block.toJSON(), true);
-  }
-  if (cmd === 'resize-block') {
-    const block = diagram.resizeBlock(pos[0], Number(pos[1]), Number(pos[2]));
-    return result(`resized ${block.id}`, block.toJSON(), true);
-  }
-  if (cmd === 'rename-block') {
-    const block = diagram.renameBlock(pos[0], pos.slice(1).join(' '));
-    return result(`renamed ${block.id}`, block.toJSON(), true);
-  }
-  if (cmd === 'rm-block' || cmd === 'remove-block') {
-    const block = diagram.removeBlock(pos[0]);
-    return result(`removed ${block.id}`, block.toJSON(), true);
-  }
-  if (cmd === 'add-terminal') {
-    const [blockId, id, side, offset] = pos;
-    if (!blockId || !id || !side || offset === undefined || !Number.isFinite(Number(offset))) {
-      throw new Error('usage: add-terminal BLOCK ID SIDE OFFSET');
-    }
-    const terminal = diagram.addTerminal(blockId, { id, side, offset: Number(offset) });
-    return result(`added terminal ${blockId}.${terminal.id}`, terminal.toJSON(), true);
-  }
-  if (cmd === 'move-terminal') {
-    const terminal = diagram.moveTerminal(pos[0], pos[1], Number(pos[2]));
-    return result(`moved terminal ${pos[0]}`, terminal.toJSON(), true);
-  }
-  if (cmd === 'rm-terminal' || cmd === 'remove-terminal') {
-    const ref = pos[0];
-    if (!diagram.removeTerminal(ref)) throw new Error(`unknown terminal "${ref}"`);
-    return result(`removed terminal ${ref}`, null, true);
-  }
-  if (cmd === 'add-arrow' || cmd === 'add-connector') {
-    const [id, from, to] = pos;
-    if (!id || !from || !to) throw new Error('usage: add-connector ID FROM TO');
-    const arrow = diagram.addArrow({ id, from, to });
-    return result(`added connector ${arrow.id}`, arrow.toJSON(), true);
-  }
-  if (cmd === 'rm-arrow' || cmd === 'remove-arrow' || cmd === 'rm-connector' || cmd === 'remove-connector') {
-    const arrow = diagram.removeArrow(pos[0]);
-    return result(`removed connector ${arrow.id}`, arrow.toJSON(), true);
-  }
-  if (cmd === 'netlabel' || cmd === 'net-label') {
-    const op = pos.shift();
-    if (op === 'list') return result([...diagram.labels.values()].filter((label) => label.connectorId).map((label) => `${label.id} connector=${label.connectorId} "${label.text}"`).join('\n') || '(no connector labels)');
-    if (op === 'add') {
-      const connector = pos.shift();
-      const tail = pos.slice();
-      if (!connector || tail.length < 3) throw new Error('usage: netlabel add CONNECTOR [ID] TEXT X Y');
-      const x = Number(tail.at(-2)); const y = Number(tail.at(-1));
-      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('usage: netlabel add CONNECTOR [ID] TEXT X Y');
-      tail.splice(-2);
-      const id = tail.length > 1 ? tail.shift() : undefined;
-      const label = diagram.addNetLabel(connector, { id, text: tail.join(' '), anchor: { x, y } });
-      return result(`added connector label ${label.id}`, label.toJSON(), true);
-    }
-    if (op === 'rename') {
-      const label = diagram.labels.get(pos[0]);
-      if (!label?.connectorId || !pos[1]) throw new Error(`unknown connector label "${pos[0]}"`);
-      label.setText(pos.slice(1).join(' '));
-      return result(`renamed connector label ${label.id}`, label.toJSON(), true);
-    }
-    if (op === 'rm' || op === 'remove') {
-      if (!diagram.labels.get(pos[0])?.connectorId || !diagram.removeLabel(pos[0])) throw new Error(`unknown connector label "${pos[0]}"`);
-      return result(`removed connector label ${pos[0]}`, null, true);
-    }
-    throw new Error('usage: netlabel add|rename|rm|list ...');
-  }
-  if (cmd === 'annotation' || cmd === 'annotate') {
-    const op = pos.shift();
-    if (op === 'list') return result([...diagram.labels.values()].map((label) => `${label.id} ${label.kind} ${label.text}`).join('\n') || '(no annotations)');
-    if (op === 'add') {
-      let kind = 'label';
-      let id;
-      let text;
-      let coordinateArgs;
-      if (['label', 'arrow', 'box', 'line'].includes(pos[0])) {
-        [kind, id, text] = pos;
-        coordinateArgs = pos.slice(3);
-      } else {
-        [id, text] = pos;
-        coordinateArgs = pos.slice(2);
-      }
-      const coordinates = coordinateArgs.map(Number);
-      const needed = kind === 'label' ? 2 : 4;
-      const coordinateCountOkay = kind === 'line'
-        ? coordinates.length >= needed && coordinates.length % 2 === 0
-        : coordinates.length === needed;
-      if (!id || text === undefined || !coordinateCountOkay || coordinates.some((value) => !Number.isFinite(value))) {
-        throw new Error('usage: annotation add [kind] ID TEXT X Y [X Y ...]');
-      }
-      const points = [];
-      for (let index = 0; index < coordinates.length; index += 2) points.push({ x: coordinates[index], y: coordinates[index + 1] });
-      const values = kind === 'label'
-        ? { id, text, x: points[0].x, y: points[0].y }
-        : kind === 'line'
-          ? { id, text, points }
-          : { id, text, x: points[0].x, y: points[0].y, end: points[1] };
-      const label = kind === 'label' ? diagram.addLabel(values) : diagram.addAnnotation(kind, values);
-      return result(`added annotation ${label.id}`, label.toJSON(), true);
-    }
-    if (op === 'rename') {
-      const label = diagram.labels.get(pos[0]);
-      if (!label) throw new Error(`unknown annotation "${pos[0]}"`);
-      const text = pos.slice(1).join(' ');
-      const children = ['arrow', 'box', 'line'].includes(label.kind)
-        ? [...diagram.labels.values()].filter((child) => child.parent === label.id)
-        : [];
-      for (const child of children) child.setText(text);
-      if (!children.length) label.setText(text);
-      return result(`renamed annotation ${label.id}`, label.toJSON(), true);
-    }
-    if (op === 'move') {
-      const label = diagram.labels.get(pos[0]);
-      const x = Number(pos[1]);
-      const y = Number(pos[2]);
-      if (!label || !Number.isFinite(x) || !Number.isFinite(y)) throw new Error(!label ? `unknown annotation "${pos[0]}"` : 'usage: annotation move LABEL X Y');
-      label.moveTo(x, y);
-      return result(`moved annotation ${label.id}`, label.toJSON(), true);
-    }
-    if (op === 'rm' || op === 'remove') { if (!diagram.removeLabel(pos[0])) throw new Error(`unknown annotation "${pos[0]}"`); return result(`removed annotation ${pos[0]}`, null, true); }
-    throw new Error('usage: annotation add|rename|move|rm|list ...');
-  }
-  if (cmd === 'svg' || cmd === 'export') {
-    const file = flags.file?.[0] || pos[0] || 'data/preview.svg';
-    const svg = renderDocument(diagram, { background: true });
-    if (io) { io.writeTextFile(file, svg); return result(`wrote ${file} (${svg.length} bytes)`); }
-    return result('SVG below', { svg });
-  }
-  if (cmd === 'save') {
-    const file = flags.file?.[0] || pos[0];
-    if (!io || !file) throw new Error('save requires file I/O and a path');
-    io.writeTextFile(file, JSON.stringify(saveDocument(diagram), null, 2));
-    return result(`saved state to ${file}`);
-  }
   throw new Error(`unknown command "${cmd}" (try: help)`);
 }
 

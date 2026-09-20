@@ -1,6 +1,5 @@
 import { Circuit, Net } from './model.js';
-import { BlockDiagram } from './block-model.js';
-import { isBlockDiagram, renderDocument } from './document.js';
+import { renderDocument } from './document.js';
 import { resolveCopySelection } from './selection.js';
 import { GRID } from './grid.js';
 import { junctionPoints, pointOnPath } from './wiring.js';
@@ -61,26 +60,13 @@ function schematicSubset(circuit, selection) {
   return drawing;
 }
 
-function blockSubset(document, { blockIds = [], arrowIds = [], labels = [] }) {
-  const drawing = new BlockDiagram();
-  const blocks = new Set(blockIds); const arrows = new Set(arrowIds);
-  drawing.blocks = new Map([...document.blocks].filter(([id]) => blocks.has(id)));
-  drawing.arrows = new Map([...document.arrows].filter(([id, arrow]) => arrows.has(id) ||
-    (blocks.has(arrow.from?.block) && blocks.has(arrow.to?.block))));
-  const labelIds = new Set(labels.map((label) => label.id));
-  drawing.labels = new Map([...document.labels].filter(([id, label]) => labelIds.has(id) ||
-    labelIds.has(label.parent) || drawing.arrows.has(label.connectorId)));
-  return drawing;
-}
-
 /** Render a subset, never a crop. No selection means the entire document.
  * Model objects are read only: measured labels and authored routes stay intact.
  * Font embedding is supplied by the browser's standalone export adapter. */
 export function selectionDrawing(document, selection = {}, options = {}) {
-  const selected = ['refs', 'labels', 'netIds', 'wireKeys', 'blockIds', 'arrowIds']
+  const selected = ['refs', 'labels', 'netIds', 'wireKeys']
     .some((key) => [...(selection[key] || [])].length > 0);
-  const drawing = !selected ? document : isBlockDiagram(document)
-    ? blockSubset(document, selection) : schematicSubset(document, selection);
+  const drawing = !selected ? document : schematicSubset(document, selection);
   const padding = options.padding ?? GRID;
   if (!Number.isFinite(padding) || padding < 0) throw new Error('drawing padding must be a non-negative number');
   const bounds = drawing.bounds();

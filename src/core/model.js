@@ -1027,7 +1027,7 @@ export class ComponentInstance {
     const sideMax = (side) => side === 'top' || side === 'bottom' ? next.w : next.h;
     const preserveSlots = options.preserveSlots instanceof Map ? options.preserveSlots : new Map();
     const slots = [];
-    // Match block-diagram perimeter behavior: every grid slot one cell away
+    // Keep perimeter behavior consistent: every grid slot one cell away
     // from a corner is a valid attachment, including the exact edge midpoint.
     for (let offset = GRID; offset <= next.w - GRID; offset += GRID) slots.push({ side: 'top', offset });
     for (let offset = GRID; offset <= next.h - GRID; offset += GRID) slots.push({ side: 'right', offset });
@@ -1048,7 +1048,7 @@ export class ComponentInstance {
     };
     // Explicit terminals and connected generated terminals are persistent.
     // Unconnected generated terminals are disposable perimeter affordances,
-    // exactly like block-diagram terminals during a resize.
+    // exactly like perimeter terminals during a resize.
     for (const item of this.blockTerminals.filter((candidate) => !/^T\d+$/.test(candidate.name))) addExplicit(item);
     for (const item of this.blockTerminals.filter((candidate) => /^T\d+$/.test(candidate.name) && connected.has(candidate.name))) {
       const requested = preserveSlots.get(item.name);

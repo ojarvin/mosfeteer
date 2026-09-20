@@ -10,7 +10,7 @@
  *   wire       projecting square caps, so the half-width extension at a
  *              terminal overlaps the pin lead inside the shared ink path and a
  *              wire meeting a lead at a right angle fills the corner square
- *   annotation visual lines/arrows and block-diagram connectors (round ends)
+ *   annotation visual lines/arrows (round ends)
  *   emph       emphasis (MOSFET gate bar, BJT base bar)
  *   ground     ground bars
  *   supply     power slabs

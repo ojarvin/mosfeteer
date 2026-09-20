@@ -4,7 +4,7 @@
  * can be saved back in place (a browser file input only yields contents).
  */
 
-const DOCUMENT_EXTENSION = '.schematic.json';
+const DOCUMENT_EXTENSION = '.json';
 
 const ICONS = {
   folder: '<path d="M3 6.5h6l2 2h10v10H3z" fill="currentColor" fill-opacity=".16"/><path d="M3 6.5V5h7l2 2"/>',
@@ -198,7 +198,7 @@ export function showFileDialog(persistence, { mode = 'open', dir = '', name = ''
     } else if (mode === 'save') {
       const documentName = nameInput.value.trim();
       if (!documentName) return;
-      result = { dir: listing.dir, name: documentName.replace(/\.schematic\.json$/i, '') };
+      result = { dir: listing.dir, name: documentName.replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '') };
     } else {
       const entry = listing.entries.find((candidate) => candidate.path === selectedPath && candidate.type === 'folder');
       result = { path: entry ? entry.path : listing.dir };

@@ -1,8 +1,9 @@
 /**
  * Document files on disk. A document is one self-contained JSON file that can
  * live anywhere: the workspace folder, a project repository, a shared drive.
- * Files saved by the app use the `.schematic.json` extension; any other
- * `.json` file that loads as a document can be opened too.
+ * Files saved by the app use the plain `.json` extension. Older
+ * `.schematic.json` paths remain readable so existing schematics can be
+ * opened and resaved under the canonical name.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -10,7 +11,8 @@ import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'no
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { documentKind, loadDocument } from '../core/document.js';
 
-export const DOCUMENT_EXTENSION = '.schematic.json';
+export const DOCUMENT_EXTENSION = '.json';
+export const LEGACY_DOCUMENT_EXTENSION = '.schematic.json';
 
 const FORBIDDEN_NAME_CHARS = /[/\\:*?"<>|\u0000-\u001f\u007f]/;
 
@@ -24,7 +26,7 @@ export function validDocumentName(value) {
 /** Display name of a document file: its base name without the document extension. */
 export function documentNameFromPath(path) {
   const file = basename(path);
-  if (file.toLowerCase().endsWith(DOCUMENT_EXTENSION)) return file.slice(0, -DOCUMENT_EXTENSION.length);
+  if (file.toLowerCase().endsWith(LEGACY_DOCUMENT_EXTENSION)) return file.slice(0, -LEGACY_DOCUMENT_EXTENSION.length);
   return file.replace(/\.json$/i, '');
 }
 
@@ -123,9 +125,12 @@ export async function deleteDocumentFile(path) {
 
 async function documentKindOf(path) {
   try {
-    return documentKind(JSON.parse(await readFile(path, 'utf8')));
+    const data = JSON.parse(await readFile(path, 'utf8'));
+    const kind = documentKind(data);
+    loadDocument(data);
+    return kind;
   } catch {
-    return 'circuit';
+    return null;
   }
 }
 
@@ -145,7 +150,7 @@ export async function listDocuments(dir) {
   const files = entries
     .filter((entry) => !entry.name.startsWith('.') && (entry.isFile() || entry.isSymbolicLink()) && entry.name.toLowerCase().endsWith(DOCUMENT_EXTENSION))
     .map((entry) => join(dir, entry.name));
-  const documents = await Promise.all(files.map(describeDocument));
+  const documents = (await Promise.all(files.map(describeDocument))).filter((document) => document.kind);
   return documents.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
@@ -174,8 +179,12 @@ export async function browseFolder(dir) {
       } catch { continue; }
     }
     if (isDirectory) items.push({ name: entry.name, path, type: 'folder' });
-    else if (isFile && entry.name.toLowerCase().endsWith(DOCUMENT_EXTENSION)) items.push({ name: documentNameFromPath(path), file: entry.name, path, type: 'document' });
-    else if (isFile && isJsonFile(entry.name)) items.push({ name: entry.name, file: entry.name, path, type: 'json' });
+    else if (isFile && isJsonFile(entry.name)) {
+      const document = await describeDocument(path);
+      items.push(document.kind
+        ? { ...document, type: 'document' }
+        : { name: entry.name, file: entry.name, path, type: 'json' });
+    }
   }
   const order = { folder: 0, document: 1, json: 2 };
   items.sort((a, b) => order[a.type] - order[b.type] || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));

@@ -226,7 +226,7 @@ Notes:
   drawing. Double-click the body or its component-row entry to edit the
   centered caption. Their perimeter pins use ordinary schematic wires, and
   the body remains an obstacle for overlap and wire-through checks. Resize a
-  selected block with the same eight handles used by block diagrams; the
+  selected block with the same eight resize handles; the
   opposite corner stays fixed, touched managed nets are rerouted atomically,
   and the size is persisted per instance. Connected pins keep their authored
   perimeter positions when the new rectangle can contain them; shrinking

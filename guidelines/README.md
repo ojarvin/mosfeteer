@@ -33,7 +33,7 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
   rules. Both roles skim it when a shared behavior matters; exact geometry and
   feature contracts live in the source, tests, and focused docs it links.
 - `guidelines/` — role-specific docs and the style guide (this directory).
-- Documents are `<name>.schematic.json` files in the workspace folder (default
+- Documents are `<name>.json` files in the workspace folder (default
   `~/Documents/Schematics`, set in the editor's ⋯ menu) or anywhere else.
 - `src/core/` — pure model and routing modules; see the detailed inventory in
   [DEVELOPER.md](./DEVELOPER.md#architecture).
@@ -54,5 +54,5 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
   `chromium --remote-debugging-port=<port>` and CDP via `Runtime.evaluate`.
 - CLI commands set the active circuit and the browser auto-loads changed
   revisions through live sync. Mutated commands persist
-  `<workspace>/<name>.schematic.json`; see `AGENTS.md` for the sync and
+  `<workspace>/<name>.json`; see `AGENTS.md` for the sync and
   persistence contract.

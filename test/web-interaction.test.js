@@ -87,7 +87,6 @@ test('the insert menu is one scrolling column led by the recent placements', () 
   // user escapes never claims a slot.
   assert.match(main, /rememberInsertType\(pendingPlace\.type\)/);
   assert.match(main, /rememberInsertType\('label'\)/);
-  assert.match(main, /rememberInsertType\('block'\)/);
   // Session state only: nothing reads or writes it through the document or
   // localStorage, so a reopened file never inherits someone else's shortcuts.
   assert.doesNotMatch(main, /insertRecentTypes[\s\S]{0,200}localStorage/);
@@ -305,13 +304,15 @@ test('editor shell exposes keyboard canvas and live status surfaces', () => {
   assert.doesNotMatch(html, /id="btn-label-bboxes"/);
 });
 
-test('new document control exposes one popup with schematic and block choices', () => {
+test('new document control starts a schematic directly', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="btn-new-document"[^>]+aria-haspopup="menu"/);
-  assert.match(html, /id="new-document-menu"[^>]+role="menu"/);
-  assert.match(html, /data-new-document="circuit"/);
-  assert.match(html, /data-new-document="block"/);
+  assert.match(html, /id="btn-new-document"[^>]+title="Start a new schematic"/);
+  assert.doesNotMatch(html, /id="btn-new-document"[^>]+aria-haspopup="menu"/);
+  assert.doesNotMatch(html, /id="new-document-menu"|data-new-document=/);
   assert.doesNotMatch(html, /id="btn-new-circuit"|id="btn-new-block"/);
+
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /newDocumentButton\?\.addEventListener\('click', \(\) => \{[\s\S]*?startNewDocument\(\);/);
 });
 
 test('an explicit new document is protected from active-document auto-loads', () => {
@@ -433,9 +434,6 @@ test('analysis form state is scoped and role metadata is restored from the activ
 test('arrow-key nudging moves mixed selections atomically', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /transformMixedSelection\('translate', \{ translation: \{ dx, dy \} \}\)/);
-  assert.match(main, /function nudgeBlockSelection\(dx, dy\)/);
-  assert.match(main, /cannot nudge attached connector/);
-  assert.match(main, /circuit\.validate\(\);\s*recordBlockHistory\(before\);/);
 });
 
 test('startup paints before listing documents and restoring the requested document', () => {
@@ -535,12 +533,10 @@ test('committed inserts repair coincident connectivity and analysis menus suppor
   assert.doesNotMatch(html, /M1=current-source/);
 });
 
-test('schematic and block pointer paths share snapped cursor conversion', () => {
-  for (const documentKind of ['circuit', 'block']) {
-    assert.deepEqual(worldAndCursorFromClient(50, 70, rect, view), {
-      world: { x: 80, y: 120 }, cursor: { x: 80, y: 120 },
-    }, documentKind);
-  }
+test('pointer paths use snapped cursor conversion', () => {
+  assert.deepEqual(worldAndCursorFromClient(50, 70, rect, view), {
+    world: { x: 80, y: 120 }, cursor: { x: 80, y: 120 },
+  });
 });
 
 test('symmetric placement mirrors across one axis, chosen by the cursor', () => {
@@ -576,7 +572,7 @@ test('a held modifier arms symmetric placement without swallowing the ghost keys
   // ghost drops it too.
   assert.match(main, /const armed = \(mode === 'insert' && pendingPlace\?\.kind === 'component'\)\s*\n?\s*\|\| \(!!wire\?\.source && !wire\.source\.fixed\)\s*\n?\s*\|\| drag\?\.mode === 'copyghost';/);
   const drops = main.match(/pendingPlace = null;\n\s*clearSymmetry\(\);/g) || [];
-  assert.ok(drops.length >= 8, `every ghost drop clears the axis (${drops.length})`);
+  assert.ok(drops.length >= 5, `every ghost drop clears the axis (${drops.length})`);
   // Both halves land in one commit, so the pair is one undo.
   assert.match(main, /const placements = \[pendingTransform\(\), \.\.\.\(twin \? \[twin\] : \[\]\)\]/);
   // Placing a pair settles the axis, so stacking the next pair above the first

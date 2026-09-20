@@ -14,7 +14,7 @@ modify the requested circuit and to inspect its saved state.
 **Allowed:**
 
 - read this guide, `style-guide.md`, `AGENTS.md` when an exact behavior matters,
-  the requested circuit's `<workspace>/<name>.schematic.json`, its rendering
+  the requested circuit's `<workspace>/<name>.json`, its rendering
   from the `svg` command, and any `circuits/<name>/learnings.md`;
 - use `add`, `move`, `rotate`, `mirror`, `connect`, `net`, `disconnect`,
   `rename`, `value`, and `rm` against the requested circuit;
@@ -202,7 +202,7 @@ sch> eval
 sch> quit
 ```
 
-The browser live-syncs changed active-circuit revisions while visible; CLI commands set the active circuit, and mutated commands persist `<workspace>/<name>.schematic.json`. See `AGENTS.md` for the authoritative sync contract. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
+The browser live-syncs changed active-circuit revisions while visible; CLI commands set the active circuit, and mutated commands persist `<workspace>/<name>.json`. See `AGENTS.md` for the authoritative sync contract. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
 
 ## Start so the user sees you live
 
@@ -229,7 +229,7 @@ GET /api/circuits/<name>
 POST /api/circuits/<name>/generate
 ```
 
-Each saved circuit is `<workspace>/<name>.schematic.json`; older notes may
+Each saved circuit is `<workspace>/<name>.json`; older notes may
 remain in `circuits/<name>/learnings.md`. Before creating a related design,
 load and inspect the existing JSON and its learnings file. Documents in the
 workspace are the only training material — don't go hunting through
@@ -400,7 +400,7 @@ label remains visible and clear after fitting the view.
 
 ## Save and record verified notes
 
-Saving writes `<workspace>/<name>.schematic.json` (source of truth); use the
+Saving writes `<workspace>/<name>.json` (source of truth); use the
 `svg` command or the editor's Export for a review image. The CLI / HTTP
 endpoint already saves on every mutated command. Do not make extra snapshots
 or create another circuit to preserve an unaccepted draft; the current

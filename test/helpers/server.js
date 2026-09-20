@@ -58,7 +58,7 @@ export async function startServer({ env = {} } = {}) {
     root,
     workspace,
     data,
-    file: (name) => join(workspace, `${name}.schematic.json`),
+    file: (name) => join(workspace, `${name}.json`),
     request: (path, { method = 'GET', body, headers = {} } = {}) => fetch(`${base}${path}`, {
       method,
       headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers },

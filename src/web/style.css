@@ -1427,44 +1427,6 @@ button:disabled {
   border: 0 !important;
 }
 
-.canvas svg .block-node.selected {
-  stroke: var(--accent) !important;
-  stroke-width: 6px !important;
-}
-
-.canvas svg .block-connector.selected path {
-  stroke: var(--accent) !important;
-  stroke-width: 9px !important;
-}
-.canvas svg .block-connector path.selected {
-  stroke: var(--accent) !important;
-  stroke-width: 7px !important;
-}
-
-.canvas svg .block-connector.selected polygon {
-  fill: var(--accent) !important;
-}
-.canvas svg .block-connector path:hover,
-.canvas svg .block-connector:hover path {
-  stroke: var(--accent) !important;
-  stroke-width: 9px !important;
-}
-.canvas svg .block-annotation.selected,
-.canvas svg .block-arrow.selected path { stroke: var(--accent) !important; stroke-width: 7px !important; }
-.canvas svg .block-arrow.selected polygon { fill: var(--accent) !important; }
-.canvas svg .block-label.selected,
-.canvas svg .block-net-label.selected { fill: var(--accent) !important; }
-.canvas svg .block-resize-handles rect { cursor: nwse-resize; pointer-events: all; }
-.canvas svg .block-annotation-handles { pointer-events: none; }
-.canvas svg .block-annotation-handles circle { pointer-events: all; cursor: crosshair; }
-.canvas svg .block-resize-handles rect[data-block-handle="n"],
-.canvas svg .block-resize-handles rect[data-block-handle="s"] { cursor: ns-resize; }
-.canvas svg .block-resize-handles rect[data-block-handle="e"],
-.canvas svg .block-resize-handles rect[data-block-handle="w"] { cursor: ew-resize; }
-.canvas svg .block-resize-handles rect[data-block-handle="ne"],
-.canvas svg .block-resize-handles rect[data-block-handle="sw"] { cursor: nesw-resize; }
-.canvas svg .block-resize-handles rect[data-block-handle="nw"],
-.canvas svg .block-resize-handles rect[data-block-handle="se"] { cursor: nwse-resize; }
 .canvas svg .component-resize-handles rect { cursor: nwse-resize; pointer-events: all; }
 .canvas svg .component-resize-handles rect[data-component-handle="n"],
 .canvas svg .component-resize-handles rect[data-component-handle="s"] { cursor: ns-resize; }
@@ -1474,12 +1436,6 @@ button:disabled {
 .canvas svg .component-resize-handles rect[data-component-handle="sw"] { cursor: nesw-resize; }
 .canvas svg .component-resize-handles rect[data-component-handle="nw"],
 .canvas svg .component-resize-handles rect[data-component-handle="se"] { cursor: nwse-resize; }
-
-.block-info {
-  color: var(--text-dim);
-  font-size: 0.75rem;
-  line-height: 1.45;
-}
 
 /* Placement/move target: intentionally lighter than selection and wire
    overlays, while still using the editor's established blue accent. */
@@ -1765,9 +1721,7 @@ button:disabled {
 }
 
 .panel-group[data-panel="components"]:not(.collapsed),
-.panel-group[data-panel="nets"]:not(.collapsed),
-.panel-group[data-panel="blocks-list"]:not(.collapsed),
-.panel-group[data-panel="connectors-list"]:not(.collapsed) {
+.panel-group[data-panel="nets"]:not(.collapsed) {
   flex-shrink: 1;
   min-height: 6.5rem;
 }

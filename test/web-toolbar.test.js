@@ -25,12 +25,6 @@ test('layer shortcuts dispatch only in an idle normal editor', () => {
   ]) assert.equal(layerActionForKey(state), null);
 });
 
-test('block help exposes only block-domain tools', () => {
-  const help = editorKeymapText('block');
-  assert.match(help, /draw a Connector/);
-  assert.doesNotMatch(help, /electrical wire|net label|component or label/i);
-});
-
 test('keyboard help is generated from current bindings without Vim movement keys', () => {
   const help = editorKeymapText();
   assert.match(help, /Arrow keys/);
@@ -110,11 +104,9 @@ test('latch variants are named and searchable in the sequential palette', () => 
 });
 
 test('image clipboard shortcut is discoverable once in each editor keymap', () => {
-  for (const kind of ['circuit', 'block']) {
-    const help = editorKeymapText(kind);
-    assert.equal(help.split('Ctrl/Cmd+Shift+C').length - 1, 1);
-    assert.match(help, /copy selection \(or whole drawing\) as an image for other apps/);
-  }
+  const help = editorKeymapText();
+  assert.equal(help.split('Ctrl/Cmd+Shift+C').length - 1, 1);
+  assert.match(help, /copy selection \(or whole drawing\) as an image for other apps/);
 });
 
 test('recent placements keep one entry each, newest first, within the limit', () => {

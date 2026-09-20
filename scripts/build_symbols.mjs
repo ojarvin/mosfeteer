@@ -7,7 +7,7 @@
  *   npm run symbols
  *
  * Mutations go through the same command endpoint as the editor and CLI, so the
- * server persists the result as `<workspace>/symbols.schematic.json`.
+ * server persists the result as `<workspace>/symbols.json`.
  */
 
 import { resolve } from 'node:path';

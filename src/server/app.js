@@ -5,7 +5,7 @@
  * Document API: files addressed by absolute path, plus a workspace folder that
  * the document picker lists and new documents are saved into.
  * Command API: `/api/circuits/<name>` (read), `.../cmd`, `.../generate`, and `/api/active` for the
- * CLI; `<name>` is `<workspace>/<name>.schematic.json`.
+ * CLI; `<name>` is `<workspace>/<name>.json`.
  */
 
 import { spawn } from 'node:child_process';
@@ -184,7 +184,10 @@ export async function startApp({
     for (const path of settings.get().recent) {
       if (inWorkspace.has(path)) continue;
       try {
-        if ((await stat(path)).isFile()) recent.push(await describeDocument(path));
+        if ((await stat(path)).isFile()) {
+          const document = await describeDocument(path);
+          if (document.kind) recent.push(document);
+        }
       } catch { /* moved or deleted; keep the entry in case it comes back */ }
     }
     return { workspace: workspace(), home: homedir(), sep, documents, recent };
@@ -423,7 +426,7 @@ export async function startApp({
         circuit = loadDocument(await readDocumentFile(path));
       } catch (error) {
         if (error.status !== 404) throw error;
-        circuit = createDocument(body.kind || 'circuit');
+        circuit = createDocument();
       }
       const results = [];
       let mutated = false;

@@ -33,7 +33,7 @@ test('document names are portable file names and match on client and server', ()
     assert.equal(validDocumentName(name), null, name);
     assert.equal(clientValidDocumentName(name), null, name);
   }
-  assert.equal(documentPathFor('/work', ' amp '), join('/work', 'amp.schematic.json'));
+  assert.equal(documentPathFor('/work', ' amp '), join('/work', 'amp.json'));
   assert.throws(() => documentPathFor('/work', '../x'), /invalid document name/);
   assert.equal(documentNameFromPath('/work/amp.schematic.json'), 'amp');
   assert.equal(documentNameFromPath('/work/amp.json'), 'amp');
@@ -41,36 +41,37 @@ test('document names are portable file names and match on client and server', ()
 
 test('atomic writes replace whole files and can refuse to overwrite', async (t) => {
   const dir = await tempDir(t, 'atomic');
-  const path = join(dir, 'nested', 'amp.schematic.json');
+  const path = join(dir, 'nested', 'amp.json');
   await writeFileAtomic(path, 'one');
   await writeFileAtomic(path, 'two');
   assert.equal(await readFile(path, 'utf8'), 'two');
   await assert.rejects(writeFileAtomic(path, 'three', { overwrite: false }), (error) => error.code === 'exists' && error.status === 409);
   assert.equal(await readFile(path, 'utf8'), 'two');
-  assert.deepEqual(await readdir(join(dir, 'nested')), ['amp.schematic.json']);
+  assert.deepEqual(await readdir(join(dir, 'nested')), ['amp.json']);
 });
 
 test('workspace listing and folder browsing show documents, folders, and other JSON', async (t) => {
   const dir = await tempDir(t, 'browse');
   const state = JSON.stringify(new Circuit().toJSON());
-  await writeFile(join(dir, 'b.schematic.json'), state);
-  await writeFile(join(dir, 'a10.schematic.json'), JSON.stringify({ kind: 'block', version: 1, grid: 40, blocks: [], arrows: [] }));
-  await writeFile(join(dir, 'a9.schematic.json'), state);
+  await writeFile(join(dir, 'b.json'), state);
+  await writeFile(join(dir, 'a10.json'), JSON.stringify({ kind: 'block', version: 1, grid: 40, blocks: [], arrows: [] }));
+  await writeFile(join(dir, 'a9.json'), state);
   await writeFile(join(dir, 'notes.json'), '{}');
   await writeFile(join(dir, 'readme.txt'), 'hi');
-  await writeFile(join(dir, '.hidden.schematic.json'), state);
+  await writeFile(join(dir, '.hidden.json'), state);
   await mkdir(join(dir, 'project'));
 
-  assert.deepEqual((await listDocuments(dir)).map(({ name, kind }) => [name, kind]), [['a9', 'circuit'], ['a10', 'block'], ['b', 'circuit']]);
+  assert.deepEqual((await listDocuments(dir)).map(({ name, kind }) => [name, kind]), [['a9', 'circuit'], ['b', 'circuit']]);
   assert.deepEqual(await listDocuments(join(dir, 'missing')), []);
   const listing = await browseFolder(dir);
   assert.deepEqual(listing.entries.map(({ name, type }) => [name, type]), [
-    ['project', 'folder'], ['a9', 'document'], ['a10', 'document'], ['b', 'document'], ['notes.json', 'json'],
+    ['project', 'folder'], ['a9', 'document'], ['b', 'document'], ['a10.json', 'json'], ['notes.json', 'json'],
   ]);
   assert.equal(listing.parent, join(dir, '..'));
   await assert.rejects(browseFolder(join(dir, 'missing')), (error) => error.status === 404);
   await assert.rejects(readDocumentFile(join(dir, 'notes.json')), (error) => error.status === 422);
-  assert.deepEqual(await readDocumentFile(join(dir, 'b.schematic.json')), JSON.parse(state));
+  assert.deepEqual(await readDocumentFile(join(dir, 'b.json')), JSON.parse(state));
+  await assert.rejects(readDocumentFile(join(dir, 'a10.json')), (error) => error.status === 422);
 });
 
 test('settings remember the workspace and a bounded recent list', async (t) => {
@@ -79,16 +80,16 @@ test('settings remember the workspace and a bounded recent list', async (t) => {
   const store = createSettingsStore(file);
   await store.load();
   await store.update({ workspace: '/work' });
-  for (let index = 0; index < 15; index += 1) await store.addRecent(`/docs/${index}.schematic.json`);
-  await store.addRecent('/docs/3.schematic.json');
-  await store.removeRecent('/docs/14.schematic.json');
+  for (let index = 0; index < 15; index += 1) await store.addRecent(`/docs/${index}.json`);
+  await store.addRecent('/docs/3.json');
+  await store.removeRecent('/docs/14.json');
   await store.flush();
   const reloaded = createSettingsStore(file);
   const settings = await reloaded.load();
   assert.equal(settings.workspace, '/work');
-  assert.equal(settings.recent[0], '/docs/3.schematic.json');
+  assert.equal(settings.recent[0], '/docs/3.json');
   assert.equal(settings.recent.length, 11);
-  assert.ok(!settings.recent.includes('/docs/14.schematic.json'));
+  assert.ok(!settings.recent.includes('/docs/14.json'));
   assert.equal(defaultWorkspace(join(dir, 'no-home')), join(dir, 'no-home', 'Schematics'));
 });
 
@@ -124,27 +125,27 @@ test('HTTP persistence addresses documents by path and exposes conditional loads
     return response({ ok: true });
   };
   const persistence = createPersistenceAdapter({ fetchImpl });
-  const cached = await persistence.load('/a b/amp.schematic.json', { ifNoneMatch: '"rev-1"' });
+  const cached = await persistence.load('/a b/amp.json', { ifNoneMatch: '"rev-1"' });
   assert.equal(cached.notModified, true);
   assert.equal(cached.revision, 'rev-1');
   assert.deepEqual(Object.keys(cached), []);
-  await persistence.load('/a b/amp.schematic.json', { open: true });
-  await persistence.save({ path: '/a b/amp.schematic.json' }, { version: 2 }, { overwrite: true });
+  await persistence.load('/a b/amp.json', { open: true });
+  await persistence.save({ path: '/a b/amp.json' }, { version: 2 }, { overwrite: true });
   await assert.rejects(persistence.save({ name: 'taken' }, {}), (error) => error.code === 'exists' && error.status === 409);
-  await persistence.delete('/a b/amp.schematic.json');
+  await persistence.delete('/a b/amp.json');
   await persistence.browse('/a b');
   await persistence.setWorkspace('/work');
 
   assert.deepEqual(requests.map(([url, options]) => [url, options.method || 'GET']), [
-    ['/api/document?path=%2Fa+b%2Famp.schematic.json', 'GET'],
-    ['/api/document?path=%2Fa+b%2Famp.schematic.json&open=1', 'GET'],
+    ['/api/document?path=%2Fa+b%2Famp.json', 'GET'],
+    ['/api/document?path=%2Fa+b%2Famp.json&open=1', 'GET'],
     ['/api/document', 'PUT'],
     ['/api/document', 'PUT'],
-    ['/api/document?path=%2Fa+b%2Famp.schematic.json', 'DELETE'],
+    ['/api/document?path=%2Fa+b%2Famp.json', 'DELETE'],
     ['/api/browse?dir=%2Fa+b', 'GET'],
     ['/api/workspace', 'PUT'],
   ]);
-  assert.deepEqual(JSON.parse(requests[2][1].body), { path: '/a b/amp.schematic.json', state: { version: 2 }, overwrite: true });
+  assert.deepEqual(JSON.parse(requests[2][1].body), { path: '/a b/amp.json', state: { version: 2 }, overwrite: true });
 });
 
 function crc32(buffer) {

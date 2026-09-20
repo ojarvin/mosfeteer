@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit, Net } from '../src/core/model.js';
-import { BlockDiagram } from '../src/core/block-model.js';
 import { resolveCopySelection } from '../src/core/selection.js';
 import { selectionDrawing } from '../src/core/selection-drawing.js';
 
@@ -122,23 +121,6 @@ test('math selection preserves MathML and its measured footprint', () => {
   assert.doesNotMatch(svg, /data-ref=/);
 });
 
-test('block selection includes internal connectors and excludes neighbours and selection UI', () => {
-  const diagram = new BlockDiagram();
-  diagram.addBlock({ id: 'B1', text: 'First', rect: { x: 0, y: 0, w: 160, h: 160 } });
-  diagram.addBlock({ id: 'B2', text: 'Second', rect: { x: 400, y: 0, w: 160, h: 160 } });
-  diagram.addBlock({ id: 'B3', text: 'Other', rect: { x: 800, y: 0, w: 160, h: 160 } });
-  const arrow = diagram.addArrow({ id: 'A1', from: 'B1.T5', to: 'B2.T11' });
-  const before = diagram.toJSON();
-  const svg = selectionDrawing(diagram, { blockIds: ['B1', 'B2'] });
-  assert.match(svg, /First|Second/);
-  assert.doesNotMatch(svg, /Other|selected|block-terminal|resize-handle/);
-  assert.ok(svg.includes(`data-arrow-id="${arrow.id}"`));
-  const arrowSvg = selectionDrawing(diagram, { arrowIds: ['A1'] });
-  assert.ok(arrowSvg.includes(`data-arrow-id="${arrow.id}"`));
-  assert.doesNotMatch(arrowSvg, /data-block-id=/);
-  assert.deepEqual(diagram.toJSON(), before);
-});
-
 test('complete junctions retain solder dots and truncated single arms do not', () => {
   const circuit = new Circuit();
   const net = new Net(circuit, {
@@ -171,17 +153,4 @@ test('wire appearance survives a fragment split inside an authored segment', () 
   const svg = selectionDrawing(circuit, { wireKeys: ['TEE:0:1'] });
   const red = [...svg.matchAll(/<path class="wire-fixed"[^>]+stroke="#ff0000"[^>]+stroke-dasharray/g)];
   assert.equal(red.length, 2);
-});
-
-test('selected block connectors carry only their own labels', () => {
-  const diagram = new BlockDiagram();
-  diagram.addBlock({ id: 'B1', rect: { x: 0, y: 0, w: 160, h: 160 } });
-  diagram.addBlock({ id: 'B2', rect: { x: 400, y: 0, w: 160, h: 160 } });
-  const arrow = diagram.addArrow({ id: 'A1', from: 'B1.T5', to: 'B2.T11' });
-  const attached = diagram.addConnectorLabel(arrow.id, { text: 'SIGNAL' });
-  const free = diagram.addLabel({ text: 'OTHER', x: 800, y: 0 });
-  const svg = selectionDrawing(diagram, { arrowIds: [arrow.id] });
-  assert.ok(svg.includes(`data-label-id="${attached.id}"`));
-  assert.ok(!svg.includes(`data-label-id="${free.id}"`));
-  assert.doesNotMatch(svg, /data-block-id=/);
 });

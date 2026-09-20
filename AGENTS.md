@@ -41,7 +41,7 @@ node launch.mjs <folder-or-file> # launch with a workspace or document
 ```
 
 There are no npm dependencies. `data/` and `node_modules/` are runtime/local
-state and are ignored. Documents are portable `<name>.schematic.json` files;
+state and are ignored. Documents are portable `<name>.json` files;
 do not add personal documents or generated server state to the repository.
 
 ## Non-negotiable model rules

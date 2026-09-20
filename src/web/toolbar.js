@@ -186,7 +186,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+S', 'save'],
     ['Ctrl/Cmd+Shift+S', 'save as: choose a folder and name'],
     ['Ctrl/Cmd+O', 'open a document file from any folder'],
-    ['drop a file', 'drop a .schematic.json file on the window to open a copy'],
+    ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+x', 'check / save without checking'],
     ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],
     [':', 'command line (for example, :connect R1.a R2.a)'],
@@ -234,49 +234,12 @@ export const EDITOR_KEYMAP = Object.freeze([
   ]],
 ]);
 
-const BLOCK_EDITOR_KEYMAP = Object.freeze([
-  ['block', [
-    ['i', 'place a block'],
-    ['w', 'draw a Connector between block terminals; arrowheads show direction'],
-    ['Shift+L', 'attach a label to a connector; it follows connector moves'],
-    ['m', 'click a block or use the selection, then click/Enter to move it; connectors follow'],
-    ['c / y', 'copy a block or selected set; click/Enter to place repeated copies'],
-    ['Shift+m', 'detached move for selected blocks or connectors; internal connectors stay attached'],
-    ['Shift+N / a / b / l', 'place text, arrow, box, or line annotations'],
-    ['Delete / dd', 'delete selected blocks, connectors, or annotations'],
-    ['Enter / F2 / double-click', 'edit the selected block or annotation text'],
-    ['r', 'rotate selected blocks 90°'],
-    ['Shift+r / Ctrl+r', 'mirror block rectangles (no visual change)'],
-    ['Shift+Up / Shift+Down', 'restack selected objects'],
-    ['v', 'visual selection'],
-    ['F / # / C / G', 'fit / grid / crosshair / guides'],
-    ['F5', 'reload the application'],
-    ['u / U / Ctrl/Cmd+Z / Ctrl/Cmd+Y', 'undo / redo'],
-    ['Ctrl/Cmd+A', 'select all blocks, connectors, and annotations'],
-    ['Ctrl/Cmd+C', 'copy one selected object\'s style'],
-    ['Ctrl/Cmd+Shift+C', 'copy selection (or whole drawing) as an image for other apps'],
-    ['Ctrl/Cmd+Shift+V', 'paste the copied style'],
-    ['Ctrl/Cmd+S', 'save'],
-    ['D', 'toggle dark mode'],
-    ['Esc', 'cancel the active block tool'],
-    ['resize handles', 'drag a selected block handle; minimum two grid cells'],
-    ['style buttons', 'color, line style, and width apply to selected objects'],
-  ]],
-  ['mouse', [
-    ['left', 'click/select; Move and Copy use a source click, then a destination click'],
-    ['double-click', 'edit a block name on canvas or in the Blocks toolbar'],
-    ['connector label', 'Shift+L, click a connector; labels are visual and non-electrical'],
-    ['connector', 'w, click a terminal, click guide points, click a target terminal'],
-    ['middle / wheel', 'pan / zoom'],
-  ]],
-]);
-
-export function editorKeymap(kind = 'all') {
-  return kind === 'block' ? BLOCK_EDITOR_KEYMAP : EDITOR_KEYMAP;
+export function editorKeymap() {
+  return EDITOR_KEYMAP;
 }
 
-export function editorKeymapText(kind = 'all') {
-  const keymap = editorKeymap(kind);
+export function editorKeymapText() {
+  const keymap = editorKeymap();
   return keymap.flatMap(([section, entries]) => [
     `-- ${section} --`,
     ...entries.map(([key, description]) => `${key.padEnd(24)}${description}`),
