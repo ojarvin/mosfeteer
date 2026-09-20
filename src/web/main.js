@@ -8650,6 +8650,7 @@ function appendContextActions(menu, target) {
   }
   if (target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'M' });
+    appendContextItem(group, 'Detached move', () => activateMove('detached'), { shortcut: 'Shift+M' });
     appendContextItem(group, 'Copy', activateCopy, { shortcut: 'C' });
     appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
     appendContextItem(group, 'Bring to front', () => restackSelected('front'), { shortcut: 'Shift+↑' });
