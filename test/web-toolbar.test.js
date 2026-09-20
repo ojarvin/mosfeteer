@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INSERT_RECENT_LIMIT, componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, placementSearchScore, withRecentType, PLACEMENT_ALIASES, PLACEMENT_LABELS } from '../src/web/toolbar.js';
+import { INSERT_RECENT_LIMIT, componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, minimalRevealScroll, placementSearchScore, withRecentType, PLACEMENT_ALIASES, PLACEMENT_LABELS } from '../src/web/toolbar.js';
 
 test('component palette omits generated solder dots but keeps real components', () => {
   const items = componentPaletteItems([
@@ -131,4 +131,11 @@ test('recent placements keep one entry each, newest first, within the limit', ()
   const before = [...recent];
   assert.deepEqual(withRecentType(recent, null), before);
   assert.deepEqual(recent, before);
+});
+
+test('mode toolbar reveal scrolls only the hidden distance and clamps at the rail ends', () => {
+  assert.equal(minimalRevealScroll(0, 100, 20, 40, 30, 200), 30, 'visible targets do not move the rail');
+  assert.equal(minimalRevealScroll(0, 100, 120, 140, 30, 200), 70, 'below-view targets move by their overflow');
+  assert.equal(minimalRevealScroll(0, 100, -40, -20, 30, 200), 0, 'above-view targets move by their overflow');
+  assert.equal(minimalRevealScroll(0, 100, 320, 340, 30, 200), 200, 'the rail does not scroll beyond its end');
 });

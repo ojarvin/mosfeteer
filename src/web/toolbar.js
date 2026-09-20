@@ -125,6 +125,16 @@ export function withRecentType(list, type, limit = INSERT_RECENT_LIMIT) {
   return [type, ...list.filter((entry) => entry !== type)].slice(0, limit);
 }
 
+/** Return the smallest clamped scroll offset that fully reveals a target. */
+export function minimalRevealScroll(viewStart, viewEnd, targetStart, targetEnd, scroll = 0, maxScroll = 0) {
+  const delta = targetStart < viewStart
+    ? targetStart - viewStart
+    : targetEnd > viewEnd
+      ? targetEnd - viewEnd
+      : 0;
+  return Math.max(0, Math.min(maxScroll, scroll + delta));
+}
+
 /** Keep generated junction markers out of the user-facing component list. */
 export function componentPaletteItems(components) {
   return [...components].filter((component) => component.type !== 'solder');

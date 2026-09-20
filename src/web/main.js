@@ -34,7 +34,7 @@ import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
-import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
+import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
 import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
@@ -303,6 +303,7 @@ function installButtonIcons() {
 
 installButtonIcons();
 preloadToolCursors();
+const modeToolbarEl = document.querySelector('.mode-toolbar');
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
@@ -10348,16 +10349,49 @@ function flashToolButton(button) {
 }
 
 let lastToolbarState = null;
+let lastModeToolbarControl = null;
+
+function modeToolbarControlFor(state) {
+  if (!modeToolbarEl) return null;
+  return toolbarElements(state.toolbar).find((el) => (
+    el.classList.contains('mode-control')
+    && !el.hidden
+    && el.closest('.mode-toolbar') === modeToolbarEl
+  )) || null;
+}
+
+/** Reveal a newly selected mode with the smallest possible rail scroll. */
+function revealModeToolbarControl(control) {
+  if (!modeToolbarEl || !control) return;
+  const horizontal = getComputedStyle(modeToolbarEl).flexDirection === 'row';
+  const rail = modeToolbarEl.getBoundingClientRect();
+  const visibleLeft = rail.left + modeToolbarEl.clientLeft;
+  const visibleTop = rail.top + modeToolbarEl.clientTop;
+  const visibleRight = visibleLeft + modeToolbarEl.clientWidth;
+  const visibleBottom = visibleTop + modeToolbarEl.clientHeight;
+  const target = control.getBoundingClientRect();
+  const nextScroll = horizontal
+    ? minimalRevealScroll(visibleLeft, visibleRight, target.left, target.right, modeToolbarEl.scrollLeft, Math.max(0, modeToolbarEl.scrollWidth - modeToolbarEl.clientWidth))
+    : minimalRevealScroll(visibleTop, visibleBottom, target.top, target.bottom, modeToolbarEl.scrollTop, Math.max(0, modeToolbarEl.scrollHeight - modeToolbarEl.clientHeight));
+  if (horizontal) {
+    if (Math.abs(nextScroll - modeToolbarEl.scrollLeft) > 0.5) modeToolbarEl.scrollLeft = nextScroll;
+  } else {
+    if (Math.abs(nextScroll - modeToolbarEl.scrollTop) > 0.5) modeToolbarEl.scrollTop = nextScroll;
+  }
+}
 
 /** Apply all interaction affordances from one derived state. */
 function syncInteractionUI() {
   const state = interactionState();
+  const modeControl = modeToolbarControlFor(state);
   if (lastToolbarState !== null && state.toolbar !== lastToolbarState) {
     for (const el of toolbarElements(state.toolbar)) {
       if (el.classList.contains('mode-control') && !el.hidden) flashToolButton(el);
     }
   }
+  if (modeControl && modeControl !== lastModeToolbarControl) revealModeToolbarControl(modeControl);
   lastToolbarState = state.toolbar;
+  lastModeToolbarControl = modeControl;
   for (const action of Object.keys(TOOLBAR_IDS)) {
     const active = state.toolbar === action;
     for (const el of toolbarElements(action)) {
@@ -12119,9 +12153,36 @@ window.addEventListener('beforeunload', (ev) => {
 });
 
 const paneEl = document.querySelector('.canvas-pane');
+
+function syncModeToolbarOverflow() {
+  if (!modeToolbarEl) return;
+  const styles = getComputedStyle(modeToolbarEl);
+  const remaining = styles.flexDirection === 'row'
+    ? modeToolbarEl.scrollWidth - modeToolbarEl.clientWidth - modeToolbarEl.scrollLeft
+    : modeToolbarEl.scrollHeight - modeToolbarEl.clientHeight - modeToolbarEl.scrollTop;
+  modeToolbarEl.toggleAttribute('data-overflow-end', remaining > 1);
+}
+
+if (modeToolbarEl) {
+  modeToolbarEl.addEventListener('scroll', syncModeToolbarOverflow, { passive: true });
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(syncModeToolbarOverflow).observe(modeToolbarEl);
+  }
+  if (typeof MutationObserver !== 'undefined') {
+    new MutationObserver(syncModeToolbarOverflow).observe(modeToolbarEl, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class', 'hidden', 'style'],
+    });
+  }
+  syncModeToolbarOverflow();
+}
+
 if (paneEl && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(() => {
     resizeView();
+    syncModeToolbarOverflow();
     render();
   }).observe(paneEl);
 }

@@ -2552,16 +2552,35 @@ button.off {
   top: 8px;
   left: 8px;
   width: 44px;
+  max-height: calc(100% - 16px);
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
   padding: 4px;
   background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
   border: 1px solid var(--border);
   border-radius: 7px;
   box-shadow: 0 2px 8px rgba(20, 24, 34, 0.16);
+}
+
+/* The fade is conditional so a full-height rail does not make its last tool
+   look disabled. The data attribute is maintained by main.js as the rail is
+   resized or scrolled. */
+.mode-toolbar[data-overflow-end] {
+  box-shadow:
+    inset 0 -18px 12px -14px color-mix(in srgb, var(--bg-panel) 96%, transparent),
+    0 2px 8px rgba(20, 24, 34, 0.16);
+}
+
+.mode-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .mode-toolbar .toolbar-group-label {
@@ -2699,9 +2718,19 @@ button.off {
   .mode-toolbar {
     right: 6px;
     width: auto;
+    max-height: none;
     flex-direction: row;
     flex-wrap: nowrap;
+    overflow-y: hidden;
     overflow-x: auto;
+    scrollbar-gutter: auto;
+    scrollbar-width: none;
+  }
+
+  .mode-toolbar[data-overflow-end] {
+    box-shadow:
+      inset -18px 0 12px -14px color-mix(in srgb, var(--bg-panel) 96%, transparent),
+      0 2px 8px rgba(20, 24, 34, 0.16);
   }
 
   .mode-toolbar .mode-control {
