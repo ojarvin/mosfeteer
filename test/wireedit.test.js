@@ -156,6 +156,42 @@ test('a run cannot slide past a neighbour (no inverted fold)', () => {
   ortho(pts);
 });
 
+test('a preview run may pass a neighbour so a later legal drop is reachable', () => {
+  const pts = [
+    { x: 0, y: 400 }, { x: 0, y: 0 },
+    { x: 400, y: 0 }, { x: 400, y: 200 },
+  ];
+  moveWireRun(pts, 'h', 0, 800, {
+    segment: 2,
+    runBounds: { lo: 1, hi: 2 },
+    allowPastNeighbors: true,
+  });
+  assert.deepEqual(pts, [
+    { x: 0, y: 400 }, { x: 0, y: 800 },
+    { x: 400, y: 800 }, { x: 400, y: 200 },
+  ]);
+  ortho(pts);
+});
+
+test('an interior run preserves adjacent diagonal geometry while moving', () => {
+  const pts = [
+    { x: 0, y: 0 }, { x: 80, y: 40 },
+    { x: 320, y: 40 }, { x: 400, y: 0 },
+  ];
+  moveWireRun(pts, 'h', 40, 200, {
+    segment: 2,
+    runBounds: { lo: 1, hi: 2 },
+    start: { type: 'free' },
+    end: { type: 'free' },
+    allowPastNeighbors: true,
+    preserveDiagonalNeighbors: true,
+  });
+  assert.deepEqual(pts, [
+    { x: 0, y: 0 }, { x: 80, y: 40 }, { x: 80, y: 200 },
+    { x: 320, y: 200 }, { x: 320, y: 40 }, { x: 400, y: 0 },
+  ]);
+});
+
 test('collapseCollinear removes duplicates and collinear middles, preserving endpoints', () => {
   const pts = [{ x: 0, y: 0 }, { x: 0, y: 40 }, { x: 0, y: 80 }, { x: 100, y: 80 }, { x: 200, y: 80 }, { x: 200, y: 0 }];
   collapseCollinear(pts);

@@ -7,12 +7,16 @@ import { GRID, snap } from './grid.js';
  * to treat aligned segments on either side of a terminal or junction
  * independently. Dragging a segment moves its bounded run perpendicularly.
  * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
- * omitted metadata uses terminal-endpoint behavior.
+ * omitted metadata uses terminal-endpoint behavior. `allowPastNeighbors` is
+ * for reversible editor previews: it lets a run pass adjacent bends so a
+ * later legal drop is reachable; the caller must validate before committing.
  *
  * Key behaviors:
- *  - The run may slide as far as an adjacent run; reaching it collapses the
- *    shared corner, and the now-invisible collinear vertex is removed.
- *  - The run never slides past a neighbour (no inverted folds).
+ *  - By default the run may slide as far as an adjacent run; reaching it
+ *    collapses the shared corner, and the now-invisible collinear vertex is
+ *    removed.
+ *  - By default the run never slides past a neighbour (no inverted folds);
+ *    reversible previews may opt out until their final geometry is validated.
  *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
  *    wire with an added connector segment so the pin stays connected.
  *  - A standalone two-point bridge between two junctions moves both junction
@@ -130,8 +134,12 @@ export function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpo
  * `endpointMeta.runBounds` and `endpointMeta.breaks` may bound the run at
  * electrical topology points; otherwise the maximal run is used. The run may
  * slide as far as an adjacent run (reaching it collapses the shared corner)
- * but never past it (no inverted folds). Runs touching a terminal endpoint
+ * but, by default, never past it (no inverted folds). Reversible previews may
+ * set `allowPastNeighbors` and validate the resulting geometry on drop. Runs touching a terminal endpoint
  * keep that pin fixed and extend the wire with a connector segment.
+ * `preserveDiagonalNeighbors` keeps a diagonal segment immediately before or
+ * after an interior run fixed, adding a perpendicular connector at the old
+ * corner instead of stretching the diagonal while the run moves.
  * `endpointMeta` is optional for compatibility with callers whose paths are
  * known to be terminal-ended: `{ start: { type }, end: { type } }`.
  * Returns the perpendicular line value the run actually ended on (== `line`
@@ -168,16 +176,30 @@ export function moveWireRun(pts, orient, line, target, endpointMeta = null) {
     else upper = Math.min(upper, v);
   }
   let t = snap(target);
-  if (t < val) t = Math.max(t, lower);
-  else if (t > val) t = Math.min(t, upper);
+  if (!endpointMeta?.allowPastNeighbors) {
+    if (t < val) t = Math.max(t, lower);
+    else if (t > val) t = Math.min(t, upper);
+  }
   if (t === val) return val;
 
   if (!loEnd && !hiEnd) {
     // Interior run: slide freely (possibly up to a neighbour to collapse).
+    const preserveDiagonals = endpointMeta?.preserveDiagonalNeighbors === true;
+    const diagonalStart = preserveDiagonals && pts[lo - 1] && pts[lo] &&
+      pts[lo - 1].x !== pts[lo].x && pts[lo - 1].y !== pts[lo].y
+      ? { ...pts[lo] } : null;
+    const diagonalEnd = preserveDiagonals && pts[hi] && pts[hi + 1] &&
+      pts[hi].x !== pts[hi + 1].x && pts[hi].y !== pts[hi + 1].y
+      ? { ...pts[hi] } : null;
     for (let i = lo; i <= hi; i++) {
       if (orient === 'h') pts[i].y = t;
       else pts[i].x = t;
     }
+    // Keep a mixed route's diagonal geometry literal. The inserted old corner
+    // is connected to the moved run by the perpendicular lead that a normal
+    // orthogonal bend would have stretched into the diagonal otherwise.
+    if (diagonalStart) pts.splice(lo, 0, diagonalStart);
+    if (diagonalEnd) pts.splice(hi + (diagonalStart ? 2 : 1), 0, diagonalEnd);
     collapseCollinear(pts);
     return t;
   }

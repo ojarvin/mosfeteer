@@ -36,10 +36,11 @@ export const PLACEMENT_LABELS = {
 
 export const PLACEMENT_ALIASES = {
   resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'],
-  nmos: ['mos', 'n-channel'], pmos: ['mos', 'p-channel'],
-  nmosb: ['mos', 'body', 'bulk', 'n-channel'], pmosb: ['mos', 'body', 'bulk', 'p-channel'],
+  nmos: ['mos', 'n-channel', 'fet'], pmos: ['mos', 'p-channel', 'fet'],
+  nmosb: ['mos', 'body', 'bulk', 'n-channel', 'fet'], pmosb: ['mos', 'body', 'bulk', 'p-channel', 'fet'],
   npn: ['bjt'], pnp: ['bjt'],
   supply: ['vdd', 'vcc', 'power'], vcm: ['common', 'potential', 'vcm'], input: ['in'], output: ['out'], inputoutput: ['io'],
+  ground: ['gnd', 'vss'],
   current_source: ['idc', 'current'], voltage_source: ['vdc', 'voltage'],
   vccs: ['transconductance', 'controlled current', 'gm'],
   opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
@@ -82,7 +83,7 @@ export const PLACEMENT_ALIASES = {
   latch_rstb_qb: ['latch', 'level sensitive', 'sequential', 'active low reset', 'complementary'],
   latch_enb_rstb: ['latch', 'level sensitive', 'sequential', 'active low'],
   latch_enb_rstb_qb: ['latch', 'level sensitive', 'sequential', 'active low', 'complementary'],
-  variable_resistor: ['potentiometer', 'pot'], variable_capacitor: ['var cap'], variable_inductor: ['var coil'],
+  variable_resistor: ['potentiometer', 'pot', 'var res', 'tunable'], variable_capacitor: ['var cap', 'tunable'], variable_inductor: ['var coil', 'tunable'],
   switch_open: ['switch', 'open'], switch_closed: ['switch', 'closed'], solder: ['junction', 'dot'],
   label: ['annotation', 'text'], block: ['block', 'rectangle', 'node'],
   signal_sum: ['sum', 'summer', 'signal flow', 'junction'],

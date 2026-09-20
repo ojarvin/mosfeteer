@@ -702,6 +702,26 @@ test('terminal commits preserve the routed preview without manual waypoints', ()
   assert.doesNotMatch(connect, /wire\.points\.length \? draftRoutePath/);
 });
 
+test('wire previews can cross neighbours but validate the final drop, and canvas menus do not promise rename by double-click', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const drag = main.slice(main.indexOf('function managedWireDragAt('), main.indexOf('\nfunction canvasMouseDown', main.indexOf('function managedWireDragAt(')));
+  assert.match(drag, /allowPastNeighbors: true/);
+  assert.match(drag, /preserveDiagonalNeighbors: true/);
+  const canvasDown = main.slice(main.indexOf('function canvasMouseDown('), main.indexOf('\nfunction beginObjectMove', main.indexOf('function canvasMouseDown(')));
+  assert.match(canvasDown, /allowPastNeighbors: true/);
+  assert.match(canvasDown, /preserveDiagonalNeighbors: true/);
+  const upStart = main.indexOf('function canvasMouseUp(');
+  const mouseup = main.slice(upStart, main.indexOf("\ncanvasEl.addEventListener('mousedown'", upStart));
+  assert.match(mouseup, /newWireBodyViolation\(drag\.startSnapshot, touchedNets\)/);
+  assert.match(mouseup, /drag\.mode === 'wireseg' && !drag\.modal && movedOut\) canvasMouseMove\(ev\)/);
+
+  const wireRename = main.match(/appendContextItem\(group, 'Rename net…',[^\n]*/)?.[0];
+  assert.ok(wireRename, 'the wire context menu still offers net rename');
+  assert.doesNotMatch(wireRename, /shortcut: 'dbl-click'/);
+  const netList = main.slice(main.indexOf('function renderNets('), main.indexOf('\nfunction startNetRename(', main.indexOf('function renderNets(')));
+  assert.match(netList, /row\.addEventListener\('dblclick', \(\) => \{[\s\S]*startNetRename\(net, ref\)/);
+});
+
 test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const arm = main.slice(main.indexOf('function armCopyGhostMirror('), main.indexOf('function dropCopyGhostMirror('));

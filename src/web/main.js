@@ -4009,6 +4009,18 @@ function newCrossNetOverlap(beforeSnapshot, touchedNetIds) {
   return null;
 }
 
+/** Name a new wire-through-body violation on the nets changed by a drag.
+ * Existing violations are tolerated so an unrelated pre-existing error does
+ * not make this gesture impossible; a newly created geometry violation still
+ * rejects the final drop. */
+function newWireBodyViolation(beforeSnapshot, touchedNetIds) {
+  const bodyIssues = (doc) => evaluate(doc).issues
+    .filter((issue) => issue.kind === 'wire-through-body' && touchedNetIds.has(issue.netId));
+  const issueKey = (issue) => JSON.stringify([issue.netId, issue.refs || [], issue.points || []]);
+  const before = new Set(bodyIssues(Circuit.fromJSON(JSON.parse(beforeSnapshot))).map(issueKey));
+  return bodyIssues(circuit).find((issue) => !before.has(issueKey(issue)))?.message || null;
+}
+
 /** Abort an in-progress mouse drag. A cancelled wire run is restored to its
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
@@ -5032,6 +5044,8 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
       breaks,
       runBounds,
       interiorRun: editable.interiorRun,
+      allowPastNeighbors: true,
+      preserveDiagonalNeighbors: true,
     };
     runs.push({
       net: currentNet,
@@ -5623,6 +5637,11 @@ function canvasMouseDown(ev) {
         breaks,
         runBounds,
         interiorRun: editable.interiorRun,
+        // This is a reversible preview.  The pointer must be able to carry
+        // the run through intermediate overlaps; the final geometry is
+        // checked when the gesture is released.
+        allowPastNeighbors: true,
+        preserveDiagonalNeighbors: true,
       };
       runs.push({
         net: n,
@@ -6541,6 +6560,11 @@ function canvasMouseUp(ev) {
     finishDiagonalSegmentDrag();
     return;
   }
+  // Repaints replace the SVG beneath the pointer while a wire is being
+  // dragged, so the final mousemove can be missed. Apply the release point
+  // once more before validating; otherwise a legal drop beyond an obstacle
+  // can be rejected using the last intermediate overlap instead.
+  if (drag.mode === 'wireseg' && !drag.modal && movedOut) canvasMouseMove(ev);
   if (drag.mode === 'zoom') {
     if (drag.moved) zoomToWorldRect(worldRect(drag.startWorld, w));
   } else if (drag.mode === 'wireseg') {
@@ -6652,6 +6676,8 @@ function canvasMouseUp(ev) {
       // merged: a drop that creates one is rejected, not committed.
       const collision = newCrossNetOverlap(drag.startSnapshot, touchedNets);
       if (collision) throw new Error(`the wire would overlap net ${collision}`);
+      const bodyViolation = newWireBodyViolation(drag.startSnapshot, touchedNets);
+      if (bodyViolation) throw new Error(bodyViolation);
       if (snapshot() !== drag.startSnapshot) {
         markModelChanged(); // committed wire drag changed net geometry
         recordHistoryEntry(drag.startSnapshot, true, 'none');
@@ -8247,7 +8273,7 @@ function appendContextActions(menu, target) {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 'T' });
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
-    appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))), { shortcut: 'dbl-click' });
+    appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
   }
   if (target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'M' });
