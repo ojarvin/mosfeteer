@@ -92,6 +92,24 @@ test('wire arrowheads stop at the visible edge of a schematic block', () => {
   assert.match(svg, /<polygon points="0 -84\.80 18 -116\.80 -18 -116\.80"/);
 });
 
+test('all non-solid wire strokes stop at the same arrowhead shaft as solid wires', () => {
+  const c = new Circuit();
+  c.addComponent('block', { refdes: 'B1', x: 0, y: 0 });
+  const net = new Net(c, {
+    id: 'N1',
+    routingMode: 'fixed',
+    fixedPaths: [{ points: [{ x: 0, y: -240 }, { x: 0, y: -80 }], start: null, end: { comp: 'B1', term: 'T9' } }],
+    wireStyles: { '0:1': { lineStyle: 'dashed', arrowhead: 'end' } },
+  });
+  c.nets.set(net.id, net);
+  for (const [lineStyle, dash] of [['dashed', '12 12'], ['dotted', '2 10'], ['dash-dot', '14 10 3 10']]) {
+    net.wireStyles['0:1'] = { lineStyle, arrowhead: 'end' };
+    const svg = svgString(c);
+    assert.match(svg, new RegExp(`<path class="wire-fixed" d="M 0 -240 L 0 -116\\.80"[^>]+stroke-dasharray="${dash}"`));
+    assert.match(svg, /<polygon points="0 -84\.80 18 -116\.80 -18 -116\.80"/);
+  }
+});
+
 test('styled segments can place a shared wire arrowhead only at path endpoints', () => {
   const c = new Circuit();
   const net = new Net(c, {

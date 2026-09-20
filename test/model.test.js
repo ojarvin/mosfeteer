@@ -4,6 +4,7 @@ import { Circuit, ComponentInstance, Net, parseTermRef, LabelInstance, applyMark
 import { GRID, snap, onGrid } from '../src/core/grid.js';
 import { segThroughInterior } from '../src/core/router.js';
 import { svgString } from '../src/core/render.js';
+import { moveWireRun } from '../src/core/wireedit.js';
 
 test('parseTermRef parses REFDES.TERM and rejects malformed', () => {
   assert.deepEqual(parseTermRef('R1.a'), { comp: 'R1', term: 'a' });
@@ -3001,6 +3002,71 @@ test('moving a wire endpoint keeps its arrowhead on the new logical endpoint', (
   const svg = svgString(c);
   assert.match(svg, /<polygon points="160 315\.20 178 283\.20 142 283\.20"/);
   assert.doesNotMatch(svg, /<polygon points="0 120/);
+});
+
+test('dragging a styled bend keeps a two-terminal route as one branch', () => {
+  const c = new Circuit();
+  c.addComponent('block', { refdes: 'B1', x: 320, y: 400 });
+  c.addComponent('block', { refdes: 'B2', x: 280, y: 720 });
+  const net = c.createWireNet({
+    branches: [[
+      { x: 320, y: 480 },
+      { x: 320, y: 560 },
+      { x: 280, y: 560 },
+      { x: 280, y: 640 },
+    ]],
+    wireStyles: { '0:3': { arrowhead: 'end' } },
+  });
+  net.terminals = [
+    { comp: 'B1', term: 'T11' },
+    { comp: 'B2', term: 'T9' },
+  ];
+
+  const dragged = net.branches[0].map((point) => ({ ...point }));
+  moveWireRun(dragged, 'h', 560, 520);
+  net.branches[0] = dragged;
+  net.route = dragged.map((point) => ({ ...point }));
+  c._reduceNet(net);
+
+  assert.deepEqual(net.branches, [[
+    { x: 320, y: 480 },
+    { x: 320, y: 520 },
+    { x: 280, y: 520 },
+    { x: 280, y: 640 },
+  ]]);
+  assert.equal(net.wireStyles['0:3'].arrowhead, 'end', 'the head stays on the logical route end');
+  assert.deepEqual(net.junctions, [], 'an ordinary bend is not promoted to a junction');
+});
+
+test('collapsing a styled route keeps its arrowhead on the surviving end segment', () => {
+  const c = new Circuit();
+  const net = c.createWireNet({
+    branches: [[
+      { x: 0, y: 0 },
+      { x: 0, y: 80 },
+      { x: 160, y: 80 },
+      { x: 160, y: 160 },
+    ]],
+    wireStyles: {
+      '0:1': { arrowhead: 'none' },
+      '0:2': { arrowhead: 'none' },
+      '0:3': { arrowhead: 'end' },
+    },
+  });
+  const before = net.paths();
+  const savedStyles = Object.fromEntries(Object.entries(net.wireStyles).map(([key, style]) => [key, { ...style }]));
+  net.branches = [[
+    { x: 0, y: 0 },
+    { x: 0, y: 80 },
+    { x: 160, y: 80 },
+  ]];
+  net.route = net.branches[0].map((point) => ({ ...point }));
+
+  c._reanchorWireArrowheads(net, before, net.paths(), savedStyles);
+
+  assert.equal(net.wireStyles['0:1'].arrowhead, 'none');
+  assert.equal(net.wireStyles['0:2'].arrowhead, 'end');
+  assert.equal(Object.keys(net.wireStyles).includes('0:3'), false, 'the removed segment has no stale style');
 });
 
 test('wirePointTo preserves an explicit target path at a same-net crossing', () => {

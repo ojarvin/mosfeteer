@@ -6103,7 +6103,12 @@ function captureRunNetGeometry(runs) {
   const snapshots = new Map();
   for (const run of runs) {
     if (snapshots.has(run.net.id)) continue;
-    snapshots.set(run.net.id, { id: run.net.id, net: run.net, ...captureRouteGeometry(run.net) });
+    snapshots.set(run.net.id, {
+      id: run.net.id,
+      net: run.net,
+      ...captureRouteGeometry(run.net),
+      wireStyles: Object.fromEntries(Object.entries(run.net.wireStyles || {}).map(([key, style]) => [key, { ...style }])),
+    });
   }
   return snapshots;
 }
@@ -7022,6 +7027,18 @@ function canvasMouseUp(ev) {
       for (const id of touchedNets) {
         const net = circuit.nets.get(id);
         if (!net) continue;
+        // A segment drag can collapse a corner, changing the segment indexes
+        // that carry endpoint arrowheads. Re-anchor from the pointer-down
+        // geometry before rerouting/reducing the edited path, otherwise the
+        // head can remain on a removed segment and disappear.
+        const saved = drag.netSnapshots?.get(id);
+        if (saved?.wireStyles) {
+          net.wireStyles = Object.fromEntries(
+            Object.entries(saved.wireStyles).map(([key, style]) => [key, { ...style }]),
+          );
+          const previousPaths = saved.branches || (saved.route ? [saved.route] : []);
+          circuit._reanchorWireArrowheads(net, previousPaths, net.paths(), saved.wireStyles);
+        }
         if (!literalNets.has(id)) {
           rerouteNet(net); // re-anchor ordinary terminal legs
         }

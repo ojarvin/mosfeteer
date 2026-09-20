@@ -2682,8 +2682,8 @@ export class Circuit {
 
   /** Keep segment-local arrowheads attached to a branch's logical endpoints
    * when component movement inserts, removes, or reroutes bend segments. */
-  _reanchorWireArrowheads(net, previousPaths = [], nextPaths = []) {
-    const sourceStyles = net.wireStyles || {};
+  _reanchorWireArrowheads(net, previousPaths = [], nextPaths = [], savedStyles = null) {
+    const sourceStyles = savedStyles || net.wireStyles || {};
     const rebuilt = { ...sourceStyles };
     for (const [branch, previous] of previousPaths.entries()) {
       const current = nextPaths[branch];
@@ -3973,8 +3973,15 @@ export class Circuit {
       .map((t) => this.getComponent(t.comp)?.terminalWorld(t.term))
       .filter(Boolean);
     const styledSegments = this._styledSegments(net, paths);
-    const reductionAnchors = styledSegments.flatMap(({ a, b }) => [a, b]);
-    const reduced = reduceBranches(paths, [...terminals, ...reductionAnchors], net.allowDiagonal);
+    // Arrowheads describe logical endpoints of a whole route, not electrical
+    // topology.  Do not let their segment endpoints turn an ordinary corner
+    // into a branch.  Keep the older style-boundary anchors for non-arrow
+    // segment appearance so existing per-segment color/dash partitions remain
+    // stable; arrowhead-bearing styles are redistributed geometrically below.
+    const styleAnchors = styledSegments
+      .filter(({ style }) => style.arrowhead === undefined)
+      .flatMap(({ a, b }) => [a, b]);
+    const reduced = reduceBranches(paths, [...terminals, ...styleAnchors], net.allowDiagonal);
     if (!reduced.length || samePolylineSet(paths, reduced)) return;
     this._installRestyledBranches(net, reduced, styledSegments);
     net.junctions = this._netJunctions(net, net.branches);
@@ -4002,8 +4009,33 @@ export class Circuit {
       (b.x - a.x) * (p.y - a.y) === (b.y - a.y) * (p.x - a.x) &&
       p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) &&
       p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
+    const same = (a, b) => a.x === b.x && a.y === b.y;
+    const styledPoints = styledSegments.flatMap(({ a, b }) => [a, b]);
+    // Keep style boundaries as vertices of a path, but never as separate
+    // branches.  A color/dash/arrowhead boundary is not an electrical
+    // junction; retaining it in the polyline is enough for per-segment
+    // rendering and keeps ordinary elbows connected.
+    const restyledPaths = paths.map((path) => {
+      const expanded = [path[0]];
+      for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1];
+        const b = path[i];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const boundaries = styledPoints
+          .filter((point) => !same(point, a) && !same(point, b) && onSegment(point, a, b))
+          .sort((left, right) =>
+            ((left.x - a.x) * dx + (left.y - a.y) * dy) -
+            ((right.x - a.x) * dx + (right.y - a.y) * dy));
+        for (const point of boundaries) {
+          if (!same(expanded.at(-1), point)) expanded.push({ ...point });
+        }
+        if (!same(expanded.at(-1), b)) expanded.push({ ...b });
+      }
+      return expanded;
+    });
     const rebuiltStyles = {};
-    paths.forEach((path, branch) => {
+    restyledPaths.forEach((path, branch) => {
       for (let i = 1; i < path.length; i++) {
         const match = styledSegments.find(({ a, b }) =>
           onSegment(path[i - 1], a, b) && onSegment(path[i], a, b));
@@ -4011,8 +4043,8 @@ export class Circuit {
       }
     });
     net.wireStyles = rebuiltStyles;
-    net.branches = paths.map((p) => clonePath(p, net.allowDiagonal));
-    net.route = clonePath(paths[0], net.allowDiagonal);
+    net.branches = restyledPaths.map((p) => clonePath(p, net.allowDiagonal));
+    net.route = clonePath(restyledPaths[0], net.allowDiagonal);
   }
 
   /** Topology growth keeps authored branches, but a new branch that merely
