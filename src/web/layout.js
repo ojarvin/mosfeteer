@@ -290,79 +290,32 @@ function alignGuide(peers, moving, axis, grid) {
   return { kind: 'align', axis, value, points };
 }
 
-// Free space is not the same as the space between two centres. A wire crossing
-// the gap, a label, a stub -- anything drawn narrows what is actually empty,
-// and an object dropped at the midpoint of two component centres can sit hard
-// against the ink on one side. The visual centre is measured between the
-// facing edges of whatever is drawn, so both readings can be offered and the
-// difference between them is the thing worth seeing.
-const MIN_VISUAL_GAP_CELLS = 2;
-
-/** The occupied rectangles that face the moving object across `axis`: only
- *  what shares its corridor on the other axis, since ink elsewhere in the
- *  drawing does not narrow this gap. */
-function facingEdges(moving, occupancy, axis, grid) {
-  const other = axis === 'x' ? 'y' : 'x';
-  const size = other === 'x' ? 'w' : 'h';
-  const span = moving.bbox[size];
-  // The corridor is the moving object's own width, never less than a cell, so
-  // a port-sized marker still sees the devices it is being placed between.
-  const half = Math.max(span, grid) / 2;
-  const lo = moving.anchor[other] - half;
-  const hi = moving.anchor[other] + half;
-  const at = moving.anchor[axis];
-  let below = -Infinity;
-  let above = Infinity;
-  for (const rect of occupancy || []) {
-    if (rect.id === moving.id) continue;
-    const rLo = rect[other];
-    const rHi = rect[other] + rect[size];
-    if (rHi <= lo || rLo >= hi) continue; // not in the corridor
-    const near = rect[axis];
-    const far = rect[axis] + rect[axis === 'x' ? 'w' : 'h'];
-    if (far <= at) below = Math.max(below, far);
-    else if (near >= at) above = Math.min(above, near);
-    else return null; // the object overlaps this ink: there is no gap to centre in
-  }
-  return Number.isFinite(below) && Number.isFinite(above) ? { below, above } : null;
-}
-
-/** The centre of the drawn gap the object stands in.
- *
- *  Unlike every other guide this one is a reference line rather than a place
- *  to land: the edges of a gap are wherever the ink happens to be, so its
- *  middle is usually off the grid and no object can sit exactly on it. Saying
- *  "you cannot have this" would be useless -- what is wanted is to see where
- *  the eye will read the centre, and to place beside it. So it is offered
- *  whenever the object is inside a gap, grid or no grid, and the two halves it
- *  measures are what makes the reading checkable. */
-function visualCentreGuide(moving, occupancy, axis, grid) {
-  const edges = facingEdges(moving, occupancy, axis, grid);
-  if (!edges) return null;
-  const gap = edges.above - edges.below;
-  if (gap < MIN_VISUAL_GAP_CELLS * grid) return null;
-  const target = (edges.below + edges.above) / 2;
-  const m = moving.anchor[axis];
-  const other = axis === 'x' ? 'y' : 'x';
-  const point = (value) => ({
+/** When alignment has only one peer, there is no pair from which to infer an
+ * even-spacing target yet. Still show the measured anchor distance beside the
+ * alignment line while the object is being placed. */
+function directSpacingGuide(alignment, moving, grid) {
+  const peers = alignment.points.filter((point) => !point.moving && !point.synthetic);
+  if (peers.length !== 1) return null;
+  const peer = peers[0];
+  const axis = alignment.axis === 'x' ? 'y' : 'x';
+  const distance = Math.abs(moving.anchor[axis] - peer[axis]);
+  if (!distance || !nearGrid(distance, grid)) return null;
+  const points = [peer, {
     id: moving.id,
-    x: axis === 'x' ? value : moving.anchor.x,
-    y: axis === 'y' ? value : moving.anchor.y,
-    moving: value === target,
-  });
+    x: moving.anchor.x,
+    y: moving.anchor.y,
+    moving: true,
+  }].sort((a, b) => a[axis] - b[axis] || a.id.localeCompare(b.id));
   return {
     kind: 'spacing',
-    basis: 'space',
-    reference: true,
+    direct: true,
     axis,
-    cells: Math.round((gap / 2 / grid) * 100) / 100,
-    exact: target === m,
-    offGrid: !nearGrid(target - m, grid),
-    away: (target - m) / grid,
-    target,
-    edges,
-    points: [point(edges.below), point(target), point(edges.above)],
-    other: moving.anchor[other],
+    cells: distance / grid,
+    exact: true,
+    offGrid: false,
+    away: 0,
+    target: moving.anchor[axis],
+    points,
   };
 }
 
@@ -370,7 +323,7 @@ function visualCentreGuide(moving, occupancy, axis, grid) {
  *  coordinates: the existing placement grid remains authoritative. At most one
  *  spacing and one alignment guide per axis, and since an object cannot both
  *  share a column and be evenly spaced along it, two is the usual number. */
-export function placementGuides(items, moving, grid = GRID, occupancy = null) {
+export function placementGuides(items, moving, grid = GRID) {
   if (!moving || moving.kind !== 'component') return [];
   const others = items.filter((item) => item.id !== moving.id && item.kind === 'component');
   const alike = others.filter((item) => item.type === moving.type && item.rotation === moving.rotation);
@@ -383,12 +336,15 @@ export function placementGuides(items, moving, grid = GRID, occupancy = null) {
     // relationship is otherwise equal.
     const spacing = spacingGuide(others, moving, axis, grid);
     if (spacing) guides.push(spacing);
-    // The drawn gap, offered beside the centre of the components whenever the
-    // two disagree -- if they coincide there is only one line to draw.
-    const visual = occupancy && visualCentreGuide(moving, occupancy, axis, grid);
-    if (visual && visual.target !== spacing?.target) guides.push(visual);
     const align = alignGuide(alike, moving, axis, grid) || alignGuide(others, moving, axis, grid);
-    if (align) guides.push(align);
+    if (align) {
+      const along = axis === 'x' ? 'y' : 'x';
+      if (!guides.some((guide) => guide.kind === 'spacing' && guide.axis === along)) {
+        const direct = directSpacingGuide(align, moving, grid);
+        if (direct) guides.push(direct);
+      }
+      guides.push(align);
+    }
   }
   return guides;
 }
@@ -408,12 +364,8 @@ export function describeGuides(guides = []) {
   };
   return guides.map((guide) => {
     if (guide.kind === 'align') return `${guide.axis === 'y' ? 'row' : 'column'} with ${peers(guide)}`;
-    if (guide.basis === 'space') {
-      const where = `${guide.axis === 'x' ? 'horizontal' : 'vertical'} centre of the drawn gap, ${guide.cells} cells each side`;
-      if (guide.exact) return where;
-      return guide.offGrid ? `${where} (between grid lines)` : `${where} ${direction(guide)}`;
-    }
     const spacing = `even ${guide.axis === 'x' ? 'horizontal' : 'vertical'} spacing ${guide.cells} cells (${peers(guide)})`;
+    if (guide.direct) return `${guide.axis === 'x' ? 'horizontal' : 'vertical'} spacing ${guide.cells} cells (${peers(guide)})`;
     if (guide.offGrid) return `no grid centre between ${peers(guide)}: an odd gap halves to ${guide.cells} cells`;
     return guide.exact ? spacing : `${spacing} ${direction(guide)}`;
   }).join(' · ');

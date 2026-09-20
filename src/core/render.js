@@ -899,20 +899,15 @@ export function editorOverlay(circuit, opts = {}) {
   // selection state. Every measurement is drawn between the two anchors it
   // measures, with a leader from each anchor to the dimension line, so what
   // is being compared is never in doubt; two equal intervals carry the same
-  // number side by side.
+  // number side by side. Only the blue anchor/alignment family is rendered.
   if (opts.placementGuide?.guides?.length) {
     const { moving, guides } = opts.placementGuide;
-    // Two measurements, two colours, because they answer different questions:
-    // sky blue is the centre of the parts, teal the centre of the space they
-    // and everything drawn between them actually leave. Both cool hues so the
-    // pair reads as one family rather than clashing.
     const ANCHOR_INK = '#0ea5e9';
-    const SPACE_INK = '#14b8a6';
     const tick = 9;
     const dot = (p, solid, ink) => `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="4.5" fill="${p.moving && !p.synthetic && solid ? ink : 'var(--paper, #fff)'}" stroke="${ink}" stroke-width="2"/>`;
     parts.push(`<g class="placement-guides" pointer-events="none" fill="none" stroke-width="2" vector-effect="non-scaling-stroke">`);
     for (const guide of guides) {
-      const color = guide.basis === 'space' ? SPACE_INK : ANCHOR_INK;
+      const color = ANCHOR_INK;
       const axis = guide.axis;
       const along = axis === 'x' ? 'y' : 'x';
       const pt = (p, a) => (a === 'x' ? p.x : p.y);
@@ -933,13 +928,19 @@ export function editorOverlay(circuit, opts = {}) {
       // One dimension line clear of every anchor and of the moving symbol. A
       // guide still being offered is drawn dashed, and its own point stands on
       // the target rather than on the object, so the two intervals stay the
-      // ones being labelled. Everything that only connects an anchor back to
-      // that line (leaders, the halfway reference) stays a quiet solid
-      // hairline, so dashing reads as one thing: not landed yet.
+      // ones being labelled. Direct one-peer distances use the opposite lane
+      // from target/even-spacing rulers, keeping both useful readings legible.
+      // Everything that only connects an anchor back to that line (leaders,
+      // the halfway reference) stays a quiet solid hairline, so dashing reads
+      // as one thing: not landed yet.
       const pending = !guide.exact;
       const dash = pending ? ` stroke-dasharray="${SUGGESTION_DASH}"` : '';
       const bboxEdge = axis === 'x' ? moving.bbox.y : moving.bbox.x;
-      const base = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along))) - GRID;
+      const bboxFarEdge = axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w;
+      const pointEdges = guide.points.map((p) => pt(p, along));
+      const base = guide.direct
+        ? Math.max(bboxFarEdge, ...pointEdges) + GRID
+        : Math.min(bboxEdge, ...pointEdges) - GRID;
       if (pending) {
         // Where to land: the target column or row, across the moving symbol.
         const lo = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along)));

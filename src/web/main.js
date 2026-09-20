@@ -3483,41 +3483,15 @@ function draftRoutePath(draft, to = cursor) {
   if (allowDiagonal) return diagonalDraftPath(circuit, endpoints, env) || undefined;
   const path = [endpoints[0]];
   for (let i = 1; i < endpoints.length; i++) {
-    const leg = smartRoute(endpoints[i - 1], endpoints[i], { ...env, allowDiagonal: false });
+    // Keep the interactive suggestion centered when several safe orthogonal
+    // channels are otherwise equivalent; Enter commits this same path.
+    const leg = smartRoute(endpoints[i - 1], endpoints[i], {
+      ...env, allowDiagonal: false, preferMidpoint: true,
+    });
     if (!leg) return undefined;
     for (const point of leg.slice(1)) path.push({ ...point });
   }
   return path;
-}
-
-/** Everything drawn that can narrow a gap: component bodies and wire runs, as
- *  rectangles. Wires count because they are what makes the visual centre of a
- *  gap differ from the centre of the parts around it. The moving set is left
- *  out -- an object never narrows its own gap. */
-function drawnOccupancy(skipRefs = new Set()) {
-  const rects = [];
-  for (const component of circuit.components.values()) {
-    if (skipRefs.has(component.refdes) || component.type === 'solder') continue;
-    rects.push({ id: component.refdes, ...component.bboxWorld() });
-  }
-  const skipNets = new Set(netsTouching([...skipRefs]));
-  for (const net of circuit.nets.values()) {
-    if (skipNets.has(net.id)) continue;
-    for (const path of net.paths()) {
-      for (let i = 1; i < path.length; i += 1) {
-        const a = path[i - 1];
-        const b = path[i];
-        rects.push({
-          id: `${net.id}:${i}`,
-          x: Math.min(a.x, b.x),
-          y: Math.min(a.y, b.y),
-          w: Math.abs(b.x - a.x),
-          h: Math.abs(b.y - a.y),
-        });
-      }
-    }
-  }
-  return rects;
 }
 
 function draftWirePreview(draft) {
@@ -3881,7 +3855,7 @@ function renderCanvas(modelKey) {
         moving: movingLayoutItem,
         guides: guidesVisible ? placementGuides([...circuit.components.values()]
           .filter((component) => !ghostRefs.has(component.refdes) && component.type !== 'solder')
-          .map(componentLayoutItem), movingLayoutItem, undefined, drawnOccupancy(ghostRefs)) : [],
+          .map(componentLayoutItem), movingLayoutItem) : [],
       }
     : null;
   activePlacementGuides = placementGuide?.guides || [];
@@ -4924,8 +4898,11 @@ function connectWireToTerminal(dst) {
     return;
   }
   const end = circuit.components.get(dst.refdes).terminalWorld(dst.term);
-  const draftPath = wire.points.length ? draftRoutePath(wire, end) : null;
-  if (wire.points.length && (!draftPath || draftPath.length < 2)) {
+  // Commit the same centered route shown in the preview, even when the user
+  // did not click an explicit waypoint. Passing no waypoints would make
+  // Circuit#wireTo autoroute the connection a second time with its defaults.
+  const draftPath = draftRoutePath(wire, end);
+  if (!draftPath || draftPath.length < 2) {
     logLine('unable to route wire safely');
     return;
   }

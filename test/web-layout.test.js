@@ -74,10 +74,12 @@ test('a guide measures to the position it points at, standing there or not', () 
   assert.equal(offered.cells, 8);
   assert.equal(offered.points.at(-1).x, 640);
   assert.equal(describeGuides([offered]), 'even horizontal spacing 8 cells (A, B) 1 cell right');
-  // Further off than half the interval it would create, it is not offered at
-  // all: the object is not near that position, it is between two of them.
-  assert.equal(placementGuides(peers, item('__ghost__', 440, 0))
-    .find((guide) => guide.kind === 'spacing'), undefined);
+  // Further off than half the interval it would create, the even-spacing
+  // target is not offered; the alignment line still carries the direct
+  // distance to its one peer.
+  const aligned = placementGuides(peers, item('__ghost__', 440, 0));
+  assert.equal(aligned.find((guide) => guide.kind === 'spacing' && !guide.direct), undefined);
+  assert.equal(aligned.find((guide) => guide.kind === 'spacing')?.cells, 3);
 });
 
 test('two placed columns predict the third from either side', () => {
@@ -205,6 +207,19 @@ test('an alignment guide reaches only the immediate neighbours', () => {
   assert.deepEqual(align.points.map((point) => point.id), ['B', '__ghost__', 'C']);
 });
 
+test('alignment placement also shows the one-peer anchor distance', () => {
+  const guides = placementGuides([item('M1', 0, 400, 120, 160, 'nmos')],
+    item('__ghost__', 0, 0, 120, 160, 'pmos'));
+  const spacing = guides.find((guide) => guide.kind === 'spacing');
+  const align = guides.find((guide) => guide.kind === 'align');
+  assert.equal(spacing.direct, true);
+  assert.equal(spacing.axis, 'y');
+  assert.equal(spacing.cells, 10);
+  assert.deepEqual(spacing.points.map((point) => point.id), ['__ghost__', 'M1']);
+  assert.equal(align.axis, 'x');
+  assert.equal(describeGuides(guides), 'vertical spacing 10 cells (M1) · column with M1');
+});
+
 test('the closest couple stays responsible for a middle guide while the cursor moves', () => {
   const stage = [
     item('M8', 0, 0), item('M9', 480, 0),
@@ -286,6 +301,8 @@ test('the editor draws and names the guides it computed', () => {
   assert.match(overlay, /for \(let i = 0; i \+ 1 < guide\.points\.length; i \+= 1\)/);
   assert.equal((overlay.match(/\$\{guide\.cells\} cells/g) || []).length, 2);
   assert.match(overlay, /leader = \(p\)/);
+  assert.match(overlay, /const ANCHOR_INK = '#0ea5e9'/);
+  assert.doesNotMatch(overlay, /SPACE_INK|#14b8a6/);
   // It is an overlay: no coordinate of the moving object is touched here.
   assert.doesNotMatch(overlay, /moving\.(anchor|bbox)\.[xy] =/);
 });
@@ -308,58 +325,9 @@ test('the cursor crosshair starts off, leaving the guides to carry position', ()
   assert.match(main, /let crosshairVisible = false;/);
 });
 
-test('the drawn gap is measured beside the centre of the parts', () => {
-  // Two devices ten cells apart in a column, with a wire crossing the gap two
-  // cells below the upper one: the parts centre and the free-space centre are
-  // no longer the same place, and both are worth offering.
+test('placement guides omit drawn-space references while keeping anchor spacing', () => {
   const stack = [item('M1', 0, 0, 120, 160, 'nmos'), item('M2', 0, 400, 120, 160, 'nmos')];
-  const occupancy = [
-    { id: 'M1', x: -60, y: -80, w: 120, h: 160 },
-    { id: 'M2', x: -60, y: 320, w: 120, h: 160 },
-    { id: 'N1:1', x: -200, y: 120, w: 400, h: 0 },   // a wire run across the gap
-  ];
-  const guides = placementGuides(stack, item('__ghost__', 0, 220, 80, 80, 'port'), undefined, occupancy);
-  const space = guides.find((guide) => guide.basis === 'space');
-  // Free space runs from the wire at y=120 to M2's top edge at y=320.
-  assert.equal(space.axis, 'y');
-  assert.equal(space.target, 220);
-  assert.equal(space.cells, 2.5);
-  assert.equal(space.exact, true);
-  assert.equal(space.reference, true);
-  assert.equal(describeGuides([space]), 'vertical centre of the drawn gap, 2.5 cells each side');
-  // The parts centre is elsewhere, and is still offered in its own right.
-  const anchors = guides.find((guide) => guide.kind === 'spacing' && guide.basis !== 'space');
-  assert.notEqual(anchors?.target, space.target);
-});
-
-test('the drawn gap is not offered when it agrees with the parts', () => {
-  const stack = [item('M1', 0, 0, 120, 160, 'nmos'), item('M2', 0, 400, 120, 160, 'nmos')];
-  // Nothing in the gap: both readings land on 200, so there is one line.
-  const occupancy = [
-    { id: 'M1', x: -60, y: -80, w: 120, h: 160 },
-    { id: 'M2', x: -60, y: 320, w: 120, h: 160 },
-  ];
-  const guides = placementGuides(stack, item('__ghost__', 0, 200, 80, 80, 'port'), undefined, occupancy);
-  assert.equal(guides.filter((guide) => guide.basis === 'space').length, 0);
-  // Ink outside the object's own corridor never narrows its gap.
-  const aside = [...occupancy, { id: 'N9:1', x: 2000, y: 120, w: 400, h: 0 }];
-  const far = placementGuides(stack, item('__ghost__', 0, 200, 80, 80, 'port'), undefined, aside);
-  assert.equal(far.filter((guide) => guide.basis === 'space').length, 0);
-});
-
-test('a gap whose centre falls between grid lines is still shown', () => {
-  // Edges are wherever the ink is, so the middle of a gap is usually not a
-  // place anything can sit. It is a line to read, not a target to land on.
-  const stack = [item('M1', 0, 0, 120, 160, 'nmos'), item('M2', 0, 480, 120, 160, 'nmos')];
-  const occupancy = [
-    { id: 'M1', x: -60, y: -80, w: 120, h: 160 },
-    { id: 'M2', x: -60, y: 400, w: 120, h: 160 },
-    { id: 'N1:1', x: -200, y: 120, w: 400, h: 0 },
-  ];
-  const space = placementGuides(stack, item('__ghost__', 0, 240, 80, 80, 'port'), undefined, occupancy)
-    .find((guide) => guide.basis === 'space');
-  assert.equal(space.target, 260);           // between the wire at 120 and M2 at 400
-  assert.equal(space.offGrid, true);
-  assert.equal(space.exact, false);
-  assert.equal(describeGuides([space]), 'vertical centre of the drawn gap, 3.5 cells each side (between grid lines)');
+  const guides = placementGuides(stack, item('__ghost__', 0, 200, 80, 80, 'port'));
+  assert.equal(guides.some((guide) => guide.basis === 'space'), false);
+  assert.ok(guides.some((guide) => guide.kind === 'spacing'));
 });

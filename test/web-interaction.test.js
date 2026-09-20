@@ -689,6 +689,19 @@ test('a held modifier mirrors a wire by replaying its own commit', () => {
   assert.match(canvas, /mirrorWirePreview = wire\?\.source \? mirroredWirePreview\(\) : null;/);
 });
 
+test('wire previews prefer a centered equivalent route', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const draft = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview', main.indexOf('function draftRoutePath(')));
+  assert.match(draft, /allowDiagonal: false, preferMidpoint: true/);
+});
+
+test('terminal commits preserve the routed preview without manual waypoints', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const connect = main.slice(main.indexOf('function connectWireToTerminal('), main.indexOf('\n/** A point reflected', main.indexOf('function connectWireToTerminal(')));
+  assert.match(connect, /const draftPath = draftRoutePath\(wire, end\);/);
+  assert.doesNotMatch(connect, /wire\.points\.length \? draftRoutePath/);
+});
+
 test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const arm = main.slice(main.indexOf('function armCopyGhostMirror('), main.indexOf('function dropCopyGhostMirror('));
