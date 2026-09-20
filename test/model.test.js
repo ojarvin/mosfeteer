@@ -1120,6 +1120,22 @@ test('moving the target component keeps the target endpoint attached to its net'
   assert.equal(n.wiringErrors().length, 0);
 });
 
+test('moving one block endpoint centers the new route elbow', () => {
+  const c = new Circuit();
+  c.addComponent('block', { refdes: 'B1', x: 320, y: 400 });
+  c.addComponent('block', { refdes: 'B2', x: 320, y: 720 });
+  const n = c.connect('B1.T11', 'B2.T9');
+
+  c.moveComponent('B2', 280, 720);
+  assert.equal(c.rerouteNet(n, new Map([['B2', { dx: -40, dy: 0 }]])), true);
+  assert.deepEqual(n.paths()[0], [
+    { x: 320, y: 480 },
+    { x: 320, y: 560 },
+    { x: 280, y: 560 },
+    { x: 280, y: 640 },
+  ]);
+});
+
 test('placing a component on an existing terminal connects it and later movement keeps the net', () => {
   const c = new Circuit();
   const r1 = c.addComponent('resistor', { x: 80, y: 0 });
@@ -2977,7 +2993,7 @@ test('moving a wire endpoint keeps its arrowhead on the new logical endpoint', (
   c.moveComponent('B2', 160, 400);
   assert.equal(c.rerouteNet(net, new Map([['B2', { dx: 160, dy: 0 }]])), true);
   assert.deepEqual(net.paths()[0], [
-    { x: 0, y: 80 }, { x: 0, y: 120 }, { x: 160, y: 120 }, { x: 160, y: 320 },
+    { x: 0, y: 80 }, { x: 0, y: 200 }, { x: 160, y: 200 }, { x: 160, y: 320 },
   ]);
   assert.equal(net.wireStyles['0:1'].arrowhead, 'none');
   assert.equal(net.wireStyles['0:2'].arrowhead, 'none');

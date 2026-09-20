@@ -749,9 +749,10 @@ export function segThroughInterior(a, b, r) {
 // Preference order (lexicographic): fewest bbox interiors crossed, fewest
 // collinear overlaps, most clearance (>= 1 grid cell from every body, barring
 // the pin legs), best straight-on pin access, fewest bends, shortest route,
-// then fewest legal crossings of other wires. If no enumerated candidate is
-// hard-safe, A* is used as a bounded fallback; failure to find a hard-safe
-// route is reported as null rather than returning an unsafe candidate.
+// optionally bends closest to the route midpoint, then fewest legal crossings
+// of other wires. If no enumerated candidate is hard-safe, A* is used as a
+// bounded fallback; failure to find a hard-safe route is reported as null
+// rather than returning an unsafe candidate.
 // ---------------------------------------------------------------------------
 
 const STEP = 40;
@@ -1018,6 +1019,22 @@ function routeLength(pts) {
   return len;
 }
 
+/** Prefer an equally good elbow whose segment midpoint is nearest the route's
+ * overall midpoint. This makes a displaced endpoint introduce a centered
+ * dogleg instead of choosing the first equivalent grid channel. */
+function midpointScore(pts) {
+  if (pts.length < 2) return 0;
+  const start = pts[0];
+  const end = pts.at(-1);
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  return Math.min(...pts.slice(1).map((point, index) => {
+    const previous = pts[index];
+    return Math.abs((previous.x + point.x) / 2 - midX) +
+      Math.abs((previous.y + point.y) / 2 - midY);
+  }));
+}
+
 /** Compare candidates lexicographically by safety, then bends, then length. */
 function cmpScore(a, b) {
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
@@ -1033,7 +1050,8 @@ function scoreCandidate(pts, env) {
   // an existing wire. Labels are soft: component clearance is hard, label
   // clearance steers. Crossing count is the final tie-break among otherwise
   // comparable routes.
-  return [bboxCrossings(pts, env), overlap, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), bendCount(pts), routeLength(pts), cross];
+  const midpoint = env.preferMidpoint ? midpointScore(pts) : 0;
+  return [bboxCrossings(pts, env), overlap, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), bendCount(pts), routeLength(pts), midpoint, cross];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */

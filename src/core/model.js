@@ -2811,6 +2811,10 @@ export class Circuit {
   /** Re-anchor one drawn polyline after a component move (see rerouteNet). */
   _reroutePolyline(net, poly, moved, env) {
     if (!poly || poly.length < 2) return poly;
+    // A one-endpoint move creates a new connector between the stationary wire
+    // body and the moved pin. Among equally safe routes, prefer its elbow near
+    // the middle so the wire does not bunch the bend against the old endpoint.
+    const routeEnv = { ...env, preferMidpoint: true };
     const n = poly.length;
     const classify = (p) => {
       if (!moved) return null;
@@ -2851,7 +2855,7 @@ export class Circuit {
       if (isDiagonalSegment(oldEnd, bodyEnd)) {
         const stretched = atStart ? [{ ...currentEnd }, { ...bodyEnd }] : [{ ...bodyEnd }, { ...currentEnd }];
         if (safeCandidate(stretched)) return stretched;
-        const connector = atStart ? smartRoute(currentEnd, oldEnd, env) : smartRoute(oldEnd, currentEnd, env);
+        const connector = atStart ? smartRoute(currentEnd, oldEnd, routeEnv) : smartRoute(oldEnd, currentEnd, routeEnv);
         if (!connector) return null;
         return atStart ? [...connector, { ...bodyEnd }] : [{ ...bodyEnd }, ...connector];
       }
@@ -2864,8 +2868,8 @@ export class Circuit {
         return automaticMovePathSafe(direct, env) ? direct : null;
       }
       return atStart
-        ? smartRoute(currentEnd, bodyEnd, env)
-        : smartRoute(bodyEnd, currentEnd, env);
+        ? smartRoute(currentEnd, bodyEnd, routeEnv)
+        : smartRoute(bodyEnd, currentEnd, routeEnv);
     };
     if (a0 && a1) {
       // The endpoint terminals moved by different deltas. Re-anchor only the
@@ -2879,11 +2883,11 @@ export class Circuit {
       if (isDiagonalSegment(poly[0], poly[1])) {
         const stretched = safeCandidate([{ ...a0.cur }, { ...a1.cur }]);
         if (stretched) return stretched;
-        const start = smartRoute(a0.cur, poly[0], env);
-        const end = smartRoute(poly[1], a1.cur, env);
+        const start = smartRoute(a0.cur, poly[0], routeEnv);
+        const end = smartRoute(poly[1], a1.cur, routeEnv);
         return start && end ? [...start, ...end] : null;
       }
-      const leg = smartRoute({ x: a0.cur.x, y: a0.cur.y }, { x: a1.cur.x, y: a1.cur.y }, env);
+      const leg = smartRoute({ x: a0.cur.x, y: a0.cur.y }, { x: a1.cur.x, y: a1.cur.y }, routeEnv);
       // A failed route must not be replaced with a straight segment: that
       // segment may pass through a component body. Signal failure without
       // changing the caller's copy of the last valid wire shape.
