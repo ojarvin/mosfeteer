@@ -107,6 +107,43 @@ test('the insert menu is one scrolling column led by the recent placements', () 
   assert.doesNotMatch(body.slice(0, body.indexOf('}')), /column-width/);
 });
 
+test('component drag snapshots restore segment styles with route geometry', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function captureNetGeometry(');
+  const end = main.indexOf('\nfunction armModalLabelMove', start);
+  const helpers = vm.runInNewContext(`(() => {
+    ${main.slice(start, end)}
+    return { captureNetGeometry, translateNetGeometry };
+  })()`, {
+    cloneFixedPaths: (entries) => entries,
+    captureRouteGeometry: (net, move = (point) => ({ ...point })) => ({
+      route: net.route ? net.route.map(move) : null,
+      branches: net.branches ? net.branches.map((path) => path.map(move)) : null,
+      junctions: (net.junctions || []).map(move),
+    }),
+  });
+  const net = {
+    routingMode: 'managed',
+    route: [{ x: 0, y: 0 }, { x: 0, y: 400 }],
+    branches: [[{ x: 0, y: 0 }, { x: 0, y: 400 }]],
+    junctions: [],
+    wireStyles: { '0:1': { color: '#111', arrowhead: 'end' } },
+  };
+  const saved = helpers.captureNetGeometry(net);
+  net.route = [{ x: 0, y: 0 }, { x: 0, y: 120 }, { x: 160, y: 120 }, { x: 160, y: 400 }];
+  net.branches = [net.route];
+  net.wireStyles = {
+    '0:1': { color: '#111', arrowhead: 'none' },
+    '0:2': { color: '#111', arrowhead: 'none' },
+    '0:3': { color: '#111', arrowhead: 'end' },
+  };
+
+  helpers.translateNetGeometry(net, saved, 0, 0);
+
+  assert.deepEqual(net.wireStyles, saved.wireStyles);
+  assert.equal(JSON.stringify(net.route), JSON.stringify(saved.route));
+});
+
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function preloadToolCursors(');

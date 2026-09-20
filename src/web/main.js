@@ -6091,6 +6091,11 @@ function captureNetGeometry(net) {
   return {
     ...captureRouteGeometry(net),
     fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
+    // Segment styles are keyed by route position. A component drag restores
+    // this geometry before each preview reroute, so restore the styles with
+    // it or a previous preview's endpoint arrowhead can be read as the wrong
+    // logical endpoint on the next mousemove.
+    wireStyles: Object.fromEntries(Object.entries(net.wireStyles || {}).map(([key, style]) => [key, { ...style }])),
   };
 }
 /** One route snapshot per distinct net behind a set of dragged wire runs. */
@@ -6114,6 +6119,9 @@ function translateNetGeometry(net, saved, dx, dy) {
   const move = (p) => ({ x: p.x + dx, y: p.y + dy });
   Object.assign(net, captureRouteGeometry(saved, move));
   if (net.routingMode === 'fixed' && saved.fixedPaths) net.fixedPaths = cloneFixedPaths(saved.fixedPaths, move);
+  if (saved.wireStyles) {
+    net.wireStyles = Object.fromEntries(Object.entries(saved.wireStyles).map(([key, style]) => [key, { ...style }]));
+  }
 }
 
 function armModalLabelMove(label, startWorld, startClient) {
