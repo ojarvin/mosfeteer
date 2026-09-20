@@ -82,7 +82,7 @@ A version-one block document has this shape:
       "to": { "block": "B2", "terminal": "in" },
       "routingMode": "auto",
       "points": [ { "x": 320, "y": 80 }, { "x": 400, "y": 80 } ],
-      "style": { "color": "#111", "lineStyle": "solid", "width": "normal" },
+      "style": { "color": "#111", "lineStyle": "solid", "width": "normal", "arrowhead": "end" },
       "drawOrder": 0
     }
   ]
@@ -135,6 +135,10 @@ is the fallback.
 `blockArrowGeometry(points)` returns `{ shaftPoints, tip, left, right }`.
 The tip is exactly the last route point; the default filled head is 32 units
 long and 36 units wide, using the final cardinal segment for orientation.
+The shared line style also accepts `arrowhead: "none" | "start" | "end" |
+"both"`; the same single filled head is used for block connectors and visual
+line/arrow annotations. Existing connectors default to `"end"`, while plain
+lines default to `"none"`.
 
 ## Persistence, commands, and rendering
 

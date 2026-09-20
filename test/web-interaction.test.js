@@ -581,6 +581,18 @@ test('the placement guides are a view toggle beside the grid', () => {
   assert.match(keymap, /\['G', 'toggle the spacing and alignment guides'\]/);
 });
 
+test('the style menu exposes one shared arrowhead with endpoint placement choices', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="style-arrowhead"/);
+  assert.match(html, /option value="none">None/);
+  assert.match(html, /option value="start">Start/);
+  assert.match(html, /option value="end">End/);
+  assert.match(html, /option value="both">Both/);
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /\['style-arrowhead', 'arrowhead'\]/);
+  assert.match(main, /field !== 'arrowhead' \|\| supportsArrowhead/);
+});
+
 test('view toggles answer in every mode but the insert search', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function viewKey(');

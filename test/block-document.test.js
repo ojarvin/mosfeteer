@@ -26,6 +26,15 @@ test('document dispatch round-trips and renders block styles', () => {
   assert.match(svg, /stroke-dasharray="2 10"/);
 });
 
+test('block annotations use the shared arrowhead placement style', () => {
+  const d = new BlockDiagram();
+  d.addAnnotation('line', { points: [{ x: 0, y: 0 }, { x: 160, y: 0 }], style: { arrowhead: 'both' } });
+  d.addAnnotation('arrow', { points: [{ x: 0, y: 160 }, { x: 160, y: 160 }], style: { arrowhead: 'none' } });
+  const svg = renderDocument(d);
+  assert.equal((svg.match(/<polygon points=/g) || []).length, 2);
+  assert.deepEqual(d.toJSON().labels?.map((label) => label.style.arrowhead), ['both', 'none']);
+});
+
 test('selected blocks and connectors expose isolated editor hit targets', () => {
   const svg = renderDocument(diagram(), { selectedBlocks: new Set(['B1']), selectedArrows: new Set(['A1']), terminals: true, grid: true });
   assert.match(svg, /<g data-block-id="B1"><rect class="block-node selected"/);

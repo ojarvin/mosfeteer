@@ -1,11 +1,23 @@
-import { blockArrowGeometry, blockConnectorJunctions } from './block-router.js';
+import { blockConnectorJunctions } from './block-router.js';
 import { GRID } from './grid.js';
 import { LABEL_FONT_SIZE, parseLabelRuns } from './model.js';
 import { escapeSvg, resolveColor, styleAttrs, themeInkSvg } from './style.js';
+import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 
 const n = (v) => Number.isInteger(v) ? v : Number(v.toFixed(2));
 const point = (p) => `${n(p.x)} ${n(p.y)}`;
 const same = (a, b) => a.x === b.x && a.y === b.y;
+const pathD = (points) => points.map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ');
+
+function arrowheadsSvg(heads, color) {
+  return heads.map((head) => `<polygon points="${point(head.tip)} ${point(head.left)} ${point(head.right)}" fill="${escapeSvg(resolveColor(color || '#111'))}" stroke="none"/>`).join('');
+}
+
+function styledPolylineSvg(points, style, base, fallback = 'none') {
+  const geometry = polylineArrowheads(points, style?.arrowhead, { fallback });
+  if (geometry.shaftPoints.length < 2) return '';
+  return `<path d="${pathD(geometry.shaftPoints)}" fill="none" ${styleAttrs(style, base)}/>${arrowheadsSvg(geometry.heads, style?.color)}`;
+}
 
 function labelText(label, selected = false) {
   const p = label.textPos ? label.textPos() : { x: label.anchor.x, y: label.anchor.y, anchor: 'middle' };
@@ -44,29 +56,23 @@ function annotationHandles(label) {
 }
 
 function annotationSvg(label, selected) {
-  const style = styleAttrs(label.style, label.kind === 'line' ? 'wire' : 'symbol');
   const cls = selected ? ' selected' : '';
-  if (label.kind === 'line') {
-    const d = label.points.map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ');
-    return `<path data-label-id="${escapeSvg(label.id)}" class="block-annotation block-line${cls}" d="${d}" fill="none" ${style}/>`;
+  if (label.kind === 'line' || label.kind === 'arrow') {
+    const points = label.points?.length ? label.points : [label.anchor, label.end];
+    const base = label.kind === 'line' ? 'wire' : 'symbol';
+    return `<g data-label-id="${escapeSvg(label.id)}" class="block-annotation block-${label.kind}${cls}">${styledPolylineSvg(points, label.style, base, defaultArrowhead(label.kind))}</g>`;
   }
+  const style = styleAttrs(label.style, 'symbol');
   const a = label.anchor; const b = label.end;
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect data-label-id="${escapeSvg(label.id)}" class="block-annotation block-box${cls}" x="${n(x)}" y="${n(y)}" width="${n(Math.abs(b.x - a.x))}" height="${n(Math.abs(b.y - a.y))}" fill="none" ${style}/>`;
   }
-  const route = label.points?.length ? label.points : [a, b];
-  const start = route.at(-2) || a;
-  const angle = Math.atan2(b.y - start.y, b.x - start.x);
-  const shaft = { x: b.x - 32 * Math.cos(angle), y: b.y - 32 * Math.sin(angle) };
-  const left = { x: shaft.x + 18 * Math.sin(angle), y: shaft.y - 18 * Math.cos(angle) };
-  const right = { x: shaft.x - 18 * Math.sin(angle), y: shaft.y + 18 * Math.cos(angle) };
-  const color = escapeSvg(resolveColor(label.style?.color || '#111'));
-  return `<g data-label-id="${escapeSvg(label.id)}" class="block-annotation block-arrow${cls}"><path d="${route.slice(0, -1).map((p, i) => `${i ? 'L' : 'M'} ${point(p)}`).join(' ')} L ${point(shaft)}" fill="none" ${style}/><polygon points="${point(b)} ${point(left)} ${point(right)}" fill="${color}" stroke="none"/></g>`;
+  return `<g data-label-id="${escapeSvg(label.id)}" class="block-annotation block-box${cls}"><rect x="${n(Math.min(a.x, b.x))}" y="${n(Math.min(a.y, b.y))}" width="${n(Math.abs(b.x - a.x))}" height="${n(Math.abs(b.y - a.y))}" fill="none" ${style}/></g>`;
 }
 
 function arrowSvg(arrow, selected, omitHead = false, selectedSegments = new Set()) {
-  const g = blockArrowGeometry(arrow.points);
+  const g = polylineArrowheads(arrow.points, arrow.style?.arrowhead, { fallback: 'end' });
   const attrs = styleAttrs(arrow.style, 'annotation');
   const cls = selected ? ' selected' : '';
   const paths = [];
@@ -76,8 +82,7 @@ function arrowSvg(arrow, selected, omitHead = false, selectedSegments = new Set(
     const key = `${arrow.id}:${i}`;
     paths.push(`<path data-arrow-segment="${escapeSvg(key)}"${selectedSegments.has(key) ? ' class="selected"' : ''} d="M ${point(a)} L ${point(b)}" fill="none" ${attrs}/>`);
   }
-  const color = escapeSvg(resolveColor(arrow.style?.color || '#111'));
-  return `<g data-arrow-id="${escapeSvg(arrow.id)}" class="block-connector${cls}">${paths.join('')}${omitHead ? '' : `<polygon points="${point(g.tip)} ${point(g.left)} ${point(g.right)}" fill="${color}" stroke="none"/>`}</g>`;
+  return `<g data-arrow-id="${escapeSvg(arrow.id)}" class="block-connector${cls}">${paths.join('')}${omitHead ? '' : arrowheadsSvg(g.heads, arrow.style?.color)}</g>`;
 }
 
 function blockShape(block) {

@@ -4,6 +4,7 @@ import { getSymbol } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
+import { defaultArrowhead, normalizeArrowhead } from './line-style.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -565,6 +566,9 @@ export class LabelInstance {
       width: opts.style?.width || 'normal',
       bold: opts.style?.bold !== false,
       italic: opts.style?.italic !== false,
+      ...(['arrow', 'line'].includes(this.kind)
+        ? { arrowhead: normalizeArrowhead(opts.style?.arrowhead, defaultArrowhead(this.kind)) }
+        : {}),
     };
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
     this.owner = this.netId ? null : (opts.owner || null);
@@ -1128,7 +1132,12 @@ export class Net {
     this.name = canonicalNetName(opts.name);
     // Preserve public wire islands; ordinary connect() nets may be pruned when
     // they no longer have an electrical anchor.
-    this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
+    this.style = {
+      color: opts.style?.color || '#111',
+      lineStyle: opts.style?.lineStyle || 'solid',
+      width: opts.style?.width || 'normal',
+      ...(opts.style?.arrowhead !== undefined ? { arrowhead: normalizeArrowhead(opts.style.arrowhead) } : {}),
+    };
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
     this.wireStyles = { ...(opts.wireStyles || {}) };
     this.preserveEmpty = !!opts.preserveEmpty;

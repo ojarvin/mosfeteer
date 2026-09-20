@@ -1,6 +1,7 @@
 import { GRID, onGrid, snap } from './grid.js';
 import { LabelInstance } from './model.js';
 import { blockArrowGeometry, conformBlockArrowEndpoints, routeBlockArrow, routeBlockDiagram, routeIsOrthogonal } from './block-router.js';
+import { normalizeArrowhead } from './line-style.js';
 
 export const BLOCK_DIAGRAM_KIND = 'block';
 export const BLOCK_DIAGRAM_VERSION = 1;
@@ -283,7 +284,8 @@ export class BlockArrow {
     this.routingMode = options.routingMode ?? 'auto';
     if (!['auto', 'fixed'].includes(this.routingMode)) throw new Error(`invalid arrow routing mode "${this.routingMode}"`);
     this.points = clone(options.points || []);
-    this.style = normalizeStyle(options.style, { color: '#111', lineStyle: 'solid', width: 'normal' });
+    this.style = normalizeStyle(options.style, { color: '#111', lineStyle: 'solid', width: 'normal', arrowhead: 'end' });
+    this.style.arrowhead = normalizeArrowhead(this.style.arrowhead, 'end');
     this.drawOrder = Number(options.drawOrder ?? 0);
     if (!Number.isFinite(this.drawOrder)) throw new Error('arrow drawOrder must be finite');
   }

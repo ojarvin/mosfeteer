@@ -19,6 +19,7 @@ import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { editorOverlay, svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
+import { defaultArrowhead } from '../core/line-style.js';
 import { createDocument, documentKindLabel, isBlockDiagram, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { resolveCopySelection } from '../core/selection.js';
@@ -1887,7 +1888,24 @@ function syncSelectedNetSolders() {
 }
 
 function styleDefaults(field) {
-  return field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : 'normal';
+  return field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : field === 'arrowhead' ? 'none' : 'normal';
+}
+
+function arrowheadKind(object) {
+  if (object?.kind === 'arrow' || object?.kind === 'line') return object.kind;
+  if (isBlockDiagram(circuit) && object && Array.isArray(object.points) && ('from' in object || 'to' in object)) return 'connector';
+  return null;
+}
+
+function supportsArrowhead(object) {
+  return !!arrowheadKind(object);
+}
+
+function objectStyleValue(object, field) {
+  if (field === 'arrowhead' && supportsArrowhead(object)) {
+    return object.style?.arrowhead || defaultArrowhead(arrowheadKind(object));
+  }
+  return object?.style?.[field] || styleDefaults(field);
 }
 
 function selectedBlockObjects() {
@@ -1934,7 +1952,9 @@ function applyStyleToSelected(style) {
     commit(() => {
       for (const object of objects) {
         if (style.color !== undefined && typeof object.setColor === 'function') object.setColor(style.color);
-        object.style = { ...(object.style || {}), ...Object.fromEntries(['color', 'lineStyle', 'width'].filter((field) => style[field] !== undefined).map((field) => [field, style[field]])) };
+        object.style = { ...(object.style || {}), ...Object.fromEntries(['color', 'lineStyle', 'width', 'arrowhead']
+          .filter((field) => style[field] !== undefined && (field !== 'arrowhead' || supportsArrowhead(object)))
+          .map((field) => [field, style[field]])) };
       }
     });
     render();
@@ -1957,8 +1977,9 @@ function applyStyleToSelected(style) {
   commit(() => {
     for (const obj of objects) {
       const next = { ...(obj.style || {}) };
-      for (const field of ['color', 'lineStyle', 'width']) {
-        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box', 'line'].includes(obj.kind) || obj.routingMode)) {
+      for (const field of ['color', 'lineStyle', 'width', 'arrowhead']) {
+        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box', 'line'].includes(obj.kind) || obj.routingMode) &&
+            (field !== 'arrowhead' || supportsArrowhead(obj))) {
           next[field] = style[field];
         }
       }
@@ -1989,7 +2010,7 @@ function applySelectedStyle(field, value) {
     commit(() => {
       for (const object of objects) {
         if (field === 'color' && typeof object.setColor === 'function') object.setColor(next);
-        else object.style = { ...(object.style || {}), [field]: next };
+        else if (field !== 'arrowhead' || supportsArrowhead(object)) object.style = { ...(object.style || {}), [field]: next };
       }
     });
     render();
@@ -2009,6 +2030,7 @@ function applySelectedStyle(field, value) {
   commit(() => {
     for (const obj of objects) {
       if (field === 'lineStyle' && !['arrow', 'box', 'line'].includes(obj.kind) && !obj.routingMode) continue;
+      if (field === 'arrowhead' && !supportsArrowhead(obj)) continue;
       if (field === 'color' && typeof obj.setColor === 'function') obj.setColor(next);
       else obj.style = { ...(obj.style || {}), [field]: next };
     }
@@ -2038,15 +2060,19 @@ function syncTextStyleControls() {
 function updateStyleControls() {
   const panel = document.getElementById('style-panel');
   const line = document.getElementById('style-line');
+  const arrowhead = document.getElementById('style-arrowhead');
   const width = document.getElementById('style-width');
   const swatches = [...document.querySelectorAll('#style-color .swatch')];
-  if (!panel || !line || !width) return;
-  const show = (colorValue, lineValue, widthValue, supportsLine) => {
+  if (!panel || !line || !arrowhead || !width) return;
+  const show = (colorValue, lineValue, arrowheadValue, widthValue, supportsLine, supportsArrowhead) => {
     panel.hidden = false;
     syncTextStyleControls();
     line.disabled = !supportsLine;
     line.closest('.style-row').hidden = !supportsLine;
+    arrowhead.disabled = !supportsArrowhead;
+    arrowhead.closest('.style-row').hidden = !supportsArrowhead;
     line.value = lineValue;
+    arrowhead.value = arrowheadValue;
     width.value = widthValue;
     for (const swatch of swatches) swatch.setAttribute('aria-checked', String(swatch.dataset.value === colorValue));
   };
@@ -2054,8 +2080,9 @@ function updateStyleControls() {
   if (isBlockDiagram(circuit)) {
     const objects = selectedBlockObjects();
     if (!objects.length) { panel.hidden = true; return; }
-    const pick = (field) => common(objects.map((object) => object.style?.[field] || styleDefaults(field)));
-    show(pick('color'), pick('lineStyle'), pick('width'), true);
+    const pick = (field) => common(objects.map((object) => objectStyleValue(object, field)));
+    const arrowTargets = objects.filter(supportsArrowhead);
+    show(pick('color'), pick('lineStyle'), common(arrowTargets.map((object) => objectStyleValue(object, 'arrowhead'))), pick('width'), true, arrowTargets.length > 0);
     return;
   }
   const wireTargets = selectedWireTargets();
@@ -2067,11 +2094,12 @@ function updateStyleControls() {
   if (!objects.length && !wireTargets.length) { panel.hidden = true; return; }
   const hasWireSelection = wireTargets.length > 0 || selectedWire || selectedWires.size > 0 || selectedNets.size > 0;
   const supportsLine = hasWireSelection || objects.some((o) => ['arrow', 'box', 'line'].includes(o.kind));
+  const hasArrowheadSelection = hasWireSelection || objects.some(supportsArrowhead);
   const pick = (field) => common([
-    ...objects.map((o) => o.style?.[field] || styleDefaults(field)),
+    ...objects.map((o) => objectStyleValue(o, field)),
     ...wireTargets.map(({ net, key }) => net.wireStyles?.[key]?.[field] || net.style?.[field] || styleDefaults(field)),
   ]);
-  show(pick('color'), pick('lineStyle'), pick('width'), supportsLine);
+  show(pick('color'), pick('lineStyle'), pick('arrowhead'), pick('width'), supportsLine, hasArrowheadSelection);
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
@@ -12880,7 +12908,7 @@ function bindInteractionControls() {
 }
 
 bindInteractionControls();
-for (const [id, field] of [['style-line', 'lineStyle'], ['style-width', 'width']]) {
+for (const [id, field] of [['style-line', 'lineStyle'], ['style-arrowhead', 'arrowhead'], ['style-width', 'width']]) {
   document.getElementById(id)?.addEventListener('change', (ev) => applySelectedStyle(field, ev.target.value));
 }
 document.getElementById('style-text-row')?.addEventListener('click', (ev) => {

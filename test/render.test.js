@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { editorOverlay, svgString, texToMathML, svgPixelSize } from '../src/core/render.js';
-import { Circuit } from '../src/core/model.js';
+import { Circuit, Net } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 import { getSymbol } from '../src/core/components/index.js';
 
@@ -86,6 +86,23 @@ test('line annotations render as rounded non-connectivity paths', () => {
   assert.match(svg, /stroke-linecap="round"/);
   assert.match(svg, /stroke-dasharray="12 12"/);
   assert.doesNotMatch(svg, /class="wire-managed"/);
+});
+
+test('annotations and wires share start/end/both arrowhead styling', () => {
+  const start = new Circuit();
+  start.addAnnotation('line', { points: [{ x: 0, y: 0 }, { x: 160, y: 0 }], style: { arrowhead: 'start' } });
+  const startSvg = svgString(start);
+  assert.equal((startSvg.match(/<polygon points=/g) || []).length, 1);
+  assert.match(startSvg, /<polygon points="0 0 32 18 32 -18"/);
+
+  const none = new Circuit();
+  none.addAnnotation('arrow', { points: [{ x: 0, y: 0 }, { x: 160, y: 0 }], style: { arrowhead: 'none' } });
+  assert.equal((svgString(none).match(/<polygon points=/g) || []).length, 0);
+
+  const both = new Circuit();
+  const net = new Net(both, { id: 'W1', route: [{ x: 0, y: 0 }, { x: 160, y: 0 }], style: { arrowhead: 'both' } });
+  both.nets.set(net.id, net);
+  assert.equal((svgString(both).match(/<polygon points=/g) || []).length, 2);
 });
 
 test('default wire stroke keeps semantic colors resolving dynamically', () => {

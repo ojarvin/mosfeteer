@@ -3,6 +3,7 @@ import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, steinerBranches } from './router.js';
 import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, styleAttrs, themeInkSvg } from './style.js';
 import { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
+import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -454,44 +455,32 @@ function mathLabelSvg(label, opacity = '') {
   return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
 }
 
-const ANNOTATION_ARROW_LENGTH = 32;
-const ANNOTATION_ARROW_HALF_WIDTH = 18;
+function polylineD(points) {
+  return points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+}
 
-function annotationArrowPoints(a, b) {
-  const angle = Math.atan2(b.y - a.y, b.x - a.x);
-  const shaft = {
-    x: b.x - ANNOTATION_ARROW_LENGTH * Math.cos(angle),
-    y: b.y - ANNOTATION_ARROW_LENGTH * Math.sin(angle),
-  };
-  return {
-    shaft,
-    left: {
-      x: shaft.x + ANNOTATION_ARROW_HALF_WIDTH * Math.sin(angle),
-      y: shaft.y - ANNOTATION_ARROW_HALF_WIDTH * Math.cos(angle),
-    },
-    right: {
-      x: shaft.x - ANNOTATION_ARROW_HALF_WIDTH * Math.sin(angle),
-      y: shaft.y + ANNOTATION_ARROW_HALF_WIDTH * Math.cos(angle),
-    },
-  };
+function arrowheadsSvg(heads, color, opacity = '') {
+  return heads.map((head) => `<polygon points="${pt(head.tip.x, head.tip.y)} ${pt(head.left.x, head.left.y)} ${pt(head.right.x, head.right.y)}" fill="${escapeSvg(resolveColor(color || '#111'))}" stroke="none"${opacity}/>`).join('');
+}
+
+function styledPolylineSvg(points, style, base, fallback = 'none', opacity = '') {
+  const geometry = polylineArrowheads(points, style?.arrowhead, { fallback });
+  if (geometry.shaftPoints.length < 2) return '';
+  const attrs = styleAttrs(style, base);
+  return `<path d="${polylineD(geometry.shaftPoints)}" fill="none"${opacity} ${attrs}/>${arrowheadsSvg(geometry.heads, style?.color, opacity)}`;
 }
 
 function shapeAnnotationSvg(label, opacity = '') {
   const a = label.anchor; const b = label.end;
-  if (label.kind === 'line') {
-    const d = label.points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-    return `<path d="${d}" fill="none"${opacity} ${styleAttrs(label.style, 'annotation')}/>`;
+  if (label.kind === 'line' || label.kind === 'arrow') {
+    const points = label.points?.length ? label.points : [a, b];
+    return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);
   }
   const attrs = styleAttrs(label.style);
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
   }
-  const points = label.points?.length ? label.points : [a, b];
-  const base = points.at(-2) || a;
-  const { shaft, left, right } = annotationArrowPoints(base, b);
-  const shaftPath = points.slice(0, -1).map((point, index) => `${index ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-  return `<path d="${shaftPath} L ${pt(shaft.x, shaft.y)}" fill="none"${opacity} ${attrs}/><polygon points="${pt(b.x, b.y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${escapeSvg(resolveColor(label.style?.color || '#111'))}" stroke="none"${opacity}/>`;
 }
 /**
  * Bare drawable geometry of one component (body graphics plus symbol text),
@@ -670,17 +659,21 @@ export function svgString(circuit, opts = {}) {
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
         const inked = !opacity && solidStyle(net.style);
-        if (inked) addInk(inkAttrs(net.style), d);
+        const geometry = polylineArrowheads(pts, net.style?.arrowhead);
+        if (inked) addInk(inkAttrs(net.style), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(arrowheadsSvg(geometry.heads, net.style?.color, opacity));
         continue;
       }
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]; const b = pts[i];
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
-        const segmentStyle = net.wireStyles[`${branch}:${i}`] || net.style;
+        const segmentStyle = { ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) };
         const inked = !opacity && solidStyle(segmentStyle);
-        if (inked) addInk(inkAttrs(segmentStyle), d);
+        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead);
+        if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
       }
     }
   }
@@ -1114,10 +1107,8 @@ export function editorOverlay(circuit, opts = {}) {
       parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
     } else {
       const route = points?.length ? points : [a, b];
-      const start = route.at(-2) || a;
-      const { shaft, left, right } = annotationArrowPoints(start, route.at(-1));
-      const d = route.slice(0, -1).map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-      parts.push(`<path d="${d} L ${pt(shaft.x, shaft.y)}" ${attrs}/><polygon points="${pt(route.at(-1).x, route.at(-1).y)} ${pt(left.x, left.y)} ${pt(right.x, right.y)}" fill="${SELECT}" stroke="none" opacity=".8"/>`);
+      const geometry = polylineArrowheads(route, 'end');
+      parts.push(`<path d="${polylineD(geometry.shaftPoints)}" ${attrs}/>${arrowheadsSvg(geometry.heads, SELECT, ' opacity=".8"')}`);
     }
   }
 
