@@ -791,7 +791,7 @@ export function svgString(circuit, opts = {}) {
  * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
  * halos around each selected component's bbox. opts.nets [net]: highlight
  * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
- * opts.centerGuides {x,y,w,h}: magenta dashed centerlines for the combined
+ * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
  * selection bounds, with small edge ticks and a center marker.
  * opts.wireMode: show all component terminals, colored by net membership.
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
@@ -800,7 +800,8 @@ export function svgString(circuit, opts = {}) {
 // SELECT (accent blue) = selection, focus, and previews of pending edits;
 // WARN (amber) = needs attention, e.g. an unconnected pin while wiring;
 // DANGER (red) = errors such as cross-net overlaps and focused check issues.
-// Magenta center guides are measurement aids and deliberately separate.
+// Sky-blue center guides are measurement aids and deliberately separate from
+// the accent blue used for selection and pending edits.
 const SELECT = 'var(--accent, #2563eb)';
 const WARN = 'var(--warn, #b45309)';
 const DANGER = 'var(--danger, #c53030)';
@@ -851,7 +852,7 @@ export function editorOverlay(circuit, opts = {}) {
     parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
   }
 
-  // Selection centerlines are deliberately magenta and dashed so they read
+  // Selection centerlines are deliberately sky blue and dashed so they read
   // as measurement guides rather than cursor crosshairs or circuit geometry.
   // Keep each guide outside the selected bounds: one grid cell of guide at
   // each edge is enough to expose the center without crossing the artwork.
@@ -861,7 +862,7 @@ export function editorOverlay(circuit, opts = {}) {
     const cy = r.y + r.h / 2;
     const pad = GRID;
     const tick = 10;
-    const color = '#d946ef';
+    const color = '#0ea5e9';
     parts.push(`<g class="selection-center-guides" pointer-events="none" opacity="0.9">` +
       `<path d="M ${fmt(cx)} ${fmt(r.y - pad)} L ${fmt(cx)} ${fmt(r.y)} M ${fmt(cx)} ${fmt(r.y + r.h)} L ${fmt(cx)} ${fmt(r.y + r.h + pad)} M ${fmt(r.x - pad)} ${fmt(cy)} L ${fmt(r.x)} ${fmt(cy)} M ${fmt(r.x + r.w)} ${fmt(cy)} L ${fmt(r.x + r.w + pad)} ${fmt(cy)}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="9 6"/>` +
       `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
@@ -870,18 +871,20 @@ export function editorOverlay(circuit, opts = {}) {
   }
 
   // Placement guides: the spacing and alignment relationships the object being
-  // placed or moved already stands in. Magenta, like the selection centerlines,
-  // because both are measurement aids rather than circuit or selection state.
-  // Every measurement is drawn between the two anchors it measures, with a
-  // leader from each anchor to the dimension line, so what is being compared is
-  // never in doubt; two equal intervals carry the same number side by side.
+  // placed or moved already stands in. Sky blue, like the selection
+  // centerlines, because both are measurement aids rather than circuit or
+  // selection state. Every measurement is drawn between the two anchors it
+  // measures, with a leader from each anchor to the dimension line, so what
+  // is being compared is never in doubt; two equal intervals carry the same
+  // number side by side.
   if (opts.placementGuide?.guides?.length) {
     const { moving, guides } = opts.placementGuide;
     // Two measurements, two colours, because they answer different questions:
-    // magenta is the centre of the parts, green the centre of the space they
-    // and everything drawn between them actually leave.
-    const ANCHOR_INK = '#d946ef';
-    const SPACE_INK = '#22c55e';
+    // sky blue is the centre of the parts, teal the centre of the space they
+    // and everything drawn between them actually leave. Both cool hues so the
+    // pair reads as one family rather than clashing.
+    const ANCHOR_INK = '#0ea5e9';
+    const SPACE_INK = '#14b8a6';
     const tick = 9;
     const dot = (p, solid, ink) => `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="4.5" fill="${p.moving && !p.synthetic && solid ? ink : 'var(--paper, #fff)'}" stroke="${ink}" stroke-width="2"/>`;
     parts.push(`<g class="placement-guides" pointer-events="none" fill="none" stroke-width="2" vector-effect="non-scaling-stroke">`);
@@ -890,22 +893,28 @@ export function editorOverlay(circuit, opts = {}) {
       const axis = guide.axis;
       const along = axis === 'x' ? 'y' : 'x';
       const pt = (p, a) => (a === 'x' ? p.x : p.y);
+      // One shared dash rhythm for every "not yet real" stroke (a suggestion,
+      // an alignment reference, a target crossing) keeps the state signal to a
+      // single visual cue instead of several competing rhythms.
+      const SUGGESTION_DASH = '7 5';
       if (guide.kind === 'align') {
         const lo = Math.min(...guide.points.map((p) => pt(p, along)));
         const hi = Math.max(...guide.points.map((p) => pt(p, along)));
         const line = (a, b) => axis === 'y'
           ? `M ${fmt(a)} ${fmt(guide.value)} H ${fmt(b)}`
           : `M ${fmt(guide.value)} ${fmt(a)} V ${fmt(b)}`;
-        parts.push(`<path d="${line(lo - GRID / 2, hi + GRID / 2)}" stroke="${color}" stroke-dasharray="9 6" stroke-opacity="0.85"/>`);
+        parts.push(`<path d="${line(lo - GRID / 2, hi + GRID / 2)}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.85"/>`);
         parts.push(guide.points.map((p) => dot(p, true, color)).join(''));
         continue;
       }
-      // One dimension line clear of every anchor and of the moving symbol, with
-      // a leader from each measured anchor out to it. A guide still being
-      // offered is drawn dashed, and its own point stands on the target rather
-      // than on the object, so the two intervals stay the ones being labelled.
+      // One dimension line clear of every anchor and of the moving symbol. A
+      // guide still being offered is drawn dashed, and its own point stands on
+      // the target rather than on the object, so the two intervals stay the
+      // ones being labelled. Everything that only connects an anchor back to
+      // that line (leaders, the halfway reference) stays a quiet solid
+      // hairline, so dashing reads as one thing: not landed yet.
       const pending = !guide.exact;
-      const dash = pending ? ' stroke-dasharray="7 5"' : '';
+      const dash = pending ? ` stroke-dasharray="${SUGGESTION_DASH}"` : '';
       const bboxEdge = axis === 'x' ? moving.bbox.y : moving.bbox.x;
       const base = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along))) - GRID;
       if (pending) {
@@ -915,12 +924,12 @@ export function editorOverlay(circuit, opts = {}) {
           ...guide.points.map((p) => pt(p, along)));
         parts.push(`<path d="${axis === 'x'
           ? `M ${fmt(guide.target)} ${fmt(lo - GRID / 2)} V ${fmt(hi + GRID / 2)}`
-          : `M ${fmt(lo - GRID / 2)} ${fmt(guide.target)} H ${fmt(hi + GRID / 2)}`}" stroke="${color}" stroke-dasharray="5 6" stroke-opacity="0.75"/>`);
+          : `M ${fmt(lo - GRID / 2)} ${fmt(guide.target)} H ${fmt(hi + GRID / 2)}`}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.55"/>`);
       }
       const leader = (p) => (axis === 'x'
         ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
         : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
-      parts.push(`<path d="${guide.points.map(leader).join(' ')}" stroke="${color}" stroke-opacity="0.4" stroke-dasharray="4 4"/>`);
+      parts.push(`<path d="${guide.points.map(leader).join(' ')}" stroke="${color}" stroke-opacity="0.3" stroke-width="1.25"/>`);
       const span = (a, b) => (axis === 'x'
         ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(b.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(b.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
         : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(b.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(b.y)} H ${fmt(base + tick)}`);
@@ -942,7 +951,7 @@ export function editorOverlay(circuit, opts = {}) {
         const text = axis === 'x'
           ? `<text x="${fmt((from.x + at.x) / 2)}" y="${fmt(halfBase + 20)}" fill="${color}" stroke="none" text-anchor="middle" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`
           : `<text x="${fmt(halfBase + 20)}" y="${fmt((from.y + at.y) / 2 + 7)}" fill="${color}" stroke="none" text-anchor="start" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`;
-        parts.push(`<g class="placement-halfway-reference" stroke="${color}" stroke-opacity="0.75" stroke-dasharray="3 4"><path d="${reference}"/></g>${text}`);
+        parts.push(`<g class="placement-halfway-reference" stroke="${color}" stroke-opacity="0.4" stroke-width="1.25"><path d="${reference}"/></g>${text}`);
       }
       parts.push(guide.points.map((p) => dot(p, guide.exact, color)).join(''));
     }
@@ -1132,7 +1141,7 @@ export function editorOverlay(circuit, opts = {}) {
   }
 
   // Symmetric placement: the axis a mirrored pair is being placed about. A
-  // construction line, drawn in the measurement magenta and never geometry.
+  // construction line, drawn in the measurement sky blue and never geometry.
   if (opts.symmetryAxis?.operation && (opts.ghost?.def || opts.wirePreview)) {
     const { operation, pin } = opts.symmetryAxis;
     const g = opts.ghost;
@@ -1151,9 +1160,9 @@ export function editorOverlay(circuit, opts = {}) {
     const d = operation === 'mirrorX'
       ? `M ${fmt(pin.x)} ${fmt(pin.y - reach)} V ${fmt(pin.y + reach)}`
       : `M ${fmt(pin.x - reach)} ${fmt(pin.y)} H ${fmt(pin.x + reach)}`;
-    parts.push(`<g class="symmetry-axis" pointer-events="none" fill="none" stroke="#d946ef" stroke-width="2" vector-effect="non-scaling-stroke">` +
+    parts.push(`<g class="symmetry-axis" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
       `<path d="${d}" stroke-dasharray="14 5 3 5"/>` +
-      `<circle cx="${fmt(pin.x)}" cy="${fmt(pin.y)}" r="4.5" fill="var(--paper, #fff)" stroke="#d946ef" stroke-width="2"/>` +
+      `<circle cx="${fmt(pin.x)}" cy="${fmt(pin.y)}" r="4.5" fill="var(--paper, #fff)" stroke="#0ea5e9" stroke-width="2"/>` +
       `</g>`);
     // How far apart the pair is being pulled. Two equal intervals either side
     // of the axis, dimensioned like a spacing guide, because the number that
@@ -1178,14 +1187,14 @@ export function editorOverlay(circuit, opts = {}) {
         ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(c.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(c.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
         : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(c.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(c.y)} H ${fmt(base + tick)}`);
       const label = (a, c) => (axis === 'x'
-        ? `<text x="${fmt((a.x + c.x) / 2)}" y="${fmt(base + GRID * 0.8)}" fill="#d946ef" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${text}</text>`
-        : `<text x="${fmt(base + GRID / 3)}" y="${fmt((a.y + c.y) / 2 + 8)}" fill="#d946ef" stroke="none" text-anchor="start" font-size="24" font-family="system-ui, sans-serif">${text}</text>`);
+        ? `<text x="${fmt((a.x + c.x) / 2)}" y="${fmt(base + GRID * 0.8)}" fill="#0ea5e9" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${text}</text>`
+        : `<text x="${fmt(base + GRID / 3)}" y="${fmt((a.y + c.y) / 2 + 8)}" fill="#0ea5e9" stroke="none" text-anchor="start" font-size="24" font-family="system-ui, sans-serif">${text}</text>`);
       const at = (p) => ({ x: axis === 'x' ? p.x : base, y: axis === 'x' ? base : p.y });
-      parts.push(`<g class="symmetry-offset" pointer-events="none" fill="none" stroke="#d946ef" stroke-width="2" vector-effect="non-scaling-stroke">` +
+      parts.push(`<g class="symmetry-offset" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
         `<path d="${[twin, pin, from].map(leader).join(' ')}" stroke-opacity="0.4" stroke-dasharray="4 4"/>` +
         `<path d="${span(twin, pin)}"/><path d="${span(pin, from)}"/>` +
         label(twin, pin) + label(pin, from) +
-        [twin, from].map((p) => `<circle cx="${fmt(at(p).x)}" cy="${fmt(at(p).y)}" r="4.5" fill="#d946ef" stroke="#d946ef" stroke-width="2"/>`).join('') +
+        [twin, from].map((p) => `<circle cx="${fmt(at(p).x)}" cy="${fmt(at(p).y)}" r="4.5" fill="#0ea5e9" stroke="#0ea5e9" stroke-width="2"/>`).join('') +
         `</g>`);
     }
   }

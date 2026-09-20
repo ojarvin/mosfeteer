@@ -41,6 +41,9 @@
   --logo-blade: var(--text);
   --logo-sheen: #8a93a3;
   color-scheme: light;
+  /* Native checkboxes/radios otherwise pick up the OS/browser accent color
+     (which can be anything, including purple) instead of the app's own. */
+  accent-color: var(--accent);
 }
 
 * {
@@ -1124,7 +1127,6 @@ button:disabled {
 .analysis-dock .analysis-approximations input[type="checkbox"] {
   width: auto;
   min-height: 0;
-  accent-color: var(--accent);
 }
 
 .analysis-dock .math-inline {
