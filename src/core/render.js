@@ -58,12 +58,12 @@ function strokeWidthOf(style, base = 'symbol') {
   return strokeWidth(style, base);
 }
 
-/** Schematic block terminals land on the centerline of the block outline.
- * Pull a filled arrowhead back by half that outline so its tip meets the
- * visible outer edge rather than disappearing into the stroked body. */
-function blockTerminalInset(circuit, point) {
+/** These terminals land on the centerline of a stroked body outline. Pull a
+ * filled arrowhead out by half that outline so its tip meets the visible edge
+ * rather than disappearing into the body. */
+function terminalBodyInset(circuit, point) {
   for (const component of circuit.components.values()) {
-    if (component.type !== 'block') continue;
+    if (!['block', 'signal_sum', 'signal_multiply'].includes(component.type)) continue;
     if (component.terminalDefs.some((terminal) => {
       const world = component.terminalWorld(terminal.name);
       return world.x === point.x && world.y === point.y;
@@ -74,8 +74,8 @@ function blockTerminalInset(circuit, point) {
 
 function wireArrowheadOptions(circuit, points) {
   return {
-    startInset: blockTerminalInset(circuit, points[0]),
-    endInset: blockTerminalInset(circuit, points.at(-1)),
+    startInset: terminalBodyInset(circuit, points[0]),
+    endInset: terminalBodyInset(circuit, points.at(-1)),
   };
 }
 
@@ -798,7 +798,11 @@ export function svgString(circuit, opts = {}) {
     const labelVisual = label.math
       ? mathLabelSvg(label)
       : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
-    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
+    if (label.selectable === false) {
+      parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
+    } else {
+      parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
+    }
   }
 
   parts.push('</svg>');

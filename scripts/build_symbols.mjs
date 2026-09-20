@@ -138,6 +138,12 @@ const rows = [
     y: 4000,
     items: [['block', 'B1', 0]],
   },
+  {
+    label: 'Signal flow',
+    id: 'signal_flow',
+    y: 4400,
+    items: [['signal_sum', 'SUM1', 0], ['signal_multiply', 'MUL1', 480]],
+  },
 ];
 
 export function buildCommands() {

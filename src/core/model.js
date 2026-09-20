@@ -24,6 +24,24 @@ const REFERENCE_MARKER_INFO = Object.freeze({
 // Keep `GND` as a compatibility alias; new unnamed ground markers use `VSS`.
 const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.freeze(['GND']) });
 
+const SIGNAL_FLOW_TYPES = new Set(['signal_sum', 'signal_multiply']);
+const SIGNAL_INPUT_SIGN_ROLE = 'signal-input-sign';
+
+function isSignalFlowComponent(component) {
+  return !!component && SIGNAL_FLOW_TYPES.has(component.type);
+}
+
+function signalInputSignOffset(terminal) {
+  // Coordinates use y-down. Put the sign one cell farther out along the pin
+  // entry direction, then one cell on the clockwise side of that direction.
+  // This gives north=(+40,-80), south=(-40,+80), west=(-80,-40) locally.
+  const dir = terminal.dir || { x: 0, y: 0 };
+  return {
+    x: terminal.x + dir.x * GRID - dir.y * GRID,
+    y: terminal.y + dir.y * GRID + dir.x * GRID,
+  };
+}
+
 // Active-low sequential symbols used the `n` suffix before the terminal names
 // were standardized on `B`. Keep old documents loadable while the registered
 // component types and their new instances use the consistent spelling.
@@ -539,6 +557,12 @@ export class LabelInstance {
     this.connectorId = opts.connectorId !== undefined && opts.connectorId !== null && opts.connectorId !== '' ? String(opts.connectorId) : null;
     this.connectorT = Number.isFinite(opts.connectorT) ? opts.connectorT : null;
     this.parent = opts.parent || null;
+    // Owned labels may carry a symbol-specific role. Signal input signs use
+    // this subtype so they remain ordinary component children for transforms,
+    // copying, styling, and deletion without masquerading as the refdes label.
+    this.role = opts.role || null;
+    this.signalTerminal = opts.signalTerminal || null;
+    this.selectable = opts.selectable !== false;
     this.roleError = null;
     if (this.netId && opts.owner) this.roleError = 'label cannot have both netId and owner';
     if (this.kind !== 'label' && (this.netId || opts.owner || this.parent || this.connectorId)) throw new Error('annotations cannot have owners, nets, or connectors');
@@ -604,8 +628,8 @@ export class LabelInstance {
     }
     else {
       const next = this.math ? normalizeMathSource(value) : String(value);
-      if (this.owner && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
-      if (this.owner && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
+      if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
+      if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
       this.circuit.invalidateRoutingCache();
     }
@@ -812,8 +836,8 @@ export class LabelInstance {
       this.circuit._markReferenceLabelsLocal?.(net);
     } else {
       const next = this.math ? normalizeMathSource(text) : String(text);
-      if (this.owner && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
-      if (this.owner && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
+      if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
+      if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
       this.clearRenderedTextBounds();
       this.circuit.invalidateRoutingCache();
@@ -904,6 +928,9 @@ export class LabelInstance {
         ? { mathBox: { w: this.colWidth() * GRID, h: this.rowHeight() * GRID } } : {}),
       align: this.align,
       owner: this.owner,
+      ...(this.role ? { role: this.role } : {}),
+      ...(this.signalTerminal ? { signalTerminal: this.signalTerminal } : {}),
+      ...(this.selectable === false ? { selectable: false } : {}),
       ...(this.referenceLocal === false ? { referenceLocal: false } : {}),
       parent: this.parent,
       netId: this.netId,
@@ -960,6 +987,14 @@ export class ComponentInstance {
       reserveLabels: !!this.def.labelOffset,
     });
     this.value = opts.value !== undefined ? String(opts.value) : this.def.defaultValue;
+    const signalInputNames = new Set((this.def.terminals || [])
+      .filter((terminal) => terminal.signalRole === 'input')
+      .map((terminal) => terminal.name));
+    this.negativeInputs = new Set(
+      (Array.isArray(opts.negativeInputs) ? opts.negativeInputs : [])
+        .map((name) => String(name))
+        .filter((name) => signalInputNames.has(name)),
+    );
     // Schematic blocks are the one resizable symbol. Keep their geometry and
     // perimeter terminal slots on the instance rather than mutating the shared
     // symbol definition (which would resize every block in the document).
@@ -1125,6 +1160,7 @@ export class ComponentInstance {
         : {}),
       transform: { ...this.transform },
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
+      ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -1509,6 +1545,11 @@ export class Circuit {
     // start. Default numeric names persist explicit textbook markup (M_{1}),
     // while the connectivity id remains compact (M1).
     if (!opts.noLabel) this._ensureComponentInstanceLabel(inst);
+    // A normal insertion can materialize its optional signal signs now. A
+    // JSON load defers this until its authored labels have been read, while a
+    // paste keeps the option in the component payload and reaches this path
+    // with noLabel omitted.
+    if (!this._loading || !opts.noLabel) this._syncSignalInputLabels(inst);
     // Touching pins connect: a newly placed component whose terminal lands on
     // another component's terminal joins that net immediately. Skipped while a
     // state is being loaded (fromJSON) so explicit nets are not pre-empted.
@@ -1630,6 +1671,75 @@ export class Circuit {
       align: 'center',
       style: { color: component.style.color },
     });
+  }
+
+  /** Keep optional signal-flow input signs as owned labels. The option is
+   * authoritative; this method makes the persisted/rendered child labels an
+   * idempotent projection of it. */
+  _syncSignalInputLabels(component) {
+    if (!isSignalFlowComponent(component)) return;
+    const inputs = component.terminalDefs.filter((terminal) => terminal.signalRole === 'input');
+    const inputNames = new Set(inputs.map((terminal) => terminal.name));
+    component.negativeInputs = new Set([...component.negativeInputs].filter((name) => inputNames.has(name)));
+    const existing = new Map();
+    for (const label of [...this.labels.values()]) {
+      if (label.owner !== component.refdes || label.role !== SIGNAL_INPUT_SIGN_ROLE) continue;
+      if (!inputNames.has(label.signalTerminal) || existing.has(label.signalTerminal) || !component.negativeInputs.has(label.signalTerminal)) {
+        this.labels.delete(label.id);
+        continue;
+      }
+      existing.set(label.signalTerminal, label);
+    }
+    for (const terminal of inputs) {
+      if (!component.negativeInputs.has(terminal.name)) continue;
+      const offset = signalInputSignOffset(terminal);
+      const label = existing.get(terminal.name) || this.addLabel({
+        text: '−',
+        owner: component.refdes,
+        role: SIGNAL_INPUT_SIGN_ROLE,
+        signalTerminal: terminal.name,
+        offset,
+        align: 'center',
+        selectable: false,
+        style: { color: component.style.color, width: 'thick' },
+      });
+      label._text = '−';
+      label.offset = { ...offset };
+      label.align = 'center';
+      label.selectable = false;
+      label.style.color = component.style.color;
+      label.style.width = 'thick';
+      label.clearRenderedTextBounds();
+    }
+    this.invalidateRoutingCache();
+    return component;
+  }
+
+  /** Clear generated input signs whose terminals are no longer routed. */
+  _syncSignalInputConnections() {
+    for (const component of this.components.values()) {
+      if (!isSignalFlowComponent(component)) continue;
+      for (const terminal of component.terminalDefs) {
+        if (terminal.signalRole !== 'input' || !component.negativeInputs.has(terminal.name)) continue;
+        if (!this.netOfTerminal({ comp: component.refdes, term: terminal.name })) {
+          component.negativeInputs.delete(terminal.name);
+        }
+      }
+      this._syncSignalInputLabels(component);
+    }
+  }
+
+  /** Toggle the polarity marker for one of the three signal-flow inputs. */
+  setSignalInputNegative(refdes, terminalName, negative = true) {
+    const component = this.getComponent(refdes);
+    if (!isSignalFlowComponent(component)) throw new Error(`component ${component.refdes} has no signal-flow input polarity`);
+    const terminal = component.terminalDefs.find((candidate) =>
+      candidate.name === terminalName && candidate.signalRole === 'input');
+    if (!terminal) throw new Error(`component ${component.refdes} has no signal-flow input "${terminalName}"`);
+    if (negative) component.negativeInputs.add(terminal.name);
+    else component.negativeInputs.delete(terminal.name);
+    this._syncSignalInputLabels(component);
+    return component;
   }
 
 
@@ -2442,12 +2552,17 @@ export class Circuit {
   removeLabel(id) {
     this.invalidateRoutingCache();
     const key = typeof id === 'string' ? id : id?.id;
-    const owner = this.labels.get(key)?.owner;
+    const removedLabel = this.labels.get(key);
+    const owner = removedLabel?.owner;
     const removed = this.labels.delete(key);
     if (removed) {
       for (const [childId, label] of this.labels) if (label.parent === key) this.labels.delete(childId);
       const marker = owner ? this.components.get(owner) : null;
       if (isReferenceMarker(marker) && !this.labelOf(marker.refdes)) this._clearReferenceMarkerName(marker);
+      const signalComponent = owner ? this.components.get(owner) : null;
+      if (removedLabel.role === SIGNAL_INPUT_SIGN_ROLE && isSignalFlowComponent(signalComponent)) {
+        signalComponent.negativeInputs.delete(removedLabel.signalTerminal);
+      }
     }
     return removed;
   }
@@ -2474,7 +2589,7 @@ export class Circuit {
 
   /** The instance label owned by a component, if any. */
   labelOf(refdes) {
-    for (const l of this.labels.values()) if (l.owner === refdes) return l;
+    for (const l of this.labels.values()) if (l.owner === refdes && !l.role) return l;
     return null;
   }
 
@@ -5264,6 +5379,7 @@ export class Circuit {
         this.components.delete(comp.refdes);
       }
     }
+    this._syncSignalInputConnections();
     return added;
   }
 
@@ -5325,6 +5441,7 @@ export class Circuit {
         mirrorY: c.transform.mirrorY,
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
+        negativeInputs: c.negativeInputs,
         style: c.style,
         analysis: migrateSerializedComponentAnalysis(c.analysis),
         drawOrder: c.drawOrder,
@@ -5402,6 +5519,9 @@ export class Circuit {
           text: l.text,
           align: l.align,
           owner: l.owner || null,
+          role: l.role || null,
+          signalTerminal: l.signalTerminal || null,
+          selectable: l.selectable,
           referenceLocal: l.referenceLocal,
           parent: l.parent || null,
           netId: l.netId || null,
@@ -5428,6 +5548,7 @@ export class Circuit {
       if (component.type !== 'port' || circuit.labelOf(component.refdes)) continue;
       try { circuit._ensureComponentInstanceLabel(component); } catch { /* label id in use */ }
     }
+    for (const component of circuit.components.values()) circuit._syncSignalInputLabels(component);
     // Restore direct pin contacts that are not represented by wire geometry.
     if (!data.topologyOnly) circuit.connectCoincident();
     // Migrate legacy owned instance labels that persisted a compact trailing

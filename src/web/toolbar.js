@@ -31,6 +31,7 @@ export const PLACEMENT_LABELS = {
   xor3_gate: '3-input XOR gate', xnor3_gate: '3-input XNOR gate',
   variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
   solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
+  signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
 };
 
 export const PLACEMENT_ALIASES = {
@@ -84,6 +85,8 @@ export const PLACEMENT_ALIASES = {
   variable_resistor: ['potentiometer', 'pot'], variable_capacitor: ['var cap'], variable_inductor: ['var coil'],
   switch_open: ['switch', 'open'], switch_closed: ['switch', 'closed'], solder: ['junction', 'dot'],
   label: ['annotation', 'text'], block: ['block', 'rectangle', 'node'],
+  signal_sum: ['sum', 'summer', 'signal flow', 'junction'],
+  signal_multiply: ['multiply', 'multiplier', 'signal flow', 'junction'],
 };
 
 /** Rank a name against a query: prefix beats substring beats subsequence, and

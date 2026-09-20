@@ -51,6 +51,15 @@ test('insert categories keep switches and macros separate and include vccs with 
   assert.match(main, /\['Macros', \/\^\(opamp\|opamp_diff\|adc\|dac\)\$\//);
   assert.match(main, /\['Logic', \/\^\(inverter\|buffer\|tristate_\(inverter\|buffer\)\|mux2\|\.\*_gate\)\$\//);
   assert.match(main, /\['Sequential', \/\^\(\?:dff\|latch\)\(\?:_\|\$\)\//);
+  assert.match(main, /\['Signal flow', \/\^signal_\(sum\|multiply\)\$\//);
+});
+
+test('selection style controls keep their text-target result shape after block mode removal', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function selectedTextTargets()');
+  const end = main.indexOf('\nfunction selectedFontState(', start);
+  assert.ok(start > 0 && end > start);
+  assert.match(main.slice(start, end), /return \{ labels: \[\.\.\.labels\.values\(\)\], blocks: \[\] \};/);
 });
 
 test('the small-signal figure owns Escape and hands the keyboard back', () => {
@@ -515,6 +524,10 @@ test('committed inserts repair coincident connectivity and analysis menus suppor
   assert.match(main, /Clear g_m r_o override/);
   assert.match(main, /Clear body-effect override/);
   assert.match(main, /function appendContextSmallSignalMenu\(menu, target\)/);
+  assert.match(main, /function appendSignalFlowPolarityMenu\(menu, target\)/);
+  assert.match(main, /signalRole === 'input'/);
+  assert.match(main, /circuit\.setSignalInputNegative\(component\.refdes, terminal\.name/);
+  assert.match(main, /Input polarity/);
   assert.match(main, /appendContextSubmenu\(menu, 'Select'/);
   assert.match(main, /function analysisChoiceState\(targets, read, expected\)/);
   assert.match(main, /context-item-active/);

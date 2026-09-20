@@ -201,6 +201,7 @@ mirror flag to override that default.
 | dff family | `D` / `CLK` or `CLKB` inputs, `Q` (and optional inverted `QB`) outputs; no reset, `RST`, or `RSTB` bottom input | 80×160 outlined body with `D` aligned to the D/Q row, a thin rising-edge clock marker, and inversion bubbles on active-low clock/reset and `QB` variants; reset-free variants have no bottom lead; owned component label sits above |
 | latch family | `L` / `EN` or `ENB` inputs, `Q` (and optional inverted `QB`) outputs; no reset, `RST`, or `RSTB` bottom input | Same body and footprint as DFFs, with no clock marker and `L` aligned to the enable/output rows; reset-free variants have no bottom lead; owned component label sits above |
 | block | `T1`…`T12`, every non-corner grid slot per side | resizable schematic shell (default 160×160) with centered editable caption; selected blocks expose eight resize handles, preserve connected attachment positions where possible, and unused terminals do not fail Design Check |
+| signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at the four cardinal directions | 80×80 signal-flow operator with a 40-unit-radius circle; sum uses a plus mark, multiply uses a × mark, unused terminals do not fail Design Check, and negative routed inputs carry a non-selectable `−` label one cell outward on the pin-entry side |
 
 Notes:
 

@@ -9,6 +9,7 @@ export const block = defineSymbol({
   type: 'block',
   description: 'Schematic block',
   refPrefix: 'B',
+  allowFloatingTerminals: true,
   terminals: [
     { name: 'T1', x: -40, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
     { name: 'T2', x: 40, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },

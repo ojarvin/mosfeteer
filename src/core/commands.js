@@ -217,10 +217,9 @@ export function evaluate(circuit) {
         addIssue('grid-violation', message, { refs: [ref], points: [point], location: 'terminal' });
       }
       terminals.push({ ref: `${c.refdes}.${t.name}`, x: w.x, y: w.y, net: net ? net.id : null });
-      // Schematic blocks are visual interface shells. Their perimeter pins are
-      // available for optional wiring, but an unused pin is not a design-check
-      // failure; the block body is still included in overlap/body geometry.
-      if (!net && c.type !== 'block') {
+      // Symbols such as schematic blocks and signal-flow operators can expose
+      // optional pins. Their bodies still participate in overlap/body checks.
+      if (!net && !c.def.allowFloatingTerminals) {
         const message = `${ref}@(${w.x},${w.y})`;
         dangling.push(message);
         addIssue('unconnected-terminal', `unconnected terminal ${message}`, {

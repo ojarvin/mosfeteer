@@ -87,6 +87,13 @@ test('multiplexer is named and searchable', () => {
   assert.ok(placementSearchScore('select', 'mux2') > 0);
 });
 
+test('signal-flow operators are named and searchable', () => {
+  assert.equal(PLACEMENT_LABELS.signal_sum, 'Sum junction');
+  assert.equal(PLACEMENT_LABELS.signal_multiply, 'Multiply junction');
+  assert.ok(PLACEMENT_ALIASES.signal_sum.includes('signal flow'));
+  assert.ok(placementSearchScore('multiplier', 'signal_multiply') > 0);
+});
+
 test('D flip-flop variants are named and searchable in the sequential palette', () => {
   assert.equal(PLACEMENT_LABELS.dff, 'D flip-flop (CLK, Q)');
   assert.equal(PLACEMENT_LABELS.dff_rst, 'D flip-flop (CLK, RST)');

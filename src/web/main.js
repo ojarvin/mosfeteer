@@ -1617,6 +1617,7 @@ function setSelection(refs, primary = refs[0], preserveMixed = false) {
 /** Replace the label selection. `primary` defaults to the first element. */
 function setLabelSelection(ids, primary = ids[0], preserveMixed = false) {
   clearDiagnosticFocus();
+  const selectableIds = ids.filter((id) => circuit.labels.get(id)?.selectable !== false);
   if (!preserveMixed) {
     selected = null;
     multi.clear();
@@ -1624,8 +1625,10 @@ function setLabelSelection(ids, primary = ids[0], preserveMixed = false) {
     selectedWires.clear();
     selectedNets.clear();
   }
-  selLabels = new Set(ids);
-  selLabel = ids.length ? (ids.includes(primary) ? primary : ids[0]) : null;
+  selLabels = new Set(selectableIds);
+  selLabel = selectableIds.length
+    ? (selectableIds.includes(primary) ? primary : selectableIds[0])
+    : null;
 }
 
 /** Deserialize a "netId:branch:segment" key into {netId, branch, segment}. */
@@ -1755,7 +1758,9 @@ function finishDiagonalSegmentDrag() {
 }
 
 function selectedLabels() {
-  return [...selLabels].map((id) => circuit.labels.get(id)).filter(Boolean);
+  return [...selLabels]
+    .map((id) => circuit.labels.get(id))
+    .filter((label) => label && label.selectable !== false);
 }
 
 function selectedLabel() {
@@ -1801,7 +1806,10 @@ function selectedTextTargets() {
       }
     }
   }
-  return { labels: [...labels.values()] };
+  // Keep the result shape used by the shared text-style controls.  Schematic
+  // block text is no longer a separate selection role, but the panel still
+  // asks for this collection while deciding whether its row is visible.
+  return { labels: [...labels.values()], blocks: [] };
 }
 
 function selectedFontState(field) {
@@ -2106,6 +2114,7 @@ function pickLabel(w) {
   const x = snap(w.x);
   const y = snap(w.y);
   for (const label of labels()) {
+    if (label.selectable === false) continue;
     if (['arrow', 'box', 'line'].includes(label.kind)) continue;
     const r = label.bbox();
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
@@ -4164,7 +4173,7 @@ function boxSelectionContents(x0, y0, x1, y1) {
   }
   const labels = [];
   for (const label of circuit.labels.values()) {
-    if (rectContained(label.bbox(), box)) labels.push(label.id);
+    if (label.selectable !== false && rectContained(label.bbox(), box)) labels.push(label.id);
   }
   const nets = [];
   const wires = [];
@@ -7043,7 +7052,9 @@ function contextCandidates(target, criterion) {
   if (criterion === 'color' || criterion === 'lineStyle') {
     return [
       ...[...circuit.components.values()].map((value) => ({ kind: 'component', value })),
-      ...[...circuit.labels.values()].map((value) => ({ kind: 'label', value })),
+      ...[...circuit.labels.values()]
+        .filter((value) => value.selectable !== false)
+        .map((value) => ({ kind: 'label', value })),
       ...wireCandidates(),
     ];
   }
@@ -7051,7 +7062,9 @@ function contextCandidates(target, criterion) {
     return [...circuit.components.values()].map((value) => ({ kind: 'component', value }));
   }
   if (target.kind === 'label') {
-    return [...circuit.labels.values()].map((value) => ({ kind: 'label', value }));
+    return [...circuit.labels.values()]
+      .filter((value) => value.selectable !== false)
+      .map((value) => ({ kind: 'label', value }));
   }
   if (target.kind === 'net') {
     return [...circuit.nets.values()].map((value) => ({ kind: 'net', value }));
@@ -8064,6 +8077,24 @@ function appendContextSelectionMenu(menu, target) {
   });
 }
 
+function appendSignalFlowPolarityMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value : null;
+  const inputs = component?.terminalDefs?.filter((terminal) => terminal.signalRole === 'input') || [];
+  if (!inputs.length) return;
+  appendContextSubmenu(menu, 'Input polarity', (submenu) => {
+    for (const terminal of inputs) {
+      const routed = !!circuit.netOfTerminal({ comp: component.refdes, term: terminal.name });
+      const negative = component.negativeInputs?.has(terminal.name) || false;
+      const label = routed
+        ? `${terminal.name} input: ${negative ? 'negative' : 'positive'}`
+        : `${terminal.name} input (not routed)`;
+      appendContextItem(submenu, label, () => {
+        commit(() => circuit.setSignalInputNegative(component.refdes, terminal.name, !negative));
+      }, { disabled: !routed, active: negative });
+    }
+  });
+}
+
 function appendContextSmallSignalMenu(menu, target) {
   const component = target.kind === 'component' ? target.value : null;
   const net = contextNet(target);
@@ -8177,6 +8208,7 @@ function openComponentContextMenu(target, x, y) {
   menu.appendChild(heading);
   appendContextActions(menu, target);
   appendContextSelectionMenu(menu, target);
+  appendSignalFlowPolarityMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(menu, 'Close', closeComponentContextMenu);
@@ -8412,7 +8444,7 @@ function openReferenceMarkerEditor(component) {
   inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
 }
 function inlineEditLabel(label, options = {}) {
-  if (!label || inlineInput) return;
+  if (!label || label.role === 'signal-input-sign' || inlineInput) return;
   const provisional = !!options.provisional;
   const equationDraft = !!options.equationDraft;
   const initialSnapshot = options.initialSnapshot || null;
@@ -9231,6 +9263,7 @@ const INSERT_CATEGORY_RULES = [
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   ['Blocks / shells', /^block$/],
+  ['Signal flow', /^signal_(sum|multiply)$/],
 ];
 
 /** Rank a component/label name against a fuzzy query (subsequence match).
@@ -9838,6 +9871,7 @@ function copySelection() {
       rotation: c.transform.rotation,
       mirrorX: c.transform.mirrorX,
       mirrorY: c.transform.mirrorY,
+      negativeInputs: c.negativeInputs ? [...c.negativeInputs] : [],
       style: { ...(c.style || {}) },
     })),
     labels: freeLabels.map(copyableLabelPayload),
@@ -10081,6 +10115,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           rotation: c.rotation,
           mirrorX: c.mirrorX,
           mirrorY: c.mirrorY,
+          negativeInputs: c.negativeInputs,
           style: c.style,
         });
         refMap.set(c.origRef, comp.refdes);

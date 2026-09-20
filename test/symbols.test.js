@@ -80,8 +80,8 @@ test('symbols generator covers every reference-sheet component and category', ()
   const adds = commands.filter((command) => command.startsWith('add '));
   const annotations = commands.filter((command) => command.startsWith('annotation add '));
   assert.equal(commands[0], 'clear');
-  assert.equal(adds.length, 71);
-  assert.equal(annotations.length, 10);
+  assert.equal(adds.length, 73);
+  assert.equal(annotations.length, 11);
   assert.ok(annotations.every((command) => command.includes('--align right --right-edge -320')));
   assert.ok(adds.filter((command) => command.startsWith('add switch_')).every((command) => !command.includes('--rot')));
   assert.equal(annotations.filter((command) => command.includes(' Sequential ')).length, 1);
@@ -96,7 +96,7 @@ test('symbols generator covers every reference-sheet component and category', ()
   for (const type of ['vccs', 'tristate_inverter', 'tristate_buffer', 'mux2', 'dff', 'dff_qb', 'dff_rst', 'dff_clkb_rstb_qb', 'latch', 'latch_rst', 'latch_enb_rstb_qb', 'and3_gate', 'xnor3_gate', 'block']) {
     assert.ok(adds.some((command) => command.startsWith(`add ${type} `)), `${type} is present`);
   }
-  assert.match(commands.at(-1), /^annotation add category_blocks Blocks /);
+  assert.match(commands.at(-1), /^annotation add category_signal_flow Signal flow /);
 });
 
 test('resistor zigzag is centered and symmetric', () => {
