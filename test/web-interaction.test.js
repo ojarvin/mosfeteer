@@ -547,6 +547,24 @@ test('a held modifier arms symmetric placement without swallowing the ghost keys
   assert.match(main, /if \(placed\.length > 1\) \{\s*symmetry\.settled = true;/);
   assert.match(main, /if \(!symmetry \|\| symmetry\.settled\) return;/);
 });
+
+test('Ctrl+r still mirrors vertically while a ghost keeps the modifier armed', () => {
+  // Holding Ctrl to keep symmetry armed makes every subsequent keydown carry
+  // ctrlKey too, so Ctrl+r cannot be told apart from "Ctrl already down, now
+  // press r" by the modifier check alone -- and releasing Ctrl does not drop
+  // `armed`, so there is no key sequence that ever presents Ctrl+r un-hijacked.
+  // It needs its own case ahead of the modifier branch, or it falls to the
+  // bare-r rotate below and the browser's own reload shortcut fires instead.
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const drivingSymmetryIndex = main.indexOf('const drivingSymmetry = symmetry');
+  const modifierBranchIndex = main.indexOf("if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {");
+  assert.ok(drivingSymmetryIndex > 0 && modifierBranchIndex > drivingSymmetryIndex);
+  const between = main.slice(drivingSymmetryIndex, modifierBranchIndex);
+  assert.match(between, /if \(drivingSymmetry && \(ev\.metaKey \|\| ev\.ctrlKey\) && !ev\.shiftKey && ev\.key\.toLowerCase\(\) === 'r'\) \{/);
+  assert.match(between, /ev\.preventDefault\(\);/);
+  assert.match(between, /transformPendingComponent\('mirrorY'\);/);
+  assert.match(between, /selectedTransform\('mirror-y'\);/);
+});
 test('the placement guides are a view toggle beside the grid', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-guides"[^>]*aria-pressed="true"/);

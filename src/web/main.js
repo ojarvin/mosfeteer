@@ -13681,11 +13681,27 @@ window.addEventListener('keydown', (ev) => {
   // everything it does not itself bind. Neither is bound with Ctrl.
   // r/Shift+r would otherwise read as Ctrl+r and Ctrl+Shift+r here, so the
   // ghost could not be rotated or flipped without letting go of the modifier.
-  // While symmetry is armed they mean what they mean in insert mode; the
-  // vertical mirror is the one transform that needs a momentary release,
-  // which a remembered axis makes free.
+  // While symmetry is armed they mean what they mean in insert mode.
   const drivingSymmetry = symmetry
     && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key.startsWith('Arrow') || ev.key.toLowerCase() === 'r');
+  // Ctrl+r (vertical mirror) has no unmodified-key form to fall back on, so it
+  // would otherwise be unreachable for as long as a ghost keeps the modifier
+  // permanently armed -- pressing Ctrl to reach it re-arms symmetry before
+  // the r lands, and releasing Ctrl does not drop `armed` (it is keyed off
+  // the ghost/drag, not the modifier), so there is no sequence that ever
+  // presents Ctrl+r un-hijacked. Handle it explicitly instead of letting the
+  // key fall through to the bare-r rotate below, which also left the browser
+  // to treat it as its own reload shortcut.
+  if (drivingSymmetry && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && ev.key.toLowerCase() === 'r') {
+    ev.preventDefault();
+    if (mode === 'insert' && pendingPlace?.kind === 'component') {
+      transformPendingComponent('mirrorY');
+      render();
+    } else {
+      selectedTransform('mirror-y');
+    }
+    return;
+  }
   if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {
     const k = ev.key.toLowerCase();
     // Ctrl held on its own arms symmetric placement; every other Ctrl chord
