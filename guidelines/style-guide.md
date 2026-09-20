@@ -200,7 +200,7 @@ mirror flag to override that default.
 | `mux2` | `a`, `b` inputs, `y` output, bottom `s` select | 80-unit tapered body, six grid squares tall on the input side and four on the output side; upright `0`/`1` row labels |
 | dff family | `D` / `CLK` or `CLKB` inputs, `Q` (and optional inverted `QB`) outputs; no reset, `RST`, or `RSTB` bottom input | 80×160 outlined body with `D` aligned to the D/Q row, a thin rising-edge clock marker, and inversion bubbles on active-low clock/reset and `QB` variants; reset-free variants have no bottom lead; owned component label sits above |
 | latch family | `L` / `EN` or `ENB` inputs, `Q` (and optional inverted `QB`) outputs; no reset, `RST`, or `RSTB` bottom input | Same body and footprint as DFFs, with no clock marker and `L` aligned to the enable/output rows; reset-free variants have no bottom lead; owned component label sits above |
-| block | `T1`…`T12`, every non-corner grid slot per side | resizable schematic shell (default 160×160) with centered editable caption; selected blocks expose eight resize handles, preserve connected terminal identities, and unused terminals do not fail Design Check |
+| block | `T1`…`T12`, every non-corner grid slot per side | resizable schematic shell (default 160×160) with centered editable caption; selected blocks expose eight resize handles, preserve connected attachment positions where possible, and unused terminals do not fail Design Check |
 
 Notes:
 
@@ -228,7 +228,10 @@ Notes:
   the body remains an obstacle for overlap and wire-through checks. Resize a
   selected block with the same eight handles used by block diagrams; the
   opposite corner stays fixed, touched managed nets are rerouted atomically,
-  and the size is persisted per instance.
+  and the size is persisted per instance. Connected pins keep their authored
+  perimeter positions when the new rectangle can contain them; shrinking
+  stops before an occupied pin would be crossed. Terminal names remain stable
+  when possible, but the attachment position is the visual invariant.
 - Transform order is **mirror → rotate → translate**.
 
 **Spacing**: keep at least one full 40-grid cell between adjacent

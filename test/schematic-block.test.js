@@ -89,6 +89,24 @@ test('schematic blocks resize from a world rectangle and preserve connected term
   assert.match(svgString(restored), /<rect x="-120" y="-120" width="240" height="240"/);
 });
 
+test('schematic block resize preserves occupied perimeter positions and clamps shrinking edges', () => {
+  const circuit = new Circuit();
+  const block = circuit.addComponent('block', { refdes: 'B1', x: 0, y: 0 });
+  const resistor = circuit.addComponent('resistor', { refdes: 'R1', x: 80, y: -320 });
+  const net = circuit.connect('B1.T9', 'R1.a');
+
+  assert.deepEqual(block.terminalWorld('T9'), { x: 0, y: -80 });
+  circuit.resizeBlock('B1', { x: -160, y: -80, w: 240, h: 160 });
+  assert.deepEqual(block.bboxWorld(), { x: -160, y: -80, w: 240, h: 160 });
+  assert.deepEqual(block.terminalWorld('T9'), { x: 0, y: -80 });
+  assert.deepEqual(net.paths()[0][0], { x: 0, y: -80 });
+
+  circuit.resizeBlock('B1', { x: 0, y: -80, w: 80, h: 160 });
+  assert.deepEqual(block.bboxWorld(), { x: -40, y: -80, w: 120, h: 160 });
+  assert.deepEqual(block.terminalWorld('T9'), { x: 0, y: -80 });
+  assert.deepEqual(net.paths()[0][0], { x: 0, y: -80 });
+});
+
 test('arrow annotations preserve authored intermediate vertices and render the head on the final leg', () => {
   const circuit = new Circuit();
   const arrow = circuit.addAnnotation('arrow', {

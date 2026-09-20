@@ -1012,8 +1012,9 @@ export class ComponentInstance {
     });
   }
 
-  setBlockSize(size = {}) {
+  setBlockSize(size = {}, options = {}) {
     if (this.type !== 'block') throw new Error(`component ${this.refdes} is not a schematic block`);
+    const old = { ...this.blockSize };
     const next = {
       w: Math.max(2 * GRID, snap(Number(size.w ?? old.w))),
       h: Math.max(2 * GRID, snap(Number(size.h ?? old.h))),
@@ -1024,6 +1025,7 @@ export class ComponentInstance {
       for (const terminal of net.terminals || []) if (terminal.comp === this.refdes) connected.add(terminal.term);
     }
     const sideMax = (side) => side === 'top' || side === 'bottom' ? next.w : next.h;
+    const preserveSlots = options.preserveSlots instanceof Map ? options.preserveSlots : new Map();
     const slots = [];
     // Match block-diagram perimeter behavior: every grid slot one cell away
     // from a corner is a valid attachment, including the exact edge midpoint.
@@ -1035,9 +1037,11 @@ export class ComponentInstance {
     const valid = new Set(slots.map((slot) => `${slot.side}:${slot.offset}`));
     const keep = [];
     const addExplicit = (item) => {
-      const nextLength = sideMax(item.side);
-      const offset = Math.max(0, Math.min(nextLength, snap(item.offset)));
-      const saved = { ...item, offset };
+      const requested = preserveSlots.get(item.name);
+      const side = requested?.side || item.side;
+      const nextLength = sideMax(side);
+      const offset = Math.max(0, Math.min(nextLength, snap(requested?.offset ?? item.offset)));
+      const saved = { ...item, side, offset };
       keep.push(saved);
       const key = `${saved.side}:${saved.offset}`;
       if (valid.has(key)) used.add(key);
@@ -1047,9 +1051,11 @@ export class ComponentInstance {
     // exactly like block-diagram terminals during a resize.
     for (const item of this.blockTerminals.filter((candidate) => !/^T\d+$/.test(candidate.name))) addExplicit(item);
     for (const item of this.blockTerminals.filter((candidate) => /^T\d+$/.test(candidate.name) && connected.has(candidate.name))) {
-      const nextLength = sideMax(item.side);
-      const offset = Math.max(0, Math.min(nextLength, snap(item.offset)));
-      const key = `${item.side}:${offset}`;
+      const requested = preserveSlots.get(item.name);
+      const side = requested?.side || item.side;
+      const nextLength = sideMax(side);
+      const offset = Math.max(0, Math.min(nextLength, snap(requested?.offset ?? item.offset)));
+      const key = `${side}:${offset}`;
       if (!valid.has(key) || used.has(key)) {
         const replacement = slots.find((candidate) => !used.has(`${candidate.side}:${candidate.offset}`));
         if (!replacement) throw new Error(`block ${this.refdes} resize creates coincident connected terminals`);
@@ -1057,7 +1063,7 @@ export class ComponentInstance {
         keep.push({ ...item, side: replacement.side, offset: replacement.offset });
       } else {
         used.add(key);
-        keep.push({ ...item, offset });
+        keep.push({ ...item, side, offset });
       }
     }
     let nextGenerated = 1;
@@ -1675,10 +1681,9 @@ export class Circuit {
     return c;
   }
 
-  /** Resize a schematic block from a world-space rectangle.  The block's
-   * origin follows the rectangle center, so the same corner-drag semantics as
-   * the block-diagram editor can be used without changing ordinary component
-   * transform rules. */
+  /** Resize a schematic block from a world-space rectangle. The block's
+   * origin follows the rectangle center, while occupied perimeter positions
+   * stay fixed whenever the new rectangle can contain them. */
   resizeBlock(refdes, rect = {}) {
     const component = this.getComponent(refdes);
     if (component.type !== 'block') throw new Error(`component ${refdes} is not a schematic block`);
@@ -1688,14 +1693,80 @@ export class Circuit {
     const beforeTransform = { ...component.transform };
     const beforeSize = { ...component.blockSize };
     const beforeTerminals = component.blockTerminals.map((terminal) => ({ ...terminal }));
+    const oldRect = {
+      x: beforeTransform.x - beforeSize.w / 2,
+      y: beforeTransform.y - beforeSize.h / 2,
+      w: beforeSize.w,
+      h: beforeSize.h,
+    };
     const topology = this._snapshotNetTopology();
-    const x = snap(Number(rect.x)); const y = snap(Number(rect.y));
-    const w = Math.max(2 * GRID, snap(Number(rect.w)));
-    const h = Math.max(2 * GRID, snap(Number(rect.h)));
-    if (![x, y, w, h].every(Number.isFinite)) throw new Error('block rectangle must contain finite coordinates');
     const touched = new Set([...this.nets.values()].filter((net) => net.terminals.some((t) => t.comp === refdes)).map((net) => net.id));
+    const connectedNames = new Set([...this.nets.values()].flatMap((net) =>
+      (net.terminals || []).filter((terminal) => terminal.comp === refdes).map((terminal) => terminal.term)));
+    const beforePoints = new Map(component.blockTerminals
+      .filter((terminal) => connectedNames.has(terminal.name))
+      .map((terminal) => [terminal.name, component.terminalWorld(terminal.name)]));
+    let x = snap(Number(rect.x)); let y = snap(Number(rect.y));
+    let w = Math.max(2 * GRID, snap(Number(rect.w)));
+    let h = Math.max(2 * GRID, snap(Number(rect.h)));
+    if (![x, y, w, h].every(Number.isFinite)) throw new Error('block rectangle must contain finite coordinates');
+
+    // A shrinking edge may not pass an occupied terminal. Top/bottom
+    // terminals constrain horizontal edges with one-cell corner clearance;
+    // left/right terminals constrain the corresponding side directly. This
+    // lets growing a block preserve connected terminals while preventing a
+    // shrink from silently relocating a wire endpoint.
+    const limits = {
+      left: Infinity,
+      right: -Infinity,
+      top: Infinity,
+      bottom: -Infinity,
+    };
+    for (const terminal of beforeTerminals) {
+      if (!beforePoints.has(terminal.name)) continue;
+      const point = beforePoints.get(terminal.name);
+      if (terminal.side === 'left') limits.left = Math.min(limits.left, point.x);
+      if (terminal.side === 'right') limits.right = Math.max(limits.right, point.x);
+      if (terminal.side === 'top' || terminal.side === 'bottom') {
+        limits.left = Math.min(limits.left, point.x - GRID);
+        limits.right = Math.max(limits.right, point.x + GRID);
+      }
+      if (terminal.side === 'top') limits.top = Math.min(limits.top, point.y);
+      if (terminal.side === 'bottom') limits.bottom = Math.max(limits.bottom, point.y);
+      if (terminal.side === 'left' || terminal.side === 'right') {
+        limits.top = Math.min(limits.top, point.y - GRID);
+        limits.bottom = Math.max(limits.bottom, point.y + GRID);
+      }
+    }
+    let right = x + w;
+    let bottom = y + h;
+    if (x > oldRect.x && Number.isFinite(limits.left)) x = Math.min(x, limits.left);
+    if (right < oldRect.x + oldRect.w && Number.isFinite(limits.right)) right = Math.max(right, limits.right);
+    if (y > oldRect.y && Number.isFinite(limits.top)) y = Math.min(y, limits.top);
+    if (bottom < oldRect.y + oldRect.h && Number.isFinite(limits.bottom)) bottom = Math.max(bottom, limits.bottom);
+    if (right - x < 2 * GRID) {
+      if (x > oldRect.x && right >= oldRect.x + oldRect.w) x = right - 2 * GRID;
+      else if (right < oldRect.x + oldRect.w && x <= oldRect.x) right = x + 2 * GRID;
+      else { x = oldRect.x; right = oldRect.x + oldRect.w; }
+    }
+    if (bottom - y < 2 * GRID) {
+      if (y > oldRect.y && bottom >= oldRect.y + oldRect.h) y = bottom - 2 * GRID;
+      else if (bottom < oldRect.y + oldRect.h && y <= oldRect.y) bottom = y + 2 * GRID;
+      else { y = oldRect.y; bottom = oldRect.y + oldRect.h; }
+    }
+    w = right - x;
+    h = bottom - y;
+    const preserveSlots = new Map();
+    for (const terminal of beforeTerminals) {
+      const point = beforePoints.get(terminal.name);
+      if (!point) continue;
+      const offset = terminal.side === 'top' || terminal.side === 'bottom'
+        ? point.x - x
+        : point.y - y;
+      preserveSlots.set(terminal.name, { side: terminal.side, offset });
+    }
     try {
-      component.setBlockSize({ w, h });
+      component.setBlockSize({ w, h }, { preserveSlots });
       component.transform.x = x + w / 2;
       component.transform.y = y + h / 2;
       this.invalidateRoutingCache();
