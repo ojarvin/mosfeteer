@@ -1,7 +1,10 @@
 /**
- * Persistence boundary for the editor: the local server's document API.
- * Documents are files addressed by absolute path; the workspace is the folder
- * the document picker lists and new documents are saved into.
+ * Persistence boundary for the editor.
+ *
+ * The normal adapter talks to the local Node server. Browser-only mode keeps
+ * the same document-shaped contract but uses browser file pickers, downloads,
+ * and a small localStorage cache instead. Keeping the boundary here means the
+ * editor and circuit core do not need to know where a document is stored.
  */
 
 /** Mirrors the server rule: document names become file names. */
@@ -9,6 +12,247 @@ export function validDocumentName(value) {
   const name = String(value ?? '').trim();
   if (!name || name.length > 120 || name.startsWith('.') || /[/\\:*?"<>|\u0000-\u001f\u007f]/.test(name)) return null;
   return name;
+}
+
+const BROWSER_DOCUMENTS_KEY = 'mosfeteer:browser-documents';
+const BROWSER_DOWNLOADS = 'Browser downloads';
+
+function browserOnlyRequested(location = globalThis.location) {
+  if (!location) return false;
+  try {
+    return location.protocol === 'file:'
+      || new URLSearchParams(location.search || '').get('browser-only') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function browserPath(name) {
+  return `browser://${name}`;
+}
+
+function browserName(path) {
+  return String(path || '').replace(/^browser:\/\//, '');
+}
+
+function documentNameFromFile(file) {
+  return String(file?.name || 'circuit.json')
+    .replace(/\.schematic\.json$/i, '')
+    .replace(/\.json$/i, '') || 'circuit';
+}
+
+function readBrowserDocuments(storage) {
+  if (!storage) return {};
+  try {
+    const value = JSON.parse(storage.getItem(BROWSER_DOCUMENTS_KEY) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeBrowserDocuments(storage, documents) {
+  if (!storage) return;
+  try { storage.setItem(BROWSER_DOCUMENTS_KEY, JSON.stringify(documents)); } catch { /* quota/private mode */ }
+}
+
+function makeDownload(download, contents, name, type) {
+  if (download) return download(contents, name, type);
+  if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof Blob === 'undefined') {
+    throw new Error('browser downloads are unavailable in this environment');
+  }
+  const blob = contents instanceof Blob ? contents : new Blob([contents], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.style.display = 'none';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function dataUrlBlob(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:([^;,]+)?;base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('invalid PNG data URL');
+  const bytes = Uint8Array.from(atob(match[2]), (char) => char.charCodeAt(0));
+  return new Blob([bytes], { type: match[1] || 'application/octet-stream' });
+}
+
+function fileInput({ documentImpl = globalThis.document, accept = '.json,application/json' } = {}) {
+  if (!documentImpl) throw new Error('browser file input is unavailable');
+  return new Promise((resolve) => {
+    const input = documentImpl.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.addEventListener('change', () => resolve(input.files?.[0] || null), { once: true });
+    input.click();
+  });
+}
+
+/**
+ * Browser-only persistence. Documents loaded from disk are cached locally so
+ * the document picker remains useful after a reload; the cache is not a
+ * replacement for the downloaded JSON file and does not provide live sync.
+ *
+ * `pickOpenFile`, `pickSaveFile`, and `download` are injectable for tests and
+ * for embedders that want to provide their own browser integration.
+ */
+export function createBrowserPersistenceAdapter({
+  storage = globalThis.localStorage,
+  documentImpl = globalThis.document,
+  windowImpl = globalThis.window,
+  pickOpenFile = null,
+  pickSaveFile = null,
+  download = null,
+} = {}) {
+  const records = new Map();
+  const cached = readBrowserDocuments(storage);
+  for (const [name, state] of Object.entries(cached)) {
+    if (state && typeof state === 'object') records.set(browserPath(name), { name, state });
+  }
+
+  function remember(name, state, handle = null) {
+    const cleanName = validDocumentName(name) || 'circuit';
+    const path = browserPath(cleanName);
+    records.set(path, { name: cleanName, state, handle });
+    const next = {};
+    for (const record of records.values()) next[record.name] = record.state;
+    writeBrowserDocuments(storage, next);
+    return path;
+  }
+
+  async function openFile() {
+    let file = null;
+    let handle = null;
+    if (!pickOpenFile && typeof windowImpl?.showOpenFilePicker === 'function') {
+      try {
+        [handle] = await windowImpl.showOpenFilePicker({
+          multiple: false,
+          types: [{ description: 'Mosfeteer schematic', accept: { 'application/json': ['.json'] } }],
+        });
+        file = await handle.getFile();
+      } catch (error) {
+        if (error?.name === 'AbortError') return null;
+        if (error?.name !== 'NotSupportedError' && error?.name !== 'SecurityError') throw error;
+      }
+    }
+    if (!file) file = pickOpenFile ? await pickOpenFile() : await fileInput({ documentImpl });
+    if (!file) return null;
+    const text = await file.text();
+    const state = JSON.parse(text);
+    const name = documentNameFromFile(file);
+    const path = remember(name, state, handle);
+    return { path, name, dir: BROWSER_DOWNLOADS };
+  }
+
+  async function saveFile(name) {
+    if (pickSaveFile) {
+      const selected = await pickSaveFile(name);
+      if (!selected) return null;
+      return { ...selected, name: documentNameFromFile({ name: selected.name || name }) };
+    }
+    if (typeof windowImpl?.showSaveFilePicker !== 'function') return { handle: null, name };
+    try {
+      const handle = await windowImpl.showSaveFilePicker({
+        suggestedName: `${name}.json`,
+        types: [{ description: 'Mosfeteer schematic', accept: { 'application/json': ['.json'] } }],
+      });
+      return { handle, name: documentNameFromFile(handle) };
+    } catch (error) {
+      if (error?.name === 'AbortError') return null;
+      if (error?.name !== 'NotSupportedError' && error?.name !== 'SecurityError') throw error;
+      return { handle: null, name };
+    }
+  }
+
+  async function save(target = {}, state) {
+    let path = target.path || '';
+    let record = path ? records.get(path) : null;
+    let name = validDocumentName(target.name || record?.name) || 'circuit';
+    if (!record) {
+      const selected = await saveFile(name);
+      if (!selected) throw Object.assign(new Error('save canceled'), { code: 'canceled' });
+      name = validDocumentName(selected.name) || name;
+      path = browserPath(name);
+      record = { name, handle: selected.handle || null };
+      records.set(path, record);
+    }
+    const content = `${JSON.stringify(state, null, 2)}\n`;
+    if (record.handle) {
+      const writable = await record.handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+    } else {
+      makeDownload(download, content, `${name}.json`, 'application/json');
+    }
+    remember(name, state, record.handle || null);
+    return { name, path, dir: BROWSER_DOWNLOADS, state };
+  }
+
+  const workspace = async () => ({
+    workspace: BROWSER_DOWNLOADS,
+    home: '',
+    sep: '/',
+    documents: [...records.values()].map(({ name }) => ({ name, path: browserPath(name), kind: 'circuit' })),
+    recent: [],
+  });
+
+  return {
+    browserOnly: true,
+    liveSync: false,
+    supportedExportFormats: new Set(['svg', 'png']),
+    workspace,
+    setWorkspace: workspace,
+    browse: async () => ({ dir: BROWSER_DOWNLOADS, entries: [], parent: null, home: '', workspace: BROWSER_DOWNLOADS }),
+    createFolder: async () => { throw new Error('folders are managed by the browser download location'); },
+    pickFile: async ({ mode = 'open', name = '' } = {}) => {
+      if (mode === 'open') return openFile();
+      if (mode === 'folder') return { path: BROWSER_DOWNLOADS };
+      const selected = await saveFile(validDocumentName(name) || 'circuit');
+      if (!selected) return null;
+      const cleanName = validDocumentName(documentNameFromFile({ name: selected.name })) || validDocumentName(name) || 'circuit';
+      const path = browserPath(cleanName);
+      records.set(path, { name: cleanName, handle: selected.handle || null });
+      return { path, dir: BROWSER_DOWNLOADS, name: cleanName };
+    },
+    load: async (path) => {
+      const record = records.get(path);
+      if (!record?.state) throw new Error(`document is not available in this browser session: ${browserName(path)}`);
+      return { name: record.name, path, dir: BROWSER_DOWNLOADS, state: record.state };
+    },
+    save,
+    delete: async (path) => {
+      const record = records.get(path);
+      if (record?.handle?.remove) await record.handle.remove();
+      records.delete(path);
+      const next = {};
+      for (const value of records.values()) next[value.name] = value.state;
+      writeBrowserDocuments(storage, next);
+      return { path, deleted: true };
+    },
+    reveal: async () => { throw new Error('the browser controls the download location'); },
+    active: async () => ({ active: '', path: '' }),
+    heartbeat: async () => {},
+    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '' }) => {
+      const supported = formats.filter((format) => ['svg', 'png'].includes(format));
+      const unsupported = formats.filter((format) => !['svg', 'png'].includes(format));
+      if (unsupported.length) throw Object.assign(new Error(`browser-only export does not support: ${unsupported.join(', ')}`), { code: 'unsupported-format' });
+      const paths = [];
+      if (supported.includes('svg')) {
+        const fileName = `${name}.svg`;
+        makeDownload(download, svg, fileName, 'image/svg+xml');
+        paths.push(`${dir}/${fileName}`);
+      }
+      if (supported.includes('png')) {
+        const fileName = `${name}.png`;
+        makeDownload(download, dataUrlBlob(png), fileName, 'image/png');
+        paths.push(`${dir}/${fileName}`);
+      }
+      return { dir, paths, notes: ['Files were downloaded by the browser.'] };
+    },
+  };
 }
 
 function responseHeader(response, name) {
@@ -45,6 +289,7 @@ const jsonBody = (method, value) => ({
 });
 
 export function createPersistenceAdapter({ fetchImpl = globalThis.fetch } = {}) {
+  if (browserOnlyRequested()) return createBrowserPersistenceAdapter();
   if (typeof fetchImpl !== 'function') throw new Error('persistence requires fetch');
   const query = (params) => new URLSearchParams(params).toString();
   return {

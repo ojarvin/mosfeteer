@@ -48,7 +48,8 @@ let mathFontFaceCss = null;
 async function embeddedMathFontFace() {
   if (mathFontFaceCss !== null) return mathFontFaceCss;
   try {
-    const bytes = new Uint8Array(await (await fetch('fonts/latinmodern-math.woff2')).arrayBuffer());
+    const fontUrl = globalThis.__MOSFETEER_FONT_URL || 'fonts/latinmodern-math.woff2';
+    const bytes = new Uint8Array(await (await fetch(fontUrl)).arrayBuffer());
     let binary = '';
     for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     mathFontFaceCss = `@font-face{font-family:"Latin Modern Math";src:url(data:font/woff2;base64,${btoa(binary)}) format("woff2");font-weight:normal;font-style:normal}`;

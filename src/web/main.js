@@ -50,7 +50,7 @@ const banner = () => document.getElementById('boot-banner');
 window.addEventListener('error', (ev) => {
   const b = banner();
   if (b) {
-    b.textContent = `App failed to start: ${ev.message || 'unknown error'} — in browser mode, use npm run serve.`;
+    b.textContent = `App failed to start: ${ev.message || 'unknown error'} — use the browser-only release or start the local server.`;
     b.classList.add('error');
   }
 });
@@ -307,6 +307,22 @@ const modeToolbarEl = document.querySelector('.mode-toolbar');
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
+
+function configureBrowserOnlyUi() {
+  if (!persistence.browserOnly) return;
+  // These actions depend on the local server's filesystem. Browser mode uses
+  // native file pickers and downloads instead of pretending that a browser can
+  // browse or reveal arbitrary folders.
+  for (const id of ['btn-workspace', 'btn-reveal-document']) document.getElementById(id)?.setAttribute('hidden', '');
+  const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
+  if (pdf) {
+    pdf.checked = false;
+    pdf.disabled = true;
+    pdf.closest('label')?.setAttribute('title', 'PDF export is not available in browser-only mode; use the browser print command.');
+  }
+}
+
+configureBrowserOnlyUi();
 
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
@@ -794,7 +810,7 @@ async function refreshCircuitList() {
     ? [{ name: currentCircuitName || documentNameForPath(currentDocumentPath), path: currentDocumentPath, kind: 'circuit' }, ...recent]
     : recent;
   const groups = [
-    [`Workspace · ${displayPath(workspaceState.workspace)}`, documents],
+    [persistence.browserOnly ? 'Documents available in this browser' : `Workspace · ${displayPath(workspaceState.workspace)}`, documents],
     ['Recent elsewhere', recentEntries],
   ];
   const signature = JSON.stringify([groups.map(([name, items]) => [name, items.map((item) => [label(item), item.path])])]);
@@ -813,13 +829,16 @@ async function refreshCircuitList() {
     }
     const actions = document.createElement('optgroup');
     actions.label = 'More';
-    actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE), new Option('Change workspace folder…', PICKER_WORKSPACE));
+    actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE));
+    if (!persistence.browserOnly) actions.append(new Option('Change workspace folder…', PICKER_WORKSPACE));
     children.push(actions);
     circuitSelectEl.replaceChildren(...children);
     circuitSelectEl.dataset.signature = signature;
   }
   circuitSelectEl.value = currentDocumentPath || '';
-  circuitSelectEl.title = currentDocumentPath ? currentDocumentPath : `Open a document from ${workspaceState.workspace}`;
+  circuitSelectEl.title = currentDocumentPath
+    ? currentDocumentPath
+    : persistence.browserOnly ? 'Open a document file' : `Open a document from ${workspaceState.workspace}`;
 }
 
 async function restoreStartup() {
@@ -835,11 +854,17 @@ async function saveCircuit({ saveAs = false } = {}) {
   let name = circuitNameEl.value.trim();
   let target;
   if (saveAs) {
-    const choice = await showFileDialog(persistence, {
-      mode: 'save',
-      dir: currentDocumentDir || workspaceState?.workspace || '',
-      name: validDocumentName(name) || currentCircuitName || '',
-    });
+    let choice;
+    try {
+      choice = await showFileDialog(persistence, {
+        mode: 'save',
+        dir: currentDocumentDir || workspaceState?.workspace || '',
+        name: validDocumentName(name) || currentCircuitName || '',
+      });
+    } catch (err) {
+      logLine(`Could not choose a save file: ${err.message}`, 'error');
+      return;
+    }
     if (!choice) return;
     ({ name } = choice);
     target = choice;
@@ -936,6 +961,12 @@ async function copyAsImage() {
 }
 
 async function runExport({ dir, name, formats, grid = false, dark = false }) {
+  const supportedFormats = persistence.supportedExportFormats || new Set(formats);
+  const unsupported = formats.filter((format) => !supportedFormats.has(format));
+  if (unsupported.length) {
+    logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
+    return;
+  }
   const renderedSvg = renderDocument(circuit, {
     ...DRAWING_EXPORT_OPTIONS,
     grid,
@@ -996,7 +1027,10 @@ function exportCircuit() {
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
   if (Array.isArray(saved?.formats)) {
-    for (const input of exportForm.querySelectorAll('input[name="format"]')) input.checked = saved.formats.includes(input.value);
+    for (const input of exportForm.querySelectorAll('input[name="format"]')) {
+      const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
+      input.checked = supported && saved.formats.includes(input.value);
+    }
   }
   const documentKey = currentDocumentPath || '';
   exportFolder = (saved?.folders && saved.folders[documentKey]) || currentDocumentDir || workspaceState?.workspace || '';
@@ -1099,11 +1133,19 @@ function requestCircuitLoad(path) {
 }
 
 async function openDocumentDialog() {
-  const choice = await showFileDialog(persistence, { mode: 'open', dir: currentDocumentDir || workspaceState?.workspace || '' });
-  if (choice) requestCircuitLoad(choice.path);
+  try {
+    const choice = await showFileDialog(persistence, { mode: 'open', dir: currentDocumentDir || workspaceState?.workspace || '' });
+    if (choice) requestCircuitLoad(choice.path);
+  } catch (err) {
+    logLine(`Could not choose an open file: ${err.message}`, 'error');
+  }
 }
 
 async function chooseWorkspaceFolder() {
+  if (persistence.browserOnly) {
+    logLine('Browser-only mode uses the browser download location instead of a workspace folder.');
+    return;
+  }
   const choice = await showFileDialog(persistence, { mode: 'folder', dir: workspaceState?.workspace || '' });
   if (!choice) return;
   try {
@@ -1118,6 +1160,10 @@ async function chooseWorkspaceFolder() {
 
 async function revealCurrentDocument() {
   if (!currentDocumentPath) return;
+  if (persistence.browserOnly) {
+    logLine('Browser-only mode cannot reveal files in the operating-system file manager.');
+    return;
+  }
   try {
     await persistence.reveal(currentDocumentPath);
   } catch (err) {
@@ -1127,11 +1173,11 @@ async function revealCurrentDocument() {
 
 function renderSaveState() {
   const dirty = hasUnsavedChanges();
-  if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentDocumentPath || deleteInFlight;
-  if (revealDocumentBtn) revealDocumentBtn.disabled = !currentDocumentPath;
+  if (deleteCircuitBtn) deleteCircuitBtn.disabled = persistence.browserOnly || !currentDocumentPath || deleteInFlight;
+  if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !currentDocumentPath;
   circuitNameEl.title = currentDocumentPath
     ? `${currentDocumentPath}\nRename and save to create a copy next to it.`
-    : 'Name used when saving this document to the workspace folder';
+    : persistence.browserOnly ? 'Name used when saving this document as a browser download' : 'Name used when saving this document to the workspace folder';
   const saveButton = document.getElementById('btn-save');
   if (saveButton) {
     saveButton.disabled = !dirty || saveInFlight > 0;
@@ -8762,30 +8808,8 @@ function renderComponents() {
     if (comp.analysis?.ignoreBodyEffect === false) analysisTags.push('body effect');
     meta.textContent = `${comp.type}${analysisTags.map((tag) => ` · ${tag}`).join('')}`;
 
-    const remove = document.createElement('button');
-    remove.className = 'remove';
-    remove.type = 'button';
-    remove.textContent = '×';
-    remove.title = `Delete ${comp.refdes}`;
-    remove.setAttribute('aria-label', `Remove ${comp.refdes}`);
-    remove.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      const touched = netsTouching([comp.refdes]);
-      commit(() => {
-        circuit.removeComponent(comp.refdes);
-        for (const id of touched) {
-          const net = circuit.nets.get(id);
-          if (net) rerouteNet(net);
-        }
-        multi.delete(comp.refdes);
-        if (selected === comp.refdes) selected = multi.size ? [...multi][0] : null;
-      });
-      render();
-    });
-
     row.appendChild(ref);
     row.appendChild(meta);
-    row.appendChild(remove);
 
     row.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
@@ -11362,7 +11386,9 @@ function startNewDocument() {
   render();
   circuitNameEl.focus();
   renderSaveState();
-  logLine('Started a new schematic. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.');
+  logLine(persistence.browserOnly
+    ? 'Started a new schematic. Enter a name and save it as a browser download, or use Save as to choose a file name.'
+    : 'Started a new schematic. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.');
 }
 
 /**
@@ -12112,7 +12138,9 @@ function startSessionHeartbeat() {
   window.setInterval(beat, 20_000);
   window.addEventListener('pageshow', (ev) => { if (ev.persisted) beat(); });
   window.addEventListener('pagehide', () => {
-    navigator.sendBeacon?.('/api/session', new Blob([JSON.stringify({ id, closing: true })], { type: 'application/json' }));
+    if (persistence.liveSync) {
+      navigator.sendBeacon?.('/api/session', new Blob([JSON.stringify({ id, closing: true })], { type: 'application/json' }));
+    }
   });
 }
 

@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mosfeteer</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="boot-banner" class="boot-banner">
+    Loading Mosfeteer&hellip; If this stays visible, the app could not start. Start it with
+    <code>node launch.mjs</code> (or <code>./start.sh</code>) instead of opening the HTML file directly.
+  </div>
+
+  <header class="toolbar">
+    <div class="toolbar-cluster document-cluster" role="group" aria-label="Document">
+      <span class="app-mark" role="img" aria-label="Mosfeteer" title="Mosfeteer"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></span>
+      <div class="circuit-picker">
+        <select id="circuit-select" aria-label="Open a document" title="Open a document">
+          <option value="">Open document…</option>
+        </select>
+        <input id="circuit-name" type="text" placeholder="Untitled" autocomplete="off" spellcheck="false" aria-label="Document name" title="Name used when saving this document to the workspace folder" />
+      </div>
+    </div>
+
+    <div class="toolbar-cluster file-cluster" role="group" aria-label="File actions">
+      <button id="btn-new-document" data-icon="file-plus" title="Start a new schematic">New</button>
+      <button id="btn-save" class="primary-action" data-icon="save" data-action="save" title="Save the current document, including designs with issues (Ctrl/Cmd+S or Shift+x)">Save</button>
+      <button id="btn-check" data-icon="check" data-action="check" data-doc-kind="schematic" title="Check the current schematic (x)">Check</button>
+      <button id="btn-export" data-icon="download" title="Export the current document as SVG, PDF, or high-resolution PNG">Export</button>
+      <div class="toolbar-popover">
+        <button id="btn-document-menu" class="icon-button" data-icon="more" aria-haspopup="menu" aria-expanded="false" aria-controls="document-menu" aria-label="More document actions" title="More document actions">More</button>
+        <div id="document-menu" class="toolbar-menu" role="menu" aria-label="More document actions" hidden>
+          <button id="btn-open-file" type="button" role="menuitem" data-icon="folder-open" title="Open a document file from any folder (Ctrl/Cmd+O)">Open file…</button>
+          <button id="btn-save-as" type="button" role="menuitem" data-icon="save" title="Save a copy in any folder under any name (Ctrl/Cmd+Shift+S)">Save as…</button>
+          <button id="btn-reveal-document" type="button" role="menuitem" data-icon="folder" title="Show the document file in your file manager" disabled>Show in folder</button>
+          <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace" title="Choose the folder the document list shows and new documents are saved into">Change workspace folder…</button>
+          <span class="toolbar-menu-separator" role="separator"></span>
+          <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Permanently delete the current document file" disabled>Delete document…</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar-spacer" aria-hidden="true"></div>
+
+    <div class="toolbar-cluster analysis-cluster" role="group" aria-label="Analysis" data-doc-kind="schematic">
+      <button id="btn-analysis" data-icon="analysis" aria-pressed="false" title="Open small-signal analysis (persistent context)">Analyze</button>
+    </div>
+
+    <div class="toolbar-cluster view-cluster" role="group" aria-label="View">
+      <button id="btn-grid" class="icon-button" data-icon="grid" aria-pressed="true" aria-label="Grid" title="Show or hide the placement grid (#)">Grid</button>
+      <button id="btn-guides" class="icon-button" data-icon="guides" aria-pressed="true" aria-label="Placement guides" title="Show or hide the spacing and alignment guides (G)">Guides</button>
+      <button id="btn-crosshair" class="icon-button" data-icon="crosshair" aria-pressed="true" aria-label="Crosshair" title="Show or hide the crosshair (C)">Crosshair</button>
+      <button id="btn-theme" class="icon-button" data-icon="moon" aria-pressed="false" aria-label="Dark theme" title="Switch between light and dark themes (D)">Dark</button>
+    </div>
+  </header>
+
+
+
+  <dialog id="delete-dialog" class="confirm-dialog" aria-labelledby="delete-dialog-title">
+    <form method="dialog">
+      <h2 id="delete-dialog-title">Delete document file?</h2>
+      <p id="delete-dialog-message"></p>
+      <div class="dialog-actions">
+        <button value="cancel" data-icon="x-circle">Cancel</button>
+        <button id="confirm-delete" value="confirm" data-icon="trash" class="danger-action">Delete file</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="switch-dialog" class="confirm-dialog" aria-labelledby="switch-dialog-title">
+    <form method="dialog">
+      <h2 id="switch-dialog-title">Discard unsaved changes?</h2>
+      <p id="switch-dialog-message"></p>
+      <div class="dialog-actions">
+        <button value="cancel" data-icon="x-circle">Keep editing</button>
+        <button id="confirm-switch" value="discard" data-icon="folder-open" class="confirm-action">Discard and load</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="export-dialog" class="confirm-dialog export-dialog" aria-labelledby="export-dialog-title">
+    <form id="export-form">
+      <h2 id="export-dialog-title">Export document</h2>
+      <fieldset class="export-location">
+        <legend>Save to</legend>
+        <div class="export-folder-row">
+          <span id="export-folder" class="export-folder" title=""></span>
+          <button id="export-choose-folder" type="button" data-icon="folder-open">Choose…</button>
+        </div>
+        <label class="export-name-row">
+          <span>Name</span>
+          <input id="export-name" type="text" autocomplete="off" spellcheck="false" required />
+          <span id="export-extensions" class="export-extensions"></span>
+        </label>
+      </fieldset>
+      <fieldset class="export-formats">
+        <legend>Formats</legend>
+        <label><input type="checkbox" name="format" value="svg" checked /> SVG</label>
+        <label><input type="checkbox" name="format" value="pdf" checked /> PDF</label>
+        <label><input type="checkbox" name="format" value="png" checked /> PNG (4×)</label>
+      </fieldset>
+      <fieldset>
+        <legend>Appearance</legend>
+        <label><input type="checkbox" name="grid" /> Include grid</label>
+        <label><input type="checkbox" name="dark" /> Dark mode</label>
+      </fieldset>
+      <div class="dialog-actions">
+        <button id="export-cancel" type="button" data-icon="x-circle">Cancel</button>
+        <button id="export-submit" type="submit" data-icon="download" class="confirm-action">Export</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="model-dialog" class="model-dialog" aria-labelledby="model-dialog-title">
+    <form method="dialog">
+      <div class="model-dialog-head">
+        <h2 id="model-dialog-title">Small-signal model</h2>
+        <p class="model-dialog-hint">Scroll to zoom · middle-drag to pan · right-drag a box · double-click to fit</p>
+        <button value="cancel" class="icon-button" data-icon="x-circle" aria-label="Close small-signal model" title="Close (Esc)">Close</button>
+      </div>
+      <div id="model-dialog-figure" class="model-dialog-figure">
+        <div id="model-dialog-rubber" class="model-dialog-rubber" hidden></div>
+      </div>
+      <ul id="model-dialog-notes" class="analysis-model-notes"></ul>
+    </form>
+  </dialog>
+
+  <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
+    <form method="dialog">
+      <h2 id="help-dialog-title">Keyboard and command help</h2>
+      <input id="help-search" type="search" placeholder="Search shortcuts and commands" aria-label="Search help" autocomplete="off" spellcheck="false" />
+      <div id="help-dialog-content" class="help-content"></div>
+      <div class="dialog-actions">
+        <button value="cancel" data-icon="x-circle">Close <kbd>Esc</kbd></button>
+      </div>
+    </form>
+  </dialog>
+
+
+  <main class="layout">
+    <section class="canvas-pane">
+      <div class="mode-group mode-toolbar" aria-labelledby="mode-heading" data-control-group="mode">
+        <span class="toolbar-group-label" id="mode-heading">Edit tools</span>
+        <button id="btn-mode-select" class="mode-control" data-icon="cursor" data-mode="select" aria-pressed="true" title="Select and edit objects (Esc)" aria-label="Select and edit objects">Select <kbd>Esc</kbd></button>
+        <button id="btn-mode-place" class="mode-control" data-icon="plus" data-mode="place" data-doc-kind="schematic" aria-pressed="false" title="Place a schematic component or label (i)" aria-label="Place a schematic component or label">Place <kbd>i</kbd></button>
+        <button id="btn-mode-wire" class="mode-control" data-icon="wire" data-mode="wire" data-doc-kind="schematic" aria-pressed="false" title="Draw an electrical wire (w) · orthogonal shape · F3 or right-click to change" aria-label="Draw an electrical wire" aria-haspopup="menu">Wire <kbd>w</kbd></button>
+        <button id="btn-mode-visual" class="mode-control" data-icon="box-select" data-mode="visual" aria-pressed="false" title="Select everything completely inside a box (v)" aria-label="Box select">Box select <kbd>v</kbd></button>
+        <span class="mode-separator" role="separator" aria-hidden="true"></span>
+        <button id="btn-mode-move" class="mode-control" data-icon="move" data-action="move" aria-pressed="false" title="Move selected objects with their connectivity; stays active until Esc (m)" aria-label="Move selected objects">Move <kbd>m</kbd></button>
+        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Move selected objects without carrying connected nets; stays active until Esc (Shift+m)" aria-label="Detach move">Detach move <kbd>Shift+m</kbd></button>
+        <button id="btn-mode-copy" class="mode-control" data-icon="copy" data-action="copy" aria-pressed="false" title="Copy a selected object or set; stays active for repeated copies (c)" aria-label="Copy selected objects">Copy <kbd>c</kbd></button>
+        <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc (Delete)" aria-label="Delete selected objects">Delete <kbd>Delete</kbd></button>
+        <span class="mode-separator" role="separator" aria-hidden="true"></span>
+        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a label on a physical wire (L)" aria-label="Place a label on a physical wire">Net label <kbd>L</kbd></button>
+        <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-icon="text" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires (Shift+N)" aria-label="Place annotation">Annotation <kbd>Shift+N</kbd></button>
+        <button id="btn-mode-arrow" class="mode-control annotation-control" data-icon="arrow" data-action="arrow" aria-pressed="false" title="Draw a multi-point arrow; press Enter to commit (a)" aria-label="Draw multi-point arrow">Arrow <kbd>a</kbd></button>
+        <button id="btn-mode-box" class="mode-control annotation-control" data-icon="rectangle" data-action="box" aria-pressed="false" title="Draw a two-point box (b)" aria-label="Draw box">Box <kbd>b</kbd></button>
+        <button id="btn-mode-line" class="mode-control annotation-control" data-icon="line" data-action="line" aria-pressed="false" title="Draw a non-connectivity line annotation (l)" aria-label="Draw line annotation">Line <kbd>l</kbd></button>
+        <span class="mode-separator" role="separator" aria-hidden="true"></span>
+        <button id="btn-bring-front" class="mode-control layer-control" data-icon="front" data-action="bring-front" aria-pressed="false" aria-keyshortcuts="Shift+ArrowUp" title="Bring selected objects to the front (Shift+Up)" aria-label="Bring selected objects to front">Bring to front <kbd>Shift+↑</kbd></button>
+        <button id="btn-send-back" class="mode-control layer-control" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send selected objects to the back (Shift+Down)" aria-label="Send selected objects to back">Send to back <kbd>Shift+↓</kbd></button>
+      </div>
+      <div id="empty-state" class="empty-state" hidden>
+        <div class="empty-state-head"><span class="app-mark empty-state-mark" aria-hidden="true"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></span><div class="empty-state-title">Empty schematic</div></div>
+        <button type="button" data-empty-action="place"><kbd>i</kbd><span class="empty-state-text">Insert a component</span></button>
+        <button type="button" data-empty-action="wire"><kbd>w</kbd><span class="empty-state-text">Draw a wire</span></button>
+        <button type="button" data-empty-action="open"><kbd>Ctrl+O</kbd><span class="empty-state-text">Open a document</span></button>
+        <button type="button" data-empty-action="help"><kbd>?</kbd><span class="empty-state-text">All shortcuts</span></button>
+      </div>
+      <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Editor canvas. Tab to focus objects; Enter or Space selects the focused object; arrow keys nudge selection."></div>
+      <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Context actions"></div>
+    </section>
+
+    <section id="analysis-dialog" class="analysis-dock" aria-labelledby="analysis-dialog-title" hidden>
+      <div class="analysis-dock-resizer" id="analysis-dock-resizer" role="separator" aria-orientation="vertical" aria-controls="analysis-dialog" aria-label="Resize analysis panel" tabindex="0" title="Drag to resize; double-click to reset"></div>
+      <form id="analysis-form">
+        <header class="analysis-dock-header">
+          <h2 id="analysis-dialog-title">Small-signal analysis</h2>
+          <button id="analysis-cancel" type="button" class="icon-button" data-icon="x-circle" aria-label="Close analysis panel" title="Close (Esc)">Close</button>
+        </header>
+        <div class="analysis-scroll">
+          <p class="analysis-intro">Pick the input and output nets, then derive gain and impedances. Poles and zeros appear when reactive components matter.</p>
+          <div class="analysis-grid">
+            <div class="analysis-node" id="analysis-input-row">
+              <label id="analysis-input-field" for="analysis-input">Input node</label>
+              <div class="analysis-node-control">
+                <select id="analysis-input" name="input"></select>
+                <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-input" aria-pressed="false" aria-label="Pick input node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
+              </div>
+            </div>
+            <div class="analysis-node" id="analysis-target-row">
+              <label id="analysis-target-field" for="analysis-target">Output node</label>
+              <div class="analysis-node-control">
+                <select id="analysis-target" name="target" required></select>
+                <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-target" aria-pressed="false" aria-label="Pick output node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
+              </div>
+            </div>
+            <div class="analysis-node" id="analysis-reference-row">
+              <label id="analysis-reference-field" for="analysis-reference">Reference (optional)</label>
+              <div class="analysis-node-control">
+                <select id="analysis-reference" name="reference"></select>
+                <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-reference" aria-pressed="false" aria-label="Pick reference node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
+              </div>
+            </div>
+          </div>
+          <fieldset class="analysis-approximations">
+            <legend>Model simplifications</legend>
+            <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</label>
+            <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</label>
+            <label><input id="analysis-approx-miller" name="approxMiller" type="checkbox" checked /> Miller approximation for gate–drain feedback</label>
+            <label><input id="analysis-parasitics" name="parasitics" type="checkbox" /> Include MOS device capacitances (<span class="math-inline">C<sub>gs</sub></span>, <span class="math-inline">C<sub>gd</sub></span>)</label>
+            <p class="field-hint">These change the model before it is solved: the branch is left out, so the small-signal netlist and the Model tab show what was actually solved.</p>
+          </fieldset>
+          <fieldset class="analysis-approximations">
+            <legend>Equation approximations</legend>
+            <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></label>
+            <label><input id="analysis-approx-dominant-pole" name="approxDominantPole" type="checkbox" /> Use dominant-pole approximation when multiple AC poles are present</label>
+            <p class="field-hint">These simplify the displayed equations only. Exact equations remain in the Log tab.</p>
+          </fieldset>
+          <details class="analysis-context" id="analysis-bias-context">
+            <summary>Small-signal context</summary>
+            <label for="analysis-ac-grounds">Additional AC-ground ports/nets</label>
+            <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" />
+            <p class="field-hint">Use named nets, physical net IDs, or terminal references. These DC bias ports are treated as AC ground.</p>
+            <label for="analysis-device-regions">Triode-region devices</label>
+            <input id="analysis-device-regions" name="deviceRegions" type="text" placeholder="M2=triode" autocomplete="off" spellcheck="false" />
+            <p class="field-hint">Use <code>REF=triode</code> to replace a MOS device with its symbolic <span class="math-inline">r<sub>ds</sub></span>.</p>
+          </details>
+          <p id="analysis-stale" class="analysis-stale" hidden>The circuit changed since these equations were derived.</p>
+          <div id="analysis-result" class="analysis-result" aria-live="polite" hidden>
+          <div class="analysis-tabs" role="tablist" aria-label="Analysis output">
+            <button id="analysis-tab-equations" type="button" role="tab" aria-selected="true" aria-controls="analysis-panel-equations" data-analysis-tab="equations">Equations</button>
+            <button id="analysis-tab-log" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-log" data-analysis-tab="log">Log</button>
+            <button id="analysis-tab-netlist" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-netlist" data-analysis-tab="netlist">Small-signal netlist</button>
+            <button id="analysis-tab-model" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-model" data-analysis-tab="model">Model</button>
+          </div>
+          <div class="analysis-tab-panels">
+            <section id="analysis-panel-equations" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-equations">
+              <div id="analysis-equation" class="analysis-equation"></div>
+            </section>
+            <section id="analysis-panel-log" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-log" hidden>
+              <pre id="analysis-details" class="analysis-details"></pre>
+            </section>
+            <section id="analysis-panel-netlist" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-netlist" hidden>
+              <pre id="analysis-netlist" class="analysis-netlist"></pre>
+            </section>
+            <section id="analysis-panel-model" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-model" hidden>
+              <div id="analysis-model" class="analysis-model"></div>
+              <div class="dialog-actions analysis-model-actions">
+                <button id="analysis-model-open" type="button" data-icon="analysis">Open full size</button>
+              </div>
+            </section>
+          </div>
+        </div>
+        </div>
+        <div class="dialog-actions">
+          <button id="analysis-annotate" type="button" data-icon="text" hidden>Annotate schematic</button>
+          <button id="analysis-submit" type="submit" data-icon="check" class="primary-action">Derive all equations</button>
+        </div>
+      </form>
+    </section>
+
+    <aside class="side-panel" id="side-panel">
+      <div class="side-panel-resizer" id="side-panel-resizer" role="separator" aria-orientation="vertical" aria-controls="side-panel" aria-label="Resize side panel" tabindex="0" title="Drag to resize; double-click to reset"></div>
+
+      <div class="panel-filter" data-doc-kind="schematic">
+        <input id="panel-filter" type="search" placeholder="Filter components and nets (Ctrl+F)" aria-label="Filter components and nets" aria-keyshortcuts="Control+F Meta+F" autocomplete="off" spellcheck="false" />
+      </div>
+
+      <section class="panel-group" data-panel="components" data-doc-kind="schematic">
+        <div class="panel-heading">
+          <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="components-list">Components <span class="panel-count" id="components-count"></span></button>
+        </div>
+        <div class="list" id="components-list"></div>
+      </section>
+
+      <section class="panel-group" data-panel="nets" data-doc-kind="schematic">
+        <div class="panel-heading">
+          <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="nets-list">Nets <span class="panel-count" id="nets-count"></span></button>
+        </div>
+        <div class="list" id="nets-list"></div>
+      </section>
+
+      <section class="panel-group" data-panel="terminals" data-doc-kind="schematic">
+        <div class="panel-heading">
+          <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="detail">Selection</button>
+        </div>
+        <div class="detail" id="detail"></div>
+      </section>
+
+      <section class="panel-group check-summary" id="check-summary" data-panel="check-summary" data-doc-kind="schematic" aria-labelledby="check-summary-heading">
+        <div class="panel-heading">
+          <button type="button" class="panel-toggle" id="check-summary-heading" aria-expanded="true" aria-controls="check-summary-body">Design check <span class="panel-count" id="check-count"></span></button>
+          <button id="btn-clear-check" data-icon="x-circle" type="button" class="check-clear" title="Clear the Design check report">Clear</button>
+        </div>
+        <div class="check-summary-body" id="check-summary-body" data-role="check-summary" aria-live="polite">
+          <div class="check-summary-empty" data-check-state="empty">Run Check to review this schematic.</div>
+        </div>
+      </section>
+
+      <section class="panel-group align-panel" id="align-panel" data-doc-kind="schematic" aria-labelledby="align-heading" hidden>
+        <h2 class="panel-heading" id="align-heading">Align <span class="panel-count" id="align-count"></span></h2>
+        <div class="align-controls">
+          <div class="align-button-grid" role="group" aria-label="Align selected object bounding boxes">
+            <button type="button" data-layout-align="left" title="Align left edges to the selected set's leftmost edge">Left</button>
+            <button type="button" data-layout-align="center-x" title="Align horizontal centers to the selected set's center">Center X</button>
+            <button type="button" data-layout-align="right" title="Align right edges to the selected set's rightmost edge">Right</button>
+            <button type="button" data-layout-align="top" title="Align top edges to the selected set's topmost edge">Top</button>
+            <button type="button" data-layout-align="center-y" title="Align vertical centers to the selected set's center">Center Y</button>
+            <button type="button" data-layout-align="bottom" title="Align bottom edges to the selected set's bottommost edge">Bottom</button>
+          </div>
+          <label class="align-measure-label" for="align-measure">Space by</label>
+          <select id="align-measure" title="Outline gaps measure space between shapes; connection anchors measure spacing between their useful placement points">
+            <option value="gaps">Outline gaps</option>
+            <option value="anchors">Connection anchors</option>
+          </select>
+          <div class="align-distribute-grid" role="group" aria-label="Distribute selected objects">
+            <button type="button" data-layout-distribute="x" title="Distribute horizontally, keeping the outer objects fixed">Even horizontal</button>
+            <button type="button" data-layout-distribute="y" title="Distribute vertically, keeping the outer objects fixed">Even vertical</button>
+          </div>
+          <div class="align-note" id="align-note" aria-live="polite"></div>
+        </div>
+      </section>
+      <section class="panel-group style-panel" id="style-panel" aria-labelledby="style-heading" hidden>
+        <h2 class="panel-heading" id="style-heading">Style</h2>
+        <div class="style-row style-row-swatches">
+          <div id="style-color" class="swatches" role="radiogroup" aria-label="Color" title="Apply color to selected objects; Ctrl/Cmd+Shift+V pastes all style fields from the copied object">
+            <button type="button" class="swatch swatch-ink" role="radio" data-value="#111" aria-label="Ink" style="--swatch:#111"></button>
+            <button type="button" class="swatch" role="radio" data-value="#7a7d85" aria-label="Grey" style="--swatch:#7a7d85"></button>
+            <button type="button" class="swatch" role="radio" data-value="#d96c75" aria-label="Red" style="--swatch:#d96c75"></button>
+            <button type="button" class="swatch" role="radio" data-value="#e59f71" aria-label="Orange" style="--swatch:#e59f71"></button>
+            <button type="button" class="swatch" role="radio" data-value="#e4c16f" aria-label="Yellow" style="--swatch:#e4c16f"></button>
+            <button type="button" class="swatch" role="radio" data-value="#9acb8a" aria-label="Green" style="--swatch:#9acb8a"></button>
+            <button type="button" class="swatch" role="radio" data-value="#62b5a7" aria-label="Teal" style="--swatch:#62b5a7"></button>
+            <button type="button" class="swatch" role="radio" data-value="#6fa8dc" aria-label="Blue" style="--swatch:#6fa8dc"></button>
+            <button type="button" class="swatch" role="radio" data-value="#8f8bd1" aria-label="Indigo" style="--swatch:#8f8bd1"></button>
+            <button type="button" class="swatch" role="radio" data-value="#b08ac6" aria-label="Purple" style="--swatch:#b08ac6"></button>
+            <button type="button" class="swatch" role="radio" data-value="#d889b5" aria-label="Pink" style="--swatch:#d889b5"></button>
+            <button type="button" class="swatch" role="radio" data-value="#9aa7b8" aria-label="Slate" style="--swatch:#9aa7b8"></button>
+          </div>
+        </div>
+        <div class="style-row" id="style-text-row" hidden>
+          <span class="style-row-label">Text</span>
+          <div class="style-text-controls">
+            <div class="segmented" role="group" aria-label="Text alignment">
+              <button type="button" class="icon-button" data-icon="align-left" data-style-align="left" aria-pressed="false" aria-label="Align left" title="Align left (Shift+Left)">Left</button>
+              <button type="button" class="icon-button" data-icon="align-center" data-style-align="center" aria-pressed="false" aria-label="Align center" title="Align center">Center</button>
+              <button type="button" class="icon-button" data-icon="align-right" data-style-align="right" aria-pressed="false" aria-label="Align right" title="Align right (Shift+Right)">Right</button>
+            </div>
+            <div class="segmented" role="group" aria-label="Font style">
+              <button type="button" class="text-toggle text-toggle-bold" data-style-font="bold" aria-pressed="false" aria-label="Bold" title="Bold (Ctrl/Cmd+B)">B</button>
+              <button type="button" class="text-toggle text-toggle-italic" data-style-font="italic" aria-pressed="false" aria-label="Italic" title="Italic (Ctrl/Cmd+I)">I</button>
+            </div>
+          </div>
+        </div>
+        <div class="style-row" id="style-line-row">
+          <span class="style-row-label">Line</span>
+          <div class="segmented" role="group" aria-label="Line style and arrowheads">
+            <button type="button" class="icon-button" id="style-arrow-start" data-icon="arrow-start" data-arrow-end="start" aria-pressed="false" aria-label="Arrowhead at line start" title="Toggle an arrowhead at the line start"></button>
+            <div class="toolbar-popover">
+              <button type="button" class="icon-button" id="style-line-pattern" data-icon="line-solid" aria-haspopup="menu" aria-expanded="false" aria-controls="style-line-menu" aria-label="Line style" title="Choose a line style"></button>
+              <div id="style-line-menu" class="toolbar-menu style-line-menu" role="menu" aria-label="Line style" hidden>
+                <button type="button" role="menuitem" class="icon-button" data-icon="line-solid" data-line-style="solid" aria-label="Solid" title="Solid"></button>
+                <button type="button" role="menuitem" class="icon-button" data-icon="line-dashed" data-line-style="dashed" aria-label="Dashed" title="Dashed"></button>
+                <button type="button" role="menuitem" class="icon-button" data-icon="line-dash-dot" data-line-style="dash-dot" aria-label="Dash-dot" title="Dash-dot"></button>
+                <button type="button" role="menuitem" class="icon-button" data-icon="line-dotted" data-line-style="dotted" aria-label="Dotted" title="Dotted"></button>
+              </div>
+            </div>
+            <button type="button" class="icon-button" id="style-arrow-end" data-icon="arrow-end" data-arrow-end="end" aria-pressed="false" aria-label="Arrowhead at line end" title="Toggle an arrowhead at the line end"></button>
+          </div>
+        </div>
+        <div class="style-row" id="style-width-row">
+          <span class="style-row-label">Width</span>
+          <div class="segmented" role="group" aria-label="Stroke width">
+            <button type="button" class="icon-button" data-icon="width-thin" data-width="thin" aria-pressed="false" aria-label="Thin" title="Thin stroke"></button>
+            <button type="button" class="icon-button" data-icon="width-normal" data-width="normal" aria-pressed="false" aria-label="Normal" title="Normal stroke"></button>
+            <button type="button" class="icon-button" data-icon="width-thick" data-width="thick" aria-pressed="false" aria-label="Thick" title="Thick stroke"></button>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="console" id="console-panel" role="region" aria-label="Command and status panel">
+    <div
+      id="console-resizer"
+      class="console-resizer"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize command and status panel"
+      aria-controls="cmd-input log"
+      aria-valuemin="92"
+      aria-valuemax="420"
+      aria-valuenow="140"
+      tabindex="0"
+    ></div>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+    <div id="accessibility-announcement" class="visually-hidden" role="status" aria-live="polite"></div>
+    <div class="console-row">
+      <button id="btn-help" data-icon="help" title="Show keyboard and command help (?)">Help</button>
+      <input id="cmd-input" type="text" placeholder="Enter a command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)" autocomplete="off" spellcheck="false" />
+    </div>
+    <pre class="log" id="log"></pre>
+  </footer>
+
+  <script>globalThis.__MOSFETEER_FONT_URL = "fonts/latinmodern-math.woff2";</script>
+  <script src="browser-only.js"></script>
+</body>
+</html>

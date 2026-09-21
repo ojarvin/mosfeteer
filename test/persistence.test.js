@@ -12,7 +12,9 @@ import { decodePngToRgb, pngToPdf } from '../src/server/pdf-raster.js';
 import { findChromium } from '../src/server/browser.js';
 import { allowedHosts, checkRequest } from '../src/server/request-guard.js';
 import { createSettingsStore, defaultWorkspace } from '../src/server/settings.js';
-import { createPersistenceAdapter, validDocumentName as clientValidDocumentName } from '../src/web/persistence.js';
+import {
+  createBrowserPersistenceAdapter, createPersistenceAdapter, validDocumentName as clientValidDocumentName,
+} from '../src/web/persistence.js';
 
 async function tempDir(t, prefix) {
   const dir = await mkdtemp(join(tmpdir(), `mosfeteer-${prefix}-`));
@@ -146,6 +148,43 @@ test('HTTP persistence addresses documents by path and exposes conditional loads
     ['/api/workspace', 'PUT'],
   ]);
   assert.deepEqual(JSON.parse(requests[2][1].body), { path: '/a b/amp.json', state: { version: 2 }, overwrite: true });
+});
+
+test('browser-only persistence opens JSON, downloads saves, and caches documents', async () => {
+  const storageValues = new Map();
+  const storage = {
+    getItem: (key) => storageValues.get(key) || null,
+    setItem: (key, value) => storageValues.set(key, value),
+  };
+  const state = new Circuit().toJSON();
+  const downloads = [];
+  const persistence = createBrowserPersistenceAdapter({
+    storage,
+    windowImpl: {},
+    pickOpenFile: async () => ({ name: 'amp.json', text: async () => JSON.stringify(state) }),
+    pickSaveFile: async (name) => ({ name: `${name}.json`, handle: null }),
+    download: (contents, name, type) => downloads.push({ contents, name, type }),
+  });
+
+  const opened = await persistence.pickFile({ mode: 'open' });
+  assert.deepEqual(opened, { path: 'browser://amp', name: 'amp', dir: 'Browser downloads' });
+  assert.deepEqual((await persistence.load(opened.path)).state, state);
+
+  const changed = { ...state, version: state.version };
+  const saved = await persistence.save({ path: opened.path }, changed);
+  assert.equal(saved.path, opened.path);
+  assert.equal(downloads[0].name, 'amp.json');
+  assert.equal(downloads[0].type, 'application/json');
+  assert.match(downloads[0].contents, /"version"/);
+  assert.deepEqual((await persistence.workspace()).documents.map(({ name }) => name), ['amp']);
+
+  const exported = await persistence.exportFiles({ name: 'amp', formats: ['svg'], svg: '<svg></svg>' });
+  assert.deepEqual(exported.paths, ['Browser downloads/amp.svg']);
+  assert.equal(downloads[1].name, 'amp.svg');
+  await assert.rejects(
+    persistence.exportFiles({ name: 'amp', formats: ['pdf'], svg: '<svg></svg>' }),
+    (error) => error.code === 'unsupported-format',
+  );
 });
 
 function crc32(buffer) {

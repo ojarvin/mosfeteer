@@ -44,6 +44,17 @@ To start it by double-clicking instead:
 
 The launcher starts a small local server and opens the editor in an app-style Chromium window, or in your default browser if Chromium isn't installed. The server only accepts requests from the editor on your own machine. It stops by itself shortly after you close the last editor window. Launching again while it's running reuses the same server.
 
+### Browser-only release
+
+The checked-in `browser-only/` folder is a static release that does not need
+Node, npm, or a local server. Double-click [`browser-only/index.html`](browser-only/index.html)
+to open it in a browser. Open and Save use browser file pickers/downloads;
+documents are cached locally for the document list. The CLI, server workspace
+browser, live file sync, and PDF export are intentionally omitted in this mode.
+
+Developers can regenerate the release with `node scripts/build_browser_only.mjs`
+(or `npm run browser-only`).
+
 ## Documents and sharing
 
 Each schematic is one self-contained `.json` file. You can keep it anywhere and send it to anyone.

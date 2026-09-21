@@ -30,6 +30,19 @@ test('tool cursors badge the select arrow per tool, theme, and danger', () => {
   assert.equal(build('trash', {}), build('trash', {})); // cached per icon/theme
 });
 
+test('component rows share the net-list layout without inline delete controls', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function renderComponents()');
+  const end = main.indexOf('\nfunction renderNets()', start);
+  assert.ok(start > 0 && end > start);
+  const render = main.slice(start, end);
+  assert.match(render, /row\.appendChild\(ref\);[\s\S]*row\.appendChild\(meta\);/);
+  assert.doesNotMatch(render, /document\.createElement\('button'\)|row\.appendChild\(remove\)/);
+
+  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /\.row \.remove/);
+});
+
 test('named net edits confirm virtual connections, and port names never repeat', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /function namedConnectionConflicts\(/);

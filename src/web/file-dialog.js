@@ -45,6 +45,7 @@ const TITLES = {
  * @returns {Promise<null | {path:string} | {dir:string, name:string}>}
  */
 export function showFileDialog(persistence, { mode = 'open', dir = '', name = '', title: customTitle } = {}) {
+  if (persistence.browserOnly) return persistence.pickFile({ mode, dir, name, title: customTitle });
   const [defaultTitle, actionLabel] = TITLES[mode];
   const title = customTitle || defaultTitle;
   let listing = null;

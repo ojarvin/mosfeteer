@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node launch.mjs",
     "serve": "node --watch src/server/serve.js",
+    "browser-only": "node scripts/build_browser_only.mjs",
     "symbols": "node scripts/build_symbols.mjs",
     "cli": "node src/cli/index.js",
     "install-launcher": "node launch.mjs --install",
