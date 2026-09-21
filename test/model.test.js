@@ -2186,6 +2186,25 @@ test('fromJSON restores coincident pin contacts omitted from wire nets', () => {
   assert.equal(net, circuit.netOfTerminal('GND2.gnd'));
 });
 
+test('topology-only snapshots preserve overlapping transient components without contacts', () => {
+  const state = {
+    version: 2,
+    grid: 40,
+    components: [
+      { refdes: 'M1', type: 'nmos', value: '', transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+      { refdes: 'M2', type: 'nmos', value: '', transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false } },
+    ],
+    nets: [],
+    labels: [],
+  };
+  const normal = Circuit.fromJSON(JSON.parse(JSON.stringify(state)));
+  assert.ok(normal.netOfTerminal('M1.g'), 'ordinary restores infer coincident contacts');
+
+  const transient = Circuit.fromJSON({ ...state, topologyOnly: true });
+  assert.equal(transient.netOfTerminal('M1.g'), null);
+  assert.equal(transient.netOfTerminal('M2.g'), null);
+});
+
 test('draw order round-trips for components, nets, and labels', () => {
   const c = new Circuit();
   const r1 = c.addComponent('resistor', { refdes: 'R1', x: 80, drawOrder: 7 });

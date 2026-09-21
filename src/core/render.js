@@ -817,6 +817,8 @@ export function svgString(circuit, opts = {}) {
  * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
  * selection bounds, with small edge ticks and a center marker.
  * opts.wireMode: show all component terminals, colored by net membership.
+ * opts.terminalSnapTarget {x,y}: Alt-held terminal snap target, emphasized
+ * with an accent halo and ring.
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
  */
 // Editor overlay colors are semantic and theme-aware (style.css tokens):
@@ -1090,6 +1092,13 @@ export function editorOverlay(circuit, opts = {}) {
 
   if (opts.wireMode) {
     const src = opts.wireSource;
+    const snapTarget = opts.terminalSnapTarget;
+    const terminalRadius = 8;
+    const sourceRadius = 8.5;
+    if (snapTarget && Number.isFinite(snapTarget.x) && Number.isFinite(snapTarget.y)) {
+      parts.push(`<circle class="wire-snap-target" cx="${fmt(snapTarget.x)}" cy="${fmt(snapTarget.y)}" r="15" fill="${SELECT}" fill-opacity="0.16"/>`);
+      parts.push(`<circle class="wire-snap-target" cx="${fmt(snapTarget.x)}" cy="${fmt(snapTarget.y)}" r="12" fill="none" stroke="${SELECT}" stroke-width="3" stroke-dasharray="5 3"/>`);
+    }
     for (const comp of circuit.components.values()) {
       for (const terminal of comp.worldTerminals()) {
         const connected = circuit.netOfTerminal({ comp: comp.refdes, term: terminal.name });
@@ -1097,10 +1106,10 @@ export function editorOverlay(circuit, opts = {}) {
         // Connected pins are quiet; open pins still need a wire (attention).
         const color = connected ? NEUTRAL : WARN;
         if (isSource) {
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="11" fill="${SELECT}" opacity="0.18"/>`);
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="${SELECT}" stroke="var(--paper, #fff)" stroke-width="2"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="12.5" fill="${SELECT}" opacity="0.18"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="${sourceRadius}" fill="${SELECT}" stroke="var(--paper, #fff)" stroke-width="2"/>`);
         } else {
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="var(--paper, #fff)" stroke="${color}" stroke-width="2.5"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="${terminalRadius}" fill="var(--paper, #fff)" stroke="${color}" stroke-width="2.5"/>`);
         }
       }
     }
@@ -1116,9 +1125,8 @@ export function editorOverlay(circuit, opts = {}) {
     parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
   }
 
-  // The draft wire, and its mirror while symmetric wiring is held. The mirror
-  // draws exactly like the draft because it commits exactly like it.
-  for (const preview of [opts.wirePreview, opts.mirrorWirePreview].filter(Boolean)) {
+  // The draft wire follows the cursor until it is committed.
+  for (const preview of [opts.wirePreview].filter(Boolean)) {
     const from = preview.from;
     const pts = preview.pts || autoRoute([{ x: from.x, y: from.y }, { x: preview.to.x, y: preview.to.y }]);
     if (pts && pts.length >= 2) {
@@ -1164,18 +1172,11 @@ export function editorOverlay(circuit, opts = {}) {
 
   // Symmetric placement: the axis a mirrored pair is being placed about. A
   // construction line, drawn in the measurement sky blue and never geometry.
-  if (opts.symmetryAxis?.operation && (opts.ghost?.def || opts.wirePreview)) {
+  if (opts.symmetryAxis?.operation && opts.ghost?.def) {
     const { operation, pin } = opts.symmetryAxis;
     const g = opts.ghost;
     // Long enough to read as an axis through whatever is being mirrored.
-    const b = g?.def
-      ? transformRect({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }, g.def.bbox)
-      : (() => {
-          const points = [...(opts.wirePreview?.pts || []), ...(opts.mirrorWirePreview?.pts || []), pin];
-          const xs = points.map((p) => p.x);
-          const ys = points.map((p) => p.y);
-          return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
-        })();
+    const b = transformRect({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }, g.def.bbox);
     const reach = operation === 'mirrorX'
       ? Math.max(Math.abs(b.y - pin.y), Math.abs(b.y + b.h - pin.y)) + GRID
       : Math.max(Math.abs(b.x - pin.x), Math.abs(b.x + b.w - pin.x)) + GRID;

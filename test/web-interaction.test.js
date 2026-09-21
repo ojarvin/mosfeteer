@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -578,6 +578,16 @@ test('pointer paths use snapped cursor conversion', () => {
   });
 });
 
+test('nearest-point selection provides the terminal target for Alt snapping', () => {
+  const nearest = nearestPoint({ x: 75, y: 5 }, [
+    { refdes: 'R1', term: 'a', x: 0, y: 0 },
+    { refdes: 'R2', term: 'a', x: 80, y: 0 },
+  ]);
+  assert.equal(nearest.refdes, 'R2');
+  assert.equal(nearest.term, 'a');
+  assert.equal(nearest.distance, Math.hypot(5, 5));
+});
+
 test('symmetric placement mirrors across one axis, chosen by the cursor', () => {
   const pin = { x: 0, y: 0 };
   // Mostly sideways reflects across a vertical line, mostly up or down across
@@ -590,16 +600,16 @@ test('symmetric placement mirrors across one axis, chosen by the cursor', () => 
   assert.equal(symmetryOperation(pin, { x: 0, y: 0 }, 'mirrorY'), 'mirrorY');
 });
 
-test('a held modifier arms symmetric placement without swallowing the ghost keys', () => {
+test('Alt arms symmetric placement without swallowing the ghost keys', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
-  // Ctrl (or Cmd, which is the one that survives a click on macOS) held on its
-  // own arms it; releasing it or losing the window drops the mirrored ghost.
-  assert.match(main, /if \(k === 'control' \|\| k === 'meta'\) \{\s*setSymmetry\(true\);/);
-  assert.match(main, /keyup[\s\S]{0,120}ev\.key === 'Control' \|\| ev\.key === 'Meta'[\s\S]{0,40}setSymmetry\(false\)/);
-  assert.match(main, /'blur', \(\) => setSymmetry\(false\)/);
+  // Alt held on its own arms it; releasing it or losing the window drops the
+  // mirrored ghost.
+  assert.match(main, /if \(ev\.key === 'Alt'\) \{[\s\S]{0,220}setSymmetry\(true\)/);
+  assert.match(main, /keyup[\s\S]{0,120}ev\.key !== 'Alt'[\s\S]{0,120}setSymmetry\(false\)/);
+  assert.match(main, /'blur', \(\) => \{[\s\S]{0,180}setSymmetry\(false\)/);
   // The modifier branch otherwise swallows every key it does not bind, which
   // would leave the ghost undrivable, untransformable and uncommittable while
-  // Ctrl is down -- r and Shift+r included, which read as Ctrl+r there.
+  // Alt is down -- r and Shift+r included, which carry the Alt modifier.
   assert.match(main, /drivingSymmetry = symmetry\s*\n?\s*&& \(ev\.key === 'Enter' \|\| ev\.key === 'Escape' \|\| ev\.key\.startsWith\('Arrow'\) \|\| ev\.key\.toLowerCase\(\) === 'r'\)/);
   assert.match(main, /if \(\(ev\.metaKey \|\| ev\.ctrlKey\) && !drivingSymmetry\)/);
   // A settled axis outlives the modifier, so stepping off it for one transform
@@ -607,9 +617,9 @@ test('a held modifier arms symmetric placement without swallowing the ghost keys
   assert.match(main, /symmetry = symmetryMemory\s*\n?\s*\? \{ pin: \{ \.\.\.symmetryMemory\.pin \}, operation: symmetryMemory\.operation, settled: true \}/);
   assert.match(main, /symmetryMemory = \{ pin: \{ \.\.\.symmetry\.pin \}, operation: symmetry\.operation \};/);
   assert.match(main, /function clearSymmetry\(\) \{\s*dropCopyGhostMirror\(\);\s*symmetry = null;\s*symmetryMemory = null;/);
-  // It belongs to a component ghost or a managed wire draft, and a dropped
-  // ghost drops it too.
-  assert.match(main, /const armed = \(mode === 'insert' && pendingPlace\?\.kind === 'component'\)\s*\n?\s*\|\| \(!!wire\?\.source && !wire\.source\.fixed\)\s*\n?\s*\|\| drag\?\.mode === 'copyghost';/);
+  // It belongs to a component ghost or copy ghost, never to a wire draft.
+  assert.match(main, /const armed = \(mode === 'insert' && pendingPlace\?\.kind === 'component'\)\s*\n?\s*\|\| drag\?\.mode === 'copyghost';/);
+  assert.doesNotMatch(main, /!!wire\?\.source && !wire\.source\.fixed/);
   const drops = main.match(/pendingPlace = null;\n\s*clearSymmetry\(\);/g) || [];
   assert.ok(drops.length >= 5, `every ghost drop clears the axis (${drops.length})`);
   // Both halves land in one commit, so the pair is one undo.
@@ -620,13 +630,9 @@ test('a held modifier arms symmetric placement without swallowing the ghost keys
   assert.match(main, /if \(!symmetry \|\| symmetry\.settled\) return;/);
 });
 
-test('Ctrl+r still mirrors vertically while a ghost keeps the modifier armed', () => {
-  // Holding Ctrl to keep symmetry armed makes every subsequent keydown carry
-  // ctrlKey too, so Ctrl+r cannot be told apart from "Ctrl already down, now
-  // press r" by the modifier check alone -- and releasing Ctrl does not drop
-  // `armed`, so there is no key sequence that ever presents Ctrl+r un-hijacked.
-  // It needs its own case ahead of the modifier branch, or it falls to the
-  // bare-r rotate below and the browser's own reload shortcut fires instead.
+test('Ctrl+r still mirrors vertically while Alt symmetry is held', () => {
+  // Alt symmetry is held while Ctrl+r is pressed, so the explicit branch must
+  // preserve the vertical mirror instead of treating r as a rotation.
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const drivingSymmetryIndex = main.indexOf('const drivingSymmetry = symmetry');
   const modifierBranchIndex = main.indexOf("if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {");
@@ -687,32 +693,18 @@ test('view toggles answer in every mode but the insert search', () => {
   assert.doesNotMatch(normal, /setGrid\(!showGrid\)|toggleTheme\(\)|setCrosshair\(!crosshairVisible\)/);
 });
 
-test('a held modifier mirrors a wire by replaying its own commit', () => {
+test('wiring uses Alt for nearest-terminal snapping instead of symmetric routing', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
-  const wrap = main.slice(main.indexOf('function withMirroredWire('), main.indexOf('\n/** Commit the draft wire onto'));
-  // The mirror re-runs the ordinary commit with the reflected draft in place,
-  // so every path it can take -- onto a terminal, into a net, open-ended --
-  // mirrors without being reimplemented.
-  assert.match(wrap, /run\(point\);/);
-  assert.match(wrap, /if \(!wire\?\.source\) \{/);
-  assert.match(wrap, /source: twin\.source, points: twin\.points/);
-  // Two commits, one undo.
-  assert.match(wrap, /history\.length = depth;\s*rememberHistory\(before\);\s*future\.length = 0;/);
-  // A mirror that cannot commit leaves no half-drawn draft behind.
-  assert.match(wrap, /if \(wire\?\.source\) \{\s*wire = \{ \.\.\.newWireDraft\(\)/);
-
-  const draft = main.slice(main.indexOf('function mirroredWireDraft('), main.indexOf('\n/** Run one wire commit'));
-  // A source standing ON the axis reflects onto its own terminal, which is
-  // what fans a tail drain out to both sides of a differential pair.
-  assert.match(draft, /const terminal = matchAt\(mirroredFrom\.x, mirroredFrom\.y\);/);
-  // A draft lying entirely on the axis is one wire, not two.
-  assert.match(draft, /mirroredFrom\.x === from\.x && mirroredFrom\.y === from\.y\s*\n?\s*&& mirroredPoint\.x === point\.x && mirroredPoint\.y === point\.y\) return null;/);
-  // Both commit routes go through it, and the preview is built after the axis
-  // has been aimed rather than before.
-  assert.match(main, /withMirroredWire\(\(point\) => \{\s*cursor = \{ \.\.\.point \};\s*commitWireAtCursor\(\);/);
-  assert.match(main, /withMirroredWire\(\(point\) => doWireClick\(/);
-  const canvas = main.slice(main.indexOf('  syncSymmetryOperation();'), main.indexOf('  const ghostTwin ='));
-  assert.match(canvas, /mirrorWirePreview = wire\?\.source \? mirroredWirePreview\(\) : null;/);
+  assert.match(main, /function terminalSnapWorld\(point\)/);
+  assert.match(main, /nearestTerminal\(point, \{ anyDistance: true \}\)/);
+  assert.match(main, /return wire && terminalSnap \? terminalSnapWorld\(point\) : snappedWorld\(point\);/);
+  assert.match(main, /if \(wire\) setTerminalSnap\(true\)/);
+  assert.match(main, /if \(terminalSnap\) \{\s*terminalSnap = false;/);
+  assert.match(main, /terminalSnapTarget: terminalSnap \? nearestTerminal\(cursor, \{ anyDistance: true \}\) : null/);
+  assert.doesNotMatch(main, /withMirroredWire|mirroredWireDraft|mirrorWirePreview/);
+  const toolbar = readFileSync(new URL('../src/web/toolbar.js', import.meta.url), 'utf8');
+  assert.match(toolbar, /hold Alt \(wire\).*nearest terminal/);
+  assert.doesNotMatch(toolbar, /symmetric wiring/);
 });
 
 test('wire previews prefer a centered equivalent route', () => {
@@ -751,6 +743,11 @@ test('wire previews can cross neighbours but validate the final drop, and canvas
 test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const arm = main.slice(main.indexOf('function armCopyGhostMirror('), main.indexOf('function dropCopyGhostMirror('));
+  const symmetry = main.slice(main.indexOf('function copyGhostSymmetryPin('), main.indexOf('function setSymmetry('));
+  assert.match(symmetry, /component\.transform\.x, y: component\.transform\.y/);
+  assert.match(main, /const pin = drag\?\.mode === 'copyghost' \? copyGhostSymmetryPin\(\) : \{ \.\.\.cursor \};/);
+  assert.match(main, /waitingForMotion: drag\?\.mode === 'copyghost'/);
+  assert.match(main, /if \(symmetry\.waitingForMotion\)[\s\S]*symmetry\.waitingForMotion = false/);
   // One transform both carries the copy to the far side and flips its symbols,
   // which is why the second set is pasted on top of the first rather than at
   // the reflected point.
@@ -764,10 +761,37 @@ test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
   const move = main.slice(main.indexOf('function moveCopyGhost('), main.indexOf('function commitCopyGhost('));
   assert.match(move, /translateCopyGhost\(ghost\.mirror,\s*\n?\s*symmetry\?\.operation === 'mirrorY' \? dx : -dx,/);
 
+  const render = main.slice(main.indexOf('function renderCanvas('), main.indexOf('\n// ----- mouse', main.indexOf('function renderCanvas(')));
+  assert.match(render, /for \(const ref of drag\.ghost\.mirror\?\.refs \|\| \[\]\) ghostRefs\.add\(ref\);/);
+  assert.match(render, /for \(const id of drag\.ghost\.mirror\?\.labels \|\| \[\]\) ghostLabels\.add\(id\);/);
+  assert.match(render, /for \(const id of drag\.ghost\.mirror\?\.netIds \|\| \[\]\) ghostNets\.add\(id\);/);
+
+  const drop = main.slice(main.indexOf('function dropCopyGhostMirror('), main.indexOf('function commitCopyGhost('));
+  // The mirror snapshot is based at the ghost's original placement. Dropping
+  // Alt must replay the primary displacement instead of returning it to the
+  // source component before the mirrored half is removed.
+  assert.match(drop, /const dx = snap\(cursor\.x\) - snap\(drag\.startWorld\.x\);/);
+  assert.match(drop, /const dy = snap\(cursor\.y\) - snap\(drag\.startWorld\.y\);/);
+  assert.match(drop, /beforeMirror\.topologyOnly = true;\s*circuit = Circuit\.fromJSON\(beforeMirror\);/);
+  assert.match(drop, /ghost\.mirror = null;\s*translateCopyGhost\(ghost, dx, dy\);/);
+
   const commit = main.slice(main.indexOf('function commitCopyGhost('), main.indexOf('\n/** Paste the clipboard'));
   // The mirror is pasted after the primary's own snapshot, so both halves are
   // already inside the single history entry -- one undo for the pair.
   assert.match(commit, /const refs = \[\.\.\.ghost\.refs, \.\.\.\(ghost\.mirror\?\.refs \|\| \[\]\)\];/);
   assert.match(commit, /recordHistoryEntry\(ghost\.beforeSnapshot\);/);
   assert.match(commit, /if \(mirrored && symmetry\?\.operation\) armCopyGhostMirror\(\);/);
+});
+
+test('transient copy ghosts stay out of side panels until committed', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const components = main.slice(main.indexOf('function renderComponents('), main.indexOf('function renderNets('));
+  assert.match(components, /componentPaletteItems\(sortedComps\(\)\)[\s\S]*\.filter\(\(comp\) => !isTransientCopyGhostRef\(comp\.refdes\)\)/);
+
+  const nets = main.slice(main.indexOf('function renderNets('), main.indexOf('\n/** Open the inline refdes editor', main.indexOf('function renderNets(')));
+  assert.match(nets, /const visibleGroupNets =/);
+  assert.match(nets, /const groupedNets = visibleGroupNets\(net\)/);
+
+  const detail = main.slice(main.indexOf('function renderDetail('), main.indexOf('// ----- insert-mode menu'));
+  assert.match(detail, /isTransientCopyGhostRef\(comp\.refdes\)/);
 });

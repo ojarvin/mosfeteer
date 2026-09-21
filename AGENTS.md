@@ -221,7 +221,7 @@ Core keyboard vocabulary:
 | normal | `i` insert, `w` wire, `m` move, `Shift+m` detached move, `c` copy, `r` rotate, `Shift+r`/`Ctrl+r` mirrors, `x` check, `u`/`U` undo/redo |
 | view | `F` fit, `#` grid, `C` crosshair, `G` guides, `D` theme, `?` help |
 | editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open |
-| wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode |
+| wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; hold `Alt` for symmetric placement/copy or nearest-terminal cursor snapping while wiring |
 
 View toggles are handled before mode-specific keys, except printable insert
 query text before a ghost exists. `Ctrl+Shift+r` is intentionally unbound.

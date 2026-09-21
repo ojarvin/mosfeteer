@@ -39,7 +39,7 @@ import { createPersistenceAdapter, defaultExportDirectory, validDocumentName } f
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
+import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
 import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 
 // ----- boot failure surface --------------------------------------
@@ -362,16 +362,16 @@ function clearCheckReport() {
 function clearDiagnosticFocus() {
   diagnosticSelection = { components: new Set(), nets: new Set(), labels: new Set() };
 }
-// Symmetric placement. While Ctrl is held with a component ghost armed, the
-// point it went down at becomes a mirror axis and a second, mirrored ghost
-// follows on the far side of it, so a differential pair or any other mirrored
-// structure is placed in one gesture. Releasing Ctrl drops the twin; nothing
-// about the primary ghost changes while it is held.
+// Symmetric placement. While Alt is held with a component ghost armed, its
+// origin becomes a mirror axis and a second, mirrored ghost follows on the
+// far side of it, so a differential pair or any other mirrored structure is
+// placed in one gesture. Releasing Alt drops the twin; nothing about the
+// primary ghost changes while it is held.
 let symmetry = null; // { pin:{x,y}, operation:'mirrorX'|'mirrorY'|null, settled }
 // An axis a pair was actually placed about is an axis of the drawing, so it
-// outlives the Ctrl press and is resumed by the next one. Dropping the ghost
+// outlives the Alt press and is resumed by the next one. Dropping the ghost
 // forgets it. Without this, stepping off Ctrl for one transform -- the only
-// way to reach the vertical mirror while Ctrl is the hold key -- would lose
+// way to reach the vertical mirror while Alt is the hold key -- would lose
 // the axis the structure is being built about.
 let symmetryMemory = null; // { pin, operation } while the same ghost is armed
 let pendingPlace = null; // insert-mode ghost: { kind:'component', type, rotation, mirrorX, mirrorY } | { kind:'label' }
@@ -406,7 +406,8 @@ let visual = null; // visual mode: anchor grid point {x,y} the selection box sta
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
 let wirePreview = null;
-let mirrorWirePreview = null;
+let terminalSnap = false; // Alt-held wiring cursor: snap to the nearest terminal
+let altHeld = false;
 let directWire = null; // protected direct wire: { source:{refdes,term}, points:[] }
 let counts = 0;
 let pendingKey = null; // { key, at } for dd chord
@@ -1229,6 +1230,7 @@ async function deleteSavedCircuit() {
     resetCheckState();
     directWire = null;
     wire = null;
+    terminalSnap = false;
     clearSymmetry();
     drag = null;
     moveMode = null;
@@ -1407,6 +1409,7 @@ function applyJson(blob) {
   // across loads, undo/redo, or remote replacement.
   directWire = null;
   wire = null;
+  terminalSnap = false;
   clearSymmetry();
   drag = null;
   moveMode = null;
@@ -1514,6 +1517,25 @@ function sortedComps() {
   return sortedCompsCache.value;
 }
 
+function transientCopyGhost() {
+  return drag?.mode === 'copyghost' ? drag.ghost : null;
+}
+
+function isTransientCopyGhostRef(refdes) {
+  const ghost = transientCopyGhost();
+  return !!ghost && (ghost.refs.includes(refdes) || ghost.mirror?.refs?.includes(refdes));
+}
+
+function transientCopyGhostNetIds() {
+  const ghost = transientCopyGhost();
+  return new Set([...(ghost?.netIds || []), ...(ghost?.mirror?.netIds || [])]);
+}
+
+function isTransientCopyGhostNet(id) {
+  const ghost = transientCopyGhost();
+  return !!ghost && (ghost.netIds.includes(id) || ghost.mirror?.netIds?.includes(id));
+}
+
 function unnamedReferenceInfoForNet(net) {
   if (!net) return null;
   for (const terminal of net.terminals || []) {
@@ -1547,6 +1569,7 @@ function visibleNets() {
   if (!visibleNetsCache || visibleNetsCache.revision !== modelRevision) {
     const grouped = new Map();
     const nets = [...circuit.nets.values()]
+      .filter((net) => !isTransientCopyGhostNet(net.id))
       .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2));
     for (const net of nets) {
       const key = namedNetGroupKey(net);
@@ -1598,22 +1621,14 @@ function matchAt(x, y) {
  * tolerance but at least half a grid cell, so genuine wire-interior clicks
  * (far from any pin) keep working for segment dragging.
  */
-function nearestTerminal(w) {
+function nearestTerminal(w, { anyDistance = false } = {}) {
   const p = paneSize();
   const pxPerUnit = p ? view.w / p.w : 1;
   const tol = Math.max(GRID / 2, 12 / pxPerUnit);
-  let best = null;
-  let bestD = Infinity;
-  for (const c of sortedComps()) {
-    for (const t of c.worldTerminals()) {
-      const d = Math.hypot(t.x - w.x, t.y - w.y);
-      if (d < bestD) {
-        bestD = d;
-        best = { refdes: c.refdes, term: t.name, x: t.x, y: t.y };
-      }
-    }
-  }
-  return bestD <= tol ? best : null;
+  const candidates = sortedComps().flatMap((c) => c.worldTerminals()
+    .map((t) => ({ refdes: c.refdes, term: t.name, x: t.x, y: t.y })));
+  const best = nearestPoint(w, candidates);
+  return best && (anyDistance || best.distance <= tol) ? best : null;
 }
 
 function openFixedEndpointAt(w) {
@@ -2899,7 +2914,8 @@ function deleteSelection() {
 }
 
 function moveCursor(cellsX, cellsY) {
-  cursor = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
+  const next = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
+  cursor = wire && terminalSnap ? terminalSnapWorld(next) : next;
   followCursor();
 }
 
@@ -3337,7 +3353,19 @@ function symmetryTwin(base = pendingTransform()) {
   return twin.x === base.x && twin.y === base.y ? null : twin;
 }
 
-/** Point the mirror at whichever way the cursor has travelled since Ctrl went
+/** Copy ghosts preserve the pointer as their drag anchor, but symmetry should
+ *  read from the copied component's origin, just like insert mode. For a
+ *  non-component selection there is no symbol origin, so keep the pointer
+ *  anchor as the sensible fallback. */
+function copyGhostSymmetryPin() {
+  const ref = drag?.ghost?.refs?.[0];
+  const component = ref && circuit.components.get(ref);
+  return component
+    ? { x: component.transform.x, y: component.transform.y }
+    : { ...cursor };
+}
+
+/** Point the mirror at whichever way the cursor has travelled since Alt went
  *  down. Called from the render path, so it follows the cursor however it
  *  moved -- pointer, arrow keys, or a view change.
  *
@@ -3349,11 +3377,11 @@ function symmetryTwin(base = pendingTransform()) {
  *  direction costs nothing. */
 function syncSymmetryOperation() {
   if (!symmetry || symmetry.settled) return;
+  if (symmetry.waitingForMotion) return;
   symmetry.operation = symmetryOperation(symmetry.pin, cursor, symmetry.operation);
-  // A wire's source, like a copy ghost's pasted set, is already committed, so
-  // the first move off the axis says where the mirror goes; a later turn must
-  // not swing it.
-  if (symmetry.operation && (wire?.source || drag?.mode === 'copyghost')) symmetry.settled = true;
+  // A copy ghost is already committed, so the first move off the axis says
+  // where the mirror goes; a later turn must not swing it.
+  if (symmetry.operation && drag?.mode === 'copyghost') symmetry.settled = true;
 }
 
 /** Drop the mirrored ghost and forget the axis it was about. Releasing the
@@ -3369,19 +3397,35 @@ function clearSymmetry() {
  *  transform between two pairs costs nothing: the next press resumes it. */
 function setSymmetry(on) {
   const armed = (mode === 'insert' && pendingPlace?.kind === 'component')
-    || (!!wire?.source && !wire.source.fixed)
     || drag?.mode === 'copyghost';
   if (on && armed && !symmetry) {
+    const pin = drag?.mode === 'copyghost' ? copyGhostSymmetryPin() : { ...cursor };
     symmetry = symmetryMemory
       ? { pin: { ...symmetryMemory.pin }, operation: symmetryMemory.operation, settled: true }
-      : { pin: { ...cursor }, operation: null };
+      : {
+          pin,
+          operation: null,
+          waitingForMotion: drag?.mode === 'copyghost',
+          armedCursor: drag?.mode === 'copyghost' ? { ...cursor } : null,
+        };
     logLine(symmetryMemory
       ? `symmetry axis resumed about ${symmetryAxisText()}`
-      : `symmetry axis at (${cursor.x},${cursor.y}) · move off it to mirror · release Ctrl to drop`);
+      : `symmetry axis at (${cursor.x},${cursor.y}) · move off it to mirror · release Alt to drop`);
   } else if (!on && symmetry) {
     dropCopyGhostMirror();
     symmetry = null;
   } else return false;
+  render();
+  return true;
+}
+
+/** While Alt is held in managed Wire mode, the pointer cursor follows the
+ * nearest component terminal. It is a hold-only aid and never changes the
+ * committed document. */
+function setTerminalSnap(on) {
+  const next = !!on && !!wire;
+  if (terminalSnap === next) return false;
+  terminalSnap = next;
   render();
   return true;
 }
@@ -3575,15 +3619,6 @@ function draftWirePreview(draft) {
   const pts = draftRoutePath(draft, cursor);
   if (!pts) return undefined;
   return { from: pts[0], to: pts[pts.length - 1], pts };
-}
-
-/** The same preview for the mirrored draft, routed through the same autorouter
- *  so what is previewed is what a commit would draw. */
-function mirroredWirePreview() {
-  const twin = mirroredWireDraft({ ...cursor });
-  if (!twin) return null;
-  const pts = draftRoutePath({ ...wire, source: twin.source, points: twin.points }, twin.point);
-  return pts ? { from: pts[0], to: pts.at(-1), pts } : null;
 }
 
 function clientRectToSvgBounds(svg, rect) {
@@ -3824,6 +3859,9 @@ function renderCanvas(modelKey) {
     for (const ref of drag.ghost.refs) ghostRefs.add(ref);
     for (const id of drag.ghost.labels) ghostLabels.add(id);
     for (const id of drag.ghost.netIds) ghostNets.add(id);
+    for (const ref of drag.ghost.mirror?.refs || []) ghostRefs.add(ref);
+    for (const id of drag.ghost.mirror?.labels || []) ghostLabels.add(id);
+    for (const id of drag.ghost.mirror?.netIds || []) ghostNets.add(id);
   } else if (drag?.mode === 'move') {
     for (const ref of drag.origins?.keys?.() || []) ghostRefs.add(ref);
     for (const id of drag.labelOrigins?.keys?.() || []) ghostLabels.add(id);
@@ -3894,10 +3932,6 @@ function renderCanvas(modelKey) {
           })()
       : undefined;
   syncSymmetryOperation();
-  // After the axis is aimed, not before: on the first move after the modifier
-  // goes down the direction does not exist yet, and a preview built then would
-  // be missing for exactly the frame it is needed.
-  mirrorWirePreview = wire?.source ? mirroredWirePreview() : null;
   const ghostTwin = ghost?.def ? (() => {
     const twin = symmetryTwin();
     return twin ? { ...ghost, ...twin } : null;
@@ -3914,7 +3948,7 @@ function renderCanvas(modelKey) {
   // dimension the pair while it is being pulled apart: a ghost measures from
   // its layout anchor (a device's conduction column, not its bbox), a wire
   // draft from the cursor, which is the end being mirrored.
-  const symmetryAxis = symmetry && (ghost?.def || wire?.source)
+  const symmetryAxis = symmetry && ghost?.def
     ? {
         operation: symmetry.operation,
         pin: symmetry.pin,
@@ -4011,10 +4045,10 @@ function renderCanvas(modelKey) {
         ? drag.rubber
         : undefined,
     wirePreview: wire ? wirePreview : null,
-    mirrorWirePreview: wire ? mirrorWirePreview : null,
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
+    terminalSnapTarget: terminalSnap ? nearestTerminal(cursor, { anyDistance: true }) : null,
     ghost,
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
@@ -4616,6 +4650,15 @@ function newWireDraft() {
   };
 }
 
+function terminalSnapWorld(point) {
+  const hit = nearestTerminal(point, { anyDistance: true });
+  return hit ? { x: hit.x, y: hit.y } : snappedWorld(point);
+}
+
+function cursorWorld(point) {
+  return wire && terminalSnap ? terminalSnapWorld(point) : snappedWorld(point);
+}
+
 function connectTwo(src, dst, points) {
   const before = snapshot();
   const meet = circuit.components.get(dst.refdes).terminalWorld(dst.term);
@@ -4905,78 +4948,6 @@ function commitWireAtCursor() {
   render();
 }
 
-/** A point reflected across the armed mirror axis. */
-function mirrorPoint(point) {
-  if (!symmetry?.operation) return null;
-  return symmetry.operation === 'mirrorX'
-    ? { x: 2 * symmetry.pin.x - point.x, y: point.y }
-    : { x: point.x, y: 2 * symmetry.pin.y - point.y };
-}
-
-/** The wire draft reflected across the axis, and the commit point with it.
- *
- *  The source becomes the mirror device's terminal where one stands at the
- *  reflected point -- which for a source ON the axis is that same terminal, so
- *  a tail drain fans out both ways from one pin -- and otherwise a free point,
- *  carrying the net it lands on. Returns null when the whole draft lies on the
- *  axis, because that is one wire rather than two. */
-function mirroredWireDraft(point) {
-  if (!wire?.source || wire.source.fixed || !symmetry?.operation) return null;
-  const from = wireOrigin(wire.source);
-  if (!from) return null;
-  const mirroredFrom = mirrorPoint(from);
-  const mirroredPoint = mirrorPoint(point);
-  if (mirroredFrom.x === from.x && mirroredFrom.y === from.y
-    && mirroredPoint.x === point.x && mirroredPoint.y === point.y) return null;
-  const terminal = matchAt(mirroredFrom.x, mirroredFrom.y);
-  const onWire = terminal?.term ? null : pickWire(mirroredFrom);
-  return {
-    source: terminal?.term
-      ? { refdes: terminal.refdes, term: terminal.term }
-      : { x: mirroredFrom.x, y: mirroredFrom.y, netId: onWire?.net?.id },
-    points: (wire.points || []).map(mirrorPoint),
-    point: mirroredPoint,
-  };
-}
-
-/** Run one wire commit, then the same commit for its mirror, as one undo.
- *  `run(point)` is the ordinary commit, so every path it can take -- onto a
- *  terminal, into a net, or open-ended -- mirrors without being reimplemented.
- *  The mirror only runs once the first commit has consumed the draft. */
-function withMirroredWire(run, point = { ...cursor }) {
-  const twin = mirroredWireDraft(point);
-  if (!twin) {
-    run(point);
-    return;
-  }
-  const style = wire.routeStyle;
-  const depth = history.length;
-  const before = snapshot();
-  run(point);
-  if (!wire?.source) {
-    const savedCursor = { ...cursor };
-    wire = { ...newWireDraft(), routeStyle: style, allowDiagonal: style === 'diagonal', source: twin.source, points: twin.points };
-    cursor = { ...twin.point };
-    try {
-      run(twin.point);
-    } catch (err) {
-      logLine(`mirrored wire: ${String(err.message || err)}`, 'error');
-    }
-    cursor = savedCursor;
-    // A mirror that could not commit leaves no half-drawn draft behind.
-    if (wire?.source) {
-      wire = { ...newWireDraft(), routeStyle: style, allowDiagonal: style === 'diagonal' };
-      logLine('mirrored wire: nothing to commit at the reflected point', 'error');
-    }
-  }
-  // Two commits, one edit: the pair undoes together, like a mirrored placement.
-  if (history.length > depth) {
-    history.length = depth;
-    rememberHistory(before);
-    future.length = 0;
-  }
-}
-
 /** Commit the draft wire onto a component terminal. Terminal-origin wires go
  *  through connectTwo; free-point / on-wire-origin drafts splice into the
  *  target net without disturbing its existing wire. */
@@ -5182,7 +5153,8 @@ function canvasMouseDown(ev) {
   }
   if (document.activeElement === cmdInput) cmdInput.blur();
   const b = ev.button;
-  const startWorld = clientToWorld(ev.clientX, ev.clientY);
+  const rawStartWorld = clientToWorld(ev.clientX, ev.clientY);
+  const startWorld = b === 0 && wire && terminalSnap ? terminalSnapWorld(rawStartWorld) : rawStartWorld;
   const startClient = { x: ev.clientX, y: ev.clientY };
 
   if (b === 1) {
@@ -6222,9 +6194,10 @@ function deleteAtPoint(world) {
 
 function updateCursorFromEvent(ev) {
   const pane = document.querySelector('.canvas-pane');
-  const { world: w, cursor: nextCursor } = worldAndCursorFromClient(
+  const { world: w } = worldAndCursorFromClient(
     ev.clientX, ev.clientY, pane.getBoundingClientRect(), view,
   );
+  const nextCursor = cursorWorld(w);
   const cursorChanged = nextCursor.x !== cursor.x || nextCursor.y !== cursor.y;
   cursor = nextCursor;
   return { w, cursorChanged };
@@ -6251,7 +6224,7 @@ function canvasMouseMove(ev) {
     // The cursor follows the mouse, always snapped to the nearest grid point.
     // The view never pans on its own — pan manually with the middle button.
     const point = mode === 'insert' && pendingPlace ? placementWorld(w, ev.shiftKey) : w;
-    const nextCursor = snappedWorld(point);
+    const nextCursor = cursorWorld(point);
     const changed = nextCursor.x !== cursor.x || nextCursor.y !== cursor.y;
     cursor = nextCursor;
     if (cursorChanged || changed) scheduleInteractionRender();
@@ -6603,8 +6576,9 @@ function canvasMouseMove(ev) {
 
 function canvasMouseUp(ev) {
   if (!drag) return;
-  const movedOut = dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
-  const w = clientToWorld(ev.clientX, ev.clientY);
+  const releaseWorld = clientToWorld(ev.clientX, ev.clientY);
+  const movedOut = dragMoved(drag.startWorld, drag.startClient, releaseWorld, ev);
+  const w = wire && terminalSnap ? terminalSnapWorld(releaseWorld) : releaseWorld;
   const movedWorld = constrainedWorld(drag.startWorld, w, ev.shiftKey);
   if (drag.mode === 'blockresize') {
     if (drag.moved && !drag.invalid && snapshot() !== drag.startSnapshot) {
@@ -6954,8 +6928,7 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'wirepick') {
     if (!movedOut) {
       const clicked = { x: snap(w.x), y: snap(w.y) };
-      withMirroredWire((point) => doWireClick(point.x, point.y,
-        point === clicked ? drag.terminalHit : null, drag.fixedEndpoint, drag.fixedTarget), clicked);
+      doWireClick(clicked.x, clicked.y, drag.terminalHit, drag.fixedEndpoint, drag.fixedTarget);
     }
   } else if (drag.mode === 'directpick') {
     if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y), drag.fixedEndpoint);
@@ -8407,12 +8380,25 @@ window.addEventListener('keydown', (ev) => {
 });
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
-// Releasing Ctrl drops the mirrored ghost; so does losing the window, since no
+// Releasing Alt drops the mirrored ghost or terminal-snap aid; so does losing the window, since no
 // keyup arrives then and the twin would otherwise be stuck on screen.
 window.addEventListener('keyup', (ev) => {
-  if (ev.key === 'Control' || ev.key === 'Meta') setSymmetry(false);
+  if (ev.key !== 'Alt') return;
+  altHeld = false;
+  setSymmetry(false);
+  if (terminalSnap) {
+    terminalSnap = false;
+    render();
+  }
 });
-window.addEventListener('blur', () => setSymmetry(false));
+window.addEventListener('blur', () => {
+  altHeld = false;
+  setSymmetry(false);
+  if (terminalSnap) {
+    terminalSnap = false;
+    render();
+  }
+});
 
 function blockResizeRect(rect, handle, world) {
   const p = { x: snap(world.x), y: snap(world.y) };
@@ -8795,7 +8781,8 @@ function renderComponents() {
   componentsListEl.setAttribute('role', 'listbox');
   componentsListEl.setAttribute('aria-label', 'Components');
   componentsListEl.setAttribute('aria-multiselectable', 'true');
-  const allComps = componentPaletteItems(sortedComps());
+  const allComps = componentPaletteItems(sortedComps())
+    .filter((comp) => !isTransientCopyGhostRef(comp.refdes));
   const comps = allComps.filter((comp) => panelFilterMatches(componentDisplayName(comp), comp.refdes, comp.type));
   setPanelCount('components-count', comps.length, allComps.length);
   if (comps.length === 0) {
@@ -8902,6 +8889,8 @@ function renderNets() {
   netsListEl.setAttribute('role', 'listbox');
   netsListEl.setAttribute('aria-label', 'Electrical nets');
   netsListEl.setAttribute('aria-multiselectable', 'true');
+  const hiddenNetIds = transientCopyGhostNetIds();
+  const visibleGroupNets = (net) => namedGroupNets(net).filter((candidate) => !hiddenNetIds.has(candidate.id));
   const allNets = visibleNets();
   const nets = allNets.filter((net) => panelFilterMatches(net.name, net.id));
   setPanelCount('nets-count', nets.length, allNets.length);
@@ -8909,9 +8898,9 @@ function renderNets() {
     netsListEl.innerHTML = `<div class="no-items">${allNets.length ? 'No matching nets' : 'No nets'}</div>`;
     return;
   }
-  const primaryNet = nets.find((net) => namedGroupNets(net).some((candidate) => selectedNets.has(candidate.id)));
+  const primaryNet = nets.find((net) => visibleGroupNets(net).some((candidate) => selectedNets.has(candidate.id)));
   for (const net of nets) {
-    const groupedNets = namedGroupNets(net);
+    const groupedNets = visibleGroupNets(net);
     const groupedIds = groupedNets.map((candidate) => candidate.id);
     const groupSelected = groupedIds.some((id) => selectedNets.has(id));
     const row = document.createElement('div');
@@ -8970,7 +8959,7 @@ function renderNets() {
         const ids = rangeValues(nets, netRangeAnchor, net.id, (item) => item.id);
         const next = ev.ctrlKey || ev.metaKey ? new Set(selectedNets) : new Set();
         for (const id of (ids.length ? ids : [net.id])) {
-          for (const grouped of namedGroupNets(circuit.nets.get(id))) next.add(grouped.id);
+          for (const grouped of visibleGroupNets(circuit.nets.get(id))) next.add(grouped.id);
         }
         selectedNets = next;
       } else if (ev.ctrlKey || ev.metaKey) {
@@ -9173,6 +9162,10 @@ function renderDetail() {
     detailEl.innerHTML = '<div class="no-items">Select a component or label to inspect it</div>';
     return;
   }
+  if (isTransientCopyGhostRef(comp.refdes)) {
+    detailEl.innerHTML = '<div class="no-items">Copy ghost — commit it to inspect its terminals</div>';
+    return;
+  }
 
   detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${comp.type} · ${comp.value}` : comp.type));
   const table = document.createElement('table');
@@ -9227,13 +9220,9 @@ function detailHeader(name, kind) {
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 
 function onWireKey(key) {
-  if (key === 'Escape' && symmetry) {
-    // One layer at a time, as in insert mode: the axis, then the draft.
-    clearSymmetry();
-    logLine('symmetry axis cleared');
-  } else if (key === 'Escape') {
+  if (key === 'Escape') {
     wire = null;
-    clearSymmetry();
+    terminalSnap = false;
     selectedWire = null;
     selectedWires.clear();
     selectedNets.clear();
@@ -9248,10 +9237,7 @@ function onWireKey(key) {
       logLine('removed last wire vertex');
     }
   } else if (key === 'Enter') {
-    withMirroredWire((point) => {
-      cursor = { ...point };
-      commitWireAtCursor();
-    });
+    commitWireAtCursor();
   } else if (key === 'Tab') {
     // Wires and wire highlights are never part of Tab cycling.
     return;
@@ -9388,6 +9374,7 @@ function pickInsertType(type) {
   pendingPlace = type === 'label'
     ? { kind: 'label', startWorld }
     : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null, startWorld };
+  if (altHeld && pendingPlace.kind === 'component') setSymmetry(true);
   insertQuery = '';
   return true;
 }
@@ -10031,6 +10018,7 @@ function startCopyGhost(startWorld, startClient, anchorShift = null) {
     rubber: null,
   };
   copyPending = true;
+  if (altHeld) setSymmetry(true);
   render();
   return true;
 }
@@ -10047,6 +10035,10 @@ function moveCopyGhost(w) {
   // arm the mirror while the primary is still sitting at its base.
   if (symmetry && !symmetry.settled) {
     cursor = { x: snap(w.x), y: snap(w.y) };
+    if (symmetry.waitingForMotion) {
+      const armed = symmetry.armedCursor || symmetry.pin;
+      if (cursor.x !== armed.x || cursor.y !== armed.y) symmetry.waitingForMotion = false;
+    }
     syncSymmetryOperation();
   }
   if (symmetry?.operation && !ghost.mirror) armCopyGhostMirror();
@@ -10115,14 +10107,25 @@ function armCopyGhostMirror() {
   return true;
 }
 
-/** Drop the mirrored half, leaving the primary ghost exactly where it is: the
- *  snapshot taken before the second paste already holds it at that position,
- *  and the next pointer move re-translates it from its own base. */
+/** Drop the mirrored half, leaving the primary ghost exactly where it is.
+ *  The mirror's snapshot is intentionally based at the ghost's original
+ *  placement, so restore it and replay the primary ghost's current delta
+ *  before removing the mirror. Otherwise releasing Alt snaps the primary
+ *  ghost back onto the source component. */
 function dropCopyGhostMirror() {
   const ghost = drag?.ghost;
   if (!ghost?.mirror) return;
-  circuit = Circuit.fromJSON(JSON.parse(ghost.mirror.beforeSnapshot));
+  const dx = snap(cursor.x) - snap(drag.startWorld.x);
+  const dy = snap(cursor.y) - snap(drag.startWorld.y);
+  // The mirror snapshot has the primary ghost at its base position, which is
+  // deliberately allowed to overlap the source while the ghost is transient.
+  // A normal fromJSON() repairs that overlap into real electrical contacts;
+  // keep this restore topology-only until the primary has been translated.
+  const beforeMirror = JSON.parse(ghost.mirror.beforeSnapshot);
+  beforeMirror.topologyOnly = true;
+  circuit = Circuit.fromJSON(beforeMirror);
   ghost.mirror = null;
+  translateCopyGhost(ghost, dx, dy);
   restoreCopyGhostSelection(ghost);
   markModelChanged();
 }
@@ -10490,14 +10493,12 @@ function renderStatus() {
     parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
   }
   if (mode === 'insert') {
-    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
+    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Alt symmetric · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
   }
   if (symmetry) {
-    const mirroring = wire?.source ? !!mirrorWirePreview
-      : drag?.mode === 'copyghost' ? !!drag.ghost?.mirror
-        : !!symmetryTwin();
+    const mirroring = drag?.mode === 'copyghost' ? !!drag.ghost?.mirror : !!symmetryTwin();
     parts.push(symmetry.operation
-      ? `SYMMETRY about ${symmetryAxisText()}${symmetry.settled ? ' (held)' : ''}${activeSymmetryCells ? ` · ${activeSymmetryCells} ${activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${activeSymmetryCells * 2} apart` : ''}${mirroring ? (wire?.source || drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
+      ? `SYMMETRY about ${symmetryAxisText()}${symmetry.settled ? ' (held)' : ''}${activeSymmetryCells ? ` · ${activeSymmetryCells} ${activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${activeSymmetryCells * 2} apart` : ''}${mirroring ? (drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
       : `SYMMETRY armed at (${symmetry.pin.x},${symmetry.pin.y}) · move to mirror`);
   }
   if (activePlacementGuides.length) parts.push(describeGuides(activePlacementGuides));
@@ -10506,13 +10507,13 @@ function renderStatus() {
   if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
   if (wire) {
     parts.push(
-      wire.source
+      `${terminalSnap ? 'TERMINAL SNAP · ' : ''}` + (wire.source
         ? wire.source.fixed
           ? `WIRE fixed endpoint @ (${wire.source.fixed.point.x},${wire.source.fixed.point.y}) → click points / target`
           : wire.source.refdes
             ? `WIRE ${wire.source.refdes}.${wire.source.term} → terminal click commits · other clicks guide · Enter commits`
             : `WIRE (${wire.source.x},${wire.source.y}) → terminal click commits · other clicks guide · Enter commits`
-        : `WIRE (${wire.routeStyle || routeMode}): click a terminal or point to start`,
+        : `WIRE (${wire.routeStyle || routeMode}): click a terminal or point to start`),
     );
   }
   if (directWire) {
@@ -10710,6 +10711,7 @@ function activateLabelPlacement(kind) {
     return;
   }
   mode = 'normal';
+  terminalSnap = false;
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
@@ -10757,6 +10759,7 @@ function activatePlace() {
   labelMode = null;
   annotationPoints = [];
   mode = 'insert';
+  terminalSnap = false;
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
@@ -10766,6 +10769,7 @@ function activatePlace() {
 function activateSelect() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction first'); return; }
   mode = 'normal';
+  terminalSnap = false;
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
@@ -10782,6 +10786,7 @@ function activateSelect() {
 function activateVisual() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before box selection'); return; }
   mode = 'normal';
+  terminalSnap = false;
   moveMode = null;
   copyMode = false;
   // Keep Delete mode armed so a visual box can delete the selected set on
@@ -10804,6 +10809,7 @@ function activateDelete() {
     return;
   }
   mode = 'normal';
+  terminalSnap = false;
   visual = null;
   moveMode = null;
   copyMode = false;
@@ -10828,16 +10834,18 @@ function activateWire() {
   labelMode = null;
   annotationPoints = [];
   mode = 'normal';
+  terminalSnap = !!altHeld;
   // F3 changes the route style of this same managed workflow.  Diagonal wires
   // never become direct/fixed nets.
   wire = newWireDraft();
-  logLine(`wiring (${routeMode}): click a terminal or point to start; terminal clicks commit, Enter commits elsewhere`);
+  logLine(`wiring (${routeMode}): click a terminal or point to start; Alt snaps to the nearest terminal; terminal clicks commit, Enter commits elsewhere`);
   render();
 }
 
 function activateMove(kind = 'connected') {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before moving'); return; }
   mode = 'normal';
+  terminalSnap = false;
   visual = null;
   copyMode = false;
   deleteMode = false;
@@ -10852,6 +10860,7 @@ function activateMove(kind = 'connected') {
 function activateCopy() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before copying'); return; }
   mode = 'normal';
+  terminalSnap = false;
   visual = null;
   moveMode = null;
   deleteMode = false;
@@ -11148,7 +11157,7 @@ function syncWireButtonRouteMode(flash = false) {
   const icon = button.querySelector('.button-icon');
   if (icon) icon.innerHTML = ICON_PATHS[routeMode === 'diagonal' ? 'wire-diagonal' : 'wire'];
   button.dataset.routeShape = routeMode;
-  button.title = `Draw an electrical wire (w) · ${routeMode} shape · F3 or right-click to change`;
+  button.title = `Draw an electrical wire (w) · hold Alt to snap to the nearest terminal · ${routeMode} shape · F3 or right-click to change`;
   if (flash) flashToolButton(button);
 }
 
@@ -11954,6 +11963,23 @@ window.addEventListener('keydown', (ev) => {
   // canvas command such as Delete, Wire, or a transform.
   if (isKeyboardSurfaceTarget(ev.target)) return;
 
+  // Alt is a hold-only modifier. In managed Wire mode it turns on terminal
+  // snapping; with a placement or copy ghost it arms the mirrored preview.
+  // Track the physical hold separately so a ghost created by a mouse click
+  // while Alt is already down receives the same behavior.
+  if (ev.key === 'Alt') {
+    altHeld = true;
+    if (wire) setTerminalSnap(true);
+    else if ((mode === 'insert' && pendingPlace?.kind === 'component') || drag?.mode === 'copyghost') setSymmetry(true);
+    ev.preventDefault();
+    return;
+  }
+  if (ev.altKey) {
+    altHeld = true;
+    if (wire) setTerminalSnap(true);
+    else if ((mode === 'insert' && pendingPlace?.kind === 'component') || drag?.mode === 'copyghost') setSymmetry(true);
+  }
+
   // cancels the first d, except for an unmodified second d within the normal
   // mode timeout window. This also covers global commands such as Ctrl+A,
   // which are handled before onNormalKey below.
@@ -11968,14 +11994,7 @@ window.addEventListener('keydown', (ev) => {
   // While symmetry is armed they mean what they mean in insert mode.
   const drivingSymmetry = symmetry
     && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key.startsWith('Arrow') || ev.key.toLowerCase() === 'r');
-  // Ctrl+r (vertical mirror) has no unmodified-key form to fall back on, so it
-  // would otherwise be unreachable for as long as a ghost keeps the modifier
-  // permanently armed -- pressing Ctrl to reach it re-arms symmetry before
-  // the r lands, and releasing Ctrl does not drop `armed` (it is keyed off
-  // the ghost/drag, not the modifier), so there is no sequence that ever
-  // presents Ctrl+r un-hijacked. Handle it explicitly instead of letting the
-  // key fall through to the bare-r rotate below, which also left the browser
-  // to treat it as its own reload shortcut.
+  // Ctrl+r (vertical mirror) remains available while Alt symmetry is held.
   if (drivingSymmetry && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && ev.key.toLowerCase() === 'r') {
     ev.preventDefault();
     if (mode === 'insert' && pendingPlace?.kind === 'component') {
@@ -11988,12 +12007,6 @@ window.addEventListener('keydown', (ev) => {
   }
   if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {
     const k = ev.key.toLowerCase();
-    // Ctrl held on its own arms symmetric placement; every other Ctrl chord
-    // keeps its meaning, and a transform applied now carries to both halves.
-    if (k === 'control' || k === 'meta') {
-      setSymmetry(true);
-      return;
-    }
     if (k === 'c' && ev.shiftKey) {
       ev.preventDefault();
       copyAsImage();

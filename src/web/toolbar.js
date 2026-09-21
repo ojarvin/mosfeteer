@@ -148,7 +148,7 @@ export const naturalCompare = new Intl.Collator(undefined, { numeric: true, sens
 export const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
     ['i / I / A', 'insert mode (fuzzy-search component and label placement)'],
-    ['w', 'wire mode: click terminals or points; Enter commits'],
+    ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal; Enter commits'],
     ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
     ['terminal letters', 'pick or complete a terminal connection while wiring'],
     ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
@@ -219,8 +219,8 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Shift while moving', 'lock a drag or ghost to the dominant horizontal or vertical direction'],
     ['r / Shift+r', 'rotate / mirror the component ghost'],
     ['Ctrl/Cmd+r', 'mirror the component ghost vertically'],
-    ['hold Ctrl/Cmd', 'symmetric placement: pin a mirror axis, move off it, place both halves'],
-    ['hold Ctrl/Cmd (wire)', 'symmetric wiring: mirror the draft about the axis and commit both'],
+    ['hold Alt', 'symmetric placement/copy: pin a mirror axis, move off it, and place both halves'],
+    ['hold Alt (wire)', 'snap the cursor to the nearest terminal while wiring'],
     ['Backspace', 'edit the search string or drop the ghost'],
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],

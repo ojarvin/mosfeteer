@@ -330,8 +330,13 @@ geometry; the rules for how to lay them out are in `style-guide.md`.
   Clicking a terminal commits immediately; clicking elsewhere adds a route
   point. The preview autoroutes each leg through committed points, and Enter
   commits at a free point or wire interior, so the new endpoint need not be a
-  terminal. `F3` toggles the route choice for new wires. There is no separate
-  uppercase-`W` editor mode.
+  terminal. Hold `Alt` while wiring to snap the cursor to the nearest
+  terminal; releasing `Alt` returns to ordinary grid cursor behavior. `F3`
+  toggles the route choice for new wires. There is no separate uppercase-`W`
+  editor mode.
+- While placing a component or copying a selection, hold `Alt` to pin a mirror
+  axis and place the mirrored pair in one gesture. `Ctrl/Cmd+r` remains the
+  explicit vertical-mirror transform; `Alt` is not a wire-symmetry mode.
 - Persisted nets with `routingMode: "fixed"` remain loadable, including
   diagonal paths. Use the `net` command's fixed-path operations when inspecting
   or deliberately editing them; managed routing does not convert a fixed net.

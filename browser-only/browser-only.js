@@ -40,7 +40,7 @@ const { createPersistenceAdapter, defaultExportDirectory, validDocumentName } = 
 const { confirmChoice, showFileDialog } = __require("src/web/file-dialog.js");
 const { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js");
 const { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js");
-const { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js");
+const { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js");
 const { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js");
 /**
  * Mosfeteer — keyboard-driven schematic editor.
@@ -406,16 +406,16 @@ function clearCheckReport() {
 function clearDiagnosticFocus() {
   diagnosticSelection = { components: new Set(), nets: new Set(), labels: new Set() };
 }
-// Symmetric placement. While Ctrl is held with a component ghost armed, the
-// point it went down at becomes a mirror axis and a second, mirrored ghost
-// follows on the far side of it, so a differential pair or any other mirrored
-// structure is placed in one gesture. Releasing Ctrl drops the twin; nothing
-// about the primary ghost changes while it is held.
+// Symmetric placement. While Alt is held with a component ghost armed, its
+// origin becomes a mirror axis and a second, mirrored ghost follows on the
+// far side of it, so a differential pair or any other mirrored structure is
+// placed in one gesture. Releasing Alt drops the twin; nothing about the
+// primary ghost changes while it is held.
 let symmetry = null; // { pin:{x,y}, operation:'mirrorX'|'mirrorY'|null, settled }
 // An axis a pair was actually placed about is an axis of the drawing, so it
-// outlives the Ctrl press and is resumed by the next one. Dropping the ghost
+// outlives the Alt press and is resumed by the next one. Dropping the ghost
 // forgets it. Without this, stepping off Ctrl for one transform -- the only
-// way to reach the vertical mirror while Ctrl is the hold key -- would lose
+// way to reach the vertical mirror while Alt is the hold key -- would lose
 // the axis the structure is being built about.
 let symmetryMemory = null; // { pin, operation } while the same ghost is armed
 let pendingPlace = null; // insert-mode ghost: { kind:'component', type, rotation, mirrorX, mirrorY } | { kind:'label' }
@@ -450,7 +450,8 @@ let visual = null; // visual mode: anchor grid point {x,y} the selection box sta
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
 let wirePreview = null;
-let mirrorWirePreview = null;
+let terminalSnap = false; // Alt-held wiring cursor: snap to the nearest terminal
+let altHeld = false;
 let directWire = null; // protected direct wire: { source:{refdes,term}, points:[] }
 let counts = 0;
 let pendingKey = null; // { key, at } for dd chord
@@ -1273,6 +1274,7 @@ async function deleteSavedCircuit() {
     resetCheckState();
     directWire = null;
     wire = null;
+    terminalSnap = false;
     clearSymmetry();
     drag = null;
     moveMode = null;
@@ -1451,6 +1453,7 @@ function applyJson(blob) {
   // across loads, undo/redo, or remote replacement.
   directWire = null;
   wire = null;
+  terminalSnap = false;
   clearSymmetry();
   drag = null;
   moveMode = null;
@@ -1558,6 +1561,25 @@ function sortedComps() {
   return sortedCompsCache.value;
 }
 
+function transientCopyGhost() {
+  return drag?.mode === 'copyghost' ? drag.ghost : null;
+}
+
+function isTransientCopyGhostRef(refdes) {
+  const ghost = transientCopyGhost();
+  return !!ghost && (ghost.refs.includes(refdes) || ghost.mirror?.refs?.includes(refdes));
+}
+
+function transientCopyGhostNetIds() {
+  const ghost = transientCopyGhost();
+  return new Set([...(ghost?.netIds || []), ...(ghost?.mirror?.netIds || [])]);
+}
+
+function isTransientCopyGhostNet(id) {
+  const ghost = transientCopyGhost();
+  return !!ghost && (ghost.netIds.includes(id) || ghost.mirror?.netIds?.includes(id));
+}
+
 function unnamedReferenceInfoForNet(net) {
   if (!net) return null;
   for (const terminal of net.terminals || []) {
@@ -1591,6 +1613,7 @@ function visibleNets() {
   if (!visibleNetsCache || visibleNetsCache.revision !== modelRevision) {
     const grouped = new Map();
     const nets = [...circuit.nets.values()]
+      .filter((net) => !isTransientCopyGhostNet(net.id))
       .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2));
     for (const net of nets) {
       const key = namedNetGroupKey(net);
@@ -1642,22 +1665,14 @@ function matchAt(x, y) {
  * tolerance but at least half a grid cell, so genuine wire-interior clicks
  * (far from any pin) keep working for segment dragging.
  */
-function nearestTerminal(w) {
+function nearestTerminal(w, { anyDistance = false } = {}) {
   const p = paneSize();
   const pxPerUnit = p ? view.w / p.w : 1;
   const tol = Math.max(GRID / 2, 12 / pxPerUnit);
-  let best = null;
-  let bestD = Infinity;
-  for (const c of sortedComps()) {
-    for (const t of c.worldTerminals()) {
-      const d = Math.hypot(t.x - w.x, t.y - w.y);
-      if (d < bestD) {
-        bestD = d;
-        best = { refdes: c.refdes, term: t.name, x: t.x, y: t.y };
-      }
-    }
-  }
-  return bestD <= tol ? best : null;
+  const candidates = sortedComps().flatMap((c) => c.worldTerminals()
+    .map((t) => ({ refdes: c.refdes, term: t.name, x: t.x, y: t.y })));
+  const best = nearestPoint(w, candidates);
+  return best && (anyDistance || best.distance <= tol) ? best : null;
 }
 
 function openFixedEndpointAt(w) {
@@ -2943,7 +2958,8 @@ function deleteSelection() {
 }
 
 function moveCursor(cellsX, cellsY) {
-  cursor = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
+  const next = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
+  cursor = wire && terminalSnap ? terminalSnapWorld(next) : next;
   followCursor();
 }
 
@@ -3381,7 +3397,19 @@ function symmetryTwin(base = pendingTransform()) {
   return twin.x === base.x && twin.y === base.y ? null : twin;
 }
 
-/** Point the mirror at whichever way the cursor has travelled since Ctrl went
+/** Copy ghosts preserve the pointer as their drag anchor, but symmetry should
+ *  read from the copied component's origin, just like insert mode. For a
+ *  non-component selection there is no symbol origin, so keep the pointer
+ *  anchor as the sensible fallback. */
+function copyGhostSymmetryPin() {
+  const ref = drag?.ghost?.refs?.[0];
+  const component = ref && circuit.components.get(ref);
+  return component
+    ? { x: component.transform.x, y: component.transform.y }
+    : { ...cursor };
+}
+
+/** Point the mirror at whichever way the cursor has travelled since Alt went
  *  down. Called from the render path, so it follows the cursor however it
  *  moved -- pointer, arrow keys, or a view change.
  *
@@ -3393,11 +3421,11 @@ function symmetryTwin(base = pendingTransform()) {
  *  direction costs nothing. */
 function syncSymmetryOperation() {
   if (!symmetry || symmetry.settled) return;
+  if (symmetry.waitingForMotion) return;
   symmetry.operation = symmetryOperation(symmetry.pin, cursor, symmetry.operation);
-  // A wire's source, like a copy ghost's pasted set, is already committed, so
-  // the first move off the axis says where the mirror goes; a later turn must
-  // not swing it.
-  if (symmetry.operation && (wire?.source || drag?.mode === 'copyghost')) symmetry.settled = true;
+  // A copy ghost is already committed, so the first move off the axis says
+  // where the mirror goes; a later turn must not swing it.
+  if (symmetry.operation && drag?.mode === 'copyghost') symmetry.settled = true;
 }
 
 /** Drop the mirrored ghost and forget the axis it was about. Releasing the
@@ -3413,19 +3441,35 @@ function clearSymmetry() {
  *  transform between two pairs costs nothing: the next press resumes it. */
 function setSymmetry(on) {
   const armed = (mode === 'insert' && pendingPlace?.kind === 'component')
-    || (!!wire?.source && !wire.source.fixed)
     || drag?.mode === 'copyghost';
   if (on && armed && !symmetry) {
+    const pin = drag?.mode === 'copyghost' ? copyGhostSymmetryPin() : { ...cursor };
     symmetry = symmetryMemory
       ? { pin: { ...symmetryMemory.pin }, operation: symmetryMemory.operation, settled: true }
-      : { pin: { ...cursor }, operation: null };
+      : {
+          pin,
+          operation: null,
+          waitingForMotion: drag?.mode === 'copyghost',
+          armedCursor: drag?.mode === 'copyghost' ? { ...cursor } : null,
+        };
     logLine(symmetryMemory
       ? `symmetry axis resumed about ${symmetryAxisText()}`
-      : `symmetry axis at (${cursor.x},${cursor.y}) · move off it to mirror · release Ctrl to drop`);
+      : `symmetry axis at (${cursor.x},${cursor.y}) · move off it to mirror · release Alt to drop`);
   } else if (!on && symmetry) {
     dropCopyGhostMirror();
     symmetry = null;
   } else return false;
+  render();
+  return true;
+}
+
+/** While Alt is held in managed Wire mode, the pointer cursor follows the
+ * nearest component terminal. It is a hold-only aid and never changes the
+ * committed document. */
+function setTerminalSnap(on) {
+  const next = !!on && !!wire;
+  if (terminalSnap === next) return false;
+  terminalSnap = next;
   render();
   return true;
 }
@@ -3619,15 +3663,6 @@ function draftWirePreview(draft) {
   const pts = draftRoutePath(draft, cursor);
   if (!pts) return undefined;
   return { from: pts[0], to: pts[pts.length - 1], pts };
-}
-
-/** The same preview for the mirrored draft, routed through the same autorouter
- *  so what is previewed is what a commit would draw. */
-function mirroredWirePreview() {
-  const twin = mirroredWireDraft({ ...cursor });
-  if (!twin) return null;
-  const pts = draftRoutePath({ ...wire, source: twin.source, points: twin.points }, twin.point);
-  return pts ? { from: pts[0], to: pts.at(-1), pts } : null;
 }
 
 function clientRectToSvgBounds(svg, rect) {
@@ -3868,6 +3903,9 @@ function renderCanvas(modelKey) {
     for (const ref of drag.ghost.refs) ghostRefs.add(ref);
     for (const id of drag.ghost.labels) ghostLabels.add(id);
     for (const id of drag.ghost.netIds) ghostNets.add(id);
+    for (const ref of drag.ghost.mirror?.refs || []) ghostRefs.add(ref);
+    for (const id of drag.ghost.mirror?.labels || []) ghostLabels.add(id);
+    for (const id of drag.ghost.mirror?.netIds || []) ghostNets.add(id);
   } else if (drag?.mode === 'move') {
     for (const ref of drag.origins?.keys?.() || []) ghostRefs.add(ref);
     for (const id of drag.labelOrigins?.keys?.() || []) ghostLabels.add(id);
@@ -3938,10 +3976,6 @@ function renderCanvas(modelKey) {
           })()
       : undefined;
   syncSymmetryOperation();
-  // After the axis is aimed, not before: on the first move after the modifier
-  // goes down the direction does not exist yet, and a preview built then would
-  // be missing for exactly the frame it is needed.
-  mirrorWirePreview = wire?.source ? mirroredWirePreview() : null;
   const ghostTwin = ghost?.def ? (() => {
     const twin = symmetryTwin();
     return twin ? { ...ghost, ...twin } : null;
@@ -3958,7 +3992,7 @@ function renderCanvas(modelKey) {
   // dimension the pair while it is being pulled apart: a ghost measures from
   // its layout anchor (a device's conduction column, not its bbox), a wire
   // draft from the cursor, which is the end being mirrored.
-  const symmetryAxis = symmetry && (ghost?.def || wire?.source)
+  const symmetryAxis = symmetry && ghost?.def
     ? {
         operation: symmetry.operation,
         pin: symmetry.pin,
@@ -4055,10 +4089,10 @@ function renderCanvas(modelKey) {
         ? drag.rubber
         : undefined,
     wirePreview: wire ? wirePreview : null,
-    mirrorWirePreview: wire ? mirrorWirePreview : null,
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
+    terminalSnapTarget: terminalSnap ? nearestTerminal(cursor, { anyDistance: true }) : null,
     ghost,
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
@@ -4660,6 +4694,15 @@ function newWireDraft() {
   };
 }
 
+function terminalSnapWorld(point) {
+  const hit = nearestTerminal(point, { anyDistance: true });
+  return hit ? { x: hit.x, y: hit.y } : snappedWorld(point);
+}
+
+function cursorWorld(point) {
+  return wire && terminalSnap ? terminalSnapWorld(point) : snappedWorld(point);
+}
+
 function connectTwo(src, dst, points) {
   const before = snapshot();
   const meet = circuit.components.get(dst.refdes).terminalWorld(dst.term);
@@ -4949,78 +4992,6 @@ function commitWireAtCursor() {
   render();
 }
 
-/** A point reflected across the armed mirror axis. */
-function mirrorPoint(point) {
-  if (!symmetry?.operation) return null;
-  return symmetry.operation === 'mirrorX'
-    ? { x: 2 * symmetry.pin.x - point.x, y: point.y }
-    : { x: point.x, y: 2 * symmetry.pin.y - point.y };
-}
-
-/** The wire draft reflected across the axis, and the commit point with it.
- *
- *  The source becomes the mirror device's terminal where one stands at the
- *  reflected point -- which for a source ON the axis is that same terminal, so
- *  a tail drain fans out both ways from one pin -- and otherwise a free point,
- *  carrying the net it lands on. Returns null when the whole draft lies on the
- *  axis, because that is one wire rather than two. */
-function mirroredWireDraft(point) {
-  if (!wire?.source || wire.source.fixed || !symmetry?.operation) return null;
-  const from = wireOrigin(wire.source);
-  if (!from) return null;
-  const mirroredFrom = mirrorPoint(from);
-  const mirroredPoint = mirrorPoint(point);
-  if (mirroredFrom.x === from.x && mirroredFrom.y === from.y
-    && mirroredPoint.x === point.x && mirroredPoint.y === point.y) return null;
-  const terminal = matchAt(mirroredFrom.x, mirroredFrom.y);
-  const onWire = terminal?.term ? null : pickWire(mirroredFrom);
-  return {
-    source: terminal?.term
-      ? { refdes: terminal.refdes, term: terminal.term }
-      : { x: mirroredFrom.x, y: mirroredFrom.y, netId: onWire?.net?.id },
-    points: (wire.points || []).map(mirrorPoint),
-    point: mirroredPoint,
-  };
-}
-
-/** Run one wire commit, then the same commit for its mirror, as one undo.
- *  `run(point)` is the ordinary commit, so every path it can take -- onto a
- *  terminal, into a net, or open-ended -- mirrors without being reimplemented.
- *  The mirror only runs once the first commit has consumed the draft. */
-function withMirroredWire(run, point = { ...cursor }) {
-  const twin = mirroredWireDraft(point);
-  if (!twin) {
-    run(point);
-    return;
-  }
-  const style = wire.routeStyle;
-  const depth = history.length;
-  const before = snapshot();
-  run(point);
-  if (!wire?.source) {
-    const savedCursor = { ...cursor };
-    wire = { ...newWireDraft(), routeStyle: style, allowDiagonal: style === 'diagonal', source: twin.source, points: twin.points };
-    cursor = { ...twin.point };
-    try {
-      run(twin.point);
-    } catch (err) {
-      logLine(`mirrored wire: ${String(err.message || err)}`, 'error');
-    }
-    cursor = savedCursor;
-    // A mirror that could not commit leaves no half-drawn draft behind.
-    if (wire?.source) {
-      wire = { ...newWireDraft(), routeStyle: style, allowDiagonal: style === 'diagonal' };
-      logLine('mirrored wire: nothing to commit at the reflected point', 'error');
-    }
-  }
-  // Two commits, one edit: the pair undoes together, like a mirrored placement.
-  if (history.length > depth) {
-    history.length = depth;
-    rememberHistory(before);
-    future.length = 0;
-  }
-}
-
 /** Commit the draft wire onto a component terminal. Terminal-origin wires go
  *  through connectTwo; free-point / on-wire-origin drafts splice into the
  *  target net without disturbing its existing wire. */
@@ -5226,7 +5197,8 @@ function canvasMouseDown(ev) {
   }
   if (document.activeElement === cmdInput) cmdInput.blur();
   const b = ev.button;
-  const startWorld = clientToWorld(ev.clientX, ev.clientY);
+  const rawStartWorld = clientToWorld(ev.clientX, ev.clientY);
+  const startWorld = b === 0 && wire && terminalSnap ? terminalSnapWorld(rawStartWorld) : rawStartWorld;
   const startClient = { x: ev.clientX, y: ev.clientY };
 
   if (b === 1) {
@@ -6266,9 +6238,10 @@ function deleteAtPoint(world) {
 
 function updateCursorFromEvent(ev) {
   const pane = document.querySelector('.canvas-pane');
-  const { world: w, cursor: nextCursor } = worldAndCursorFromClient(
+  const { world: w } = worldAndCursorFromClient(
     ev.clientX, ev.clientY, pane.getBoundingClientRect(), view,
   );
+  const nextCursor = cursorWorld(w);
   const cursorChanged = nextCursor.x !== cursor.x || nextCursor.y !== cursor.y;
   cursor = nextCursor;
   return { w, cursorChanged };
@@ -6295,7 +6268,7 @@ function canvasMouseMove(ev) {
     // The cursor follows the mouse, always snapped to the nearest grid point.
     // The view never pans on its own — pan manually with the middle button.
     const point = mode === 'insert' && pendingPlace ? placementWorld(w, ev.shiftKey) : w;
-    const nextCursor = snappedWorld(point);
+    const nextCursor = cursorWorld(point);
     const changed = nextCursor.x !== cursor.x || nextCursor.y !== cursor.y;
     cursor = nextCursor;
     if (cursorChanged || changed) scheduleInteractionRender();
@@ -6647,8 +6620,9 @@ function canvasMouseMove(ev) {
 
 function canvasMouseUp(ev) {
   if (!drag) return;
-  const movedOut = dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
-  const w = clientToWorld(ev.clientX, ev.clientY);
+  const releaseWorld = clientToWorld(ev.clientX, ev.clientY);
+  const movedOut = dragMoved(drag.startWorld, drag.startClient, releaseWorld, ev);
+  const w = wire && terminalSnap ? terminalSnapWorld(releaseWorld) : releaseWorld;
   const movedWorld = constrainedWorld(drag.startWorld, w, ev.shiftKey);
   if (drag.mode === 'blockresize') {
     if (drag.moved && !drag.invalid && snapshot() !== drag.startSnapshot) {
@@ -6998,8 +6972,7 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'wirepick') {
     if (!movedOut) {
       const clicked = { x: snap(w.x), y: snap(w.y) };
-      withMirroredWire((point) => doWireClick(point.x, point.y,
-        point === clicked ? drag.terminalHit : null, drag.fixedEndpoint, drag.fixedTarget), clicked);
+      doWireClick(clicked.x, clicked.y, drag.terminalHit, drag.fixedEndpoint, drag.fixedTarget);
     }
   } else if (drag.mode === 'directpick') {
     if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y), drag.fixedEndpoint);
@@ -8451,12 +8424,25 @@ window.addEventListener('keydown', (ev) => {
 });
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
-// Releasing Ctrl drops the mirrored ghost; so does losing the window, since no
+// Releasing Alt drops the mirrored ghost or terminal-snap aid; so does losing the window, since no
 // keyup arrives then and the twin would otherwise be stuck on screen.
 window.addEventListener('keyup', (ev) => {
-  if (ev.key === 'Control' || ev.key === 'Meta') setSymmetry(false);
+  if (ev.key !== 'Alt') return;
+  altHeld = false;
+  setSymmetry(false);
+  if (terminalSnap) {
+    terminalSnap = false;
+    render();
+  }
 });
-window.addEventListener('blur', () => setSymmetry(false));
+window.addEventListener('blur', () => {
+  altHeld = false;
+  setSymmetry(false);
+  if (terminalSnap) {
+    terminalSnap = false;
+    render();
+  }
+});
 
 function blockResizeRect(rect, handle, world) {
   const p = { x: snap(world.x), y: snap(world.y) };
@@ -8839,7 +8825,8 @@ function renderComponents() {
   componentsListEl.setAttribute('role', 'listbox');
   componentsListEl.setAttribute('aria-label', 'Components');
   componentsListEl.setAttribute('aria-multiselectable', 'true');
-  const allComps = componentPaletteItems(sortedComps());
+  const allComps = componentPaletteItems(sortedComps())
+    .filter((comp) => !isTransientCopyGhostRef(comp.refdes));
   const comps = allComps.filter((comp) => panelFilterMatches(componentDisplayName(comp), comp.refdes, comp.type));
   setPanelCount('components-count', comps.length, allComps.length);
   if (comps.length === 0) {
@@ -8946,6 +8933,8 @@ function renderNets() {
   netsListEl.setAttribute('role', 'listbox');
   netsListEl.setAttribute('aria-label', 'Electrical nets');
   netsListEl.setAttribute('aria-multiselectable', 'true');
+  const hiddenNetIds = transientCopyGhostNetIds();
+  const visibleGroupNets = (net) => namedGroupNets(net).filter((candidate) => !hiddenNetIds.has(candidate.id));
   const allNets = visibleNets();
   const nets = allNets.filter((net) => panelFilterMatches(net.name, net.id));
   setPanelCount('nets-count', nets.length, allNets.length);
@@ -8953,9 +8942,9 @@ function renderNets() {
     netsListEl.innerHTML = `<div class="no-items">${allNets.length ? 'No matching nets' : 'No nets'}</div>`;
     return;
   }
-  const primaryNet = nets.find((net) => namedGroupNets(net).some((candidate) => selectedNets.has(candidate.id)));
+  const primaryNet = nets.find((net) => visibleGroupNets(net).some((candidate) => selectedNets.has(candidate.id)));
   for (const net of nets) {
-    const groupedNets = namedGroupNets(net);
+    const groupedNets = visibleGroupNets(net);
     const groupedIds = groupedNets.map((candidate) => candidate.id);
     const groupSelected = groupedIds.some((id) => selectedNets.has(id));
     const row = document.createElement('div');
@@ -9014,7 +9003,7 @@ function renderNets() {
         const ids = rangeValues(nets, netRangeAnchor, net.id, (item) => item.id);
         const next = ev.ctrlKey || ev.metaKey ? new Set(selectedNets) : new Set();
         for (const id of (ids.length ? ids : [net.id])) {
-          for (const grouped of namedGroupNets(circuit.nets.get(id))) next.add(grouped.id);
+          for (const grouped of visibleGroupNets(circuit.nets.get(id))) next.add(grouped.id);
         }
         selectedNets = next;
       } else if (ev.ctrlKey || ev.metaKey) {
@@ -9217,6 +9206,10 @@ function renderDetail() {
     detailEl.innerHTML = '<div class="no-items">Select a component or label to inspect it</div>';
     return;
   }
+  if (isTransientCopyGhostRef(comp.refdes)) {
+    detailEl.innerHTML = '<div class="no-items">Copy ghost — commit it to inspect its terminals</div>';
+    return;
+  }
 
   detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${comp.type} · ${comp.value}` : comp.type));
   const table = document.createElement('table');
@@ -9271,13 +9264,9 @@ function detailHeader(name, kind) {
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 
 function onWireKey(key) {
-  if (key === 'Escape' && symmetry) {
-    // One layer at a time, as in insert mode: the axis, then the draft.
-    clearSymmetry();
-    logLine('symmetry axis cleared');
-  } else if (key === 'Escape') {
+  if (key === 'Escape') {
     wire = null;
-    clearSymmetry();
+    terminalSnap = false;
     selectedWire = null;
     selectedWires.clear();
     selectedNets.clear();
@@ -9292,10 +9281,7 @@ function onWireKey(key) {
       logLine('removed last wire vertex');
     }
   } else if (key === 'Enter') {
-    withMirroredWire((point) => {
-      cursor = { ...point };
-      commitWireAtCursor();
-    });
+    commitWireAtCursor();
   } else if (key === 'Tab') {
     // Wires and wire highlights are never part of Tab cycling.
     return;
@@ -9432,6 +9418,7 @@ function pickInsertType(type) {
   pendingPlace = type === 'label'
     ? { kind: 'label', startWorld }
     : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null, startWorld };
+  if (altHeld && pendingPlace.kind === 'component') setSymmetry(true);
   insertQuery = '';
   return true;
 }
@@ -10075,6 +10062,7 @@ function startCopyGhost(startWorld, startClient, anchorShift = null) {
     rubber: null,
   };
   copyPending = true;
+  if (altHeld) setSymmetry(true);
   render();
   return true;
 }
@@ -10091,6 +10079,10 @@ function moveCopyGhost(w) {
   // arm the mirror while the primary is still sitting at its base.
   if (symmetry && !symmetry.settled) {
     cursor = { x: snap(w.x), y: snap(w.y) };
+    if (symmetry.waitingForMotion) {
+      const armed = symmetry.armedCursor || symmetry.pin;
+      if (cursor.x !== armed.x || cursor.y !== armed.y) symmetry.waitingForMotion = false;
+    }
     syncSymmetryOperation();
   }
   if (symmetry?.operation && !ghost.mirror) armCopyGhostMirror();
@@ -10159,14 +10151,25 @@ function armCopyGhostMirror() {
   return true;
 }
 
-/** Drop the mirrored half, leaving the primary ghost exactly where it is: the
- *  snapshot taken before the second paste already holds it at that position,
- *  and the next pointer move re-translates it from its own base. */
+/** Drop the mirrored half, leaving the primary ghost exactly where it is.
+ *  The mirror's snapshot is intentionally based at the ghost's original
+ *  placement, so restore it and replay the primary ghost's current delta
+ *  before removing the mirror. Otherwise releasing Alt snaps the primary
+ *  ghost back onto the source component. */
 function dropCopyGhostMirror() {
   const ghost = drag?.ghost;
   if (!ghost?.mirror) return;
-  circuit = Circuit.fromJSON(JSON.parse(ghost.mirror.beforeSnapshot));
+  const dx = snap(cursor.x) - snap(drag.startWorld.x);
+  const dy = snap(cursor.y) - snap(drag.startWorld.y);
+  // The mirror snapshot has the primary ghost at its base position, which is
+  // deliberately allowed to overlap the source while the ghost is transient.
+  // A normal fromJSON() repairs that overlap into real electrical contacts;
+  // keep this restore topology-only until the primary has been translated.
+  const beforeMirror = JSON.parse(ghost.mirror.beforeSnapshot);
+  beforeMirror.topologyOnly = true;
+  circuit = Circuit.fromJSON(beforeMirror);
   ghost.mirror = null;
+  translateCopyGhost(ghost, dx, dy);
   restoreCopyGhostSelection(ghost);
   markModelChanged();
 }
@@ -10534,14 +10537,12 @@ function renderStatus() {
     parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
   }
   if (mode === 'insert') {
-    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
+    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Alt symmetric · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
   }
   if (symmetry) {
-    const mirroring = wire?.source ? !!mirrorWirePreview
-      : drag?.mode === 'copyghost' ? !!drag.ghost?.mirror
-        : !!symmetryTwin();
+    const mirroring = drag?.mode === 'copyghost' ? !!drag.ghost?.mirror : !!symmetryTwin();
     parts.push(symmetry.operation
-      ? `SYMMETRY about ${symmetryAxisText()}${symmetry.settled ? ' (held)' : ''}${activeSymmetryCells ? ` · ${activeSymmetryCells} ${activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${activeSymmetryCells * 2} apart` : ''}${mirroring ? (wire?.source || drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
+      ? `SYMMETRY about ${symmetryAxisText()}${symmetry.settled ? ' (held)' : ''}${activeSymmetryCells ? ` · ${activeSymmetryCells} ${activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${activeSymmetryCells * 2} apart` : ''}${mirroring ? (drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
       : `SYMMETRY armed at (${symmetry.pin.x},${symmetry.pin.y}) · move to mirror`);
   }
   if (activePlacementGuides.length) parts.push(describeGuides(activePlacementGuides));
@@ -10550,13 +10551,13 @@ function renderStatus() {
   if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
   if (wire) {
     parts.push(
-      wire.source
+      `${terminalSnap ? 'TERMINAL SNAP · ' : ''}` + (wire.source
         ? wire.source.fixed
           ? `WIRE fixed endpoint @ (${wire.source.fixed.point.x},${wire.source.fixed.point.y}) → click points / target`
           : wire.source.refdes
             ? `WIRE ${wire.source.refdes}.${wire.source.term} → terminal click commits · other clicks guide · Enter commits`
             : `WIRE (${wire.source.x},${wire.source.y}) → terminal click commits · other clicks guide · Enter commits`
-        : `WIRE (${wire.routeStyle || routeMode}): click a terminal or point to start`,
+        : `WIRE (${wire.routeStyle || routeMode}): click a terminal or point to start`),
     );
   }
   if (directWire) {
@@ -10754,6 +10755,7 @@ function activateLabelPlacement(kind) {
     return;
   }
   mode = 'normal';
+  terminalSnap = false;
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
@@ -10801,6 +10803,7 @@ function activatePlace() {
   labelMode = null;
   annotationPoints = [];
   mode = 'insert';
+  terminalSnap = false;
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
@@ -10810,6 +10813,7 @@ function activatePlace() {
 function activateSelect() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction first'); return; }
   mode = 'normal';
+  terminalSnap = false;
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
@@ -10826,6 +10830,7 @@ function activateSelect() {
 function activateVisual() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before box selection'); return; }
   mode = 'normal';
+  terminalSnap = false;
   moveMode = null;
   copyMode = false;
   // Keep Delete mode armed so a visual box can delete the selected set on
@@ -10848,6 +10853,7 @@ function activateDelete() {
     return;
   }
   mode = 'normal';
+  terminalSnap = false;
   visual = null;
   moveMode = null;
   copyMode = false;
@@ -10872,16 +10878,18 @@ function activateWire() {
   labelMode = null;
   annotationPoints = [];
   mode = 'normal';
+  terminalSnap = !!altHeld;
   // F3 changes the route style of this same managed workflow.  Diagonal wires
   // never become direct/fixed nets.
   wire = newWireDraft();
-  logLine(`wiring (${routeMode}): click a terminal or point to start; terminal clicks commit, Enter commits elsewhere`);
+  logLine(`wiring (${routeMode}): click a terminal or point to start; Alt snaps to the nearest terminal; terminal clicks commit, Enter commits elsewhere`);
   render();
 }
 
 function activateMove(kind = 'connected') {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before moving'); return; }
   mode = 'normal';
+  terminalSnap = false;
   visual = null;
   copyMode = false;
   deleteMode = false;
@@ -10896,6 +10904,7 @@ function activateMove(kind = 'connected') {
 function activateCopy() {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before copying'); return; }
   mode = 'normal';
+  terminalSnap = false;
   visual = null;
   moveMode = null;
   deleteMode = false;
@@ -11192,7 +11201,7 @@ function syncWireButtonRouteMode(flash = false) {
   const icon = button.querySelector('.button-icon');
   if (icon) icon.innerHTML = ICON_PATHS[routeMode === 'diagonal' ? 'wire-diagonal' : 'wire'];
   button.dataset.routeShape = routeMode;
-  button.title = `Draw an electrical wire (w) · ${routeMode} shape · F3 or right-click to change`;
+  button.title = `Draw an electrical wire (w) · hold Alt to snap to the nearest terminal · ${routeMode} shape · F3 or right-click to change`;
   if (flash) flashToolButton(button);
 }
 
@@ -11998,6 +12007,23 @@ window.addEventListener('keydown', (ev) => {
   // canvas command such as Delete, Wire, or a transform.
   if (isKeyboardSurfaceTarget(ev.target)) return;
 
+  // Alt is a hold-only modifier. In managed Wire mode it turns on terminal
+  // snapping; with a placement or copy ghost it arms the mirrored preview.
+  // Track the physical hold separately so a ghost created by a mouse click
+  // while Alt is already down receives the same behavior.
+  if (ev.key === 'Alt') {
+    altHeld = true;
+    if (wire) setTerminalSnap(true);
+    else if ((mode === 'insert' && pendingPlace?.kind === 'component') || drag?.mode === 'copyghost') setSymmetry(true);
+    ev.preventDefault();
+    return;
+  }
+  if (ev.altKey) {
+    altHeld = true;
+    if (wire) setTerminalSnap(true);
+    else if ((mode === 'insert' && pendingPlace?.kind === 'component') || drag?.mode === 'copyghost') setSymmetry(true);
+  }
+
   // cancels the first d, except for an unmodified second d within the normal
   // mode timeout window. This also covers global commands such as Ctrl+A,
   // which are handled before onNormalKey below.
@@ -12012,14 +12038,7 @@ window.addEventListener('keydown', (ev) => {
   // While symmetry is armed they mean what they mean in insert mode.
   const drivingSymmetry = symmetry
     && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key.startsWith('Arrow') || ev.key.toLowerCase() === 'r');
-  // Ctrl+r (vertical mirror) has no unmodified-key form to fall back on, so it
-  // would otherwise be unreachable for as long as a ghost keeps the modifier
-  // permanently armed -- pressing Ctrl to reach it re-arms symmetry before
-  // the r lands, and releasing Ctrl does not drop `armed` (it is keyed off
-  // the ghost/drag, not the modifier), so there is no sequence that ever
-  // presents Ctrl+r un-hijacked. Handle it explicitly instead of letting the
-  // key fall through to the bare-r rotate below, which also left the browser
-  // to treat it as its own reload shortcut.
+  // Ctrl+r (vertical mirror) remains available while Alt symmetry is held.
   if (drivingSymmetry && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && ev.key.toLowerCase() === 'r') {
     ev.preventDefault();
     if (mode === 'insert' && pendingPlace?.kind === 'component') {
@@ -12032,12 +12051,6 @@ window.addEventListener('keydown', (ev) => {
   }
   if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {
     const k = ev.key.toLowerCase();
-    // Ctrl held on its own arms symmetric placement; every other Ctrl chord
-    // keeps its meaning, and a transform applied now carries to both halves.
-    if (k === 'control' || k === 'meta') {
-      setSymmetry(true);
-      return;
-    }
     if (k === 'c' && ev.shiftKey) {
       ev.preventDefault();
       copyAsImage();
@@ -15319,1671 +15332,6 @@ function smallSignalSchematic(report, options = {}) {
 __exports.textbookSymbol = textbookSymbol;
 __exports.smallSignalSchematic = smallSignalSchematic;
 __exports.AC_GROUND_NODE = AC_GROUND_NODE;
-};
-
-__modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
-/**
- * Where each symbol in a displayed equation came from.
- *
- * `devices.js` mints every symbolic parameter name through one chokepoint,
- * `parameterName(prefix, refdes)`, and tags every primitive it emits with
- * `metadata.component` and an `id` of the form `<refdes>.<role>`. That makes
- * the inversion below exact: it reads the table devices.js already built
- * rather than guessing at the spelling of a rendered name. Nothing here parses
- * TeX, and nothing here knows about the DOM.
- *
- * Keys are the raw expression symbol names (`gm1`, `ro1`, `RD`) as they appear
- * in `{kind:'symbol', name}` nodes — not their rendered forms (`g_{m1}`).
- * `present.js` owns that spelling and the two must not be confused.
- */
-
-function roleOf(primitive) {
-  const id = String(primitive?.id || '');
-  const dot = id.lastIndexOf('.');
-  const role = dot >= 0 ? id.slice(dot + 1) : '';
-  return role || String(primitive?.kind || '');
-}
-
-/**
- * Invert one or more primitive lists into
- * `{ [symbolName]: {component, role, kind, primitives} }`. Earlier lists win,
- * so pass the solved model first and earlier modeling stages after it.
- *
- * Several lists are needed because a symbol can survive into a displayed
- * equation after its own primitive has left the solved set:
- *
- *  - A Miller shunt carries an expression, not a parameter name, so it mints no
- *    symbol of its own — but that expression still contains the feedback
- *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
- *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
- *    the engine puts `r_o` back when removing it would make the solve singular.
- *
- * A symbol the table cannot resolve simply does not highlight, which is why
- * these gaps are invisible until someone points at the term and nothing
- * happens. Only primitives whose `value` is a symbolic name contribute, and a
- * symbol reached by more than one primitive keeps the first component and
- * accumulates the primitive ids.
- */
-function symbolProvenance(...primitiveLists) {
-  const table = Object.create(null);
-  for (const primitives of primitiveLists) {
-    for (const primitive of primitives || []) {
-      const name = primitive?.value;
-      if (typeof name !== 'string' || !name) continue;
-      const component = primitive?.metadata?.component;
-      if (!component) continue;
-      const existing = table[name];
-      if (existing) {
-        if (!existing.primitives.includes(primitive.id)) existing.primitives.push(primitive.id);
-        continue;
-      }
-      table[name] = {
-        component,
-        role: roleOf(primitive),
-        kind: primitive.kind,
-        primitives: [primitive.id],
-      };
-    }
-  }
-  return table;
-}
-
-/** The distinct components a set of symbol names resolves to, in first-seen
- *  order. Used to label a rendered subexpression with everything it touches. */
-function componentsOfSymbols(names, table) {
-  const seen = [];
-  for (const name of names || []) {
-    const component = table?.[name]?.component;
-    if (component && !seen.includes(component)) seen.push(component);
-  }
-  return seen;
-}
-
-__exports.symbolProvenance = symbolProvenance;
-__exports.componentsOfSymbols = componentsOfSymbols;
-};
-
-__modules["src/core/style.js"] = function (__require, __exports) {
-/**
- * Centralized schematic line styles.
- *
- * Symbols and wires select a stroke role via `style`. Roles differ only in
- * width, cap, and join; filled body shapes use polygon fill instead.
- *
- *   line       legacy/default fallback (flat caps, miter joins)
- *   thick      heavier legacy linework (~1.5x default)
- *   symbol     normal textbook linework
- *   wire       projecting square caps, so the half-width extension at a
- *              terminal overlaps the pin lead inside the shared ink path and a
- *              wire meeting a lead at a right angle fills the corner square
- *   annotation visual lines/arrows (round ends)
- *   emph       emphasis (MOSFET gate bar, BJT base bar)
- *   ground     ground bars
- *   supply     power slabs
- */
-const STROKES = {
-  line: { width: 6, cap: 'flat', join: 'miter' },
-  thick: { width: 9, cap: 'flat', join: 'flat' },
-  symbol: { width: 6, cap: 'butt', join: 'miter' },
-  wire: { width: 6, cap: 'square', join: 'miter' },
-  annotation: { width: 6, cap: 'round', join: 'miter' },
-  emph: { width: 9.6, cap: 'butt', join: 'miter' },
-  ground: { width: 11.6, cap: 'butt', join: 'miter' },
-  supply: { width: 7.2, cap: 'butt', join: 'miter' },
-};
-
-const DEFAULT_INK = '#111';
-
-/** Named semantic colors. Values are intentionally mutable so a theme can
- * update a token and already-loaded drawings immediately pick it up. */
-const COLOR_PALETTE = {
-  red: '#d96c75',
-  orange: '#e59f71',
-  yellow: '#e4c16f',
-  green: '#9acb8a',
-  teal: '#62b5a7',
-  blue: '#6fa8dc',
-  indigo: '#8f8bd1',
-  purple: '#b08ac6',
-  pink: '#d889b5',
-  slate: '#9aa7b8',
-  gray: '#7a7d85',
-};
-
-const LEGACY_COLORS = new Map(Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]));
-function resolveColor(value) {
-  if (typeof value !== 'string' || !value) return DEFAULT_INK;
-  const token = value.startsWith('$') ? value.slice(1) : value;
-  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return COLOR_PALETTE[token];
-  const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
-  return legacyToken ? COLOR_PALETTE[legacyToken] : value;
-}
-
-/** Editor rendering: default ink follows the page theme through CSS `color`.
- * Standalone exports keep literal colors and never use this. */
-function themeInkSvg(svg) {
-  return String(svg).replace(/\b(stroke|fill)="(?:#111|#111111|#292929|#333)"/gi, '$1="currentColor"');
-}
-
-function setColorToken(token, value) {
-  if (!Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) throw new Error(`unknown color token "${token}"`);
-  if (typeof value !== 'string' || !value) throw new Error('color token value must be a CSS color');
-  COLOR_PALETTE[token] = value;
-  return value;
-}
-
-/** Escape a value for use in SVG text or a quoted attribute. */
-const escapeSvg = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-
-function strokeParts(styleName, miterLimit, color = DEFAULT_INK, width) {
-  const s = STROKES[styleName] || STROKES.line;
-  const limit = Number.isFinite(miterLimit) && miterLimit > 0 ? ` stroke-miterlimit="${miterLimit}"` : '';
-  return `stroke="${escapeSvg(color)}" stroke-width="${width ?? s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"${limit}`;
-}
-
-function strokeAttrs(styleName, miterLimit) {
-  return strokeParts(styleName, miterLimit);
-}
-
-/** Resolve the painted stroke width for a style role, including explicit
- * thin/thick overrides. Consumers that position filled geometry next to a
- * stroked body should use this instead of duplicating the role table. */
-function strokeWidth(style = {}, base = 'line') {
-  if (style.width === 'thin') return 3;
-  if (style.width === 'thick') return 9;
-  return STROKES[base]?.width ?? STROKES.line.width;
-}
-
-/** Text styles for schematic labels, keyed by `fontAttrs` kind. */
-const FONTS = {
-  instance: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
-  label: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
-};
-
-function fontAttrs(kind) {
-  const f = FONTS[kind];
-  if (!f) return '';
-  const parts = [`font-size="${f.size}"`, `fill="${escapeSvg(resolveColor(f.fill))}"`];
-  if (f.weight) parts.push(`font-weight="${f.weight}"`);
-  if (f.italic) parts.push(`font-style="italic"`);
-  return parts.join(' ');
-}
-
-function styleAttrs(style = {}, base = 'symbol', miterLimit) {
-  const width = style.width === 'thin' ? 3 : style.width === 'thick' ? 9 : undefined;
-  const attrs = strokeParts(base, miterLimit, resolveColor(style.color || DEFAULT_INK), width);
-  const dash = style.lineStyle && style.lineStyle !== 'solid'
-    ? { dashed: '12 12', 'dash-dot': '14 10 3 10', dotted: '2 10' }[style.lineStyle]
-    : null;
-  return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
-}
-
-__exports.resolveColor = resolveColor;
-__exports.themeInkSvg = themeInkSvg;
-__exports.setColorToken = setColorToken;
-__exports.strokeAttrs = strokeAttrs;
-__exports.strokeWidth = strokeWidth;
-__exports.fontAttrs = fontAttrs;
-__exports.styleAttrs = styleAttrs;
-__exports.COLOR_PALETTE = COLOR_PALETTE;
-__exports.escapeSvg = escapeSvg;
-};
-
-__modules["src/core/render.js"] = function (__require, __exports) {
-const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
-const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
-const { autoRoute, steinerBranches } = __require("src/core/router.js");
-const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
-const { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
-const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
-
-
-
-
-
-
-
-function pt(x, y) {
-  return `${fmt(x)} ${fmt(y)}`;
-}
-
-/**
- * Map an absolute M/L/C path's coordinates through a component transform.
- * `trim` pulls a straight first/last segment's ends in by that distance, so a
- * butt-ended lead keeps its exact look inside a square-capped ink path.
- */
-function transformPathD(d, t, trim = 0) {
-  const tokens = String(d).match(/[MLC]|-?\d*\.?\d+(?:e-?\d+)?/gi) || [];
-  const commands = [];
-  for (const token of tokens) {
-    if (/^[MLC]$/.test(token)) commands.push({ command: token, values: [] });
-    else commands.at(-1)?.values.push(Number(token));
-  }
-  const pull = (point, toward) => {
-    const dx = toward[0] - point[0];
-    const dy = toward[1] - point[1];
-    const length = Math.hypot(dx, dy);
-    if (!length || length <= 2 * trim) return point;
-    return [point[0] + dx / length * trim, point[1] + dy / length * trim];
-  };
-  if (trim > 0 && commands.length >= 2 && commands[0].command === 'M' && commands[1].command === 'L') {
-    const [x, y] = pull(commands[0].values.slice(0, 2), commands[1].values.slice(0, 2));
-    commands[0].values.splice(0, 2, x, y);
-  }
-  const last = commands.at(-1);
-  if (trim > 0 && commands.length >= 2 && last.command === 'L' && last.values.length === 2) {
-    const prev = commands.at(-2).values.slice(-2);
-    const [x, y] = pull(last.values, prev);
-    last.values.splice(0, 2, x, y);
-  }
-  const format = (n) => Number(n.toFixed(3));
-  return commands.map(({ command, values }) => {
-    const points = [];
-    for (let i = 0; i + 1 < values.length; i += 2) {
-      const p = applyTransform(t, values[i], values[i + 1]);
-      points.push(`${format(p.x)} ${format(p.y)}`);
-    }
-    return `${command} ${points.join(' ')}`;
-  }).join(' ');
-}
-
-/** Solid strokes merged into one path render without doubled anti-aliased edges. */
-function solidStyle(style) {
-  return !style?.lineStyle || style.lineStyle === 'solid';
-}
-
-function strokeWidthOf(style, base = 'symbol') {
-  return strokeWidth(style, base);
-}
-
-/** These terminals land on the centerline of a stroked body outline. Pull a
- * filled arrowhead out by half that outline so its tip meets the visible edge
- * rather than disappearing into the body. */
-function terminalBodyInset(circuit, point) {
-  for (const component of circuit.components.values()) {
-    if (!['block', 'signal_sum', 'signal_multiply'].includes(component.type)) continue;
-    if (component.terminalDefs.some((terminal) => {
-      const world = component.terminalWorld(terminal.name);
-      return world.x === point.x && world.y === point.y;
-    })) return strokeWidthOf(component.style, 'emph') / 2;
-  }
-  return 0;
-}
-
-function wireArrowheadOptions(circuit, points) {
-  return {
-    startInset: terminalBodyInset(circuit, points[0]),
-    endInset: terminalBodyInset(circuit, points.at(-1)),
-  };
-}
-
-// One shared miter limit keeps merged wires and sharp resistor leads in one
-// group, and every ink subpath uses the wires' projecting square cap.
-const INK_MITER_LIMIT = 5;
-function inkAttrs(style) {
-  return styleAttrs(style, 'wire', INK_MITER_LIMIT);
-}
-
-function polygonPoints(g) {
-  if (typeof g.points === 'string') return g.points;
-  return (g.points || []).map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' ');
-}
-
-function graphicsToSvg(g, textTransform = '', objectStyle = null) {
-  const stroke = objectStyle ? styleAttrs(objectStyle, g.style, g.miterLimit) : strokeAttrs(g.style, g.miterLimit);
-  switch (g.kind) {
-    case 'path':
-      return `<path d="${g.d}" fill="none" ${stroke}/>`;
-    case 'circle':
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${stroke}/>`;
-    case 'rect':
-      return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${stroke}/>`;
-    case 'polygon':
-      if (g.fill === 'foreground') {
-        return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(objectStyle?.color || '#111'))}" stroke="none"/>`;
-      }
-      return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(g.fill || 'none'))}" ${stroke}/>`;
-    case 'text':
-      return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${escapeSvg(g.text)}</text>`;
-    case 'dot':
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${escapeSvg(resolveColor(objectStyle?.color || g.fill || '#111'))}" stroke="none"/>`;
-    default:
-      return '';
-  }
-}
-
-function symbolTextSvg(g, t, color = '#111') {
-  const p = applyTransform(t, g.x, g.y);
-  const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`);
-  const attrs = `x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none"`;
-  const lines = String(g.text ?? '').split('\n');
-  if (lines.length === 1) return `<text ${attrs}>${escapeSvg(lines[0])}</text>`;
-  const lineHeight = g.font === 'label' ? LABEL_FONT_SIZE : 16;
-  const firstDy = -((lines.length - 1) * lineHeight) / 2;
-  const tspans = lines.map((line, index) => `<tspan x="${fmt(p.x)}" dy="${fmt(index ? lineHeight : firstDy)}">${escapeSvg(line)}</tspan>`).join('');
-  return `<text ${attrs}>${tspans}</text>`;
-}
-
-function textEl(x, y, text, anchor, size, fill) {
-  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${escapeSvg(resolveColor(fill || '#111'))}" stroke="none">${escapeSvg(text)}</text>`;
-}
-
-// Label-object text with one of the style.js font kinds ("instance" | "label").
-// Runs with `sub`/`super` render as tspans (baseline-shift + smaller size) so
-// instance labels like M1 render as M with a subscript 1, keeping the text's
-// alignment/anchor untouched (alignment is handled by the parent <text>).
-function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
-  let font = fontAttrs(kind)
-    .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`)
-    .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
-    .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
-  if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
-  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
-  if (runs.length === 1 && !runs[0].sub && !runs[0].super && !runs[0].text.includes('\n')) {
-    return `<text ${attrs}>${escapeSvg(runs[0].text)}</text>`;
-  }
-  const lineRuns = [[]];
-  for (const run of runs) {
-    const parts = String(run.text).split('\n');
-    parts.forEach((part, index) => {
-      if (part) lineRuns.at(-1).push({ ...run, text: part });
-      if (index < parts.length - 1) lineRuns.push([]);
-    });
-  }
-  const renderRuns = (line) => line.map((r) => {
-      if (!r.sub && !r.super) return escapeSvg(r.text);
-      const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
-      const size = r.sub || r.super ? ' font-size="0.62em"' : '';
-      return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
-    }).join('');
-  const body = lineRuns.length === 1
-    ? renderRuns(lineRuns[0])
-    : lineRuns.map((line, lineIndex) => `<tspan x="${fmt(x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
-  return `<text ${attrs}>${body}</text>`;
-}
-
-const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
-
-function mathMlAtom(value, kind = 'mi', attrs = '') {
-  return `<${kind}${attrs ? ` ${attrs}` : ''}>${escapeSvg(value)}</${kind}>`;
-}
-
-function mathMlDelimiter(value, stretchy = true) {
-  // Fences stretch to their own <mrow> (see parseFenced), so no minimum size
-  // is imposed: a short group keeps LaTeX's text-size parenthesis. TeX sets
-  // no space between a fence and its content, so neither do we.
-  return mathMlAtom(value, 'mo', `fence="true" stretchy="${stretchy}" lspace="0em" rspace="0em"`);
-}
-
-// TeX typesets a leading sign as a prefix: `-g_m` is tight, while the `-` of
-// `a - b` keeps binary spacing. It also draws U+2212, which is wider and sits
-// higher than the ASCII hyphen.
-const MATH_SIGNS = { '-': '\u2212', '+': '+' };
-
-// TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
-// Greek upright, which needs the explicit variant.
-const GREEK_LOWER = {
-  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
-  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
-  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
-  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'ϕ',
-  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
-};
-const GREEK_UPPER = {
-  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
-  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
-};
-
-// TeX Appendix G rule 18a: when the nucleus is a single character, the script
-// shift ignores that character's own height and depth, so `g_m` and `r_o` set
-// their subscripts on one line. MathML instead drops a subscript clear of a
-// descender (the MATH table's SubscriptBaselineDropMin) and lifts a
-// superscript clear of a tall base, which parts those subscripts by 0.17 em.
-// Zeroing the metric each shift is measured from restores TeX's rule; mpadded
-// changes only the reported box, so the glyph itself is untouched.
-const SINGLE_CHARACTER = /^<m[in](?: [^>]*)?>(?:[^<&]|&[a-z]+;|&#\d+;)<\/m[in]>$/;
-
-// A provenance wrapper (see the `\pv` branch below) must not hide the nucleus
-// it groups: the padding belongs on the character, the `data-node` attribute
-// outside it, so a provenance render lays out exactly like an ordinary one.
-const PROVENANCE_ROW = /^(<mrow data-node="\d+">)([\s\S]*)(<\/mrow>)$/;
-
-function mathMlNucleus(base, metric) {
-  const wrapped = PROVENANCE_ROW.exec(base);
-  if (wrapped) return `${wrapped[1]}${mathMlNucleus(wrapped[2], metric)}${wrapped[3]}`;
-  return SINGLE_CHARACTER.test(base) ? `<mpadded ${metric}="0">${base}</mpadded>` : base;
-}
-
-function mathMlSign(value, prefix) {
-  const glyph = MATH_SIGNS[value];
-  return prefix
-    ? mathMlAtom(glyph, 'mo', 'form="prefix" lspace="0em" rspace="0em"')
-    : mathMlAtom(glyph, 'mo', 'form="infix"');
-}
-
-/** Size table shared by the parallel operator and the evaluation bar. */
-function fenceSize(tall, requestedSize) {
-  if (requestedSize === 'Bigg') return 'minsize="2.8em" maxsize="3.4em"';
-  if (requestedSize === 'bigg') return 'minsize="2.4em" maxsize="3.0em"';
-  if (requestedSize === 'Big') return 'minsize="2.0em" maxsize="2.5em"';
-  if (requestedSize === 'big') return 'minsize="1.6em" maxsize="2.0em"';
-  return tall ? 'minsize="2.2em" maxsize="2.8em"' : 'minsize="1.2em"';
-}
-
-/**
- * A single tall bar, as in `Z_{out} = v/i \Big\vert_{v_{in}=0}`: the
- * condition a quantity was evaluated under. It takes the same sizing as the
- * parallel operator, and hugs its own subscript on the right.
- */
-function mathMlEvaluationBar(tall = false, requestedSize = null) {
-  const attrs = `fence="true" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0em"`;
-  return mathMlAtom('|', 'mo', attrs);
-}
-
-function mathMlParallel(tall = false, requestedSize = null) {
-  // Use the same single double-bar operator as LaTeX `\Vert`, rather than
-  // two independent bars whose MathML operator spacing creates a large gap.
-  // Explicit Big/Bigg commands win; a fraction on the line gets the compact
-  // `\Big\Vert` treatment automatically.
-  const attrs = `fence="false" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0.15em"`;
-  return mathMlAtom('∥', 'mo', attrs);
-}
-
-/** Pixel size declared on an SVG root, with a sensible fallback. Shared by the
- *  editor's PNG rasterization and the server's PDF page sizing. */
-function svgPixelSize(svg) {
-  const root = String(svg).match(/<svg\b[^>]*>/i)?.[0] || '';
-  const width = Number(root.match(/\bwidth="([\d.]+)"/i)?.[1]);
-  const height = Number(root.match(/\bheight="([\d.]+)"/i)?.[1]);
-  return {
-    width: Number.isFinite(width) && width > 0 ? width : 1000,
-    height: Number.isFinite(height) && height > 0 ? height : 800,
-  };
-}
-
-/** Convert the small TeX subset emitted by symbolic analysis into MathML.
- * MathML is rendered by the browser inside the live SVG through a
- * foreignObject; keeping this parser local avoids a runtime CDN dependency. */
-function texToMathML(source) {
-  const text = stripMathDelimiters(source).replace(/\s+/g, ' ').trim();
-  const hasFraction = /\\frac\b/.test(text);
-  let index = 0;
-  const commandSymbols = {
-    parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
-    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→', gg: '≫',
-    ll: '≪', equiv: '≡', propto: '∝', partial: '∂',
-  };
-  let requestedParallelSize = null;
-  const skipSpaces = () => { while (text[index] === ' ') index += 1; };
-  const parseSequence = (stop = null) => {
-    const atoms = [];
-    while (index < text.length) {
-      if (stop && text[index] === stop) { index += 1; break; }
-      const token = text[index];
-      if (token === '_' || token === '^') {
-        index += 1;
-        const script = parseArgument();
-        const base = atoms.pop() || mathMlAtom('', 'mi');
-        atoms.push(token === '_'
-          ? `<msub>${mathMlNucleus(base, 'depth')}${script}</msub>`
-          : `<msup>${mathMlNucleus(base, 'height')}${script}</msup>`);
-        continue;
-      }
-      atoms.push(parseAtom(atoms[atoms.length - 1]));
-    }
-    return atoms.join('');
-  };
-  // A fenced group is its own <mrow>, so its delimiters stretch to that group
-  // and nothing else — what LaTeX's \left…\right does. Without the wrapper
-  // every parenthesis stretches to the tallest thing on the line, so `A_v(s)`
-  // next to a fraction grows parentheses several lines tall.
-  const parseFenced = (open, close) => {
-    const body = parseSequence(close);
-    const closed = text[index - 1] === close;
-    // Only a group that is genuinely taller than one line gets stretched
-    // fences, the way a TeX author reaches for \left…\right there and plain
-    // parentheses everywhere else: a stretched glyph is also padded away from
-    // its content, which reads as a gap around short groups like `(s)`.
-    const tall = /<mfrac|<msqrt/.test(body);
-    return `<mrow>${mathMlDelimiter(open, tall)}${body}${closed ? mathMlDelimiter(close, tall) : ''}</mrow>`;
-  };
-  const parseArgument = () => {
-    skipSpaces();
-    if (text[index] === '{') {
-      index += 1;
-      return `<mrow>${parseSequence('}')}</mrow>`;
-    }
-    return parseAtom();
-  };
-  // A marker argument is read literally: `present.js` writes only digits here
-  // and its contents are an AST node id, not math to typeset.
-  const parseRawArgument = () => {
-    skipSpaces();
-    if (text[index] !== '{') return '';
-    index += 1;
-    let raw = '';
-    while (index < text.length && text[index] !== '}') raw += text[index++];
-    if (text[index] === '}') index += 1;
-    return raw;
-  };
-  const parseTextArgument = () => {
-    skipSpaces();
-    if (text[index] !== '{') return parseArgument();
-    index += 1;
-    let depth = 1;
-    let raw = '';
-    while (index < text.length && depth > 0) {
-      const ch = text[index++];
-      if (ch === '{') depth += 1;
-      else if (ch === '}') {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-      if (depth > 0) raw += ch;
-    }
-    // TeX/editor spacing commands have no literal glyph to emit. Preserve
-    // them as visible word spaces in <mtext> so prose such as "Miller
-    // approximation used for" does not collapse together.
-    const prose = raw
-      // Accept the editor's escaped colon while converting other spacing
-      // commands to ordinary word spaces.
-      .replace(/\\:/g, ':')
-      .replace(/\\qquad/g, '  ')
-      .replace(/\\quad/g, ' ')
-      .replace(/\\[;,!]/g, ' ')
-      .replace(/\\ /g, ' ')
-      .replace(/\s+/g, ' ');
-    return `<mtext>${escapeSvg(prose).replace(/ /g, '&#160;')}</mtext>`;
-  };
-  const parseCommand = () => {
-    index += 1; // backslash
-    const match = text.slice(index).match(/^[A-Za-z]+|^./);
-    if (!match) return mathMlAtom('\\', 'mo');
-    const name = match[0];
-    index += name.length;
-    if (name === 'frac') {
-      const numerator = parseArgument();
-      const denominator = parseArgument();
-      return `<mfrac>${numerator}${denominator}</mfrac>`;
-    }
-    if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
-    if (name === 'pv') {
-      // Provenance marker from `present.js`: the first group is the AST node
-      // id, the second is the sub-expression rendered from it. The wrapper is
-      // an <mrow>, MathML's own grouping element, so it carries the attribute
-      // without changing layout. Ordinary renders emit no markers, so nothing
-      // persisted, exported, or edited as a label ever reaches this branch.
-      const id = parseRawArgument().replace(/[^0-9]/g, '');
-      skipSpaces();
-      if (text[index] !== '{') return `<mrow data-node="${id}">${parseAtom()}</mrow>`;
-      index += 1;
-      return `<mrow data-node="${id}">${parseSequence('}')}</mrow>`;
-    }
-    // \left is transparent: the delimiter after it starts a fenced group like
-    // any other. \right and \middle are dropped without consuming their
-    // delimiter, so the enclosing group closes on it exactly once.
-    if (name === 'left') return parseAtom();
-    if (name === 'right' || name === 'middle') return '';
-    if (name === '|') {
-      // The analysis engine emits the TeX-safe parallel spelling `\|\|`.
-      // Consume both escaped bars as one compact operator so the second bar
-      // is not parsed as an independent stretchy delimiter.
-      if (text[index] === '\\' && text[index + 1] === '|') index += 2;
-      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return parallel;
-    }
-    if (name === 'vert') {
-      const bar = mathMlEvaluationBar(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return bar;
-    }
-    if (name === 'Vert') {
-      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return parallel;
-    }
-    if (name === 'mathrm' || name === 'text' || name === 'operatorname') return parseTextArgument();
-    if (name === 'parallel') {
-      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return parallel;
-    }
-    if (['big', 'Big', 'bigg', 'Bigg'].includes(name)) {
-      requestedParallelSize = name;
-      return '';
-    }
-    if (name === 'quad') return '<mspace width="1em"/>';
-    if (name === 'qquad') return '<mspace width="2em"/>';
-    if (name === '>') return mathMlAtom('>', 'mo');
-    if (GREEK_LOWER[name]) return mathMlAtom(GREEK_LOWER[name], 'mi');
-    if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
-    if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
-    if (name === ',' || name === ';' || name === '!') return '';
-    return mathMlAtom(name, 'mi');
-  };
-  // An atom that follows nothing, or follows an operator, starts an
-  // expression: a sign there is TeX's prefix form.
-  const parseAtom = (previous = null) => {
-    skipSpaces();
-    if (index >= text.length) return '';
-    // Be forgiving for hand-authored labels that use plain `||` rather than
-    // the TeX-safe `\|\|` spelling.  Both forms render identically, while
-    // the stored label source remains untouched for editing.
-    if (text[index] === '|' && text[index + 1] === '|') {
-      index += 2;
-      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return parallel;
-    }
-    if (text[index] === '\\') return parseCommand();
-    if (text[index] === '{') {
-      index += 1;
-      return `<mrow>${parseSequence('}')}</mrow>`;
-    }
-    const char = text[index++];
-    if (/[A-Za-z]/.test(char)) return mathMlAtom(char, 'mi');
-    if (/[0-9]/.test(char)) return mathMlAtom(char, 'mn');
-    if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
-    if ('()[]|'.includes(char)) return mathMlDelimiter(char);
-    if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));
-    if (char === ' ' && text[index] === ' ') return '<mspace width="0.25em"/>';
-    return mathMlAtom(char, 'mo');
-  };
-  return `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" style="font-family:${MATH_FONT_FAMILY};color:inherit"><mrow>${parseSequence()}</mrow></math>`;
-}
-
-function mathLabelSvg(label, opacity = '') {
-  const box = label.bbox();
-  const color = resolveColor(label.style?.color || '#111');
-  // Keep the default ink theme-aware.  Math labels live in an XHTML
-  // foreignObject, so the SVG attribute recoloring rules used by ordinary
-  // <text> labels do not reach their inline `color` declaration.  Explicit
-  // user colors remain literal and therefore are not changed by dark mode.
-  const colorCss = color.toLowerCase() === '#111' ? 'var(--svg-ink, #111)' : color;
-  const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
-  const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
-  const aria = escapeSvg(`Math label ${label.text}`);
-  const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
-  const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
-  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;pointer-events:none;`;
-  const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
-  const lines = stripMathDelimiters(label.text).split(/\r?\n/)
-    .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
-    .join('');
-  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
-}
-
-function polylineD(points) {
-  return points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-}
-
-function arrowheadsSvg(heads, color, opacity = '') {
-  return heads.map((head) => `<polygon points="${pt(head.tip.x, head.tip.y)} ${pt(head.left.x, head.left.y)} ${pt(head.right.x, head.right.y)}" fill="${escapeSvg(resolveColor(color || '#111'))}" stroke="none"${opacity}/>`).join('');
-}
-
-function styledPolylineSvg(points, style, base, fallback = 'none', opacity = '') {
-  const geometry = polylineArrowheads(points, style?.arrowhead, { fallback });
-  if (geometry.shaftPoints.length < 2) return '';
-  const attrs = styleAttrs(style, base);
-  return `<path d="${polylineD(geometry.shaftPoints)}" fill="none"${opacity} ${attrs}/>${arrowheadsSvg(geometry.heads, style?.color, opacity)}`;
-}
-
-function shapeAnnotationSvg(label, opacity = '') {
-  const a = label.anchor; const b = label.end;
-  if (label.kind === 'line' || label.kind === 'arrow') {
-    const points = label.points?.length ? label.points : [a, b];
-    return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);
-  }
-  const attrs = styleAttrs(label.style);
-  if (label.kind === 'box') {
-    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-    return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
-  }
-}
-/**
- * Bare drawable geometry of one component (body graphics plus symbol text),
- * without ids, labels, or accessibility wrappers. Editor effects restyle it
- * with CSS, e.g. the commit-feedback glow that traces the symbol itself.
- */
-function componentShapeSvg(c) {
-  const t = c.transform;
-  const body = c.type === 'block'
-    ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
-    : c.def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
-  const text = c.def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
-  return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
-}
-
-/**
- * Bare drawable geometry of one label: its text, or the line/arrow/box of a
- * visual annotation. Math labels are HTML (foreignObject) and return null.
- */
-function labelShapeSvg(label) {
-  if (['box', 'arrow', 'line'].includes(label.kind)) return shapeAnnotationSvg(label);
-  if (label.math) return null;
-  const t = label.textPos();
-  return labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
-}
-
-/**
- * Render a Circuit to an SVG string.
- * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
- * draw terminal dots / net junction dots. opts.background: white rect.
- * opts.netNames: label nets by name. opts.includeBBox: draw component bboxes.
- * opts.emptyHint: draw the 'empty schematic' placeholder (default true).
- * opts.themeInk: emit default ink as currentColor for theme-aware editor views.
- * opts.underlay: emit an empty editor-underlay group above the grid for effects.
- * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
- * absent, the view auto-fits the circuit contents (used for exports / PNG).
- */
-function svgString(circuit, opts = {}) {
-  const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
-  const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
-  const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
-  const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
-  const b = circuit.bounds(o.grid || o.background ? 0 : 20);
-  const vp = o.viewport;
-  const empty = b.w <= 0 && b.h <= 0;
-  if (empty && !vp) {
-    const w = 400;
-    const h = 200;
-    const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
-    parts.push(`<rect width="${w}" height="${h}" fill="#fff"/>`);
-    if (o.grid) {
-      for (let x = 0; x <= w; x += GRID) parts.push(`<line class="grid-line" x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="#eee" stroke-width="1"/>`);
-      for (let y = 0; y <= h; y += GRID) parts.push(`<line class="grid-line" x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#eee" stroke-width="1"/>`);
-    }
-    parts.push(textEl(w / 2, h / 2, 'empty schematic', 'middle', 16, '#999'));
-    parts.push('</svg>');
-    return parts.join('\n');
-  }
-
-  // Extents to draw (in world units). With a viewport the window is the exact
-  // view (so free panning never rescales the drawing); without one, the view
-  // auto-fits the circuit contents (exports / PNG).
-  const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
-  const x0 = vp ? vp.x : floorGrid(b.x) - pad;
-  const y0 = vp ? vp.y : floorGrid(b.y) - pad;
-  const x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
-  const y1 = vp ? vp.y + vp.h : ceilGrid(b.y + b.h) + pad;
-  const W = x1 - x0;
-  const H = y1 - y0;
-
-  const parts = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(W)} ${fmt(H)}">`,
-  ];
-
-  if (o.background) parts.push(`<rect x="${fmt(x0)}" y="${fmt(y0)}" width="${fmt(W)}" height="${fmt(H)}" fill="#fff"/>`);
-
-  if (empty && o.emptyHint) parts.push(textEl(x0 + W / 2, y0 + H / 2, 'empty schematic', 'middle', 16, '#999'));
-
-  if (o.grid) {
-    if (vp) {
-      for (let x = ceilGrid(vp.x); x <= ceilGrid(vp.x + vp.w); x += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-      for (let y = ceilGrid(vp.y); y <= ceilGrid(vp.y + vp.h); y += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-    } else {
-      for (let x = x0; x <= x1; x += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-      for (let y = y0; y <= y1; y += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-    }
-  }
-  // Editor-only slot for transient effects that should glow behind the drawing.
-  if (o.underlay) parts.push('<g class="editor-underlay"></g>');
-  // The crosshair is a navigation aid, not an object highlight. Render it
-  // before components, wires, and labels so those objects remain readable.
-  if (o.cursor && o.cursorCrosshair) {
-    const { x, y } = o.cursor;
-    const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
-    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
-  }
-  const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
-  const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);
-  const labels = [...circuit.labels.values()];
-  const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
-
-  // Bottom layer: visual shape annotations and their child labels. Keeping
-  // these together prevents annotation text from floating above the other
-  // default layers when a box or arrow has a caption.
-  const annotationShapes = labels
-    .filter((label) => ['arrow', 'box', 'line'].includes(label.kind))
-    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
-  for (const label of annotationShapes) {
-    if (label.id === o.editingLabel) continue;
-    const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
-    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`${label.kind} annotation ${label.text || label.id}`)}">${shapeAnnotationSvg(label, '')}</g>`);
-    if (label.kind !== 'line') {
-      const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
-      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
-    }
-    for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
-      if (child.id === o.editingLabel) continue;
-      const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
-      const t = child.textPos();
-      const childVisual = child.math
-        ? mathLabelSvg(child)
-        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
-      parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${childVisual}</g>`);
-    }
-  }
-
-  // Middle layer: wires deliberately sit behind components and labels. Their
-  // rounded caps still overlap terminal leads at the exact electrical point.
-  const nets = [...circuit.nets.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
-  // Where a wire meets a pin lead (or another wire), two separately drawn
-  // strokes overlap and their anti-aliased edges add up into a visibly
-  // thicker joint. Solid wires and terminal leads of one stroke style are
-  // therefore drawn together as a single path ("ink"), rasterized once.
-  // Per-segment wire elements stay in place, unpainted, for hit targets and
-  // keyboard access; ghosts and dashed strokes keep their own elements.
-  const ink = new Map();
-  const addInk = (attrs, d) => {
-    if (!ink.has(attrs)) ink.set(attrs, []);
-    ink.get(attrs).push(d);
-  };
-  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(c.style);
-  for (const c of comps) {
-    if (!inkLeads(c)) continue;
-    for (const g of c.def.graphics) {
-      if (g.terminalLead) addInk(inkAttrs(c.style), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
-    }
-  }
-  const UNPAINTED = ' stroke-opacity="0"';
-  for (const net of nets) {
-    // Fixed paths are already the complete authored geometry. Keep the legacy
-    // managed fallback below so multi-terminal managed nets retain their old
-    // rendering behavior.
-    const paths = net.routingMode === 'fixed'
-      ? net.paths()
-      : net.branches
-        ? net.branches
-        : !net.route && net.terminals.length >= 3
-          ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
-          : [net.points()];
-    const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
-    for (const [branch, pts] of paths.entries()) {
-      if (!pts || pts.length < 2) continue;
-      const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
-      const wireHelp = net.routingMode === 'fixed'
-        ? 'Fixed/direct wire — drag vertices, segments, or junctions'
-        : 'Managed wire — drag orthogonal segments';
-      const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
-      if (!segmentStyles) {
-        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        const inked = !opacity && solidStyle(net.style);
-        const geometry = polylineArrowheads(pts, net.style?.arrowhead, wireArrowheadOptions(circuit, pts));
-        if (inked) addInk(inkAttrs(net.style), polylineD(geometry.shaftPoints));
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
-        parts.push(arrowheadsSvg(geometry.heads, net.style?.color, opacity));
-        continue;
-      }
-      for (let i = 1; i < pts.length; i++) {
-        const a = pts[i - 1]; const b = pts[i];
-        const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
-        const segmentStyle = { ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) };
-        const inked = !opacity && solidStyle(segmentStyle);
-        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
-        // Solid wires are painted by the shared ink path below, but dashed
-        // and ghosted wires paint their own element. Use the same shortened
-        // shaft for those visible strokes so a dash cannot run underneath an
-        // endpoint arrowhead.
-        const paintedD = inked ? d : polylineD(geometry.shaftPoints);
-        if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
-        parts.push(`<path class="wire-${wireKind}" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
-        parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
-      }
-    }
-  }
-  for (const [attrs, ds] of ink) {
-    parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
-  }
-
-  // Top layer: components and their body/value graphics sit above wires.
-  for (const c of comps) {
-    const t = c.transform;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
-    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
-    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
-    parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
-    if (c.type === 'block') {
-      const r = c.blockSize;
-      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`);
-    } else {
-      const leadsInked = inkLeads(c);
-      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', c.style));
-    }
-    parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
-    if (o.includeBBox) {
-      const r = c.bboxWorld();
-      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
-    }
-  }
-
-  // Junction dots are placed by the routing algorithm as actual `solder`
-  // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
-  // circle at net junctions.
-
-  // Junction dots at multi-terminal net connection points (above the wires).
-  if (o.junctions) {
-    for (const net of circuit.nets.values()) {
-      if (net.terminals.length < 3) continue;
-      for (const { comp, term } of net.terminals) {
-        const c = circuit.components.get(comp);
-        if (!c) continue;
-        const p = c.terminalWorld(term);
-        parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#292929"/>`);
-      }
-    }
-  }
-
-  // Terminal dots.
-  if (o.terminals) {
-    for (const c of comps) {
-      for (const { x, y } of c.worldTerminals()) {
-        parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="3" fill="#111"/>`);
-      }
-    }
-  }
-
-  // Top layer: components, instance labels, free labels, and net labels draw
-  // above the middle wires. Component drawOrder only changes stacking within
-  // this layer, so a pushed-back component remains above every wire.
-  // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
-  for (const c of comps) {
-    const def = c.def;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
-    if (def.refPrefix && def.refPos && !def.labelOffset) {
-      const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
-      // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
-      // matching the dedicated instance labels used by transistors (e.g. nmos).
-      parts.push(
-        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${escapeSvg(c.refdes)}</text>`,
-      );
-    }
-    const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
-    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
-      const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
-      const valueText = def.textPos.font
-        ? symbolTextSvg({ ...def.textPos, text: c.value }, c.transform, c.style?.color || '#333')
-        : textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333');
-      parts.push(`<g${opacity}>${valueText}</g>`);
-    }
-    if (isReferenceMarker(c) && !def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
-      const marker = referenceMarkerInfo(c.type);
-      const p = applyTransform(c.transform, marker.labelOffset.x, marker.labelOffset.y);
-      parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, 'middle', 12, '#333')}</g>`);
-    }
-  }
-
-  // Dedicated / instance label objects (instance identifiers are bold+italic and
-  // larger than free-standing annotation labels). Text is aligned inside the
-  // label's rendered box (left/center/right) and vertically centered.
-  for (const label of labels
-    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent)
-    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
-    if (label.id === o.editingLabel) continue;
-    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
-    const t = label.textPos();
-    const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
-    const labelVisual = label.math
-      ? mathLabelSvg(label)
-      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
-    if (label.selectable === false) {
-      parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
-    } else {
-      parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
-    }
-  }
-
-  parts.push('</svg>');
-  return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
-}
-
-/**
- * Editor-only overlays rendered on top of svgString output.
- * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
- * halos around each selected component's bbox. opts.nets [net]: highlight
- * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
- * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
- * selection bounds, with small edge ticks and a center marker.
- * opts.wireMode: show all component terminals, colored by net membership.
- * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
- */
-// Editor overlay colors are semantic and theme-aware (style.css tokens):
-// SELECT (accent blue) = selection, focus, and previews of pending edits;
-// WARN (amber) = needs attention, e.g. an unconnected pin while wiring;
-// DANGER (red) = errors such as cross-net overlaps and focused check issues.
-// Sky-blue center guides are measurement aids and deliberately separate from
-// the accent blue used for selection and pending edits.
-const SELECT = 'var(--accent, #2563eb)';
-const WARN = 'var(--warn, #b45309)';
-const DANGER = 'var(--danger, #c53030)';
-const NEUTRAL = 'var(--svg-faint, #7a7d85)';
-
-function editorOverlay(circuit, opts = {}) {
-  const parts = [];
-  if (opts.cursor && opts.cursorCrosshair) {
-    const { x, y } = opts.cursor;
-    const { x: vx, y: vy, w, h } = opts.cursorCrosshair;
-    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + w)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + h)}" fill="none"/>`);
-  }
-  const halo = (r) =>
-    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${SELECT}" fill-opacity="0.1" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
-  const dangerHalo = (r) =>
-    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${DANGER}" fill-opacity="0.1" stroke="${DANGER}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
-
-  for (const ref of opts.selection || []) {
-    const c = circuit.components.get(ref);
-    if (c) parts.push(halo(c.bboxWorld()));
-  }
-
-  for (const r of opts.layoutPreviewRects || []) {
-    parts.push(`<rect class="layout-preview" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="var(--accent)" fill-opacity="0.06" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7 5" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
-  }
-
-  // Equation to schematic highlight: the devices one hovered or locked
-  // sub-expression of a derived equation was built from. Their own geometry is
-  // retraced and restyled by CSS, the way commit feedback traces a committed
-  // shape. Interaction only — the overlay never reaches an export.
-  for (const ref of opts.emphasis || []) {
-    const c = circuit.components.get(ref);
-    if (c) parts.push(`<g class="equation-emphasis">${componentShapeSvg(c)}</g>`);
-  }
-
-  // Resizable schematic blocks use the same eight-handle affordance as block
-  // diagrams. Handles live in the interaction overlay, so they never become
-  // selectable circuit geometry or affect bounds/routing.
-  for (const ref of opts.resizeBlocks || []) {
-    const c = circuit.components.get(ref);
-    if (!c || c.type !== 'block') continue;
-    const r = c.bboxWorld();
-    const handles = [
-      ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
-      ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
-      ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
-    ];
-    parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
-  }
-
-  // Selection centerlines are deliberately sky blue and dashed so they read
-  // as measurement guides rather than cursor crosshairs or circuit geometry.
-  // Keep each guide outside the selected bounds: one grid cell of guide at
-  // each edge is enough to expose the center without crossing the artwork.
-  if (opts.centerGuides) {
-    const r = opts.centerGuides;
-    const cx = r.x + r.w / 2;
-    const cy = r.y + r.h / 2;
-    const pad = GRID;
-    const tick = 10;
-    const color = '#0ea5e9';
-    parts.push(`<g class="selection-center-guides" pointer-events="none" opacity="0.9">` +
-      `<path d="M ${fmt(cx)} ${fmt(r.y - pad)} L ${fmt(cx)} ${fmt(r.y)} M ${fmt(cx)} ${fmt(r.y + r.h)} L ${fmt(cx)} ${fmt(r.y + r.h + pad)} M ${fmt(r.x - pad)} ${fmt(cy)} L ${fmt(r.x)} ${fmt(cy)} M ${fmt(r.x + r.w)} ${fmt(cy)} L ${fmt(r.x + r.w + pad)} ${fmt(cy)}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="9 6"/>` +
-      `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
-      `<rect x="${fmt(cx - 4)}" y="${fmt(cy - 4)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="2" transform="rotate(45 ${fmt(cx)} ${fmt(cy)})"/>` +
-      `</g>`);
-  }
-
-  // Placement guides: the spacing and alignment relationships the object being
-  // placed or moved already stands in. Sky blue, like the selection
-  // centerlines, because both are measurement aids rather than circuit or
-  // selection state. Every measurement is drawn between the two anchors it
-  // measures, with a leader from each anchor to the dimension line, so what
-  // is being compared is never in doubt; two equal intervals carry the same
-  // number side by side. Only the blue anchor/alignment family is rendered.
-  if (opts.placementGuide?.guides?.length) {
-    const { moving, guides } = opts.placementGuide;
-    const ANCHOR_INK = '#0ea5e9';
-    const tick = 9;
-    const dot = (p, solid, ink) => `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="4.5" fill="${p.moving && !p.synthetic && solid ? ink : 'var(--paper, #fff)'}" stroke="${ink}" stroke-width="2"/>`;
-    parts.push(`<g class="placement-guides" pointer-events="none" fill="none" stroke-width="2" vector-effect="non-scaling-stroke">`);
-    for (const guide of guides) {
-      const color = ANCHOR_INK;
-      const axis = guide.axis;
-      const along = axis === 'x' ? 'y' : 'x';
-      const pt = (p, a) => (a === 'x' ? p.x : p.y);
-      // One shared dash rhythm for every "not yet real" stroke (a suggestion,
-      // an alignment reference, a target crossing) keeps the state signal to a
-      // single visual cue instead of several competing rhythms.
-      const SUGGESTION_DASH = '7 5';
-      if (guide.kind === 'align') {
-        const lo = Math.min(...guide.points.map((p) => pt(p, along)));
-        const hi = Math.max(...guide.points.map((p) => pt(p, along)));
-        const line = (a, b) => axis === 'y'
-          ? `M ${fmt(a)} ${fmt(guide.value)} H ${fmt(b)}`
-          : `M ${fmt(guide.value)} ${fmt(a)} V ${fmt(b)}`;
-        parts.push(`<path d="${line(lo - GRID / 2, hi + GRID / 2)}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.85"/>`);
-        parts.push(guide.points.map((p) => dot(p, true, color)).join(''));
-        continue;
-      }
-      // One dimension line clear of every anchor and of the moving symbol. A
-      // guide still being offered is drawn dashed, and its own point stands on
-      // the target rather than on the object, so the two intervals stay the
-      // ones being labelled. Direct one-peer distances use the opposite lane
-      // from target/even-spacing rulers, keeping both useful readings legible.
-      // Everything that only connects an anchor back to that line (leaders,
-      // the halfway reference) stays a quiet solid hairline, so dashing reads
-      // as one thing: not landed yet.
-      const pending = !guide.exact;
-      const dash = pending ? ` stroke-dasharray="${SUGGESTION_DASH}"` : '';
-      const bboxEdge = axis === 'x' ? moving.bbox.y : moving.bbox.x;
-      const bboxFarEdge = axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w;
-      const pointEdges = guide.points.map((p) => pt(p, along));
-      const base = guide.direct
-        ? Math.max(bboxFarEdge, ...pointEdges) + GRID
-        : Math.min(bboxEdge, ...pointEdges) - GRID;
-      if (pending) {
-        // Where to land: the target column or row, across the moving symbol.
-        const lo = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along)));
-        const hi = Math.max(axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w,
-          ...guide.points.map((p) => pt(p, along)));
-        parts.push(`<path d="${axis === 'x'
-          ? `M ${fmt(guide.target)} ${fmt(lo - GRID / 2)} V ${fmt(hi + GRID / 2)}`
-          : `M ${fmt(lo - GRID / 2)} ${fmt(guide.target)} H ${fmt(hi + GRID / 2)}`}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.55"/>`);
-      }
-      const leader = (p) => (axis === 'x'
-        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
-        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
-      parts.push(`<path d="${guide.points.map(leader).join(' ')}" stroke="${color}" stroke-opacity="0.3" stroke-width="1.25"/>`);
-      const span = (a, b) => (axis === 'x'
-        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(b.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(b.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
-        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(b.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(b.y)} H ${fmt(base + tick)}`);
-      const label = (a, b) => (axis === 'x'
-        ? `<text x="${fmt((a.x + b.x) / 2)}" y="${fmt(base - GRID / 3)}" fill="${color}" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`
-        : `<text x="${fmt(base - GRID / 3)}" y="${fmt((a.y + b.y) / 2 + 8)}" fill="${color}" stroke="none" text-anchor="end" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`);
-      for (let i = 0; i + 1 < guide.points.length; i += 1) {
-        const a = guide.points[i];
-        const b = guide.points[i + 1];
-        parts.push(`<path d="${span(a, b)}" stroke="${color}"${dash}/>`);
-        parts.push(label(a, b));
-      }
-      if (guide.halfway) {
-        const { from, at, cells } = guide.halfway;
-        const halfBase = base + tick + 8;
-        const reference = axis === 'x'
-          ? `M ${fmt(at.x)} ${fmt(at.y)} V ${fmt(base)} M ${fmt(from.x)} ${fmt(halfBase)} H ${fmt(at.x)}`
-          : `M ${fmt(at.x)} ${fmt(at.y)} H ${fmt(base)} M ${fmt(halfBase)} ${fmt(from.y)} V ${fmt(at.y)}`;
-        const text = axis === 'x'
-          ? `<text x="${fmt((from.x + at.x) / 2)}" y="${fmt(halfBase + 20)}" fill="${color}" stroke="none" text-anchor="middle" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`
-          : `<text x="${fmt(halfBase + 20)}" y="${fmt((from.y + at.y) / 2 + 7)}" fill="${color}" stroke="none" text-anchor="start" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`;
-        parts.push(`<g class="placement-halfway-reference" stroke="${color}" stroke-opacity="0.4" stroke-width="1.25"><path d="${reference}"/></g>${text}`);
-      }
-      parts.push(guide.points.map((p) => dot(p, guide.exact, color)).join(''));
-    }
-    parts.push('</g>');
-  }
-
-  // A marquee/visual selection is only a preview until its gesture commits.
-  // Keep it visually distinct and never touch the editor's real selection.
-  if (opts.previewSelection) {
-    for (const ref of opts.previewSelection.refs || []) {
-      const c = circuit.components.get(ref);
-      if (c) {
-        const r = c.bboxWorld();
-        parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="3" opacity="0.9"/>`);
-      }
-    }
-    for (const id of opts.previewSelection.labels || []) {
-      const label = circuit.labels.get(id);
-      if (!label) continue;
-      const r = label.bbox();
-      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="2" opacity="0.9"/>`);
-    }
-    for (const id of opts.previewSelection.nets || []) {
-      const net = circuit.nets.get(id);
-      if (!net) continue;
-      for (const pts of net.paths()) {
-        if (!pts || pts.length < 2) continue;
-        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="7" opacity="0.32" stroke-dasharray="8 5" stroke-linecap="round"/>`);
-      }
-    }
-    for (const { a, b } of opts.previewWireSegments || []) {
-      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="8" opacity="0.55" stroke-dasharray="8 5" stroke-linecap="round"/>`);
-    }
-  }
-
-  // Solder dots on a highlighted net get a halo so wire junctions stand out.
-  if (opts.netSolder && opts.netSolder.length) {
-    for (const p of opts.netSolder) {
-      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="13" fill="none" stroke="${SELECT}" stroke-width="2" opacity="0.7"/>`);
-      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="${SELECT}"/>`);
-    }
-  }
-
-  if (opts.selLabels && opts.selLabels.length) {
-    for (const id of opts.selLabels) {
-      const label = circuit.labels.get(id);
-      if (!label) continue;
-      const b = label.bbox();
-      const a = label.anchorWorld();
-      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
-      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
-    }
-  } else if (opts.selLabel) {
-    const label = circuit.labels.get(opts.selLabel);
-    if (label) {
-      const b = label.bbox();
-      const a = label.anchorWorld();
-      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
-      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
-    }
-  }
-
-  for (const net of opts.nets || []) {
-    const paths = net && typeof net.paths === 'function' ? net.paths() : [net];
-    for (const pts of paths) {
-      if (!pts || pts.length < 2) continue;
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="12" opacity="0.35" stroke-linecap="round" stroke-linejoin="round"/>`);
-      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2.4"/>`);
-    }
-  }
-
-  // Design-check focus: the objects behind the selected issue, in the error color.
-  if (opts.diagnostic) {
-    for (const ref of opts.diagnostic.components || []) {
-      const c = circuit.components.get(ref);
-      if (c) parts.push(dangerHalo(c.bboxWorld()));
-    }
-    for (const id of opts.diagnostic.labels || []) {
-      const label = circuit.labels.get(id);
-      if (label) parts.push(dangerHalo(label.bbox()));
-    }
-    for (const id of opts.diagnostic.nets || []) {
-      const net = circuit.nets.get(id);
-      for (const pts of net?.paths?.() || []) {
-        if (!pts || pts.length < 2) continue;
-        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="12" opacity="0.3" stroke-linecap="round" stroke-linejoin="round"/>`);
-        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="2.4"/>`);
-      }
-    }
-  }
-
-  // Cross-net collinear overlaps (a wire dragged on top of another net's wire).
-  if (opts.warnOverlaps && opts.warnOverlaps.length) {
-    for (const o of opts.warnOverlaps) {
-      parts.push(`<line x1="${fmt(o.x0)}" y1="${fmt(o.y0)}" x2="${fmt(o.x1)}" y2="${fmt(o.y1)}" stroke="${DANGER}" stroke-width="9" opacity="0.55" stroke-linecap="round"/>`);
-    }
-  }
-
-  if (opts.wireSegments && opts.wireSegments.length) {
-    for (const { a, b } of opts.wireSegments) {
-      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="9" opacity="0.6" stroke-linecap="round"/>`);
-    }
-  }
-
-  if (opts.fixedDrag) {
-    const { x, y, junction } = opts.fixedDrag;
-    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${junction ? 14 : 10}" fill="none" stroke="${SELECT}" stroke-width="2.5" stroke-dasharray="4 3"/>`);
-  }
-
-  if (opts.wireMode) {
-    const src = opts.wireSource;
-    for (const comp of circuit.components.values()) {
-      for (const terminal of comp.worldTerminals()) {
-        const connected = circuit.netOfTerminal({ comp: comp.refdes, term: terminal.name });
-        const isSource = src && src.refdes === comp.refdes && src.term === terminal.name;
-        // Connected pins are quiet; open pins still need a wire (attention).
-        const color = connected ? NEUTRAL : WARN;
-        if (isSource) {
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="11" fill="${SELECT}" opacity="0.18"/>`);
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="${SELECT}" stroke="var(--paper, #fff)" stroke-width="2"/>`);
-        } else {
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="7" fill="var(--paper, #fff)" stroke="${color}" stroke-width="2.5"/>`);
-        }
-      }
-    }
-  }
-
-  if (opts.rubber) {
-    const r = opts.rubber;
-    const x = Math.min(r.x0, r.x1);
-    const y = Math.min(r.y0, r.y1);
-    const w = Math.abs(r.x1 - r.x0);
-    const h = Math.abs(r.y1 - r.y0);
-    const color = r.color === 'neutral' ? NEUTRAL : SELECT;
-    parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
-  }
-
-  // The draft wire, and its mirror while symmetric wiring is held. The mirror
-  // draws exactly like the draft because it commits exactly like it.
-  for (const preview of [opts.wirePreview, opts.mirrorWirePreview].filter(Boolean)) {
-    const from = preview.from;
-    const pts = preview.pts || autoRoute([{ x: from.x, y: from.y }, { x: preview.to.x, y: preview.to.y }]);
-    if (pts && pts.length >= 2) {
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="6 5"/>`);
-    }
-    parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="${SELECT}"/>`);
-  }
-  if (opts.annotationPreview) {
-    const { kind, a, b, points } = opts.annotationPreview;
-    const attrs = `stroke="${SELECT}" stroke-width="6" stroke-dasharray="10 7" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
-    if (kind === 'line') {
-      const d = points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-      parts.push(`<path d="${d}" ${attrs}/>`);
-    } else if (kind === 'box') {
-      const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-      parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
-    } else {
-      const route = points?.length ? points : [a, b];
-      const geometry = polylineArrowheads(route, 'end');
-      parts.push(`<path d="${polylineD(geometry.shaftPoints)}" ${attrs}/>${arrowheadsSvg(geometry.heads, SELECT, ' opacity=".8"')}`);
-    }
-  }
-
-  if (opts.directWirePreview) {
-    const { from, pts } = opts.directWirePreview;
-    if (from && pts && pts.length >= 2) {
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path class="direct-wire-preview" d="${d}" fill="none" stroke="${SELECT}" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>`);
-      for (const p of pts.slice(1, -1)) parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="5" fill="var(--paper, #fff)" stroke="${SELECT}" stroke-width="2"/>`);
-    }
-  }
-
-  if (opts.cursor) {
-    const { x, y } = opts.cursor;
-    const color = opts.directWirePreview || opts.wireMode ? SELECT : '#7a7d85';
-    const radius = opts.wireMode ? 8 : 4;
-    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${radius}" fill="none" stroke="${color}" stroke-width="${opts.wireMode ? 2 : 1.5}"/>`);
-    if (opts.wireMode && !opts.wirePreview && !opts.directWirePreview) {
-      parts.push(`<path d="M ${fmt(x - 14)} ${fmt(y)} L ${fmt(x + 14)} ${fmt(y)} M ${fmt(x)} ${fmt(y - 14)} L ${fmt(x)} ${fmt(y + 14)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="3 2"/>`);
-    }
-  }
-
-  // Symmetric placement: the axis a mirrored pair is being placed about. A
-  // construction line, drawn in the measurement sky blue and never geometry.
-  if (opts.symmetryAxis?.operation && (opts.ghost?.def || opts.wirePreview)) {
-    const { operation, pin } = opts.symmetryAxis;
-    const g = opts.ghost;
-    // Long enough to read as an axis through whatever is being mirrored.
-    const b = g?.def
-      ? transformRect({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }, g.def.bbox)
-      : (() => {
-          const points = [...(opts.wirePreview?.pts || []), ...(opts.mirrorWirePreview?.pts || []), pin];
-          const xs = points.map((p) => p.x);
-          const ys = points.map((p) => p.y);
-          return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
-        })();
-    const reach = operation === 'mirrorX'
-      ? Math.max(Math.abs(b.y - pin.y), Math.abs(b.y + b.h - pin.y)) + GRID
-      : Math.max(Math.abs(b.x - pin.x), Math.abs(b.x + b.w - pin.x)) + GRID;
-    const d = operation === 'mirrorX'
-      ? `M ${fmt(pin.x)} ${fmt(pin.y - reach)} V ${fmt(pin.y + reach)}`
-      : `M ${fmt(pin.x - reach)} ${fmt(pin.y)} H ${fmt(pin.x + reach)}`;
-    parts.push(`<g class="symmetry-axis" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
-      `<path d="${d}" stroke-dasharray="14 5 3 5"/>` +
-      `<circle cx="${fmt(pin.x)}" cy="${fmt(pin.y)}" r="4.5" fill="var(--paper, #fff)" stroke="#0ea5e9" stroke-width="2"/>` +
-      `</g>`);
-    // How far apart the pair is being pulled. Two equal intervals either side
-    // of the axis, dimensioned like a spacing guide, because the number that
-    // decides a differential pair's pitch is the one the gesture is setting.
-    // It sits on the far side of the symbol from the placement guides, which
-    // measure off the top/left edge, so the two readouts never collide.
-    const from = opts.symmetryAxis.from;
-    const axis = operation === 'mirrorX' ? 'x' : 'y';
-    const offset = from ? Math.abs(from[axis] - pin[axis]) : 0;
-    if (offset > 1e-6) {
-      const twin = { x: from.x, y: from.y, [axis]: 2 * pin[axis] - from[axis] };
-      const cells = Math.round((offset / GRID) * 100) / 100;
-      const text = `${cells} ${cells === 1 ? 'cell' : 'cells'}`;
-      const tick = 9;
-      const base = axis === 'x'
-        ? Math.max(b.y + b.h, pin.y, from.y) + GRID
-        : Math.max(b.x + b.w, pin.x, from.x) + GRID;
-      const leader = (p) => (axis === 'x'
-        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
-        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
-      const span = (a, c) => (axis === 'x'
-        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(c.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(c.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
-        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(c.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(c.y)} H ${fmt(base + tick)}`);
-      const label = (a, c) => (axis === 'x'
-        ? `<text x="${fmt((a.x + c.x) / 2)}" y="${fmt(base + GRID * 0.8)}" fill="#0ea5e9" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${text}</text>`
-        : `<text x="${fmt(base + GRID / 3)}" y="${fmt((a.y + c.y) / 2 + 8)}" fill="#0ea5e9" stroke="none" text-anchor="start" font-size="24" font-family="system-ui, sans-serif">${text}</text>`);
-      const at = (p) => ({ x: axis === 'x' ? p.x : base, y: axis === 'x' ? base : p.y });
-      parts.push(`<g class="symmetry-offset" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
-        `<path d="${[twin, pin, from].map(leader).join(' ')}" stroke-opacity="0.4" stroke-dasharray="4 4"/>` +
-        `<path d="${span(twin, pin)}"/><path d="${span(pin, from)}"/>` +
-        label(twin, pin) + label(pin, from) +
-        [twin, from].map((p) => `<circle cx="${fmt(at(p).x)}" cy="${fmt(at(p).y)}" r="4.5" fill="#0ea5e9" stroke="#0ea5e9" stroke-width="2"/>`).join('') +
-        `</g>`);
-    }
-  }
-
-  // Placement ghost: a faded preview of the component (or label) that will be
-  // placed at the snapped cursor once the user clicks or presses Enter. A
-  // symmetric placement previews its mirrored twin the same way.
-  for (const g of [opts.ghost, opts.ghostTwin].filter(Boolean)) {
-    if (g.label) {
-      // Use the same label model and renderer as the committed annotation so
-      // markup, alignment, and the grid-sized footprint are previewed honestly.
-      const preview = new LabelInstance(circuit, {
-        text: g.text || 'label', x: g.x, y: g.y, align: g.align || 'center',
-      });
-      const b = preview.bbox();
-      const t = preview.textPos();
-      parts.push(`<g class="label-placement-ghost" opacity="0.58">`);
-      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#9aa0ab" stroke-width="1.5" stroke-dasharray="4 3"/>`);
-      parts.push(labelTextEl(t.x, t.y, preview.runs(), t.anchor, 'label'));
-      parts.push('</g>');
-    } else if (g.def) {
-      const t = transformToSvg({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY });
-      const body = g.def.graphics.filter((gg) => gg.kind !== 'text').map((gg) => graphicsToSvg(gg)).join('');
-      const text = g.def.graphics.filter((gg) => gg.kind === 'text').map((gg) => symbolTextSvg(gg, { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY })).join('');
-      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>${text}`);
-    }
-  }
-
-  return parts.join('\n');
-}
-
-__exports.svgPixelSize = svgPixelSize;
-__exports.texToMathML = texToMathML;
-__exports.componentShapeSvg = componentShapeSvg;
-__exports.labelShapeSvg = labelShapeSvg;
-__exports.svgString = svgString;
-__exports.editorOverlay = editorOverlay;
-};
-
-__modules["src/core/line-style.js"] = function (__require, __exports) {
-/** The one filled triangular arrowhead offered by the shared style menu. */
-const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
-
-function normalizeArrowhead(value, fallback = 'none') {
-  return ARROWHEAD_VALUES.includes(value) ? value : fallback;
-}
-
-function defaultArrowhead(kind) {
-  return kind === 'arrow' || kind === 'connector' ? 'end' : 'none';
-}
-
-function arrowheadEnds(value, fallback = 'none') {
-  const normalized = normalizeArrowhead(typeof value === 'object' ? value?.arrowhead : value, fallback);
-  return {
-    start: normalized === 'start' || normalized === 'both',
-    end: normalized === 'end' || normalized === 'both',
-  };
-}
-
-/**
- * Map one shared arrowhead choice onto the individual segments of a
- * polyline.  A bent route is still one drawable wire, so its heads belong at
- * the route endpoints rather than at its corner vertices.  On a single
- * segment both heads can share that segment; otherwise the two heads occupy
- * the first and last segments independently.
- */
-function polylineArrowheadValues(points = [], value = 'none') {
-  const route = [];
-  for (const point of points || []) {
-    const next = { x: point.x, y: point.y };
-    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
-  }
-  if (route.length < 2) return [];
-  const ends = arrowheadEnds(value);
-  let first = -1;
-  let last = -1;
-  for (let i = 1; i < route.length; i++) {
-    if (samePoint(route[i - 1], route[i])) continue;
-    if (first < 0) first = i;
-    last = i;
-  }
-  if (first < 0) return route.slice(1).map(() => 'none');
-  const values = route.slice(1).map(() => 'none');
-  if (ends.start) values[first - 1] = first === last && ends.end ? 'both' : 'start';
-  if (ends.end) values[last - 1] = ['start', 'both'].includes(values[last - 1]) ? 'both' : 'end';
-  return values;
-}
-
-/** Resolve segment-local arrowhead styles to the logical endpoints of a
- * polyline. This also repairs older documents where an end head was left on
- * an interior segment after a route gained a bend. */
-function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
-  const values = [];
-  for (let index = 1; index < points.length; index++) {
-    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
-    if (value !== undefined) values.push(normalizeArrowhead(value));
-  }
-  if (!values.length) return normalizeArrowhead(inherited);
-  const start = values.some((value) => arrowheadEnds(value).start);
-  const end = values.some((value) => arrowheadEnds(value).end);
-  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
-}
-
-/** Return wireStyles with one shared arrowhead choice distributed across a
- * path's endpoint segments. Existing per-segment appearance is preserved. */
-function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {
-  const next = { ...wireStyles };
-  for (const [index, arrowhead] of polylineArrowheadValues(points, value).entries()) {
-    const key = `${branch}:${index + 1}`;
-    next[key] = { ...(next[key] || {}), arrowhead };
-  }
-  return next;
-}
-
-const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
-
-/** Filled arrowhead geometry for a segment whose tip is `b`. */
-function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const distance = Math.hypot(dx, dy);
-  if (!distance) return null;
-  const ux = dx / distance;
-  const uy = dy / distance;
-  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
-  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
-  const normal = { x: uy, y: -ux };
-  return {
-    shaft: base,
-    tip,
-    left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
-    right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
-  };
-}
-
-/**
- * Return a polyline shortened at the decorated endpoints plus the filled
- * heads. The input is never mutated. Endpoint decoration works for straight,
- * diagonal, and orthogonal multi-point paths.
- */
-function polylineArrowheads(points = [], value = 'none', options = {}) {
-  const route = [];
-  for (const point of points || []) {
-    const next = { x: point.x, y: point.y };
-    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
-  }
-  if (route.length < 2) return { shaftPoints: route, heads: [] };
-  const ends = arrowheadEnds(value, options.fallback || 'none');
-  let first = -1;
-  let last = -1;
-  for (let i = 1; i < route.length; i++) {
-    if (samePoint(route[i - 1], route[i])) continue;
-    if (first < 0) first = i;
-    last = i;
-  }
-  if (first < 0) return { shaftPoints: route, heads: [] };
-  const sameSegment = first === last;
-  const fullLength = options.length ?? 32;
-  const halfWidth = options.halfWidth ?? 18;
-  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
-  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
-  const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
-  const length = sameSegment && ends.start && ends.end
-    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
-    : fullLength;
-  const heads = [];
-  const shaftPoints = route.map((point) => ({ ...point }));
-  if (ends.start) {
-    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
-    if (head) {
-      heads.push({ ...head, placement: 'start' });
-      shaftPoints[0] = head.shaft;
-    }
-  }
-  if (ends.end) {
-    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
-    if (head) {
-      heads.push({ ...head, placement: 'end' });
-      shaftPoints[shaftPoints.length - 1] = head.shaft;
-    }
-  }
-  return { shaftPoints, heads };
-}
-
-__exports.normalizeArrowhead = normalizeArrowhead;
-__exports.defaultArrowhead = defaultArrowhead;
-__exports.arrowheadEnds = arrowheadEnds;
-__exports.polylineArrowheadValues = polylineArrowheadValues;
-__exports.polylineArrowheadValue = polylineArrowheadValue;
-__exports.polylineArrowheadStyles = polylineArrowheadStyles;
-__exports.arrowheadGeometry = arrowheadGeometry;
-__exports.polylineArrowheads = polylineArrowheads;
-__exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
-};
-
-__modules["src/core/document.js"] = function (__require, __exports) {
-const { Circuit } = __require("src/core/model.js");
-const { svgString } = __require("src/core/render.js");
-
-
-
-function documentKind(data) {
-  if (data?.kind === 'block') throw new Error('block diagram documents are no longer supported');
-  return 'circuit';
-}
-function documentKindLabel() { return 'Schematic'; }
-function createDocument(kind = 'circuit') {
-  if (kind === 'circuit' || kind === 'schematic') return new Circuit();
-  throw new Error(`unknown document kind "${kind}"`);
-}
-/** Load a saved document. Schematics are normalized to the app's single wire
- * model: legacy fixed nets become managed nets with protected diagonals. */
-function loadDocument(data) {
-  documentKind(data);
-  const circuit = Circuit.fromJSON(data);
-  circuit.convertFixedNets();
-  return circuit;
-}
-function renderDocument(document, options = {}) { return svgString(document, options); }
-function saveDocument(document) { return document.toJSON(); }
-function isDocument(value) { return value instanceof Circuit; }
-
-__exports.documentKind = documentKind;
-__exports.documentKindLabel = documentKindLabel;
-__exports.createDocument = createDocument;
-__exports.loadDocument = loadDocument;
-__exports.renderDocument = renderDocument;
-__exports.saveDocument = saveDocument;
-__exports.isDocument = isDocument;
 };
 
 __modules["src/core/model.js"] = function (__require, __exports) {
@@ -22608,6 +20956,1672 @@ __exports.Net = Net;
 __exports.Circuit = Circuit;
 };
 
+__modules["src/core/render.js"] = function (__require, __exports) {
+const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
+const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
+const { autoRoute, steinerBranches } = __require("src/core/router.js");
+const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
+const { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
+const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
+
+
+
+
+
+
+
+function pt(x, y) {
+  return `${fmt(x)} ${fmt(y)}`;
+}
+
+/**
+ * Map an absolute M/L/C path's coordinates through a component transform.
+ * `trim` pulls a straight first/last segment's ends in by that distance, so a
+ * butt-ended lead keeps its exact look inside a square-capped ink path.
+ */
+function transformPathD(d, t, trim = 0) {
+  const tokens = String(d).match(/[MLC]|-?\d*\.?\d+(?:e-?\d+)?/gi) || [];
+  const commands = [];
+  for (const token of tokens) {
+    if (/^[MLC]$/.test(token)) commands.push({ command: token, values: [] });
+    else commands.at(-1)?.values.push(Number(token));
+  }
+  const pull = (point, toward) => {
+    const dx = toward[0] - point[0];
+    const dy = toward[1] - point[1];
+    const length = Math.hypot(dx, dy);
+    if (!length || length <= 2 * trim) return point;
+    return [point[0] + dx / length * trim, point[1] + dy / length * trim];
+  };
+  if (trim > 0 && commands.length >= 2 && commands[0].command === 'M' && commands[1].command === 'L') {
+    const [x, y] = pull(commands[0].values.slice(0, 2), commands[1].values.slice(0, 2));
+    commands[0].values.splice(0, 2, x, y);
+  }
+  const last = commands.at(-1);
+  if (trim > 0 && commands.length >= 2 && last.command === 'L' && last.values.length === 2) {
+    const prev = commands.at(-2).values.slice(-2);
+    const [x, y] = pull(last.values, prev);
+    last.values.splice(0, 2, x, y);
+  }
+  const format = (n) => Number(n.toFixed(3));
+  return commands.map(({ command, values }) => {
+    const points = [];
+    for (let i = 0; i + 1 < values.length; i += 2) {
+      const p = applyTransform(t, values[i], values[i + 1]);
+      points.push(`${format(p.x)} ${format(p.y)}`);
+    }
+    return `${command} ${points.join(' ')}`;
+  }).join(' ');
+}
+
+/** Solid strokes merged into one path render without doubled anti-aliased edges. */
+function solidStyle(style) {
+  return !style?.lineStyle || style.lineStyle === 'solid';
+}
+
+function strokeWidthOf(style, base = 'symbol') {
+  return strokeWidth(style, base);
+}
+
+/** These terminals land on the centerline of a stroked body outline. Pull a
+ * filled arrowhead out by half that outline so its tip meets the visible edge
+ * rather than disappearing into the body. */
+function terminalBodyInset(circuit, point) {
+  for (const component of circuit.components.values()) {
+    if (!['block', 'signal_sum', 'signal_multiply'].includes(component.type)) continue;
+    if (component.terminalDefs.some((terminal) => {
+      const world = component.terminalWorld(terminal.name);
+      return world.x === point.x && world.y === point.y;
+    })) return strokeWidthOf(component.style, 'emph') / 2;
+  }
+  return 0;
+}
+
+function wireArrowheadOptions(circuit, points) {
+  return {
+    startInset: terminalBodyInset(circuit, points[0]),
+    endInset: terminalBodyInset(circuit, points.at(-1)),
+  };
+}
+
+// One shared miter limit keeps merged wires and sharp resistor leads in one
+// group, and every ink subpath uses the wires' projecting square cap.
+const INK_MITER_LIMIT = 5;
+function inkAttrs(style) {
+  return styleAttrs(style, 'wire', INK_MITER_LIMIT);
+}
+
+function polygonPoints(g) {
+  if (typeof g.points === 'string') return g.points;
+  return (g.points || []).map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' ');
+}
+
+function graphicsToSvg(g, textTransform = '', objectStyle = null) {
+  const stroke = objectStyle ? styleAttrs(objectStyle, g.style, g.miterLimit) : strokeAttrs(g.style, g.miterLimit);
+  switch (g.kind) {
+    case 'path':
+      return `<path d="${g.d}" fill="none" ${stroke}/>`;
+    case 'circle':
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${stroke}/>`;
+    case 'rect':
+      return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${stroke}/>`;
+    case 'polygon':
+      if (g.fill === 'foreground') {
+        return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(objectStyle?.color || '#111'))}" stroke="none"/>`;
+      }
+      return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(g.fill || 'none'))}" ${stroke}/>`;
+    case 'text':
+      return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${escapeSvg(g.text)}</text>`;
+    case 'dot':
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${escapeSvg(resolveColor(objectStyle?.color || g.fill || '#111'))}" stroke="none"/>`;
+    default:
+      return '';
+  }
+}
+
+function symbolTextSvg(g, t, color = '#111') {
+  const p = applyTransform(t, g.x, g.y);
+  const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`);
+  const attrs = `x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none"`;
+  const lines = String(g.text ?? '').split('\n');
+  if (lines.length === 1) return `<text ${attrs}>${escapeSvg(lines[0])}</text>`;
+  const lineHeight = g.font === 'label' ? LABEL_FONT_SIZE : 16;
+  const firstDy = -((lines.length - 1) * lineHeight) / 2;
+  const tspans = lines.map((line, index) => `<tspan x="${fmt(p.x)}" dy="${fmt(index ? lineHeight : firstDy)}">${escapeSvg(line)}</tspan>`).join('');
+  return `<text ${attrs}>${tspans}</text>`;
+}
+
+function textEl(x, y, text, anchor, size, fill) {
+  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${escapeSvg(resolveColor(fill || '#111'))}" stroke="none">${escapeSvg(text)}</text>`;
+}
+
+// Label-object text with one of the style.js font kinds ("instance" | "label").
+// Runs with `sub`/`super` render as tspans (baseline-shift + smaller size) so
+// instance labels like M1 render as M with a subscript 1, keeping the text's
+// alignment/anchor untouched (alignment is handled by the parent <text>).
+function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
+  let font = fontAttrs(kind)
+    .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`)
+    .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
+    .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
+  if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
+  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
+  if (runs.length === 1 && !runs[0].sub && !runs[0].super && !runs[0].text.includes('\n')) {
+    return `<text ${attrs}>${escapeSvg(runs[0].text)}</text>`;
+  }
+  const lineRuns = [[]];
+  for (const run of runs) {
+    const parts = String(run.text).split('\n');
+    parts.forEach((part, index) => {
+      if (part) lineRuns.at(-1).push({ ...run, text: part });
+      if (index < parts.length - 1) lineRuns.push([]);
+    });
+  }
+  const renderRuns = (line) => line.map((r) => {
+      if (!r.sub && !r.super) return escapeSvg(r.text);
+      const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
+      const size = r.sub || r.super ? ' font-size="0.62em"' : '';
+      return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
+    }).join('');
+  const body = lineRuns.length === 1
+    ? renderRuns(lineRuns[0])
+    : lineRuns.map((line, lineIndex) => `<tspan x="${fmt(x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
+  return `<text ${attrs}>${body}</text>`;
+}
+
+const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
+
+function mathMlAtom(value, kind = 'mi', attrs = '') {
+  return `<${kind}${attrs ? ` ${attrs}` : ''}>${escapeSvg(value)}</${kind}>`;
+}
+
+function mathMlDelimiter(value, stretchy = true) {
+  // Fences stretch to their own <mrow> (see parseFenced), so no minimum size
+  // is imposed: a short group keeps LaTeX's text-size parenthesis. TeX sets
+  // no space between a fence and its content, so neither do we.
+  return mathMlAtom(value, 'mo', `fence="true" stretchy="${stretchy}" lspace="0em" rspace="0em"`);
+}
+
+// TeX typesets a leading sign as a prefix: `-g_m` is tight, while the `-` of
+// `a - b` keeps binary spacing. It also draws U+2212, which is wider and sits
+// higher than the ASCII hyphen.
+const MATH_SIGNS = { '-': '\u2212', '+': '+' };
+
+// TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
+// Greek upright, which needs the explicit variant.
+const GREEK_LOWER = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
+  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
+  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
+  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'ϕ',
+  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+};
+const GREEK_UPPER = {
+  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+};
+
+// TeX Appendix G rule 18a: when the nucleus is a single character, the script
+// shift ignores that character's own height and depth, so `g_m` and `r_o` set
+// their subscripts on one line. MathML instead drops a subscript clear of a
+// descender (the MATH table's SubscriptBaselineDropMin) and lifts a
+// superscript clear of a tall base, which parts those subscripts by 0.17 em.
+// Zeroing the metric each shift is measured from restores TeX's rule; mpadded
+// changes only the reported box, so the glyph itself is untouched.
+const SINGLE_CHARACTER = /^<m[in](?: [^>]*)?>(?:[^<&]|&[a-z]+;|&#\d+;)<\/m[in]>$/;
+
+// A provenance wrapper (see the `\pv` branch below) must not hide the nucleus
+// it groups: the padding belongs on the character, the `data-node` attribute
+// outside it, so a provenance render lays out exactly like an ordinary one.
+const PROVENANCE_ROW = /^(<mrow data-node="\d+">)([\s\S]*)(<\/mrow>)$/;
+
+function mathMlNucleus(base, metric) {
+  const wrapped = PROVENANCE_ROW.exec(base);
+  if (wrapped) return `${wrapped[1]}${mathMlNucleus(wrapped[2], metric)}${wrapped[3]}`;
+  return SINGLE_CHARACTER.test(base) ? `<mpadded ${metric}="0">${base}</mpadded>` : base;
+}
+
+function mathMlSign(value, prefix) {
+  const glyph = MATH_SIGNS[value];
+  return prefix
+    ? mathMlAtom(glyph, 'mo', 'form="prefix" lspace="0em" rspace="0em"')
+    : mathMlAtom(glyph, 'mo', 'form="infix"');
+}
+
+/** Size table shared by the parallel operator and the evaluation bar. */
+function fenceSize(tall, requestedSize) {
+  if (requestedSize === 'Bigg') return 'minsize="2.8em" maxsize="3.4em"';
+  if (requestedSize === 'bigg') return 'minsize="2.4em" maxsize="3.0em"';
+  if (requestedSize === 'Big') return 'minsize="2.0em" maxsize="2.5em"';
+  if (requestedSize === 'big') return 'minsize="1.6em" maxsize="2.0em"';
+  return tall ? 'minsize="2.2em" maxsize="2.8em"' : 'minsize="1.2em"';
+}
+
+/**
+ * A single tall bar, as in `Z_{out} = v/i \Big\vert_{v_{in}=0}`: the
+ * condition a quantity was evaluated under. It takes the same sizing as the
+ * parallel operator, and hugs its own subscript on the right.
+ */
+function mathMlEvaluationBar(tall = false, requestedSize = null) {
+  const attrs = `fence="true" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0em"`;
+  return mathMlAtom('|', 'mo', attrs);
+}
+
+function mathMlParallel(tall = false, requestedSize = null) {
+  // Use the same single double-bar operator as LaTeX `\Vert`, rather than
+  // two independent bars whose MathML operator spacing creates a large gap.
+  // Explicit Big/Bigg commands win; a fraction on the line gets the compact
+  // `\Big\Vert` treatment automatically.
+  const attrs = `fence="false" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0.15em"`;
+  return mathMlAtom('∥', 'mo', attrs);
+}
+
+/** Pixel size declared on an SVG root, with a sensible fallback. Shared by the
+ *  editor's PNG rasterization and the server's PDF page sizing. */
+function svgPixelSize(svg) {
+  const root = String(svg).match(/<svg\b[^>]*>/i)?.[0] || '';
+  const width = Number(root.match(/\bwidth="([\d.]+)"/i)?.[1]);
+  const height = Number(root.match(/\bheight="([\d.]+)"/i)?.[1]);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : 1000,
+    height: Number.isFinite(height) && height > 0 ? height : 800,
+  };
+}
+
+/** Convert the small TeX subset emitted by symbolic analysis into MathML.
+ * MathML is rendered by the browser inside the live SVG through a
+ * foreignObject; keeping this parser local avoids a runtime CDN dependency. */
+function texToMathML(source) {
+  const text = stripMathDelimiters(source).replace(/\s+/g, ' ').trim();
+  const hasFraction = /\\frac\b/.test(text);
+  let index = 0;
+  const commandSymbols = {
+    parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
+    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→', gg: '≫',
+    ll: '≪', equiv: '≡', propto: '∝', partial: '∂',
+  };
+  let requestedParallelSize = null;
+  const skipSpaces = () => { while (text[index] === ' ') index += 1; };
+  const parseSequence = (stop = null) => {
+    const atoms = [];
+    while (index < text.length) {
+      if (stop && text[index] === stop) { index += 1; break; }
+      const token = text[index];
+      if (token === '_' || token === '^') {
+        index += 1;
+        const script = parseArgument();
+        const base = atoms.pop() || mathMlAtom('', 'mi');
+        atoms.push(token === '_'
+          ? `<msub>${mathMlNucleus(base, 'depth')}${script}</msub>`
+          : `<msup>${mathMlNucleus(base, 'height')}${script}</msup>`);
+        continue;
+      }
+      atoms.push(parseAtom(atoms[atoms.length - 1]));
+    }
+    return atoms.join('');
+  };
+  // A fenced group is its own <mrow>, so its delimiters stretch to that group
+  // and nothing else — what LaTeX's \left…\right does. Without the wrapper
+  // every parenthesis stretches to the tallest thing on the line, so `A_v(s)`
+  // next to a fraction grows parentheses several lines tall.
+  const parseFenced = (open, close) => {
+    const body = parseSequence(close);
+    const closed = text[index - 1] === close;
+    // Only a group that is genuinely taller than one line gets stretched
+    // fences, the way a TeX author reaches for \left…\right there and plain
+    // parentheses everywhere else: a stretched glyph is also padded away from
+    // its content, which reads as a gap around short groups like `(s)`.
+    const tall = /<mfrac|<msqrt/.test(body);
+    return `<mrow>${mathMlDelimiter(open, tall)}${body}${closed ? mathMlDelimiter(close, tall) : ''}</mrow>`;
+  };
+  const parseArgument = () => {
+    skipSpaces();
+    if (text[index] === '{') {
+      index += 1;
+      return `<mrow>${parseSequence('}')}</mrow>`;
+    }
+    return parseAtom();
+  };
+  // A marker argument is read literally: `present.js` writes only digits here
+  // and its contents are an AST node id, not math to typeset.
+  const parseRawArgument = () => {
+    skipSpaces();
+    if (text[index] !== '{') return '';
+    index += 1;
+    let raw = '';
+    while (index < text.length && text[index] !== '}') raw += text[index++];
+    if (text[index] === '}') index += 1;
+    return raw;
+  };
+  const parseTextArgument = () => {
+    skipSpaces();
+    if (text[index] !== '{') return parseArgument();
+    index += 1;
+    let depth = 1;
+    let raw = '';
+    while (index < text.length && depth > 0) {
+      const ch = text[index++];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+      if (depth > 0) raw += ch;
+    }
+    // TeX/editor spacing commands have no literal glyph to emit. Preserve
+    // them as visible word spaces in <mtext> so prose such as "Miller
+    // approximation used for" does not collapse together.
+    const prose = raw
+      // Accept the editor's escaped colon while converting other spacing
+      // commands to ordinary word spaces.
+      .replace(/\\:/g, ':')
+      .replace(/\\qquad/g, '  ')
+      .replace(/\\quad/g, ' ')
+      .replace(/\\[;,!]/g, ' ')
+      .replace(/\\ /g, ' ')
+      .replace(/\s+/g, ' ');
+    return `<mtext>${escapeSvg(prose).replace(/ /g, '&#160;')}</mtext>`;
+  };
+  const parseCommand = () => {
+    index += 1; // backslash
+    const match = text.slice(index).match(/^[A-Za-z]+|^./);
+    if (!match) return mathMlAtom('\\', 'mo');
+    const name = match[0];
+    index += name.length;
+    if (name === 'frac') {
+      const numerator = parseArgument();
+      const denominator = parseArgument();
+      return `<mfrac>${numerator}${denominator}</mfrac>`;
+    }
+    if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
+    if (name === 'pv') {
+      // Provenance marker from `present.js`: the first group is the AST node
+      // id, the second is the sub-expression rendered from it. The wrapper is
+      // an <mrow>, MathML's own grouping element, so it carries the attribute
+      // without changing layout. Ordinary renders emit no markers, so nothing
+      // persisted, exported, or edited as a label ever reaches this branch.
+      const id = parseRawArgument().replace(/[^0-9]/g, '');
+      skipSpaces();
+      if (text[index] !== '{') return `<mrow data-node="${id}">${parseAtom()}</mrow>`;
+      index += 1;
+      return `<mrow data-node="${id}">${parseSequence('}')}</mrow>`;
+    }
+    // \left is transparent: the delimiter after it starts a fenced group like
+    // any other. \right and \middle are dropped without consuming their
+    // delimiter, so the enclosing group closes on it exactly once.
+    if (name === 'left') return parseAtom();
+    if (name === 'right' || name === 'middle') return '';
+    if (name === '|') {
+      // The analysis engine emits the TeX-safe parallel spelling `\|\|`.
+      // Consume both escaped bars as one compact operator so the second bar
+      // is not parsed as an independent stretchy delimiter.
+      if (text[index] === '\\' && text[index + 1] === '|') index += 2;
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (name === 'vert') {
+      const bar = mathMlEvaluationBar(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return bar;
+    }
+    if (name === 'Vert') {
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (name === 'mathrm' || name === 'text' || name === 'operatorname') return parseTextArgument();
+    if (name === 'parallel') {
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (['big', 'Big', 'bigg', 'Bigg'].includes(name)) {
+      requestedParallelSize = name;
+      return '';
+    }
+    if (name === 'quad') return '<mspace width="1em"/>';
+    if (name === 'qquad') return '<mspace width="2em"/>';
+    if (name === '>') return mathMlAtom('>', 'mo');
+    if (GREEK_LOWER[name]) return mathMlAtom(GREEK_LOWER[name], 'mi');
+    if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
+    if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
+    if (name === ',' || name === ';' || name === '!') return '';
+    return mathMlAtom(name, 'mi');
+  };
+  // An atom that follows nothing, or follows an operator, starts an
+  // expression: a sign there is TeX's prefix form.
+  const parseAtom = (previous = null) => {
+    skipSpaces();
+    if (index >= text.length) return '';
+    // Be forgiving for hand-authored labels that use plain `||` rather than
+    // the TeX-safe `\|\|` spelling.  Both forms render identically, while
+    // the stored label source remains untouched for editing.
+    if (text[index] === '|' && text[index + 1] === '|') {
+      index += 2;
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (text[index] === '\\') return parseCommand();
+    if (text[index] === '{') {
+      index += 1;
+      return `<mrow>${parseSequence('}')}</mrow>`;
+    }
+    const char = text[index++];
+    if (/[A-Za-z]/.test(char)) return mathMlAtom(char, 'mi');
+    if (/[0-9]/.test(char)) return mathMlAtom(char, 'mn');
+    if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
+    if ('()[]|'.includes(char)) return mathMlDelimiter(char);
+    if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));
+    if (char === ' ' && text[index] === ' ') return '<mspace width="0.25em"/>';
+    return mathMlAtom(char, 'mo');
+  };
+  return `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" style="font-family:${MATH_FONT_FAMILY};color:inherit"><mrow>${parseSequence()}</mrow></math>`;
+}
+
+function mathLabelSvg(label, opacity = '') {
+  const box = label.bbox();
+  const color = resolveColor(label.style?.color || '#111');
+  // Keep the default ink theme-aware.  Math labels live in an XHTML
+  // foreignObject, so the SVG attribute recoloring rules used by ordinary
+  // <text> labels do not reach their inline `color` declaration.  Explicit
+  // user colors remain literal and therefore are not changed by dark mode.
+  const colorCss = color.toLowerCase() === '#111' ? 'var(--svg-ink, #111)' : color;
+  const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
+  const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
+  const aria = escapeSvg(`Math label ${label.text}`);
+  const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
+  const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
+  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;pointer-events:none;`;
+  const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
+  const lines = stripMathDelimiters(label.text).split(/\r?\n/)
+    .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
+    .join('');
+  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
+}
+
+function polylineD(points) {
+  return points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+}
+
+function arrowheadsSvg(heads, color, opacity = '') {
+  return heads.map((head) => `<polygon points="${pt(head.tip.x, head.tip.y)} ${pt(head.left.x, head.left.y)} ${pt(head.right.x, head.right.y)}" fill="${escapeSvg(resolveColor(color || '#111'))}" stroke="none"${opacity}/>`).join('');
+}
+
+function styledPolylineSvg(points, style, base, fallback = 'none', opacity = '') {
+  const geometry = polylineArrowheads(points, style?.arrowhead, { fallback });
+  if (geometry.shaftPoints.length < 2) return '';
+  const attrs = styleAttrs(style, base);
+  return `<path d="${polylineD(geometry.shaftPoints)}" fill="none"${opacity} ${attrs}/>${arrowheadsSvg(geometry.heads, style?.color, opacity)}`;
+}
+
+function shapeAnnotationSvg(label, opacity = '') {
+  const a = label.anchor; const b = label.end;
+  if (label.kind === 'line' || label.kind === 'arrow') {
+    const points = label.points?.length ? label.points : [a, b];
+    return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);
+  }
+  const attrs = styleAttrs(label.style);
+  if (label.kind === 'box') {
+    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+    return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
+  }
+}
+/**
+ * Bare drawable geometry of one component (body graphics plus symbol text),
+ * without ids, labels, or accessibility wrappers. Editor effects restyle it
+ * with CSS, e.g. the commit-feedback glow that traces the symbol itself.
+ */
+function componentShapeSvg(c) {
+  const t = c.transform;
+  const body = c.type === 'block'
+    ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
+    : c.def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
+  const text = c.def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
+  return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
+}
+
+/**
+ * Bare drawable geometry of one label: its text, or the line/arrow/box of a
+ * visual annotation. Math labels are HTML (foreignObject) and return null.
+ */
+function labelShapeSvg(label) {
+  if (['box', 'arrow', 'line'].includes(label.kind)) return shapeAnnotationSvg(label);
+  if (label.math) return null;
+  const t = label.textPos();
+  return labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
+}
+
+/**
+ * Render a Circuit to an SVG string.
+ * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
+ * draw terminal dots / net junction dots. opts.background: white rect.
+ * opts.netNames: label nets by name. opts.includeBBox: draw component bboxes.
+ * opts.emptyHint: draw the 'empty schematic' placeholder (default true).
+ * opts.themeInk: emit default ink as currentColor for theme-aware editor views.
+ * opts.underlay: emit an empty editor-underlay group above the grid for effects.
+ * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
+ * absent, the view auto-fits the circuit contents (used for exports / PNG).
+ */
+function svgString(circuit, opts = {}) {
+  const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
+  const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
+  const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
+  const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
+  const b = circuit.bounds(o.grid || o.background ? 0 : 20);
+  const vp = o.viewport;
+  const empty = b.w <= 0 && b.h <= 0;
+  if (empty && !vp) {
+    const w = 400;
+    const h = 200;
+    const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
+    parts.push(`<rect width="${w}" height="${h}" fill="#fff"/>`);
+    if (o.grid) {
+      for (let x = 0; x <= w; x += GRID) parts.push(`<line class="grid-line" x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="#eee" stroke-width="1"/>`);
+      for (let y = 0; y <= h; y += GRID) parts.push(`<line class="grid-line" x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#eee" stroke-width="1"/>`);
+    }
+    parts.push(textEl(w / 2, h / 2, 'empty schematic', 'middle', 16, '#999'));
+    parts.push('</svg>');
+    return parts.join('\n');
+  }
+
+  // Extents to draw (in world units). With a viewport the window is the exact
+  // view (so free panning never rescales the drawing); without one, the view
+  // auto-fits the circuit contents (exports / PNG).
+  const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
+  const x0 = vp ? vp.x : floorGrid(b.x) - pad;
+  const y0 = vp ? vp.y : floorGrid(b.y) - pad;
+  const x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
+  const y1 = vp ? vp.y + vp.h : ceilGrid(b.y + b.h) + pad;
+  const W = x1 - x0;
+  const H = y1 - y0;
+
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(W)} ${fmt(H)}">`,
+  ];
+
+  if (o.background) parts.push(`<rect x="${fmt(x0)}" y="${fmt(y0)}" width="${fmt(W)}" height="${fmt(H)}" fill="#fff"/>`);
+
+  if (empty && o.emptyHint) parts.push(textEl(x0 + W / 2, y0 + H / 2, 'empty schematic', 'middle', 16, '#999'));
+
+  if (o.grid) {
+    if (vp) {
+      for (let x = ceilGrid(vp.x); x <= ceilGrid(vp.x + vp.w); x += GRID) {
+        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
+      }
+      for (let y = ceilGrid(vp.y); y <= ceilGrid(vp.y + vp.h); y += GRID) {
+        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
+      }
+    } else {
+      for (let x = x0; x <= x1; x += GRID) {
+        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
+      }
+      for (let y = y0; y <= y1; y += GRID) {
+        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
+      }
+    }
+  }
+  // Editor-only slot for transient effects that should glow behind the drawing.
+  if (o.underlay) parts.push('<g class="editor-underlay"></g>');
+  // The crosshair is a navigation aid, not an object highlight. Render it
+  // before components, wires, and labels so those objects remain readable.
+  if (o.cursor && o.cursorCrosshair) {
+    const { x, y } = o.cursor;
+    const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
+    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
+  }
+  const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
+  const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);
+  const labels = [...circuit.labels.values()];
+  const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
+
+  // Bottom layer: visual shape annotations and their child labels. Keeping
+  // these together prevents annotation text from floating above the other
+  // default layers when a box or arrow has a caption.
+  const annotationShapes = labels
+    .filter((label) => ['arrow', 'box', 'line'].includes(label.kind))
+    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
+  for (const label of annotationShapes) {
+    if (label.id === o.editingLabel) continue;
+    const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`${label.kind} annotation ${label.text || label.id}`)}">${shapeAnnotationSvg(label, '')}</g>`);
+    if (label.kind !== 'line') {
+      const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
+      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
+    }
+    for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
+      if (child.id === o.editingLabel) continue;
+      const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+      const t = child.textPos();
+      const childVisual = child.math
+        ? mathLabelSvg(child)
+        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
+      parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${childVisual}</g>`);
+    }
+  }
+
+  // Middle layer: wires deliberately sit behind components and labels. Their
+  // rounded caps still overlap terminal leads at the exact electrical point.
+  const nets = [...circuit.nets.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
+  // Where a wire meets a pin lead (or another wire), two separately drawn
+  // strokes overlap and their anti-aliased edges add up into a visibly
+  // thicker joint. Solid wires and terminal leads of one stroke style are
+  // therefore drawn together as a single path ("ink"), rasterized once.
+  // Per-segment wire elements stay in place, unpainted, for hit targets and
+  // keyboard access; ghosts and dashed strokes keep their own elements.
+  const ink = new Map();
+  const addInk = (attrs, d) => {
+    if (!ink.has(attrs)) ink.set(attrs, []);
+    ink.get(attrs).push(d);
+  };
+  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(c.style);
+  for (const c of comps) {
+    if (!inkLeads(c)) continue;
+    for (const g of c.def.graphics) {
+      if (g.terminalLead) addInk(inkAttrs(c.style), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
+    }
+  }
+  const UNPAINTED = ' stroke-opacity="0"';
+  for (const net of nets) {
+    // Fixed paths are already the complete authored geometry. Keep the legacy
+    // managed fallback below so multi-terminal managed nets retain their old
+    // rendering behavior.
+    const paths = net.routingMode === 'fixed'
+      ? net.paths()
+      : net.branches
+        ? net.branches
+        : !net.route && net.terminals.length >= 3
+          ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
+          : [net.points()];
+    const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
+    for (const [branch, pts] of paths.entries()) {
+      if (!pts || pts.length < 2) continue;
+      const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
+      const wireHelp = net.routingMode === 'fixed'
+        ? 'Fixed/direct wire — drag vertices, segments, or junctions'
+        : 'Managed wire — drag orthogonal segments';
+      const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
+      if (!segmentStyles) {
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        const inked = !opacity && solidStyle(net.style);
+        const geometry = polylineArrowheads(pts, net.style?.arrowhead, wireArrowheadOptions(circuit, pts));
+        if (inked) addInk(inkAttrs(net.style), polylineD(geometry.shaftPoints));
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(arrowheadsSvg(geometry.heads, net.style?.color, opacity));
+        continue;
+      }
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1]; const b = pts[i];
+        const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
+        const segmentStyle = { ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) };
+        const inked = !opacity && solidStyle(segmentStyle);
+        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
+        // Solid wires are painted by the shared ink path below, but dashed
+        // and ghosted wires paint their own element. Use the same shortened
+        // shaft for those visible strokes so a dash cannot run underneath an
+        // endpoint arrowhead.
+        const paintedD = inked ? d : polylineD(geometry.shaftPoints);
+        if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
+        parts.push(`<path class="wire-${wireKind}" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
+      }
+    }
+  }
+  for (const [attrs, ds] of ink) {
+    parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
+  }
+
+  // Top layer: components and their body/value graphics sit above wires.
+  for (const c of comps) {
+    const t = c.transform;
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
+    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
+    parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
+    if (c.type === 'block') {
+      const r = c.blockSize;
+      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`);
+    } else {
+      const leadsInked = inkLeads(c);
+      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', c.style));
+    }
+    parts.push('</g></g>');
+    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
+    if (o.includeBBox) {
+      const r = c.bboxWorld();
+      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
+    }
+  }
+
+  // Junction dots are placed by the routing algorithm as actual `solder`
+  // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
+  // circle at net junctions.
+
+  // Junction dots at multi-terminal net connection points (above the wires).
+  if (o.junctions) {
+    for (const net of circuit.nets.values()) {
+      if (net.terminals.length < 3) continue;
+      for (const { comp, term } of net.terminals) {
+        const c = circuit.components.get(comp);
+        if (!c) continue;
+        const p = c.terminalWorld(term);
+        parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#292929"/>`);
+      }
+    }
+  }
+
+  // Terminal dots.
+  if (o.terminals) {
+    for (const c of comps) {
+      for (const { x, y } of c.worldTerminals()) {
+        parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="3" fill="#111"/>`);
+      }
+    }
+  }
+
+  // Top layer: components, instance labels, free labels, and net labels draw
+  // above the middle wires. Component drawOrder only changes stacking within
+  // this layer, so a pushed-back component remains above every wire.
+  // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
+  for (const c of comps) {
+    const def = c.def;
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    if (def.refPrefix && def.refPos && !def.labelOffset) {
+      const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
+      // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
+      // matching the dedicated instance labels used by transistors (e.g. nmos).
+      parts.push(
+        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${escapeSvg(c.refdes)}</text>`,
+      );
+    }
+    const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
+    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
+      const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
+      const valueText = def.textPos.font
+        ? symbolTextSvg({ ...def.textPos, text: c.value }, c.transform, c.style?.color || '#333')
+        : textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333');
+      parts.push(`<g${opacity}>${valueText}</g>`);
+    }
+    if (isReferenceMarker(c) && !def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
+      const marker = referenceMarkerInfo(c.type);
+      const p = applyTransform(c.transform, marker.labelOffset.x, marker.labelOffset.y);
+      parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, 'middle', 12, '#333')}</g>`);
+    }
+  }
+
+  // Dedicated / instance label objects (instance identifiers are bold+italic and
+  // larger than free-standing annotation labels). Text is aligned inside the
+  // label's rendered box (left/center/right) and vertically centered.
+  for (const label of labels
+    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent)
+    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
+    if (label.id === o.editingLabel) continue;
+    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
+    const t = label.textPos();
+    const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
+    const labelVisual = label.math
+      ? mathLabelSvg(label)
+      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
+    if (label.selectable === false) {
+      parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
+    } else {
+      parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
+    }
+  }
+
+  parts.push('</svg>');
+  return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
+}
+
+/**
+ * Editor-only overlays rendered on top of svgString output.
+ * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
+ * halos around each selected component's bbox. opts.nets [net]: highlight
+ * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
+ * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
+ * selection bounds, with small edge ticks and a center marker.
+ * opts.wireMode: show all component terminals, colored by net membership.
+ * opts.terminalSnapTarget {x,y}: Alt-held terminal snap target, emphasized
+ * with an accent halo and ring.
+ * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
+ */
+// Editor overlay colors are semantic and theme-aware (style.css tokens):
+// SELECT (accent blue) = selection, focus, and previews of pending edits;
+// WARN (amber) = needs attention, e.g. an unconnected pin while wiring;
+// DANGER (red) = errors such as cross-net overlaps and focused check issues.
+// Sky-blue center guides are measurement aids and deliberately separate from
+// the accent blue used for selection and pending edits.
+const SELECT = 'var(--accent, #2563eb)';
+const WARN = 'var(--warn, #b45309)';
+const DANGER = 'var(--danger, #c53030)';
+const NEUTRAL = 'var(--svg-faint, #7a7d85)';
+
+function editorOverlay(circuit, opts = {}) {
+  const parts = [];
+  if (opts.cursor && opts.cursorCrosshair) {
+    const { x, y } = opts.cursor;
+    const { x: vx, y: vy, w, h } = opts.cursorCrosshair;
+    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + w)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + h)}" fill="none"/>`);
+  }
+  const halo = (r) =>
+    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${SELECT}" fill-opacity="0.1" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
+  const dangerHalo = (r) =>
+    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${DANGER}" fill-opacity="0.1" stroke="${DANGER}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
+
+  for (const ref of opts.selection || []) {
+    const c = circuit.components.get(ref);
+    if (c) parts.push(halo(c.bboxWorld()));
+  }
+
+  for (const r of opts.layoutPreviewRects || []) {
+    parts.push(`<rect class="layout-preview" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="var(--accent)" fill-opacity="0.06" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7 5" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
+
+  // Equation to schematic highlight: the devices one hovered or locked
+  // sub-expression of a derived equation was built from. Their own geometry is
+  // retraced and restyled by CSS, the way commit feedback traces a committed
+  // shape. Interaction only — the overlay never reaches an export.
+  for (const ref of opts.emphasis || []) {
+    const c = circuit.components.get(ref);
+    if (c) parts.push(`<g class="equation-emphasis">${componentShapeSvg(c)}</g>`);
+  }
+
+  // Resizable schematic blocks use the same eight-handle affordance as block
+  // diagrams. Handles live in the interaction overlay, so they never become
+  // selectable circuit geometry or affect bounds/routing.
+  for (const ref of opts.resizeBlocks || []) {
+    const c = circuit.components.get(ref);
+    if (!c || c.type !== 'block') continue;
+    const r = c.bboxWorld();
+    const handles = [
+      ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
+      ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
+      ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
+    ];
+    parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
+  }
+
+  // Selection centerlines are deliberately sky blue and dashed so they read
+  // as measurement guides rather than cursor crosshairs or circuit geometry.
+  // Keep each guide outside the selected bounds: one grid cell of guide at
+  // each edge is enough to expose the center without crossing the artwork.
+  if (opts.centerGuides) {
+    const r = opts.centerGuides;
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    const pad = GRID;
+    const tick = 10;
+    const color = '#0ea5e9';
+    parts.push(`<g class="selection-center-guides" pointer-events="none" opacity="0.9">` +
+      `<path d="M ${fmt(cx)} ${fmt(r.y - pad)} L ${fmt(cx)} ${fmt(r.y)} M ${fmt(cx)} ${fmt(r.y + r.h)} L ${fmt(cx)} ${fmt(r.y + r.h + pad)} M ${fmt(r.x - pad)} ${fmt(cy)} L ${fmt(r.x)} ${fmt(cy)} M ${fmt(r.x + r.w)} ${fmt(cy)} L ${fmt(r.x + r.w + pad)} ${fmt(cy)}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="9 6"/>` +
+      `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
+      `<rect x="${fmt(cx - 4)}" y="${fmt(cy - 4)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="2" transform="rotate(45 ${fmt(cx)} ${fmt(cy)})"/>` +
+      `</g>`);
+  }
+
+  // Placement guides: the spacing and alignment relationships the object being
+  // placed or moved already stands in. Sky blue, like the selection
+  // centerlines, because both are measurement aids rather than circuit or
+  // selection state. Every measurement is drawn between the two anchors it
+  // measures, with a leader from each anchor to the dimension line, so what
+  // is being compared is never in doubt; two equal intervals carry the same
+  // number side by side. Only the blue anchor/alignment family is rendered.
+  if (opts.placementGuide?.guides?.length) {
+    const { moving, guides } = opts.placementGuide;
+    const ANCHOR_INK = '#0ea5e9';
+    const tick = 9;
+    const dot = (p, solid, ink) => `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="4.5" fill="${p.moving && !p.synthetic && solid ? ink : 'var(--paper, #fff)'}" stroke="${ink}" stroke-width="2"/>`;
+    parts.push(`<g class="placement-guides" pointer-events="none" fill="none" stroke-width="2" vector-effect="non-scaling-stroke">`);
+    for (const guide of guides) {
+      const color = ANCHOR_INK;
+      const axis = guide.axis;
+      const along = axis === 'x' ? 'y' : 'x';
+      const pt = (p, a) => (a === 'x' ? p.x : p.y);
+      // One shared dash rhythm for every "not yet real" stroke (a suggestion,
+      // an alignment reference, a target crossing) keeps the state signal to a
+      // single visual cue instead of several competing rhythms.
+      const SUGGESTION_DASH = '7 5';
+      if (guide.kind === 'align') {
+        const lo = Math.min(...guide.points.map((p) => pt(p, along)));
+        const hi = Math.max(...guide.points.map((p) => pt(p, along)));
+        const line = (a, b) => axis === 'y'
+          ? `M ${fmt(a)} ${fmt(guide.value)} H ${fmt(b)}`
+          : `M ${fmt(guide.value)} ${fmt(a)} V ${fmt(b)}`;
+        parts.push(`<path d="${line(lo - GRID / 2, hi + GRID / 2)}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.85"/>`);
+        parts.push(guide.points.map((p) => dot(p, true, color)).join(''));
+        continue;
+      }
+      // One dimension line clear of every anchor and of the moving symbol. A
+      // guide still being offered is drawn dashed, and its own point stands on
+      // the target rather than on the object, so the two intervals stay the
+      // ones being labelled. Direct one-peer distances use the opposite lane
+      // from target/even-spacing rulers, keeping both useful readings legible.
+      // Everything that only connects an anchor back to that line (leaders,
+      // the halfway reference) stays a quiet solid hairline, so dashing reads
+      // as one thing: not landed yet.
+      const pending = !guide.exact;
+      const dash = pending ? ` stroke-dasharray="${SUGGESTION_DASH}"` : '';
+      const bboxEdge = axis === 'x' ? moving.bbox.y : moving.bbox.x;
+      const bboxFarEdge = axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w;
+      const pointEdges = guide.points.map((p) => pt(p, along));
+      const base = guide.direct
+        ? Math.max(bboxFarEdge, ...pointEdges) + GRID
+        : Math.min(bboxEdge, ...pointEdges) - GRID;
+      if (pending) {
+        // Where to land: the target column or row, across the moving symbol.
+        const lo = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along)));
+        const hi = Math.max(axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w,
+          ...guide.points.map((p) => pt(p, along)));
+        parts.push(`<path d="${axis === 'x'
+          ? `M ${fmt(guide.target)} ${fmt(lo - GRID / 2)} V ${fmt(hi + GRID / 2)}`
+          : `M ${fmt(lo - GRID / 2)} ${fmt(guide.target)} H ${fmt(hi + GRID / 2)}`}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.55"/>`);
+      }
+      const leader = (p) => (axis === 'x'
+        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
+        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
+      parts.push(`<path d="${guide.points.map(leader).join(' ')}" stroke="${color}" stroke-opacity="0.3" stroke-width="1.25"/>`);
+      const span = (a, b) => (axis === 'x'
+        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(b.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(b.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
+        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(b.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(b.y)} H ${fmt(base + tick)}`);
+      const label = (a, b) => (axis === 'x'
+        ? `<text x="${fmt((a.x + b.x) / 2)}" y="${fmt(base - GRID / 3)}" fill="${color}" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`
+        : `<text x="${fmt(base - GRID / 3)}" y="${fmt((a.y + b.y) / 2 + 8)}" fill="${color}" stroke="none" text-anchor="end" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`);
+      for (let i = 0; i + 1 < guide.points.length; i += 1) {
+        const a = guide.points[i];
+        const b = guide.points[i + 1];
+        parts.push(`<path d="${span(a, b)}" stroke="${color}"${dash}/>`);
+        parts.push(label(a, b));
+      }
+      if (guide.halfway) {
+        const { from, at, cells } = guide.halfway;
+        const halfBase = base + tick + 8;
+        const reference = axis === 'x'
+          ? `M ${fmt(at.x)} ${fmt(at.y)} V ${fmt(base)} M ${fmt(from.x)} ${fmt(halfBase)} H ${fmt(at.x)}`
+          : `M ${fmt(at.x)} ${fmt(at.y)} H ${fmt(base)} M ${fmt(halfBase)} ${fmt(from.y)} V ${fmt(at.y)}`;
+        const text = axis === 'x'
+          ? `<text x="${fmt((from.x + at.x) / 2)}" y="${fmt(halfBase + 20)}" fill="${color}" stroke="none" text-anchor="middle" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`
+          : `<text x="${fmt(halfBase + 20)}" y="${fmt((from.y + at.y) / 2 + 7)}" fill="${color}" stroke="none" text-anchor="start" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`;
+        parts.push(`<g class="placement-halfway-reference" stroke="${color}" stroke-opacity="0.4" stroke-width="1.25"><path d="${reference}"/></g>${text}`);
+      }
+      parts.push(guide.points.map((p) => dot(p, guide.exact, color)).join(''));
+    }
+    parts.push('</g>');
+  }
+
+  // A marquee/visual selection is only a preview until its gesture commits.
+  // Keep it visually distinct and never touch the editor's real selection.
+  if (opts.previewSelection) {
+    for (const ref of opts.previewSelection.refs || []) {
+      const c = circuit.components.get(ref);
+      if (c) {
+        const r = c.bboxWorld();
+        parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="3" opacity="0.9"/>`);
+      }
+    }
+    for (const id of opts.previewSelection.labels || []) {
+      const label = circuit.labels.get(id);
+      if (!label) continue;
+      const r = label.bbox();
+      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="2" opacity="0.9"/>`);
+    }
+    for (const id of opts.previewSelection.nets || []) {
+      const net = circuit.nets.get(id);
+      if (!net) continue;
+      for (const pts of net.paths()) {
+        if (!pts || pts.length < 2) continue;
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="7" opacity="0.32" stroke-dasharray="8 5" stroke-linecap="round"/>`);
+      }
+    }
+    for (const { a, b } of opts.previewWireSegments || []) {
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="8" opacity="0.55" stroke-dasharray="8 5" stroke-linecap="round"/>`);
+    }
+  }
+
+  // Solder dots on a highlighted net get a halo so wire junctions stand out.
+  if (opts.netSolder && opts.netSolder.length) {
+    for (const p of opts.netSolder) {
+      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="13" fill="none" stroke="${SELECT}" stroke-width="2" opacity="0.7"/>`);
+      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="${SELECT}"/>`);
+    }
+  }
+
+  if (opts.selLabels && opts.selLabels.length) {
+    for (const id of opts.selLabels) {
+      const label = circuit.labels.get(id);
+      if (!label) continue;
+      const b = label.bbox();
+      const a = label.anchorWorld();
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
+      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
+    }
+  } else if (opts.selLabel) {
+    const label = circuit.labels.get(opts.selLabel);
+    if (label) {
+      const b = label.bbox();
+      const a = label.anchorWorld();
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
+      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
+    }
+  }
+
+  for (const net of opts.nets || []) {
+    const paths = net && typeof net.paths === 'function' ? net.paths() : [net];
+    for (const pts of paths) {
+      if (!pts || pts.length < 2) continue;
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="12" opacity="0.35" stroke-linecap="round" stroke-linejoin="round"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2.4"/>`);
+    }
+  }
+
+  // Design-check focus: the objects behind the selected issue, in the error color.
+  if (opts.diagnostic) {
+    for (const ref of opts.diagnostic.components || []) {
+      const c = circuit.components.get(ref);
+      if (c) parts.push(dangerHalo(c.bboxWorld()));
+    }
+    for (const id of opts.diagnostic.labels || []) {
+      const label = circuit.labels.get(id);
+      if (label) parts.push(dangerHalo(label.bbox()));
+    }
+    for (const id of opts.diagnostic.nets || []) {
+      const net = circuit.nets.get(id);
+      for (const pts of net?.paths?.() || []) {
+        if (!pts || pts.length < 2) continue;
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="12" opacity="0.3" stroke-linecap="round" stroke-linejoin="round"/>`);
+        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="2.4"/>`);
+      }
+    }
+  }
+
+  // Cross-net collinear overlaps (a wire dragged on top of another net's wire).
+  if (opts.warnOverlaps && opts.warnOverlaps.length) {
+    for (const o of opts.warnOverlaps) {
+      parts.push(`<line x1="${fmt(o.x0)}" y1="${fmt(o.y0)}" x2="${fmt(o.x1)}" y2="${fmt(o.y1)}" stroke="${DANGER}" stroke-width="9" opacity="0.55" stroke-linecap="round"/>`);
+    }
+  }
+
+  if (opts.wireSegments && opts.wireSegments.length) {
+    for (const { a, b } of opts.wireSegments) {
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="9" opacity="0.6" stroke-linecap="round"/>`);
+    }
+  }
+
+  if (opts.fixedDrag) {
+    const { x, y, junction } = opts.fixedDrag;
+    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${junction ? 14 : 10}" fill="none" stroke="${SELECT}" stroke-width="2.5" stroke-dasharray="4 3"/>`);
+  }
+
+  if (opts.wireMode) {
+    const src = opts.wireSource;
+    const snapTarget = opts.terminalSnapTarget;
+    const terminalRadius = 8;
+    const sourceRadius = 8.5;
+    if (snapTarget && Number.isFinite(snapTarget.x) && Number.isFinite(snapTarget.y)) {
+      parts.push(`<circle class="wire-snap-target" cx="${fmt(snapTarget.x)}" cy="${fmt(snapTarget.y)}" r="15" fill="${SELECT}" fill-opacity="0.16"/>`);
+      parts.push(`<circle class="wire-snap-target" cx="${fmt(snapTarget.x)}" cy="${fmt(snapTarget.y)}" r="12" fill="none" stroke="${SELECT}" stroke-width="3" stroke-dasharray="5 3"/>`);
+    }
+    for (const comp of circuit.components.values()) {
+      for (const terminal of comp.worldTerminals()) {
+        const connected = circuit.netOfTerminal({ comp: comp.refdes, term: terminal.name });
+        const isSource = src && src.refdes === comp.refdes && src.term === terminal.name;
+        // Connected pins are quiet; open pins still need a wire (attention).
+        const color = connected ? NEUTRAL : WARN;
+        if (isSource) {
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="12.5" fill="${SELECT}" opacity="0.18"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="${sourceRadius}" fill="${SELECT}" stroke="var(--paper, #fff)" stroke-width="2"/>`);
+        } else {
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="${terminalRadius}" fill="var(--paper, #fff)" stroke="${color}" stroke-width="2.5"/>`);
+        }
+      }
+    }
+  }
+
+  if (opts.rubber) {
+    const r = opts.rubber;
+    const x = Math.min(r.x0, r.x1);
+    const y = Math.min(r.y0, r.y1);
+    const w = Math.abs(r.x1 - r.x0);
+    const h = Math.abs(r.y1 - r.y0);
+    const color = r.color === 'neutral' ? NEUTRAL : SELECT;
+    parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
+  }
+
+  // The draft wire follows the cursor until it is committed.
+  for (const preview of [opts.wirePreview].filter(Boolean)) {
+    const from = preview.from;
+    const pts = preview.pts || autoRoute([{ x: from.x, y: from.y }, { x: preview.to.x, y: preview.to.y }]);
+    if (pts && pts.length >= 2) {
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="6 5"/>`);
+    }
+    parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="${SELECT}"/>`);
+  }
+  if (opts.annotationPreview) {
+    const { kind, a, b, points } = opts.annotationPreview;
+    const attrs = `stroke="${SELECT}" stroke-width="6" stroke-dasharray="10 7" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
+    if (kind === 'line') {
+      const d = points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+      parts.push(`<path d="${d}" ${attrs}/>`);
+    } else if (kind === 'box') {
+      const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+      parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
+    } else {
+      const route = points?.length ? points : [a, b];
+      const geometry = polylineArrowheads(route, 'end');
+      parts.push(`<path d="${polylineD(geometry.shaftPoints)}" ${attrs}/>${arrowheadsSvg(geometry.heads, SELECT, ' opacity=".8"')}`);
+    }
+  }
+
+  if (opts.directWirePreview) {
+    const { from, pts } = opts.directWirePreview;
+    if (from && pts && pts.length >= 2) {
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path class="direct-wire-preview" d="${d}" fill="none" stroke="${SELECT}" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>`);
+      for (const p of pts.slice(1, -1)) parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="5" fill="var(--paper, #fff)" stroke="${SELECT}" stroke-width="2"/>`);
+    }
+  }
+
+  if (opts.cursor) {
+    const { x, y } = opts.cursor;
+    const color = opts.directWirePreview || opts.wireMode ? SELECT : '#7a7d85';
+    const radius = opts.wireMode ? 8 : 4;
+    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${radius}" fill="none" stroke="${color}" stroke-width="${opts.wireMode ? 2 : 1.5}"/>`);
+    if (opts.wireMode && !opts.wirePreview && !opts.directWirePreview) {
+      parts.push(`<path d="M ${fmt(x - 14)} ${fmt(y)} L ${fmt(x + 14)} ${fmt(y)} M ${fmt(x)} ${fmt(y - 14)} L ${fmt(x)} ${fmt(y + 14)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="3 2"/>`);
+    }
+  }
+
+  // Symmetric placement: the axis a mirrored pair is being placed about. A
+  // construction line, drawn in the measurement sky blue and never geometry.
+  if (opts.symmetryAxis?.operation && opts.ghost?.def) {
+    const { operation, pin } = opts.symmetryAxis;
+    const g = opts.ghost;
+    // Long enough to read as an axis through whatever is being mirrored.
+    const b = transformRect({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }, g.def.bbox);
+    const reach = operation === 'mirrorX'
+      ? Math.max(Math.abs(b.y - pin.y), Math.abs(b.y + b.h - pin.y)) + GRID
+      : Math.max(Math.abs(b.x - pin.x), Math.abs(b.x + b.w - pin.x)) + GRID;
+    const d = operation === 'mirrorX'
+      ? `M ${fmt(pin.x)} ${fmt(pin.y - reach)} V ${fmt(pin.y + reach)}`
+      : `M ${fmt(pin.x - reach)} ${fmt(pin.y)} H ${fmt(pin.x + reach)}`;
+    parts.push(`<g class="symmetry-axis" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
+      `<path d="${d}" stroke-dasharray="14 5 3 5"/>` +
+      `<circle cx="${fmt(pin.x)}" cy="${fmt(pin.y)}" r="4.5" fill="var(--paper, #fff)" stroke="#0ea5e9" stroke-width="2"/>` +
+      `</g>`);
+    // How far apart the pair is being pulled. Two equal intervals either side
+    // of the axis, dimensioned like a spacing guide, because the number that
+    // decides a differential pair's pitch is the one the gesture is setting.
+    // It sits on the far side of the symbol from the placement guides, which
+    // measure off the top/left edge, so the two readouts never collide.
+    const from = opts.symmetryAxis.from;
+    const axis = operation === 'mirrorX' ? 'x' : 'y';
+    const offset = from ? Math.abs(from[axis] - pin[axis]) : 0;
+    if (offset > 1e-6) {
+      const twin = { x: from.x, y: from.y, [axis]: 2 * pin[axis] - from[axis] };
+      const cells = Math.round((offset / GRID) * 100) / 100;
+      const text = `${cells} ${cells === 1 ? 'cell' : 'cells'}`;
+      const tick = 9;
+      const base = axis === 'x'
+        ? Math.max(b.y + b.h, pin.y, from.y) + GRID
+        : Math.max(b.x + b.w, pin.x, from.x) + GRID;
+      const leader = (p) => (axis === 'x'
+        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
+        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
+      const span = (a, c) => (axis === 'x'
+        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(c.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(c.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
+        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(c.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(c.y)} H ${fmt(base + tick)}`);
+      const label = (a, c) => (axis === 'x'
+        ? `<text x="${fmt((a.x + c.x) / 2)}" y="${fmt(base + GRID * 0.8)}" fill="#0ea5e9" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${text}</text>`
+        : `<text x="${fmt(base + GRID / 3)}" y="${fmt((a.y + c.y) / 2 + 8)}" fill="#0ea5e9" stroke="none" text-anchor="start" font-size="24" font-family="system-ui, sans-serif">${text}</text>`);
+      const at = (p) => ({ x: axis === 'x' ? p.x : base, y: axis === 'x' ? base : p.y });
+      parts.push(`<g class="symmetry-offset" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
+        `<path d="${[twin, pin, from].map(leader).join(' ')}" stroke-opacity="0.4" stroke-dasharray="4 4"/>` +
+        `<path d="${span(twin, pin)}"/><path d="${span(pin, from)}"/>` +
+        label(twin, pin) + label(pin, from) +
+        [twin, from].map((p) => `<circle cx="${fmt(at(p).x)}" cy="${fmt(at(p).y)}" r="4.5" fill="#0ea5e9" stroke="#0ea5e9" stroke-width="2"/>`).join('') +
+        `</g>`);
+    }
+  }
+
+  // Placement ghost: a faded preview of the component (or label) that will be
+  // placed at the snapped cursor once the user clicks or presses Enter. A
+  // symmetric placement previews its mirrored twin the same way.
+  for (const g of [opts.ghost, opts.ghostTwin].filter(Boolean)) {
+    if (g.label) {
+      // Use the same label model and renderer as the committed annotation so
+      // markup, alignment, and the grid-sized footprint are previewed honestly.
+      const preview = new LabelInstance(circuit, {
+        text: g.text || 'label', x: g.x, y: g.y, align: g.align || 'center',
+      });
+      const b = preview.bbox();
+      const t = preview.textPos();
+      parts.push(`<g class="label-placement-ghost" opacity="0.58">`);
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#9aa0ab" stroke-width="1.5" stroke-dasharray="4 3"/>`);
+      parts.push(labelTextEl(t.x, t.y, preview.runs(), t.anchor, 'label'));
+      parts.push('</g>');
+    } else if (g.def) {
+      const t = transformToSvg({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY });
+      const body = g.def.graphics.filter((gg) => gg.kind !== 'text').map((gg) => graphicsToSvg(gg)).join('');
+      const text = g.def.graphics.filter((gg) => gg.kind === 'text').map((gg) => symbolTextSvg(gg, { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY })).join('');
+      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>${text}`);
+    }
+  }
+
+  return parts.join('\n');
+}
+
+__exports.svgPixelSize = svgPixelSize;
+__exports.texToMathML = texToMathML;
+__exports.componentShapeSvg = componentShapeSvg;
+__exports.labelShapeSvg = labelShapeSvg;
+__exports.svgString = svgString;
+__exports.editorOverlay = editorOverlay;
+};
+
+__modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
+/**
+ * Where each symbol in a displayed equation came from.
+ *
+ * `devices.js` mints every symbolic parameter name through one chokepoint,
+ * `parameterName(prefix, refdes)`, and tags every primitive it emits with
+ * `metadata.component` and an `id` of the form `<refdes>.<role>`. That makes
+ * the inversion below exact: it reads the table devices.js already built
+ * rather than guessing at the spelling of a rendered name. Nothing here parses
+ * TeX, and nothing here knows about the DOM.
+ *
+ * Keys are the raw expression symbol names (`gm1`, `ro1`, `RD`) as they appear
+ * in `{kind:'symbol', name}` nodes — not their rendered forms (`g_{m1}`).
+ * `present.js` owns that spelling and the two must not be confused.
+ */
+
+function roleOf(primitive) {
+  const id = String(primitive?.id || '');
+  const dot = id.lastIndexOf('.');
+  const role = dot >= 0 ? id.slice(dot + 1) : '';
+  return role || String(primitive?.kind || '');
+}
+
+/**
+ * Invert one or more primitive lists into
+ * `{ [symbolName]: {component, role, kind, primitives} }`. Earlier lists win,
+ * so pass the solved model first and earlier modeling stages after it.
+ *
+ * Several lists are needed because a symbol can survive into a displayed
+ * equation after its own primitive has left the solved set:
+ *
+ *  - A Miller shunt carries an expression, not a parameter name, so it mints no
+ *    symbol of its own — but that expression still contains the feedback
+ *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
+ *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
+ *    the engine puts `r_o` back when removing it would make the solve singular.
+ *
+ * A symbol the table cannot resolve simply does not highlight, which is why
+ * these gaps are invisible until someone points at the term and nothing
+ * happens. Only primitives whose `value` is a symbolic name contribute, and a
+ * symbol reached by more than one primitive keeps the first component and
+ * accumulates the primitive ids.
+ */
+function symbolProvenance(...primitiveLists) {
+  const table = Object.create(null);
+  for (const primitives of primitiveLists) {
+    for (const primitive of primitives || []) {
+      const name = primitive?.value;
+      if (typeof name !== 'string' || !name) continue;
+      const component = primitive?.metadata?.component;
+      if (!component) continue;
+      const existing = table[name];
+      if (existing) {
+        if (!existing.primitives.includes(primitive.id)) existing.primitives.push(primitive.id);
+        continue;
+      }
+      table[name] = {
+        component,
+        role: roleOf(primitive),
+        kind: primitive.kind,
+        primitives: [primitive.id],
+      };
+    }
+  }
+  return table;
+}
+
+/** The distinct components a set of symbol names resolves to, in first-seen
+ *  order. Used to label a rendered subexpression with everything it touches. */
+function componentsOfSymbols(names, table) {
+  const seen = [];
+  for (const name of names || []) {
+    const component = table?.[name]?.component;
+    if (component && !seen.includes(component)) seen.push(component);
+  }
+  return seen;
+}
+
+__exports.symbolProvenance = symbolProvenance;
+__exports.componentsOfSymbols = componentsOfSymbols;
+};
+
+__modules["src/core/style.js"] = function (__require, __exports) {
+/**
+ * Centralized schematic line styles.
+ *
+ * Symbols and wires select a stroke role via `style`. Roles differ only in
+ * width, cap, and join; filled body shapes use polygon fill instead.
+ *
+ *   line       legacy/default fallback (flat caps, miter joins)
+ *   thick      heavier legacy linework (~1.5x default)
+ *   symbol     normal textbook linework
+ *   wire       projecting square caps, so the half-width extension at a
+ *              terminal overlaps the pin lead inside the shared ink path and a
+ *              wire meeting a lead at a right angle fills the corner square
+ *   annotation visual lines/arrows (round ends)
+ *   emph       emphasis (MOSFET gate bar, BJT base bar)
+ *   ground     ground bars
+ *   supply     power slabs
+ */
+const STROKES = {
+  line: { width: 6, cap: 'flat', join: 'miter' },
+  thick: { width: 9, cap: 'flat', join: 'flat' },
+  symbol: { width: 6, cap: 'butt', join: 'miter' },
+  wire: { width: 6, cap: 'square', join: 'miter' },
+  annotation: { width: 6, cap: 'round', join: 'miter' },
+  emph: { width: 9.6, cap: 'butt', join: 'miter' },
+  ground: { width: 11.6, cap: 'butt', join: 'miter' },
+  supply: { width: 7.2, cap: 'butt', join: 'miter' },
+};
+
+const DEFAULT_INK = '#111';
+
+/** Named semantic colors. Values are intentionally mutable so a theme can
+ * update a token and already-loaded drawings immediately pick it up. */
+const COLOR_PALETTE = {
+  red: '#d96c75',
+  orange: '#e59f71',
+  yellow: '#e4c16f',
+  green: '#9acb8a',
+  teal: '#62b5a7',
+  blue: '#6fa8dc',
+  indigo: '#8f8bd1',
+  purple: '#b08ac6',
+  pink: '#d889b5',
+  slate: '#9aa7b8',
+  gray: '#7a7d85',
+};
+
+const LEGACY_COLORS = new Map(Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]));
+function resolveColor(value) {
+  if (typeof value !== 'string' || !value) return DEFAULT_INK;
+  const token = value.startsWith('$') ? value.slice(1) : value;
+  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return COLOR_PALETTE[token];
+  const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
+  return legacyToken ? COLOR_PALETTE[legacyToken] : value;
+}
+
+/** Editor rendering: default ink follows the page theme through CSS `color`.
+ * Standalone exports keep literal colors and never use this. */
+function themeInkSvg(svg) {
+  return String(svg).replace(/\b(stroke|fill)="(?:#111|#111111|#292929|#333)"/gi, '$1="currentColor"');
+}
+
+function setColorToken(token, value) {
+  if (!Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) throw new Error(`unknown color token "${token}"`);
+  if (typeof value !== 'string' || !value) throw new Error('color token value must be a CSS color');
+  COLOR_PALETTE[token] = value;
+  return value;
+}
+
+/** Escape a value for use in SVG text or a quoted attribute. */
+const escapeSvg = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+function strokeParts(styleName, miterLimit, color = DEFAULT_INK, width) {
+  const s = STROKES[styleName] || STROKES.line;
+  const limit = Number.isFinite(miterLimit) && miterLimit > 0 ? ` stroke-miterlimit="${miterLimit}"` : '';
+  return `stroke="${escapeSvg(color)}" stroke-width="${width ?? s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"${limit}`;
+}
+
+function strokeAttrs(styleName, miterLimit) {
+  return strokeParts(styleName, miterLimit);
+}
+
+/** Resolve the painted stroke width for a style role, including explicit
+ * thin/thick overrides. Consumers that position filled geometry next to a
+ * stroked body should use this instead of duplicating the role table. */
+function strokeWidth(style = {}, base = 'line') {
+  if (style.width === 'thin') return 3;
+  if (style.width === 'thick') return 9;
+  return STROKES[base]?.width ?? STROKES.line.width;
+}
+
+/** Text styles for schematic labels, keyed by `fontAttrs` kind. */
+const FONTS = {
+  instance: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
+  label: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
+};
+
+function fontAttrs(kind) {
+  const f = FONTS[kind];
+  if (!f) return '';
+  const parts = [`font-size="${f.size}"`, `fill="${escapeSvg(resolveColor(f.fill))}"`];
+  if (f.weight) parts.push(`font-weight="${f.weight}"`);
+  if (f.italic) parts.push(`font-style="italic"`);
+  return parts.join(' ');
+}
+
+function styleAttrs(style = {}, base = 'symbol', miterLimit) {
+  const width = style.width === 'thin' ? 3 : style.width === 'thick' ? 9 : undefined;
+  const attrs = strokeParts(base, miterLimit, resolveColor(style.color || DEFAULT_INK), width);
+  const dash = style.lineStyle && style.lineStyle !== 'solid'
+    ? { dashed: '12 12', 'dash-dot': '14 10 3 10', dotted: '2 10' }[style.lineStyle]
+    : null;
+  return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
+}
+
+__exports.resolveColor = resolveColor;
+__exports.themeInkSvg = themeInkSvg;
+__exports.setColorToken = setColorToken;
+__exports.strokeAttrs = strokeAttrs;
+__exports.strokeWidth = strokeWidth;
+__exports.fontAttrs = fontAttrs;
+__exports.styleAttrs = styleAttrs;
+__exports.COLOR_PALETTE = COLOR_PALETTE;
+__exports.escapeSvg = escapeSvg;
+};
+
+__modules["src/core/line-style.js"] = function (__require, __exports) {
+/** The one filled triangular arrowhead offered by the shared style menu. */
+const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
+
+function normalizeArrowhead(value, fallback = 'none') {
+  return ARROWHEAD_VALUES.includes(value) ? value : fallback;
+}
+
+function defaultArrowhead(kind) {
+  return kind === 'arrow' || kind === 'connector' ? 'end' : 'none';
+}
+
+function arrowheadEnds(value, fallback = 'none') {
+  const normalized = normalizeArrowhead(typeof value === 'object' ? value?.arrowhead : value, fallback);
+  return {
+    start: normalized === 'start' || normalized === 'both',
+    end: normalized === 'end' || normalized === 'both',
+  };
+}
+
+/**
+ * Map one shared arrowhead choice onto the individual segments of a
+ * polyline.  A bent route is still one drawable wire, so its heads belong at
+ * the route endpoints rather than at its corner vertices.  On a single
+ * segment both heads can share that segment; otherwise the two heads occupy
+ * the first and last segments independently.
+ */
+function polylineArrowheadValues(points = [], value = 'none') {
+  const route = [];
+  for (const point of points || []) {
+    const next = { x: point.x, y: point.y };
+    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
+  }
+  if (route.length < 2) return [];
+  const ends = arrowheadEnds(value);
+  let first = -1;
+  let last = -1;
+  for (let i = 1; i < route.length; i++) {
+    if (samePoint(route[i - 1], route[i])) continue;
+    if (first < 0) first = i;
+    last = i;
+  }
+  if (first < 0) return route.slice(1).map(() => 'none');
+  const values = route.slice(1).map(() => 'none');
+  if (ends.start) values[first - 1] = first === last && ends.end ? 'both' : 'start';
+  if (ends.end) values[last - 1] = ['start', 'both'].includes(values[last - 1]) ? 'both' : 'end';
+  return values;
+}
+
+/** Resolve segment-local arrowhead styles to the logical endpoints of a
+ * polyline. This also repairs older documents where an end head was left on
+ * an interior segment after a route gained a bend. */
+function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
+  const values = [];
+  for (let index = 1; index < points.length; index++) {
+    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
+    if (value !== undefined) values.push(normalizeArrowhead(value));
+  }
+  if (!values.length) return normalizeArrowhead(inherited);
+  const start = values.some((value) => arrowheadEnds(value).start);
+  const end = values.some((value) => arrowheadEnds(value).end);
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
+}
+
+/** Return wireStyles with one shared arrowhead choice distributed across a
+ * path's endpoint segments. Existing per-segment appearance is preserved. */
+function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {
+  const next = { ...wireStyles };
+  for (const [index, arrowhead] of polylineArrowheadValues(points, value).entries()) {
+    const key = `${branch}:${index + 1}`;
+    next[key] = { ...(next[key] || {}), arrowhead };
+  }
+  return next;
+}
+
+const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
+
+/** Filled arrowhead geometry for a segment whose tip is `b`. */
+function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const distance = Math.hypot(dx, dy);
+  if (!distance) return null;
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
+  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
+  const normal = { x: uy, y: -ux };
+  return {
+    shaft: base,
+    tip,
+    left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
+    right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
+  };
+}
+
+/**
+ * Return a polyline shortened at the decorated endpoints plus the filled
+ * heads. The input is never mutated. Endpoint decoration works for straight,
+ * diagonal, and orthogonal multi-point paths.
+ */
+function polylineArrowheads(points = [], value = 'none', options = {}) {
+  const route = [];
+  for (const point of points || []) {
+    const next = { x: point.x, y: point.y };
+    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
+  }
+  if (route.length < 2) return { shaftPoints: route, heads: [] };
+  const ends = arrowheadEnds(value, options.fallback || 'none');
+  let first = -1;
+  let last = -1;
+  for (let i = 1; i < route.length; i++) {
+    if (samePoint(route[i - 1], route[i])) continue;
+    if (first < 0) first = i;
+    last = i;
+  }
+  if (first < 0) return { shaftPoints: route, heads: [] };
+  const sameSegment = first === last;
+  const fullLength = options.length ?? 32;
+  const halfWidth = options.halfWidth ?? 18;
+  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
+  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
+  const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
+  const length = sameSegment && ends.start && ends.end
+    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
+    : fullLength;
+  const heads = [];
+  const shaftPoints = route.map((point) => ({ ...point }));
+  if (ends.start) {
+    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
+    if (head) {
+      heads.push({ ...head, placement: 'start' });
+      shaftPoints[0] = head.shaft;
+    }
+  }
+  if (ends.end) {
+    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
+    if (head) {
+      heads.push({ ...head, placement: 'end' });
+      shaftPoints[shaftPoints.length - 1] = head.shaft;
+    }
+  }
+  return { shaftPoints, heads };
+}
+
+__exports.normalizeArrowhead = normalizeArrowhead;
+__exports.defaultArrowhead = defaultArrowhead;
+__exports.arrowheadEnds = arrowheadEnds;
+__exports.polylineArrowheadValues = polylineArrowheadValues;
+__exports.polylineArrowheadValue = polylineArrowheadValue;
+__exports.polylineArrowheadStyles = polylineArrowheadStyles;
+__exports.arrowheadGeometry = arrowheadGeometry;
+__exports.polylineArrowheads = polylineArrowheads;
+__exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
+};
+
+__modules["src/core/document.js"] = function (__require, __exports) {
+const { Circuit } = __require("src/core/model.js");
+const { svgString } = __require("src/core/render.js");
+
+
+
+function documentKind(data) {
+  if (data?.kind === 'block') throw new Error('block diagram documents are no longer supported');
+  return 'circuit';
+}
+function documentKindLabel() { return 'Schematic'; }
+function createDocument(kind = 'circuit') {
+  if (kind === 'circuit' || kind === 'schematic') return new Circuit();
+  throw new Error(`unknown document kind "${kind}"`);
+}
+/** Load a saved document. Schematics are normalized to the app's single wire
+ * model: legacy fixed nets become managed nets with protected diagonals. */
+function loadDocument(data) {
+  documentKind(data);
+  const circuit = Circuit.fromJSON(data);
+  circuit.convertFixedNets();
+  return circuit;
+}
+function renderDocument(document, options = {}) { return svgString(document, options); }
+function saveDocument(document) { return document.toJSON(); }
+function isDocument(value) { return value instanceof Circuit; }
+
+__exports.documentKind = documentKind;
+__exports.documentKindLabel = documentKindLabel;
+__exports.createDocument = createDocument;
+__exports.loadDocument = loadDocument;
+__exports.renderDocument = renderDocument;
+__exports.saveDocument = saveDocument;
+__exports.isDocument = isDocument;
+};
+
 __modules["src/core/grid.js"] = function (__require, __exports) {
 /**
  * Coarse placement grid. Every world coordinate of a terminal, a component
@@ -23082,6 +23096,312 @@ __exports.distanceToSegment = distanceToSegment;
 __exports.fmt = fmt;
 __exports.pt = pt;
 __exports.midSnap = midSnap;
+};
+
+__modules["src/core/wireedit.js"] = function (__require, __exports) {
+const { GRID, snap } = __require("src/core/grid.js");
+
+
+/**
+ * Interactive re-routing of an explicit wire polyline by dragging a segment.
+ * A route is an ordered list of grid points. By default a "run" is a maximal
+ * run of consecutive collinear segments; callers may provide topology breaks
+ * to treat aligned segments on either side of a terminal or junction
+ * independently. Dragging a segment moves its bounded run perpendicularly.
+ * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
+ * omitted metadata uses terminal-endpoint behavior. `allowPastNeighbors` is
+ * for reversible editor previews: it lets a run pass adjacent bends so a
+ * later legal drop is reachable; the caller must validate before committing.
+ *
+ * Key behaviors:
+ *  - By default the run may slide as far as an adjacent run; reaching it
+ *    collapses the shared corner, and the now-invisible collinear vertex is
+ *    removed.
+ *  - By default the run never slides past a neighbour (no inverted folds);
+ *    reversible previews may opt out until their final geometry is validated.
+ *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
+ *    wire with an added connector segment so the pin stays connected.
+ *  - A standalone two-point bridge between two junctions moves both junction
+ *    endpoints together; a standalone pin-to-pin run remains immovable.
+ */
+
+/** Collinear run containing segment `seg`, stopping at optional topology
+ * points. Topology breaks let adjacent aligned branch segments move
+ * independently when a junction sits between them. */
+function wireRunAt(pts, seg, breaks = null) {
+  const n = pts.length;
+  const i = Math.max(1, Math.min(seg, n - 1));
+  const orient = pts[i - 1].y === pts[i].y ? 'h' : 'v';
+  const val = orient === 'h' ? pts[i].y : pts[i].x;
+  const same = (p) => (orient === 'h' ? p.y === val : p.x === val);
+  const isBreak = (p) => breaks?.has(`${p.x},${p.y}`);
+  let lo = i - 1;
+  let hi = i;
+  while (lo > 0 && same(pts[lo - 1]) && !isBreak(pts[lo])) lo--;
+  while (hi < n - 1 && same(pts[hi + 1]) && !isBreak(pts[hi])) hi++;
+  return { lo, hi, orient, val };
+}
+
+/** Drop consecutive duplicates and any middle point collinear with its
+ * neighbours, in place. Endpoints (terminal pins) are always preserved.
+ * Returns the new length.
+ */
+function collapseCollinear(pts) {
+  let i = pts.length - 2;
+  while (i >= 1) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const c = pts[i + 1];
+    if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y) || (a.x === b.x && a.y === b.y)) {
+      pts.splice(i, 1);
+    }
+    i--;
+  }
+  return pts.length;
+}
+
+/** Index of a segment lying on the collinear run at perpendicular line `line`
+ *  (a y for horizontal runs, an x for vertical runs), or -1 if none. */
+function findRunLine(pts, orient, line) {
+  for (let i = 1; i < pts.length; i++) {
+    const onLine = orient === 'h' ? pts[i].y === line : pts[i].x === line;
+    if (!onLine) continue;
+    const aligned = orient === 'h' ? pts[i - 1].y === pts[i].y : pts[i - 1].x === pts[i].x;
+    if (aligned) return i;
+  }
+  return -1;
+}
+
+/** Move one junction in a managed branch set and rebuild each incident branch
+ * endpoint with a local orthogonal elbow when the old and new locations are not
+ * collinear with its neighbour. The caller owns the net object; this pure
+ * helper mutates `paths` and returns the replacement junction list. */
+function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpointInfo = null) {
+  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return junctions;
+  for (const path of paths || []) {
+    for (let i = 0; i < path.length; i++) {
+      const p = path[i];
+      if (p.x !== oldPoint.x || p.y !== oldPoint.y) continue;
+      const neighbor = i === 0 ? path[1] : path[i - 1];
+      const oldHorizontal = neighbor && neighbor.y === oldPoint.y;
+      const oldVertical = neighbor && neighbor.x === oldPoint.x;
+      const otherIndex = i === 0 ? 1 : i === path.length - 1 ? path.length - 2 : -1;
+      const otherMeta = otherIndex >= 0 && endpointInfo ? endpointInfo(path, otherIndex) : null;
+      p.x = newPoint.x;
+      p.y = newPoint.y;
+      if (neighbor && p.x !== neighbor.x && p.y !== neighbor.y) {
+        const candidates = oldHorizontal
+          ? [{ x: neighbor.x, y: newPoint.y }, { x: newPoint.x, y: neighbor.y }]
+          : oldVertical
+            ? [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }]
+            : [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }];
+        const same = (a, b) => a.x === b.x && a.y === b.y;
+        const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
+        const incoming = (q) => i === 0 ? step(q, neighbor) : step(neighbor, q);
+        const desired = otherMeta?.type === 'terminal' && otherMeta.dir
+          ? { x: -otherMeta.dir.x, y: -otherMeta.dir.y } : null;
+        const valid = candidates.filter((q) =>
+          !same(q, oldPoint) && !same(q, newPoint) && !same(q, neighbor)
+        );
+        const elbow = valid.find((q) =>
+          (!desired || (incoming(q).x === desired.x && incoming(q).y === desired.y))
+        );
+        if (elbow) {
+          path.splice(i === 0 ? 1 : i, 0, elbow);
+        } else if (desired) {
+          // Detour one extra grid cell outward from the terminal to preserve
+          // pin conformity without retaining the junction coordinate.
+          const sign = otherMeta.dir;
+          const distance = same({ x: neighbor.x + sign.x * GRID, y: neighbor.y + sign.y * GRID }, oldPoint) ? 2 : 1;
+          const pinLead = { x: neighbor.x + sign.x * GRID * distance, y: neighbor.y + sign.y * GRID * distance };
+          const detours = newPoint.x === pinLead.x || newPoint.y === pinLead.y ? [] : [
+            { x: newPoint.x, y: pinLead.y },
+            { x: pinLead.x, y: newPoint.y },
+          ];
+          const detour = detours.find((q) => !same(q, oldPoint) && !same(q, newPoint) && !same(q, pinLead));
+          const inserts = i === 0 ? [ ...(detour ? [detour] : []), pinLead ] : [ pinLead, ...(detour ? [detour] : []) ];
+          path.splice(i === 0 ? 1 : i, 0, ...inserts);
+        }
+      }
+    }
+  }
+  return (junctions || []).map((p) => (
+    p.x === oldPoint.x && p.y === oldPoint.y ? { ...newPoint } : p
+  ));
+}
+
+/**
+ * Move the collinear run of orientation `orient` presently at perpendicular
+ * line `line` to `target` (grid-snapped along the perpendicular axis).
+ * `endpointMeta.runBounds` and `endpointMeta.breaks` may bound the run at
+ * electrical topology points; otherwise the maximal run is used. The run may
+ * slide as far as an adjacent run (reaching it collapses the shared corner)
+ * but, by default, never past it (no inverted folds). Reversible previews may
+ * set `allowPastNeighbors` and validate the resulting geometry on drop. Runs touching a terminal endpoint
+ * keep that pin fixed and extend the wire with a connector segment.
+ * `preserveDiagonalNeighbors` keeps a diagonal segment immediately before or
+ * after an interior run fixed, adding a perpendicular connector at the old
+ * corner instead of stretching the diagonal while the run moves.
+ * `endpointMeta` is optional for compatibility with callers whose paths are
+ * known to be terminal-ended: `{ start: { type }, end: { type } }`.
+ * Returns the perpendicular line value the run actually ended on (== `line`
+ * when nothing could move).
+ */
+function moveWireRun(pts, orient, line, target, endpointMeta = null) {
+  const si = Number.isInteger(endpointMeta?.segment)
+    ? Math.max(1, Math.min(endpointMeta.segment, pts.length - 1))
+    : findRunLine(pts, orient, line);
+  if (si < 0) return line;
+  const run = wireRunAt(pts, si, endpointMeta?.breaks);
+  const forcedInterior = endpointMeta?.interiorRun === true;
+  const lo = endpointMeta?.runBounds?.lo ?? (forcedInterior ? 1 : run.lo);
+  const hi = endpointMeta?.runBounds?.hi ?? (forcedInterior ? pts.length - 2 : run.hi);
+  const n = pts.length;
+  const loEnd = lo === 0;
+  const hiEnd = hi === n - 1;
+  const startType = endpointMeta?.start?.type || 'terminal';
+  const endType = endpointMeta?.end?.type || 'terminal';
+  const startTerminal = startType === 'terminal';
+  const endTerminal = endType === 'terminal';
+  const val = line;
+  const nv = (idx) => (orient === 'h' ? pts[idx].y : pts[idx].x);
+  let lower = -Infinity;
+  let upper = Infinity;
+  if (!loEnd) {
+    const v = nv(lo - 1);
+    if (v < val) lower = Math.max(lower, v);
+    else upper = Math.min(upper, v);
+  }
+  if (!hiEnd) {
+    const v = nv(hi + 1);
+    if (v < val) lower = Math.max(lower, v);
+    else upper = Math.min(upper, v);
+  }
+  let t = snap(target);
+  if (!endpointMeta?.allowPastNeighbors) {
+    if (t < val) t = Math.max(t, lower);
+    else if (t > val) t = Math.min(t, upper);
+  }
+  if (t === val) return val;
+
+  if (!loEnd && !hiEnd) {
+    // Interior run: slide freely (possibly up to a neighbour to collapse).
+    const preserveDiagonals = endpointMeta?.preserveDiagonalNeighbors === true;
+    const diagonalStart = preserveDiagonals && pts[lo - 1] && pts[lo] &&
+      pts[lo - 1].x !== pts[lo].x && pts[lo - 1].y !== pts[lo].y
+      ? { ...pts[lo] } : null;
+    const diagonalEnd = preserveDiagonals && pts[hi] && pts[hi + 1] &&
+      pts[hi].x !== pts[hi + 1].x && pts[hi].y !== pts[hi + 1].y
+      ? { ...pts[hi] } : null;
+    for (let i = lo; i <= hi; i++) {
+      if (orient === 'h') pts[i].y = t;
+      else pts[i].x = t;
+    }
+    // Keep a mixed route's diagonal geometry literal. The inserted old corner
+    // is connected to the moved run by the perpendicular lead that a normal
+    // orthogonal bend would have stretched into the diagonal otherwise.
+    if (diagonalStart) pts.splice(lo, 0, diagonalStart);
+    if (diagonalEnd) pts.splice(hi + (diagonalStart ? 2 : 1), 0, diagonalEnd);
+    collapseCollinear(pts);
+    return t;
+  }
+
+  const boundedRun = !!endpointMeta?.runBounds;
+  const anchoredStart = boundedRun && loEnd && (startTerminal || startType === 'junction');
+  const anchoredEnd = boundedRun && hiEnd && (endTerminal || endType === 'junction');
+  if (anchoredStart || anchoredEnd) {
+    // A topology-bounded run moves without moving its electrical anchors.
+    // Keep each terminal/junction fixed and add connector legs at the ends;
+    // incident branches therefore remain stationary unless explicitly selected.
+    if (anchoredStart && anchoredEnd) {
+      const a = { ...pts[0] };
+      const b = { ...pts[n - 1] };
+      if (orient === 'h') {
+        for (let i = 1; i < n - 1; i++) pts[i].y = t;
+        pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
+      } else {
+        for (let i = 1; i < n - 1; i++) pts[i].x = t;
+        pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
+      }
+      return t;
+    }
+    if (anchoredStart) {
+      const p = { ...pts[0] };
+      if (orient === 'h') {
+        for (let i = 1; i <= hi; i++) pts[i].y = t;
+        pts.splice(1, 0, { x: p.x, y: t });
+      } else {
+        for (let i = 1; i <= hi; i++) pts[i].x = t;
+        pts.splice(1, 0, { x: t, y: p.y });
+      }
+      return t;
+    }
+    const p = { ...pts[n - 1] };
+    if (orient === 'h') {
+      for (let i = lo; i < n - 1; i++) pts[i].y = t;
+      pts.splice(n - 1, 0, { x: p.x, y: t });
+    } else {
+      for (let i = lo; i < n - 1; i++) pts[i].x = t;
+      pts.splice(n - 1, 0, { x: t, y: p.y });
+    }
+    return t;
+  }
+
+  // A standalone bridge is bounded by two real junctions rather than pins.
+  // Without run bounds, move the whole bridge.
+  if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
+    for (const p of pts) {
+      if (orient === 'h') p.y = t;
+      else p.x = t;
+    }
+    return t;
+  }
+
+  if (loEnd && hiEnd && startTerminal && endTerminal) {
+    if (!boundedRun) return val;
+    const a = { ...pts[0] };
+    const b = { ...pts[n - 1] };
+    if (orient === 'h') {
+      pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
+    } else {
+      pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
+    }
+    return t;
+  }
+  if (orient === 'h') {
+    if (loEnd && (!hiEnd || startTerminal)) {
+      const px = pts[0].x;
+      for (let i = 1; i <= hi; i++) pts[i].y = t;
+      if (startTerminal) pts.splice(1, 0, { x: px, y: t });
+      else pts[0].y = t;
+    } else if (hiEnd) {
+      const px = pts[n - 1].x;
+      for (let i = lo; i <= n - 2; i++) pts[i].y = t;
+      if (endTerminal) pts.splice(n - 1, 0, { x: px, y: t });
+      else pts[n - 1].y = t;
+    }
+  } else {
+    if (loEnd && (!hiEnd || startTerminal)) {
+      const py = pts[0].y;
+      for (let i = 1; i <= hi; i++) pts[i].x = t;
+      if (startTerminal) pts.splice(1, 0, { x: t, y: py });
+      else pts[0].x = t;
+    } else if (hiEnd) {
+      const py = pts[n - 1].y;
+      for (let i = lo; i <= n - 2; i++) pts[i].x = t;
+      if (endTerminal) pts.splice(n - 1, 0, { x: t, y: py });
+      else pts[n - 1].x = t;
+    }
+  }
+  collapseCollinear(pts);
+  return t;
+}
+
+__exports.wireRunAt = wireRunAt;
+__exports.collapseCollinear = collapseCollinear;
+__exports.findRunLine = findRunLine;
+__exports.moveJunctionEndpoint = moveJunctionEndpoint;
+__exports.moveWireRun = moveWireRun;
 };
 
 __modules["src/core/router.js"] = function (__require, __exports) {
@@ -24378,312 +24698,6 @@ __exports.bodyClearanceSafe = bodyClearanceSafe;
 __exports.smartRoute = smartRoute;
 };
 
-__modules["src/core/wireedit.js"] = function (__require, __exports) {
-const { GRID, snap } = __require("src/core/grid.js");
-
-
-/**
- * Interactive re-routing of an explicit wire polyline by dragging a segment.
- * A route is an ordered list of grid points. By default a "run" is a maximal
- * run of consecutive collinear segments; callers may provide topology breaks
- * to treat aligned segments on either side of a terminal or junction
- * independently. Dragging a segment moves its bounded run perpendicularly.
- * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
- * omitted metadata uses terminal-endpoint behavior. `allowPastNeighbors` is
- * for reversible editor previews: it lets a run pass adjacent bends so a
- * later legal drop is reachable; the caller must validate before committing.
- *
- * Key behaviors:
- *  - By default the run may slide as far as an adjacent run; reaching it
- *    collapses the shared corner, and the now-invisible collinear vertex is
- *    removed.
- *  - By default the run never slides past a neighbour (no inverted folds);
- *    reversible previews may opt out until their final geometry is validated.
- *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
- *    wire with an added connector segment so the pin stays connected.
- *  - A standalone two-point bridge between two junctions moves both junction
- *    endpoints together; a standalone pin-to-pin run remains immovable.
- */
-
-/** Collinear run containing segment `seg`, stopping at optional topology
- * points. Topology breaks let adjacent aligned branch segments move
- * independently when a junction sits between them. */
-function wireRunAt(pts, seg, breaks = null) {
-  const n = pts.length;
-  const i = Math.max(1, Math.min(seg, n - 1));
-  const orient = pts[i - 1].y === pts[i].y ? 'h' : 'v';
-  const val = orient === 'h' ? pts[i].y : pts[i].x;
-  const same = (p) => (orient === 'h' ? p.y === val : p.x === val);
-  const isBreak = (p) => breaks?.has(`${p.x},${p.y}`);
-  let lo = i - 1;
-  let hi = i;
-  while (lo > 0 && same(pts[lo - 1]) && !isBreak(pts[lo])) lo--;
-  while (hi < n - 1 && same(pts[hi + 1]) && !isBreak(pts[hi])) hi++;
-  return { lo, hi, orient, val };
-}
-
-/** Drop consecutive duplicates and any middle point collinear with its
- * neighbours, in place. Endpoints (terminal pins) are always preserved.
- * Returns the new length.
- */
-function collapseCollinear(pts) {
-  let i = pts.length - 2;
-  while (i >= 1) {
-    const a = pts[i - 1];
-    const b = pts[i];
-    const c = pts[i + 1];
-    if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y) || (a.x === b.x && a.y === b.y)) {
-      pts.splice(i, 1);
-    }
-    i--;
-  }
-  return pts.length;
-}
-
-/** Index of a segment lying on the collinear run at perpendicular line `line`
- *  (a y for horizontal runs, an x for vertical runs), or -1 if none. */
-function findRunLine(pts, orient, line) {
-  for (let i = 1; i < pts.length; i++) {
-    const onLine = orient === 'h' ? pts[i].y === line : pts[i].x === line;
-    if (!onLine) continue;
-    const aligned = orient === 'h' ? pts[i - 1].y === pts[i].y : pts[i - 1].x === pts[i].x;
-    if (aligned) return i;
-  }
-  return -1;
-}
-
-/** Move one junction in a managed branch set and rebuild each incident branch
- * endpoint with a local orthogonal elbow when the old and new locations are not
- * collinear with its neighbour. The caller owns the net object; this pure
- * helper mutates `paths` and returns the replacement junction list. */
-function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpointInfo = null) {
-  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return junctions;
-  for (const path of paths || []) {
-    for (let i = 0; i < path.length; i++) {
-      const p = path[i];
-      if (p.x !== oldPoint.x || p.y !== oldPoint.y) continue;
-      const neighbor = i === 0 ? path[1] : path[i - 1];
-      const oldHorizontal = neighbor && neighbor.y === oldPoint.y;
-      const oldVertical = neighbor && neighbor.x === oldPoint.x;
-      const otherIndex = i === 0 ? 1 : i === path.length - 1 ? path.length - 2 : -1;
-      const otherMeta = otherIndex >= 0 && endpointInfo ? endpointInfo(path, otherIndex) : null;
-      p.x = newPoint.x;
-      p.y = newPoint.y;
-      if (neighbor && p.x !== neighbor.x && p.y !== neighbor.y) {
-        const candidates = oldHorizontal
-          ? [{ x: neighbor.x, y: newPoint.y }, { x: newPoint.x, y: neighbor.y }]
-          : oldVertical
-            ? [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }]
-            : [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }];
-        const same = (a, b) => a.x === b.x && a.y === b.y;
-        const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
-        const incoming = (q) => i === 0 ? step(q, neighbor) : step(neighbor, q);
-        const desired = otherMeta?.type === 'terminal' && otherMeta.dir
-          ? { x: -otherMeta.dir.x, y: -otherMeta.dir.y } : null;
-        const valid = candidates.filter((q) =>
-          !same(q, oldPoint) && !same(q, newPoint) && !same(q, neighbor)
-        );
-        const elbow = valid.find((q) =>
-          (!desired || (incoming(q).x === desired.x && incoming(q).y === desired.y))
-        );
-        if (elbow) {
-          path.splice(i === 0 ? 1 : i, 0, elbow);
-        } else if (desired) {
-          // Detour one extra grid cell outward from the terminal to preserve
-          // pin conformity without retaining the junction coordinate.
-          const sign = otherMeta.dir;
-          const distance = same({ x: neighbor.x + sign.x * GRID, y: neighbor.y + sign.y * GRID }, oldPoint) ? 2 : 1;
-          const pinLead = { x: neighbor.x + sign.x * GRID * distance, y: neighbor.y + sign.y * GRID * distance };
-          const detours = newPoint.x === pinLead.x || newPoint.y === pinLead.y ? [] : [
-            { x: newPoint.x, y: pinLead.y },
-            { x: pinLead.x, y: newPoint.y },
-          ];
-          const detour = detours.find((q) => !same(q, oldPoint) && !same(q, newPoint) && !same(q, pinLead));
-          const inserts = i === 0 ? [ ...(detour ? [detour] : []), pinLead ] : [ pinLead, ...(detour ? [detour] : []) ];
-          path.splice(i === 0 ? 1 : i, 0, ...inserts);
-        }
-      }
-    }
-  }
-  return (junctions || []).map((p) => (
-    p.x === oldPoint.x && p.y === oldPoint.y ? { ...newPoint } : p
-  ));
-}
-
-/**
- * Move the collinear run of orientation `orient` presently at perpendicular
- * line `line` to `target` (grid-snapped along the perpendicular axis).
- * `endpointMeta.runBounds` and `endpointMeta.breaks` may bound the run at
- * electrical topology points; otherwise the maximal run is used. The run may
- * slide as far as an adjacent run (reaching it collapses the shared corner)
- * but, by default, never past it (no inverted folds). Reversible previews may
- * set `allowPastNeighbors` and validate the resulting geometry on drop. Runs touching a terminal endpoint
- * keep that pin fixed and extend the wire with a connector segment.
- * `preserveDiagonalNeighbors` keeps a diagonal segment immediately before or
- * after an interior run fixed, adding a perpendicular connector at the old
- * corner instead of stretching the diagonal while the run moves.
- * `endpointMeta` is optional for compatibility with callers whose paths are
- * known to be terminal-ended: `{ start: { type }, end: { type } }`.
- * Returns the perpendicular line value the run actually ended on (== `line`
- * when nothing could move).
- */
-function moveWireRun(pts, orient, line, target, endpointMeta = null) {
-  const si = Number.isInteger(endpointMeta?.segment)
-    ? Math.max(1, Math.min(endpointMeta.segment, pts.length - 1))
-    : findRunLine(pts, orient, line);
-  if (si < 0) return line;
-  const run = wireRunAt(pts, si, endpointMeta?.breaks);
-  const forcedInterior = endpointMeta?.interiorRun === true;
-  const lo = endpointMeta?.runBounds?.lo ?? (forcedInterior ? 1 : run.lo);
-  const hi = endpointMeta?.runBounds?.hi ?? (forcedInterior ? pts.length - 2 : run.hi);
-  const n = pts.length;
-  const loEnd = lo === 0;
-  const hiEnd = hi === n - 1;
-  const startType = endpointMeta?.start?.type || 'terminal';
-  const endType = endpointMeta?.end?.type || 'terminal';
-  const startTerminal = startType === 'terminal';
-  const endTerminal = endType === 'terminal';
-  const val = line;
-  const nv = (idx) => (orient === 'h' ? pts[idx].y : pts[idx].x);
-  let lower = -Infinity;
-  let upper = Infinity;
-  if (!loEnd) {
-    const v = nv(lo - 1);
-    if (v < val) lower = Math.max(lower, v);
-    else upper = Math.min(upper, v);
-  }
-  if (!hiEnd) {
-    const v = nv(hi + 1);
-    if (v < val) lower = Math.max(lower, v);
-    else upper = Math.min(upper, v);
-  }
-  let t = snap(target);
-  if (!endpointMeta?.allowPastNeighbors) {
-    if (t < val) t = Math.max(t, lower);
-    else if (t > val) t = Math.min(t, upper);
-  }
-  if (t === val) return val;
-
-  if (!loEnd && !hiEnd) {
-    // Interior run: slide freely (possibly up to a neighbour to collapse).
-    const preserveDiagonals = endpointMeta?.preserveDiagonalNeighbors === true;
-    const diagonalStart = preserveDiagonals && pts[lo - 1] && pts[lo] &&
-      pts[lo - 1].x !== pts[lo].x && pts[lo - 1].y !== pts[lo].y
-      ? { ...pts[lo] } : null;
-    const diagonalEnd = preserveDiagonals && pts[hi] && pts[hi + 1] &&
-      pts[hi].x !== pts[hi + 1].x && pts[hi].y !== pts[hi + 1].y
-      ? { ...pts[hi] } : null;
-    for (let i = lo; i <= hi; i++) {
-      if (orient === 'h') pts[i].y = t;
-      else pts[i].x = t;
-    }
-    // Keep a mixed route's diagonal geometry literal. The inserted old corner
-    // is connected to the moved run by the perpendicular lead that a normal
-    // orthogonal bend would have stretched into the diagonal otherwise.
-    if (diagonalStart) pts.splice(lo, 0, diagonalStart);
-    if (diagonalEnd) pts.splice(hi + (diagonalStart ? 2 : 1), 0, diagonalEnd);
-    collapseCollinear(pts);
-    return t;
-  }
-
-  const boundedRun = !!endpointMeta?.runBounds;
-  const anchoredStart = boundedRun && loEnd && (startTerminal || startType === 'junction');
-  const anchoredEnd = boundedRun && hiEnd && (endTerminal || endType === 'junction');
-  if (anchoredStart || anchoredEnd) {
-    // A topology-bounded run moves without moving its electrical anchors.
-    // Keep each terminal/junction fixed and add connector legs at the ends;
-    // incident branches therefore remain stationary unless explicitly selected.
-    if (anchoredStart && anchoredEnd) {
-      const a = { ...pts[0] };
-      const b = { ...pts[n - 1] };
-      if (orient === 'h') {
-        for (let i = 1; i < n - 1; i++) pts[i].y = t;
-        pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
-      } else {
-        for (let i = 1; i < n - 1; i++) pts[i].x = t;
-        pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
-      }
-      return t;
-    }
-    if (anchoredStart) {
-      const p = { ...pts[0] };
-      if (orient === 'h') {
-        for (let i = 1; i <= hi; i++) pts[i].y = t;
-        pts.splice(1, 0, { x: p.x, y: t });
-      } else {
-        for (let i = 1; i <= hi; i++) pts[i].x = t;
-        pts.splice(1, 0, { x: t, y: p.y });
-      }
-      return t;
-    }
-    const p = { ...pts[n - 1] };
-    if (orient === 'h') {
-      for (let i = lo; i < n - 1; i++) pts[i].y = t;
-      pts.splice(n - 1, 0, { x: p.x, y: t });
-    } else {
-      for (let i = lo; i < n - 1; i++) pts[i].x = t;
-      pts.splice(n - 1, 0, { x: t, y: p.y });
-    }
-    return t;
-  }
-
-  // A standalone bridge is bounded by two real junctions rather than pins.
-  // Without run bounds, move the whole bridge.
-  if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
-    for (const p of pts) {
-      if (orient === 'h') p.y = t;
-      else p.x = t;
-    }
-    return t;
-  }
-
-  if (loEnd && hiEnd && startTerminal && endTerminal) {
-    if (!boundedRun) return val;
-    const a = { ...pts[0] };
-    const b = { ...pts[n - 1] };
-    if (orient === 'h') {
-      pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
-    } else {
-      pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
-    }
-    return t;
-  }
-  if (orient === 'h') {
-    if (loEnd && (!hiEnd || startTerminal)) {
-      const px = pts[0].x;
-      for (let i = 1; i <= hi; i++) pts[i].y = t;
-      if (startTerminal) pts.splice(1, 0, { x: px, y: t });
-      else pts[0].y = t;
-    } else if (hiEnd) {
-      const px = pts[n - 1].x;
-      for (let i = lo; i <= n - 2; i++) pts[i].y = t;
-      if (endTerminal) pts.splice(n - 1, 0, { x: px, y: t });
-      else pts[n - 1].y = t;
-    }
-  } else {
-    if (loEnd && (!hiEnd || startTerminal)) {
-      const py = pts[0].y;
-      for (let i = 1; i <= hi; i++) pts[i].x = t;
-      if (startTerminal) pts.splice(1, 0, { x: t, y: py });
-      else pts[0].x = t;
-    } else if (hiEnd) {
-      const py = pts[n - 1].y;
-      for (let i = lo; i <= n - 2; i++) pts[i].x = t;
-      if (endTerminal) pts.splice(n - 1, 0, { x: t, y: py });
-      else pts[n - 1].x = t;
-    }
-  }
-  collapseCollinear(pts);
-  return t;
-}
-
-__exports.wireRunAt = wireRunAt;
-__exports.collapseCollinear = collapseCollinear;
-__exports.findRunLine = findRunLine;
-__exports.moveJunctionEndpoint = moveJunctionEndpoint;
-__exports.moveWireRun = moveWireRun;
-};
-
 __modules["src/core/wiring.js"] = function (__require, __exports) {
 const { snap, GRID } = __require("src/core/grid.js");
 
@@ -25826,7 +25840,7 @@ const naturalCompare = new Intl.Collator(undefined, { numeric: true, sensitivity
 const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
     ['i / I / A', 'insert mode (fuzzy-search component and label placement)'],
-    ['w', 'wire mode: click terminals or points; Enter commits'],
+    ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal; Enter commits'],
     ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
     ['terminal letters', 'pick or complete a terminal connection while wiring'],
     ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
@@ -25897,8 +25911,8 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift while moving', 'lock a drag or ghost to the dominant horizontal or vertical direction'],
     ['r / Shift+r', 'rotate / mirror the component ghost'],
     ['Ctrl/Cmd+r', 'mirror the component ghost vertically'],
-    ['hold Ctrl/Cmd', 'symmetric placement: pin a mirror axis, move off it, place both halves'],
-    ['hold Ctrl/Cmd (wire)', 'symmetric wiring: mirror the draft about the axis and commit both'],
+    ['hold Alt', 'symmetric placement/copy: pin a mirror axis, move off it, and place both halves'],
+    ['hold Alt (wire)', 'snap the cursor to the nearest terminal while wiring'],
     ['Backspace', 'edit the search string or drop the ghost'],
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],
@@ -27066,6 +27080,24 @@ function worldAndCursorFromClient(clientX, clientY, rect, view) {
   return { world, cursor: { x: snap(world.x), y: snap(world.y) } };
 }
 
+/** Return the nearest candidate to a world point, preserving its fields and
+ * adding the measured distance. The editor uses this for terminal snapping;
+ * keeping it pure makes the "always snap to the nearest terminal" behavior
+ * testable without a browser surface. */
+function nearestPoint(point, candidates = []) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const candidate of candidates) {
+    if (!Number.isFinite(candidate?.x) || !Number.isFinite(candidate?.y)) continue;
+    const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { ...candidate };
+    }
+  }
+  return best ? { ...best, distance: bestDistance } : null;
+}
+
 /** Lock a pointer displacement to its dominant axis. */
 /** The mirror a symmetric placement takes, read from the cursor's own
  *  displacement out of the point symmetry was armed at: moving mostly sideways
@@ -27097,6 +27129,7 @@ __exports.shouldForwardCanvasMove = shouldForwardCanvasMove;
 __exports.shouldPanTouch = shouldPanTouch;
 __exports.isKeyboardSurfaceTarget = isKeyboardSurfaceTarget;
 __exports.worldAndCursorFromClient = worldAndCursorFromClient;
+__exports.nearestPoint = nearestPoint;
 __exports.symmetryOperation = symmetryOperation;
 __exports.constrainAxis = constrainAxis;
 };
@@ -27683,6 +27716,15 @@ const nmosb = createMos('nmosb', { bulk: true });
 __exports.nmosb = nmosb;
 };
 
+__modules["src/core/components/pmosb.js"] = function (__require, __exports) {
+const { createMos } = __require("src/core/components/mos.js");
+
+
+const pmosb = createMos('pmosb', { pmos: true, bulk: true });
+
+__exports.pmosb = pmosb;
+};
+
 __modules["src/core/components/npn.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -27719,15 +27761,6 @@ const npn = defineSymbol({
 });
 
 __exports.npn = npn;
-};
-
-__modules["src/core/components/pmosb.js"] = function (__require, __exports) {
-const { createMos } = __require("src/core/components/mos.js");
-
-
-const pmosb = createMos('pmosb', { pmos: true, bulk: true });
-
-__exports.pmosb = pmosb;
 };
 
 __modules["src/core/components/pnp.js"] = function (__require, __exports) {
@@ -31624,51 +31657,6 @@ __exports.approximateTopology = approximateTopology;
 __exports.buildTopologyIdentities = buildTopologyIdentities;
 };
 
-__modules["src/core/analysis/compact.js"] = function (__require, __exports) {
-const { add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js");
-
-
-/** Cancel local distributive identities without expanding a huge transfer. */
-function compactRational(value, ops) {
-  if (value?.kind !== 'rational' || value.budgetExceeded) return value;
-  const limit = 128;
-  const weight = (node) => 1 + (node.kind === 'rational' ? weight(node.numerator) + weight(node.denominator)
-    : node.kind === 'add' ? node.terms.reduce((sum, term) => sum + weight(term), 0)
-      : node.kind === 'multiply' ? node.factors.reduce((sum, factor) => sum + weight(factor), 0)
-        : node.kind === 'power' ? weight(node.base) : 0);
-  function terms(expression) {
-    ops.budget?.step();
-    if (expression.kind === 'add') {
-      const result = expression.terms.flatMap(terms);
-      if (result.length > limit) throw new RangeError('local expansion limit');
-      return result;
-    }
-    let factors;
-    if (expression.kind === 'multiply') factors = expression.factors;
-    else if (expression.kind === 'power' && expression.exponent >= 0 && expression.exponent <= 8) {
-      factors = Array(expression.exponent).fill(expression.base);
-    } else return [expression];
-    let result = [integer(1)];
-    for (const factor of factors) {
-      const next = terms(factor);
-      if (result.length * next.length > limit) throw new RangeError('local expansion limit');
-      result = result.flatMap((a) => next.map((b) => multiply(a, b)));
-    }
-    return result;
-  }
-  try {
-    const compact = rationalFunction(add(terms(value.numerator)), add(terms(value.denominator)), {
-      variable: value.variable, budget: ops.budget,
-    });
-    return weight(compact) <= weight(value) ? compact : value;
-  } catch {
-    return value;
-  }
-}
-
-__exports.compactRational = compactRational;
-};
-
 __modules["src/core/analysis/rational.js"] = function (__require, __exports) {
 const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
 const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
@@ -32471,6 +32459,51 @@ __exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
 __exports.INFINITY_NAMES = INFINITY_NAMES;
 };
 
+__modules["src/core/analysis/compact.js"] = function (__require, __exports) {
+const { add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js");
+
+
+/** Cancel local distributive identities without expanding a huge transfer. */
+function compactRational(value, ops) {
+  if (value?.kind !== 'rational' || value.budgetExceeded) return value;
+  const limit = 128;
+  const weight = (node) => 1 + (node.kind === 'rational' ? weight(node.numerator) + weight(node.denominator)
+    : node.kind === 'add' ? node.terms.reduce((sum, term) => sum + weight(term), 0)
+      : node.kind === 'multiply' ? node.factors.reduce((sum, factor) => sum + weight(factor), 0)
+        : node.kind === 'power' ? weight(node.base) : 0);
+  function terms(expression) {
+    ops.budget?.step();
+    if (expression.kind === 'add') {
+      const result = expression.terms.flatMap(terms);
+      if (result.length > limit) throw new RangeError('local expansion limit');
+      return result;
+    }
+    let factors;
+    if (expression.kind === 'multiply') factors = expression.factors;
+    else if (expression.kind === 'power' && expression.exponent >= 0 && expression.exponent <= 8) {
+      factors = Array(expression.exponent).fill(expression.base);
+    } else return [expression];
+    let result = [integer(1)];
+    for (const factor of factors) {
+      const next = terms(factor);
+      if (result.length * next.length > limit) throw new RangeError('local expansion limit');
+      result = result.flatMap((a) => next.map((b) => multiply(a, b)));
+    }
+    return result;
+  }
+  try {
+    const compact = rationalFunction(add(terms(value.numerator)), add(terms(value.denominator)), {
+      variable: value.variable, budget: ops.budget,
+    });
+    return weight(compact) <= weight(value) ? compact : value;
+  } catch {
+    return value;
+  }
+}
+
+__exports.compactRational = compactRational;
+};
+
 __modules["src/core/analysis/present.js"] = function (__require, __exports) {
 const { INFINITY_NAMES, ONE, isNumber, isZero, keyOf } = __require("src/core/analysis/rational.js");
 
@@ -33151,65 +33184,6 @@ __exports.provenQuotient = provenQuotient;
 __exports.provenSum = provenSum;
 };
 
-__modules["src/core/components/mos.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-const TERMINALS = [
-  { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
-  { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
-  { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
-];
-const BULK = { name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } };
-const BBOX = { x: -120, y: -80, w: 120, h: 160 };
-
-function mosGraphics(sourceArrow, bulk) {
-  const graphics = [
-    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
-    { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
-    { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
-    { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
-    // Channel-side stubs start inside the channel bar (like the drain), so the
-    // butt end never meets the bar edge and leaves an anti-aliased seam.
-    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
-    sourceArrow,
-  ];
-  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
-  return graphics;
-}
-
-/** Build one of the four MOS symbols without sharing mutable definition data. */
-function createMos(type, { pmos = false, bulk = false } = {}) {
-  return defineSymbol({
-    type,
-    description: bulk ? `${pmos ? 'PMOS' : 'NMOS'} transistor with bulk` : `${pmos ? 'PMOS' : 'NMOS'} Transistor`,
-    refPrefix: 'M',
-    terminals: [...TERMINALS, ...(bulk ? [BULK] : [])].map((terminal) => ({
-      ...terminal,
-      dir: { ...terminal.dir },
-    })),
-    // The reusable layout guide measures the conduction column, not the
-    // asymmetric bbox that extends toward the gate. This is symbol metadata,
-    // not a MOS-specific branch in the editor's guide/distribute tools.
-    layoutAnchorTerminals: ['d', 's'],
-    bbox: { ...BBOX },
-    graphics: mosGraphics(
-      pmos
-        ? { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' }
-        : { kind: 'polygon', points: [{ x: 0, y: 27.91 }, { x: -34.88, y: 11.63 }, { x: -34.88, y: 44.19 }], fill: 'foreground' },
-      bulk,
-    ),
-    textPos: { x: -26, y: -30, anchor: 'middle' },
-    refPos: null,
-    labelOffset: bulk ? { x: 40, y: -40 } : { x: 40, y: 0 },
-    ...(pmos ? { defaultMirrorY: true } : {}),
-    defaultValue: '',
-  });
-}
-
-__exports.createMos = createMos;
-};
-
 __modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
 const { GRID } = __require("src/core/grid.js");
 
@@ -33287,407 +33261,63 @@ __exports.markTerminalLeads = markTerminalLeads;
 __exports.validateSymbol = validateSymbol;
 };
 
-__modules["src/core/analysis/context.js"] = function (__require, __exports) {
-const { MOS_TYPES } = __require("src/core/analysis/shared.js");
-const { canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js");
+__modules["src/core/components/mos.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
 
+const TERMINALS = [
+  { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
+  { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
+  { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
+];
+const BULK = { name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } };
+const BBOX = { x: -120, y: -80, w: 120, h: 160 };
 
-const AC_GROUND = '@AC_GROUND';
-const REFERENCE_NAMES = new Set(['GND', 'VSS', 'VDD', 'VCM']);
-
-function diagnostic(code, message, details = {}) {
-  return { code, message, ...details };
-}
-
-function componentTerminalNet(circuit, component, term) {
-  return circuit.netOfTerminal({ comp: component.refdes, term });
-}
-
-function asValues(value) {
-  if (value == null || value === '') return [];
-  if (value instanceof Set || Array.isArray(value)) return [...value];
-  return [value];
-}
-
-function netByValue(circuit, value, role) {
-  if (value && typeof value === 'object' && value.comp && value.term) {
-    try {
-      const terminal = circuit.resolveTerm(value);
-      const net = circuit.netOfTerminal(terminal);
-      return net
-        ? { ok: true, net, value: `${value.comp}.${value.term}` }
-        : { ok: false, diagnostic: diagnostic('unconnected-port', `${role} terminal "${value.comp}.${value.term}" is not connected to a net`) };
-    } catch {
-      return { ok: false, diagnostic: diagnostic('unknown-terminal', `unknown ${role} terminal "${value.comp}.${value.term}"`) };
-    }
-  }
-  if (value && typeof value === 'object' && value.id) {
-    const net = circuit.nets.get(value.id);
-    return net
-      ? { ok: true, net, value: value.id }
-      : { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${value.id}"`) };
-  }
-
-  const raw = String(value ?? '').trim();
-  if (!raw) return { ok: false, diagnostic: diagnostic('missing-port', `${role} net is required`) };
-  const byId = circuit.nets.get(raw);
-  if (byId) return { ok: true, net: byId, value: raw };
-
-  if (raw.includes('.')) {
-    try {
-      const terminal = circuit.resolveTerm(raw);
-      const net = circuit.netOfTerminal(terminal);
-      return net
-        ? { ok: true, net, value: raw }
-        : { ok: false, diagnostic: diagnostic('unconnected-port', `${role} terminal "${raw}" is not connected to a net`) };
-    } catch {
-      return { ok: false, diagnostic: diagnostic('unknown-terminal', `unknown ${role} terminal "${raw}"`) };
-    }
-  }
-
-  const matches = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
-  // Several physical nets carrying one name are one node (a virtual
-  // connection), so the first of them answers for the whole group.
-  if (matches.length) return { ok: true, net: matches[0], value: raw };
-  return { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${raw}"`) };
-}
-
-function roleCandidates(circuit, role) {
-  const candidates = [];
-  const seen = new Set();
-  const add = (net) => {
-    if (net && !seen.has(net.id)) {
-      seen.add(net.id);
-      candidates.push(net);
-    }
-  };
-  for (const net of circuit.nets.values()) {
-    if (net.analysis?.role === role) add(net);
-  }
-  for (const component of circuit.components.values()) {
-    const typeMatches = role === 'input'
-      ? component.type === 'input'
-      : role === 'output' ? component.type === 'output' : false;
-    if (typeMatches || component.analysis?.role === role) {
-      add(componentTerminalNet(circuit, component, 'p'));
-    }
-  }
-  const namePattern = role === 'input'
-    ? /^(?:V_?IN|INPUT|IN)$/i
-    : /^(?:V_?OUT|OUTPUT|OUT)$/i;
-  if (candidates.length === 0) {
-    for (const net of circuit.nets.values()) {
-      if (namePattern.test(canonicalNetName(net.name))) add(net);
-    }
-  }
-  return candidates;
-}
-
-function resolveAnalysisPort(circuit, value, role) {
-  if (value != null && value !== '') return netByValue(circuit, value, role);
-  const all = roleCandidates(circuit, role);
-  // Candidates that share a name are one node, so they cannot be ambiguous.
-  const seenNames = new Set();
-  const candidates = all.filter((net) => {
-    const name = canonicalNetName(net.name);
-    if (!name || !seenNames.has(name)) {
-      if (name) seenNames.add(name);
-      return true;
-    }
-    return false;
-  });
-  if (candidates.length === 1) {
-    return { ok: true, net: candidates[0], value: candidates[0].id, inferred: true };
-  }
-  if (candidates.length > 1) {
-    return {
-      ok: false,
-      diagnostic: diagnostic('ambiguous-port', `${role} port is ambiguous`, {
-        candidates: candidates.map((net) => net.id),
-      }),
-    };
-  }
-  return { ok: false, diagnostic: diagnostic('missing-port', `${role} port is required`) };
-}
-
-function markerNet(circuit, component) {
-  const info = referenceMarkerInfo(component.type);
-  return info ? componentTerminalNet(circuit, component, info.terminal) : null;
-}
-
-function isGlobalReferenceNet(component, net) {
-  if (!net) return false;
-  const info = referenceMarkerInfo(component.type);
-  return !referenceMarkerIsLocal(component)
-    || isReferenceMarkerGlobalName(info, net.name)
-    || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase());
-}
-
-function collectAcGrounds(circuit, values = []) {
-  const ids = new Set();
-  const diagnostics = [];
-  for (const component of circuit.components.values()) {
-    if (!isReferenceMarker(component)) continue;
-    const net = markerNet(circuit, component);
-    if (isGlobalReferenceNet(component, net)) ids.add(net.id);
-  }
-  for (const net of circuit.nets.values()) {
-    if (net.analysis?.acGround === true || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase())) {
-      ids.add(net.id);
-    }
-  }
-  for (const value of asValues(values)) {
-    const result = netByValue(circuit, value, 'AC-ground');
-    if (result.ok) ids.add(result.net.id);
-    else diagnostics.push(result.diagnostic);
-  }
-  return { ids, diagnostics };
-}
-
-/** Physical nets that share a canonical name are one electrical node: a
- * deliberate virtual connection drawn without a wire (a repeated net label, or
- * a port and a label carrying the same name). Their drawable geometry stays
- * separate, so the solve maps every member onto the first one it meets. The
- * returned map holds only the members that are not the representative. */
-function virtualNetAliases(circuit) {
-  const byName = new Map();
-  for (const net of circuit.nets.values()) {
-    const name = canonicalNetName(net.name);
-    if (!name) continue;
-    // Case-sensitive, like `Circuit#logicallyConnected` and the net list's
-    // own grouping: one spelling is one name.
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push(net.id);
-  }
-  const aliases = new Map();
-  for (const ids of byName.values()) {
-    for (const id of ids.slice(1)) aliases.set(id, ids[0]);
-  }
-  return aliases;
-}
-
-/** A virtual connection to an AC-reference rail grounds every member of the
- * group, so the alias never points at a node the solve has removed. */
-function expandGroundsThroughAliases(acGroundIds, aliases) {
-  for (const [member, representative] of aliases) {
-    if (acGroundIds.has(member) || acGroundIds.has(representative)) {
-      acGroundIds.add(member);
-      acGroundIds.add(representative);
-    }
-  }
-  return acGroundIds;
-}
-
-/**
- * Take the chosen ports out of the AC-reference set, name group and all.
- * Returns whether anything was released, so an analysis that just removed its
- * own last reference can say so instead of solving a floating model.
- */
-function releasePortsFromReference(acGroundIds, results, aliases) {
-  const representative = (id) => aliases?.get(id) ?? id;
-  const ports = new Set(results.filter((result) => result?.ok).map((result) => representative(result.net.id)));
-  if (!ports.size || !acGroundIds.size) return false;
-  let released = false;
-  for (const id of [...acGroundIds]) {
-    if (!ports.has(representative(id))) continue;
-    acGroundIds.delete(id);
-    released = true;
-  }
-  return released;
-}
-
-function nodeForNet(netId, acGroundIds, aliases = null) {
-  if (!netId) return netId;
-  if (acGroundIds.has(netId)) return AC_GROUND;
-  return aliases?.get(netId) ?? netId;
-}
-
-function resolveMosBulk(circuit, component, acGroundIds = new Set(), aliases = null) {
-  if (!component || !MOS_TYPES.has(component.type)) {
-    return { ok: false, diagnostic: diagnostic('not-mos', 'bulk resolution requires a MOS component') };
-  }
-  const hasExplicitBulk = component.def?.terminals?.some(({ name }) => name === 'b');
-  if (hasExplicitBulk) {
-    const net = componentTerminalNet(circuit, component, 'b');
-    if (!net) {
-      return {
-        ok: false,
-        diagnostic: diagnostic('unconnected-bulk', `${component.refdes} has an unconnected explicit bulk terminal`, {
-          component: component.refdes,
-        }),
-      };
-    }
-    return {
-      ok: true,
-      component: component.refdes,
-      kind: 'explicit',
-      reference: null,
-      netId: net.id,
-      node: nodeForNet(net.id, acGroundIds, aliases),
-    };
-  }
-  const reference = component.type.startsWith('pmos') ? 'VDD' : 'VSS';
-  return {
-    ok: true,
-    component: component.refdes,
-    kind: 'implicit',
-    reference,
-    netId: null,
-    node: AC_GROUND,
-  };
-}
-
-function normalizedPort(result, role, acGroundIds, aliases) {
-  return {
-    role,
-    value: result.value,
-    netId: result.net.id,
-    name: canonicalNetName(result.net.name) || result.net.id,
-    node: nodeForNet(result.net.id, acGroundIds, aliases),
-    inferred: result.inferred === true,
-  };
-}
-
-function optionValue(options, role) {
-  const ports = options.ports || {};
-  if (role === 'input') return options.input ?? options.inputName ?? options.inputNet ?? ports.input;
-  return options.output ?? options.outputName ?? options.outputNet ?? options.target ?? options.targetName ?? ports.output;
-}
-
-function normalizeDeviceRegions(options) {
-  const source = options.deviceRegions
-    ?? options.modelOverrides
-    ?? options.models
-    ?? options.devices;
-  if (!source) return new Map();
-  const entries = source instanceof Map
-    ? [...source.entries()]
-    : Array.isArray(source)
-      ? source.map((entry) => {
-        const match = String(entry).trim().match(/^([^:=\s]+)\s*[:=]\s*(.+)$/);
-        return match ? [match[1], match[2]] : [];
-      }).filter(([refdes]) => refdes)
-      : typeof source === 'string'
-        ? source.split(',').map((entry) => {
-          const match = entry.trim().match(/^([^:=\s]+)\s*[:=]\s*(.+)$/);
-          return match ? [match[1], match[2]] : [];
-        }).filter(([refdes]) => refdes)
-        : Object.entries(source);
-  const regions = new Map();
-  for (const [refdes, value] of entries) {
-    if (value === undefined || value === null || value === '') continue;
-    regions.set(String(refdes), value && typeof value === 'object' ? { ...value } : { model: value });
-  }
-  return regions;
-}
-
-function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}) {
-  const normalizedOptions = typeof options === 'string'
-    ? { ...legacyOptions, output: options }
-    : options || {};
-  const diagnostics = [];
-  const inputResult = resolveAnalysisPort(circuit, optionValue(normalizedOptions, 'input'), 'input');
-  const outputResult = resolveAnalysisPort(circuit, optionValue(normalizedOptions, 'output'), 'output');
-  if (!inputResult.ok) diagnostics.push(inputResult.diagnostic);
-  if (!outputResult.ok) diagnostics.push(outputResult.diagnostic);
-
-  const groundValues = [
-    ...asValues(normalizedOptions.acGrounds ?? normalizedOptions.acGround),
-    ...asValues(normalizedOptions.reference),
+function mosGraphics(sourceArrow, bulk) {
+  const graphics = [
+    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
+    { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
+    { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
+    { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
+    // Channel-side stubs start inside the channel bar (like the drain), so the
+    // butt end never meets the bar edge and leaves an anti-aliased seam.
+    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
+    sourceArrow,
   ];
-  const groundResult = collectAcGrounds(circuit, groundValues);
-  diagnostics.push(...groundResult.diagnostics);
-  const virtualAliases = virtualNetAliases(circuit);
-  expandGroundsThroughAliases(groundResult.ids, virtualAliases);
-
-  // A node chosen as a port is driven or observed there, so it is not the AC
-  // reference any more. That is what lets a supply rail answer as an input --
-  // a supply-rejection query is an ordinary transfer between two nodes, with
-  // no rule of its own -- and the rail's whole name group leaves with it.
-  const released = releasePortsFromReference(groundResult.ids, [inputResult, outputResult], virtualAliases);
-  if (released && !groundResult.ids.size) {
-    diagnostics.push(diagnostic('missing-reference', 'the selected ports are the only AC reference: mark another net as AC ground'));
-  }
-
-  const input = inputResult.ok ? normalizedPort(inputResult, 'input', groundResult.ids, virtualAliases) : null;
-  const output = outputResult.ok ? normalizedPort(outputResult, 'output', groundResult.ids, virtualAliases) : null;
-  if (input && output && input.node === output.node) {
-    diagnostics.push(diagnostic('same-port', 'input and output must be different nodes', {
-      input: input.netId,
-      output: output.netId,
-    }));
-  }
-
-  const bulks = new Map();
-  for (const component of circuit.components.values()) {
-    if (!MOS_TYPES.has(component.type)) continue;
-    const result = resolveMosBulk(circuit, component, groundResult.ids, virtualAliases);
-    if (result.ok) bulks.set(component.refdes, result);
-    else diagnostics.push(result.diagnostic);
-  }
-
-  const nodeAliases = new Map([
-    ...virtualAliases,
-    ...[...groundResult.ids].map((id) => [id, AC_GROUND]),
-  ]);
-  const terminalNodes = new Map();
-  for (const component of circuit.components.values()) {
-    for (const terminal of component.def?.terminals || []) {
-      const net = componentTerminalNet(circuit, component, terminal.name);
-      if (net) terminalNodes.set(`${component.refdes}.${terminal.name}`, nodeForNet(net.id, groundResult.ids, virtualAliases));
-    }
-  }
-  const referenceNodes = new Map([
-    ['GND', AC_GROUND],
-    ['VSS', AC_GROUND],
-    ['VDD', AC_GROUND],
-    ['VCM', AC_GROUND],
-  ]);
-  // An implicit bulk names its rail rather than a net. When that rail is the
-  // port under test it is a live node, and the bulks must follow it there.
-  for (const port of [input, output]) {
-    if (!port) continue;
-    const rail = canonicalNetName(port.name).replace(/[_^]\{([^}]*)\}/g, '$1').toUpperCase();
-    if (!referenceNodes.has(rail)) continue;
-    referenceNodes.set(rail, port.node);
-    if (rail === 'VSS') referenceNodes.set('GND', port.node);
-    if (rail === 'GND') referenceNodes.set('VSS', port.node);
-  }
-  const deviceRegions = normalizeDeviceRegions(normalizedOptions);
-  // Device capacitances are opt-in: off unless the request asks for them, and
-  // a device's own attribute can still opt in or out on its own.
-  const parasitics = normalizedOptions.parasitics === true
-    || normalizedOptions.deviceCapacitances === true
-    || normalizedOptions.includeParasitics === true;
-  const ok = diagnostics.length === 0;
-  return {
-    ok,
-    input,
-    output,
-    acGround: AC_GROUND,
-    acGroundIds: groundResult.ids,
-    referenceIds: groundResult.ids,
-    nodeAliases,
-    terminalNodes,
-    referenceNodes,
-    referenceNets: referenceNodes,
-    rails: referenceNodes,
-    deviceRegions,
-    parasitics,
-    acGroundNode: AC_GROUND,
-    bulks,
-    diagnostics: { errors: diagnostics, warnings: [] },
-    error: ok ? null : diagnostics.map(({ message }) => message).join('; '),
-  };
+  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
+  return graphics;
 }
 
-__exports.resolveAnalysisPort = resolveAnalysisPort;
-__exports.collectAcGrounds = collectAcGrounds;
-__exports.virtualNetAliases = virtualNetAliases;
-__exports.resolveMosBulk = resolveMosBulk;
-__exports.resolveAnalysisContext = resolveAnalysisContext;
-__exports.AC_GROUND = AC_GROUND;
+/** Build one of the four MOS symbols without sharing mutable definition data. */
+function createMos(type, { pmos = false, bulk = false } = {}) {
+  return defineSymbol({
+    type,
+    description: bulk ? `${pmos ? 'PMOS' : 'NMOS'} transistor with bulk` : `${pmos ? 'PMOS' : 'NMOS'} Transistor`,
+    refPrefix: 'M',
+    terminals: [...TERMINALS, ...(bulk ? [BULK] : [])].map((terminal) => ({
+      ...terminal,
+      dir: { ...terminal.dir },
+    })),
+    // The reusable layout guide measures the conduction column, not the
+    // asymmetric bbox that extends toward the gate. This is symbol metadata,
+    // not a MOS-specific branch in the editor's guide/distribute tools.
+    layoutAnchorTerminals: ['d', 's'],
+    bbox: { ...BBOX },
+    graphics: mosGraphics(
+      pmos
+        ? { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' }
+        : { kind: 'polygon', points: [{ x: 0, y: 27.91 }, { x: -34.88, y: 11.63 }, { x: -34.88, y: 44.19 }], fill: 'foreground' },
+      bulk,
+    ),
+    textPos: { x: -26, y: -30, anchor: 'middle' },
+    refPos: null,
+    labelOffset: bulk ? { x: 40, y: -40 } : { x: 40, y: 0 },
+    ...(pmos ? { defaultMirrorY: true } : {}),
+    defaultValue: '',
+  });
+}
+
+__exports.createMos = createMos;
 };
 
 __modules["src/core/analysis/devices.js"] = function (__require, __exports) {
@@ -34320,6 +33950,409 @@ function coupledSubgraph(primitives = [], roots = [], options = {}) {
 
 __exports.splitAtNode = splitAtNode;
 __exports.coupledSubgraph = coupledSubgraph;
+};
+
+__modules["src/core/analysis/context.js"] = function (__require, __exports) {
+const { MOS_TYPES } = __require("src/core/analysis/shared.js");
+const { canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js");
+
+
+
+const AC_GROUND = '@AC_GROUND';
+const REFERENCE_NAMES = new Set(['GND', 'VSS', 'VDD', 'VCM']);
+
+function diagnostic(code, message, details = {}) {
+  return { code, message, ...details };
+}
+
+function componentTerminalNet(circuit, component, term) {
+  return circuit.netOfTerminal({ comp: component.refdes, term });
+}
+
+function asValues(value) {
+  if (value == null || value === '') return [];
+  if (value instanceof Set || Array.isArray(value)) return [...value];
+  return [value];
+}
+
+function netByValue(circuit, value, role) {
+  if (value && typeof value === 'object' && value.comp && value.term) {
+    try {
+      const terminal = circuit.resolveTerm(value);
+      const net = circuit.netOfTerminal(terminal);
+      return net
+        ? { ok: true, net, value: `${value.comp}.${value.term}` }
+        : { ok: false, diagnostic: diagnostic('unconnected-port', `${role} terminal "${value.comp}.${value.term}" is not connected to a net`) };
+    } catch {
+      return { ok: false, diagnostic: diagnostic('unknown-terminal', `unknown ${role} terminal "${value.comp}.${value.term}"`) };
+    }
+  }
+  if (value && typeof value === 'object' && value.id) {
+    const net = circuit.nets.get(value.id);
+    return net
+      ? { ok: true, net, value: value.id }
+      : { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${value.id}"`) };
+  }
+
+  const raw = String(value ?? '').trim();
+  if (!raw) return { ok: false, diagnostic: diagnostic('missing-port', `${role} net is required`) };
+  const byId = circuit.nets.get(raw);
+  if (byId) return { ok: true, net: byId, value: raw };
+
+  if (raw.includes('.')) {
+    try {
+      const terminal = circuit.resolveTerm(raw);
+      const net = circuit.netOfTerminal(terminal);
+      return net
+        ? { ok: true, net, value: raw }
+        : { ok: false, diagnostic: diagnostic('unconnected-port', `${role} terminal "${raw}" is not connected to a net`) };
+    } catch {
+      return { ok: false, diagnostic: diagnostic('unknown-terminal', `unknown ${role} terminal "${raw}"`) };
+    }
+  }
+
+  const matches = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
+  // Several physical nets carrying one name are one node (a virtual
+  // connection), so the first of them answers for the whole group.
+  if (matches.length) return { ok: true, net: matches[0], value: raw };
+  return { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${raw}"`) };
+}
+
+function roleCandidates(circuit, role) {
+  const candidates = [];
+  const seen = new Set();
+  const add = (net) => {
+    if (net && !seen.has(net.id)) {
+      seen.add(net.id);
+      candidates.push(net);
+    }
+  };
+  for (const net of circuit.nets.values()) {
+    if (net.analysis?.role === role) add(net);
+  }
+  for (const component of circuit.components.values()) {
+    const typeMatches = role === 'input'
+      ? component.type === 'input'
+      : role === 'output' ? component.type === 'output' : false;
+    if (typeMatches || component.analysis?.role === role) {
+      add(componentTerminalNet(circuit, component, 'p'));
+    }
+  }
+  const namePattern = role === 'input'
+    ? /^(?:V_?IN|INPUT|IN)$/i
+    : /^(?:V_?OUT|OUTPUT|OUT)$/i;
+  if (candidates.length === 0) {
+    for (const net of circuit.nets.values()) {
+      if (namePattern.test(canonicalNetName(net.name))) add(net);
+    }
+  }
+  return candidates;
+}
+
+function resolveAnalysisPort(circuit, value, role) {
+  if (value != null && value !== '') return netByValue(circuit, value, role);
+  const all = roleCandidates(circuit, role);
+  // Candidates that share a name are one node, so they cannot be ambiguous.
+  const seenNames = new Set();
+  const candidates = all.filter((net) => {
+    const name = canonicalNetName(net.name);
+    if (!name || !seenNames.has(name)) {
+      if (name) seenNames.add(name);
+      return true;
+    }
+    return false;
+  });
+  if (candidates.length === 1) {
+    return { ok: true, net: candidates[0], value: candidates[0].id, inferred: true };
+  }
+  if (candidates.length > 1) {
+    return {
+      ok: false,
+      diagnostic: diagnostic('ambiguous-port', `${role} port is ambiguous`, {
+        candidates: candidates.map((net) => net.id),
+      }),
+    };
+  }
+  return { ok: false, diagnostic: diagnostic('missing-port', `${role} port is required`) };
+}
+
+function markerNet(circuit, component) {
+  const info = referenceMarkerInfo(component.type);
+  return info ? componentTerminalNet(circuit, component, info.terminal) : null;
+}
+
+function isGlobalReferenceNet(component, net) {
+  if (!net) return false;
+  const info = referenceMarkerInfo(component.type);
+  return !referenceMarkerIsLocal(component)
+    || isReferenceMarkerGlobalName(info, net.name)
+    || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase());
+}
+
+function collectAcGrounds(circuit, values = []) {
+  const ids = new Set();
+  const diagnostics = [];
+  for (const component of circuit.components.values()) {
+    if (!isReferenceMarker(component)) continue;
+    const net = markerNet(circuit, component);
+    if (isGlobalReferenceNet(component, net)) ids.add(net.id);
+  }
+  for (const net of circuit.nets.values()) {
+    if (net.analysis?.acGround === true || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase())) {
+      ids.add(net.id);
+    }
+  }
+  for (const value of asValues(values)) {
+    const result = netByValue(circuit, value, 'AC-ground');
+    if (result.ok) ids.add(result.net.id);
+    else diagnostics.push(result.diagnostic);
+  }
+  return { ids, diagnostics };
+}
+
+/** Physical nets that share a canonical name are one electrical node: a
+ * deliberate virtual connection drawn without a wire (a repeated net label, or
+ * a port and a label carrying the same name). Their drawable geometry stays
+ * separate, so the solve maps every member onto the first one it meets. The
+ * returned map holds only the members that are not the representative. */
+function virtualNetAliases(circuit) {
+  const byName = new Map();
+  for (const net of circuit.nets.values()) {
+    const name = canonicalNetName(net.name);
+    if (!name) continue;
+    // Case-sensitive, like `Circuit#logicallyConnected` and the net list's
+    // own grouping: one spelling is one name.
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(net.id);
+  }
+  const aliases = new Map();
+  for (const ids of byName.values()) {
+    for (const id of ids.slice(1)) aliases.set(id, ids[0]);
+  }
+  return aliases;
+}
+
+/** A virtual connection to an AC-reference rail grounds every member of the
+ * group, so the alias never points at a node the solve has removed. */
+function expandGroundsThroughAliases(acGroundIds, aliases) {
+  for (const [member, representative] of aliases) {
+    if (acGroundIds.has(member) || acGroundIds.has(representative)) {
+      acGroundIds.add(member);
+      acGroundIds.add(representative);
+    }
+  }
+  return acGroundIds;
+}
+
+/**
+ * Take the chosen ports out of the AC-reference set, name group and all.
+ * Returns whether anything was released, so an analysis that just removed its
+ * own last reference can say so instead of solving a floating model.
+ */
+function releasePortsFromReference(acGroundIds, results, aliases) {
+  const representative = (id) => aliases?.get(id) ?? id;
+  const ports = new Set(results.filter((result) => result?.ok).map((result) => representative(result.net.id)));
+  if (!ports.size || !acGroundIds.size) return false;
+  let released = false;
+  for (const id of [...acGroundIds]) {
+    if (!ports.has(representative(id))) continue;
+    acGroundIds.delete(id);
+    released = true;
+  }
+  return released;
+}
+
+function nodeForNet(netId, acGroundIds, aliases = null) {
+  if (!netId) return netId;
+  if (acGroundIds.has(netId)) return AC_GROUND;
+  return aliases?.get(netId) ?? netId;
+}
+
+function resolveMosBulk(circuit, component, acGroundIds = new Set(), aliases = null) {
+  if (!component || !MOS_TYPES.has(component.type)) {
+    return { ok: false, diagnostic: diagnostic('not-mos', 'bulk resolution requires a MOS component') };
+  }
+  const hasExplicitBulk = component.def?.terminals?.some(({ name }) => name === 'b');
+  if (hasExplicitBulk) {
+    const net = componentTerminalNet(circuit, component, 'b');
+    if (!net) {
+      return {
+        ok: false,
+        diagnostic: diagnostic('unconnected-bulk', `${component.refdes} has an unconnected explicit bulk terminal`, {
+          component: component.refdes,
+        }),
+      };
+    }
+    return {
+      ok: true,
+      component: component.refdes,
+      kind: 'explicit',
+      reference: null,
+      netId: net.id,
+      node: nodeForNet(net.id, acGroundIds, aliases),
+    };
+  }
+  const reference = component.type.startsWith('pmos') ? 'VDD' : 'VSS';
+  return {
+    ok: true,
+    component: component.refdes,
+    kind: 'implicit',
+    reference,
+    netId: null,
+    node: AC_GROUND,
+  };
+}
+
+function normalizedPort(result, role, acGroundIds, aliases) {
+  return {
+    role,
+    value: result.value,
+    netId: result.net.id,
+    name: canonicalNetName(result.net.name) || result.net.id,
+    node: nodeForNet(result.net.id, acGroundIds, aliases),
+    inferred: result.inferred === true,
+  };
+}
+
+function optionValue(options, role) {
+  const ports = options.ports || {};
+  if (role === 'input') return options.input ?? options.inputName ?? options.inputNet ?? ports.input;
+  return options.output ?? options.outputName ?? options.outputNet ?? options.target ?? options.targetName ?? ports.output;
+}
+
+function normalizeDeviceRegions(options) {
+  const source = options.deviceRegions
+    ?? options.modelOverrides
+    ?? options.models
+    ?? options.devices;
+  if (!source) return new Map();
+  const entries = source instanceof Map
+    ? [...source.entries()]
+    : Array.isArray(source)
+      ? source.map((entry) => {
+        const match = String(entry).trim().match(/^([^:=\s]+)\s*[:=]\s*(.+)$/);
+        return match ? [match[1], match[2]] : [];
+      }).filter(([refdes]) => refdes)
+      : typeof source === 'string'
+        ? source.split(',').map((entry) => {
+          const match = entry.trim().match(/^([^:=\s]+)\s*[:=]\s*(.+)$/);
+          return match ? [match[1], match[2]] : [];
+        }).filter(([refdes]) => refdes)
+        : Object.entries(source);
+  const regions = new Map();
+  for (const [refdes, value] of entries) {
+    if (value === undefined || value === null || value === '') continue;
+    regions.set(String(refdes), value && typeof value === 'object' ? { ...value } : { model: value });
+  }
+  return regions;
+}
+
+function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}) {
+  const normalizedOptions = typeof options === 'string'
+    ? { ...legacyOptions, output: options }
+    : options || {};
+  const diagnostics = [];
+  const inputResult = resolveAnalysisPort(circuit, optionValue(normalizedOptions, 'input'), 'input');
+  const outputResult = resolveAnalysisPort(circuit, optionValue(normalizedOptions, 'output'), 'output');
+  if (!inputResult.ok) diagnostics.push(inputResult.diagnostic);
+  if (!outputResult.ok) diagnostics.push(outputResult.diagnostic);
+
+  const groundValues = [
+    ...asValues(normalizedOptions.acGrounds ?? normalizedOptions.acGround),
+    ...asValues(normalizedOptions.reference),
+  ];
+  const groundResult = collectAcGrounds(circuit, groundValues);
+  diagnostics.push(...groundResult.diagnostics);
+  const virtualAliases = virtualNetAliases(circuit);
+  expandGroundsThroughAliases(groundResult.ids, virtualAliases);
+
+  // A node chosen as a port is driven or observed there, so it is not the AC
+  // reference any more. That is what lets a supply rail answer as an input --
+  // a supply-rejection query is an ordinary transfer between two nodes, with
+  // no rule of its own -- and the rail's whole name group leaves with it.
+  const released = releasePortsFromReference(groundResult.ids, [inputResult, outputResult], virtualAliases);
+  if (released && !groundResult.ids.size) {
+    diagnostics.push(diagnostic('missing-reference', 'the selected ports are the only AC reference: mark another net as AC ground'));
+  }
+
+  const input = inputResult.ok ? normalizedPort(inputResult, 'input', groundResult.ids, virtualAliases) : null;
+  const output = outputResult.ok ? normalizedPort(outputResult, 'output', groundResult.ids, virtualAliases) : null;
+  if (input && output && input.node === output.node) {
+    diagnostics.push(diagnostic('same-port', 'input and output must be different nodes', {
+      input: input.netId,
+      output: output.netId,
+    }));
+  }
+
+  const bulks = new Map();
+  for (const component of circuit.components.values()) {
+    if (!MOS_TYPES.has(component.type)) continue;
+    const result = resolveMosBulk(circuit, component, groundResult.ids, virtualAliases);
+    if (result.ok) bulks.set(component.refdes, result);
+    else diagnostics.push(result.diagnostic);
+  }
+
+  const nodeAliases = new Map([
+    ...virtualAliases,
+    ...[...groundResult.ids].map((id) => [id, AC_GROUND]),
+  ]);
+  const terminalNodes = new Map();
+  for (const component of circuit.components.values()) {
+    for (const terminal of component.def?.terminals || []) {
+      const net = componentTerminalNet(circuit, component, terminal.name);
+      if (net) terminalNodes.set(`${component.refdes}.${terminal.name}`, nodeForNet(net.id, groundResult.ids, virtualAliases));
+    }
+  }
+  const referenceNodes = new Map([
+    ['GND', AC_GROUND],
+    ['VSS', AC_GROUND],
+    ['VDD', AC_GROUND],
+    ['VCM', AC_GROUND],
+  ]);
+  // An implicit bulk names its rail rather than a net. When that rail is the
+  // port under test it is a live node, and the bulks must follow it there.
+  for (const port of [input, output]) {
+    if (!port) continue;
+    const rail = canonicalNetName(port.name).replace(/[_^]\{([^}]*)\}/g, '$1').toUpperCase();
+    if (!referenceNodes.has(rail)) continue;
+    referenceNodes.set(rail, port.node);
+    if (rail === 'VSS') referenceNodes.set('GND', port.node);
+    if (rail === 'GND') referenceNodes.set('VSS', port.node);
+  }
+  const deviceRegions = normalizeDeviceRegions(normalizedOptions);
+  // Device capacitances are opt-in: off unless the request asks for them, and
+  // a device's own attribute can still opt in or out on its own.
+  const parasitics = normalizedOptions.parasitics === true
+    || normalizedOptions.deviceCapacitances === true
+    || normalizedOptions.includeParasitics === true;
+  const ok = diagnostics.length === 0;
+  return {
+    ok,
+    input,
+    output,
+    acGround: AC_GROUND,
+    acGroundIds: groundResult.ids,
+    referenceIds: groundResult.ids,
+    nodeAliases,
+    terminalNodes,
+    referenceNodes,
+    referenceNets: referenceNodes,
+    rails: referenceNodes,
+    deviceRegions,
+    parasitics,
+    acGroundNode: AC_GROUND,
+    bulks,
+    diagnostics: { errors: diagnostics, warnings: [] },
+    error: ok ? null : diagnostics.map(({ message }) => message).join('; '),
+  };
+}
+
+__exports.resolveAnalysisPort = resolveAnalysisPort;
+__exports.collectAcGrounds = collectAcGrounds;
+__exports.virtualNetAliases = virtualNetAliases;
+__exports.resolveMosBulk = resolveMosBulk;
+__exports.resolveAnalysisContext = resolveAnalysisContext;
+__exports.AC_GROUND = AC_GROUND;
 };
 
 __modules["src/core/analysis/mna.js"] = function (__require, __exports) {

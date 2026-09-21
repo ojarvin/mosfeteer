@@ -118,6 +118,24 @@ export function worldAndCursorFromClient(clientX, clientY, rect, view) {
   return { world, cursor: { x: snap(world.x), y: snap(world.y) } };
 }
 
+/** Return the nearest candidate to a world point, preserving its fields and
+ * adding the measured distance. The editor uses this for terminal snapping;
+ * keeping it pure makes the "always snap to the nearest terminal" behavior
+ * testable without a browser surface. */
+export function nearestPoint(point, candidates = []) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const candidate of candidates) {
+    if (!Number.isFinite(candidate?.x) || !Number.isFinite(candidate?.y)) continue;
+    const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { ...candidate };
+    }
+  }
+  return best ? { ...best, distance: bestDistance } : null;
+}
+
 /** Lock a pointer displacement to its dominant axis. */
 /** The mirror a symmetric placement takes, read from the cursor's own
  *  displacement out of the point symmetry was armed at: moving mostly sideways

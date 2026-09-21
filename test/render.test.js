@@ -765,16 +765,6 @@ test('a mirrored pair is dimensioned from its axis in grid cells', () => {
   assert.doesNotMatch(onAxis, /symmetry-offset/);
 });
 
-test('a symmetric wire draft is dimensioned along the axis it mirrors about', () => {
-  const circuit = new Circuit();
-  const overlay = editorOverlay(circuit, {
-    wirePreview: { from: { x: 0, y: 0 }, pts: [{ x: 0, y: 0 }, { x: 0, y: 160 }] },
-    symmetryAxis: { operation: 'mirrorY', pin: { x: 0, y: 0 }, from: { x: 0, y: 160 } },
-  });
-  assert.match(overlay, /symmetry-offset/);
-  assert.equal(overlay.match(/>4 cells</g)?.length, 2);
-});
-
 test('a placement midpoint is referenced from the ghost to the full-pitch ruler', () => {
   const overlay = editorOverlay(new Circuit(), {
     placementGuide: {
@@ -796,4 +786,17 @@ test('a placement midpoint is referenced from the ghost to the full-pitch ruler'
   });
   assert.match(overlay, /class="placement-halfway-reference"/);
   assert.match(overlay, />6 cells</);
+});
+
+test('wire mode enlarges terminal markers and emphasizes the Alt snap target', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  const overlay = editorOverlay(circuit, {
+    wireMode: true,
+    cursor: { x: -80, y: 0 },
+    terminalSnapTarget: { x: -80, y: 0 },
+  });
+  assert.match(overlay, /class="wire-snap-target"[^>]+r="15"/);
+  assert.match(overlay, /class="wire-snap-target"[^>]+r="12"/);
+  assert.match(overlay, /r="8" fill="var\(--paper, #fff\)"/);
 });
