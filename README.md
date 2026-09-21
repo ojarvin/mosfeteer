@@ -49,8 +49,11 @@ The launcher starts a small local server and opens the editor in an app-style Ch
 The checked-in `browser-only/` folder is a static release that does not need
 Node, npm, or a local server. Double-click [`browser-only/index.html`](browser-only/index.html)
 to open it in a browser. Open and Save use browser file pickers/downloads;
-documents are cached locally for the document list. The CLI, server workspace
-browser, live file sync, and PDF export are intentionally omitted in this mode.
+documents are cached locally for the document list, and **Forget from browser…**
+removes a stale cached entry without deleting a downloaded file. SVG export
+downloads directly; PNG export uses the browser's save picker when available. The CLI,
+server workspace browser, live file sync, and PDF export are intentionally
+omitted in this mode.
 
 Developers can regenerate the release with `node scripts/build_browser_only.mjs`
 (or `npm run browser-only`).
@@ -64,7 +67,7 @@ Each schematic is one self-contained `.json` file. You can keep it anywhere and 
 - **Drop** a `.json` file (for example, an email attachment) onto the window to open a copy. Saving it puts the copy in your workspace.
 - If a file changes on disk (for example, after `git pull` or an edit by a coworker on a shared drive), an open document with no unsaved changes reloads automatically.
 - `node launch.mjs path/to/amp.json` opens a document directly.
-- **Export** writes SVG, PDF, and 4× PNG files into a folder you choose (by default, the document's own folder). PDFs are vector files printed by a Chrome, Chromium, Edge, or Brave install found on your machine; without one, the PDF contains the high-resolution image instead.
+- **Export** writes SVG, PDF, and 3× PNG files into a folder you choose (by default, your OS Pictures folder in Node mode). Press Ctrl/Cmd+E to open the export dialog. PDFs are vector files printed by a Chrome, Chromium, Edge, or Brave install found on your machine; without one, the PDF contains the high-resolution image instead.
 
 ## Development
 

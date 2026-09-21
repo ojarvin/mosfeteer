@@ -25,6 +25,18 @@ test('grid lines use the ordinary style throughout', () => {
   assert.match(svg, /class="grid-line"[^>]+x1="40"/);
 });
 
+test('export padding leaves a safety margin around measured label bounds', () => {
+  const c = new Circuit();
+  c.addLabel({ text: '$$Z_{out} = r_{o1}$$', math: true, x: 0, y: 0 });
+  const viewBox = (svg) => svg.match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
+  const normal = viewBox(svgString(c, { padding: 0 }));
+  const padded = viewBox(svgString(c, { padding: 40 }));
+  assert.equal(padded[2], normal[2] + 80);
+  assert.equal(padded[3], normal[3] + 80);
+  assert.equal(padded[0], normal[0] - 40);
+  assert.equal(padded[1], normal[1] - 40);
+});
+
 test('wires and pin leads share one square-capped ink path', () => {
   assert.match(strokeAttrs('unknown'), /stroke-linecap="flat"/);
   assert.match(strokeAttrs('unknown'), /stroke-linejoin="miter"/);

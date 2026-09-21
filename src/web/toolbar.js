@@ -200,6 +200,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+S', 'save'],
     ['Ctrl/Cmd+Shift+S', 'save as: choose a folder and name'],
     ['Ctrl/Cmd+O', 'open a document file from any folder'],
+    ['Ctrl/Cmd+E', 'open the export dialog'],
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+x', 'check / save without checking'],
     ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],

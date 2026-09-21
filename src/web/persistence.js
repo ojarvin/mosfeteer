@@ -17,6 +17,15 @@ export function validDocumentName(value) {
 const BROWSER_DOCUMENTS_KEY = 'mosfeteer:browser-documents';
 const BROWSER_DOWNLOADS = 'Browser downloads';
 
+/** Return the initial export destination for the active persistence mode. */
+export function defaultExportDirectory(workspaceState = {}, { browserOnly = false } = {}) {
+  if (browserOnly) return workspaceState.workspace || BROWSER_DOWNLOADS;
+  const home = String(workspaceState.home || '').trim();
+  if (!home) return workspaceState.workspace || '';
+  const separator = workspaceState.sep || '/';
+  return home.endsWith(separator) ? `${home}Pictures` : `${home}${separator}Pictures`;
+}
+
 function browserOnlyRequested(location = globalThis.location) {
   if (!location) return false;
   try {
@@ -71,6 +80,12 @@ function makeDownload(download, contents, name, type) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function writeFileHandle(handle, contents) {
+  const writable = await handle.createWritable();
+  await writable.write(contents);
+  await writable.close();
 }
 
 function dataUrlBlob(dataUrl) {
@@ -203,6 +218,21 @@ export function createBrowserPersistenceAdapter({
     browserOnly: true,
     liveSync: false,
     supportedExportFormats: new Set(['svg', 'png']),
+    /** Reserve a native save target before PNG rasterization loses user activation. */
+    prepareExport: async ({ name, formats = [] } = {}) => {
+      if (!formats.includes('png') || download || typeof windowImpl?.showSaveFilePicker !== 'function') return null;
+      try {
+        const handle = await windowImpl.showSaveFilePicker({
+          suggestedName: `${validDocumentName(name) || 'circuit'}.png`,
+          types: [{ description: 'PNG image', accept: { 'image/png': ['.png'] } }],
+        });
+        return { pngHandle: handle };
+      } catch (error) {
+        if (error?.name === 'AbortError') throw Object.assign(new Error('save canceled'), { code: 'canceled' });
+        if (error?.name !== 'NotSupportedError' && error?.name !== 'SecurityError') throw error;
+        return null;
+      }
+    },
     workspace,
     setWorkspace: workspace,
     browse: async () => ({ dir: BROWSER_DOWNLOADS, entries: [], parent: null, home: '', workspace: BROWSER_DOWNLOADS }),
@@ -224,8 +254,8 @@ export function createBrowserPersistenceAdapter({
     },
     save,
     delete: async (path) => {
-      const record = records.get(path);
-      if (record?.handle?.remove) await record.handle.remove();
+      // Browser-only cleanup forgets the cached entry; it never deletes a
+      // disk file, including one represented by a native file handle.
       records.delete(path);
       const next = {};
       for (const value of records.values()) next[value.name] = value.state;
@@ -235,7 +265,7 @@ export function createBrowserPersistenceAdapter({
     reveal: async () => { throw new Error('the browser controls the download location'); },
     active: async () => ({ active: '', path: '' }),
     heartbeat: async () => {},
-    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '' }) => {
+    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '' }, { prepared = null } = {}) => {
       const supported = formats.filter((format) => ['svg', 'png'].includes(format));
       const unsupported = formats.filter((format) => !['svg', 'png'].includes(format));
       if (unsupported.length) throw Object.assign(new Error(`browser-only export does not support: ${unsupported.join(', ')}`), { code: 'unsupported-format' });
@@ -247,7 +277,9 @@ export function createBrowserPersistenceAdapter({
       }
       if (supported.includes('png')) {
         const fileName = `${name}.png`;
-        makeDownload(download, dataUrlBlob(png), fileName, 'image/png');
+        const image = dataUrlBlob(png);
+        if (prepared?.pngHandle) await writeFileHandle(prepared.pngHandle, image);
+        else makeDownload(download, image, fileName, 'image/png');
         paths.push(`${dir}/${fileName}`);
       }
       return { dir, paths, notes: ['Files were downloaded by the browser.'] };

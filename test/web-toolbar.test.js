@@ -116,6 +116,10 @@ test('image clipboard shortcut is discoverable once in each editor keymap', () =
   assert.match(help, /copy selection \(or whole drawing\) as an image for other apps/);
 });
 
+test('export shortcut is discoverable in the editor keymap', () => {
+  assert.match(editorKeymapText(), /Ctrl\/Cmd\+E.*open the export dialog/);
+});
+
 test('recent placements keep one entry each, newest first, within the limit', () => {
   let recent = [];
   for (const type of ['resistor', 'nmos', 'pmos']) recent = withRecentType(recent, type);

@@ -6,6 +6,10 @@ import { junctionPoints, pointOnPath } from './wiring.js';
 
 export const DRAWING_EXPORT_OPTIONS = Object.freeze({
   grid: false, terminals: false, junctions: false, background: true, netNames: true,
+  // Leave room for browser MathML glyphs whose ink can extend beyond the
+  // measured foreignObject box. The model bounds still determine placement;
+  // this is only the final export safety margin.
+  padding: GRID,
 });
 
 function schematicSubset(circuit, selection) {

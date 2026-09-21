@@ -35,7 +35,7 @@ import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as 
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
 import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
-import { createPersistenceAdapter, validDocumentName } from './persistence.js';
+import { createPersistenceAdapter, defaultExportDirectory, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
@@ -314,6 +314,15 @@ function configureBrowserOnlyUi() {
   // native file pickers and downloads instead of pretending that a browser can
   // browse or reveal arbitrary folders.
   for (const id of ['btn-workspace', 'btn-reveal-document']) document.getElementById(id)?.setAttribute('hidden', '');
+  const forget = document.getElementById('btn-delete-circuit');
+  if (forget) {
+    forget.textContent = 'Forget from browser…';
+    forget.title = 'Remove the current document from this browser\'s cached document list';
+  }
+  const deleteTitle = document.getElementById('delete-dialog-title');
+  if (deleteTitle) deleteTitle.textContent = 'Forget browser document?';
+  const confirmDelete = document.getElementById('confirm-delete');
+  if (confirmDelete) confirmDelete.textContent = 'Forget document';
   const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
   if (pdf) {
     pdf.checked = false;
@@ -933,6 +942,7 @@ function copySelectionSource() {
 let clipboardNotice = '';
 let clipboardNoticeTimer = null;
 let imageCopyInFlight = false;
+const EXPORT_PNG_SCALE = 3;
 
 function reportImageCopy(text, error = false) {
   clipboardNotice = text;
@@ -967,18 +977,30 @@ async function runExport({ dir, name, formats, grid = false, dark = false }) {
     logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
     return;
   }
-  const renderedSvg = renderDocument(circuit, {
-    ...DRAWING_EXPORT_OPTIONS,
-    grid,
-  });
-  const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
-  const request = { dir, name, formats, svg };
   try {
     logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
-    if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, 4);
+    // Reserve a native PNG save target while the submit event still carries
+    // user activation. Rasterization below is asynchronous and may otherwise
+    // make a later download click get blocked by the browser.
+    const prepared = persistence.prepareExport
+      ? await persistence.prepareExport({ name, formats })
+      : null;
+    // A MathML label can acquire its final browser-sized box after the last
+    // canvas paint. Sync it before taking bounds for the exported viewBox.
+    for (let attempt = 0; attempt < 3 && syncRenderedLabelMetrics(); attempt += 1) {
+      committedCanvasKey = '';
+      render();
+    }
+    const renderedSvg = renderDocument(circuit, {
+      ...DRAWING_EXPORT_OPTIONS,
+      grid,
+    });
+    const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
+    const request = { dir, name, formats, svg };
+    if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
     let result;
     try {
-      result = await persistence.exportFiles(request);
+      result = await persistence.exportFiles(request, { prepared });
     } catch (err) {
       if (err.code !== 'exists') throw err;
       const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
@@ -992,7 +1014,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false }) {
         logLine('Export canceled.');
         return;
       }
-      result = await persistence.exportFiles({ ...request, overwrite: true });
+      result = await persistence.exportFiles({ ...request, overwrite: true }, { prepared });
     }
     logLine(`Exported ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(result.dir)}.`);
     for (const note of result.notes || []) logLine(note);
@@ -1018,7 +1040,8 @@ function renderExportLocation() {
 }
 
 /**
- * Exports default to print-ready output (light, no grid) next to the document.
+ * Exports default to print-ready output (light, no grid) in the OS Pictures
+ * folder in Node mode, or the browser download location in browser-only mode.
  * Formats, appearance, and a folder chosen for this document are remembered.
  */
 function exportCircuit() {
@@ -1033,7 +1056,8 @@ function exportCircuit() {
     }
   }
   const documentKey = currentDocumentPath || '';
-  exportFolder = (saved?.folders && saved.folders[documentKey]) || currentDocumentDir || workspaceState?.workspace || '';
+  const defaultFolder = defaultExportDirectory(workspaceState, { browserOnly: persistence.browserOnly });
+  exportFolder = (saved?.folders && saved.folders[documentKey]) || defaultFolder;
   const nameInput = document.getElementById('export-name');
   if (nameInput) nameInput.value = validDocumentName(circuitNameEl.value) || currentCircuitName || 'circuit';
   renderExportLocation();
@@ -1173,7 +1197,7 @@ async function revealCurrentDocument() {
 
 function renderSaveState() {
   const dirty = hasUnsavedChanges();
-  if (deleteCircuitBtn) deleteCircuitBtn.disabled = persistence.browserOnly || !currentDocumentPath || deleteInFlight;
+  if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentDocumentPath || deleteInFlight;
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !currentDocumentPath;
   circuitNameEl.title = currentDocumentPath
     ? `${currentDocumentPath}\nRename and save to create a copy next to it.`
@@ -1237,7 +1261,7 @@ async function deleteSavedCircuit() {
     try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
     render();
     await refreshCircuitList();
-    logLine(`Deleted "${name}" (${displayPath(path)}).`);
+    logLine(`${persistence.browserOnly ? 'Forgot' : 'Deleted'} "${name}" (${displayPath(path)}).`);
   } catch (err) {
     logLine(`Could not delete document: ${err.message}`, 'error');
   } finally {
@@ -1249,9 +1273,15 @@ async function deleteSavedCircuit() {
 function askDeleteCircuit() {
   const path = currentDocumentPath;
   if (!path || !deleteDialog) return;
-  deleteDialogMessage.textContent = hasUnsavedChanges()
-    ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
-    : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
+  if (persistence.browserOnly) {
+    deleteDialogMessage.textContent = hasUnsavedChanges()
+      ? `This removes ${displayPath(path)} from this browser's cached document list and discards its unsaved editor changes. It does not delete a file already downloaded to disk.`
+      : `This removes ${displayPath(path)} from this browser's cached document list. It does not delete a file already downloaded to disk.`;
+  } else {
+    deleteDialogMessage.textContent = hasUnsavedChanges()
+      ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
+      : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
+  }
   deleteDialog.showModal();
 }
 
@@ -11704,7 +11734,8 @@ exportForm?.addEventListener('submit', (event) => {
     // Remember a folder only when it differs from the document's own folder.
     const folders = { ...(saved.folders || {}) };
     const documentKey = currentDocumentPath || '';
-    if (exportFolder === (currentDocumentDir || workspaceState?.workspace)) delete folders[documentKey];
+    const defaultFolder = defaultExportDirectory(workspaceState, { browserOnly: persistence.browserOnly });
+    if (exportFolder === defaultFolder || exportFolder === currentDocumentDir) delete folders[documentKey];
     else folders[documentKey] = exportFolder;
     localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
   } catch { /* storage unavailable */ }
@@ -11870,6 +11901,11 @@ window.addEventListener('keydown', (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 's' && !inlineInput) {
     ev.preventDefault();
     saveCircuit({ saveAs: true });
+    return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'e' && !inlineInput) {
+    ev.preventDefault();
+    exportCircuit();
     return;
   }
   if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'f') {

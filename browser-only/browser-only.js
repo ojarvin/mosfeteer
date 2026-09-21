@@ -36,7 +36,7 @@ const { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds: sel
 const { buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js");
 const { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js");
 const { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js");
-const { createPersistenceAdapter, validDocumentName } = __require("src/web/persistence.js");
+const { createPersistenceAdapter, defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js");
 const { confirmChoice, showFileDialog } = __require("src/web/file-dialog.js");
 const { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js");
 const { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js");
@@ -358,6 +358,15 @@ function configureBrowserOnlyUi() {
   // native file pickers and downloads instead of pretending that a browser can
   // browse or reveal arbitrary folders.
   for (const id of ['btn-workspace', 'btn-reveal-document']) document.getElementById(id)?.setAttribute('hidden', '');
+  const forget = document.getElementById('btn-delete-circuit');
+  if (forget) {
+    forget.textContent = 'Forget from browser…';
+    forget.title = 'Remove the current document from this browser\'s cached document list';
+  }
+  const deleteTitle = document.getElementById('delete-dialog-title');
+  if (deleteTitle) deleteTitle.textContent = 'Forget browser document?';
+  const confirmDelete = document.getElementById('confirm-delete');
+  if (confirmDelete) confirmDelete.textContent = 'Forget document';
   const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
   if (pdf) {
     pdf.checked = false;
@@ -977,6 +986,7 @@ function copySelectionSource() {
 let clipboardNotice = '';
 let clipboardNoticeTimer = null;
 let imageCopyInFlight = false;
+const EXPORT_PNG_SCALE = 3;
 
 function reportImageCopy(text, error = false) {
   clipboardNotice = text;
@@ -1011,18 +1021,30 @@ async function runExport({ dir, name, formats, grid = false, dark = false }) {
     logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
     return;
   }
-  const renderedSvg = renderDocument(circuit, {
-    ...DRAWING_EXPORT_OPTIONS,
-    grid,
-  });
-  const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
-  const request = { dir, name, formats, svg };
   try {
     logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
-    if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, 4);
+    // Reserve a native PNG save target while the submit event still carries
+    // user activation. Rasterization below is asynchronous and may otherwise
+    // make a later download click get blocked by the browser.
+    const prepared = persistence.prepareExport
+      ? await persistence.prepareExport({ name, formats })
+      : null;
+    // A MathML label can acquire its final browser-sized box after the last
+    // canvas paint. Sync it before taking bounds for the exported viewBox.
+    for (let attempt = 0; attempt < 3 && syncRenderedLabelMetrics(); attempt += 1) {
+      committedCanvasKey = '';
+      render();
+    }
+    const renderedSvg = renderDocument(circuit, {
+      ...DRAWING_EXPORT_OPTIONS,
+      grid,
+    });
+    const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
+    const request = { dir, name, formats, svg };
+    if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
     let result;
     try {
-      result = await persistence.exportFiles(request);
+      result = await persistence.exportFiles(request, { prepared });
     } catch (err) {
       if (err.code !== 'exists') throw err;
       const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
@@ -1036,7 +1058,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false }) {
         logLine('Export canceled.');
         return;
       }
-      result = await persistence.exportFiles({ ...request, overwrite: true });
+      result = await persistence.exportFiles({ ...request, overwrite: true }, { prepared });
     }
     logLine(`Exported ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(result.dir)}.`);
     for (const note of result.notes || []) logLine(note);
@@ -1062,7 +1084,8 @@ function renderExportLocation() {
 }
 
 /**
- * Exports default to print-ready output (light, no grid) next to the document.
+ * Exports default to print-ready output (light, no grid) in the OS Pictures
+ * folder in Node mode, or the browser download location in browser-only mode.
  * Formats, appearance, and a folder chosen for this document are remembered.
  */
 function exportCircuit() {
@@ -1077,7 +1100,8 @@ function exportCircuit() {
     }
   }
   const documentKey = currentDocumentPath || '';
-  exportFolder = (saved?.folders && saved.folders[documentKey]) || currentDocumentDir || workspaceState?.workspace || '';
+  const defaultFolder = defaultExportDirectory(workspaceState, { browserOnly: persistence.browserOnly });
+  exportFolder = (saved?.folders && saved.folders[documentKey]) || defaultFolder;
   const nameInput = document.getElementById('export-name');
   if (nameInput) nameInput.value = validDocumentName(circuitNameEl.value) || currentCircuitName || 'circuit';
   renderExportLocation();
@@ -1217,7 +1241,7 @@ async function revealCurrentDocument() {
 
 function renderSaveState() {
   const dirty = hasUnsavedChanges();
-  if (deleteCircuitBtn) deleteCircuitBtn.disabled = persistence.browserOnly || !currentDocumentPath || deleteInFlight;
+  if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentDocumentPath || deleteInFlight;
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !currentDocumentPath;
   circuitNameEl.title = currentDocumentPath
     ? `${currentDocumentPath}\nRename and save to create a copy next to it.`
@@ -1281,7 +1305,7 @@ async function deleteSavedCircuit() {
     try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
     render();
     await refreshCircuitList();
-    logLine(`Deleted "${name}" (${displayPath(path)}).`);
+    logLine(`${persistence.browserOnly ? 'Forgot' : 'Deleted'} "${name}" (${displayPath(path)}).`);
   } catch (err) {
     logLine(`Could not delete document: ${err.message}`, 'error');
   } finally {
@@ -1293,9 +1317,15 @@ async function deleteSavedCircuit() {
 function askDeleteCircuit() {
   const path = currentDocumentPath;
   if (!path || !deleteDialog) return;
-  deleteDialogMessage.textContent = hasUnsavedChanges()
-    ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
-    : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
+  if (persistence.browserOnly) {
+    deleteDialogMessage.textContent = hasUnsavedChanges()
+      ? `This removes ${displayPath(path)} from this browser's cached document list and discards its unsaved editor changes. It does not delete a file already downloaded to disk.`
+      : `This removes ${displayPath(path)} from this browser's cached document list. It does not delete a file already downloaded to disk.`;
+  } else {
+    deleteDialogMessage.textContent = hasUnsavedChanges()
+      ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
+      : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
+  }
   deleteDialog.showModal();
 }
 
@@ -11748,7 +11778,8 @@ exportForm?.addEventListener('submit', (event) => {
     // Remember a folder only when it differs from the document's own folder.
     const folders = { ...(saved.folders || {}) };
     const documentKey = currentDocumentPath || '';
-    if (exportFolder === (currentDocumentDir || workspaceState?.workspace)) delete folders[documentKey];
+    const defaultFolder = defaultExportDirectory(workspaceState, { browserOnly: persistence.browserOnly });
+    if (exportFolder === defaultFolder || exportFolder === currentDocumentDir) delete folders[documentKey];
     else folders[documentKey] = exportFolder;
     localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
   } catch { /* storage unavailable */ }
@@ -11914,6 +11945,11 @@ window.addEventListener('keydown', (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 's' && !inlineInput) {
     ev.preventDefault();
     saveCircuit({ saveAs: true });
+    return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'e' && !inlineInput) {
+    ev.preventDefault();
+    exportCircuit();
     return;
   }
   if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'f') {
@@ -13494,498 +13530,6 @@ __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 };
 
-__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
-const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
-const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
-const { infinity } = __require("src/core/analysis/rational.js");
-
-
-
-
-
-const QUANTITIES = Object.freeze([
-  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
-  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
-  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
-]);
-
-const SOURCE_NAMES = Object.freeze({
-  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
-  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
-  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
-});
-
-function asArray(value) {
-  if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-function unique(values) {
-  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
-}
-
-function lookup(source, names) {
-  if (!source || typeof source !== 'object') return undefined;
-  for (const name of names) {
-    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
-  }
-  return undefined;
-}
-
-function isExpression(value) {
-  return value && typeof value === 'object' && typeof value.kind === 'string';
-}
-
-function expressionOf(value) {
-  if (value === undefined || value === null) return undefined;
-  if (value.kind === 'rational') return value;
-  if (isExpression(value)) return value;
-  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
-  return value;
-}
-
-function hasFrequency(value) {
-  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
-  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
-  if (value?.kind === 'power') return hasFrequency(value.base);
-  if (value?.kind === 'add' || value?.kind === 'multiply') {
-    const values = value.kind === 'add' ? value.terms : value.factors;
-    return values.some(hasFrequency);
-  }
-  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
-}
-
-function responseRecord(value) {
-  if (value === undefined || value === null) return null;
-  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
-  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
-    return value;
-  }
-  const expression = expressionOf(value);
-  if (expression === undefined || expression === null) return null;
-  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
-  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
-}
-
-function pairFor(source) {
-  if (!source) return { selected: null, exact: null, source: null };
-  const selectedRaw = firstDefined(
-    source.selectedResponse,
-    source.selectedResult,
-    source.selected,
-    source.display,
-    source.approximate,
-    source.expression !== undefined ? source : undefined,
-    isExpression(source) ? source : undefined,
-  );
-  const exactRaw = firstDefined(
-    source.exactResponse,
-    source.exactResult,
-    source.exact,
-    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
-    selectedRaw,
-  );
-  return {
-    selected: responseRecord(selectedRaw),
-    exact: responseRecord(exactRaw),
-    source,
-  };
-}
-
-function valueKey(value) {
-  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
-  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
-  if (value?.kind === 'symbol') return `s:${value.name}`;
-  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
-  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
-  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
-  return JSON.stringify(value);
-}
-
-function sameValue(left, right) {
-  if (left === right) return true;
-  if (left === undefined || right === undefined || left === null || right === null) return false;
-  try {
-    return valueKey(left) === valueKey(right);
-  } catch {
-    return false;
-  }
-}
-
-function render(value, options) {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return value;
-  if (value.kind === 'infinity') return renderExpression(value, options);
-  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
-  return String(value);
-}
-
-function responseExpression(response) {
-  return expressionOf(response);
-}
-
-function equation(label, expression, approximate = false, options) {
-  const body = render(expression, options);
-  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
-}
-
-/**
- * The same equation rendered with provenance markers, so the GUI can map a
- * clicked sub-expression back to the devices it came from.
- *
- * This is built here, beside the string it mirrors, for the reason AGENTS.md
- * gives about `equivalenceOptions`: a row rendered anywhere else would have to
- * reproduce this function's label, approximation flag, and equivalence options,
- * and getting any of them wrong fails silently on that row alone.
- */
-function equationProvenance(label, expression, approximate = false, options) {
-  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
-  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
-  // Mirrors `equation()` above exactly, including its relation symbol.
-  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
-  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
-}
-
-function dcValue(limit) {
-  if (!limit) return undefined;
-  if (limit.value !== undefined && limit.value !== null) return limit.value;
-  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
-  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
-    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
-    return infinity(sign);
-  }
-  return undefined;
-}
-
-function equivalenceOptions(source) {
-  return {
-    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
-    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
-  };
-}
-
-function dcResult(label, selected, exact, source) {
-  const selectedLimit = selected?.dc || source?.dc;
-  const exactLimit = exact?.dc || selectedLimit;
-  const selectedValue = dcValue(selectedLimit);
-  const exactValue = dcValue(exactLimit);
-  if (selectedValue === undefined) {
-    return {
-      ok: false,
-      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
-    };
-  }
-  const changed = !sameValue(selectedValue, exactValue);
-  const options = equivalenceOptions(source);
-  return {
-    ok: true,
-    equation: equation(label, selectedValue, changed, options),
-    exactEquation: equation(label, exactValue, false, options),
-    equationProvenance: equationProvenance(label, selectedValue, changed, options),
-    expression: selectedValue,
-    exactExpression: exactValue,
-  };
-}
-
-function rootValue(root) {
-  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
-}
-
-/**
- * The provenance render of one pole or zero. It must mirror the
- * `renderRootEquation` call beside it exactly, options included — a pole row
- * rendered under different options would highlight terms the displayed row
- * does not contain.
- */
-function rootProvenance(kind, index, value) {
-  if (value === undefined || value === null || typeof value === 'string') return undefined;
-  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
-  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
-}
-
-function rootsOf(response, kind) {
-  const roots = response?.[kind] || [];
-  return roots.map((root, index) => {
-    const value = rootValue(root);
-    return {
-      ...root,
-      index,
-      ...(value !== undefined
-        ? {
-          root: value,
-          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
-          equationProvenance: rootProvenance(kind, index, value),
-        }
-        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
-    };
-  });
-}
-
-function frequencyResponse(selected, exact, source) {
-  const has = Boolean(firstDefined(
-    selected?.hasFrequency,
-    exact?.hasFrequency,
-    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
-  ));
-  if (!has) return null;
-  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
-  return {
-    ...base,
-    hasFrequency: true,
-    expression: responseExpression(selected),
-    exactExpression: responseExpression(exact),
-    numerator: selected?.numerator,
-    denominator: selected?.denominator,
-    poles: rootsOf(selected || exact, 'poles'),
-    zeros: rootsOf(selected || exact, 'zeros'),
-  };
-}
-
-function detailsFor(combined, source) {
-  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
-  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
-  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
-  const solution = get('solution');
-  const log = get('log', 'logDetails');
-  return {
-    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
-    ...(solution !== undefined ? { solution } : {}),
-    ...(log !== undefined ? { log } : {}),
-    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
-    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
-    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
-  };
-}
-
-function childSource(combined, key, quantity) {
-  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
-  const names = SOURCE_NAMES[quantity];
-  for (const container of containers) {
-    const found = lookup(container, [key, ...names]);
-    if (found !== undefined) return found;
-  }
-  return null;
-}
-
-function childMetadata(combined, source, key) {
-  const context = combined?.context || {};
-  const metadata = {
-    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
-    input: firstDefined(source?.input, context.input, combined?.input),
-    reference: firstDefined(source?.reference, context.reference, combined?.reference),
-  };
-  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
-}
-
-function childPairs(combined) {
-  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
-    const source = childSource(combined, key, quantity);
-    return [key, pairFor(source)];
-  }));
-}
-
-function adaptChild(combined, key, quantity) {
-  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
-  const raw = childSource(combined, key, quantity);
-  const pair = pairFor(raw);
-  const source = pair.source || {};
-  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
-  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
-  const selected = pair.selected || responseRecord(selectedExpression);
-  const exact = pair.exact || responseRecord(exactExpression);
-  const details = detailsFor(combined, source);
-  const failed = source?.ok === false || (!selectedExpression && source?.error);
-  const reactive = Boolean(frequencyResponse(selected, exact, source));
-  const label = reactive ? `${labelBase}(s)` : labelBase;
-  const changed = !sameValue(selectedExpression, exactExpression);
-  const renderOptions = equivalenceOptions(source);
-  const result = {
-    ...source,
-    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
-    query,
-    ...childMetadata(combined, source, key),
-    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
-    ...(exactExpression !== undefined ? { exactExpression } : {}),
-    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
-    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
-    ...(selectedExpression !== undefined
-      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
-      : {}),
-    ...details,
-    assumptions: unique([combined?.assumptions, source?.assumptions]),
-    approximations: unique([combined?.approximations, source?.approximations]),
-    dependencies: unique([combined?.dependencies, source?.dependencies]),
-    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
-  };
-  if (reactive && key !== 'transfer') delete result.acTransfer;
-  if (!reactive) {
-    delete result.frequencyResponse;
-    delete result.acTransfer;
-  }
-  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
-    result.smallSignalNetlist = combined.smallSignalNetlist;
-  }
-  if (key === 'transfer' && reactive && result.expression !== undefined) {
-    result.acTransfer = {
-      ok: result.ok,
-      equation: result.equation,
-      exactEquation: result.exactEquation,
-      equationProvenance: result.equationProvenance,
-      expression: result.expression,
-      exactExpression: result.exactExpression,
-    };
-  }
-  if (!result.ok) {
-    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
-    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
-    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
-  }
-  return result;
-}
-
-function transferCompanions(combined, children) {
-  const transfer = children.transfer;
-  const input = children.input;
-  const output = children.output;
-  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
-  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
-  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
-  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
-    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
-  }
-  transfer.dcGain = dcGain;
-  transfer.dcInputImpedance = dcInput;
-  transfer.dcOutputImpedance = dcOutput;
-  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
-}
-
-function cleanChild(child) {
-  const result = { ...child };
-  delete result._selected;
-  delete result._exact;
-  delete result._source;
-  return result;
-}
-
-const ROOT_SEPARATOR = ',\\quad ';
-
-/**
- * One Poles or Zeros row: the roots' own equations shown together. The joined
- * provenance render is kept only when every root has one, so the row's markers
- * can never describe a different string than the one displayed.
- */
-function rootRow(roots) {
-  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
-  const parts = roots.map((root) => root.equationProvenance);
-  return {
-    ok: true,
-    equation,
-    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
-  };
-}
-
-/** What the quantities are ratios of, named by the nodes they were taken at. */
-function portEntry(report) {
-  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
-  if (!definitions.length) return null;
-  // A definition, not a derived expression: it names nodes rather than device
-  // parameters, so there is nothing to trace back to the canvas.
-  const lines = definitions.map(({ tex }) => tex);
-  return {
-    title: 'Ports',
-    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
-  };
-}
-
-function equationEntries(reports, report) {
-  const entries = [];
-  const ports = portEntry(report);
-  if (ports) entries.push(ports);
-  const add = (title, result) => {
-    if (result?.ok && result.equation) entries.push({ title, result });
-  };
-  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
-  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
-  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
-  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
-  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
-  add('DC gain', reports.transfer.dcGain);
-  const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
-  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
-  return entries;
-}
-
-/** Convert one exact/selected v2 response set into the legacy child reports. */
-function adaptCombinedReport(report) {
-  if (!report || typeof report !== 'object') {
-    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
-  }
-  const pairs = childPairs(report);
-  const children = {};
-  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
-    const child = adaptChild(report, key, quantity);
-    children[key] = child;
-  }
-  for (const key of Object.keys(children)) {
-    children[key]._selected = pairs[key].selected;
-    children[key]._exact = pairs[key].exact;
-    children[key]._source = pairs[key].source;
-  }
-  const companions = transferCompanions(report, children);
-  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
-  const details = detailsFor(report, report);
-  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
-  const entries = equationEntries(reports, report);
-  const successful = Object.values(reports).filter((child) => child.ok);
-  const context = report.context || {};
-  const inputPort = firstDefined(context.input);
-  const outputPort = firstDefined(context.output);
-  const referencePort = firstDefined(context.reference);
-  const base = {
-    ...report,
-    query: 'combined',
-    ok: successful.length > 0,
-    complete: successful.length === 3,
-    reports,
-    // Port metadata is distinct from the solved impedance and transfer rows.
-    input: inputPort,
-    output: outputPort,
-    reference: referencePort,
-    inputPort,
-    outputPort,
-    referencePort,
-    inputImpedance: reports.input,
-    outputImpedance: reports.output,
-    voltageTransfer: reports.transfer,
-    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
-    ...companions,
-    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
-    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
-    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
-    ...details,
-    equationEntries: entries,
-    equationOrder: entries.map(({ title }) => title),
-    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
-  };
-  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
-  else delete base.frequencyResponse;
-  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
-    base.acTransfer = {
-      ok: reports.transfer.ok,
-      equation: reports.transfer.equation,
-      exactEquation: reports.transfer.exactEquation,
-      expression: reports.transfer.expression,
-      exactExpression: reports.transfer.exactExpression,
-    };
-  } else delete base.acTransfer;
-  return base;
-}
-
-__exports.adaptCombinedReport = adaptCombinedReport;
-};
-
 __modules["src/core/analysis/engine.js"] = function (__require, __exports) {
 const { MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js");
 const { applyApproximations } = __require("src/core/analysis/approximation.js");
@@ -14806,6 +14350,498 @@ __exports.portDefinitions = portDefinitions;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 };
 
+__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
+const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
+const { analyzeResponse } = __require("src/core/analysis/response.js");
+const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
+const { infinity } = __require("src/core/analysis/rational.js");
+
+
+
+
+
+const QUANTITIES = Object.freeze([
+  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
+  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
+  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
+]);
+
+const SOURCE_NAMES = Object.freeze({
+  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
+  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
+  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
+});
+
+function asArray(value) {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function unique(values) {
+  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
+}
+
+function lookup(source, names) {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const name of names) {
+    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
+  }
+  return undefined;
+}
+
+function isExpression(value) {
+  return value && typeof value === 'object' && typeof value.kind === 'string';
+}
+
+function expressionOf(value) {
+  if (value === undefined || value === null) return undefined;
+  if (value.kind === 'rational') return value;
+  if (isExpression(value)) return value;
+  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
+  return value;
+}
+
+function hasFrequency(value) {
+  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
+  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
+  if (value?.kind === 'power') return hasFrequency(value.base);
+  if (value?.kind === 'add' || value?.kind === 'multiply') {
+    const values = value.kind === 'add' ? value.terms : value.factors;
+    return values.some(hasFrequency);
+  }
+  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+}
+
+function responseRecord(value) {
+  if (value === undefined || value === null) return null;
+  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
+  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
+    return value;
+  }
+  const expression = expressionOf(value);
+  if (expression === undefined || expression === null) return null;
+  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
+  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
+}
+
+function pairFor(source) {
+  if (!source) return { selected: null, exact: null, source: null };
+  const selectedRaw = firstDefined(
+    source.selectedResponse,
+    source.selectedResult,
+    source.selected,
+    source.display,
+    source.approximate,
+    source.expression !== undefined ? source : undefined,
+    isExpression(source) ? source : undefined,
+  );
+  const exactRaw = firstDefined(
+    source.exactResponse,
+    source.exactResult,
+    source.exact,
+    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
+    selectedRaw,
+  );
+  return {
+    selected: responseRecord(selectedRaw),
+    exact: responseRecord(exactRaw),
+    source,
+  };
+}
+
+function valueKey(value) {
+  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
+  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
+  if (value?.kind === 'symbol') return `s:${value.name}`;
+  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
+  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
+  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
+  return JSON.stringify(value);
+}
+
+function sameValue(left, right) {
+  if (left === right) return true;
+  if (left === undefined || right === undefined || left === null || right === null) return false;
+  try {
+    return valueKey(left) === valueKey(right);
+  } catch {
+    return false;
+  }
+}
+
+function render(value, options) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value;
+  if (value.kind === 'infinity') return renderExpression(value, options);
+  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
+  return String(value);
+}
+
+function responseExpression(response) {
+  return expressionOf(response);
+}
+
+function equation(label, expression, approximate = false, options) {
+  const body = render(expression, options);
+  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
+}
+
+/**
+ * The same equation rendered with provenance markers, so the GUI can map a
+ * clicked sub-expression back to the devices it came from.
+ *
+ * This is built here, beside the string it mirrors, for the reason AGENTS.md
+ * gives about `equivalenceOptions`: a row rendered anywhere else would have to
+ * reproduce this function's label, approximation flag, and equivalence options,
+ * and getting any of them wrong fails silently on that row alone.
+ */
+function equationProvenance(label, expression, approximate = false, options) {
+  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
+  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
+  // Mirrors `equation()` above exactly, including its relation symbol.
+  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
+  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
+}
+
+function dcValue(limit) {
+  if (!limit) return undefined;
+  if (limit.value !== undefined && limit.value !== null) return limit.value;
+  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
+  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
+    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
+    return infinity(sign);
+  }
+  return undefined;
+}
+
+function equivalenceOptions(source) {
+  return {
+    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
+    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
+  };
+}
+
+function dcResult(label, selected, exact, source) {
+  const selectedLimit = selected?.dc || source?.dc;
+  const exactLimit = exact?.dc || selectedLimit;
+  const selectedValue = dcValue(selectedLimit);
+  const exactValue = dcValue(exactLimit);
+  if (selectedValue === undefined) {
+    return {
+      ok: false,
+      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
+    };
+  }
+  const changed = !sameValue(selectedValue, exactValue);
+  const options = equivalenceOptions(source);
+  return {
+    ok: true,
+    equation: equation(label, selectedValue, changed, options),
+    exactEquation: equation(label, exactValue, false, options),
+    equationProvenance: equationProvenance(label, selectedValue, changed, options),
+    expression: selectedValue,
+    exactExpression: exactValue,
+  };
+}
+
+function rootValue(root) {
+  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
+}
+
+/**
+ * The provenance render of one pole or zero. It must mirror the
+ * `renderRootEquation` call beside it exactly, options included — a pole row
+ * rendered under different options would highlight terms the displayed row
+ * does not contain.
+ */
+function rootProvenance(kind, index, value) {
+  if (value === undefined || value === null || typeof value === 'string') return undefined;
+  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
+  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
+}
+
+function rootsOf(response, kind) {
+  const roots = response?.[kind] || [];
+  return roots.map((root, index) => {
+    const value = rootValue(root);
+    return {
+      ...root,
+      index,
+      ...(value !== undefined
+        ? {
+          root: value,
+          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
+          equationProvenance: rootProvenance(kind, index, value),
+        }
+        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
+    };
+  });
+}
+
+function frequencyResponse(selected, exact, source) {
+  const has = Boolean(firstDefined(
+    selected?.hasFrequency,
+    exact?.hasFrequency,
+    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
+  ));
+  if (!has) return null;
+  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
+  return {
+    ...base,
+    hasFrequency: true,
+    expression: responseExpression(selected),
+    exactExpression: responseExpression(exact),
+    numerator: selected?.numerator,
+    denominator: selected?.denominator,
+    poles: rootsOf(selected || exact, 'poles'),
+    zeros: rootsOf(selected || exact, 'zeros'),
+  };
+}
+
+function detailsFor(combined, source) {
+  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
+  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
+  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
+  const solution = get('solution');
+  const log = get('log', 'logDetails');
+  return {
+    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
+    ...(solution !== undefined ? { solution } : {}),
+    ...(log !== undefined ? { log } : {}),
+    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
+    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
+    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
+  };
+}
+
+function childSource(combined, key, quantity) {
+  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
+  const names = SOURCE_NAMES[quantity];
+  for (const container of containers) {
+    const found = lookup(container, [key, ...names]);
+    if (found !== undefined) return found;
+  }
+  return null;
+}
+
+function childMetadata(combined, source, key) {
+  const context = combined?.context || {};
+  const metadata = {
+    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
+    input: firstDefined(source?.input, context.input, combined?.input),
+    reference: firstDefined(source?.reference, context.reference, combined?.reference),
+  };
+  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
+}
+
+function childPairs(combined) {
+  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
+    const source = childSource(combined, key, quantity);
+    return [key, pairFor(source)];
+  }));
+}
+
+function adaptChild(combined, key, quantity) {
+  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
+  const raw = childSource(combined, key, quantity);
+  const pair = pairFor(raw);
+  const source = pair.source || {};
+  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
+  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
+  const selected = pair.selected || responseRecord(selectedExpression);
+  const exact = pair.exact || responseRecord(exactExpression);
+  const details = detailsFor(combined, source);
+  const failed = source?.ok === false || (!selectedExpression && source?.error);
+  const reactive = Boolean(frequencyResponse(selected, exact, source));
+  const label = reactive ? `${labelBase}(s)` : labelBase;
+  const changed = !sameValue(selectedExpression, exactExpression);
+  const renderOptions = equivalenceOptions(source);
+  const result = {
+    ...source,
+    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
+    query,
+    ...childMetadata(combined, source, key),
+    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
+    ...(exactExpression !== undefined ? { exactExpression } : {}),
+    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
+    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
+    ...(selectedExpression !== undefined
+      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
+      : {}),
+    ...details,
+    assumptions: unique([combined?.assumptions, source?.assumptions]),
+    approximations: unique([combined?.approximations, source?.approximations]),
+    dependencies: unique([combined?.dependencies, source?.dependencies]),
+    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
+  };
+  if (reactive && key !== 'transfer') delete result.acTransfer;
+  if (!reactive) {
+    delete result.frequencyResponse;
+    delete result.acTransfer;
+  }
+  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
+    result.smallSignalNetlist = combined.smallSignalNetlist;
+  }
+  if (key === 'transfer' && reactive && result.expression !== undefined) {
+    result.acTransfer = {
+      ok: result.ok,
+      equation: result.equation,
+      exactEquation: result.exactEquation,
+      equationProvenance: result.equationProvenance,
+      expression: result.expression,
+      exactExpression: result.exactExpression,
+    };
+  }
+  if (!result.ok) {
+    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
+    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
+    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
+  }
+  return result;
+}
+
+function transferCompanions(combined, children) {
+  const transfer = children.transfer;
+  const input = children.input;
+  const output = children.output;
+  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
+  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
+  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
+  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
+    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
+  }
+  transfer.dcGain = dcGain;
+  transfer.dcInputImpedance = dcInput;
+  transfer.dcOutputImpedance = dcOutput;
+  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
+}
+
+function cleanChild(child) {
+  const result = { ...child };
+  delete result._selected;
+  delete result._exact;
+  delete result._source;
+  return result;
+}
+
+const ROOT_SEPARATOR = ',\\quad ';
+
+/**
+ * One Poles or Zeros row: the roots' own equations shown together. The joined
+ * provenance render is kept only when every root has one, so the row's markers
+ * can never describe a different string than the one displayed.
+ */
+function rootRow(roots) {
+  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
+  const parts = roots.map((root) => root.equationProvenance);
+  return {
+    ok: true,
+    equation,
+    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
+  };
+}
+
+/** What the quantities are ratios of, named by the nodes they were taken at. */
+function portEntry(report) {
+  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
+  if (!definitions.length) return null;
+  // A definition, not a derived expression: it names nodes rather than device
+  // parameters, so there is nothing to trace back to the canvas.
+  const lines = definitions.map(({ tex }) => tex);
+  return {
+    title: 'Ports',
+    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
+  };
+}
+
+function equationEntries(reports, report) {
+  const entries = [];
+  const ports = portEntry(report);
+  if (ports) entries.push(ports);
+  const add = (title, result) => {
+    if (result?.ok && result.equation) entries.push({ title, result });
+  };
+  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
+  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
+  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
+  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
+  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
+  add('DC gain', reports.transfer.dcGain);
+  const frequency = reports.transfer.frequencyResponse;
+  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
+  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
+  return entries;
+}
+
+/** Convert one exact/selected v2 response set into the legacy child reports. */
+function adaptCombinedReport(report) {
+  if (!report || typeof report !== 'object') {
+    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
+  }
+  const pairs = childPairs(report);
+  const children = {};
+  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
+    const child = adaptChild(report, key, quantity);
+    children[key] = child;
+  }
+  for (const key of Object.keys(children)) {
+    children[key]._selected = pairs[key].selected;
+    children[key]._exact = pairs[key].exact;
+    children[key]._source = pairs[key].source;
+  }
+  const companions = transferCompanions(report, children);
+  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
+  const details = detailsFor(report, report);
+  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
+  const entries = equationEntries(reports, report);
+  const successful = Object.values(reports).filter((child) => child.ok);
+  const context = report.context || {};
+  const inputPort = firstDefined(context.input);
+  const outputPort = firstDefined(context.output);
+  const referencePort = firstDefined(context.reference);
+  const base = {
+    ...report,
+    query: 'combined',
+    ok: successful.length > 0,
+    complete: successful.length === 3,
+    reports,
+    // Port metadata is distinct from the solved impedance and transfer rows.
+    input: inputPort,
+    output: outputPort,
+    reference: referencePort,
+    inputPort,
+    outputPort,
+    referencePort,
+    inputImpedance: reports.input,
+    outputImpedance: reports.output,
+    voltageTransfer: reports.transfer,
+    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
+    ...companions,
+    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
+    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
+    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
+    ...details,
+    equationEntries: entries,
+    equationOrder: entries.map(({ title }) => title),
+    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
+  };
+  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
+  else delete base.frequencyResponse;
+  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
+    base.acTransfer = {
+      ok: reports.transfer.ok,
+      equation: reports.transfer.equation,
+      exactEquation: reports.transfer.exactEquation,
+      expression: reports.transfer.expression,
+      exactExpression: reports.transfer.exactExpression,
+    };
+  } else delete base.acTransfer;
+  return base;
+}
+
+__exports.adaptCombinedReport = adaptCombinedReport;
+};
+
 __modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
 const { Circuit } = __require("src/core/model.js");
 const { rectsOverlap } = __require("src/core/geometry.js");
@@ -15493,162 +15529,6 @@ __exports.COLOR_PALETTE = COLOR_PALETTE;
 __exports.escapeSvg = escapeSvg;
 };
 
-__modules["src/core/line-style.js"] = function (__require, __exports) {
-/** The one filled triangular arrowhead offered by the shared style menu. */
-const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
-
-function normalizeArrowhead(value, fallback = 'none') {
-  return ARROWHEAD_VALUES.includes(value) ? value : fallback;
-}
-
-function defaultArrowhead(kind) {
-  return kind === 'arrow' || kind === 'connector' ? 'end' : 'none';
-}
-
-function arrowheadEnds(value, fallback = 'none') {
-  const normalized = normalizeArrowhead(typeof value === 'object' ? value?.arrowhead : value, fallback);
-  return {
-    start: normalized === 'start' || normalized === 'both',
-    end: normalized === 'end' || normalized === 'both',
-  };
-}
-
-/**
- * Map one shared arrowhead choice onto the individual segments of a
- * polyline.  A bent route is still one drawable wire, so its heads belong at
- * the route endpoints rather than at its corner vertices.  On a single
- * segment both heads can share that segment; otherwise the two heads occupy
- * the first and last segments independently.
- */
-function polylineArrowheadValues(points = [], value = 'none') {
-  const route = [];
-  for (const point of points || []) {
-    const next = { x: point.x, y: point.y };
-    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
-  }
-  if (route.length < 2) return [];
-  const ends = arrowheadEnds(value);
-  let first = -1;
-  let last = -1;
-  for (let i = 1; i < route.length; i++) {
-    if (samePoint(route[i - 1], route[i])) continue;
-    if (first < 0) first = i;
-    last = i;
-  }
-  if (first < 0) return route.slice(1).map(() => 'none');
-  const values = route.slice(1).map(() => 'none');
-  if (ends.start) values[first - 1] = first === last && ends.end ? 'both' : 'start';
-  if (ends.end) values[last - 1] = ['start', 'both'].includes(values[last - 1]) ? 'both' : 'end';
-  return values;
-}
-
-/** Resolve segment-local arrowhead styles to the logical endpoints of a
- * polyline. This also repairs older documents where an end head was left on
- * an interior segment after a route gained a bend. */
-function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
-  const values = [];
-  for (let index = 1; index < points.length; index++) {
-    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
-    if (value !== undefined) values.push(normalizeArrowhead(value));
-  }
-  if (!values.length) return normalizeArrowhead(inherited);
-  const start = values.some((value) => arrowheadEnds(value).start);
-  const end = values.some((value) => arrowheadEnds(value).end);
-  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
-}
-
-/** Return wireStyles with one shared arrowhead choice distributed across a
- * path's endpoint segments. Existing per-segment appearance is preserved. */
-function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {
-  const next = { ...wireStyles };
-  for (const [index, arrowhead] of polylineArrowheadValues(points, value).entries()) {
-    const key = `${branch}:${index + 1}`;
-    next[key] = { ...(next[key] || {}), arrowhead };
-  }
-  return next;
-}
-
-const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
-
-/** Filled arrowhead geometry for a segment whose tip is `b`. */
-function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const distance = Math.hypot(dx, dy);
-  if (!distance) return null;
-  const ux = dx / distance;
-  const uy = dy / distance;
-  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
-  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
-  const normal = { x: uy, y: -ux };
-  return {
-    shaft: base,
-    tip,
-    left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
-    right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
-  };
-}
-
-/**
- * Return a polyline shortened at the decorated endpoints plus the filled
- * heads. The input is never mutated. Endpoint decoration works for straight,
- * diagonal, and orthogonal multi-point paths.
- */
-function polylineArrowheads(points = [], value = 'none', options = {}) {
-  const route = [];
-  for (const point of points || []) {
-    const next = { x: point.x, y: point.y };
-    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
-  }
-  if (route.length < 2) return { shaftPoints: route, heads: [] };
-  const ends = arrowheadEnds(value, options.fallback || 'none');
-  let first = -1;
-  let last = -1;
-  for (let i = 1; i < route.length; i++) {
-    if (samePoint(route[i - 1], route[i])) continue;
-    if (first < 0) first = i;
-    last = i;
-  }
-  if (first < 0) return { shaftPoints: route, heads: [] };
-  const sameSegment = first === last;
-  const fullLength = options.length ?? 32;
-  const halfWidth = options.halfWidth ?? 18;
-  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
-  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
-  const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
-  const length = sameSegment && ends.start && ends.end
-    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
-    : fullLength;
-  const heads = [];
-  const shaftPoints = route.map((point) => ({ ...point }));
-  if (ends.start) {
-    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
-    if (head) {
-      heads.push({ ...head, placement: 'start' });
-      shaftPoints[0] = head.shaft;
-    }
-  }
-  if (ends.end) {
-    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
-    if (head) {
-      heads.push({ ...head, placement: 'end' });
-      shaftPoints[shaftPoints.length - 1] = head.shaft;
-    }
-  }
-  return { shaftPoints, heads };
-}
-
-__exports.normalizeArrowhead = normalizeArrowhead;
-__exports.defaultArrowhead = defaultArrowhead;
-__exports.arrowheadEnds = arrowheadEnds;
-__exports.polylineArrowheadValues = polylineArrowheadValues;
-__exports.polylineArrowheadValue = polylineArrowheadValue;
-__exports.polylineArrowheadStyles = polylineArrowheadStyles;
-__exports.arrowheadGeometry = arrowheadGeometry;
-__exports.polylineArrowheads = polylineArrowheads;
-__exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
-};
-
 __modules["src/core/render.js"] = function (__require, __exports) {
 const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
 const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
@@ -16222,7 +16102,7 @@ function svgString(circuit, opts = {}) {
   // Extents to draw (in world units). With a viewport the window is the exact
   // view (so free panning never rescales the drawing); without one, the view
   // auto-fits the circuit contents (exports / PNG).
-  const pad = o.grid && !vp ? 0 : 40;
+  const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
   const x0 = vp ? vp.x : floorGrid(b.x) - pad;
   const y0 = vp ? vp.y : floorGrid(b.y) - pad;
   const x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
@@ -16914,49 +16794,160 @@ __exports.svgString = svgString;
 __exports.editorOverlay = editorOverlay;
 };
 
-__modules["src/core/grid.js"] = function (__require, __exports) {
+__modules["src/core/line-style.js"] = function (__require, __exports) {
+/** The one filled triangular arrowhead offered by the shared style menu. */
+const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
+
+function normalizeArrowhead(value, fallback = 'none') {
+  return ARROWHEAD_VALUES.includes(value) ? value : fallback;
+}
+
+function defaultArrowhead(kind) {
+  return kind === 'arrow' || kind === 'connector' ? 'end' : 'none';
+}
+
+function arrowheadEnds(value, fallback = 'none') {
+  const normalized = normalizeArrowhead(typeof value === 'object' ? value?.arrowhead : value, fallback);
+  return {
+    start: normalized === 'start' || normalized === 'both',
+    end: normalized === 'end' || normalized === 'both',
+  };
+}
+
 /**
- * Coarse placement grid. Every world coordinate of a terminal, a component
- * origin, or a wire point must be an integer multiple of GRID.
+ * Map one shared arrowhead choice onto the individual segments of a
+ * polyline.  A bent route is still one drawable wire, so its heads belong at
+ * the route endpoints rather than at its corner vertices.  On a single
+ * segment both heads can share that segment; otherwise the two heads occupy
+ * the first and last segments independently.
  */
-const GRID = 40;
-
-/** Snap a single scalar to the nearest grid multiple. */
-function snap(n) {
-  return Math.round(n / GRID) * GRID;
+function polylineArrowheadValues(points = [], value = 'none') {
+  const route = [];
+  for (const point of points || []) {
+    const next = { x: point.x, y: point.y };
+    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
+  }
+  if (route.length < 2) return [];
+  const ends = arrowheadEnds(value);
+  let first = -1;
+  let last = -1;
+  for (let i = 1; i < route.length; i++) {
+    if (samePoint(route[i - 1], route[i])) continue;
+    if (first < 0) first = i;
+    last = i;
+  }
+  if (first < 0) return route.slice(1).map(() => 'none');
+  const values = route.slice(1).map(() => 'none');
+  if (ends.start) values[first - 1] = first === last && ends.end ? 'both' : 'start';
+  if (ends.end) values[last - 1] = ['start', 'both'].includes(values[last - 1]) ? 'both' : 'end';
+  return values;
 }
 
-/** Snap x,y to grid; returns a new point {x,y}. */
-function snapPoint(x, y) {
-  return { x: snap(x), y: snap(y) };
+/** Resolve segment-local arrowhead styles to the logical endpoints of a
+ * polyline. This also repairs older documents where an end head was left on
+ * an interior segment after a route gained a bend. */
+function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
+  const values = [];
+  for (let index = 1; index < points.length; index++) {
+    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
+    if (value !== undefined) values.push(normalizeArrowhead(value));
+  }
+  if (!values.length) return normalizeArrowhead(inherited);
+  const start = values.some((value) => arrowheadEnds(value).start);
+  const end = values.some((value) => arrowheadEnds(value).end);
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
 }
 
-/** True if n is (lexact triangle) a grid multiple. */
-function onGrid(n, eps = 1e-9) {
-  return Math.abs(n / GRID - Math.round(n / GRID)) < eps;
+/** Return wireStyles with one shared arrowhead choice distributed across a
+ * path's endpoint segments. Existing per-segment appearance is preserved. */
+function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {
+  const next = { ...wireStyles };
+  for (const [index, arrowhead] of polylineArrowheadValues(points, value).entries()) {
+    const key = `${branch}:${index + 1}`;
+    next[key] = { ...(next[key] || {}), arrowhead };
+  }
+  return next;
 }
 
-/** Grid index (cell number) of a coordinate. */
-function cell(n) {
-  return Math.round(n / GRID);
+const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
+
+/** Filled arrowhead geometry for a segment whose tip is `b`. */
+function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const distance = Math.hypot(dx, dy);
+  if (!distance) return null;
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
+  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
+  const normal = { x: uy, y: -ux };
+  return {
+    shaft: base,
+    tip,
+    left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
+    right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
+  };
 }
 
-/** Nearest multiple of GRID at or below n. */
-function floorGrid(n) {
-  return Math.floor(n / GRID) * GRID;
+/**
+ * Return a polyline shortened at the decorated endpoints plus the filled
+ * heads. The input is never mutated. Endpoint decoration works for straight,
+ * diagonal, and orthogonal multi-point paths.
+ */
+function polylineArrowheads(points = [], value = 'none', options = {}) {
+  const route = [];
+  for (const point of points || []) {
+    const next = { x: point.x, y: point.y };
+    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
+  }
+  if (route.length < 2) return { shaftPoints: route, heads: [] };
+  const ends = arrowheadEnds(value, options.fallback || 'none');
+  let first = -1;
+  let last = -1;
+  for (let i = 1; i < route.length; i++) {
+    if (samePoint(route[i - 1], route[i])) continue;
+    if (first < 0) first = i;
+    last = i;
+  }
+  if (first < 0) return { shaftPoints: route, heads: [] };
+  const sameSegment = first === last;
+  const fullLength = options.length ?? 32;
+  const halfWidth = options.halfWidth ?? 18;
+  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
+  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
+  const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
+  const length = sameSegment && ends.start && ends.end
+    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
+    : fullLength;
+  const heads = [];
+  const shaftPoints = route.map((point) => ({ ...point }));
+  if (ends.start) {
+    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
+    if (head) {
+      heads.push({ ...head, placement: 'start' });
+      shaftPoints[0] = head.shaft;
+    }
+  }
+  if (ends.end) {
+    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
+    if (head) {
+      heads.push({ ...head, placement: 'end' });
+      shaftPoints[shaftPoints.length - 1] = head.shaft;
+    }
+  }
+  return { shaftPoints, heads };
 }
 
-/** Nearest multiple of GRID at or above n. */
-function ceilGrid(n) {
-  return Math.ceil(n / GRID) * GRID;
-}
-__exports.snap = snap;
-__exports.snapPoint = snapPoint;
-__exports.onGrid = onGrid;
-__exports.cell = cell;
-__exports.floorGrid = floorGrid;
-__exports.ceilGrid = ceilGrid;
-__exports.GRID = GRID;
+__exports.normalizeArrowhead = normalizeArrowhead;
+__exports.defaultArrowhead = defaultArrowhead;
+__exports.arrowheadEnds = arrowheadEnds;
+__exports.polylineArrowheadValues = polylineArrowheadValues;
+__exports.polylineArrowheadValue = polylineArrowheadValue;
+__exports.polylineArrowheadStyles = polylineArrowheadStyles;
+__exports.arrowheadGeometry = arrowheadGeometry;
+__exports.polylineArrowheads = polylineArrowheads;
+__exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 };
 
 __modules["src/core/document.js"] = function (__require, __exports) {
@@ -22617,6 +22608,51 @@ __exports.Net = Net;
 __exports.Circuit = Circuit;
 };
 
+__modules["src/core/grid.js"] = function (__require, __exports) {
+/**
+ * Coarse placement grid. Every world coordinate of a terminal, a component
+ * origin, or a wire point must be an integer multiple of GRID.
+ */
+const GRID = 40;
+
+/** Snap a single scalar to the nearest grid multiple. */
+function snap(n) {
+  return Math.round(n / GRID) * GRID;
+}
+
+/** Snap x,y to grid; returns a new point {x,y}. */
+function snapPoint(x, y) {
+  return { x: snap(x), y: snap(y) };
+}
+
+/** True if n is (lexact triangle) a grid multiple. */
+function onGrid(n, eps = 1e-9) {
+  return Math.abs(n / GRID - Math.round(n / GRID)) < eps;
+}
+
+/** Grid index (cell number) of a coordinate. */
+function cell(n) {
+  return Math.round(n / GRID);
+}
+
+/** Nearest multiple of GRID at or below n. */
+function floorGrid(n) {
+  return Math.floor(n / GRID) * GRID;
+}
+
+/** Nearest multiple of GRID at or above n. */
+function ceilGrid(n) {
+  return Math.ceil(n / GRID) * GRID;
+}
+__exports.snap = snap;
+__exports.snapPoint = snapPoint;
+__exports.onGrid = onGrid;
+__exports.cell = cell;
+__exports.floorGrid = floorGrid;
+__exports.ceilGrid = ceilGrid;
+__exports.GRID = GRID;
+};
+
 __modules["src/core/selection.js"] = function (__require, __exports) {
 const { extractWireFragments } = __require("src/core/model.js");
 
@@ -22688,6 +22724,10 @@ const { junctionPoints, pointOnPath } = __require("src/core/wiring.js");
 
 const DRAWING_EXPORT_OPTIONS = Object.freeze({
   grid: false, terminals: false, junctions: false, background: true, netNames: true,
+  // Leave room for browser MathML glyphs whose ink can extend beyond the
+  // measured foreignObject box. The model bounds still determine placement;
+  // this is only the final export safety margin.
+  padding: GRID,
 });
 
 function schematicSubset(circuit, selection) {
@@ -24644,324 +24684,6 @@ __exports.moveJunctionEndpoint = moveJunctionEndpoint;
 __exports.moveWireRun = moveWireRun;
 };
 
-__modules["src/web/selection.js"] = function (__require, __exports) {
-
-
-/** Convert any standalone visual label, including a net label, to the
- * label-only clipboard shape. Deliberately omits owner/netId so the pasted
- * object is a floating annotation rather than electrical topology. */
-function copyableLabelPayload(label) {
-  if (!label || label.owner) return null;
-  const anchor = typeof label.anchorWorld === 'function' ? label.anchorWorld() : label.anchor;
-  return {
-    id: label.id,
-    kind: label.kind,
-    parent: label.parent || null,
-    text: label.text,
-    align: label.align,
-    x: anchor.x,
-    y: anchor.y,
-    end: label.kind === 'label' ? null : { ...label.end },
-    points: label.kind === 'line' ? label.points.map((point) => ({ ...point })) : null,
-    style: { ...(label.style || {}) },
-  };
-}
-
-/**
- * Return the selected component that should own a move gesture, or null when
- * the hit is not a member of a preselected component set. Wire and label hits
- * are source confirmation for the set rather than standalone edit requests.
- */
-function selectedSetMoveSource({
-  selectedRefs = [],
-  components = new Map(),
-  componentRef = null,
-  wire = null,
-  label = null,
-  selectedWireKeys = new Set(),
-  selectedNetIds = new Set(),
-  touchedNetIds = new Set(),
-  selectedLabelIds = new Set(),
-} = {}) {
-  const refs = [...selectedRefs];
-  const hasDesignComponent = refs.some((refdes) => components.get(refdes)?.type !== 'solder');
-  if (!hasDesignComponent) return null;
-  const wireKey = wire ? `${wire.net.id}:${wire.branch}:${wire.seg}` : null;
-  const wireMember = wire && (
-    selectedWireKeys.has(wireKey) ||
-    selectedNetIds.has(wire.net.id) ||
-    touchedNetIds.has(wire.net.id)
-  );
-  const labelMember = label && (
-    selectedLabelIds.has(label.id) ||
-    (label.netId && selectedNetIds.has(label.netId))
-  );
-  if (!componentRef && !wireMember && !labelMember) return null;
-  return componentRef || refs.find((refdes) => components.get(refdes)?.type !== 'solder') || refs[0] || null;
-}
-
-/** Return selected nets whose entire terminal set rides the moved components.
- * Terminal-less selected nets are complete by definition. */
-function completeSelectedNetIds({ selectedNetIds = new Set(), nets = new Map(), selectedRefs = [] } = {}) {
-  const refs = new Set(selectedRefs);
-  return new Set([...selectedNetIds].filter((id) => {
-    const net = nets.get(id);
-    return net && (!net.terminals.length || net.terminals.every((terminal) => refs.has(terminal.comp)));
-  }));
-}
-
-/**
- * Choose a wire hit after geometric distances have been computed.
- *
- * The first (nearest) candidate remains the default.  Only candidates at
- * effectively the same distance participate in preference resolution:
- * explicit selected nets take precedence, while diagnostic focus is useful
- * only when it names exactly one tied net.  Candidate order is the
- * deterministic final fallback, and unknown preference IDs are ignored.
- */
-function chooseWireHitCandidate({
-  candidates = [],
-  selectedNets = new Set(),
-  diagnosticNets = new Set(),
-} = {}) {
-  if (!candidates.length) return null;
-  const nearest = candidates.reduce((best, candidate) =>
-    candidate.distance < best.distance ? candidate : best);
-  const scale = Math.max(1, Math.abs(nearest.distance));
-  const tied = candidates.filter(({ distance }) =>
-    Math.abs(distance - nearest.distance) <= 1e-9 * scale);
-  const selected = tied.filter(({ net }) => selectedNets.has(net.id));
-  if (selected.length) return selected[0];
-  const diagnostic = tied.filter(({ net }) => diagnosticNets.has(net.id));
-  const diagnosticNetsInTie = new Set(diagnostic.map(({ net }) => net.id));
-  if (diagnosticNetsInTie.size === 1) return diagnostic[0];
-  return tied[0];
-}
-
-__exports.copySelectionParts = __require("src/core/selection.js").copySelectionParts;
-__exports.copyableLabelPayload = copyableLabelPayload;
-__exports.selectedSetMoveSource = selectedSetMoveSource;
-__exports.completeSelectedNetIds = completeSelectedNetIds;
-__exports.chooseWireHitCandidate = chooseWireHitCandidate;
-};
-
-__modules["src/web/commit-feedback.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-const { componentShapeSvg, labelShapeSvg } = __require("src/core/render.js");
-/**
- * Commit feedback: what visibly "landed" between two committed documents.
- *
- * The editor flashes these regions briefly after an undoable edit. The diff is
- * geometric rather than per-tool, so placement, wiring, moves, copies, pastes,
- * label edits, and console commands all get the same feedback without each
- * tool describing its own result. Undo/redo never call this.
- */
-
-
-
-
-// A huge edit (select-all move, loading a template through a command) should
-// still acknowledge the commit without building thousands of SVG nodes.
-const MAX_RECTS = 80;
-const MAX_PIECES = 1500;
-const MAX_POINTS = 60;
-
-const pointKey = (p) => `${Math.round(p.x)},${Math.round(p.y)}`;
-
-function componentKey(json) {
-  return JSON.stringify(json);
-}
-
-/** Split a drawable path into grid-length pieces so re-segmented but
- * geometrically unchanged wires (a junction split, collinear merge) compare
- * equal. Diagonal segments stay whole. */
-function wirePieces(paths) {
-  const pieces = new Map();
-  for (const { netId, pts } of paths) {
-    if (!pts || pts.length < 2) continue;
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1];
-      const b = pts[i];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const steps = (dx === 0 || dy === 0) ? Math.max(1, Math.round(Math.abs(dx + dy) / GRID)) : 1;
-      for (let s = 0; s < steps; s++) {
-        const p = { x: a.x + (dx * s) / steps, y: a.y + (dy * s) / steps };
-        const q = { x: a.x + (dx * (s + 1)) / steps, y: a.y + (dy * (s + 1)) / steps };
-        const [lo, hi] = pointKey(p) < pointKey(q) ? [p, q] : [q, p];
-        // Keyed per net: a wire moved onto another net's wire is still new.
-        pieces.set(`${netId}|${pointKey(lo)}|${pointKey(hi)}`, { a: lo, b: hi });
-      }
-    }
-  }
-  return pieces;
-}
-
-function circuitWirePieces(circuit) {
-  const paths = [];
-  for (const net of circuit.nets.values()) {
-    try { paths.push(...net.paths().map((pts) => ({ netId: net.id, pts }))); } catch { /* unroutable net: nothing drawn */ }
-  }
-  return wirePieces(paths);
-}
-
-function connectedTerminalKeys(circuit) {
-  const keys = new Set();
-  for (const net of circuit.nets.values()) {
-    if ((net.terminals?.length || 0) < 2 && !(net.junctions?.length)) continue;
-    for (const t of net.terminals || []) keys.add(`${t.comp}.${t.term}`);
-  }
-  return keys;
-}
-
-function labelKey(label) {
-  let box = null;
-  try { box = label.bbox(); } catch { /* no drawable box */ }
-  // Owned labels store a local offset, so compare the world box as well.
-  return JSON.stringify([label.toJSON ? label.toJSON() : label, box]);
-}
-
-/**
- * Compare the committed `before` circuit with `after`. Returns world geometry:
- * - components/labels: added or changed objects (from `after`);
- * - pieces: added wire pieces ({a,b});
- * - points: new connections (new solder junctions, newly connected pins,
- *   and pins touched by a new wire piece) — where the edit "clicked" in;
- * - removedComponents/removedLabels/removedPieces: what a deletion removed
- *   (from `before`). A deletion that reroutes the remaining wires is still a
- *   deletion: its reroute is not flashed as an addition.
- */
-function commitFeedbackDiff(before, after) {
-  const components = [];
-  const labels = [];
-  const removedComponents = [];
-  const removedLabels = [];
-  const points = new Map();
-
-  const beforeComps = new Map([...before.components.values()].map((c) => [c.refdes, c]));
-  for (const c of after.components.values()) {
-    const old = beforeComps.get(c.refdes);
-    beforeComps.delete(c.refdes);
-    if (c.type === 'solder') {
-      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y });
-      continue;
-    }
-    if (old && componentKey(old.toJSON()) === componentKey(c.toJSON())) continue;
-    components.push(c);
-  }
-  for (const c of beforeComps.values()) {
-    if (c.type !== 'solder') removedComponents.push(c);
-  }
-
-  const beforeLabels = new Map(before.labels);
-  for (const label of after.labels.values()) {
-    const old = beforeLabels.get(label.id);
-    beforeLabels.delete(label.id);
-    if (old && labelKey(old) === labelKey(label)) continue;
-    labels.push(label);
-  }
-  removedLabels.push(...beforeLabels.values());
-
-  const oldPieces = circuitWirePieces(before);
-  const newPieces = circuitWirePieces(after);
-  const pieces = [];
-  for (const [key, piece] of newPieces) if (!oldPieces.has(key)) pieces.push(piece);
-  const removedPieces = [];
-  for (const [key, piece] of oldPieces) if (!newPieces.has(key)) removedPieces.push(piece);
-
-  // A deletion removed objects, or removed wire without drawing any. Moving or
-  // shortening a wire removes more pieces than it adds, but is not a deletion.
-  const deletion = !components.length && !labels.length
-    && (removedComponents.length || removedLabels.length || (removedPieces.length && !pieces.length));
-  if (deletion) {
-    return {
-      components: [], labels: [], pieces: [], points: [],
-      removedComponents: removedComponents.slice(0, MAX_RECTS),
-      removedLabels: removedLabels.slice(0, MAX_RECTS),
-      removedPieces: removedPieces.slice(0, MAX_PIECES),
-    };
-  }
-
-  // Pins that gained a connection, or sit at an end of a freshly drawn wire.
-  const pieceEnds = new Map();
-  for (const { a, b } of pieces) {
-    for (const p of [a, b]) {
-      const key = pointKey(p);
-      pieceEnds.set(key, (pieceEnds.get(key) || 0) + 1);
-    }
-  }
-  const wasConnected = connectedTerminalKeys(before);
-  const isConnected = connectedTerminalKeys(after);
-  for (const c of after.components.values()) {
-    if (c.type === 'solder') continue;
-    for (const t of c.worldTerminals()) {
-      const id = `${c.refdes}.${t.name}`;
-      if (!isConnected.has(id)) continue;
-      const key = pointKey(t);
-      if (!wasConnected.has(id) || pieceEnds.get(key) === 1) points.set(key, { x: t.x, y: t.y });
-    }
-  }
-
-  return {
-    components: components.slice(0, MAX_RECTS),
-    labels: labels.slice(0, MAX_RECTS),
-    pieces: pieces.slice(0, MAX_PIECES),
-    points: [...points.values()].slice(0, MAX_POINTS),
-    removedComponents: [],
-    removedLabels: [],
-    removedPieces: [],
-  };
-}
-
-function isEmptyFeedback(diff) {
-  return !diff || Object.values(diff).every((list) => !list.length);
-}
-
-const f = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
-
-/** One label's traced shape; a math label (HTML) falls back to a soft box. */
-function labelTrace(label, boxClass) {
-  const shape = labelShapeSvg(label);
-  if (shape) return shape;
-  try {
-    const r = label.bbox();
-    return `<rect class="${boxClass}" x="${f(r.x)}" y="${f(r.y)}" width="${f(r.w)}" height="${f(r.h)}" rx="6"/>`;
-  } catch {
-    return '';
-  }
-}
-
-/** SVG markup for one feedback burst: `under` glows behind the drawing (the
- * objects' own shapes, restyled by CSS), `over` sits on top (connection
- * ripples, and the trailing red halo of deleted objects). */
-function commitFeedbackSvg(diff) {
-  const piecePath = (list) => list.map(({ a, b }) => `M ${f(a.x)} ${f(a.y)} L ${f(b.x)} ${f(b.y)}`).join(' ');
-  const under = [];
-  const over = [];
-  const glow = [
-    ...diff.components.map((c) => componentShapeSvg(c)),
-    ...diff.labels.map((label) => labelTrace(label, 'landing-box')),
-  ].join('');
-  if (glow) under.push(`<g class="landing-glow">${glow}</g>`);
-  if (diff.pieces.length) under.push(`<path class="landing-wire" d="${piecePath(diff.pieces)}"/>`);
-  for (const p of diff.points) {
-    over.push(`<circle class="landing-ripple" cx="${f(p.x)}" cy="${f(p.y)}" r="18"/>`);
-    over.push(`<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
-  }
-  const removed = [
-    ...diff.removedComponents.map((c) => componentShapeSvg(c)),
-    ...diff.removedLabels.map((label) => labelTrace(label, 'landing-box')),
-    diff.removedPieces.length ? `<path d="${piecePath(diff.removedPieces)}" fill="none"/>` : '',
-  ].join('');
-  if (removed) over.push(`<g class="landing-removed">${removed}</g>`);
-  return { under: under.join(''), over: over.join('') };
-}
-
-__exports.commitFeedbackDiff = commitFeedbackDiff;
-__exports.isEmptyFeedback = isEmptyFeedback;
-__exports.commitFeedbackSvg = commitFeedbackSvg;
-};
-
 __modules["src/core/wiring.js"] = function (__require, __exports) {
 const { snap, GRID } = __require("src/core/grid.js");
 
@@ -25559,6 +25281,400 @@ __exports.validateWiring = validateWiring;
 __exports.pointKey = pointKey;
 };
 
+__modules["src/web/selection.js"] = function (__require, __exports) {
+
+
+/** Convert any standalone visual label, including a net label, to the
+ * label-only clipboard shape. Deliberately omits owner/netId so the pasted
+ * object is a floating annotation rather than electrical topology. */
+function copyableLabelPayload(label) {
+  if (!label || label.owner) return null;
+  const anchor = typeof label.anchorWorld === 'function' ? label.anchorWorld() : label.anchor;
+  return {
+    id: label.id,
+    kind: label.kind,
+    parent: label.parent || null,
+    text: label.text,
+    align: label.align,
+    x: anchor.x,
+    y: anchor.y,
+    end: label.kind === 'label' ? null : { ...label.end },
+    points: label.kind === 'line' ? label.points.map((point) => ({ ...point })) : null,
+    style: { ...(label.style || {}) },
+  };
+}
+
+/**
+ * Return the selected component that should own a move gesture, or null when
+ * the hit is not a member of a preselected component set. Wire and label hits
+ * are source confirmation for the set rather than standalone edit requests.
+ */
+function selectedSetMoveSource({
+  selectedRefs = [],
+  components = new Map(),
+  componentRef = null,
+  wire = null,
+  label = null,
+  selectedWireKeys = new Set(),
+  selectedNetIds = new Set(),
+  touchedNetIds = new Set(),
+  selectedLabelIds = new Set(),
+} = {}) {
+  const refs = [...selectedRefs];
+  const hasDesignComponent = refs.some((refdes) => components.get(refdes)?.type !== 'solder');
+  if (!hasDesignComponent) return null;
+  const wireKey = wire ? `${wire.net.id}:${wire.branch}:${wire.seg}` : null;
+  const wireMember = wire && (
+    selectedWireKeys.has(wireKey) ||
+    selectedNetIds.has(wire.net.id) ||
+    touchedNetIds.has(wire.net.id)
+  );
+  const labelMember = label && (
+    selectedLabelIds.has(label.id) ||
+    (label.netId && selectedNetIds.has(label.netId))
+  );
+  if (!componentRef && !wireMember && !labelMember) return null;
+  return componentRef || refs.find((refdes) => components.get(refdes)?.type !== 'solder') || refs[0] || null;
+}
+
+/** Return selected nets whose entire terminal set rides the moved components.
+ * Terminal-less selected nets are complete by definition. */
+function completeSelectedNetIds({ selectedNetIds = new Set(), nets = new Map(), selectedRefs = [] } = {}) {
+  const refs = new Set(selectedRefs);
+  return new Set([...selectedNetIds].filter((id) => {
+    const net = nets.get(id);
+    return net && (!net.terminals.length || net.terminals.every((terminal) => refs.has(terminal.comp)));
+  }));
+}
+
+/**
+ * Choose a wire hit after geometric distances have been computed.
+ *
+ * The first (nearest) candidate remains the default.  Only candidates at
+ * effectively the same distance participate in preference resolution:
+ * explicit selected nets take precedence, while diagnostic focus is useful
+ * only when it names exactly one tied net.  Candidate order is the
+ * deterministic final fallback, and unknown preference IDs are ignored.
+ */
+function chooseWireHitCandidate({
+  candidates = [],
+  selectedNets = new Set(),
+  diagnosticNets = new Set(),
+} = {}) {
+  if (!candidates.length) return null;
+  const nearest = candidates.reduce((best, candidate) =>
+    candidate.distance < best.distance ? candidate : best);
+  const scale = Math.max(1, Math.abs(nearest.distance));
+  const tied = candidates.filter(({ distance }) =>
+    Math.abs(distance - nearest.distance) <= 1e-9 * scale);
+  const selected = tied.filter(({ net }) => selectedNets.has(net.id));
+  if (selected.length) return selected[0];
+  const diagnostic = tied.filter(({ net }) => diagnosticNets.has(net.id));
+  const diagnosticNetsInTie = new Set(diagnostic.map(({ net }) => net.id));
+  if (diagnosticNetsInTie.size === 1) return diagnostic[0];
+  return tied[0];
+}
+
+__exports.copySelectionParts = __require("src/core/selection.js").copySelectionParts;
+__exports.copyableLabelPayload = copyableLabelPayload;
+__exports.selectedSetMoveSource = selectedSetMoveSource;
+__exports.completeSelectedNetIds = completeSelectedNetIds;
+__exports.chooseWireHitCandidate = chooseWireHitCandidate;
+};
+
+__modules["src/web/wire-index.js"] = function (__require, __exports) {
+const { distanceToSegment } = __require("src/core/geometry.js");
+
+
+const CELL = 40;
+
+const cellKey = (x, y) => `${x},${y}`;
+const cell = value => Math.floor(value / CELL);
+
+function buildWireHitIndex(nets) {
+  const buckets = new Map();
+  const diagonals = [];
+  let order = 0;
+  const add = (key, record) => {
+    let bucket = buckets.get(key);
+    if (!bucket) buckets.set(key, bucket = []);
+    bucket.push(record);
+  };
+  for (const net of nets) {
+    const paths = net.paths();
+    for (let branch = 0; branch < paths.length; branch++) {
+      const pts = paths[branch];
+      for (let seg = 1; seg < pts.length; seg++) {
+        const a = pts[seg - 1], b = pts[seg];
+        if (a.x === b.x && a.y === b.y) continue;
+        const record = { net, branch, seg, pts, a, b, order: order++ };
+        if (a.x !== b.x && a.y !== b.y) {
+          diagonals.push(record);
+        } else if (a.y === b.y) {
+          const y = cell(a.y);
+          for (let x = cell(Math.min(a.x, b.x)); x <= cell(Math.max(a.x, b.x)); x++) add(cellKey(x, y), record);
+        } else {
+          const x = cell(a.x);
+          for (let y = cell(Math.min(a.y, b.y)); y <= cell(Math.max(a.y, b.y)); y++) add(cellKey(x, y), record);
+        }
+      }
+    }
+  }
+  return { buckets, diagonals };
+}
+
+function queryWireHitIndex(index, raw, snapped, tolerance) {
+  const candidates = new Map();
+  const add = record => {
+    const key = `${record.net.id}:${record.branch}:${record.seg}`;
+    if (!candidates.has(key)) candidates.set(key, record);
+  };
+  for (const point of [raw, snapped]) {
+    const radius = Math.ceil(tolerance / CELL);
+    const cx = cell(point.x), cy = cell(point.y);
+    for (let x = cx - radius; x <= cx + radius; x++) {
+      for (let y = cy - radius; y <= cy + radius; y++) {
+        for (const record of index.buckets.get(cellKey(x, y)) || []) add(record);
+      }
+    }
+    for (const record of index.diagonals) add(record);
+  }
+  const records = [...candidates.values()].sort((a, b) => a.order - b.order);
+  const measure = (point) => records.map(record => ({
+    net: record.net,
+    branch: record.branch,
+    seg: record.seg,
+    pts: record.pts,
+    distance: distanceToSegment(point, record.a, record.b),
+  })).filter(candidate => candidate.distance < tolerance);
+  // The raw pointer decides between segments that meet at a grid point (for
+  // example a bend next to a diagonal). The snapped point is only a fallback
+  // when the raw pointer is not near any wire.
+  const rawHits = measure(raw);
+  return rawHits.length ? rawHits : measure(snapped);
+}
+
+__exports.buildWireHitIndex = buildWireHitIndex;
+__exports.queryWireHitIndex = queryWireHitIndex;
+};
+
+__modules["src/web/commit-feedback.js"] = function (__require, __exports) {
+const { GRID } = __require("src/core/grid.js");
+const { componentShapeSvg, labelShapeSvg } = __require("src/core/render.js");
+/**
+ * Commit feedback: what visibly "landed" between two committed documents.
+ *
+ * The editor flashes these regions briefly after an undoable edit. The diff is
+ * geometric rather than per-tool, so placement, wiring, moves, copies, pastes,
+ * label edits, and console commands all get the same feedback without each
+ * tool describing its own result. Undo/redo never call this.
+ */
+
+
+
+
+// A huge edit (select-all move, loading a template through a command) should
+// still acknowledge the commit without building thousands of SVG nodes.
+const MAX_RECTS = 80;
+const MAX_PIECES = 1500;
+const MAX_POINTS = 60;
+
+const pointKey = (p) => `${Math.round(p.x)},${Math.round(p.y)}`;
+
+function componentKey(json) {
+  return JSON.stringify(json);
+}
+
+/** Split a drawable path into grid-length pieces so re-segmented but
+ * geometrically unchanged wires (a junction split, collinear merge) compare
+ * equal. Diagonal segments stay whole. */
+function wirePieces(paths) {
+  const pieces = new Map();
+  for (const { netId, pts } of paths) {
+    if (!pts || pts.length < 2) continue;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const steps = (dx === 0 || dy === 0) ? Math.max(1, Math.round(Math.abs(dx + dy) / GRID)) : 1;
+      for (let s = 0; s < steps; s++) {
+        const p = { x: a.x + (dx * s) / steps, y: a.y + (dy * s) / steps };
+        const q = { x: a.x + (dx * (s + 1)) / steps, y: a.y + (dy * (s + 1)) / steps };
+        const [lo, hi] = pointKey(p) < pointKey(q) ? [p, q] : [q, p];
+        // Keyed per net: a wire moved onto another net's wire is still new.
+        pieces.set(`${netId}|${pointKey(lo)}|${pointKey(hi)}`, { a: lo, b: hi });
+      }
+    }
+  }
+  return pieces;
+}
+
+function circuitWirePieces(circuit) {
+  const paths = [];
+  for (const net of circuit.nets.values()) {
+    try { paths.push(...net.paths().map((pts) => ({ netId: net.id, pts }))); } catch { /* unroutable net: nothing drawn */ }
+  }
+  return wirePieces(paths);
+}
+
+function connectedTerminalKeys(circuit) {
+  const keys = new Set();
+  for (const net of circuit.nets.values()) {
+    if ((net.terminals?.length || 0) < 2 && !(net.junctions?.length)) continue;
+    for (const t of net.terminals || []) keys.add(`${t.comp}.${t.term}`);
+  }
+  return keys;
+}
+
+function labelKey(label) {
+  let box = null;
+  try { box = label.bbox(); } catch { /* no drawable box */ }
+  // Owned labels store a local offset, so compare the world box as well.
+  return JSON.stringify([label.toJSON ? label.toJSON() : label, box]);
+}
+
+/**
+ * Compare the committed `before` circuit with `after`. Returns world geometry:
+ * - components/labels: added or changed objects (from `after`);
+ * - pieces: added wire pieces ({a,b});
+ * - points: new connections (new solder junctions, newly connected pins,
+ *   and pins touched by a new wire piece) — where the edit "clicked" in;
+ * - removedComponents/removedLabels/removedPieces: what a deletion removed
+ *   (from `before`). A deletion that reroutes the remaining wires is still a
+ *   deletion: its reroute is not flashed as an addition.
+ */
+function commitFeedbackDiff(before, after) {
+  const components = [];
+  const labels = [];
+  const removedComponents = [];
+  const removedLabels = [];
+  const points = new Map();
+
+  const beforeComps = new Map([...before.components.values()].map((c) => [c.refdes, c]));
+  for (const c of after.components.values()) {
+    const old = beforeComps.get(c.refdes);
+    beforeComps.delete(c.refdes);
+    if (c.type === 'solder') {
+      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y });
+      continue;
+    }
+    if (old && componentKey(old.toJSON()) === componentKey(c.toJSON())) continue;
+    components.push(c);
+  }
+  for (const c of beforeComps.values()) {
+    if (c.type !== 'solder') removedComponents.push(c);
+  }
+
+  const beforeLabels = new Map(before.labels);
+  for (const label of after.labels.values()) {
+    const old = beforeLabels.get(label.id);
+    beforeLabels.delete(label.id);
+    if (old && labelKey(old) === labelKey(label)) continue;
+    labels.push(label);
+  }
+  removedLabels.push(...beforeLabels.values());
+
+  const oldPieces = circuitWirePieces(before);
+  const newPieces = circuitWirePieces(after);
+  const pieces = [];
+  for (const [key, piece] of newPieces) if (!oldPieces.has(key)) pieces.push(piece);
+  const removedPieces = [];
+  for (const [key, piece] of oldPieces) if (!newPieces.has(key)) removedPieces.push(piece);
+
+  // A deletion removed objects, or removed wire without drawing any. Moving or
+  // shortening a wire removes more pieces than it adds, but is not a deletion.
+  const deletion = !components.length && !labels.length
+    && (removedComponents.length || removedLabels.length || (removedPieces.length && !pieces.length));
+  if (deletion) {
+    return {
+      components: [], labels: [], pieces: [], points: [],
+      removedComponents: removedComponents.slice(0, MAX_RECTS),
+      removedLabels: removedLabels.slice(0, MAX_RECTS),
+      removedPieces: removedPieces.slice(0, MAX_PIECES),
+    };
+  }
+
+  // Pins that gained a connection, or sit at an end of a freshly drawn wire.
+  const pieceEnds = new Map();
+  for (const { a, b } of pieces) {
+    for (const p of [a, b]) {
+      const key = pointKey(p);
+      pieceEnds.set(key, (pieceEnds.get(key) || 0) + 1);
+    }
+  }
+  const wasConnected = connectedTerminalKeys(before);
+  const isConnected = connectedTerminalKeys(after);
+  for (const c of after.components.values()) {
+    if (c.type === 'solder') continue;
+    for (const t of c.worldTerminals()) {
+      const id = `${c.refdes}.${t.name}`;
+      if (!isConnected.has(id)) continue;
+      const key = pointKey(t);
+      if (!wasConnected.has(id) || pieceEnds.get(key) === 1) points.set(key, { x: t.x, y: t.y });
+    }
+  }
+
+  return {
+    components: components.slice(0, MAX_RECTS),
+    labels: labels.slice(0, MAX_RECTS),
+    pieces: pieces.slice(0, MAX_PIECES),
+    points: [...points.values()].slice(0, MAX_POINTS),
+    removedComponents: [],
+    removedLabels: [],
+    removedPieces: [],
+  };
+}
+
+function isEmptyFeedback(diff) {
+  return !diff || Object.values(diff).every((list) => !list.length);
+}
+
+const f = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
+
+/** One label's traced shape; a math label (HTML) falls back to a soft box. */
+function labelTrace(label, boxClass) {
+  const shape = labelShapeSvg(label);
+  if (shape) return shape;
+  try {
+    const r = label.bbox();
+    return `<rect class="${boxClass}" x="${f(r.x)}" y="${f(r.y)}" width="${f(r.w)}" height="${f(r.h)}" rx="6"/>`;
+  } catch {
+    return '';
+  }
+}
+
+/** SVG markup for one feedback burst: `under` glows behind the drawing (the
+ * objects' own shapes, restyled by CSS), `over` sits on top (connection
+ * ripples, and the trailing red halo of deleted objects). */
+function commitFeedbackSvg(diff) {
+  const piecePath = (list) => list.map(({ a, b }) => `M ${f(a.x)} ${f(a.y)} L ${f(b.x)} ${f(b.y)}`).join(' ');
+  const under = [];
+  const over = [];
+  const glow = [
+    ...diff.components.map((c) => componentShapeSvg(c)),
+    ...diff.labels.map((label) => labelTrace(label, 'landing-box')),
+  ].join('');
+  if (glow) under.push(`<g class="landing-glow">${glow}</g>`);
+  if (diff.pieces.length) under.push(`<path class="landing-wire" d="${piecePath(diff.pieces)}"/>`);
+  for (const p of diff.points) {
+    over.push(`<circle class="landing-ripple" cx="${f(p.x)}" cy="${f(p.y)}" r="18"/>`);
+    over.push(`<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
+  }
+  const removed = [
+    ...diff.removedComponents.map((c) => componentShapeSvg(c)),
+    ...diff.removedLabels.map((label) => labelTrace(label, 'landing-box')),
+    diff.removedPieces.length ? `<path d="${piecePath(diff.removedPieces)}" fill="none"/>` : '',
+  ].join('');
+  if (removed) over.push(`<g class="landing-removed">${removed}</g>`);
+  return { under: under.join(''), over: over.join('') };
+}
+
+__exports.commitFeedbackDiff = commitFeedbackDiff;
+__exports.isEmptyFeedback = isEmptyFeedback;
+__exports.commitFeedbackSvg = commitFeedbackSvg;
+};
+
 __modules["src/web/toolbar.js"] = function (__require, __exports) {
 /** Display names and extra search words for the insert menu, keyed by symbol type. */
 const PLACEMENT_LABELS = {
@@ -25762,6 +25878,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+S', 'save'],
     ['Ctrl/Cmd+Shift+S', 'save as: choose a folder and name'],
     ['Ctrl/Cmd+O', 'open a document file from any folder'],
+    ['Ctrl/Cmd+E', 'open the export dialog'],
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+x', 'check / save without checking'],
     ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],
@@ -25862,82 +25979,6 @@ __exports.naturalCompare = naturalCompare;
 __exports.EDITOR_KEYMAP = EDITOR_KEYMAP;
 };
 
-__modules["src/web/wire-index.js"] = function (__require, __exports) {
-const { distanceToSegment } = __require("src/core/geometry.js");
-
-
-const CELL = 40;
-
-const cellKey = (x, y) => `${x},${y}`;
-const cell = value => Math.floor(value / CELL);
-
-function buildWireHitIndex(nets) {
-  const buckets = new Map();
-  const diagonals = [];
-  let order = 0;
-  const add = (key, record) => {
-    let bucket = buckets.get(key);
-    if (!bucket) buckets.set(key, bucket = []);
-    bucket.push(record);
-  };
-  for (const net of nets) {
-    const paths = net.paths();
-    for (let branch = 0; branch < paths.length; branch++) {
-      const pts = paths[branch];
-      for (let seg = 1; seg < pts.length; seg++) {
-        const a = pts[seg - 1], b = pts[seg];
-        if (a.x === b.x && a.y === b.y) continue;
-        const record = { net, branch, seg, pts, a, b, order: order++ };
-        if (a.x !== b.x && a.y !== b.y) {
-          diagonals.push(record);
-        } else if (a.y === b.y) {
-          const y = cell(a.y);
-          for (let x = cell(Math.min(a.x, b.x)); x <= cell(Math.max(a.x, b.x)); x++) add(cellKey(x, y), record);
-        } else {
-          const x = cell(a.x);
-          for (let y = cell(Math.min(a.y, b.y)); y <= cell(Math.max(a.y, b.y)); y++) add(cellKey(x, y), record);
-        }
-      }
-    }
-  }
-  return { buckets, diagonals };
-}
-
-function queryWireHitIndex(index, raw, snapped, tolerance) {
-  const candidates = new Map();
-  const add = record => {
-    const key = `${record.net.id}:${record.branch}:${record.seg}`;
-    if (!candidates.has(key)) candidates.set(key, record);
-  };
-  for (const point of [raw, snapped]) {
-    const radius = Math.ceil(tolerance / CELL);
-    const cx = cell(point.x), cy = cell(point.y);
-    for (let x = cx - radius; x <= cx + radius; x++) {
-      for (let y = cy - radius; y <= cy + radius; y++) {
-        for (const record of index.buckets.get(cellKey(x, y)) || []) add(record);
-      }
-    }
-    for (const record of index.diagonals) add(record);
-  }
-  const records = [...candidates.values()].sort((a, b) => a.order - b.order);
-  const measure = (point) => records.map(record => ({
-    net: record.net,
-    branch: record.branch,
-    seg: record.seg,
-    pts: record.pts,
-    distance: distanceToSegment(point, record.a, record.b),
-  })).filter(candidate => candidate.distance < tolerance);
-  // The raw pointer decides between segments that meet at a grid point (for
-  // example a bend next to a diagonal). The snapped point is only a fallback
-  // when the raw pointer is not near any wire.
-  const rawHits = measure(raw);
-  return rawHits.length ? rawHits : measure(snapped);
-}
-
-__exports.buildWireHitIndex = buildWireHitIndex;
-__exports.queryWireHitIndex = queryWireHitIndex;
-};
-
 __modules["src/web/persistence.js"] = function (__require, __exports) {
 /**
  * Persistence boundary for the editor.
@@ -25957,6 +25998,15 @@ function validDocumentName(value) {
 
 const BROWSER_DOCUMENTS_KEY = 'mosfeteer:browser-documents';
 const BROWSER_DOWNLOADS = 'Browser downloads';
+
+/** Return the initial export destination for the active persistence mode. */
+function defaultExportDirectory(workspaceState = {}, { browserOnly = false } = {}) {
+  if (browserOnly) return workspaceState.workspace || BROWSER_DOWNLOADS;
+  const home = String(workspaceState.home || '').trim();
+  if (!home) return workspaceState.workspace || '';
+  const separator = workspaceState.sep || '/';
+  return home.endsWith(separator) ? `${home}Pictures` : `${home}${separator}Pictures`;
+}
 
 function browserOnlyRequested(location = globalThis.location) {
   if (!location) return false;
@@ -26012,6 +26062,12 @@ function makeDownload(download, contents, name, type) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function writeFileHandle(handle, contents) {
+  const writable = await handle.createWritable();
+  await writable.write(contents);
+  await writable.close();
 }
 
 function dataUrlBlob(dataUrl) {
@@ -26144,6 +26200,21 @@ function createBrowserPersistenceAdapter({
     browserOnly: true,
     liveSync: false,
     supportedExportFormats: new Set(['svg', 'png']),
+    /** Reserve a native save target before PNG rasterization loses user activation. */
+    prepareExport: async ({ name, formats = [] } = {}) => {
+      if (!formats.includes('png') || download || typeof windowImpl?.showSaveFilePicker !== 'function') return null;
+      try {
+        const handle = await windowImpl.showSaveFilePicker({
+          suggestedName: `${validDocumentName(name) || 'circuit'}.png`,
+          types: [{ description: 'PNG image', accept: { 'image/png': ['.png'] } }],
+        });
+        return { pngHandle: handle };
+      } catch (error) {
+        if (error?.name === 'AbortError') throw Object.assign(new Error('save canceled'), { code: 'canceled' });
+        if (error?.name !== 'NotSupportedError' && error?.name !== 'SecurityError') throw error;
+        return null;
+      }
+    },
     workspace,
     setWorkspace: workspace,
     browse: async () => ({ dir: BROWSER_DOWNLOADS, entries: [], parent: null, home: '', workspace: BROWSER_DOWNLOADS }),
@@ -26165,8 +26236,8 @@ function createBrowserPersistenceAdapter({
     },
     save,
     delete: async (path) => {
-      const record = records.get(path);
-      if (record?.handle?.remove) await record.handle.remove();
+      // Browser-only cleanup forgets the cached entry; it never deletes a
+      // disk file, including one represented by a native file handle.
       records.delete(path);
       const next = {};
       for (const value of records.values()) next[value.name] = value.state;
@@ -26176,7 +26247,7 @@ function createBrowserPersistenceAdapter({
     reveal: async () => { throw new Error('the browser controls the download location'); },
     active: async () => ({ active: '', path: '' }),
     heartbeat: async () => {},
-    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '' }) => {
+    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '' }, { prepared = null } = {}) => {
       const supported = formats.filter((format) => ['svg', 'png'].includes(format));
       const unsupported = formats.filter((format) => !['svg', 'png'].includes(format));
       if (unsupported.length) throw Object.assign(new Error(`browser-only export does not support: ${unsupported.join(', ')}`), { code: 'unsupported-format' });
@@ -26188,7 +26259,9 @@ function createBrowserPersistenceAdapter({
       }
       if (supported.includes('png')) {
         const fileName = `${name}.png`;
-        makeDownload(download, dataUrlBlob(png), fileName, 'image/png');
+        const image = dataUrlBlob(png);
+        if (prepared?.pngHandle) await writeFileHandle(prepared.pngHandle, image);
+        else makeDownload(download, image, fileName, 'image/png');
         paths.push(`${dir}/${fileName}`);
       }
       return { dir, paths, notes: ['Files were downloaded by the browser.'] };
@@ -26255,6 +26328,7 @@ function createPersistenceAdapter({ fetchImpl = globalThis.fetch } = {}) {
 }
 
 __exports.validDocumentName = validDocumentName;
+__exports.defaultExportDirectory = defaultExportDirectory;
 __exports.createBrowserPersistenceAdapter = createBrowserPersistenceAdapter;
 __exports.createPersistenceAdapter = createPersistenceAdapter;
 };
@@ -27489,13 +27563,36 @@ const resistor = defineSymbol({
 __exports.resistor = resistor;
 };
 
-__modules["src/core/components/nmos.js"] = function (__require, __exports) {
-const { createMos } = __require("src/core/components/mos.js");
+__modules["src/core/components/capacitor.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
 
-const nmos = createMos('nmos');
+/**
+ * Capacitor (textbook style): two thick parallel plates between a (left) and
+ * b (right). Four squares wide (160) with the plates centered on the midpoint.
+ */
+const capacitor = defineSymbol({
+  type: 'capacitor',
+  description: 'Capacitor',
+  refPrefix: 'C',
+  terminals: [
+    { name: 'a', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
+    { name: 'b', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -40, w: 160, h: 80 },
+  graphics: [
+    { kind: 'path', d: 'M -80 0 L -12.94 0', style: 'symbol' },
+    { kind: 'path', d: 'M -12.94 -32.2 L -12.94 32.2', style: 'emph' },
+    { kind: 'path', d: 'M 12.94 -32.2 L 12.94 32.2', style: 'emph' },
+    { kind: 'path', d: 'M 12.94 0 L 80 0', style: 'symbol' },
+  ],
+  textPos: { x: 0, y: -30, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: 0, y: -80 },
+  defaultValue: '',
+});
 
-__exports.nmos = nmos;
+__exports.capacitor = capacitor;
 };
 
 __modules["src/core/components/inductor.js"] = function (__require, __exports) {
@@ -27559,6 +27656,15 @@ const diode = defineSymbol({
 __exports.diode = diode;
 };
 
+__modules["src/core/components/nmos.js"] = function (__require, __exports) {
+const { createMos } = __require("src/core/components/mos.js");
+
+
+const nmos = createMos('nmos');
+
+__exports.nmos = nmos;
+};
+
 __modules["src/core/components/pmos.js"] = function (__require, __exports) {
 const { createMos } = __require("src/core/components/mos.js");
 
@@ -27568,38 +27674,6 @@ const pmos = createMos('pmos', { pmos: true });
 __exports.pmos = pmos;
 };
 
-__modules["src/core/components/capacitor.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-/**
- * Capacitor (textbook style): two thick parallel plates between a (left) and
- * b (right). Four squares wide (160) with the plates centered on the midpoint.
- */
-const capacitor = defineSymbol({
-  type: 'capacitor',
-  description: 'Capacitor',
-  refPrefix: 'C',
-  terminals: [
-    { name: 'a', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
-    { name: 'b', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
-  ],
-  bbox: { x: -80, y: -40, w: 160, h: 80 },
-  graphics: [
-    { kind: 'path', d: 'M -80 0 L -12.94 0', style: 'symbol' },
-    { kind: 'path', d: 'M -12.94 -32.2 L -12.94 32.2', style: 'emph' },
-    { kind: 'path', d: 'M 12.94 -32.2 L 12.94 32.2', style: 'emph' },
-    { kind: 'path', d: 'M 12.94 0 L 80 0', style: 'symbol' },
-  ],
-  textPos: { x: 0, y: -30, anchor: 'middle' },
-  refPos: null,
-  labelOffset: { x: 0, y: -80 },
-  defaultValue: '',
-});
-
-__exports.capacitor = capacitor;
-};
-
 __modules["src/core/components/nmosb.js"] = function (__require, __exports) {
 const { createMos } = __require("src/core/components/mos.js");
 
@@ -27607,15 +27681,6 @@ const { createMos } = __require("src/core/components/mos.js");
 const nmosb = createMos('nmosb', { bulk: true });
 
 __exports.nmosb = nmosb;
-};
-
-__modules["src/core/components/pmosb.js"] = function (__require, __exports) {
-const { createMos } = __require("src/core/components/mos.js");
-
-
-const pmosb = createMos('pmosb', { pmos: true, bulk: true });
-
-__exports.pmosb = pmosb;
 };
 
 __modules["src/core/components/npn.js"] = function (__require, __exports) {
@@ -27654,6 +27719,15 @@ const npn = defineSymbol({
 });
 
 __exports.npn = npn;
+};
+
+__modules["src/core/components/pmosb.js"] = function (__require, __exports) {
+const { createMos } = __require("src/core/components/mos.js");
+
+
+const pmosb = createMos('pmosb', { pmos: true, bulk: true });
+
+__exports.pmosb = pmosb;
 };
 
 __modules["src/core/components/pnp.js"] = function (__require, __exports) {
@@ -28694,1780 +28768,6 @@ __exports.firstDefined = firstDefined;
 __exports.OWN = OWN;
 __exports.MOS_TYPES = MOS_TYPES;
 __exports.PASSIVE_KINDS = PASSIVE_KINDS;
-};
-
-__modules["src/core/analysis/response.js"] = function (__require, __exports) {
-const { add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js");
-
-
-const DEFAULT_VARIABLE = 's';
-const ZERO = integer(0);
-const ONE = integer(1);
-
-function asRational(value, variable, options) {
-  if (value?.kind === 'rational') {
-    return rationalFunction(value.numerator, value.denominator, {
-      ...options,
-      variable,
-    });
-  }
-  return rationalFunction(value ?? ONE, ONE, { ...options, variable });
-}
-
-function quotient(numerator, denominator) {
-  if (denominator.kind === 'number') {
-    if (numerator.kind === 'number') {
-      return rational(
-        numerator.numerator * denominator.denominator,
-        numerator.denominator * denominator.numerator,
-      );
-    }
-    return multiply(numerator, rational(denominator.denominator, denominator.numerator));
-  }
-  return multiply(numerator, power(denominator, -1));
-}
-
-function coefficientAt(coefficients, exponent) {
-  return coefficients.find(({ power: powerValue }) => powerValue === exponent)?.coefficient || ZERO;
-}
-
-function polynomialInfo(expression, variable, options) {
-  const coefficients = polynomialCoefficients(expression, variable, options);
-  if (!coefficients) return null;
-  return Object.freeze({
-    coefficients,
-    degree: coefficients.length ? coefficients[0].power : null,
-    valuation: coefficients.length ? coefficients[coefficients.length - 1].power : null,
-  });
-}
-
-function limitAtZero(numeratorInfo, denominatorInfo) {
-  if (!numeratorInfo || !denominatorInfo) {
-    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
-  }
-  if (numeratorInfo.valuation === null) {
-    return Object.freeze({ kind: 'zero', value: ZERO, order: null, coefficient: ZERO });
-  }
-  if (denominatorInfo.valuation === null) {
-    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
-  }
-
-  const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.valuation);
-  const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.valuation);
-  const order = denominatorInfo.valuation - numeratorInfo.valuation;
-  if (order > 0) {
-    return Object.freeze({
-      kind: 'pole',
-      value: null,
-      order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  if (order < 0) {
-    return Object.freeze({
-      kind: 'zero',
-      value: ZERO,
-      order: -order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  const value = quotient(numeratorCoefficient, denominatorCoefficient);
-  return Object.freeze({
-    kind: value === ZERO ? 'zero' : 'finite',
-    value,
-    order: 0,
-    coefficient: value,
-  });
-}
-
-function limitAtInfinity(numeratorInfo, denominatorInfo) {
-  if (!numeratorInfo || !denominatorInfo) {
-    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
-  }
-  if (numeratorInfo.degree === null) {
-    return Object.freeze({ kind: 'zero', value: ZERO, order: null, coefficient: ZERO });
-  }
-  if (denominatorInfo.degree === null) {
-    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
-  }
-
-  const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.degree);
-  const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.degree);
-  const order = numeratorInfo.degree - denominatorInfo.degree;
-  if (order > 0) {
-    return Object.freeze({
-      kind: 'pole',
-      value: null,
-      order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  if (order < 0) {
-    return Object.freeze({
-      kind: 'zero',
-      value: ZERO,
-      order: -order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  const value = quotient(numeratorCoefficient, denominatorCoefficient);
-  return Object.freeze({
-    kind: value === ZERO ? 'zero' : 'finite',
-    value,
-    order: 0,
-    coefficient: value,
-  });
-}
-
-function polynomialExpression(coefficients, variable) {
-  return add(coefficients.map(({ power: exponent, coefficient }) => (
-    exponent === 0 ? coefficient : multiply(coefficient, power(symbol(variable), exponent))
-  )));
-}
-
-function isZeroExpression(value) {
-  return value?.kind === 'number' && value.numerator === 0n;
-}
-
-function integerSquareRoot(value) {
-  if (value < 0n) return null;
-  if (value < 2n) return value;
-  let x = BigInt(Math.floor(Math.sqrt(Number(value))));
-  while (x * x > value) x -= 1n;
-  while ((x + 1n) * (x + 1n) <= value) x += 1n;
-  return x * x === value ? x : null;
-}
-
-/** Exact square root of a monomial with even exponents (e.g. `4 C_M^2 g_m^2`), or null. */
-function monomialSquareRoot(value) {
-  if (value.kind === 'number') {
-    const numerator = integerSquareRoot(value.numerator);
-    const denominator = integerSquareRoot(value.denominator);
-    return numerator === null || denominator === null ? null : rational(numerator, denominator);
-  }
-  if (value.kind === 'symbol') return null;
-  if (value.kind === 'power') {
-    return value.exponent % 2 === 0 && value.base.kind !== 'number' ? power(value.base, value.exponent / 2) : null;
-  }
-  if (value.kind === 'multiply') {
-    const roots = value.factors.map(monomialSquareRoot);
-    return roots.some((root) => root === null) ? null : multiply(roots);
-  }
-  return null;
-}
-
-/** Cancel common factors of a root fraction (as a rational function). */
-function rootValue(numerator, denominator, variable) {
-  return rationalFunction(numerator, denominator, { variable });
-}
-
-/** A root location expression from its cancelled fraction. */
-function rootExpression(numerator, denominator, variable) {
-  const value = rootValue(numerator, denominator, variable);
-  return isOneExpression(value.denominator) ? value.numerator : quotient(value.numerator, value.denominator);
-}
-
-function rootRecords(coefficients, role, variable) {
-  if (!coefficients?.length) return [];
-  const degree = coefficients[0].power;
-  if (degree === 0) return [];
-  const polynomial = polynomialExpression(coefficients, variable);
-  const base = { role, order: degree, polynomial, coefficients };
-  // Roots at the origin are exact and need no formula: s^k * P(s).
-  const valuation = coefficients[coefficients.length - 1].power;
-  if (valuation > 0) {
-    const reduced = coefficients.map(({ power: exponent, coefficient }) => ({ power: exponent - valuation, coefficient }));
-    const origin = Array.from({ length: valuation }, () => ({ ...base, kind: 'root', root: ZERO }));
-    return [...origin, ...rootRecords(reduced, role, variable)]
-      .map((record, index) => ({ ...record, ...base, index }));
-  }
-  if (degree === 1) {
-    const linear = coefficientAt(coefficients, 1);
-    const constant = coefficientAt(coefficients, 0);
-    return [{ ...base, index: 0, kind: 'root', root: rootExpression(negate(constant), linear, variable) }];
-  }
-  if (degree === 2) {
-    const a = coefficientAt(coefficients, 2);
-    const b = coefficientAt(coefficients, 1);
-    const c = coefficientAt(coefficients, 0);
-    const discriminant = add(multiply(b, b), negate(multiply(integer(4), a, c)));
-    // Monic form s^2 + B s + C, B = b/a and C = c/a, both cancelled, so
-    // s = (-B_n +- sqrt(B_n^2 - 4 C B_d^2)) / (2 B_d).
-    const monicLinear = rootValue(b, a, variable);
-    const monicConstant = rootValue(c, a, variable);
-    const reducedDiscriminant = rootValue(
-      add(
-        multiply(monicLinear.numerator, monicLinear.numerator, monicConstant.denominator),
-        negate(multiply(integer(4), monicConstant.numerator, power(monicLinear.denominator, 2))),
-      ),
-      monicConstant.denominator,
-      variable,
-    );
-    const monic = isOneExpression(reducedDiscriminant.denominator);
-    const shownDiscriminant = monic ? reducedDiscriminant.numerator : discriminant;
-    const linear = monic ? negate(monicLinear.numerator) : negate(b);
-    const denominator = monic ? multiply(integer(2), monicLinear.denominator) : multiply(integer(2), a);
-    const squareRoot = monomialSquareRoot(shownDiscriminant);
-    return [-1, 1].map((sign, index) => {
-      if (squareRoot) {
-        return {
-          ...base, index, kind: 'root',
-          root: rootExpression(add(linear, sign < 0 ? negate(squareRoot) : squareRoot), denominator, variable),
-        };
-      }
-      return {
-        ...base,
-        index,
-        kind: 'quadratic-root',
-        root: {
-          kind: 'quadratic-formula',
-          sign,
-          numerator: { kind: 'quadratic-numerator', linear, discriminant: shownDiscriminant },
-          denominator,
-          a,
-          b,
-          c,
-          discriminant: shownDiscriminant,
-        },
-      };
-    });
-  }
-  return [{ ...base, index: 0, kind: 'polynomial' }];
-}
-
-function isOneExpression(value) {
-  return value?.kind === 'number' && value.numerator === 1n && value.denominator === 1n;
-}
-
-function responseRecord(value, options = {}) {
-  const variable = options.variable || value?.variable || DEFAULT_VARIABLE;
-  const expression = asRational(value, variable, options);
-  const numeratorInfo = polynomialInfo(expression.numerator, variable, options);
-  const denominatorInfo = polynomialInfo(expression.denominator, variable, options);
-  const hasFrequency = Boolean(
-    numeratorInfo?.coefficients.some(({ power: exponent }) => exponent > 0)
-    || denominatorInfo?.coefficients.some(({ power: exponent }) => exponent > 0),
-  );
-  return Object.freeze({
-    expression,
-    numerator: expression.numerator,
-    denominator: expression.denominator,
-    numeratorCoefficients: numeratorInfo?.coefficients || null,
-    denominatorCoefficients: denominatorInfo?.coefficients || null,
-    numeratorDegree: numeratorInfo?.degree ?? null,
-    denominatorDegree: denominatorInfo?.degree ?? null,
-    numeratorValuation: numeratorInfo?.valuation ?? null,
-    denominatorValuation: denominatorInfo?.valuation ?? null,
-    degrees: Object.freeze({ numerator: numeratorInfo?.degree ?? null, denominator: denominatorInfo?.degree ?? null }),
-    dc: limitAtZero(numeratorInfo, denominatorInfo),
-    infinity: limitAtInfinity(numeratorInfo, denominatorInfo),
-    hasFrequency,
-    poles: hasFrequency ? rootRecords(denominatorInfo?.coefficients, 'pole', variable) : [],
-    zeros: hasFrequency ? rootRecords(numeratorInfo?.coefficients, 'zero', variable) : [],
-  });
-}
-
-/** Canonicalize one exact response and derive limits, degrees, poles, and zeros. */
-function analyzeResponse(value, options = {}) {
-  return responseRecord(value, options);
-}
-
-/** Process the Av/Zin/Zout response set through one topology-independent path. */
-function processResponses(responses = {}, options = {}) {
-  const variable = options.variable || DEFAULT_VARIABLE;
-  const result = {};
-  for (const name of ['Av', 'Zin', 'Zout']) {
-    if (responses[name] !== undefined && responses[name] !== null) {
-      result[name] = responseRecord(responses[name], { ...options, variable });
-    }
-  }
-  return Object.freeze(result);
-}
-
-__exports.analyzeResponse = analyzeResponse;
-__exports.processResponses = processResponses;
-};
-
-__modules["src/core/analysis/present.js"] = function (__require, __exports) {
-const { INFINITY_NAMES, ONE, isNumber, isZero, keyOf } = __require("src/core/analysis/rational.js");
-
-
-const PRECEDENCE = Object.freeze({ sum: 10, product: 20, power: 30, atom: 40 });
-const PARALLEL_KINDS = new Set(['parallel', 'parallel-resistance']);
-
-function isNegativeNumber(value) {
-  return isNumber(value) && value.numerator < 0n;
-}
-
-function isNegative(value) {
-  if (isNegativeNumber(value)) return true;
-  if (value?.kind === 'rational') return isNegative(value.numerator);
-  return value?.kind === 'multiply' && isNegativeNumber(value.factors[0]);
-}
-
-function structuralKey(value) {
-  if (value?.kind === 'rational') {
-    return `q:${value.variable}:${structuralKey(value.numerator)}/${structuralKey(value.denominator)}`;
-  }
-  if (value?.kind === 'infinity') return `i:${value.sign < 0 ? -1 : 1}`;
-  if (value?.kind === 'multiply') return `m:${value.factors.map(structuralKey).join(',')}`;
-  if (value?.kind === 'add') return `a:${value.terms.map(structuralKey).join(',')}`;
-  if (value?.kind === 'power') return `p:${structuralKey(value.base)}^${value.exponent}`;
-  return keyOf(value);
-}
-
-function displayProduct(factors) {
-  let coefficient = 1n;
-  const visible = factors.filter((factor) => {
-    if (isNumber(factor) && factor.denominator === 1n) {
-      coefficient *= factor.numerator;
-      return false;
-    }
-    return true;
-  });
-  if (coefficient !== 1n || !visible.length) visible.unshift({ ...ONE, numerator: coefficient });
-  return visible.length === 1 ? visible[0] : { kind: 'multiply', factors: visible };
-}
-
-/** Display-only fraction composition. Parallel identities remain indivisible
- * factors; no circuit polynomial is expanded or approximated here. */
-function composedFraction(value, context, options) {
-  const usedProofs = new Set();
-  let visited = 0;
-  function parts(node, path = new Set()) {
-    if (++visited > 256) throw new RangeError('fraction presentation limit');
-    if (explicitParallel(node, options)) return { n: [node], d: [] };
-    const key = structuralKey(node);
-    const proof = !path.has(key) && options.equivalences?.get?.(key);
-    const nestedPath = new Set([...path, key]);
-    let kind = node.kind;
-    let operands;
-    if (proof?.proven && ['product', 'quotient', 'sum'].includes(proof.kind)) {
-      kind = proof.kind;
-      operands = proof.operands;
-      usedProofs.add(key);
-    }
-    if (kind === 'rational' || kind === 'quotient') {
-      const a = parts(operands?.[0] || node.numerator, nestedPath);
-      const b = parts(operands?.[1] || node.denominator, nestedPath);
-      return { n: [...a.n, ...b.d], d: [...a.d, ...b.n] };
-    }
-    if (kind === 'number') {
-      return { n: [{ ...ONE, numerator: node.numerator }], d: node.denominator === 1n ? [] : [{ ...ONE, numerator: node.denominator }] };
-    }
-    if (kind === 'multiply' || kind === 'product') {
-      const factors = (operands || node.factors).map((factor) => parts(factor, nestedPath));
-      return { n: factors.flatMap((factor) => factor.n), d: factors.flatMap((factor) => factor.d) };
-    }
-    if (kind === 'power') {
-      const base = parts(node.base, nestedPath);
-      const exponent = Math.abs(node.exponent);
-      const powered = (factors) => !factors.length ? [] : exponent === 1 ? factors : [{ kind: 'power', base: displayProduct(factors), exponent }];
-      if (node.exponent === 0) return { n: [ONE], d: [] };
-      return node.exponent < 0 ? { n: powered(base.d), d: powered(base.n) } : { n: powered(base.n), d: powered(base.d) };
-    }
-    if (kind === 'add' || kind === 'sum') {
-      const terms = (operands || node.terms).map((term) => parts(term, nestedPath));
-      if (!terms.some((term) => term.d.some((factor) => !isNumber(factor) || factor.numerator !== factor.denominator))) {
-        return { n: [operands ? { kind: 'add', terms: terms.map((term) => displayProduct(term.n)), ordered: true } : node], d: [] };
-      }
-      // Common denominator uses the largest multiplicity of each factor,
-      // avoiding repeated denominators in 1/a + 1/a without distributing sums.
-      const common = new Map();
-      const denominators = terms.map((term) => {
-        const counts = new Map();
-        for (const factor of term.d) {
-          if (isNumber(factor) && factor.numerator === 1n) continue;
-          const key = structuralKey(factor);
-          const entry = counts.get(key) || { factor, count: 0 };
-          entry.count++;
-          counts.set(key, entry);
-        }
-        for (const [key, entry] of counts) if ((common.get(key)?.count || 0) < entry.count) common.set(key, entry);
-        return counts;
-      });
-      const numerator = { kind: 'add', terms: terms.map((term, index) => displayProduct([
-        ...term.n,
-        ...[...common].flatMap(([key, entry]) => Array(entry.count - (denominators[index].get(key)?.count || 0)).fill(entry.factor)),
-      ])) };
-      return { n: [numerator], d: [...common.values()].flatMap((entry) => Array(entry.count).fill(entry.factor)) };
-    }
-    return { n: [node], d: [] };
-  }
-  try {
-    const { n, d } = parts(value);
-    const denominator = displayProduct(d);
-    if (isNumber(denominator) && denominator.numerator === 1n) return null;
-    const numerator = displayProduct(n);
-    const negative = isNegative(numerator) !== isNegative(denominator);
-    const equivalences = new Map(options.equivalences instanceof Map
-      ? options.equivalences : Object.entries(options.equivalences || {}));
-    usedProofs.forEach((key) => equivalences.delete(key));
-    const nested = { ...options, equivalences };
-    return `${negative ? '-' : ''}\\frac{${render(unsigned(numerator), 0, context, nested)}}{${render(unsigned(denominator), 0, context, nested)}}`;
-  } catch (error) {
-    if (error instanceof RangeError) return null;
-    throw error;
-  }
-}
-
-function equivalent(left, right) {
-  if (left?.kind !== right?.kind) return false;
-  if (left?.kind === 'rational') {
-    return left.variable === right.variable
-      && equivalent(left.numerator, right.numerator)
-      && equivalent(left.denominator, right.denominator);
-  }
-  if (left?.kind === 'infinity') return (left.sign < 0) === (right.sign < 0);
-  return structuralKey(left) === structuralKey(right);
-}
-
-function absoluteNumber(value) {
-  return value.numerator < 0n
-    ? { ...value, numerator: -value.numerator }
-    : value;
-}
-
-function unsigned(value) {
-  if (isNegativeNumber(value)) return absoluteNumber(value);
-  if (value?.kind === 'rational' && isNegative(value.numerator)) {
-    return Object.freeze({ ...value, numerator: unsigned(value.numerator) });
-  }
-  if (value?.kind === 'multiply' && isNegativeNumber(value.factors[0])) {
-    const [coefficient, ...factors] = value.factors;
-    const positive = absoluteNumber(coefficient);
-    if (isNumber(positive) && positive.numerator === 1n && positive.denominator === 1n) {
-      if (factors.length === 0) return positive;
-      return factors.length === 1 ? factors[0] : Object.freeze({ ...value, factors: Object.freeze(factors) });
-    }
-    return factors.length === 0 ? positive : Object.freeze({ ...value, factors: Object.freeze([positive, ...factors]) });
-  }
-  return value;
-}
-
-function symbolText(name) {
-  const raw = String(name);
-  if (INFINITY_NAMES.has(raw.toLowerCase())) return '\\infty';
-  if (raw === 's') return 's';
-  if (raw.includes('_{') || raw.includes('^{')) return raw;
-  if (raw.length < 2) return raw;
-  const first = raw[0];
-  if (!/[A-Za-z]/.test(first)) return raw;
-  const rest = raw.slice(1).replace(/^_/, '');
-  if (!rest || !/^[A-Za-z0-9]+$/.test(rest)) return raw;
-  const shouldSubscript = first === first.toUpperCase()
-    || /[0-9]/.test(rest)
-    || raw.includes('_')
-    || /^[grclviapz][A-Za-z]/i.test(raw);
-  if (!shouldSubscript) return raw;
-  return `${first}_{${rest}}`;
-}
-
-function variableName(context) {
-  return context.variable || 's';
-}
-
-function isVariable(value, context) {
-  return value?.kind === 'symbol' && value.name === variableName(context);
-}
-
-function variableDegree(value, context) {
-  if (isVariable(value, context)) return 1;
-  if (value?.kind === 'power' && value.exponent >= 0 && isVariable(value.base, context)) return value.exponent;
-  if (value?.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + variableDegree(factor, context), 0);
-  return 0;
-}
-
-function sortSumTerms(terms, context) {
-  return [...terms].sort((left, right) => variableDegree(right, context) - variableDegree(left, context)
-    || structuralKey(left).localeCompare(structuralKey(right)));
-}
-
-function isVariablePower(value, context) {
-  return isVariable(value, context)
-    || (value?.kind === 'power' && value.exponent > 0 && isVariable(value.base, context));
-}
-
-function factorRank(value, context) {
-  if (isVariablePower(value, context)) return 0;
-  if (isNumber(value)) return 1;
-  if (value?.kind === 'symbol' || value?.kind === 'power') return 2;
-  return 3;
-}
-
-function sortProductFactors(factors, context) {
-  const sorted = [...factors].sort((left, right) => factorRank(left, context) - factorRank(right, context)
-    || structuralKey(left).localeCompare(structuralKey(right)));
-  // Put each transistor's gm*ro together before other resistance factors.
-  for (let i = 0; i < sorted.length; i++) {
-    const match = sorted[i]?.kind === 'symbol' && /^gm(.+)$/.exec(sorted[i].name);
-    if (!match) continue;
-    const j = sorted.findIndex((factor, index) => index > i && factor.kind === 'symbol' && factor.name === `ro${match[1]}`);
-    if (j > i + 1) sorted.splice(i + 1, 0, sorted.splice(j, 1)[0]);
-  }
-  return sorted;
-}
-
-// Algebra may factor ro*(gm*ro + 1) for cancellation. For presentation,
-// flatten small resistive sums without expanding frequency polynomials or
-// topology-proven gain/load products. This never changes the solver's AST.
-function flatResistiveSum(value) {
-  if (value?.kind !== 'multiply' || !value.factors.some((factor) => factor.kind === 'symbol' && /^ro.+$/.test(factor.name))) return null;
-  let terms = [[]];
-  for (const factor of value.factors) {
-    const choices = factor.kind === 'add' ? factor.terms : [factor];
-    if (terms.length * choices.length > 4) return null;
-    if (choices.some((choice) => choice.kind === 'rational' || choice.kind === 'add'
-      || (choice.kind === 'multiply' && choice.factors.some((part) => !['number', 'symbol', 'power'].includes(part.kind))))) return null;
-    terms = terms.flatMap((term) => choices.map((choice) => [...term, ...(choice.kind === 'multiply' ? choice.factors : [choice])]));
-  }
-  if (terms.length < 2 || terms.some((term) => term.some((factor) => factor.kind === 'symbol' && factor.name === 's'))) return null;
-  return { kind: 'add', terms: terms.map((factors) => {
-    factors = factors.filter((factor) => !isNumber(factor) || factor.numerator !== factor.denominator);
-    return factors.length === 1 ? factors[0] : { kind: 'multiply', factors };
-  }) };
-}
-
-function parenthesize(text) {
-  return `\\left(${text}\\right)`;
-}
-
-/**
- * Provenance markers. `\pv{n}{…}` wraps one rendered sub-expression so the
- * MathML it becomes can carry a `data-node` attribute back to the AST node it
- * was rendered from. TeX stays the single source of truth for the displayed
- * equation: markers appear only when a caller asks for provenance, and nothing
- * persisted, exported, or edited as a label ever sees one.
- *
- * A few renderers post-process a child's rendered text (stripping a leading
- * minus, comparing against `1`). They reach through the wrapper with the two
- * helpers below, so a provenance render differs from an ordinary one by
- * exactly the markers — which `analysis-present-v2.test.js` asserts directly.
- */
-function unmark(text) {
-  if (!text.startsWith('\\pv{')) return null;
-  const idEnd = text.indexOf('}', 4);
-  if (idEnd < 0 || text[idEnd + 1] !== '{') return null;
-  let depth = 1;
-  for (let i = idEnd + 2; i < text.length; i += 1) {
-    if (text[i] === '{') depth += 1;
-    else if (text[i] === '}') {
-      depth -= 1;
-      // Only a marker spanning the whole string is this text's own wrapper;
-      // `\pv{1}{A} + \pv{2}{B}` is a sequence and must not be unwrapped.
-      if (depth === 0) return i === text.length - 1 ? { id: text.slice(4, idEnd), body: text.slice(idEnd + 2, i) } : null;
-    }
-  }
-  return null;
-}
-
-/** A child's rendered text with its own provenance wrapper removed. */
-function markedBody(text) {
-  return unmark(text)?.body ?? text;
-}
-
-/** Rewrite a child's rendered text while preserving its provenance wrapper. */
-function mapMarked(text, fn) {
-  const marked = unmark(text);
-  return marked ? `\\pv{${marked.id}}{${fn(marked.body)}}` : fn(text);
-}
-
-/**
- * The symbol names in one subtree. The AST is immutable and shared, so
- * identity memoization keeps a whole provenance pass linear in the tree
- * instead of quadratic in its depth.
- */
-const SYMBOL_NAMES = new WeakMap();
-function symbolNames(value) {
-  if (!value || typeof value !== 'object') return [];
-  const cached = SYMBOL_NAMES.get(value);
-  if (cached) return cached;
-  let names;
-  if (value.kind === 'symbol') names = [value.name];
-  else if (value.kind === 'rational') names = [...symbolNames(value.numerator), ...symbolNames(value.denominator)];
-  else if (value.kind === 'multiply') names = value.factors.flatMap(symbolNames);
-  else if (value.kind === 'add') names = value.terms.flatMap(symbolNames);
-  else if (value.kind === 'power') names = symbolNames(value.base);
-  else if (value.kind === 'quadratic-formula') {
-    names = [
-      ...symbolNames(value.numerator?.linear),
-      ...symbolNames(value.discriminant),
-      ...symbolNames(value.denominator),
-    ];
-  } else names = [];
-  const unique = Object.freeze([...new Set(names)]);
-  SYMBOL_NAMES.set(value, unique);
-  return unique;
-}
-
-function createProvenanceCollector() {
-  const symbols = new Map();
-  let next = 0;
-  return {
-    wrap(value, text) {
-      const id = (next += 1);
-      symbols.set(id, symbolNames(value));
-      return `\\pv{${id}}{${text}}`;
-    },
-    /**
-     * Only ids that survived into the rendered string are real: a speculative
-     * render the presenter then discards (`composedFraction` probing a shape
-     * it rejects) allocates an id that never appears in the output.
-     */
-    resolve(tex) {
-      const used = new Set();
-      for (const match of String(tex).matchAll(/\\pv\{(\d+)\}/g)) used.add(Number(match[1]));
-      return [...used].sort((a, b) => a - b)
-        .map((id) => ({ id, symbols: [...(symbols.get(id) || [])] }));
-    },
-  };
-}
-
-/**
- * Strip every provenance marker, leaving exactly the TeX an ordinary render
- * would have produced. A balanced scan, because a marker's body contains
- * arbitrary nested braces.
- */
-function stripProvenanceMarkers(tex) {
-  const text = String(tex);
-  let out = '';
-  const markers = [];
-  let depth = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    if (text[i] === '\\') {
-      const marker = /^\\pv\{\d+\}\{/.exec(text.slice(i));
-      if (marker) {
-        markers.push(depth);
-        depth += 1;
-        i += marker[0].length - 1;
-        continue;
-      }
-    }
-    const char = text[i];
-    if (char === '{') depth += 1;
-    else if (char === '}') {
-      depth -= 1;
-      // This closes the innermost open marker rather than a TeX group.
-      if (markers.length && markers[markers.length - 1] === depth) { markers.pop(); continue; }
-    }
-    out += char;
-  }
-  return out;
-}
-
-function renderNumber(value) {
-  const numerator = value.numerator;
-  const denominator = value.denominator;
-  if (denominator === 1n) return String(numerator);
-  const sign = numerator < 0n ? '-' : '';
-  return `${sign}\\frac{${numerator < 0n ? -numerator : numerator}}{${denominator}}`;
-}
-
-function renderPower(value, context, options) {
-  if (value.exponent < 0) {
-    return `\\frac{1}{${renderPower({ ...value, exponent: -value.exponent }, context, options)}}`;
-  }
-  if (value.exponent === 1) return render(value.base, 0, context, options);
-  const baseText = render(value.base, PRECEDENCE.power, context, options);
-  return `${baseText}^{${value.exponent}}`;
-}
-
-function renderProduct(value, context, options) {
-  const fraction = composedFraction(value, context, options);
-  if (fraction) return fraction;
-  const negative = isNegative(value);
-  const positive = unsigned(value);
-  const visible = sortProductFactors(positive.kind === 'multiply' ? positive.factors : [positive], context);
-  const body = visible.length
-    ? visible.map((factor) => render(factor, PRECEDENCE.product, context, options)).join(' \\, ')
-    : '1';
-  if (!negative) return body;
-  if (visible.length === 1 && visible[0]?.kind === 'add') return `-${parenthesize(render(visible[0], 0, context, options))}`;
-  return `-${body}`;
-}
-
-function renderSum(value, context, options) {
-  const flat = value.terms.flatMap((term) => flatResistiveSum(term)?.terms || [term]);
-  const terms = options.orderedSum || value.ordered ? flat : sortSumTerms(flat, context);
-  return terms.map((term, index) => {
-    const negative = isNegative(term);
-    const body = render(unsigned(term), negative || explicitParallel(term, options) ? PRECEDENCE.product : PRECEDENCE.sum, context, options);
-    if (index === 0) return negative ? `-${body}` : body;
-    return negative ? ` - ${body}` : ` + ${body}`;
-  }).join('');
-}
-
-function renderRational(value, context, options) {
-  if (isZero(value.numerator)) return '0';
-  const composed = composedFraction(value, context, options);
-  if (composed) return composed;
-  const numeratorNegative = isNegative(value.numerator);
-  const denominatorNegative = isNegative(value.denominator);
-  const negative = numeratorNegative !== denominatorNegative;
-  const numerator = negative ? unsigned(value.numerator) : value.numerator;
-  const denominator = denominatorNegative ? unsigned(value.denominator) : value.denominator;
-  const numeratorText = render(numerator, 0, context, options);
-  const denominatorText = render(denominator, 0, context, options);
-  const fraction = isNumber(denominator) && denominator.numerator === 1n && denominator.denominator === 1n
-    ? numeratorText
-    : `\\frac{${numeratorText}}{${denominatorText}}`;
-  return negative ? `-${markedBody(denominatorText) === '1' && numerator.kind === 'add' ? parenthesize(fraction) : fraction}` : fraction;
-}
-
-function operandsOf(metadata) {
-  if (!metadata || metadata.proven !== true || !PARALLEL_KINDS.has(metadata.kind)) return null;
-  const operands = metadata.operands || [metadata.left, metadata.right];
-  return Array.isArray(operands) && operands.length >= 2 && metadata.equivalent !== undefined ? operands : null;
-}
-
-/**
- * `options.equivalence`/`options.parallel` proves parallel notation for one
- * specific value (checked at every recursive `render` call, so it can match
- * a nested sub-expression, not just the top-level one). `options.equivalences`
- * additionally carries a whole table of such proofs — e.g. from a network's
- * general series/parallel pre-reduction (`reduce.js`), which can prove many
- * unrelated sub-networks at once — keyed by `structuralKey` of the value each
- * one proves, for the same reason `equivalent()` below reduces to that key.
- */
-function explicitParallel(value, options) {
-  const direct = options.equivalence || options.parallel;
-  const directOperands = operandsOf(direct);
-  if (directOperands && equivalent(value, direct.equivalent)) return directOperands;
-  const table = options.equivalences;
-  if (!table) return null;
-  const key = structuralKey(value);
-  const entry = table instanceof Map ? table.get(key) : table[key];
-  return operandsOf(entry);
-}
-
-function renderParallel(value, context, options) {
-  const operands = explicitParallel(value, options);
-  if (!operands) return null;
-  function flatten(operand, seen) {
-    const key = structuralKey(operand);
-    const nested = !seen.has(key) && explicitParallel(operand, options);
-    if (!nested) return [operand];
-    return nested.flatMap((branch) => flatten(branch, new Set([...seen, key])));
-  }
-  const flat = operands.flatMap((operand) => flatten(operand, new Set([structuralKey(value)])));
-  const body = flat.map((operand) => render(operand, PRECEDENCE.product, context, options)).join(' \\parallel ');
-  return body;
-}
-
-function precedence(value) {
-  if (value?.kind === 'add') return PRECEDENCE.sum;
-  if (value?.kind === 'multiply') return PRECEDENCE.product;
-  if (value?.kind === 'power') return PRECEDENCE.power;
-  return PRECEDENCE.atom;
-}
-
-function renderQuadraticFormula(value, context, options) {
-  const linear = value.numerator?.linear;
-  const root = `\\sqrt{${render(value.discriminant, 0, context, options)}}`;
-  const sign = value.sign < 0 ? '-' : '+';
-  const numerator = isZero(linear)
-    ? `${sign === '-' ? '-' : ''}${root}`
-    : `${render(linear, PRECEDENCE.sum, context, options)} ${sign} ${root}`;
-  return `\\frac{${numerator}}{${render(value.denominator, 0, context, options)}}`;
-}
-
-function renderNode(value, parentPrecedence, context, options = {}) {
-  if (value?.kind === 'quadratic-formula') return renderQuadraticFormula(value, context, options);
-  let text;
-  const proof = options.equivalences?.get?.(structuralKey(value));
-  if (proof?.proven === true && ['quotient', 'sum'].includes(proof.kind)) {
-    const equivalences = new Map(options.equivalences);
-    equivalences.delete(structuralKey(value));
-    const nested = { ...options, equivalences };
-    if (proof.kind === 'quotient') return composedFraction(value, context, options)
-      || renderRational({ kind: 'rational', numerator: proof.operands[0], denominator: proof.operands[1] }, context, nested);
-    const body = renderSum({ kind: 'add', terms: proof.operands }, context, { ...nested, orderedSum: true });
-    return parentPrecedence > PRECEDENCE.sum ? parenthesize(body) : body;
-  }
-  if (proof?.proven === true && proof.kind === 'product') {
-    // Remove this identity while visiting its factors: a unit factor must
-    // never make a display proof recurse back into itself.
-    const equivalences = new Map(options.equivalences);
-    equivalences.delete(structuralKey(value));
-    const negative = proof.operands.filter(isNegative).length % 2 === 1;
-    const factors = proof.operands.map((factor) => {
-      const text = render(factor, PRECEDENCE.product, context, { ...options, equivalences });
-      return isNegative(factor)
-        ? mapMarked(text, (body) => (body.startsWith('-') ? body.slice(1) : body))
-        : text;
-    });
-    const body = `${negative ? '-' : ''}${factors.join(' \\, ')}`;
-    return parentPrecedence > PRECEDENCE.product ? parenthesize(body) : body;
-  }
-  if (value?.kind === 'infinity') return value.sign < 0 ? '-\\infty' : '\\infty';
-  if (value?.kind === 'number') return renderNumber(value);
-  if (value?.kind === 'symbol') return symbolText(value.name);
-  if (value?.kind === 'rational') {
-    const parallel = renderParallel(value, context, options);
-    text = parallel || renderRational(value, context, options);
-  } else if (value?.kind === 'power') {
-    text = renderPower(value, context, options);
-  } else if (value?.kind === 'multiply') {
-    const parallel = renderParallel(value, context, options);
-    const flat = !parallel && flatResistiveSum(value);
-    if (flat) return render(flat, parentPrecedence, context, options);
-    text = parallel || renderProduct(value, context, options);
-  } else if (value?.kind === 'add') {
-    text = renderSum(value, context, options);
-  } else {
-    throw new TypeError(`unknown expression kind ${value?.kind}`);
-  }
-  const parallel = explicitParallel(value, options);
-  const rank = parallel ? PRECEDENCE.sum
-    : value?.kind === 'rational' && isNumber(value.denominator) && value.denominator.numerator === value.denominator.denominator
-      ? precedence(value.numerator) : precedence(value);
-  return rank < parentPrecedence ? parenthesize(text) : text;
-}
-
-/**
- * Render one node. With `options.provenance` set, the result is wrapped in a
- * `\pv{…}` marker naming the AST node it came from; without it this is a
- * direct call through to `renderNode` and costs nothing.
- */
-function render(value, parentPrecedence, context, options = {}) {
-  const text = renderNode(value, parentPrecedence, context, options);
-  return options.provenance ? options.provenance.wrap(value, text) : text;
-}
-
-/** Render an immutable rational AST as deterministic textbook TeX. */
-function renderExpression(value, options = {}) {
-  return render(value, 0, { variable: options.variable || 's' }, options);
-}
-
-/**
- * Render as `renderExpression` does, but with every sub-expression wrapped in a
- * provenance marker, and return the node table alongside the TeX. Each entry is
- * `{id, symbols}`; resolving those symbol names to circuit objects is
- * `provenance.js`'s job, and turning the markers into `data-node` attributes is
- * `texToMathML`'s.
- */
-function renderExpressionWithProvenance(value, options = {}) {
-  const provenance = createProvenanceCollector();
-  const tex = render(value, 0, { variable: options.variable || 's' }, { ...options, provenance });
-  return { tex, nodes: provenance.resolve(tex) };
-}
-
-/** `renderEquation` with provenance markers, for the same reason. */
-function renderEquationWithProvenance(label, value, options = {}) {
-  const { tex, nodes } = renderExpressionWithProvenance(value, options);
-  return { tex: `${label} = ${tex}`, nodes };
-}
-
-/** `renderRootEquation` with provenance markers, for the same reason. */
-function renderRootEquationWithProvenance(kind, index, value, options = {}) {
-  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
-  return renderEquationWithProvenance(`${prefix}_{${index}}`, value, options);
-}
-
-/**
- * Join several provenance renders into one, renumbering so node ids stay
- * unique across the result. A pole or zero row is several root equations shown
- * together, each rendered on its own; without renumbering the second root's
- * nodes would collide with the first's and highlight the wrong devices.
- */
-function joinProvenanceRenders(parts, separator = '') {
-  const pieces = [];
-  const nodes = [];
-  let offset = 0;
-  for (const part of parts) {
-    if (!part) continue;
-    const shift = offset;
-    pieces.push(String(part.tex).replace(/\\pv\{(\d+)\}/g, (match, id) => `\\pv{${Number(id) + shift}}`));
-    for (const node of part.nodes) nodes.push({ id: node.id + shift, symbols: [...node.symbols] });
-    offset += part.nodes.reduce((highest, node) => Math.max(highest, node.id), 0);
-  }
-  return { tex: pieces.join(separator), nodes };
-}
-
-/** Render an equation with an already formatted left-hand label. */
-function renderEquation(label, value, options = {}) {
-  return `${label} = ${renderExpression(value, options)}`;
-}
-
-const QUANTITY_LABELS = Object.freeze({
-  zin: 'Z_{in}',
-  zout: 'Z_{out}',
-  av: 'A_v',
-  gain: 'A_v',
-});
-
-/** Return the standard analysis label for AC or DC quantities. */
-function quantityLabel(quantity, argument = undefined) {
-  const key = String(quantity).replace(/[^A-Za-z]/g, '').toLowerCase();
-  const base = QUANTITY_LABELS[key] || String(quantity);
-  return argument === undefined || argument === null ? base : `${base}(${argument})`;
-}
-
-/** Render `Z_in(s)`, `Z_out(0)`, or `A_v(s)` with its expression. */
-function renderQuantityEquation(quantity, argument, value, options = {}) {
-  return renderEquation(quantityLabel(quantity, argument), value, options);
-}
-
-/** Render a zero-based pole or zero equation. */
-function renderRootEquation(kind, index, value, options = {}) {
-  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
-  return renderEquation(`${prefix}_{${index}}`, value, options);
-}
-
-/**
- * Build the `options.equivalences` table `render` checks at every recursive
- * call (see `explicitParallel`) from a list of `provenParallel(...)` results
- * (or equivalent `{ equivalent, operands }` records) — e.g. one per parallel
- * merge a network's series/parallel pre-reduction (`reduce.js`) performed.
- */
-function equivalenceTable(proofs) {
-  const table = new Map();
-  for (const proof of proofs) table.set(structuralKey(proof.equivalent), proof);
-  return table;
-}
-
-/** Build explicit metadata for a caller-proven parallel-resistance display. */
-function provenParallel(equivalent, ...operands) {
-  return Object.freeze({
-    kind: 'parallel-resistance',
-    proven: true,
-    equivalent,
-    operands: Object.freeze(operands),
-  });
-}
-
-/** A factored identity established by the circuit's linear port model. */
-function provenProduct(equivalent, ...operands) {
-  return Object.freeze({ kind: 'product', proven: true, equivalent, operands: Object.freeze(operands) });
-}
-
-/** Ratios and sums whose recombination the caller has checked exactly. */
-function provenQuotient(equivalent, numerator, denominator) {
-  return Object.freeze({ kind: 'quotient', proven: true, equivalent, operands: Object.freeze([numerator, denominator]) });
-}
-
-function provenSum(equivalent, ...operands) {
-  return Object.freeze({ kind: 'sum', proven: true, equivalent, operands: Object.freeze(operands) });
-}
-
-
-__exports.stripProvenanceMarkers = stripProvenanceMarkers;
-__exports.renderExpression = renderExpression;
-__exports.renderExpressionWithProvenance = renderExpressionWithProvenance;
-__exports.renderEquationWithProvenance = renderEquationWithProvenance;
-__exports.renderRootEquationWithProvenance = renderRootEquationWithProvenance;
-__exports.joinProvenanceRenders = joinProvenanceRenders;
-__exports.renderEquation = renderEquation;
-__exports.quantityLabel = quantityLabel;
-__exports.renderQuantityEquation = renderQuantityEquation;
-__exports.renderRootEquation = renderRootEquation;
-__exports.equivalenceTable = equivalenceTable;
-__exports.provenParallel = provenParallel;
-__exports.provenProduct = provenProduct;
-__exports.provenQuotient = provenQuotient;
-__exports.provenSum = provenSum;
-};
-
-__modules["src/core/analysis/rational.js"] = function (__require, __exports) {
-const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
-const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
-const MINUS_ONE = Object.freeze({ kind: 'number', numerator: -1n, denominator: 1n });
-const DEFAULT_MAX_OPERATIONS = 200000;
-
-function gcd(a, b) {
-  let x = a < 0n ? -a : a;
-  let y = b < 0n ? -b : b;
-  while (y !== 0n) [x, y] = [y, x % y];
-  return x || 1n;
-}
-
-function integerValue(value) {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value);
-  if (typeof value === 'string' && /^[-+]?\d+$/.test(value.trim())) return BigInt(value.trim());
-  throw new TypeError(`expected an exact integer, got ${String(value)}`);
-}
-
-function exactNumber(numerator, denominator = 1n) {
-  let n = integerValue(numerator);
-  let d = integerValue(denominator);
-  if (d === 0n) throw new RangeError('rational denominator must not be zero');
-  if (d < 0n) [n, d] = [-n, -d];
-  const divisor = gcd(n, d);
-  n /= divisor;
-  d /= divisor;
-  if (n === 0n) return ZERO;
-  if (n === 1n && d === 1n) return ONE;
-  if (n === -1n && d === 1n) return MINUS_ONE;
-  return Object.freeze({ kind: 'number', numerator: n, denominator: d });
-}
-
-function isNumber(value) {
-  return value?.kind === 'number';
-}
-
-function isZero(value) {
-  return isNumber(value) && value.numerator === 0n;
-}
-
-function isInfinity(value) {
-  return value?.kind === 'infinity';
-}
-
-function isOne(value) {
-  return isNumber(value) && value.numerator === 1n && value.denominator === 1n;
-}
-
-function isMinusOne(value) {
-  return value === MINUS_ONE;
-}
-
-function asExpression(value) {
-  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
-  if (value?.kind) return value;
-  return exactNumber(value);
-}
-
-function argumentList(values) {
-  return values.length === 1 && Array.isArray(values[0]) ? values[0] : values;
-}
-
-function expressionKey(value) {
-  switch (value.kind) {
-    case 'number': return `n:${value.numerator}/${value.denominator}`;
-    case 'symbol': return `s:${value.name}`;
-    case 'infinity': return `i:${value.sign < 0 ? -1 : 1}`;
-    case 'power': return `p:${expressionKey(value.base)}^${value.exponent}`;
-    case 'multiply': return `m:${value.factors.map(expressionKey).join(',')}`;
-    case 'add': return `a:${value.terms.map(expressionKey).join(',')}`;
-    default: throw new TypeError(`unknown expression kind ${value.kind}`);
-  }
-}
-
-function factorRank(value) {
-  if (isNumber(value)) return 0;
-  if (value.kind === 'symbol') return 1;
-  if (value.kind === 'power') return 2;
-  if (value.kind === 'multiply') return 3;
-  return 4;
-}
-
-function compareKeys(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function compareFactors(left, right) {
-  return factorRank(left) - factorRank(right) || compareKeys(expressionKey(left), expressionKey(right));
-}
-
-function variableDegree(value, variable = 's') {
-  if (value?.kind === 'symbol') return value.name === variable ? 1 : 0;
-  if (value?.kind === 'power' && value.exponent >= 0) {
-    return value.base?.kind === 'symbol' && value.base.name === variable ? value.exponent : 0;
-  }
-  if (value?.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + variableDegree(factor, variable), 0);
-  return 0;
-}
-
-function numericAdd(left, right) {
-  return exactNumber(
-    left.numerator * right.denominator + right.numerator * left.denominator,
-    left.denominator * right.denominator,
-  );
-}
-
-function numericMultiply(left, right) {
-  return exactNumber(left.numerator * right.numerator, left.denominator * right.denominator);
-}
-
-function numericPower(value, exponent) {
-  if (exponent === 0) return ONE;
-  if (value.numerator === 0n && exponent < 0) throw new RangeError('zero cannot have a negative power');
-  if (exponent > 0) return exactNumber(value.numerator ** BigInt(exponent), value.denominator ** BigInt(exponent));
-  return exactNumber(value.denominator ** BigInt(-exponent), value.numerator ** BigInt(-exponent));
-}
-
-function factorEntries(value) {
-  if (value.kind === 'multiply') return value.factors.flatMap(factorEntries);
-  if (value.kind === 'power' && value.exponent !== 0) return [[value.base, value.exponent]];
-  return [[value, 1]];
-}
-
-function factorsFromEntries(entries) {
-  const factors = [];
-  for (const [factor, exponent] of entries) {
-    if (exponent === 0 || isOne(factor)) continue;
-    factors.push(exponent === 1 ? factor : power(factor, exponent));
-  }
-  return factors;
-}
-
-function nonNumericFactors(value) {
-  return factorEntries(value).filter(([factor]) => !isNumber(factor));
-}
-
-function makeMultiply(values) {
-  return multiply(...values);
-}
-
-// A term shaped like `numericCoefficient * (sum)` (and nothing else) is kept
-// factored by default so unrelated `add()` calls elsewhere in the pipeline
-// can still find it as a shared multiplicative factor. It is only expanded
-// here, on a trial basis, when doing so lets its pieces cancel against
-// sibling terms (for example `-1*(gm1+gm2) + gm1 + gm2` collapsing to `0`);
-// see `combineTerms`/`distributeScaledSum` below.
-function distributeScaledSum(term) {
-  if (term.kind !== 'multiply') return null;
-  const nonNumeric = term.factors.filter((factor) => !isNumber(factor));
-  if (nonNumeric.length !== 1 || nonNumeric[0].kind !== 'add') return null;
-  const coefficient = term.factors.find((factor) => isNumber(factor)) || ONE;
-  return nonNumeric[0].terms.map((subterm) => makeMultiply([coefficient, subterm]));
-}
-
-function combineTerms(terms) {
-  const combined = new Map();
-  for (const rawTerm of terms) {
-    const term = asExpression(rawTerm);
-    const entries = term.kind === 'multiply' ? term.factors : [term];
-    const coefficient = entries.length && isNumber(entries[0]) ? entries[0] : ONE;
-    const core = entries.length && isNumber(entries[0]) ? makeMultiply(entries.slice(1)) : term;
-    const key = expressionKey(core);
-    const previous = combined.get(key);
-    combined.set(key, previous
-      ? { coefficient: numericAdd(previous.coefficient, coefficient), core: previous.core }
-      : { coefficient, core });
-  }
-  const result = [];
-  for (const { coefficient, core } of combined.values()) {
-    if (isZero(coefficient)) continue;
-    result.push(isOne(core) ? coefficient : makeMultiply([coefficient, core]));
-  }
-  return result;
-}
-
-function makeAdd(values, factorCommon) {
-  const terms = values.flatMap(value => value.kind === 'add' ? value.terms : [value]).map(asExpression);
-  const infinities = terms.filter(isInfinity);
-  if (infinities.length) {
-    const signs = new Set(infinities.map(value => value.sign < 0 ? -1 : 1));
-    if (signs.size > 1) throw new RangeError('undefined infinity addition');
-    return infinity(infinities[0].sign);
-  }
-  const direct = combineTerms(terms);
-  let normalized = direct;
-  if (terms.some(term => distributeScaledSum(term) !== null)) {
-    const expandedTerms = terms.flatMap(term => distributeScaledSum(term) || [term]);
-    const expanded = combineTerms(expandedTerms);
-    if (expanded.length < direct.length) normalized = expanded;
-  }
-  if (!normalized.length) return ZERO;
-  if (normalized.length === 1) return normalized[0];
-
-  const allNegative = normalized.every(term => {
-    const coefficient = term.kind === 'multiply' && isNumber(term.factors[0]) ? term.factors[0] : (isNumber(term) ? term : ONE);
-    return coefficient.numerator < 0n;
-  });
-  if (allNegative) {
-    return makeMultiply([MINUS_ONE, makeAdd(normalized.map(term => negate(term)), factorCommon)]);
-  }
-
-  if (factorCommon) {
-    const factorMaps = normalized.map(term => {
-      const coefficient = term.kind === 'multiply' && isNumber(term.factors[0]) ? term.factors[0] : (isNumber(term) ? term : ONE);
-      const core = term.kind === 'multiply' && isNumber(term.factors[0]) ? makeMultiply(term.factors.slice(1)) : term;
-      const counts = new Map();
-      for (const [factor, exponent] of nonNumericFactors(core)) {
-        const key = expressionKey(factor);
-        counts.set(key, { factor, exponent: (counts.get(key)?.exponent || 0) + exponent });
-      }
-      return { coefficient, core, counts };
-    });
-    const common = [];
-    for (const [key, first] of factorMaps[0].counts) {
-      const exponent = Math.min(...factorMaps.map(({ counts }) => counts.get(key)?.exponent || 0));
-      if (exponent) common.push([first.factor, exponent]);
-    }
-    if (common.length) {
-      const residual = factorMaps.map(({ coefficient, counts }) => {
-        const remaining = [];
-        for (const [key, entry] of counts) remaining.push([entry.factor, entry.exponent - (common.find(([factor]) => expressionKey(factor) === key)?.[1] || 0)]);
-        return makeMultiply([coefficient, ...factorsFromEntries(remaining)]);
-      });
-      return makeMultiply([...factorsFromEntries(common), makeAdd(residual, false)]);
-    }
-  }
-
-  normalized.sort((left, right) => compareKeys(expressionKey(left), expressionKey(right)));
-  return Object.freeze({ kind: 'add', terms: Object.freeze(normalized) });
-}
-
-/** Create an exact integer or rational number node. */
-function rational(numerator, denominator = 1n) {
-  return exactNumber(numerator, denominator);
-}
-
-/** Create an exact integer node. */
-function integer(value) {
-  return exactNumber(value);
-}
-
-/** Create a named symbolic parameter node. */
-function symbol(name) {
-  const text = String(name);
-  if (!text) throw new TypeError('symbol name must not be empty');
-  return Object.freeze({ kind: 'symbol', name: text });
-}
-
-/** Create a normalized sum of exact expressions. */
-function add(...values) {
-  return makeAdd(argumentList(values).map(asExpression), true);
-}
-
-/** Create a normalized product of exact expressions. */
-function multiply(...values) {
-  const factors = argumentList(values).map(asExpression);
-  const infinities = factors.filter(isInfinity);
-  if (infinities.length) {
-    if (factors.some(isZero)) throw new RangeError('undefined zero times infinity');
-    const sign = infinities.reduce((result, value) => result * (value.sign < 0 ? -1 : 1), 1)
-      * factors.filter(isNumber).reduce((result, value) => result * (value.numerator < 0n ? -1 : 1), 1);
-    return infinity(sign);
-  }
-  let coefficient = ONE;
-  const counts = new Map();
-  for (const factor of factors) {
-    if (isZero(factor)) return ZERO;
-    for (const [base, exponent] of factorEntries(factor)) {
-      if (isNumber(base)) {
-        coefficient = numericMultiply(coefficient, numericPower(base, exponent));
-        continue;
-      }
-      const key = expressionKey(base);
-      counts.set(key, { base, exponent: (counts.get(key)?.exponent || 0) + exponent });
-    }
-  }
-  if (isZero(coefficient)) return ZERO;
-  const combined = factorsFromEntries([...counts.values()].map(({ base, exponent }) => [base, exponent]));
-  combined.sort(compareFactors);
-  if (!isOne(coefficient)) combined.unshift(coefficient);
-  if (!combined.length) return ONE;
-  if (combined.length === 1) return combined[0];
-  return Object.freeze({ kind: 'multiply', factors: Object.freeze(combined) });
-}
-
-/** Create a normalized integer power. */
-function power(base, exponent) {
-  const value = asExpression(base);
-  const powerValue = Number(integerValue(exponent));
-  if (!Number.isSafeInteger(powerValue)) throw new RangeError('power exponent must be a safe integer');
-  if (powerValue === 0) return ONE;
-  if (powerValue === 1) return value;
-  if (isNumber(value)) return numericPower(value, powerValue);
-  if (value.kind === 'power') return power(value.base, value.exponent * powerValue);
-  return Object.freeze({ kind: 'power', base: value, exponent: powerValue });
-}
-
-/** Create the exact additive inverse. */
-function negate(value) {
-  return multiply(MINUS_ONE, asExpression(value));
-}
-
-/** Substitute exact expressions by symbol name without mutating the source. */
-function substitute(value, replacements) {
-  const source = asExpression(value);
-  if (isInfinity(source)) return source;
-  const lookup = replacements instanceof Map ? replacements : new Map(Object.entries(replacements || {}));
-  if (source.kind === 'symbol') return lookup.has(source.name) ? asExpression(lookup.get(source.name)) : source;
-  if (source.kind === 'number') return source;
-  if (source.kind === 'power') return power(substitute(source.base, lookup), source.exponent);
-  if (source.kind === 'multiply') return multiply(source.factors.map(factor => substitute(factor, lookup)));
-  return add(source.terms.map(term => substitute(term, lookup)));
-}
-
-/** Test exact structural equality after canonical construction. */
-function equals(left, right) {
-  return expressionKey(asExpression(left)) === expressionKey(asExpression(right));
-}
-
-function cancelFactors(numerator, denominator, budget = null) {
-  budget?.step();
-  if (equals(numerator, denominator)) return [ONE, ONE];
-  const exponents = new Map();
-  for (const [factor, exponent] of factorEntries(numerator)) {
-    const key = expressionKey(factor);
-    exponents.set(key, { factor, exponent: (exponents.get(key)?.exponent || 0) + exponent });
-  }
-  for (const [factor, exponent] of factorEntries(denominator)) {
-    const key = expressionKey(factor);
-    exponents.set(key, { factor, exponent: (exponents.get(key)?.exponent || 0) - exponent });
-  }
-  const reducedNumerator = [];
-  const reducedDenominator = [];
-  for (const { factor, exponent } of exponents.values()) {
-    if (exponent > 0) reducedNumerator.push([factor, exponent]);
-    if (exponent < 0) reducedDenominator.push([factor, -exponent]);
-  }
-  return [makeMultiply(factorsFromEntries(reducedNumerator)), makeMultiply(factorsFromEntries(reducedDenominator))];
-}
-
-function splitNumericFactor(value) {
-  if (isNumber(value)) return { coefficient: value, rest: ONE };
-  if (value.kind !== 'multiply' || !isNumber(value.factors[0])) return { coefficient: ONE, rest: value };
-  return { coefficient: value.factors[0], rest: makeMultiply(value.factors.slice(1)) };
-}
-
-function absoluteNumeric(value) {
-  return value.numerator < 0n ? exactNumber(-value.numerator, value.denominator) : value;
-}
-
-function numericGcd(values) {
-  const numbers = values.map(absoluteNumeric);
-  let numerator = numbers.reduce((result, value) => gcd(result, value.numerator), 0n);
-  let denominator = numbers.reduce((result, value) => {
-    return result / gcd(result, value.denominator) * value.denominator;
-  }, 1n);
-  if (numerator === 0n) return ONE;
-  return exactNumber(numerator, denominator);
-}
-
-function factorCounts(value) {
-  const counts = new Map();
-  for (const [factor, exponent] of nonNumericFactors(value)) {
-    const key = expressionKey(factor);
-    counts.set(key, { factor, exponent: (counts.get(key)?.exponent || 0) + exponent });
-  }
-  return counts;
-}
-
-function commonFactor(values) {
-  const expressions = values.filter(value => !isZero(value));
-  if (!expressions.length) return ONE;
-  const parts = expressions.map(splitNumericFactor);
-  const coefficient = numericGcd(parts.map(({ coefficient }) => coefficient));
-  const first = factorCounts(parts[0].rest);
-  const common = [];
-  for (const [key, entry] of first) {
-    const exponent = Math.min(...parts.slice(1).map(({ rest }) => factorCounts(rest).get(key)?.exponent || 0), entry.exponent);
-    if (exponent > 0) common.push([entry.factor, exponent]);
-  }
-  return makeMultiply([coefficient, ...factorsFromEntries(common)]);
-}
-
-function divideByFactor(value, factor, budget = null) {
-  if (isOne(factor)) return value;
-  budget?.step();
-  const valueParts = splitNumericFactor(value);
-  const factorParts = splitNumericFactor(factor);
-  const numeric = exactNumber(
-    valueParts.coefficient.numerator * factorParts.coefficient.denominator,
-    valueParts.coefficient.denominator * factorParts.coefficient.numerator,
-  );
-  const [rest, remainder] = cancelFactors(valueParts.rest, factorParts.rest, budget);
-  if (!isOne(remainder)) return null;
-  return makeMultiply([numeric, rest]);
-}
-
-function cancelPolynomialContent(map, factor, budget) {
-  if (isOne(factor)) return map;
-  const result = new Map();
-  for (const [powerValue, coefficient] of map) {
-    budget.step();
-    const reduced = divideByFactor(coefficient, factor, budget);
-    if (reduced === null) return null;
-    if (!isZero(reduced)) result.set(powerValue, reduced);
-  }
-  return result;
-}
-
-function fallbackRational(numerator, denominator, variable, budgetExceeded = false) {
-  if (isInfinity(numerator)) {
-    return Object.freeze({ kind: 'rational', variable, numerator, denominator: ONE, budgetExceeded, infinite: true });
-  }
-  if (isInfinity(denominator)) {
-    return Object.freeze({ kind: 'rational', variable, numerator: ZERO, denominator: ONE, budgetExceeded });
-  }
-  if (isZero(denominator)) throw new RangeError('rational denominator must not be zero');
-  if (isZero(numerator)) return Object.freeze({ kind: 'rational', variable, numerator: ZERO, denominator: ONE, budgetExceeded });
-  return Object.freeze({ kind: 'rational', variable, numerator, denominator, budgetExceeded });
-}
-
-function canonicalRational(numerator, denominator, variable, budgetExceeded = false, budget = null) {
-  const fallback = () => fallbackRational(numerator, denominator, variable, budgetExceeded);
-  if (isInfinity(numerator) || isInfinity(denominator)) return fallback();
-  if (isZero(denominator)) throw new RangeError('rational denominator must not be zero');
-  budget?.step();
-  let [n, d] = cancelFactors(numerator, denominator, budget);
-  if (isZero(n)) return fallbackRational(ZERO, ONE, variable, budgetExceeded);
-  const nc = splitNumericFactor(n);
-  const dc = splitNumericFactor(d);
-  const coefficient = numericMultiply(nc.coefficient, exactNumber(dc.coefficient.denominator, dc.coefficient.numerator));
-  n = makeMultiply([coefficient, nc.rest]);
-  d = dc.rest;
-  if (isMinusOne(d)) {
-    n = negate(n);
-    d = ONE;
-  }
-  return Object.freeze({ kind: 'rational', variable, numerator: n, denominator: d, budgetExceeded });
-}
-
-class OperationBudget {
-  constructor(limit = DEFAULT_MAX_OPERATIONS) {
-    if (!Number.isFinite(limit)) throw new RangeError('maxOperations must be finite');
-    this.limit = Math.max(0, Math.floor(limit));
-    this.used = 0;
-    this.exceeded = false;
-  }
-
-  step(amount = 1) {
-    if (!Number.isSafeInteger(amount) || amount < 0) throw new RangeError('budget step must be a non-negative integer');
-    if (this.exceeded || this.used + amount > this.limit) {
-      this.used = this.limit;
-      this.exceeded = true;
-      throw new BudgetExceeded();
-    }
-    this.used += amount;
-  }
-}
-
-class BudgetExceeded extends Error {}
-
-function polynomialMap(value, variable, budget) {
-  budget.step();
-  if (isNumber(value)) return new Map([[0, value]]);
-  if (value.kind === 'symbol') return new Map([[value.name === variable ? 1 : 0, value.name === variable ? ONE : value]]);
-  if (value.kind === 'add') {
-    const result = new Map();
-    for (const term of value.terms) {
-      const termMap = polynomialMap(term, variable, budget);
-      if (!termMap) return null;
-      mergeCoefficientMap(result, termMap, budget);
-    }
-    return result;
-  }
-  if (value.kind === 'multiply') {
-    let result = new Map([[0, ONE]]);
-    for (const factor of value.factors) {
-      const factorMap = polynomialMap(factor, variable, budget);
-      if (!factorMap) return null;
-      result = multiplyPolynomialMaps(result, factorMap, budget);
-    }
-    return result;
-  }
-  if (value.kind === 'power' && value.exponent >= 0) {
-    let result = new Map([[0, ONE]]);
-    const base = polynomialMap(value.base, variable, budget);
-    if (!base) return null;
-    for (let index = 0; index < value.exponent; index += 1) result = multiplyPolynomialMaps(result, base, budget);
-    return result;
-  }
-  return null;
-}
-
-function mergeCoefficientMap(target, source, budget) {
-  for (const [powerValue, coefficient] of source) {
-    budget.step();
-    target.set(powerValue, target.has(powerValue) ? add(target.get(powerValue), coefficient) : coefficient);
-  }
-}
-
-function multiplyPolynomialMaps(left, right, budget) {
-  const result = new Map();
-  for (const [leftPower, leftCoefficient] of left) {
-    for (const [rightPower, rightCoefficient] of right) {
-      budget.step();
-      const powerValue = leftPower + rightPower;
-      const coefficient = multiply(leftCoefficient, rightCoefficient);
-      result.set(powerValue, result.has(powerValue) ? add(result.get(powerValue), coefficient) : coefficient);
-    }
-  }
-  return result;
-}
-
-function polynomialExpression(coefficients, variable) {
-  const terms = [];
-  for (const { power: powerValue, coefficient } of coefficients) {
-    if (isZero(coefficient)) continue;
-    terms.push(powerValue === 0 ? coefficient : multiply(coefficient, power(symbol(variable), powerValue)));
-  }
-  return makeAdd(terms, true);
-}
-
-function coefficientsFromMap(map) {
-  return Object.freeze([...map.entries()]
-    .filter(([, coefficient]) => !isZero(coefficient))
-    .sort(([left], [right]) => right - left)
-    .map(([powerValue, coefficient]) => Object.freeze({ power: powerValue, coefficient })));
-}
-
-/** Return polynomial coefficients in descending powers of the chosen variable. */
-function polynomialCoefficients(value, variable = 's', options = {}) {
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  try {
-    const map = polynomialMap(asExpression(value), variable, budget);
-    if (!map) return null;
-    return coefficientsFromMap(map);
-  } catch (error) {
-    if (error instanceof BudgetExceeded) return null;
-    throw error;
-  }
-}
-
-/** Normalize a rational function and cancel structurally provable factors. */
-function rationalFunction(numerator, denominator = ONE, options = {}) {
-  const variable = options.variable || 's';
-  const rawNumerator = asExpression(numerator);
-  const rawDenominator = asExpression(denominator);
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  let result;
-  try {
-    result = canonicalRational(rawNumerator, rawDenominator, variable, false, budget);
-    const numeratorMap = polynomialMap(result.numerator, variable, budget);
-    const denominatorMap = polynomialMap(result.denominator, variable, budget);
-    if (numeratorMap && denominatorMap) {
-      const content = commonFactor([
-        commonFactor([...numeratorMap.values()]),
-        commonFactor([...denominatorMap.values()]),
-      ]);
-      const reducedNumeratorMap = cancelPolynomialContent(numeratorMap, content, budget);
-      const reducedDenominatorMap = cancelPolynomialContent(denominatorMap, content, budget);
-      // A content factor that does not divide every coefficient exactly is a
-      // structural outcome, not exhaustion: keep the uncancelled coefficients
-      // rather than failing the whole analysis as over budget.
-      const cancelled = reducedNumeratorMap && reducedDenominatorMap;
-      const numeratorCoefficients = coefficientsFromMap(cancelled ? reducedNumeratorMap : numeratorMap);
-      const denominatorCoefficients = coefficientsFromMap(cancelled ? reducedDenominatorMap : denominatorMap);
-      budget.step(numeratorCoefficients.length + denominatorCoefficients.length);
-      const normalizedNumerator = polynomialExpression(numeratorCoefficients, variable);
-      const normalizedDenominator = polynomialExpression(denominatorCoefficients, variable);
-      result = canonicalRational(normalizedNumerator, normalizedDenominator, variable, false, budget);
-    }
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    result = fallbackRational(rawNumerator, rawDenominator, variable, true);
-  }
-  return result;
-}
-
-function asRational(value, variable = 's', options = {}) {
-  if (isInfinity(value)) return value;
-  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
-  return value?.kind === 'rational' ? value : rationalFunction(value, ONE, { ...options, variable });
-}
-
-/** Add two rational functions, preserving a valid factored fallback on budget exhaustion. */
-function rationalAdd(left, right, options = {}) {
-  const variable = options.variable || left?.variable || right?.variable || 's';
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  const a = asRational(left, variable, { ...options, budget });
-  const b = asRational(right, variable, { ...options, budget });
-  if (isInfinity(a)) {
-    if (isInfinity(b) && a.sign !== b.sign) throw new RangeError('undefined infinity addition');
-    return infinity(a.sign);
-  }
-  if (isInfinity(b)) return infinity(b.sign);
-  try {
-    budget.step(2);
-    const numerator = add(multiply(a.numerator, b.denominator), multiply(b.numerator, a.denominator));
-    const denominator = multiply(a.denominator, b.denominator);
-    return rationalFunction(numerator, denominator, { ...options, budget });
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    return fallbackRational(a.numerator, a.denominator, variable, true);
-  }
-}
-
-/** Multiply two rational functions. */
-function rationalMultiply(left, right, options = {}) {
-  const variable = options.variable || left?.variable || right?.variable || 's';
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  const a = asRational(left, variable, { ...options, budget });
-  const b = asRational(right, variable, { ...options, budget });
-  if (isInfinity(a) || isInfinity(b)) {
-    if (isInfinity(a) && isInfinity(b)) return infinity(a.sign * b.sign);
-    const other = isInfinity(a) ? b : a;
-    if (isZero(other?.numerator)) throw new RangeError('undefined zero times infinity');
-    const sign = (isInfinity(a) ? a.sign : b.sign)
-      * (other?.numerator?.numerator < 0n ? -1 : 1);
-    return infinity(sign);
-  }
-  try {
-    budget.step(2);
-    return rationalFunction(
-      multiply(a.numerator, b.numerator),
-      multiply(a.denominator, b.denominator),
-      { ...options, budget },
-    );
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    return fallbackRational(a.numerator, a.denominator, variable, true);
-  }
-}
-
-/** Divide two rational functions. */
-function rationalDivide(left, right, options = {}) {
-  const variable = options.variable || left?.variable || right?.variable || 's';
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  const a = asRational(left, variable, { ...options, budget });
-  const b = asRational(right, variable, { ...options, budget });
-  if (isInfinity(a)) {
-    if (isInfinity(b) || isZero(b.numerator)) throw new RangeError('undefined infinity division');
-    return infinity(a.sign);
-  }
-  if (isInfinity(b)) return ZERO;
-  if (isZero(b.numerator)) {
-    if (isZero(a.numerator)) throw new RangeError('undefined zero divided by zero');
-    return infinity(a.numerator?.kind === 'number' && a.numerator.numerator < 0n ? -1 : 1);
-  }
-  try {
-    budget.step(2);
-    return rationalFunction(
-      multiply(a.numerator, b.denominator),
-      multiply(a.denominator, b.numerator),
-      { ...options, budget },
-    );
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    return fallbackRational(a.numerator, a.denominator, variable, true);
-  }
-}
-
-/** Substitute exact expressions into a rational function. */
-function substituteRational(value, replacements, options = {}) {
-  if (isInfinity(value)) return value;
-  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  const rationalValue = asRational(value, 's', { ...options, budget });
-  if (rationalValue.budgetExceeded === true) return rationalValue;
-  try {
-    budget.step();
-    return rationalFunction(
-      substitute(rationalValue.numerator, replacements),
-      substitute(rationalValue.denominator, replacements),
-      { ...options, budget, variable: rationalValue.variable },
-    );
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    return fallbackRational(rationalValue.numerator, rationalValue.denominator, rationalValue.variable, true);
-  }
-}
-
-/** Evaluate a rational function at an exact value. */
-function rationalAt(value, argument, options = {}) {
-  if (isInfinity(value)) return value;
-  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
-  const rationalValue = asRational(value, 's', options);
-  const replacements = new Map([[rationalValue.variable, asExpression(argument)]]);
-  const numerator = substitute(rationalValue.numerator, replacements);
-  const denominator = substitute(rationalValue.denominator, replacements);
-  if (isZero(denominator)) throw new RangeError('rational function is singular at this value');
-  if (isZero(numerator)) return ZERO;
-  if (isNumber(numerator) && isNumber(denominator)) {
-    return rational(numerator.numerator * denominator.denominator, numerator.denominator * denominator.numerator);
-  }
-  return rationalFunction(numerator, denominator, { ...options, variable: rationalValue.variable });
-}
-
-/** Rebuild an already canonical expression under an optional operation budget. */
-function simplify(value, options = {}) {
-  const expression = asExpression(value);
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  try {
-    budget.step(expressionNodeCount(expression));
-    return substitute(expression, new Map());
-  } catch (error) {
-    if (error instanceof BudgetExceeded) return expression;
-    throw error;
-  }
-}
-
-function expressionNodeCount(value) {
-  if (value.kind === 'number' || value.kind === 'symbol') return 1;
-  if (value.kind === 'power') return 1 + expressionNodeCount(value.base);
-  return 1 + value[`${value.kind === 'add' ? 'terms' : 'factors'}`].reduce((count, child) => count + expressionNodeCount(child), 0);
-}
-
-/** Return a deterministic structural string for diagnostics and focused tests. */
-function formatExpression(value) {
-  const expression = asExpression(value);
-  if (isInfinity(expression)) return expression.sign < 0 ? '-infinity' : 'infinity';
-  if (isNumber(expression)) return expression.denominator === 1n ? String(expression.numerator) : `${expression.numerator}/${expression.denominator}`;
-  if (expression.kind === 'symbol') return expression.name;
-  if (expression.kind === 'power') {
-    const base = expression.base.kind === 'symbol' ? formatExpression(expression.base) : `(${formatExpression(expression.base)})`;
-    return `${base}^${expression.exponent}`;
-  }
-  if (expression.kind === 'multiply') {
-    const negative = isMinusOne(expression.factors[0]);
-    const factors = negative ? expression.factors.slice(1) : expression.factors;
-    const body = factors.map(factor => factor.kind === 'add' ? `(${formatExpression(factor)})` : formatExpression(factor)).join('*');
-    if (negative) return `-${body}`;
-    return body;
-  }
-  const terms = [...expression.terms].sort((left, right) => variableDegree(right) - variableDegree(left)
-    || compareKeys(expressionKey(left), expressionKey(right)));
-  return terms.map((term, index) => {
-    const negative = term.kind === 'multiply' && isMinusOne(term.factors[0]);
-    if (negative) return `${index ? ' - ' : '-'}${formatExpression(negate(term))}`;
-    if (isNumber(term) && term.numerator < 0n) return `${index ? ' - ' : '-'}${formatExpression(negate(term))}`;
-    return `${index ? ' + ' : ''}${formatExpression(term)}`;
-  }).join('');
-}
-
-/** Return a canonical expression's stable identity. */
-function keyOf(value) {
-  return expressionKey(asExpression(value));
-}
-
-/** Text spellings accepted and rendered for the infinity sentinel. */
-const INFINITY_NAMES = new Set(['inf', 'infinity', 'infty', '∞', '\\infty']);
-
-/** Return an exact signed infinity sentinel. */
-function infinity(sign = 1) {
-  return Object.freeze({ kind: 'infinity', sign: sign < 0 ? -1 : 1 });
-}
-
-/** Test the exact infinity sentinel. */
-function isInfinite(value) {
-  return isInfinity(value);
-}
-
-/** Create the finite mutable budget shared by one exact analysis. */
-function createOperationBudget(limit = DEFAULT_MAX_OPERATIONS) {
-  return new OperationBudget(limit);
-}
-
-__exports.isNumber = isNumber;
-__exports.isZero = isZero;
-__exports.rational = rational;
-__exports.integer = integer;
-__exports.symbol = symbol;
-__exports.add = add;
-__exports.multiply = multiply;
-__exports.power = power;
-__exports.negate = negate;
-__exports.substitute = substitute;
-__exports.equals = equals;
-__exports.polynomialCoefficients = polynomialCoefficients;
-__exports.rationalFunction = rationalFunction;
-__exports.rationalAdd = rationalAdd;
-__exports.rationalMultiply = rationalMultiply;
-__exports.rationalDivide = rationalDivide;
-__exports.substituteRational = substituteRational;
-__exports.rationalAt = rationalAt;
-__exports.simplify = simplify;
-__exports.formatExpression = formatExpression;
-__exports.keyOf = keyOf;
-__exports.infinity = infinity;
-__exports.isInfinite = isInfinite;
-__exports.createOperationBudget = createOperationBudget;
-__exports.ONE = ONE;
-__exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
-__exports.INFINITY_NAMES = INFINITY_NAMES;
 };
 
 __modules["src/core/analysis/approximation.js"] = function (__require, __exports) {
@@ -32808,6 +31108,298 @@ __exports.formatSmallSignalNetlist = formatSmallSignalNetlist;
 __exports.describeSmallSignalNetlist = describeSmallSignalNetlist;
 };
 
+__modules["src/core/analysis/response.js"] = function (__require, __exports) {
+const { add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js");
+
+
+const DEFAULT_VARIABLE = 's';
+const ZERO = integer(0);
+const ONE = integer(1);
+
+function asRational(value, variable, options) {
+  if (value?.kind === 'rational') {
+    return rationalFunction(value.numerator, value.denominator, {
+      ...options,
+      variable,
+    });
+  }
+  return rationalFunction(value ?? ONE, ONE, { ...options, variable });
+}
+
+function quotient(numerator, denominator) {
+  if (denominator.kind === 'number') {
+    if (numerator.kind === 'number') {
+      return rational(
+        numerator.numerator * denominator.denominator,
+        numerator.denominator * denominator.numerator,
+      );
+    }
+    return multiply(numerator, rational(denominator.denominator, denominator.numerator));
+  }
+  return multiply(numerator, power(denominator, -1));
+}
+
+function coefficientAt(coefficients, exponent) {
+  return coefficients.find(({ power: powerValue }) => powerValue === exponent)?.coefficient || ZERO;
+}
+
+function polynomialInfo(expression, variable, options) {
+  const coefficients = polynomialCoefficients(expression, variable, options);
+  if (!coefficients) return null;
+  return Object.freeze({
+    coefficients,
+    degree: coefficients.length ? coefficients[0].power : null,
+    valuation: coefficients.length ? coefficients[coefficients.length - 1].power : null,
+  });
+}
+
+function limitAtZero(numeratorInfo, denominatorInfo) {
+  if (!numeratorInfo || !denominatorInfo) {
+    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
+  }
+  if (numeratorInfo.valuation === null) {
+    return Object.freeze({ kind: 'zero', value: ZERO, order: null, coefficient: ZERO });
+  }
+  if (denominatorInfo.valuation === null) {
+    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
+  }
+
+  const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.valuation);
+  const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.valuation);
+  const order = denominatorInfo.valuation - numeratorInfo.valuation;
+  if (order > 0) {
+    return Object.freeze({
+      kind: 'pole',
+      value: null,
+      order,
+      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
+    });
+  }
+  if (order < 0) {
+    return Object.freeze({
+      kind: 'zero',
+      value: ZERO,
+      order: -order,
+      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
+    });
+  }
+  const value = quotient(numeratorCoefficient, denominatorCoefficient);
+  return Object.freeze({
+    kind: value === ZERO ? 'zero' : 'finite',
+    value,
+    order: 0,
+    coefficient: value,
+  });
+}
+
+function limitAtInfinity(numeratorInfo, denominatorInfo) {
+  if (!numeratorInfo || !denominatorInfo) {
+    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
+  }
+  if (numeratorInfo.degree === null) {
+    return Object.freeze({ kind: 'zero', value: ZERO, order: null, coefficient: ZERO });
+  }
+  if (denominatorInfo.degree === null) {
+    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
+  }
+
+  const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.degree);
+  const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.degree);
+  const order = numeratorInfo.degree - denominatorInfo.degree;
+  if (order > 0) {
+    return Object.freeze({
+      kind: 'pole',
+      value: null,
+      order,
+      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
+    });
+  }
+  if (order < 0) {
+    return Object.freeze({
+      kind: 'zero',
+      value: ZERO,
+      order: -order,
+      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
+    });
+  }
+  const value = quotient(numeratorCoefficient, denominatorCoefficient);
+  return Object.freeze({
+    kind: value === ZERO ? 'zero' : 'finite',
+    value,
+    order: 0,
+    coefficient: value,
+  });
+}
+
+function polynomialExpression(coefficients, variable) {
+  return add(coefficients.map(({ power: exponent, coefficient }) => (
+    exponent === 0 ? coefficient : multiply(coefficient, power(symbol(variable), exponent))
+  )));
+}
+
+function isZeroExpression(value) {
+  return value?.kind === 'number' && value.numerator === 0n;
+}
+
+function integerSquareRoot(value) {
+  if (value < 0n) return null;
+  if (value < 2n) return value;
+  let x = BigInt(Math.floor(Math.sqrt(Number(value))));
+  while (x * x > value) x -= 1n;
+  while ((x + 1n) * (x + 1n) <= value) x += 1n;
+  return x * x === value ? x : null;
+}
+
+/** Exact square root of a monomial with even exponents (e.g. `4 C_M^2 g_m^2`), or null. */
+function monomialSquareRoot(value) {
+  if (value.kind === 'number') {
+    const numerator = integerSquareRoot(value.numerator);
+    const denominator = integerSquareRoot(value.denominator);
+    return numerator === null || denominator === null ? null : rational(numerator, denominator);
+  }
+  if (value.kind === 'symbol') return null;
+  if (value.kind === 'power') {
+    return value.exponent % 2 === 0 && value.base.kind !== 'number' ? power(value.base, value.exponent / 2) : null;
+  }
+  if (value.kind === 'multiply') {
+    const roots = value.factors.map(monomialSquareRoot);
+    return roots.some((root) => root === null) ? null : multiply(roots);
+  }
+  return null;
+}
+
+/** Cancel common factors of a root fraction (as a rational function). */
+function rootValue(numerator, denominator, variable) {
+  return rationalFunction(numerator, denominator, { variable });
+}
+
+/** A root location expression from its cancelled fraction. */
+function rootExpression(numerator, denominator, variable) {
+  const value = rootValue(numerator, denominator, variable);
+  return isOneExpression(value.denominator) ? value.numerator : quotient(value.numerator, value.denominator);
+}
+
+function rootRecords(coefficients, role, variable) {
+  if (!coefficients?.length) return [];
+  const degree = coefficients[0].power;
+  if (degree === 0) return [];
+  const polynomial = polynomialExpression(coefficients, variable);
+  const base = { role, order: degree, polynomial, coefficients };
+  // Roots at the origin are exact and need no formula: s^k * P(s).
+  const valuation = coefficients[coefficients.length - 1].power;
+  if (valuation > 0) {
+    const reduced = coefficients.map(({ power: exponent, coefficient }) => ({ power: exponent - valuation, coefficient }));
+    const origin = Array.from({ length: valuation }, () => ({ ...base, kind: 'root', root: ZERO }));
+    return [...origin, ...rootRecords(reduced, role, variable)]
+      .map((record, index) => ({ ...record, ...base, index }));
+  }
+  if (degree === 1) {
+    const linear = coefficientAt(coefficients, 1);
+    const constant = coefficientAt(coefficients, 0);
+    return [{ ...base, index: 0, kind: 'root', root: rootExpression(negate(constant), linear, variable) }];
+  }
+  if (degree === 2) {
+    const a = coefficientAt(coefficients, 2);
+    const b = coefficientAt(coefficients, 1);
+    const c = coefficientAt(coefficients, 0);
+    const discriminant = add(multiply(b, b), negate(multiply(integer(4), a, c)));
+    // Monic form s^2 + B s + C, B = b/a and C = c/a, both cancelled, so
+    // s = (-B_n +- sqrt(B_n^2 - 4 C B_d^2)) / (2 B_d).
+    const monicLinear = rootValue(b, a, variable);
+    const monicConstant = rootValue(c, a, variable);
+    const reducedDiscriminant = rootValue(
+      add(
+        multiply(monicLinear.numerator, monicLinear.numerator, monicConstant.denominator),
+        negate(multiply(integer(4), monicConstant.numerator, power(monicLinear.denominator, 2))),
+      ),
+      monicConstant.denominator,
+      variable,
+    );
+    const monic = isOneExpression(reducedDiscriminant.denominator);
+    const shownDiscriminant = monic ? reducedDiscriminant.numerator : discriminant;
+    const linear = monic ? negate(monicLinear.numerator) : negate(b);
+    const denominator = monic ? multiply(integer(2), monicLinear.denominator) : multiply(integer(2), a);
+    const squareRoot = monomialSquareRoot(shownDiscriminant);
+    return [-1, 1].map((sign, index) => {
+      if (squareRoot) {
+        return {
+          ...base, index, kind: 'root',
+          root: rootExpression(add(linear, sign < 0 ? negate(squareRoot) : squareRoot), denominator, variable),
+        };
+      }
+      return {
+        ...base,
+        index,
+        kind: 'quadratic-root',
+        root: {
+          kind: 'quadratic-formula',
+          sign,
+          numerator: { kind: 'quadratic-numerator', linear, discriminant: shownDiscriminant },
+          denominator,
+          a,
+          b,
+          c,
+          discriminant: shownDiscriminant,
+        },
+      };
+    });
+  }
+  return [{ ...base, index: 0, kind: 'polynomial' }];
+}
+
+function isOneExpression(value) {
+  return value?.kind === 'number' && value.numerator === 1n && value.denominator === 1n;
+}
+
+function responseRecord(value, options = {}) {
+  const variable = options.variable || value?.variable || DEFAULT_VARIABLE;
+  const expression = asRational(value, variable, options);
+  const numeratorInfo = polynomialInfo(expression.numerator, variable, options);
+  const denominatorInfo = polynomialInfo(expression.denominator, variable, options);
+  const hasFrequency = Boolean(
+    numeratorInfo?.coefficients.some(({ power: exponent }) => exponent > 0)
+    || denominatorInfo?.coefficients.some(({ power: exponent }) => exponent > 0),
+  );
+  return Object.freeze({
+    expression,
+    numerator: expression.numerator,
+    denominator: expression.denominator,
+    numeratorCoefficients: numeratorInfo?.coefficients || null,
+    denominatorCoefficients: denominatorInfo?.coefficients || null,
+    numeratorDegree: numeratorInfo?.degree ?? null,
+    denominatorDegree: denominatorInfo?.degree ?? null,
+    numeratorValuation: numeratorInfo?.valuation ?? null,
+    denominatorValuation: denominatorInfo?.valuation ?? null,
+    degrees: Object.freeze({ numerator: numeratorInfo?.degree ?? null, denominator: denominatorInfo?.degree ?? null }),
+    dc: limitAtZero(numeratorInfo, denominatorInfo),
+    infinity: limitAtInfinity(numeratorInfo, denominatorInfo),
+    hasFrequency,
+    poles: hasFrequency ? rootRecords(denominatorInfo?.coefficients, 'pole', variable) : [],
+    zeros: hasFrequency ? rootRecords(numeratorInfo?.coefficients, 'zero', variable) : [],
+  });
+}
+
+/** Canonicalize one exact response and derive limits, degrees, poles, and zeros. */
+function analyzeResponse(value, options = {}) {
+  return responseRecord(value, options);
+}
+
+/** Process the Av/Zin/Zout response set through one topology-independent path. */
+function processResponses(responses = {}, options = {}) {
+  const variable = options.variable || DEFAULT_VARIABLE;
+  const result = {};
+  for (const name of ['Av', 'Zin', 'Zout']) {
+    if (responses[name] !== undefined && responses[name] !== null) {
+      result[name] = responseRecord(responses[name], { ...options, variable });
+    }
+  }
+  return Object.freeze(result);
+}
+
+__exports.analyzeResponse = analyzeResponse;
+__exports.processResponses = processResponses;
+};
+
 __modules["src/core/analysis/topology.js"] = function (__require, __exports) {
 const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
 const { solveMNA } = __require("src/core/analysis/solve.js");
@@ -33077,6 +31669,1488 @@ function compactRational(value, ops) {
 __exports.compactRational = compactRational;
 };
 
+__modules["src/core/analysis/rational.js"] = function (__require, __exports) {
+const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
+const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
+const MINUS_ONE = Object.freeze({ kind: 'number', numerator: -1n, denominator: 1n });
+const DEFAULT_MAX_OPERATIONS = 200000;
+
+function gcd(a, b) {
+  let x = a < 0n ? -a : a;
+  let y = b < 0n ? -b : b;
+  while (y !== 0n) [x, y] = [y, x % y];
+  return x || 1n;
+}
+
+function integerValue(value) {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value);
+  if (typeof value === 'string' && /^[-+]?\d+$/.test(value.trim())) return BigInt(value.trim());
+  throw new TypeError(`expected an exact integer, got ${String(value)}`);
+}
+
+function exactNumber(numerator, denominator = 1n) {
+  let n = integerValue(numerator);
+  let d = integerValue(denominator);
+  if (d === 0n) throw new RangeError('rational denominator must not be zero');
+  if (d < 0n) [n, d] = [-n, -d];
+  const divisor = gcd(n, d);
+  n /= divisor;
+  d /= divisor;
+  if (n === 0n) return ZERO;
+  if (n === 1n && d === 1n) return ONE;
+  if (n === -1n && d === 1n) return MINUS_ONE;
+  return Object.freeze({ kind: 'number', numerator: n, denominator: d });
+}
+
+function isNumber(value) {
+  return value?.kind === 'number';
+}
+
+function isZero(value) {
+  return isNumber(value) && value.numerator === 0n;
+}
+
+function isInfinity(value) {
+  return value?.kind === 'infinity';
+}
+
+function isOne(value) {
+  return isNumber(value) && value.numerator === 1n && value.denominator === 1n;
+}
+
+function isMinusOne(value) {
+  return value === MINUS_ONE;
+}
+
+function asExpression(value) {
+  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
+  if (value?.kind) return value;
+  return exactNumber(value);
+}
+
+function argumentList(values) {
+  return values.length === 1 && Array.isArray(values[0]) ? values[0] : values;
+}
+
+function expressionKey(value) {
+  switch (value.kind) {
+    case 'number': return `n:${value.numerator}/${value.denominator}`;
+    case 'symbol': return `s:${value.name}`;
+    case 'infinity': return `i:${value.sign < 0 ? -1 : 1}`;
+    case 'power': return `p:${expressionKey(value.base)}^${value.exponent}`;
+    case 'multiply': return `m:${value.factors.map(expressionKey).join(',')}`;
+    case 'add': return `a:${value.terms.map(expressionKey).join(',')}`;
+    default: throw new TypeError(`unknown expression kind ${value.kind}`);
+  }
+}
+
+function factorRank(value) {
+  if (isNumber(value)) return 0;
+  if (value.kind === 'symbol') return 1;
+  if (value.kind === 'power') return 2;
+  if (value.kind === 'multiply') return 3;
+  return 4;
+}
+
+function compareKeys(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareFactors(left, right) {
+  return factorRank(left) - factorRank(right) || compareKeys(expressionKey(left), expressionKey(right));
+}
+
+function variableDegree(value, variable = 's') {
+  if (value?.kind === 'symbol') return value.name === variable ? 1 : 0;
+  if (value?.kind === 'power' && value.exponent >= 0) {
+    return value.base?.kind === 'symbol' && value.base.name === variable ? value.exponent : 0;
+  }
+  if (value?.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + variableDegree(factor, variable), 0);
+  return 0;
+}
+
+function numericAdd(left, right) {
+  return exactNumber(
+    left.numerator * right.denominator + right.numerator * left.denominator,
+    left.denominator * right.denominator,
+  );
+}
+
+function numericMultiply(left, right) {
+  return exactNumber(left.numerator * right.numerator, left.denominator * right.denominator);
+}
+
+function numericPower(value, exponent) {
+  if (exponent === 0) return ONE;
+  if (value.numerator === 0n && exponent < 0) throw new RangeError('zero cannot have a negative power');
+  if (exponent > 0) return exactNumber(value.numerator ** BigInt(exponent), value.denominator ** BigInt(exponent));
+  return exactNumber(value.denominator ** BigInt(-exponent), value.numerator ** BigInt(-exponent));
+}
+
+function factorEntries(value) {
+  if (value.kind === 'multiply') return value.factors.flatMap(factorEntries);
+  if (value.kind === 'power' && value.exponent !== 0) return [[value.base, value.exponent]];
+  return [[value, 1]];
+}
+
+function factorsFromEntries(entries) {
+  const factors = [];
+  for (const [factor, exponent] of entries) {
+    if (exponent === 0 || isOne(factor)) continue;
+    factors.push(exponent === 1 ? factor : power(factor, exponent));
+  }
+  return factors;
+}
+
+function nonNumericFactors(value) {
+  return factorEntries(value).filter(([factor]) => !isNumber(factor));
+}
+
+function makeMultiply(values) {
+  return multiply(...values);
+}
+
+// A term shaped like `numericCoefficient * (sum)` (and nothing else) is kept
+// factored by default so unrelated `add()` calls elsewhere in the pipeline
+// can still find it as a shared multiplicative factor. It is only expanded
+// here, on a trial basis, when doing so lets its pieces cancel against
+// sibling terms (for example `-1*(gm1+gm2) + gm1 + gm2` collapsing to `0`);
+// see `combineTerms`/`distributeScaledSum` below.
+function distributeScaledSum(term) {
+  if (term.kind !== 'multiply') return null;
+  const nonNumeric = term.factors.filter((factor) => !isNumber(factor));
+  if (nonNumeric.length !== 1 || nonNumeric[0].kind !== 'add') return null;
+  const coefficient = term.factors.find((factor) => isNumber(factor)) || ONE;
+  return nonNumeric[0].terms.map((subterm) => makeMultiply([coefficient, subterm]));
+}
+
+function combineTerms(terms) {
+  const combined = new Map();
+  for (const rawTerm of terms) {
+    const term = asExpression(rawTerm);
+    const entries = term.kind === 'multiply' ? term.factors : [term];
+    const coefficient = entries.length && isNumber(entries[0]) ? entries[0] : ONE;
+    const core = entries.length && isNumber(entries[0]) ? makeMultiply(entries.slice(1)) : term;
+    const key = expressionKey(core);
+    const previous = combined.get(key);
+    combined.set(key, previous
+      ? { coefficient: numericAdd(previous.coefficient, coefficient), core: previous.core }
+      : { coefficient, core });
+  }
+  const result = [];
+  for (const { coefficient, core } of combined.values()) {
+    if (isZero(coefficient)) continue;
+    result.push(isOne(core) ? coefficient : makeMultiply([coefficient, core]));
+  }
+  return result;
+}
+
+function makeAdd(values, factorCommon) {
+  const terms = values.flatMap(value => value.kind === 'add' ? value.terms : [value]).map(asExpression);
+  const infinities = terms.filter(isInfinity);
+  if (infinities.length) {
+    const signs = new Set(infinities.map(value => value.sign < 0 ? -1 : 1));
+    if (signs.size > 1) throw new RangeError('undefined infinity addition');
+    return infinity(infinities[0].sign);
+  }
+  const direct = combineTerms(terms);
+  let normalized = direct;
+  if (terms.some(term => distributeScaledSum(term) !== null)) {
+    const expandedTerms = terms.flatMap(term => distributeScaledSum(term) || [term]);
+    const expanded = combineTerms(expandedTerms);
+    if (expanded.length < direct.length) normalized = expanded;
+  }
+  if (!normalized.length) return ZERO;
+  if (normalized.length === 1) return normalized[0];
+
+  const allNegative = normalized.every(term => {
+    const coefficient = term.kind === 'multiply' && isNumber(term.factors[0]) ? term.factors[0] : (isNumber(term) ? term : ONE);
+    return coefficient.numerator < 0n;
+  });
+  if (allNegative) {
+    return makeMultiply([MINUS_ONE, makeAdd(normalized.map(term => negate(term)), factorCommon)]);
+  }
+
+  if (factorCommon) {
+    const factorMaps = normalized.map(term => {
+      const coefficient = term.kind === 'multiply' && isNumber(term.factors[0]) ? term.factors[0] : (isNumber(term) ? term : ONE);
+      const core = term.kind === 'multiply' && isNumber(term.factors[0]) ? makeMultiply(term.factors.slice(1)) : term;
+      const counts = new Map();
+      for (const [factor, exponent] of nonNumericFactors(core)) {
+        const key = expressionKey(factor);
+        counts.set(key, { factor, exponent: (counts.get(key)?.exponent || 0) + exponent });
+      }
+      return { coefficient, core, counts };
+    });
+    const common = [];
+    for (const [key, first] of factorMaps[0].counts) {
+      const exponent = Math.min(...factorMaps.map(({ counts }) => counts.get(key)?.exponent || 0));
+      if (exponent) common.push([first.factor, exponent]);
+    }
+    if (common.length) {
+      const residual = factorMaps.map(({ coefficient, counts }) => {
+        const remaining = [];
+        for (const [key, entry] of counts) remaining.push([entry.factor, entry.exponent - (common.find(([factor]) => expressionKey(factor) === key)?.[1] || 0)]);
+        return makeMultiply([coefficient, ...factorsFromEntries(remaining)]);
+      });
+      return makeMultiply([...factorsFromEntries(common), makeAdd(residual, false)]);
+    }
+  }
+
+  normalized.sort((left, right) => compareKeys(expressionKey(left), expressionKey(right)));
+  return Object.freeze({ kind: 'add', terms: Object.freeze(normalized) });
+}
+
+/** Create an exact integer or rational number node. */
+function rational(numerator, denominator = 1n) {
+  return exactNumber(numerator, denominator);
+}
+
+/** Create an exact integer node. */
+function integer(value) {
+  return exactNumber(value);
+}
+
+/** Create a named symbolic parameter node. */
+function symbol(name) {
+  const text = String(name);
+  if (!text) throw new TypeError('symbol name must not be empty');
+  return Object.freeze({ kind: 'symbol', name: text });
+}
+
+/** Create a normalized sum of exact expressions. */
+function add(...values) {
+  return makeAdd(argumentList(values).map(asExpression), true);
+}
+
+/** Create a normalized product of exact expressions. */
+function multiply(...values) {
+  const factors = argumentList(values).map(asExpression);
+  const infinities = factors.filter(isInfinity);
+  if (infinities.length) {
+    if (factors.some(isZero)) throw new RangeError('undefined zero times infinity');
+    const sign = infinities.reduce((result, value) => result * (value.sign < 0 ? -1 : 1), 1)
+      * factors.filter(isNumber).reduce((result, value) => result * (value.numerator < 0n ? -1 : 1), 1);
+    return infinity(sign);
+  }
+  let coefficient = ONE;
+  const counts = new Map();
+  for (const factor of factors) {
+    if (isZero(factor)) return ZERO;
+    for (const [base, exponent] of factorEntries(factor)) {
+      if (isNumber(base)) {
+        coefficient = numericMultiply(coefficient, numericPower(base, exponent));
+        continue;
+      }
+      const key = expressionKey(base);
+      counts.set(key, { base, exponent: (counts.get(key)?.exponent || 0) + exponent });
+    }
+  }
+  if (isZero(coefficient)) return ZERO;
+  const combined = factorsFromEntries([...counts.values()].map(({ base, exponent }) => [base, exponent]));
+  combined.sort(compareFactors);
+  if (!isOne(coefficient)) combined.unshift(coefficient);
+  if (!combined.length) return ONE;
+  if (combined.length === 1) return combined[0];
+  return Object.freeze({ kind: 'multiply', factors: Object.freeze(combined) });
+}
+
+/** Create a normalized integer power. */
+function power(base, exponent) {
+  const value = asExpression(base);
+  const powerValue = Number(integerValue(exponent));
+  if (!Number.isSafeInteger(powerValue)) throw new RangeError('power exponent must be a safe integer');
+  if (powerValue === 0) return ONE;
+  if (powerValue === 1) return value;
+  if (isNumber(value)) return numericPower(value, powerValue);
+  if (value.kind === 'power') return power(value.base, value.exponent * powerValue);
+  return Object.freeze({ kind: 'power', base: value, exponent: powerValue });
+}
+
+/** Create the exact additive inverse. */
+function negate(value) {
+  return multiply(MINUS_ONE, asExpression(value));
+}
+
+/** Substitute exact expressions by symbol name without mutating the source. */
+function substitute(value, replacements) {
+  const source = asExpression(value);
+  if (isInfinity(source)) return source;
+  const lookup = replacements instanceof Map ? replacements : new Map(Object.entries(replacements || {}));
+  if (source.kind === 'symbol') return lookup.has(source.name) ? asExpression(lookup.get(source.name)) : source;
+  if (source.kind === 'number') return source;
+  if (source.kind === 'power') return power(substitute(source.base, lookup), source.exponent);
+  if (source.kind === 'multiply') return multiply(source.factors.map(factor => substitute(factor, lookup)));
+  return add(source.terms.map(term => substitute(term, lookup)));
+}
+
+/** Test exact structural equality after canonical construction. */
+function equals(left, right) {
+  return expressionKey(asExpression(left)) === expressionKey(asExpression(right));
+}
+
+function cancelFactors(numerator, denominator, budget = null) {
+  budget?.step();
+  if (equals(numerator, denominator)) return [ONE, ONE];
+  const exponents = new Map();
+  for (const [factor, exponent] of factorEntries(numerator)) {
+    const key = expressionKey(factor);
+    exponents.set(key, { factor, exponent: (exponents.get(key)?.exponent || 0) + exponent });
+  }
+  for (const [factor, exponent] of factorEntries(denominator)) {
+    const key = expressionKey(factor);
+    exponents.set(key, { factor, exponent: (exponents.get(key)?.exponent || 0) - exponent });
+  }
+  const reducedNumerator = [];
+  const reducedDenominator = [];
+  for (const { factor, exponent } of exponents.values()) {
+    if (exponent > 0) reducedNumerator.push([factor, exponent]);
+    if (exponent < 0) reducedDenominator.push([factor, -exponent]);
+  }
+  return [makeMultiply(factorsFromEntries(reducedNumerator)), makeMultiply(factorsFromEntries(reducedDenominator))];
+}
+
+function splitNumericFactor(value) {
+  if (isNumber(value)) return { coefficient: value, rest: ONE };
+  if (value.kind !== 'multiply' || !isNumber(value.factors[0])) return { coefficient: ONE, rest: value };
+  return { coefficient: value.factors[0], rest: makeMultiply(value.factors.slice(1)) };
+}
+
+function absoluteNumeric(value) {
+  return value.numerator < 0n ? exactNumber(-value.numerator, value.denominator) : value;
+}
+
+function numericGcd(values) {
+  const numbers = values.map(absoluteNumeric);
+  let numerator = numbers.reduce((result, value) => gcd(result, value.numerator), 0n);
+  let denominator = numbers.reduce((result, value) => {
+    return result / gcd(result, value.denominator) * value.denominator;
+  }, 1n);
+  if (numerator === 0n) return ONE;
+  return exactNumber(numerator, denominator);
+}
+
+function factorCounts(value) {
+  const counts = new Map();
+  for (const [factor, exponent] of nonNumericFactors(value)) {
+    const key = expressionKey(factor);
+    counts.set(key, { factor, exponent: (counts.get(key)?.exponent || 0) + exponent });
+  }
+  return counts;
+}
+
+function commonFactor(values) {
+  const expressions = values.filter(value => !isZero(value));
+  if (!expressions.length) return ONE;
+  const parts = expressions.map(splitNumericFactor);
+  const coefficient = numericGcd(parts.map(({ coefficient }) => coefficient));
+  const first = factorCounts(parts[0].rest);
+  const common = [];
+  for (const [key, entry] of first) {
+    const exponent = Math.min(...parts.slice(1).map(({ rest }) => factorCounts(rest).get(key)?.exponent || 0), entry.exponent);
+    if (exponent > 0) common.push([entry.factor, exponent]);
+  }
+  return makeMultiply([coefficient, ...factorsFromEntries(common)]);
+}
+
+function divideByFactor(value, factor, budget = null) {
+  if (isOne(factor)) return value;
+  budget?.step();
+  const valueParts = splitNumericFactor(value);
+  const factorParts = splitNumericFactor(factor);
+  const numeric = exactNumber(
+    valueParts.coefficient.numerator * factorParts.coefficient.denominator,
+    valueParts.coefficient.denominator * factorParts.coefficient.numerator,
+  );
+  const [rest, remainder] = cancelFactors(valueParts.rest, factorParts.rest, budget);
+  if (!isOne(remainder)) return null;
+  return makeMultiply([numeric, rest]);
+}
+
+function cancelPolynomialContent(map, factor, budget) {
+  if (isOne(factor)) return map;
+  const result = new Map();
+  for (const [powerValue, coefficient] of map) {
+    budget.step();
+    const reduced = divideByFactor(coefficient, factor, budget);
+    if (reduced === null) return null;
+    if (!isZero(reduced)) result.set(powerValue, reduced);
+  }
+  return result;
+}
+
+function fallbackRational(numerator, denominator, variable, budgetExceeded = false) {
+  if (isInfinity(numerator)) {
+    return Object.freeze({ kind: 'rational', variable, numerator, denominator: ONE, budgetExceeded, infinite: true });
+  }
+  if (isInfinity(denominator)) {
+    return Object.freeze({ kind: 'rational', variable, numerator: ZERO, denominator: ONE, budgetExceeded });
+  }
+  if (isZero(denominator)) throw new RangeError('rational denominator must not be zero');
+  if (isZero(numerator)) return Object.freeze({ kind: 'rational', variable, numerator: ZERO, denominator: ONE, budgetExceeded });
+  return Object.freeze({ kind: 'rational', variable, numerator, denominator, budgetExceeded });
+}
+
+function canonicalRational(numerator, denominator, variable, budgetExceeded = false, budget = null) {
+  const fallback = () => fallbackRational(numerator, denominator, variable, budgetExceeded);
+  if (isInfinity(numerator) || isInfinity(denominator)) return fallback();
+  if (isZero(denominator)) throw new RangeError('rational denominator must not be zero');
+  budget?.step();
+  let [n, d] = cancelFactors(numerator, denominator, budget);
+  if (isZero(n)) return fallbackRational(ZERO, ONE, variable, budgetExceeded);
+  const nc = splitNumericFactor(n);
+  const dc = splitNumericFactor(d);
+  const coefficient = numericMultiply(nc.coefficient, exactNumber(dc.coefficient.denominator, dc.coefficient.numerator));
+  n = makeMultiply([coefficient, nc.rest]);
+  d = dc.rest;
+  if (isMinusOne(d)) {
+    n = negate(n);
+    d = ONE;
+  }
+  return Object.freeze({ kind: 'rational', variable, numerator: n, denominator: d, budgetExceeded });
+}
+
+class OperationBudget {
+  constructor(limit = DEFAULT_MAX_OPERATIONS) {
+    if (!Number.isFinite(limit)) throw new RangeError('maxOperations must be finite');
+    this.limit = Math.max(0, Math.floor(limit));
+    this.used = 0;
+    this.exceeded = false;
+  }
+
+  step(amount = 1) {
+    if (!Number.isSafeInteger(amount) || amount < 0) throw new RangeError('budget step must be a non-negative integer');
+    if (this.exceeded || this.used + amount > this.limit) {
+      this.used = this.limit;
+      this.exceeded = true;
+      throw new BudgetExceeded();
+    }
+    this.used += amount;
+  }
+}
+
+class BudgetExceeded extends Error {}
+
+function polynomialMap(value, variable, budget) {
+  budget.step();
+  if (isNumber(value)) return new Map([[0, value]]);
+  if (value.kind === 'symbol') return new Map([[value.name === variable ? 1 : 0, value.name === variable ? ONE : value]]);
+  if (value.kind === 'add') {
+    const result = new Map();
+    for (const term of value.terms) {
+      const termMap = polynomialMap(term, variable, budget);
+      if (!termMap) return null;
+      mergeCoefficientMap(result, termMap, budget);
+    }
+    return result;
+  }
+  if (value.kind === 'multiply') {
+    let result = new Map([[0, ONE]]);
+    for (const factor of value.factors) {
+      const factorMap = polynomialMap(factor, variable, budget);
+      if (!factorMap) return null;
+      result = multiplyPolynomialMaps(result, factorMap, budget);
+    }
+    return result;
+  }
+  if (value.kind === 'power' && value.exponent >= 0) {
+    let result = new Map([[0, ONE]]);
+    const base = polynomialMap(value.base, variable, budget);
+    if (!base) return null;
+    for (let index = 0; index < value.exponent; index += 1) result = multiplyPolynomialMaps(result, base, budget);
+    return result;
+  }
+  return null;
+}
+
+function mergeCoefficientMap(target, source, budget) {
+  for (const [powerValue, coefficient] of source) {
+    budget.step();
+    target.set(powerValue, target.has(powerValue) ? add(target.get(powerValue), coefficient) : coefficient);
+  }
+}
+
+function multiplyPolynomialMaps(left, right, budget) {
+  const result = new Map();
+  for (const [leftPower, leftCoefficient] of left) {
+    for (const [rightPower, rightCoefficient] of right) {
+      budget.step();
+      const powerValue = leftPower + rightPower;
+      const coefficient = multiply(leftCoefficient, rightCoefficient);
+      result.set(powerValue, result.has(powerValue) ? add(result.get(powerValue), coefficient) : coefficient);
+    }
+  }
+  return result;
+}
+
+function polynomialExpression(coefficients, variable) {
+  const terms = [];
+  for (const { power: powerValue, coefficient } of coefficients) {
+    if (isZero(coefficient)) continue;
+    terms.push(powerValue === 0 ? coefficient : multiply(coefficient, power(symbol(variable), powerValue)));
+  }
+  return makeAdd(terms, true);
+}
+
+function coefficientsFromMap(map) {
+  return Object.freeze([...map.entries()]
+    .filter(([, coefficient]) => !isZero(coefficient))
+    .sort(([left], [right]) => right - left)
+    .map(([powerValue, coefficient]) => Object.freeze({ power: powerValue, coefficient })));
+}
+
+/** Return polynomial coefficients in descending powers of the chosen variable. */
+function polynomialCoefficients(value, variable = 's', options = {}) {
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  try {
+    const map = polynomialMap(asExpression(value), variable, budget);
+    if (!map) return null;
+    return coefficientsFromMap(map);
+  } catch (error) {
+    if (error instanceof BudgetExceeded) return null;
+    throw error;
+  }
+}
+
+/** Normalize a rational function and cancel structurally provable factors. */
+function rationalFunction(numerator, denominator = ONE, options = {}) {
+  const variable = options.variable || 's';
+  const rawNumerator = asExpression(numerator);
+  const rawDenominator = asExpression(denominator);
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  let result;
+  try {
+    result = canonicalRational(rawNumerator, rawDenominator, variable, false, budget);
+    const numeratorMap = polynomialMap(result.numerator, variable, budget);
+    const denominatorMap = polynomialMap(result.denominator, variable, budget);
+    if (numeratorMap && denominatorMap) {
+      const content = commonFactor([
+        commonFactor([...numeratorMap.values()]),
+        commonFactor([...denominatorMap.values()]),
+      ]);
+      const reducedNumeratorMap = cancelPolynomialContent(numeratorMap, content, budget);
+      const reducedDenominatorMap = cancelPolynomialContent(denominatorMap, content, budget);
+      // A content factor that does not divide every coefficient exactly is a
+      // structural outcome, not exhaustion: keep the uncancelled coefficients
+      // rather than failing the whole analysis as over budget.
+      const cancelled = reducedNumeratorMap && reducedDenominatorMap;
+      const numeratorCoefficients = coefficientsFromMap(cancelled ? reducedNumeratorMap : numeratorMap);
+      const denominatorCoefficients = coefficientsFromMap(cancelled ? reducedDenominatorMap : denominatorMap);
+      budget.step(numeratorCoefficients.length + denominatorCoefficients.length);
+      const normalizedNumerator = polynomialExpression(numeratorCoefficients, variable);
+      const normalizedDenominator = polynomialExpression(denominatorCoefficients, variable);
+      result = canonicalRational(normalizedNumerator, normalizedDenominator, variable, false, budget);
+    }
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    result = fallbackRational(rawNumerator, rawDenominator, variable, true);
+  }
+  return result;
+}
+
+function asRational(value, variable = 's', options = {}) {
+  if (isInfinity(value)) return value;
+  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
+  return value?.kind === 'rational' ? value : rationalFunction(value, ONE, { ...options, variable });
+}
+
+/** Add two rational functions, preserving a valid factored fallback on budget exhaustion. */
+function rationalAdd(left, right, options = {}) {
+  const variable = options.variable || left?.variable || right?.variable || 's';
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  const a = asRational(left, variable, { ...options, budget });
+  const b = asRational(right, variable, { ...options, budget });
+  if (isInfinity(a)) {
+    if (isInfinity(b) && a.sign !== b.sign) throw new RangeError('undefined infinity addition');
+    return infinity(a.sign);
+  }
+  if (isInfinity(b)) return infinity(b.sign);
+  try {
+    budget.step(2);
+    const numerator = add(multiply(a.numerator, b.denominator), multiply(b.numerator, a.denominator));
+    const denominator = multiply(a.denominator, b.denominator);
+    return rationalFunction(numerator, denominator, { ...options, budget });
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    return fallbackRational(a.numerator, a.denominator, variable, true);
+  }
+}
+
+/** Multiply two rational functions. */
+function rationalMultiply(left, right, options = {}) {
+  const variable = options.variable || left?.variable || right?.variable || 's';
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  const a = asRational(left, variable, { ...options, budget });
+  const b = asRational(right, variable, { ...options, budget });
+  if (isInfinity(a) || isInfinity(b)) {
+    if (isInfinity(a) && isInfinity(b)) return infinity(a.sign * b.sign);
+    const other = isInfinity(a) ? b : a;
+    if (isZero(other?.numerator)) throw new RangeError('undefined zero times infinity');
+    const sign = (isInfinity(a) ? a.sign : b.sign)
+      * (other?.numerator?.numerator < 0n ? -1 : 1);
+    return infinity(sign);
+  }
+  try {
+    budget.step(2);
+    return rationalFunction(
+      multiply(a.numerator, b.numerator),
+      multiply(a.denominator, b.denominator),
+      { ...options, budget },
+    );
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    return fallbackRational(a.numerator, a.denominator, variable, true);
+  }
+}
+
+/** Divide two rational functions. */
+function rationalDivide(left, right, options = {}) {
+  const variable = options.variable || left?.variable || right?.variable || 's';
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  const a = asRational(left, variable, { ...options, budget });
+  const b = asRational(right, variable, { ...options, budget });
+  if (isInfinity(a)) {
+    if (isInfinity(b) || isZero(b.numerator)) throw new RangeError('undefined infinity division');
+    return infinity(a.sign);
+  }
+  if (isInfinity(b)) return ZERO;
+  if (isZero(b.numerator)) {
+    if (isZero(a.numerator)) throw new RangeError('undefined zero divided by zero');
+    return infinity(a.numerator?.kind === 'number' && a.numerator.numerator < 0n ? -1 : 1);
+  }
+  try {
+    budget.step(2);
+    return rationalFunction(
+      multiply(a.numerator, b.denominator),
+      multiply(a.denominator, b.numerator),
+      { ...options, budget },
+    );
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    return fallbackRational(a.numerator, a.denominator, variable, true);
+  }
+}
+
+/** Substitute exact expressions into a rational function. */
+function substituteRational(value, replacements, options = {}) {
+  if (isInfinity(value)) return value;
+  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  const rationalValue = asRational(value, 's', { ...options, budget });
+  if (rationalValue.budgetExceeded === true) return rationalValue;
+  try {
+    budget.step();
+    return rationalFunction(
+      substitute(rationalValue.numerator, replacements),
+      substitute(rationalValue.denominator, replacements),
+      { ...options, budget, variable: rationalValue.variable },
+    );
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    return fallbackRational(rationalValue.numerator, rationalValue.denominator, rationalValue.variable, true);
+  }
+}
+
+/** Evaluate a rational function at an exact value. */
+function rationalAt(value, argument, options = {}) {
+  if (isInfinity(value)) return value;
+  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
+  const rationalValue = asRational(value, 's', options);
+  const replacements = new Map([[rationalValue.variable, asExpression(argument)]]);
+  const numerator = substitute(rationalValue.numerator, replacements);
+  const denominator = substitute(rationalValue.denominator, replacements);
+  if (isZero(denominator)) throw new RangeError('rational function is singular at this value');
+  if (isZero(numerator)) return ZERO;
+  if (isNumber(numerator) && isNumber(denominator)) {
+    return rational(numerator.numerator * denominator.denominator, numerator.denominator * denominator.numerator);
+  }
+  return rationalFunction(numerator, denominator, { ...options, variable: rationalValue.variable });
+}
+
+/** Rebuild an already canonical expression under an optional operation budget. */
+function simplify(value, options = {}) {
+  const expression = asExpression(value);
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  try {
+    budget.step(expressionNodeCount(expression));
+    return substitute(expression, new Map());
+  } catch (error) {
+    if (error instanceof BudgetExceeded) return expression;
+    throw error;
+  }
+}
+
+function expressionNodeCount(value) {
+  if (value.kind === 'number' || value.kind === 'symbol') return 1;
+  if (value.kind === 'power') return 1 + expressionNodeCount(value.base);
+  return 1 + value[`${value.kind === 'add' ? 'terms' : 'factors'}`].reduce((count, child) => count + expressionNodeCount(child), 0);
+}
+
+/** Return a deterministic structural string for diagnostics and focused tests. */
+function formatExpression(value) {
+  const expression = asExpression(value);
+  if (isInfinity(expression)) return expression.sign < 0 ? '-infinity' : 'infinity';
+  if (isNumber(expression)) return expression.denominator === 1n ? String(expression.numerator) : `${expression.numerator}/${expression.denominator}`;
+  if (expression.kind === 'symbol') return expression.name;
+  if (expression.kind === 'power') {
+    const base = expression.base.kind === 'symbol' ? formatExpression(expression.base) : `(${formatExpression(expression.base)})`;
+    return `${base}^${expression.exponent}`;
+  }
+  if (expression.kind === 'multiply') {
+    const negative = isMinusOne(expression.factors[0]);
+    const factors = negative ? expression.factors.slice(1) : expression.factors;
+    const body = factors.map(factor => factor.kind === 'add' ? `(${formatExpression(factor)})` : formatExpression(factor)).join('*');
+    if (negative) return `-${body}`;
+    return body;
+  }
+  const terms = [...expression.terms].sort((left, right) => variableDegree(right) - variableDegree(left)
+    || compareKeys(expressionKey(left), expressionKey(right)));
+  return terms.map((term, index) => {
+    const negative = term.kind === 'multiply' && isMinusOne(term.factors[0]);
+    if (negative) return `${index ? ' - ' : '-'}${formatExpression(negate(term))}`;
+    if (isNumber(term) && term.numerator < 0n) return `${index ? ' - ' : '-'}${formatExpression(negate(term))}`;
+    return `${index ? ' + ' : ''}${formatExpression(term)}`;
+  }).join('');
+}
+
+/** Return a canonical expression's stable identity. */
+function keyOf(value) {
+  return expressionKey(asExpression(value));
+}
+
+/** Text spellings accepted and rendered for the infinity sentinel. */
+const INFINITY_NAMES = new Set(['inf', 'infinity', 'infty', '∞', '\\infty']);
+
+/** Return an exact signed infinity sentinel. */
+function infinity(sign = 1) {
+  return Object.freeze({ kind: 'infinity', sign: sign < 0 ? -1 : 1 });
+}
+
+/** Test the exact infinity sentinel. */
+function isInfinite(value) {
+  return isInfinity(value);
+}
+
+/** Create the finite mutable budget shared by one exact analysis. */
+function createOperationBudget(limit = DEFAULT_MAX_OPERATIONS) {
+  return new OperationBudget(limit);
+}
+
+__exports.isNumber = isNumber;
+__exports.isZero = isZero;
+__exports.rational = rational;
+__exports.integer = integer;
+__exports.symbol = symbol;
+__exports.add = add;
+__exports.multiply = multiply;
+__exports.power = power;
+__exports.negate = negate;
+__exports.substitute = substitute;
+__exports.equals = equals;
+__exports.polynomialCoefficients = polynomialCoefficients;
+__exports.rationalFunction = rationalFunction;
+__exports.rationalAdd = rationalAdd;
+__exports.rationalMultiply = rationalMultiply;
+__exports.rationalDivide = rationalDivide;
+__exports.substituteRational = substituteRational;
+__exports.rationalAt = rationalAt;
+__exports.simplify = simplify;
+__exports.formatExpression = formatExpression;
+__exports.keyOf = keyOf;
+__exports.infinity = infinity;
+__exports.isInfinite = isInfinite;
+__exports.createOperationBudget = createOperationBudget;
+__exports.ONE = ONE;
+__exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
+__exports.INFINITY_NAMES = INFINITY_NAMES;
+};
+
+__modules["src/core/analysis/present.js"] = function (__require, __exports) {
+const { INFINITY_NAMES, ONE, isNumber, isZero, keyOf } = __require("src/core/analysis/rational.js");
+
+
+const PRECEDENCE = Object.freeze({ sum: 10, product: 20, power: 30, atom: 40 });
+const PARALLEL_KINDS = new Set(['parallel', 'parallel-resistance']);
+
+function isNegativeNumber(value) {
+  return isNumber(value) && value.numerator < 0n;
+}
+
+function isNegative(value) {
+  if (isNegativeNumber(value)) return true;
+  if (value?.kind === 'rational') return isNegative(value.numerator);
+  return value?.kind === 'multiply' && isNegativeNumber(value.factors[0]);
+}
+
+function structuralKey(value) {
+  if (value?.kind === 'rational') {
+    return `q:${value.variable}:${structuralKey(value.numerator)}/${structuralKey(value.denominator)}`;
+  }
+  if (value?.kind === 'infinity') return `i:${value.sign < 0 ? -1 : 1}`;
+  if (value?.kind === 'multiply') return `m:${value.factors.map(structuralKey).join(',')}`;
+  if (value?.kind === 'add') return `a:${value.terms.map(structuralKey).join(',')}`;
+  if (value?.kind === 'power') return `p:${structuralKey(value.base)}^${value.exponent}`;
+  return keyOf(value);
+}
+
+function displayProduct(factors) {
+  let coefficient = 1n;
+  const visible = factors.filter((factor) => {
+    if (isNumber(factor) && factor.denominator === 1n) {
+      coefficient *= factor.numerator;
+      return false;
+    }
+    return true;
+  });
+  if (coefficient !== 1n || !visible.length) visible.unshift({ ...ONE, numerator: coefficient });
+  return visible.length === 1 ? visible[0] : { kind: 'multiply', factors: visible };
+}
+
+/** Display-only fraction composition. Parallel identities remain indivisible
+ * factors; no circuit polynomial is expanded or approximated here. */
+function composedFraction(value, context, options) {
+  const usedProofs = new Set();
+  let visited = 0;
+  function parts(node, path = new Set()) {
+    if (++visited > 256) throw new RangeError('fraction presentation limit');
+    if (explicitParallel(node, options)) return { n: [node], d: [] };
+    const key = structuralKey(node);
+    const proof = !path.has(key) && options.equivalences?.get?.(key);
+    const nestedPath = new Set([...path, key]);
+    let kind = node.kind;
+    let operands;
+    if (proof?.proven && ['product', 'quotient', 'sum'].includes(proof.kind)) {
+      kind = proof.kind;
+      operands = proof.operands;
+      usedProofs.add(key);
+    }
+    if (kind === 'rational' || kind === 'quotient') {
+      const a = parts(operands?.[0] || node.numerator, nestedPath);
+      const b = parts(operands?.[1] || node.denominator, nestedPath);
+      return { n: [...a.n, ...b.d], d: [...a.d, ...b.n] };
+    }
+    if (kind === 'number') {
+      return { n: [{ ...ONE, numerator: node.numerator }], d: node.denominator === 1n ? [] : [{ ...ONE, numerator: node.denominator }] };
+    }
+    if (kind === 'multiply' || kind === 'product') {
+      const factors = (operands || node.factors).map((factor) => parts(factor, nestedPath));
+      return { n: factors.flatMap((factor) => factor.n), d: factors.flatMap((factor) => factor.d) };
+    }
+    if (kind === 'power') {
+      const base = parts(node.base, nestedPath);
+      const exponent = Math.abs(node.exponent);
+      const powered = (factors) => !factors.length ? [] : exponent === 1 ? factors : [{ kind: 'power', base: displayProduct(factors), exponent }];
+      if (node.exponent === 0) return { n: [ONE], d: [] };
+      return node.exponent < 0 ? { n: powered(base.d), d: powered(base.n) } : { n: powered(base.n), d: powered(base.d) };
+    }
+    if (kind === 'add' || kind === 'sum') {
+      const terms = (operands || node.terms).map((term) => parts(term, nestedPath));
+      if (!terms.some((term) => term.d.some((factor) => !isNumber(factor) || factor.numerator !== factor.denominator))) {
+        return { n: [operands ? { kind: 'add', terms: terms.map((term) => displayProduct(term.n)), ordered: true } : node], d: [] };
+      }
+      // Common denominator uses the largest multiplicity of each factor,
+      // avoiding repeated denominators in 1/a + 1/a without distributing sums.
+      const common = new Map();
+      const denominators = terms.map((term) => {
+        const counts = new Map();
+        for (const factor of term.d) {
+          if (isNumber(factor) && factor.numerator === 1n) continue;
+          const key = structuralKey(factor);
+          const entry = counts.get(key) || { factor, count: 0 };
+          entry.count++;
+          counts.set(key, entry);
+        }
+        for (const [key, entry] of counts) if ((common.get(key)?.count || 0) < entry.count) common.set(key, entry);
+        return counts;
+      });
+      const numerator = { kind: 'add', terms: terms.map((term, index) => displayProduct([
+        ...term.n,
+        ...[...common].flatMap(([key, entry]) => Array(entry.count - (denominators[index].get(key)?.count || 0)).fill(entry.factor)),
+      ])) };
+      return { n: [numerator], d: [...common.values()].flatMap((entry) => Array(entry.count).fill(entry.factor)) };
+    }
+    return { n: [node], d: [] };
+  }
+  try {
+    const { n, d } = parts(value);
+    const denominator = displayProduct(d);
+    if (isNumber(denominator) && denominator.numerator === 1n) return null;
+    const numerator = displayProduct(n);
+    const negative = isNegative(numerator) !== isNegative(denominator);
+    const equivalences = new Map(options.equivalences instanceof Map
+      ? options.equivalences : Object.entries(options.equivalences || {}));
+    usedProofs.forEach((key) => equivalences.delete(key));
+    const nested = { ...options, equivalences };
+    return `${negative ? '-' : ''}\\frac{${render(unsigned(numerator), 0, context, nested)}}{${render(unsigned(denominator), 0, context, nested)}}`;
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
+}
+
+function equivalent(left, right) {
+  if (left?.kind !== right?.kind) return false;
+  if (left?.kind === 'rational') {
+    return left.variable === right.variable
+      && equivalent(left.numerator, right.numerator)
+      && equivalent(left.denominator, right.denominator);
+  }
+  if (left?.kind === 'infinity') return (left.sign < 0) === (right.sign < 0);
+  return structuralKey(left) === structuralKey(right);
+}
+
+function absoluteNumber(value) {
+  return value.numerator < 0n
+    ? { ...value, numerator: -value.numerator }
+    : value;
+}
+
+function unsigned(value) {
+  if (isNegativeNumber(value)) return absoluteNumber(value);
+  if (value?.kind === 'rational' && isNegative(value.numerator)) {
+    return Object.freeze({ ...value, numerator: unsigned(value.numerator) });
+  }
+  if (value?.kind === 'multiply' && isNegativeNumber(value.factors[0])) {
+    const [coefficient, ...factors] = value.factors;
+    const positive = absoluteNumber(coefficient);
+    if (isNumber(positive) && positive.numerator === 1n && positive.denominator === 1n) {
+      if (factors.length === 0) return positive;
+      return factors.length === 1 ? factors[0] : Object.freeze({ ...value, factors: Object.freeze(factors) });
+    }
+    return factors.length === 0 ? positive : Object.freeze({ ...value, factors: Object.freeze([positive, ...factors]) });
+  }
+  return value;
+}
+
+function symbolText(name) {
+  const raw = String(name);
+  if (INFINITY_NAMES.has(raw.toLowerCase())) return '\\infty';
+  if (raw === 's') return 's';
+  if (raw.includes('_{') || raw.includes('^{')) return raw;
+  if (raw.length < 2) return raw;
+  const first = raw[0];
+  if (!/[A-Za-z]/.test(first)) return raw;
+  const rest = raw.slice(1).replace(/^_/, '');
+  if (!rest || !/^[A-Za-z0-9]+$/.test(rest)) return raw;
+  const shouldSubscript = first === first.toUpperCase()
+    || /[0-9]/.test(rest)
+    || raw.includes('_')
+    || /^[grclviapz][A-Za-z]/i.test(raw);
+  if (!shouldSubscript) return raw;
+  return `${first}_{${rest}}`;
+}
+
+function variableName(context) {
+  return context.variable || 's';
+}
+
+function isVariable(value, context) {
+  return value?.kind === 'symbol' && value.name === variableName(context);
+}
+
+function variableDegree(value, context) {
+  if (isVariable(value, context)) return 1;
+  if (value?.kind === 'power' && value.exponent >= 0 && isVariable(value.base, context)) return value.exponent;
+  if (value?.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + variableDegree(factor, context), 0);
+  return 0;
+}
+
+function sortSumTerms(terms, context) {
+  return [...terms].sort((left, right) => variableDegree(right, context) - variableDegree(left, context)
+    || structuralKey(left).localeCompare(structuralKey(right)));
+}
+
+function isVariablePower(value, context) {
+  return isVariable(value, context)
+    || (value?.kind === 'power' && value.exponent > 0 && isVariable(value.base, context));
+}
+
+function factorRank(value, context) {
+  if (isVariablePower(value, context)) return 0;
+  if (isNumber(value)) return 1;
+  if (value?.kind === 'symbol' || value?.kind === 'power') return 2;
+  return 3;
+}
+
+function sortProductFactors(factors, context) {
+  const sorted = [...factors].sort((left, right) => factorRank(left, context) - factorRank(right, context)
+    || structuralKey(left).localeCompare(structuralKey(right)));
+  // Put each transistor's gm*ro together before other resistance factors.
+  for (let i = 0; i < sorted.length; i++) {
+    const match = sorted[i]?.kind === 'symbol' && /^gm(.+)$/.exec(sorted[i].name);
+    if (!match) continue;
+    const j = sorted.findIndex((factor, index) => index > i && factor.kind === 'symbol' && factor.name === `ro${match[1]}`);
+    if (j > i + 1) sorted.splice(i + 1, 0, sorted.splice(j, 1)[0]);
+  }
+  return sorted;
+}
+
+// Algebra may factor ro*(gm*ro + 1) for cancellation. For presentation,
+// flatten small resistive sums without expanding frequency polynomials or
+// topology-proven gain/load products. This never changes the solver's AST.
+function flatResistiveSum(value) {
+  if (value?.kind !== 'multiply' || !value.factors.some((factor) => factor.kind === 'symbol' && /^ro.+$/.test(factor.name))) return null;
+  let terms = [[]];
+  for (const factor of value.factors) {
+    const choices = factor.kind === 'add' ? factor.terms : [factor];
+    if (terms.length * choices.length > 4) return null;
+    if (choices.some((choice) => choice.kind === 'rational' || choice.kind === 'add'
+      || (choice.kind === 'multiply' && choice.factors.some((part) => !['number', 'symbol', 'power'].includes(part.kind))))) return null;
+    terms = terms.flatMap((term) => choices.map((choice) => [...term, ...(choice.kind === 'multiply' ? choice.factors : [choice])]));
+  }
+  if (terms.length < 2 || terms.some((term) => term.some((factor) => factor.kind === 'symbol' && factor.name === 's'))) return null;
+  return { kind: 'add', terms: terms.map((factors) => {
+    factors = factors.filter((factor) => !isNumber(factor) || factor.numerator !== factor.denominator);
+    return factors.length === 1 ? factors[0] : { kind: 'multiply', factors };
+  }) };
+}
+
+function parenthesize(text) {
+  return `\\left(${text}\\right)`;
+}
+
+/**
+ * Provenance markers. `\pv{n}{…}` wraps one rendered sub-expression so the
+ * MathML it becomes can carry a `data-node` attribute back to the AST node it
+ * was rendered from. TeX stays the single source of truth for the displayed
+ * equation: markers appear only when a caller asks for provenance, and nothing
+ * persisted, exported, or edited as a label ever sees one.
+ *
+ * A few renderers post-process a child's rendered text (stripping a leading
+ * minus, comparing against `1`). They reach through the wrapper with the two
+ * helpers below, so a provenance render differs from an ordinary one by
+ * exactly the markers — which `analysis-present-v2.test.js` asserts directly.
+ */
+function unmark(text) {
+  if (!text.startsWith('\\pv{')) return null;
+  const idEnd = text.indexOf('}', 4);
+  if (idEnd < 0 || text[idEnd + 1] !== '{') return null;
+  let depth = 1;
+  for (let i = idEnd + 2; i < text.length; i += 1) {
+    if (text[i] === '{') depth += 1;
+    else if (text[i] === '}') {
+      depth -= 1;
+      // Only a marker spanning the whole string is this text's own wrapper;
+      // `\pv{1}{A} + \pv{2}{B}` is a sequence and must not be unwrapped.
+      if (depth === 0) return i === text.length - 1 ? { id: text.slice(4, idEnd), body: text.slice(idEnd + 2, i) } : null;
+    }
+  }
+  return null;
+}
+
+/** A child's rendered text with its own provenance wrapper removed. */
+function markedBody(text) {
+  return unmark(text)?.body ?? text;
+}
+
+/** Rewrite a child's rendered text while preserving its provenance wrapper. */
+function mapMarked(text, fn) {
+  const marked = unmark(text);
+  return marked ? `\\pv{${marked.id}}{${fn(marked.body)}}` : fn(text);
+}
+
+/**
+ * The symbol names in one subtree. The AST is immutable and shared, so
+ * identity memoization keeps a whole provenance pass linear in the tree
+ * instead of quadratic in its depth.
+ */
+const SYMBOL_NAMES = new WeakMap();
+function symbolNames(value) {
+  if (!value || typeof value !== 'object') return [];
+  const cached = SYMBOL_NAMES.get(value);
+  if (cached) return cached;
+  let names;
+  if (value.kind === 'symbol') names = [value.name];
+  else if (value.kind === 'rational') names = [...symbolNames(value.numerator), ...symbolNames(value.denominator)];
+  else if (value.kind === 'multiply') names = value.factors.flatMap(symbolNames);
+  else if (value.kind === 'add') names = value.terms.flatMap(symbolNames);
+  else if (value.kind === 'power') names = symbolNames(value.base);
+  else if (value.kind === 'quadratic-formula') {
+    names = [
+      ...symbolNames(value.numerator?.linear),
+      ...symbolNames(value.discriminant),
+      ...symbolNames(value.denominator),
+    ];
+  } else names = [];
+  const unique = Object.freeze([...new Set(names)]);
+  SYMBOL_NAMES.set(value, unique);
+  return unique;
+}
+
+function createProvenanceCollector() {
+  const symbols = new Map();
+  let next = 0;
+  return {
+    wrap(value, text) {
+      const id = (next += 1);
+      symbols.set(id, symbolNames(value));
+      return `\\pv{${id}}{${text}}`;
+    },
+    /**
+     * Only ids that survived into the rendered string are real: a speculative
+     * render the presenter then discards (`composedFraction` probing a shape
+     * it rejects) allocates an id that never appears in the output.
+     */
+    resolve(tex) {
+      const used = new Set();
+      for (const match of String(tex).matchAll(/\\pv\{(\d+)\}/g)) used.add(Number(match[1]));
+      return [...used].sort((a, b) => a - b)
+        .map((id) => ({ id, symbols: [...(symbols.get(id) || [])] }));
+    },
+  };
+}
+
+/**
+ * Strip every provenance marker, leaving exactly the TeX an ordinary render
+ * would have produced. A balanced scan, because a marker's body contains
+ * arbitrary nested braces.
+ */
+function stripProvenanceMarkers(tex) {
+  const text = String(tex);
+  let out = '';
+  const markers = [];
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '\\') {
+      const marker = /^\\pv\{\d+\}\{/.exec(text.slice(i));
+      if (marker) {
+        markers.push(depth);
+        depth += 1;
+        i += marker[0].length - 1;
+        continue;
+      }
+    }
+    const char = text[i];
+    if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      // This closes the innermost open marker rather than a TeX group.
+      if (markers.length && markers[markers.length - 1] === depth) { markers.pop(); continue; }
+    }
+    out += char;
+  }
+  return out;
+}
+
+function renderNumber(value) {
+  const numerator = value.numerator;
+  const denominator = value.denominator;
+  if (denominator === 1n) return String(numerator);
+  const sign = numerator < 0n ? '-' : '';
+  return `${sign}\\frac{${numerator < 0n ? -numerator : numerator}}{${denominator}}`;
+}
+
+function renderPower(value, context, options) {
+  if (value.exponent < 0) {
+    return `\\frac{1}{${renderPower({ ...value, exponent: -value.exponent }, context, options)}}`;
+  }
+  if (value.exponent === 1) return render(value.base, 0, context, options);
+  const baseText = render(value.base, PRECEDENCE.power, context, options);
+  return `${baseText}^{${value.exponent}}`;
+}
+
+function renderProduct(value, context, options) {
+  const fraction = composedFraction(value, context, options);
+  if (fraction) return fraction;
+  const negative = isNegative(value);
+  const positive = unsigned(value);
+  const visible = sortProductFactors(positive.kind === 'multiply' ? positive.factors : [positive], context);
+  const body = visible.length
+    ? visible.map((factor) => render(factor, PRECEDENCE.product, context, options)).join(' \\, ')
+    : '1';
+  if (!negative) return body;
+  if (visible.length === 1 && visible[0]?.kind === 'add') return `-${parenthesize(render(visible[0], 0, context, options))}`;
+  return `-${body}`;
+}
+
+function renderSum(value, context, options) {
+  const flat = value.terms.flatMap((term) => flatResistiveSum(term)?.terms || [term]);
+  const terms = options.orderedSum || value.ordered ? flat : sortSumTerms(flat, context);
+  return terms.map((term, index) => {
+    const negative = isNegative(term);
+    const body = render(unsigned(term), negative || explicitParallel(term, options) ? PRECEDENCE.product : PRECEDENCE.sum, context, options);
+    if (index === 0) return negative ? `-${body}` : body;
+    return negative ? ` - ${body}` : ` + ${body}`;
+  }).join('');
+}
+
+function renderRational(value, context, options) {
+  if (isZero(value.numerator)) return '0';
+  const composed = composedFraction(value, context, options);
+  if (composed) return composed;
+  const numeratorNegative = isNegative(value.numerator);
+  const denominatorNegative = isNegative(value.denominator);
+  const negative = numeratorNegative !== denominatorNegative;
+  const numerator = negative ? unsigned(value.numerator) : value.numerator;
+  const denominator = denominatorNegative ? unsigned(value.denominator) : value.denominator;
+  const numeratorText = render(numerator, 0, context, options);
+  const denominatorText = render(denominator, 0, context, options);
+  const fraction = isNumber(denominator) && denominator.numerator === 1n && denominator.denominator === 1n
+    ? numeratorText
+    : `\\frac{${numeratorText}}{${denominatorText}}`;
+  return negative ? `-${markedBody(denominatorText) === '1' && numerator.kind === 'add' ? parenthesize(fraction) : fraction}` : fraction;
+}
+
+function operandsOf(metadata) {
+  if (!metadata || metadata.proven !== true || !PARALLEL_KINDS.has(metadata.kind)) return null;
+  const operands = metadata.operands || [metadata.left, metadata.right];
+  return Array.isArray(operands) && operands.length >= 2 && metadata.equivalent !== undefined ? operands : null;
+}
+
+/**
+ * `options.equivalence`/`options.parallel` proves parallel notation for one
+ * specific value (checked at every recursive `render` call, so it can match
+ * a nested sub-expression, not just the top-level one). `options.equivalences`
+ * additionally carries a whole table of such proofs — e.g. from a network's
+ * general series/parallel pre-reduction (`reduce.js`), which can prove many
+ * unrelated sub-networks at once — keyed by `structuralKey` of the value each
+ * one proves, for the same reason `equivalent()` below reduces to that key.
+ */
+function explicitParallel(value, options) {
+  const direct = options.equivalence || options.parallel;
+  const directOperands = operandsOf(direct);
+  if (directOperands && equivalent(value, direct.equivalent)) return directOperands;
+  const table = options.equivalences;
+  if (!table) return null;
+  const key = structuralKey(value);
+  const entry = table instanceof Map ? table.get(key) : table[key];
+  return operandsOf(entry);
+}
+
+function renderParallel(value, context, options) {
+  const operands = explicitParallel(value, options);
+  if (!operands) return null;
+  function flatten(operand, seen) {
+    const key = structuralKey(operand);
+    const nested = !seen.has(key) && explicitParallel(operand, options);
+    if (!nested) return [operand];
+    return nested.flatMap((branch) => flatten(branch, new Set([...seen, key])));
+  }
+  const flat = operands.flatMap((operand) => flatten(operand, new Set([structuralKey(value)])));
+  const body = flat.map((operand) => render(operand, PRECEDENCE.product, context, options)).join(' \\parallel ');
+  return body;
+}
+
+function precedence(value) {
+  if (value?.kind === 'add') return PRECEDENCE.sum;
+  if (value?.kind === 'multiply') return PRECEDENCE.product;
+  if (value?.kind === 'power') return PRECEDENCE.power;
+  return PRECEDENCE.atom;
+}
+
+function renderQuadraticFormula(value, context, options) {
+  const linear = value.numerator?.linear;
+  const root = `\\sqrt{${render(value.discriminant, 0, context, options)}}`;
+  const sign = value.sign < 0 ? '-' : '+';
+  const numerator = isZero(linear)
+    ? `${sign === '-' ? '-' : ''}${root}`
+    : `${render(linear, PRECEDENCE.sum, context, options)} ${sign} ${root}`;
+  return `\\frac{${numerator}}{${render(value.denominator, 0, context, options)}}`;
+}
+
+function renderNode(value, parentPrecedence, context, options = {}) {
+  if (value?.kind === 'quadratic-formula') return renderQuadraticFormula(value, context, options);
+  let text;
+  const proof = options.equivalences?.get?.(structuralKey(value));
+  if (proof?.proven === true && ['quotient', 'sum'].includes(proof.kind)) {
+    const equivalences = new Map(options.equivalences);
+    equivalences.delete(structuralKey(value));
+    const nested = { ...options, equivalences };
+    if (proof.kind === 'quotient') return composedFraction(value, context, options)
+      || renderRational({ kind: 'rational', numerator: proof.operands[0], denominator: proof.operands[1] }, context, nested);
+    const body = renderSum({ kind: 'add', terms: proof.operands }, context, { ...nested, orderedSum: true });
+    return parentPrecedence > PRECEDENCE.sum ? parenthesize(body) : body;
+  }
+  if (proof?.proven === true && proof.kind === 'product') {
+    // Remove this identity while visiting its factors: a unit factor must
+    // never make a display proof recurse back into itself.
+    const equivalences = new Map(options.equivalences);
+    equivalences.delete(structuralKey(value));
+    const negative = proof.operands.filter(isNegative).length % 2 === 1;
+    const factors = proof.operands.map((factor) => {
+      const text = render(factor, PRECEDENCE.product, context, { ...options, equivalences });
+      return isNegative(factor)
+        ? mapMarked(text, (body) => (body.startsWith('-') ? body.slice(1) : body))
+        : text;
+    });
+    const body = `${negative ? '-' : ''}${factors.join(' \\, ')}`;
+    return parentPrecedence > PRECEDENCE.product ? parenthesize(body) : body;
+  }
+  if (value?.kind === 'infinity') return value.sign < 0 ? '-\\infty' : '\\infty';
+  if (value?.kind === 'number') return renderNumber(value);
+  if (value?.kind === 'symbol') return symbolText(value.name);
+  if (value?.kind === 'rational') {
+    const parallel = renderParallel(value, context, options);
+    text = parallel || renderRational(value, context, options);
+  } else if (value?.kind === 'power') {
+    text = renderPower(value, context, options);
+  } else if (value?.kind === 'multiply') {
+    const parallel = renderParallel(value, context, options);
+    const flat = !parallel && flatResistiveSum(value);
+    if (flat) return render(flat, parentPrecedence, context, options);
+    text = parallel || renderProduct(value, context, options);
+  } else if (value?.kind === 'add') {
+    text = renderSum(value, context, options);
+  } else {
+    throw new TypeError(`unknown expression kind ${value?.kind}`);
+  }
+  const parallel = explicitParallel(value, options);
+  const rank = parallel ? PRECEDENCE.sum
+    : value?.kind === 'rational' && isNumber(value.denominator) && value.denominator.numerator === value.denominator.denominator
+      ? precedence(value.numerator) : precedence(value);
+  return rank < parentPrecedence ? parenthesize(text) : text;
+}
+
+/**
+ * Render one node. With `options.provenance` set, the result is wrapped in a
+ * `\pv{…}` marker naming the AST node it came from; without it this is a
+ * direct call through to `renderNode` and costs nothing.
+ */
+function render(value, parentPrecedence, context, options = {}) {
+  const text = renderNode(value, parentPrecedence, context, options);
+  return options.provenance ? options.provenance.wrap(value, text) : text;
+}
+
+/** Render an immutable rational AST as deterministic textbook TeX. */
+function renderExpression(value, options = {}) {
+  return render(value, 0, { variable: options.variable || 's' }, options);
+}
+
+/**
+ * Render as `renderExpression` does, but with every sub-expression wrapped in a
+ * provenance marker, and return the node table alongside the TeX. Each entry is
+ * `{id, symbols}`; resolving those symbol names to circuit objects is
+ * `provenance.js`'s job, and turning the markers into `data-node` attributes is
+ * `texToMathML`'s.
+ */
+function renderExpressionWithProvenance(value, options = {}) {
+  const provenance = createProvenanceCollector();
+  const tex = render(value, 0, { variable: options.variable || 's' }, { ...options, provenance });
+  return { tex, nodes: provenance.resolve(tex) };
+}
+
+/** `renderEquation` with provenance markers, for the same reason. */
+function renderEquationWithProvenance(label, value, options = {}) {
+  const { tex, nodes } = renderExpressionWithProvenance(value, options);
+  return { tex: `${label} = ${tex}`, nodes };
+}
+
+/** `renderRootEquation` with provenance markers, for the same reason. */
+function renderRootEquationWithProvenance(kind, index, value, options = {}) {
+  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
+  return renderEquationWithProvenance(`${prefix}_{${index}}`, value, options);
+}
+
+/**
+ * Join several provenance renders into one, renumbering so node ids stay
+ * unique across the result. A pole or zero row is several root equations shown
+ * together, each rendered on its own; without renumbering the second root's
+ * nodes would collide with the first's and highlight the wrong devices.
+ */
+function joinProvenanceRenders(parts, separator = '') {
+  const pieces = [];
+  const nodes = [];
+  let offset = 0;
+  for (const part of parts) {
+    if (!part) continue;
+    const shift = offset;
+    pieces.push(String(part.tex).replace(/\\pv\{(\d+)\}/g, (match, id) => `\\pv{${Number(id) + shift}}`));
+    for (const node of part.nodes) nodes.push({ id: node.id + shift, symbols: [...node.symbols] });
+    offset += part.nodes.reduce((highest, node) => Math.max(highest, node.id), 0);
+  }
+  return { tex: pieces.join(separator), nodes };
+}
+
+/** Render an equation with an already formatted left-hand label. */
+function renderEquation(label, value, options = {}) {
+  return `${label} = ${renderExpression(value, options)}`;
+}
+
+const QUANTITY_LABELS = Object.freeze({
+  zin: 'Z_{in}',
+  zout: 'Z_{out}',
+  av: 'A_v',
+  gain: 'A_v',
+});
+
+/** Return the standard analysis label for AC or DC quantities. */
+function quantityLabel(quantity, argument = undefined) {
+  const key = String(quantity).replace(/[^A-Za-z]/g, '').toLowerCase();
+  const base = QUANTITY_LABELS[key] || String(quantity);
+  return argument === undefined || argument === null ? base : `${base}(${argument})`;
+}
+
+/** Render `Z_in(s)`, `Z_out(0)`, or `A_v(s)` with its expression. */
+function renderQuantityEquation(quantity, argument, value, options = {}) {
+  return renderEquation(quantityLabel(quantity, argument), value, options);
+}
+
+/** Render a zero-based pole or zero equation. */
+function renderRootEquation(kind, index, value, options = {}) {
+  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
+  return renderEquation(`${prefix}_{${index}}`, value, options);
+}
+
+/**
+ * Build the `options.equivalences` table `render` checks at every recursive
+ * call (see `explicitParallel`) from a list of `provenParallel(...)` results
+ * (or equivalent `{ equivalent, operands }` records) — e.g. one per parallel
+ * merge a network's series/parallel pre-reduction (`reduce.js`) performed.
+ */
+function equivalenceTable(proofs) {
+  const table = new Map();
+  for (const proof of proofs) table.set(structuralKey(proof.equivalent), proof);
+  return table;
+}
+
+/** Build explicit metadata for a caller-proven parallel-resistance display. */
+function provenParallel(equivalent, ...operands) {
+  return Object.freeze({
+    kind: 'parallel-resistance',
+    proven: true,
+    equivalent,
+    operands: Object.freeze(operands),
+  });
+}
+
+/** A factored identity established by the circuit's linear port model. */
+function provenProduct(equivalent, ...operands) {
+  return Object.freeze({ kind: 'product', proven: true, equivalent, operands: Object.freeze(operands) });
+}
+
+/** Ratios and sums whose recombination the caller has checked exactly. */
+function provenQuotient(equivalent, numerator, denominator) {
+  return Object.freeze({ kind: 'quotient', proven: true, equivalent, operands: Object.freeze([numerator, denominator]) });
+}
+
+function provenSum(equivalent, ...operands) {
+  return Object.freeze({ kind: 'sum', proven: true, equivalent, operands: Object.freeze(operands) });
+}
+
+
+__exports.stripProvenanceMarkers = stripProvenanceMarkers;
+__exports.renderExpression = renderExpression;
+__exports.renderExpressionWithProvenance = renderExpressionWithProvenance;
+__exports.renderEquationWithProvenance = renderEquationWithProvenance;
+__exports.renderRootEquationWithProvenance = renderRootEquationWithProvenance;
+__exports.joinProvenanceRenders = joinProvenanceRenders;
+__exports.renderEquation = renderEquation;
+__exports.quantityLabel = quantityLabel;
+__exports.renderQuantityEquation = renderQuantityEquation;
+__exports.renderRootEquation = renderRootEquation;
+__exports.equivalenceTable = equivalenceTable;
+__exports.provenParallel = provenParallel;
+__exports.provenProduct = provenProduct;
+__exports.provenQuotient = provenQuotient;
+__exports.provenSum = provenSum;
+};
+
 __modules["src/core/components/mos.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -33134,6 +33208,83 @@ function createMos(type, { pmos = false, bulk = false } = {}) {
 }
 
 __exports.createMos = createMos;
+};
+
+__modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
+const { GRID } = __require("src/core/grid.js");
+
+
+/**
+ * Symbol definition factory. Enforces the contract:
+ *  - every terminal position is on the GRID (multiple of 40)
+ *  - the bounding box corners/extents are on the GRID (unless the symbol has
+ *    no terminals — pure annotations like solder may use a dot-sized bbox)
+ *  - terminal names are unique
+ * The terminal list may be empty for pure annotations (e.g. solder dots).
+ * Symbol body graphics may use arbitrary coordinates.
+ */
+function defineSymbol(def) {
+  validateSymbol(def);
+  return Object.freeze({
+    ...def,
+    terminals: Object.freeze(def.terminals.map(Object.freeze)),
+    graphics: markTerminalLeads(def.graphics || [], def.terminals),
+  });
+}
+
+/**
+ * An open absolute path that starts or ends on a terminal is a pin lead. The
+ * renderer draws leads in the same single ink path as wires, so a lead and
+ * the wire meeting it at the terminal are rasterized once, without a seam or
+ * doubled anti-aliased edges.
+ */
+function markTerminalLeads(graphics, terminals) {
+  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
+  return graphics.map((g) => {
+    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
+    const d = String(g.d || '').trim();
+    // Only absolute move/line/cubic paths: their first and last numbers are points.
+    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
+    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+    if (numbers.length < 4) return g;
+    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
+    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
+  });
+}
+
+function validateSymbol(def) {
+  const terms = def.terminals;
+  if (!Array.isArray(terms)) {
+    throw new Error(`symbol "${def.type}" must define a terminals array`);
+  }
+  const names = new Set();
+  for (const t of terms) {
+    if (!t.name || names.has(t.name)) {
+      throw new Error(`symbol "${def.type}": terminal names must be unique, got "${t.name}"`);
+    }
+    names.add(t.name);
+    if (!Number.isInteger(t.x / GRID) || !Number.isInteger(t.y / GRID)) {
+      throw new Error(
+        `symbol "${def.type}": terminal "${t.name}" at (${t.x},${t.y}) is NOT on the ${GRID}-unit grid`
+      );
+    }
+  }
+  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
+  // grid point and never routed through, so their bbox may be the drawn size
+  // rather than an aligned grid cell.
+  if (terms.length > 0) {
+    const r = def.bbox;
+    for (const [k, v] of Object.entries(r)) {
+      if (!Number.isInteger(v / GRID)) {
+        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
+      }
+    }
+  }
+}
+
+__exports.defineSymbol = defineSymbol;
+__exports.markTerminalLeads = markTerminalLeads;
+__exports.validateSymbol = validateSymbol;
 };
 
 __modules["src/core/analysis/context.js"] = function (__require, __exports) {
@@ -33953,83 +34104,6 @@ function convertCircuitToPrimitives(circuit, context = {}) {
 
 __exports.componentToPrimitives = componentToPrimitives;
 __exports.convertCircuitToPrimitives = convertCircuitToPrimitives;
-};
-
-__modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-
-
-/**
- * Symbol definition factory. Enforces the contract:
- *  - every terminal position is on the GRID (multiple of 40)
- *  - the bounding box corners/extents are on the GRID (unless the symbol has
- *    no terminals — pure annotations like solder may use a dot-sized bbox)
- *  - terminal names are unique
- * The terminal list may be empty for pure annotations (e.g. solder dots).
- * Symbol body graphics may use arbitrary coordinates.
- */
-function defineSymbol(def) {
-  validateSymbol(def);
-  return Object.freeze({
-    ...def,
-    terminals: Object.freeze(def.terminals.map(Object.freeze)),
-    graphics: markTerminalLeads(def.graphics || [], def.terminals),
-  });
-}
-
-/**
- * An open absolute path that starts or ends on a terminal is a pin lead. The
- * renderer draws leads in the same single ink path as wires, so a lead and
- * the wire meeting it at the terminal are rasterized once, without a seam or
- * doubled anti-aliased edges.
- */
-function markTerminalLeads(graphics, terminals) {
-  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
-  return graphics.map((g) => {
-    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
-    const d = String(g.d || '').trim();
-    // Only absolute move/line/cubic paths: their first and last numbers are points.
-    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
-    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
-    if (numbers.length < 4) return g;
-    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
-    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
-  });
-}
-
-function validateSymbol(def) {
-  const terms = def.terminals;
-  if (!Array.isArray(terms)) {
-    throw new Error(`symbol "${def.type}" must define a terminals array`);
-  }
-  const names = new Set();
-  for (const t of terms) {
-    if (!t.name || names.has(t.name)) {
-      throw new Error(`symbol "${def.type}": terminal names must be unique, got "${t.name}"`);
-    }
-    names.add(t.name);
-    if (!Number.isInteger(t.x / GRID) || !Number.isInteger(t.y / GRID)) {
-      throw new Error(
-        `symbol "${def.type}": terminal "${t.name}" at (${t.x},${t.y}) is NOT on the ${GRID}-unit grid`
-      );
-    }
-  }
-  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
-  // grid point and never routed through, so their bbox may be the drawn size
-  // rather than an aligned grid cell.
-  if (terms.length > 0) {
-    const r = def.bbox;
-    for (const [k, v] of Object.entries(r)) {
-      if (!Number.isInteger(v / GRID)) {
-        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
-      }
-    }
-  }
-}
-
-__exports.defineSymbol = defineSymbol;
-__exports.markTerminalLeads = markTerminalLeads;
-__exports.validateSymbol = validateSymbol;
 };
 
 __modules["src/core/analysis/graph.js"] = function (__require, __exports) {

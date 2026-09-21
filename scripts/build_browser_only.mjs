@@ -124,12 +124,14 @@ ${moduleSource}
 `;
 
 const sourceHtml = await readFile(join(ROOT, 'src', 'web', 'index.html'), 'utf8');
+const fontBytes = await readFile(join(ROOT, 'src', 'web', 'fonts', 'latinmodern-math.woff2'));
+const embeddedFontUrl = `data:font/woff2;base64,${fontBytes.toString('base64')}`;
 const html = sourceHtml
   .replace('href="icon.svg"', 'href="icon.svg"')
   .replace('href="style.css"', 'href="style.css"')
-  .replace('<script type="module" src="main.js?v=41"></script>', '<script>globalThis.__MOSFETEER_FONT_URL = "src/web/fonts/latinmodern-math.woff2";</script>\n  <script src="browser-only.js"></script>');
+  .replace('<script type="module" src="main.js?v=41"></script>', `<script>globalThis.__MOSFETEER_FONT_URL = ${JSON.stringify(embeddedFontUrl)};</script>\n  <script src="browser-only.js"></script>`);
 
-const releaseHtml = html.replace('src/web/fonts/latinmodern-math.woff2', 'fonts/latinmodern-math.woff2');
+const releaseHtml = html;
 await mkdir(join(OUTPUT_DIR, 'fonts'), { recursive: true });
 await copyFile(join(ROOT, 'src', 'web', 'style.css'), join(OUTPUT_DIR, 'style.css'));
 await copyFile(join(ROOT, 'src', 'web', 'icon.svg'), join(OUTPUT_DIR, 'icon.svg'));

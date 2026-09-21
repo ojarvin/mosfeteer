@@ -43,6 +43,19 @@ test('component rows share the net-list layout without inline delete controls', 
   assert.doesNotMatch(css, /\.row \.remove/);
 });
 
+test('export has a Ctrl/Cmd+E shortcut before focused-control handling', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /ev\.key\.toLowerCase\(\) === 'e'[^\n]*!inlineInput[\s\S]*?ev\.preventDefault\(\);\s*exportCircuit\(\);/);
+});
+
+test('document raster export uses the 3x scale shown in the UI', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  assert.match(main, /const EXPORT_PNG_SCALE = 3/);
+  assert.match(main, /svgToPngDataUrl\(svg, EXPORT_PNG_SCALE\)/);
+  assert.match(html, /PNG \(3×\)/);
+});
+
 test('named net edits confirm virtual connections, and port names never repeat', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /function namedConnectionConflicts\(/);

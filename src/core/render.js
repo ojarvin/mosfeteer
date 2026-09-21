@@ -564,7 +564,7 @@ export function svgString(circuit, opts = {}) {
   // Extents to draw (in world units). With a viewport the window is the exact
   // view (so free panning never rescales the drawing); without one, the view
   // auto-fits the circuit contents (exports / PNG).
-  const pad = o.grid && !vp ? 0 : 40;
+  const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
   const x0 = vp ? vp.x : floorGrid(b.x) - pad;
   const y0 = vp ? vp.y : floorGrid(b.y) - pad;
   const x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;

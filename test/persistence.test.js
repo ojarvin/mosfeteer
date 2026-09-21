@@ -13,7 +13,7 @@ import { findChromium } from '../src/server/browser.js';
 import { allowedHosts, checkRequest } from '../src/server/request-guard.js';
 import { createSettingsStore, defaultWorkspace } from '../src/server/settings.js';
 import {
-  createBrowserPersistenceAdapter, createPersistenceAdapter, validDocumentName as clientValidDocumentName,
+  createBrowserPersistenceAdapter, createPersistenceAdapter, defaultExportDirectory, validDocumentName as clientValidDocumentName,
 } from '../src/web/persistence.js';
 
 async function tempDir(t, prefix) {
@@ -39,6 +39,12 @@ test('document names are portable file names and match on client and server', ()
   assert.throws(() => documentPathFor('/work', '../x'), /invalid document name/);
   assert.equal(documentNameFromPath('/work/amp.schematic.json'), 'amp');
   assert.equal(documentNameFromPath('/work/amp.json'), 'amp');
+});
+
+test('export defaults use Pictures in Node mode and browser downloads otherwise', () => {
+  assert.equal(defaultExportDirectory({ home: '/home/alice', sep: '/' }), '/home/alice/Pictures');
+  assert.equal(defaultExportDirectory({ home: 'C:\\Users\\Alice', sep: '\\' }), 'C:\\Users\\Alice\\Pictures');
+  assert.equal(defaultExportDirectory({ workspace: 'Browser downloads' }, { browserOnly: true }), 'Browser downloads');
 });
 
 test('atomic writes replace whole files and can refuse to overwrite', async (t) => {
@@ -181,10 +187,31 @@ test('browser-only persistence opens JSON, downloads saves, and caches documents
   const exported = await persistence.exportFiles({ name: 'amp', formats: ['svg'], svg: '<svg></svg>' });
   assert.deepEqual(exported.paths, ['Browser downloads/amp.svg']);
   assert.equal(downloads[1].name, 'amp.svg');
+  let writtenPng = null;
+  const pickerPersistence = createBrowserPersistenceAdapter({
+    storage,
+    windowImpl: {
+      showSaveFilePicker: async (options) => {
+        assert.equal(options.suggestedName, 'amp.png');
+        return {
+          createWritable: async () => ({
+            write: async (contents) => { writtenPng = contents; },
+            close: async () => {},
+          }),
+        };
+      },
+    },
+  });
+  const prepared = await pickerPersistence.prepareExport({ name: 'amp', formats: ['png'] });
+  await pickerPersistence.exportFiles({ name: 'amp', formats: ['png'], png: 'data:image/png;base64,iVBORw0KGgo=' }, { prepared });
+  assert.equal(writtenPng.type, 'image/png');
+  assert.equal(writtenPng.size, 8);
   await assert.rejects(
     persistence.exportFiles({ name: 'amp', formats: ['pdf'], svg: '<svg></svg>' }),
     (error) => error.code === 'unsupported-format',
   );
+  await persistence.delete(opened.path);
+  assert.deepEqual((await persistence.workspace()).documents, []);
 });
 
 function crc32(buffer) {
