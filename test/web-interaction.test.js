@@ -598,6 +598,11 @@ test('symmetric placement mirrors across one axis, chosen by the cursor', () => 
   // was chosen last is kept.
   assert.equal(symmetryOperation(pin, { x: 0, y: 0 }), null);
   assert.equal(symmetryOperation(pin, { x: 0, y: 0 }, 'mirrorY'), 'mirrorY');
+  // Copy ghosts may arm from an offset click, so the direction reference can
+  // be anywhere in the drawing without making the selection arrangement pick
+  // the axis.
+  assert.equal(symmetryOperation({ x: 400, y: 400 }, { x: 560, y: 440 }), 'mirrorX');
+  assert.equal(symmetryOperation({ x: 400, y: 400 }, { x: 440, y: 640 }), 'mirrorY');
 });
 
 test('Alt arms symmetric placement without swallowing the ghost keys', () => {
@@ -744,14 +749,22 @@ test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const arm = main.slice(main.indexOf('function armCopyGhostMirror('), main.indexOf('function dropCopyGhostMirror('));
   const symmetry = main.slice(main.indexOf('function copyGhostSymmetryPin('), main.indexOf('function setSymmetry('));
-  assert.match(symmetry, /component\.transform\.x, y: component\.transform\.y/);
+  assert.match(symmetry, /components\[0\]\.transform\.x, y: components\[0\]\.transform\.y/);
+  assert.match(symmetry, /components\.length > 1/);
+  assert.match(symmetry, /x: snap\(\(x0 \+ x1\) \/ 2\), y: snap\(\(y0 \+ y1\) \/ 2\)/);
   assert.match(main, /const pin = drag\?\.mode === 'copyghost' \? copyGhostSymmetryPin\(\) : \{ \.\.\.cursor \};/);
   assert.match(main, /waitingForMotion: drag\?\.mode === 'copyghost'/);
   assert.match(main, /if \(symmetry\.waitingForMotion\)[\s\S]*symmetry\.waitingForMotion = false/);
+  assert.match(main, /const directionPin = symmetry\.armedCursor \|\| symmetry\.pin;/);
+  assert.match(main, /symmetry\.operation = symmetryOperation\(directionPin, cursor, symmetry\.operation\);/);
   // One transform both carries the copy to the far side and flips its symbols,
   // which is why the second set is pasted on top of the first rather than at
   // the reflected point.
+  assert.match(arm, /const savedClipboard = clipboard;/);
+  assert.match(arm, /restoreCopyGhostSelection\(ghost\);\s*if \(!copySelection\(\)\)/);
+  assert.match(arm, /cursor = \{ \.\.\.clipboard\.anchor \};/);
   assert.match(arm, /pasteClipboard\(\{ recordHistory: false, connect: false \}\);/);
+  assert.match(arm, /clipboard = savedClipboard;\s*cursor = savedCursor;/);
   assert.match(arm, /transformMixedSelection\(symmetry\.operation, \{ recordHistory: false, center: symmetry\.pin \}\)/);
   // A selection that cannot be reflected whole leaves nothing behind.
   assert.match(arm, /circuit = Circuit\.fromJSON\(JSON\.parse\(beforeSnapshot\)\);\s*\n\s*restoreCopyGhostSelection\(ghost\);/);
@@ -760,6 +773,13 @@ test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
 
   const move = main.slice(main.indexOf('function moveCopyGhost('), main.indexOf('function commitCopyGhost('));
   assert.match(move, /translateCopyGhost\(ghost\.mirror,\s*\n?\s*symmetry\?\.operation === 'mirrorY' \? dx : -dx,/);
+  const refresh = main.slice(main.indexOf('function mirroredCopyGhostOperation('), main.indexOf('function refreshCopyGhostBase('));
+  assert.match(refresh, /transformMixedSelection\(mirroredCopyGhostOperation\(operation\),/);
+  assert.match(refresh, /const mirrorPivot = transformWorldPoints\(\[pivot\], symmetry\.pin, symmetry\.operation\)\[0\];/);
+  assert.match(main, /const operation = axis === 'x' \? 'mirrorX' : 'mirrorY';[\s\S]*refreshCopyGhostBase\(\{ operation, pivot \}\)/);
+  assert.match(main, /function rotateSelectionAbout\([\s\S]*?if \(inCopyGhost \|\| multi\.size > 1/);
+  assert.match(main, /function mirrorSelectionAbout\([\s\S]*?if \(inCopyGhost \|\| multi\.size > 1/);
+  assert.doesNotMatch(main, /copyPivot/);
 
   const render = main.slice(main.indexOf('function renderCanvas('), main.indexOf('\n// ----- mouse', main.indexOf('function renderCanvas(')));
   assert.match(render, /for \(const ref of drag\.ghost\.mirror\?\.refs \|\| \[\]\) ghostRefs\.add\(ref\);/);

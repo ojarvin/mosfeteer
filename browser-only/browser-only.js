@@ -2510,8 +2510,41 @@ function restackSelected(direction) {
   render();
 }
 
-function refreshCopyGhostBase() {
+function mirroredCopyGhostOperation(operation) {
+  if (operation === 'rotate') return 'rotateCCW';
+  if (operation === 'rotateCCW') return 'rotate';
+  return operation;
+}
+
+/** Keep the secondary copy as the exact symmetric image of a transformed
+ * primary copy. Keyboard transforms do not pass through moveCopyGhost(), so
+ * the mirror must be transformed in the same event instead of waiting for a
+ * later pointer move to rebuild it. */
+function refreshCopyGhostMirror({ operation = null, pivot = null, translation = null } = {}) {
+  const ghost = drag?.ghost;
+  const mirror = ghost?.mirror;
+  if (!ghost || !mirror || !symmetry?.operation) return true;
+  if (translation) {
+    const dx = symmetry.operation === 'mirrorX' ? -translation.dx : translation.dx;
+    const dy = symmetry.operation === 'mirrorY' ? -translation.dy : translation.dy;
+    translateCopyGhost(mirror, dx, dy);
+  } else if (operation && pivot) {
+    const mirrorPivot = transformWorldPoints([pivot], symmetry.pin, symmetry.operation)[0];
+    restoreCopyGhostSelection(mirror);
+    const changed = transformMixedSelection(mirroredCopyGhostOperation(operation), {
+      recordHistory: false,
+      center: mirrorPivot,
+    });
+    restoreCopyGhostSelection(ghost);
+    if (!changed) return false;
+  }
+  mirror.baseGeometry = captureCopyGhostGeometry(mirror);
+  return true;
+}
+
+function refreshCopyGhostBase(transform = {}) {
   if (drag?.mode === 'copyghost' && drag.ghost) {
+    refreshCopyGhostMirror(transform);
     drag.ghost.baseSnapshot = snapshot();
     drag.ghost.baseGeometry = captureCopyGhostGeometry(drag.ghost);
     // The base snapshot now already contains the ghost at the current cursor.
@@ -2589,9 +2622,9 @@ function applySingletonWorldMirror(comp, axis, pivot = null) {
 }
 
 /**
- * Rotate a singleton component about its own origin, or about the copy point
- * while a copy ghost is active. Multi-component and mixed selections are
- * transformed as one world-space set by transformMixedSelection.
+ * Rotate a selection about the copy point or selected component origin.
+ * Copy ghosts and mixed selections share transformMixedSelection so their
+ * mirrored halves follow the same world-space operation.
  */
 function moveGhostActive() {
   return drag?.mode === 'move' && drag.modal;
@@ -2649,14 +2682,15 @@ function rotateSelectionAbout(deg) {
   const inCopyGhost = drag?.mode === 'copyghost';
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
-  if (multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
-    const turns = ((deg % 360) + 360) % 360;
+  const turns = ((deg % 360) + 360) % 360;
+  const operation = turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate';
+  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
     const changed = transformMixedSelection(
-      turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate',
+      operation,
       { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
     );
     if (changed && inCopyGhost) {
-      refreshCopyGhostBase();
+      refreshCopyGhostBase({ operation, pivot });
       cursor = pivot;
     } else if (changed && inMoveGhost) {
       cursor = pivot;
@@ -2672,11 +2706,7 @@ function rotateSelectionAbout(deg) {
     }
     rerouteTouchedNets(refs, null, true);
   };
-  if (inCopyGhost) {
-    apply();
-    refreshCopyGhostBase();
-    cursor = pivot;
-  } else if (inMoveGhost) {
+  if (inMoveGhost) {
     apply();
     cursor = pivot;
     recordMoveGhostMutation();
@@ -2686,21 +2716,22 @@ function rotateSelectionAbout(deg) {
 }
 
 /**
- * Mirror a singleton component about a world vertical (x) or horizontal (y)
- * axis through the origin. Multi-component and mixed selections are
- * transformed as one world-space set by transformMixedSelection.
+ * Mirror a selection about a world vertical (x) or horizontal (y) axis.
+ * Copy ghosts and mixed selections share transformMixedSelection so their
+ * mirrored halves follow the same world-space operation.
  */
 function mirrorSelectionAbout(axis) {
   const inCopyGhost = drag?.mode === 'copyghost';
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
-  if (multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+  const operation = axis === 'x' ? 'mirrorX' : 'mirrorY';
+  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
     const changed = transformMixedSelection(
-      axis === 'x' ? 'mirrorX' : 'mirrorY',
+      operation,
       { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
     );
     if (changed && inCopyGhost) {
-      refreshCopyGhostBase();
+      refreshCopyGhostBase({ operation, pivot });
       cursor = pivot;
     } else if (changed && inMoveGhost) {
       cursor = pivot;
@@ -2713,11 +2744,7 @@ function mirrorSelectionAbout(axis) {
     for (const c of selectedComps()) applySingletonWorldMirror(c, axis, pivot);
     rerouteTouchedNets(refs, null, true);
   };
-  if (inCopyGhost) {
-    apply();
-    refreshCopyGhostBase();
-    cursor = pivot;
-  } else if (inMoveGhost) {
+  if (inMoveGhost) {
     apply();
     cursor = pivot;
     recordMoveGhostMutation();
@@ -3398,15 +3425,25 @@ function symmetryTwin(base = pendingTransform()) {
 }
 
 /** Copy ghosts preserve the pointer as their drag anchor, but symmetry should
- *  read from the copied component's origin, just like insert mode. For a
+ *  read from the copied component set: a single device uses its origin, while
+ *  a multi-device copy uses the midpoint of its component origins. For a
  *  non-component selection there is no symbol origin, so keep the pointer
  *  anchor as the sensible fallback. */
 function copyGhostSymmetryPin() {
-  const ref = drag?.ghost?.refs?.[0];
-  const component = ref && circuit.components.get(ref);
-  return component
-    ? { x: component.transform.x, y: component.transform.y }
-    : { ...cursor };
+  const components = (drag?.ghost?.refs || [])
+    .map((ref) => circuit.components.get(ref))
+    .filter(Boolean);
+  if (components.length === 1) {
+    return { x: components[0].transform.x, y: components[0].transform.y };
+  }
+  if (components.length > 1) {
+    const x0 = Math.min(...components.map((component) => component.transform.x));
+    const x1 = Math.max(...components.map((component) => component.transform.x));
+    const y0 = Math.min(...components.map((component) => component.transform.y));
+    const y1 = Math.max(...components.map((component) => component.transform.y));
+    return { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
+  }
+  return { ...cursor };
 }
 
 /** Point the mirror at whichever way the cursor has travelled since Alt went
@@ -3422,7 +3459,11 @@ function copyGhostSymmetryPin() {
 function syncSymmetryOperation() {
   if (!symmetry || symmetry.settled) return;
   if (symmetry.waitingForMotion) return;
-  symmetry.operation = symmetryOperation(symmetry.pin, cursor, symmetry.operation);
+  // A copy can be armed from an arbitrary point in a multi-device selection.
+  // Choose the axis from the post-Alt drag direction, not from that click's
+  // offset to the selection centre or first component.
+  const directionPin = symmetry.armedCursor || symmetry.pin;
+  symmetry.operation = symmetryOperation(directionPin, cursor, symmetry.operation);
   // A copy ghost is already committed, so the first move off the axis says
   // where the mirror goes; a later turn must not swing it.
   if (symmetry.operation && drag?.mode === 'copyghost') symmetry.settled = true;
@@ -9642,11 +9683,12 @@ function onNormalKey(key, shiftKey = false) {
     if (comps.length || labs.length || hasWireSelection) {
       const dx = nudgeKey[0] * count * GRID;
       const dy = nudgeKey[1] * count * GRID;
-      transformMixedSelection('translate', { translation: { dx, dy } });
+      const changed = transformMixedSelection('translate', { translation: { dx, dy } });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
       if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       else if (a) cursor = { x: a.x, y: a.y };
+      if (changed && drag?.mode === 'copyghost') refreshCopyGhostBase({ translation: { dx, dy } });
       followCursor();
     } else {
       moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
@@ -9665,8 +9707,7 @@ function onNormalKey(key, shiftKey = false) {
       const total = ((90 * count) % 360 + 360) % 360;
       if (total) rotateSelectionAbout(total);
       const primary = selectedComp() || selectedComps()[0];
-      if (copyPivot) cursor = copyPivot;
-      else if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
+      if (drag?.mode !== 'copyghost' && primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       render();
     }
     return;
@@ -10102,12 +10143,12 @@ function moveCopyGhost(w) {
   markModelChanged();
 }
 
-/** Arm the mirrored half of a copy ghost: a second paste of the same
- *  clipboard, reflected about the axis as one mixed-selection transform, which
- *  is what flips the symbols as well as moving them. Keeping its own base
- *  geometry means every later pointer move is only a translation, since
- *  reflecting a translated set is the same as translating a reflected one by
- *  the reflected delta. */
+/** Arm the mirrored half of a copy ghost. Duplicate the primary ghost's
+ *  current state first, so an explicit rotate/mirror performed before Alt is
+ *  preserved, then reflect that duplicate about the drag-selected axis.
+ *  Keeping its own base geometry means every later pointer move is only a
+ *  translation, since reflecting a translated set is the same as translating
+ *  the reflected one by the reflected delta. */
 function armCopyGhostMirror() {
   const ghost = drag?.ghost;
   if (!ghost || !symmetry?.operation || ghost.mirror || !clipboard) return false;
@@ -10116,12 +10157,23 @@ function armCopyGhostMirror() {
   const existingComps = new Set(circuit.components.keys());
   const existingLabels = new Set(circuit.labels.keys());
   const savedCursor = { ...cursor };
-  // Lay the second copy over the primary's own base placement, then reflect:
-  // one transform both carries it to the far side and mirrors every symbol.
-  // Basing it on the base rather than the current position is what lets every
-  // later pointer move be a plain reflected translation.
-  cursor = { ...(ghost.startWorld || cursor) };
-  pasteClipboard({ recordHistory: false, connect: false });
+  const savedClipboard = clipboard;
+  // Re-copy the live primary ghost instead of using the original clipboard.
+  // This carries its current component transforms, labels, and internal nets
+  // into the new half before the symmetry transform is applied.
+  restoreCopyGhostSelection(ghost);
+  if (!copySelection()) {
+    clipboard = savedClipboard;
+    cursor = savedCursor;
+    return false;
+  }
+  cursor = { ...clipboard.anchor };
+  try {
+    pasteClipboard({ recordHistory: false, connect: false });
+  } finally {
+    clipboard = savedClipboard;
+    cursor = savedCursor;
+  }
   const mirror = {
     refs: [...circuit.components.keys()].filter((ref) => !existingComps.has(ref)),
     labels: [...circuit.labels.keys()].filter((id) => !existingLabels.has(id)),
@@ -10134,7 +10186,6 @@ function armCopyGhostMirror() {
     cursor = savedCursor;
     return false;
   }
-  if (ghost.anchorShift) translateCopyGhost(mirror, ghost.anchorShift.x, ghost.anchorShift.y);
   restoreCopyGhostSelection(mirror);
   const moved = transformMixedSelection(symmetry.operation, { recordHistory: false, center: symmetry.pin });
   cursor = savedCursor;
@@ -13543,6 +13594,1059 @@ __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 };
 
+__modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
+const { Circuit } = __require("src/core/model.js");
+const { rectsOverlap } = __require("src/core/geometry.js");
+const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
+const { renderExpression } = __require("src/core/analysis/present.js");
+/**
+ * Draw the small-signal model the solve actually used as an ordinary
+ * schematic: one column per node, shunt branches hanging from each node down
+ * to a single AC-ground rail, and series branches stacked in rows above the
+ * node line. The primitives come from the pipeline *after* its pre-solve
+ * transforms (Miller decoupling, `r_o -> infinity`, triode overrides), so the
+ * drawing shows the circuit the displayed equations describe, not the
+ * schematic they came from.
+ *
+ * The result is an ordinary `Circuit`: it renders, exports, and analyzes like
+ * any other document, which is what makes it checkable -- analyzing the model
+ * must reproduce the source schematic's equations.
+ */
+
+
+
+
+
+const AC_GROUND_NODE = '@AC_GROUND';
+
+const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
+const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source']);
+const MIN_PITCH = 240;
+const SLOT_PADDING = 240;
+const BUS_Y = 0;
+const SHUNT_Y = 240;
+const RAIL_Y = 480;
+const ROW_H = 240;
+const PORT_GAP = 240;
+
+/** Elements whose branch is drawn with each symbol. */
+const ELEMENT_TYPES = new Map([
+  ['resistor', 'resistor'],
+  ['conductance', 'resistor'],
+  ['triode-resistance', 'resistor'],
+  ['capacitor', 'capacitor'],
+  ['inductor', 'inductor'],
+  ['vccs', 'vccs'],
+  ['current-source', 'current_source'],
+  ['voltage-source', 'voltage_source'],
+]);
+
+function isGround(node) {
+  return node === undefined || node === null || AC_GROUND_NAMES.has(String(node));
+}
+
+/** Accept every primitive shape the pipeline hands out: branches carry `a`/`b`
+ * or `terminals`, controlled sources carry `outPlus`/`outMinus`. */
+function normalize(primitive) {
+  if (!primitive || typeof primitive !== 'object') return null;
+  const a = primitive.a ?? primitive.terminals?.a ?? primitive.outPlus;
+  const b = primitive.b ?? primitive.terminals?.b ?? primitive.outMinus;
+  if (a === undefined && b === undefined) return null;
+  const controlA = primitive.control?.a ?? primitive.controlPlus;
+  const controlB = primitive.control?.b ?? primitive.controlMinus;
+  return {
+    id: String(primitive.id || primitive.kind || 'primitive'),
+    kind: String(primitive.kind || '').toLowerCase(),
+    a: isGround(a) ? AC_GROUND_NODE : String(a),
+    b: isGround(b) ? AC_GROUND_NODE : String(b),
+    control: controlA === undefined && controlB === undefined ? null : {
+      a: isGround(controlA) ? AC_GROUND_NODE : String(controlA),
+      b: isGround(controlB) ? AC_GROUND_NODE : String(controlB),
+    },
+    parameter: primitive.parameter ? String(primitive.parameter) : '',
+    value: primitive.value,
+    metadata: primitive.metadata || {},
+    source: primitive,
+  };
+}
+
+/** `ro1` -> `r_{o1}`, `CGD` -> `C_{GD}`, `gmb2` -> `g_{mb2}`: the same textbook
+ * spelling the netlist and the equations use. */
+function textbookSymbol(raw) {
+  const name = String(raw || '');
+  if (!name) return '';
+  if (/^gmb[A-Za-z0-9_]*$/.test(name)) return `g_{mb${name.slice(3)}}`;
+  if (/^gm[A-Za-z0-9_]*$/.test(name)) return `g_{m${name.slice(2)}}`;
+  if (/^go[A-Za-z0-9_]*$/.test(name)) return `g_{o${name.slice(2)}}`;
+  if (/^rds[A-Za-z0-9_]*$/.test(name)) return `r_{ds${name.slice(3)}}`;
+  if (/^ro[A-Za-z0-9_]*$/.test(name)) return `r_{o${name.slice(2)}}`;
+  if (/^[RCL][A-Za-z0-9_]+$/.test(name)) return `${name[0]}_{${name.slice(1)}}`;
+  return name;
+}
+
+/**
+ * A controlled source is labelled with its own transconductance times the
+ * controlling voltage, the way a hybrid-pi figure is drawn: the control pair
+ * is text, never a second pair of wires across the drawing. The pair names the
+ * drawing's own nodes -- `g_{m1}(V_{IN} - 0)`, not `g_{m1} v_{gs1}` -- so the
+ * reader can follow the control back to a node without decoding a subscript.
+ */
+function controlledSourceLabel(element, nodeName) {
+  const gain = textbookSymbol(element.parameter) || 'g_m';
+  if (!element.control) return gain;
+  const plus = nodeName(element.control.a) || '0';
+  const minus = nodeName(element.control.b) || '0';
+  return `${gain}(${plus} - ${minus})`;
+}
+
+/**
+ * A Miller shunt has no parameter symbol of its own, and its admittance is a
+ * whole fraction -- far too wide to sit beside a symbol. Name it the way a
+ * textbook does and state the value in the legend below the drawing.
+ */
+function millerSymbol(element, symbol) {
+  const device = String(element.metadata?.component || '').replace(/\W/g, '') || 'M';
+  const side = element.metadata?.millerSide === 'output' ? 'out' : 'in';
+  return `${symbol === 'capacitor' ? 'C' : 'Y'}_{${device},${side}}`;
+}
+
+/** An admittance divided by `s`, when that leaves no frequency behind: the
+ * capacitance a capacitive shunt is drawn as. */
+function perFrequency(value, options) {
+  try {
+    const ops = createRationalOps({ variable: 's', maxOperations: 4000 });
+    const capacitance = ops.div(value, ops.s());
+    if (ops.budget?.exceeded) return null;
+    const rendered = renderExpression(capacitance, options.renderOptions || {});
+    return /(^|[^A-Za-z])s([^A-Za-z]|$)/.test(rendered) ? null : rendered;
+  } catch { return null; }
+}
+
+function elementLabel(element, symbol, options, nodeName) {
+  if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
+  if (element.parameter) return { text: textbookSymbol(element.parameter) };
+  let rendered = '';
+  try { rendered = renderExpression(element.value, options.renderOptions || {}); }
+  catch { rendered = ''; }
+  if (element.kind === 'admittance') {
+    const name = millerSymbol(element, symbol);
+    // A shunt drawn as a capacitor is named as one, so state a capacitance:
+    // the primitive carries the admittance Y = sC, and C = Y/s is the
+    // textbook Miller value.
+    if (symbol === 'capacitor') {
+      const capacitance = perFrequency(element.value, options);
+      if (capacitance) return { text: name, legend: { symbol: name, value: capacitance } };
+    }
+    return { text: name, legend: rendered ? { symbol: `Y_{${name.slice(name.indexOf('{') + 1, -1)}}`, value: rendered } : null };
+  }
+  return { text: rendered || element.id };
+}
+
+/**
+ * A label's rendered width is only known in a browser, and the drawing has to
+ * be laid out before that. Estimate it from the text the way `textWidth` does
+ * -- the tight per-glyph model at the label font size -- so columns are spaced
+ * for their own contents instead of a fixed guess.
+ */
+function estimateLabelWidth(tex) {
+  const plain = String(tex)
+    .replace(/\\left|\\right|\\,|\\;|\\!/g, '')
+    .replace(/\\frac/g, '')
+    .replace(/[{}$]/g, '');
+  return Math.max(120, plain.length * 24);
+}
+
+/** Local offset that renders at a given world offset for a placed symbol. */
+function localOffset(dx, dy, rotation) {
+  const turn = ((rotation % 360) + 360) % 360;
+  if (turn === 90) return { x: dy, y: -dx };
+  if (turn === 180) return { x: -dx, y: -dy };
+  if (turn === 270) return { x: -dy, y: dx };
+  return { x: dx, y: dy };
+}
+
+/** A Miller shunt made only of capacitors is a capacitor in the drawing --
+ * that is exactly the textbook Miller capacitance. */
+function elementSymbol(element) {
+  const mapped = ELEMENT_TYPES.get(element.kind);
+  if (mapped) return mapped;
+  if (element.kind === 'admittance') {
+    const kinds = element.metadata?.feedbackKinds || [];
+    if (kinds.length && kinds.every((kind) => kind === 'capacitor')) return 'capacitor';
+  }
+  return 'resistor';
+}
+
+function uniqueRefdes(base, used) {
+  const clean = String(base || 'X').replace(/[^A-Za-z0-9_]/g, '') || 'X';
+  let candidate = /^[A-Za-z]/.test(clean) ? clean : `X${clean}`;
+  let index = 2;
+  while (used.has(candidate)) candidate = `${clean}_${index++}`;
+  used.add(candidate);
+  return candidate;
+}
+
+/** Node display names, preferring the source circuit's own net names. */
+function nodeNames(report, options) {
+  const names = new Map();
+  const circuit = options.circuit;
+  if (circuit) {
+    for (const net of circuit.nets.values()) names.set(net.id, net.name || net.id);
+  }
+  for (const [key, value] of options.nodeNames instanceof Map ? options.nodeNames : []) names.set(key, value);
+  return names;
+}
+
+/**
+ * Node order across the drawing. The source schematic's own left-to-right
+ * order is the one the reader already knows, so use it when the circuit is
+ * available; otherwise fall back to first appearance with the analysis input
+ * first and its output last.
+ */
+function orderNodes(elements, report, options) {
+  const seen = [];
+  for (const element of elements) {
+    for (const node of [element.a, element.b, element.control?.a, element.control?.b]) {
+      if (node && node !== AC_GROUND_NODE && !seen.includes(node)) seen.push(node);
+    }
+  }
+  const circuit = options.circuit;
+  const centre = new Map();
+  if (circuit) {
+    for (const node of seen) {
+      const net = circuit.nets.get(node);
+      const points = (net?.terminals || []).map((terminal) => {
+        try { return circuit.getComponent(terminal.comp).terminalWorld(terminal.term).x; }
+        catch { return null; }
+      }).filter((value) => value !== null);
+      if (points.length) centre.set(node, points.reduce((sum, value) => sum + value, 0) / points.length);
+    }
+  }
+  const inputNode = portNode(report, 'input');
+  const outputNode = portNode(report, 'output');
+  const rank = (node) => node === inputNode ? -Infinity : node === outputNode ? Infinity : 0;
+  return [...seen].sort((left, right) => {
+    const ranked = rank(left) - rank(right);
+    if (Number.isFinite(ranked) && ranked !== 0) return ranked;
+    if (!Number.isFinite(ranked)) return ranked < 0 ? -1 : 1;
+    const a = centre.get(left);
+    const b = centre.get(right);
+    if (a !== undefined && b !== undefined && a !== b) return a - b;
+    return seen.indexOf(left) - seen.indexOf(right);
+  });
+}
+
+/** The analysis node a port role resolved to, as the context recorded it. */
+function portNode(report, role) {
+  const context = report?.context || report?.details?.pipeline?.context;
+  return context?.[role]?.node || null;
+}
+
+/**
+ * Where to hang a node's name: the middle of its longest run, preferring a
+ * horizontal one, and only where a label-sized box above the wire clears every
+ * symbol. A node whose wires are all crowded keeps its name in the net list
+ * rather than printing it over a component.
+ */
+function netLabelAnchor(net, width, boxes) {
+  const segments = [];
+  for (const path of (net.paths ? net.paths() : [])) {
+    for (let index = 1; index < path.length; index += 1) segments.push([path[index - 1], path[index]]);
+  }
+  const span = ([a, b]) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  const horizontal = segments.filter(([a, b]) => a.y === b.y);
+  const ordered = (horizontal.length ? horizontal : segments).sort((left, right) => span(right) - span(left));
+  for (const [a, b] of ordered) {
+    const point = { x: snapTo((a.x + b.x) / 2), y: snapTo((a.y + b.y) / 2) };
+    const box = { x: point.x - width / 2, y: point.y - 120, w: width, h: 120 };
+    if (!boxes.some((other) => rectsOverlap(box, other))) return point;
+  }
+  return null;
+}
+
+function snapTo(value) {
+  return Math.round(value / 40) * 40;
+}
+
+/**
+ * Build the drawn model.
+ *
+ * @param {object} report a successful `analyzeSmallSignalV2` report
+ * @param {{circuit?: import('../model.js').Circuit, nodeNames?: Map}} options
+ * @returns {{ok: boolean, circuit?: Circuit, correspondence?: Map, notes: string[], error?: string}}
+ */
+function smallSignalSchematic(report, options = {}) {
+  const primitives = report?.details?.pipeline?.selected;
+  if (!Array.isArray(primitives) || !primitives.length) {
+    return { ok: false, notes: [], error: 'this analysis produced no small-signal primitives to draw' };
+  }
+  const elements = primitives.map(normalize).filter(Boolean);
+  const names = nodeNames(report, options);
+  // The node's own name, markup included: label text renders `_{...}`.
+  const nodeName = (node) => (!node || node === AC_GROUND_NODE ? '' : String(names.get(node) || node));
+  const plainName = (node) => nodeName(node).replace(/[_^]\{([^}]*)\}/g, '$1');
+  const nodes = orderNodes(elements, report, options);
+  const shunts = new Map(nodes.map((node) => [node, []]));
+  const series = [];
+  for (const element of elements) {
+    const aGround = element.a === AC_GROUND_NODE;
+    const bGround = element.b === AC_GROUND_NODE;
+    if (aGround && bGround) continue;
+    // A controlled source across one node carries no current -- the body
+    // effect of a device whose source is the AC reference. Drawing it says
+    // nothing and costs a column.
+    if (element.control && element.control.a === element.control.b) continue;
+    if (aGround || bGround) shunts.get(bGround ? element.a : element.b).push(element);
+    else series.push(element);
+  }
+
+  // Every element is drawn with its label above it, so a node's slot is as
+  // wide as its own branches need -- a Miller shunt beside a bare r_o should
+  // not push every other column apart.
+  const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
+  const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
+  // A shunt wears its label on its left, so its neighbour must clear it.
+  const widthOf = (element) => Math.max(MIN_PITCH, snapTo(estimateLabelWidth(labels.get(element).text) + 160));
+  const pitches = new Map(nodes.map((node) => [node, Math.max(MIN_PITCH, ...shunts.get(node).map(widthOf))]));
+
+  const columns = new Map();
+  let x = 0;
+  for (const node of nodes) {
+    const count = Math.max(1, shunts.get(node).length);
+    const width = count * pitches.get(node) + 2 * SLOT_PADDING;
+    columns.set(node, snapTo(x + width / 2));
+    x += width;
+  }
+
+  const circuit = new Circuit();
+  const used = new Set();
+  const correspondence = new Map();
+  const notes = [];
+  const legend = [];
+  const attachments = new Map(nodes.map((node) => [node, []]));
+  const groundRefs = [];
+
+  const addElement = (element, placement, upright = true) => {
+    const type = symbols.get(element);
+    const refdes = uniqueRefdes(element.parameter || element.id.replace(/\W/g, ''), used);
+    const component = circuit.addComponent(type, { ...placement, refdes, noLabel: true });
+    const label = labels.get(element);
+    // Plain `_{...}` markup, not a math label: every symbol in the drawing is
+    // a name with a subscript, and a markup label needs no browser
+    // measurement, so the figure lays out the same in a test, an export, and
+    // the dock. The one thing that needs real math -- a Miller admittance --
+    // is named here and stated in the legend instead.
+    //
+    // An upright branch wears its label on the left, where a textbook puts it;
+    // a branch lying along a row wears it above, clear of its own wires. The
+    // offset comes from the label's own measured box rather than the estimate
+    // the columns are spaced by, so the text sits against its symbol instead
+    // of drifting into the gap towards the next one.
+    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
+    const box = owned.bbox();
+    const reach = (extent) => 40 * Math.ceil((40 + extent / 2) / 40);
+    const world = upright ? { x: -reach(box.w), y: 0 } : { x: 0, y: -reach(box.h) };
+    owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
+    owned.clearRenderedTextBounds();
+    if (label.legend) legend.push(label.legend);
+    correspondence.set(refdes, { primitive: element.id, component: element.metadata?.component || null, role: element.kind });
+    return component;
+  };
+
+  // Shunt branches: node bus -> element -> ground rail.
+  for (const node of nodes) {
+    const list = shunts.get(node);
+    const centreX = columns.get(node);
+    const pitch = pitches.get(node);
+    list.forEach((element, index) => {
+      const shuntX = snapTo(centreX + (index - (list.length - 1) / 2) * pitch);
+      const vertical = SOURCE_KINDS.has(element.kind);
+      // A source symbol is already vertical; a passive is turned upright. The
+      // current of a controlled source flows from `a` into `b`, so a source
+      // whose ground end is `a` is turned around rather than redrawn.
+      const flipped = element.a === AC_GROUND_NODE;
+      const rotation = vertical ? (flipped ? 180 : 0) : (flipped ? 270 : 90);
+      const component = addElement(element, { x: shuntX, y: SHUNT_Y, rotation }, true);
+      const [top, bottom] = flipped ? ['b', 'a'] : ['a', 'b'];
+      attachments.get(node).push(`${component.refdes}.${top}`);
+      groundRefs.push(`${component.refdes}.${bottom}`);
+    });
+  }
+
+  // Series branches stack in rows above the node line, lowest row first.
+  const rows = [];
+  for (const element of series) {
+    const left = Math.min(columns.get(element.a), columns.get(element.b));
+    const right = Math.max(columns.get(element.a), columns.get(element.b));
+    let row = rows.findIndex((spans) => spans.every(([from, to]) => right <= from || left >= to));
+    if (row < 0) row = rows.push([]) - 1;
+    rows[row].push([left, right]);
+    const y = BUS_Y - (row + 1) * ROW_H;
+    const rotation = SOURCE_KINDS.has(element.kind) ? 270 : 0;
+    const component = addElement(element, { x: snapTo((left + right) / 2), y, rotation }, false);
+    const aLeft = columns.get(element.a) <= columns.get(element.b);
+    attachments.get(element.a).push(`${component.refdes}.${aLeft ? 'a' : 'b'}`);
+    attachments.get(element.b).push(`${component.refdes}.${aLeft ? 'b' : 'a'}`);
+  }
+
+  // The interface ports read left to right on the node line itself, outside
+  // every column: the input node sorts first and the output node last, so
+  // neither stub crosses another node's bus.
+  const portNodes = new Set();
+  // Outside everything drawn, and outside every column: a node that only
+  // controls a source has a column but nothing standing in it.
+  const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
+  const spans = [...columns.values()];
+  const leftEdge = snapTo(Math.min(...drawn.map((box) => box.x), ...spans) - PORT_GAP);
+  const rightEdge = snapTo(Math.max(...drawn.map((box) => box.x + box.w), ...spans) + PORT_GAP);
+  const portFor = (node, type, side) => {
+    if (!node || !columns.has(node)) return;
+    const refdes = uniqueRefdes(plainName(node), used);
+    const port = circuit.addComponent(type, {
+      refdes, x: side === 'left' ? leftEdge : rightEdge, y: BUS_Y, noLabel: true,
+    });
+    // Above the port, not beside it: an outward-facing port box already
+    // occupies the side its own label offset points at.
+    circuit.addLabel({ owner: refdes, text: nodeName(node), align: 'center', offset: { x: 0, y: -120 } });
+    attachments.get(node).push(`${port.refdes}.p`);
+    portNodes.add(node);
+  };
+  portFor(portNode(report, 'input'), 'input', 'left');
+  portFor(portNode(report, 'output'), 'output', 'right');
+
+  // One AC-ground rail under the whole drawing.
+  const railX = snapTo(Math.min(...columns.values()) - SLOT_PADDING);
+  const ground = circuit.addComponent('ground', { refdes: 'GND', x: railX, y: RAIL_Y, noLabel: true });
+  groundRefs.push(`${ground.refdes}.gnd`);
+
+  const failures = [];
+  const wire = (refs, name, stub = null) => {
+    try {
+      // A node that only controls a source -- a bare gate -- has no branch of
+      // its own. Draw its port down to the node line anyway: the controlling
+      // voltage needs somewhere to be read.
+      if (refs.length === 1 && stub) {
+        circuit.wireTo(refs[0], stub);
+        return null;
+      }
+      if (refs.length < 2) return null;
+      const net = circuit.connect(...refs);
+      if (name && net) circuit.renameNet(net, name);
+      return net;
+    } catch (error) { failures.push(`${name || 'net'}: ${error.message}`); }
+    return null;
+  };
+  const wired = new Map();
+  for (const node of nodes) {
+    wired.set(node, wire(attachments.get(node), nodeName(node) || node, { x: columns.get(node), y: BUS_Y }));
+  }
+  wire(groundRefs, 'VSS');
+
+  // Name the nodes on the drawing. A node with a port already reads its name
+  // off that port, and the AC-ground rail is what the ground symbol says.
+  // Clear of every symbol *and* every label already placed: a node name that
+  // lands on a branch's own label is as unreadable as one over a symbol.
+  const boxes = [
+    ...[...circuit.components.values()].map((component) => component.bboxWorld()),
+    ...[...circuit.labels.values()].map((label) => label.bbox()),
+  ];
+  for (const node of nodes) {
+    const net = wired.get(node);
+    if (!net || portNodes.has(node) || !net.name) continue;
+    const anchor = netLabelAnchor(net, estimateLabelWidth(net.name), boxes);
+    if (!anchor) continue;
+    try { circuit.addNetLabel(net, { anchor, netSide: 'above' }); }
+    catch { /* a node whose wire the router shaped differently keeps its name in the net list */ }
+  }
+  if (failures.length) notes.push(`${failures.length} connection${failures.length === 1 ? '' : 's'} could not be routed automatically`);
+
+  const miller = (report?.details?.pipeline?.millerSubstitutions || []).map(({ device }) => device).filter(Boolean);
+  if (miller.length) notes.push(`Miller approximation applied to ${miller.join(', ')}`);
+  const omitted = report?.details?.pipeline?.omittedOutputResistances || [];
+  if (omitted.length) notes.push(`r_o omitted for ${omitted.join(', ')}`);
+
+  return { ok: true, circuit, correspondence, notes, legend, failures };
+}
+
+__exports.textbookSymbol = textbookSymbol;
+__exports.smallSignalSchematic = smallSignalSchematic;
+__exports.AC_GROUND_NODE = AC_GROUND_NODE;
+};
+
+__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
+const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
+const { analyzeResponse } = __require("src/core/analysis/response.js");
+const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
+const { infinity } = __require("src/core/analysis/rational.js");
+
+
+
+
+
+const QUANTITIES = Object.freeze([
+  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
+  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
+  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
+]);
+
+const SOURCE_NAMES = Object.freeze({
+  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
+  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
+  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
+});
+
+function asArray(value) {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function unique(values) {
+  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
+}
+
+function lookup(source, names) {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const name of names) {
+    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
+  }
+  return undefined;
+}
+
+function isExpression(value) {
+  return value && typeof value === 'object' && typeof value.kind === 'string';
+}
+
+function expressionOf(value) {
+  if (value === undefined || value === null) return undefined;
+  if (value.kind === 'rational') return value;
+  if (isExpression(value)) return value;
+  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
+  return value;
+}
+
+function hasFrequency(value) {
+  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
+  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
+  if (value?.kind === 'power') return hasFrequency(value.base);
+  if (value?.kind === 'add' || value?.kind === 'multiply') {
+    const values = value.kind === 'add' ? value.terms : value.factors;
+    return values.some(hasFrequency);
+  }
+  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+}
+
+function responseRecord(value) {
+  if (value === undefined || value === null) return null;
+  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
+  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
+    return value;
+  }
+  const expression = expressionOf(value);
+  if (expression === undefined || expression === null) return null;
+  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
+  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
+}
+
+function pairFor(source) {
+  if (!source) return { selected: null, exact: null, source: null };
+  const selectedRaw = firstDefined(
+    source.selectedResponse,
+    source.selectedResult,
+    source.selected,
+    source.display,
+    source.approximate,
+    source.expression !== undefined ? source : undefined,
+    isExpression(source) ? source : undefined,
+  );
+  const exactRaw = firstDefined(
+    source.exactResponse,
+    source.exactResult,
+    source.exact,
+    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
+    selectedRaw,
+  );
+  return {
+    selected: responseRecord(selectedRaw),
+    exact: responseRecord(exactRaw),
+    source,
+  };
+}
+
+function valueKey(value) {
+  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
+  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
+  if (value?.kind === 'symbol') return `s:${value.name}`;
+  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
+  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
+  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
+  return JSON.stringify(value);
+}
+
+function sameValue(left, right) {
+  if (left === right) return true;
+  if (left === undefined || right === undefined || left === null || right === null) return false;
+  try {
+    return valueKey(left) === valueKey(right);
+  } catch {
+    return false;
+  }
+}
+
+function render(value, options) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value;
+  if (value.kind === 'infinity') return renderExpression(value, options);
+  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
+  return String(value);
+}
+
+function responseExpression(response) {
+  return expressionOf(response);
+}
+
+function equation(label, expression, approximate = false, options) {
+  const body = render(expression, options);
+  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
+}
+
+/**
+ * The same equation rendered with provenance markers, so the GUI can map a
+ * clicked sub-expression back to the devices it came from.
+ *
+ * This is built here, beside the string it mirrors, for the reason AGENTS.md
+ * gives about `equivalenceOptions`: a row rendered anywhere else would have to
+ * reproduce this function's label, approximation flag, and equivalence options,
+ * and getting any of them wrong fails silently on that row alone.
+ */
+function equationProvenance(label, expression, approximate = false, options) {
+  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
+  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
+  // Mirrors `equation()` above exactly, including its relation symbol.
+  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
+  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
+}
+
+function dcValue(limit) {
+  if (!limit) return undefined;
+  if (limit.value !== undefined && limit.value !== null) return limit.value;
+  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
+  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
+    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
+    return infinity(sign);
+  }
+  return undefined;
+}
+
+function equivalenceOptions(source) {
+  return {
+    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
+    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
+  };
+}
+
+function dcResult(label, selected, exact, source) {
+  const selectedLimit = selected?.dc || source?.dc;
+  const exactLimit = exact?.dc || selectedLimit;
+  const selectedValue = dcValue(selectedLimit);
+  const exactValue = dcValue(exactLimit);
+  if (selectedValue === undefined) {
+    return {
+      ok: false,
+      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
+    };
+  }
+  const changed = !sameValue(selectedValue, exactValue);
+  const options = equivalenceOptions(source);
+  return {
+    ok: true,
+    equation: equation(label, selectedValue, changed, options),
+    exactEquation: equation(label, exactValue, false, options),
+    equationProvenance: equationProvenance(label, selectedValue, changed, options),
+    expression: selectedValue,
+    exactExpression: exactValue,
+  };
+}
+
+function rootValue(root) {
+  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
+}
+
+/**
+ * The provenance render of one pole or zero. It must mirror the
+ * `renderRootEquation` call beside it exactly, options included — a pole row
+ * rendered under different options would highlight terms the displayed row
+ * does not contain.
+ */
+function rootProvenance(kind, index, value) {
+  if (value === undefined || value === null || typeof value === 'string') return undefined;
+  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
+  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
+}
+
+function rootsOf(response, kind) {
+  const roots = response?.[kind] || [];
+  return roots.map((root, index) => {
+    const value = rootValue(root);
+    return {
+      ...root,
+      index,
+      ...(value !== undefined
+        ? {
+          root: value,
+          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
+          equationProvenance: rootProvenance(kind, index, value),
+        }
+        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
+    };
+  });
+}
+
+function frequencyResponse(selected, exact, source) {
+  const has = Boolean(firstDefined(
+    selected?.hasFrequency,
+    exact?.hasFrequency,
+    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
+  ));
+  if (!has) return null;
+  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
+  return {
+    ...base,
+    hasFrequency: true,
+    expression: responseExpression(selected),
+    exactExpression: responseExpression(exact),
+    numerator: selected?.numerator,
+    denominator: selected?.denominator,
+    poles: rootsOf(selected || exact, 'poles'),
+    zeros: rootsOf(selected || exact, 'zeros'),
+  };
+}
+
+function detailsFor(combined, source) {
+  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
+  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
+  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
+  const solution = get('solution');
+  const log = get('log', 'logDetails');
+  return {
+    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
+    ...(solution !== undefined ? { solution } : {}),
+    ...(log !== undefined ? { log } : {}),
+    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
+    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
+    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
+  };
+}
+
+function childSource(combined, key, quantity) {
+  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
+  const names = SOURCE_NAMES[quantity];
+  for (const container of containers) {
+    const found = lookup(container, [key, ...names]);
+    if (found !== undefined) return found;
+  }
+  return null;
+}
+
+function childMetadata(combined, source, key) {
+  const context = combined?.context || {};
+  const metadata = {
+    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
+    input: firstDefined(source?.input, context.input, combined?.input),
+    reference: firstDefined(source?.reference, context.reference, combined?.reference),
+  };
+  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
+}
+
+function childPairs(combined) {
+  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
+    const source = childSource(combined, key, quantity);
+    return [key, pairFor(source)];
+  }));
+}
+
+function adaptChild(combined, key, quantity) {
+  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
+  const raw = childSource(combined, key, quantity);
+  const pair = pairFor(raw);
+  const source = pair.source || {};
+  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
+  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
+  const selected = pair.selected || responseRecord(selectedExpression);
+  const exact = pair.exact || responseRecord(exactExpression);
+  const details = detailsFor(combined, source);
+  const failed = source?.ok === false || (!selectedExpression && source?.error);
+  const reactive = Boolean(frequencyResponse(selected, exact, source));
+  const label = reactive ? `${labelBase}(s)` : labelBase;
+  const changed = !sameValue(selectedExpression, exactExpression);
+  const renderOptions = equivalenceOptions(source);
+  const result = {
+    ...source,
+    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
+    query,
+    ...childMetadata(combined, source, key),
+    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
+    ...(exactExpression !== undefined ? { exactExpression } : {}),
+    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
+    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
+    ...(selectedExpression !== undefined
+      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
+      : {}),
+    ...details,
+    assumptions: unique([combined?.assumptions, source?.assumptions]),
+    approximations: unique([combined?.approximations, source?.approximations]),
+    dependencies: unique([combined?.dependencies, source?.dependencies]),
+    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
+  };
+  if (reactive && key !== 'transfer') delete result.acTransfer;
+  if (!reactive) {
+    delete result.frequencyResponse;
+    delete result.acTransfer;
+  }
+  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
+    result.smallSignalNetlist = combined.smallSignalNetlist;
+  }
+  if (key === 'transfer' && reactive && result.expression !== undefined) {
+    result.acTransfer = {
+      ok: result.ok,
+      equation: result.equation,
+      exactEquation: result.exactEquation,
+      equationProvenance: result.equationProvenance,
+      expression: result.expression,
+      exactExpression: result.exactExpression,
+    };
+  }
+  if (!result.ok) {
+    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
+    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
+    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
+  }
+  return result;
+}
+
+function transferCompanions(combined, children) {
+  const transfer = children.transfer;
+  const input = children.input;
+  const output = children.output;
+  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
+  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
+  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
+  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
+    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
+  }
+  transfer.dcGain = dcGain;
+  transfer.dcInputImpedance = dcInput;
+  transfer.dcOutputImpedance = dcOutput;
+  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
+}
+
+function cleanChild(child) {
+  const result = { ...child };
+  delete result._selected;
+  delete result._exact;
+  delete result._source;
+  return result;
+}
+
+const ROOT_SEPARATOR = ',\\quad ';
+
+/**
+ * One Poles or Zeros row: the roots' own equations shown together. The joined
+ * provenance render is kept only when every root has one, so the row's markers
+ * can never describe a different string than the one displayed.
+ */
+function rootRow(roots) {
+  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
+  const parts = roots.map((root) => root.equationProvenance);
+  return {
+    ok: true,
+    equation,
+    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
+  };
+}
+
+/** What the quantities are ratios of, named by the nodes they were taken at. */
+function portEntry(report) {
+  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
+  if (!definitions.length) return null;
+  // A definition, not a derived expression: it names nodes rather than device
+  // parameters, so there is nothing to trace back to the canvas.
+  const lines = definitions.map(({ tex }) => tex);
+  return {
+    title: 'Ports',
+    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
+  };
+}
+
+function equationEntries(reports, report) {
+  const entries = [];
+  const ports = portEntry(report);
+  if (ports) entries.push(ports);
+  const add = (title, result) => {
+    if (result?.ok && result.equation) entries.push({ title, result });
+  };
+  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
+  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
+  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
+  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
+  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
+  add('DC gain', reports.transfer.dcGain);
+  const frequency = reports.transfer.frequencyResponse;
+  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
+  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
+  return entries;
+}
+
+/** Convert one exact/selected v2 response set into the legacy child reports. */
+function adaptCombinedReport(report) {
+  if (!report || typeof report !== 'object') {
+    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
+  }
+  const pairs = childPairs(report);
+  const children = {};
+  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
+    const child = adaptChild(report, key, quantity);
+    children[key] = child;
+  }
+  for (const key of Object.keys(children)) {
+    children[key]._selected = pairs[key].selected;
+    children[key]._exact = pairs[key].exact;
+    children[key]._source = pairs[key].source;
+  }
+  const companions = transferCompanions(report, children);
+  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
+  const details = detailsFor(report, report);
+  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
+  const entries = equationEntries(reports, report);
+  const successful = Object.values(reports).filter((child) => child.ok);
+  const context = report.context || {};
+  const inputPort = firstDefined(context.input);
+  const outputPort = firstDefined(context.output);
+  const referencePort = firstDefined(context.reference);
+  const base = {
+    ...report,
+    query: 'combined',
+    ok: successful.length > 0,
+    complete: successful.length === 3,
+    reports,
+    // Port metadata is distinct from the solved impedance and transfer rows.
+    input: inputPort,
+    output: outputPort,
+    reference: referencePort,
+    inputPort,
+    outputPort,
+    referencePort,
+    inputImpedance: reports.input,
+    outputImpedance: reports.output,
+    voltageTransfer: reports.transfer,
+    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
+    ...companions,
+    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
+    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
+    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
+    ...details,
+    equationEntries: entries,
+    equationOrder: entries.map(({ title }) => title),
+    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
+  };
+  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
+  else delete base.frequencyResponse;
+  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
+    base.acTransfer = {
+      ok: reports.transfer.ok,
+      equation: reports.transfer.equation,
+      exactEquation: reports.transfer.exactEquation,
+      expression: reports.transfer.expression,
+      exactExpression: reports.transfer.exactExpression,
+    };
+  } else delete base.acTransfer;
+  return base;
+}
+
+__exports.adaptCombinedReport = adaptCombinedReport;
+};
+
+__modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
+/**
+ * Where each symbol in a displayed equation came from.
+ *
+ * `devices.js` mints every symbolic parameter name through one chokepoint,
+ * `parameterName(prefix, refdes)`, and tags every primitive it emits with
+ * `metadata.component` and an `id` of the form `<refdes>.<role>`. That makes
+ * the inversion below exact: it reads the table devices.js already built
+ * rather than guessing at the spelling of a rendered name. Nothing here parses
+ * TeX, and nothing here knows about the DOM.
+ *
+ * Keys are the raw expression symbol names (`gm1`, `ro1`, `RD`) as they appear
+ * in `{kind:'symbol', name}` nodes — not their rendered forms (`g_{m1}`).
+ * `present.js` owns that spelling and the two must not be confused.
+ */
+
+function roleOf(primitive) {
+  const id = String(primitive?.id || '');
+  const dot = id.lastIndexOf('.');
+  const role = dot >= 0 ? id.slice(dot + 1) : '';
+  return role || String(primitive?.kind || '');
+}
+
+/**
+ * Invert one or more primitive lists into
+ * `{ [symbolName]: {component, role, kind, primitives} }`. Earlier lists win,
+ * so pass the solved model first and earlier modeling stages after it.
+ *
+ * Several lists are needed because a symbol can survive into a displayed
+ * equation after its own primitive has left the solved set:
+ *
+ *  - A Miller shunt carries an expression, not a parameter name, so it mints no
+ *    symbol of its own — but that expression still contains the feedback
+ *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
+ *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
+ *    the engine puts `r_o` back when removing it would make the solve singular.
+ *
+ * A symbol the table cannot resolve simply does not highlight, which is why
+ * these gaps are invisible until someone points at the term and nothing
+ * happens. Only primitives whose `value` is a symbolic name contribute, and a
+ * symbol reached by more than one primitive keeps the first component and
+ * accumulates the primitive ids.
+ */
+function symbolProvenance(...primitiveLists) {
+  const table = Object.create(null);
+  for (const primitives of primitiveLists) {
+    for (const primitive of primitives || []) {
+      const name = primitive?.value;
+      if (typeof name !== 'string' || !name) continue;
+      const component = primitive?.metadata?.component;
+      if (!component) continue;
+      const existing = table[name];
+      if (existing) {
+        if (!existing.primitives.includes(primitive.id)) existing.primitives.push(primitive.id);
+        continue;
+      }
+      table[name] = {
+        component,
+        role: roleOf(primitive),
+        kind: primitive.kind,
+        primitives: [primitive.id],
+      };
+    }
+  }
+  return table;
+}
+
+/** The distinct components a set of symbol names resolves to, in first-seen
+ *  order. Used to label a rendered subexpression with everything it touches. */
+function componentsOfSymbols(names, table) {
+  const seen = [];
+  for (const name of names || []) {
+    const component = table?.[name]?.component;
+    if (component && !seen.includes(component)) seen.push(component);
+  }
+  return seen;
+}
+
+__exports.symbolProvenance = symbolProvenance;
+__exports.componentsOfSymbols = componentsOfSymbols;
+};
+
 __modules["src/core/analysis/engine.js"] = function (__require, __exports) {
 const { MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js");
 const { applyApproximations } = __require("src/core/analysis/approximation.js");
@@ -14363,975 +15467,1633 @@ __exports.portDefinitions = portDefinitions;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 };
 
-__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
-const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
-const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
-const { infinity } = __require("src/core/analysis/rational.js");
+__modules["src/core/style.js"] = function (__require, __exports) {
+/**
+ * Centralized schematic line styles.
+ *
+ * Symbols and wires select a stroke role via `style`. Roles differ only in
+ * width, cap, and join; filled body shapes use polygon fill instead.
+ *
+ *   line       legacy/default fallback (flat caps, miter joins)
+ *   thick      heavier legacy linework (~1.5x default)
+ *   symbol     normal textbook linework
+ *   wire       projecting square caps, so the half-width extension at a
+ *              terminal overlaps the pin lead inside the shared ink path and a
+ *              wire meeting a lead at a right angle fills the corner square
+ *   annotation visual lines/arrows (round ends)
+ *   emph       emphasis (MOSFET gate bar, BJT base bar)
+ *   ground     ground bars
+ *   supply     power slabs
+ */
+const STROKES = {
+  line: { width: 6, cap: 'flat', join: 'miter' },
+  thick: { width: 9, cap: 'flat', join: 'flat' },
+  symbol: { width: 6, cap: 'butt', join: 'miter' },
+  wire: { width: 6, cap: 'square', join: 'miter' },
+  annotation: { width: 6, cap: 'round', join: 'miter' },
+  emph: { width: 9.6, cap: 'butt', join: 'miter' },
+  ground: { width: 11.6, cap: 'butt', join: 'miter' },
+  supply: { width: 7.2, cap: 'butt', join: 'miter' },
+};
 
+const DEFAULT_INK = '#111';
 
+/** Named semantic colors. Values are intentionally mutable so a theme can
+ * update a token and already-loaded drawings immediately pick it up. */
+const COLOR_PALETTE = {
+  red: '#d96c75',
+  orange: '#e59f71',
+  yellow: '#e4c16f',
+  green: '#9acb8a',
+  teal: '#62b5a7',
+  blue: '#6fa8dc',
+  indigo: '#8f8bd1',
+  purple: '#b08ac6',
+  pink: '#d889b5',
+  slate: '#9aa7b8',
+  gray: '#7a7d85',
+};
 
-
-
-const QUANTITIES = Object.freeze([
-  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
-  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
-  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
-]);
-
-const SOURCE_NAMES = Object.freeze({
-  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
-  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
-  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
-});
-
-function asArray(value) {
-  if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value : [value];
+const LEGACY_COLORS = new Map(Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]));
+function resolveColor(value) {
+  if (typeof value !== 'string' || !value) return DEFAULT_INK;
+  const token = value.startsWith('$') ? value.slice(1) : value;
+  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return COLOR_PALETTE[token];
+  const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
+  return legacyToken ? COLOR_PALETTE[legacyToken] : value;
 }
 
-function unique(values) {
-  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
+/** Editor rendering: default ink follows the page theme through CSS `color`.
+ * Standalone exports keep literal colors and never use this. */
+function themeInkSvg(svg) {
+  return String(svg).replace(/\b(stroke|fill)="(?:#111|#111111|#292929|#333)"/gi, '$1="currentColor"');
 }
 
-function lookup(source, names) {
-  if (!source || typeof source !== 'object') return undefined;
-  for (const name of names) {
-    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
-  }
-  return undefined;
-}
-
-function isExpression(value) {
-  return value && typeof value === 'object' && typeof value.kind === 'string';
-}
-
-function expressionOf(value) {
-  if (value === undefined || value === null) return undefined;
-  if (value.kind === 'rational') return value;
-  if (isExpression(value)) return value;
-  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
+function setColorToken(token, value) {
+  if (!Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) throw new Error(`unknown color token "${token}"`);
+  if (typeof value !== 'string' || !value) throw new Error('color token value must be a CSS color');
+  COLOR_PALETTE[token] = value;
   return value;
 }
 
-function hasFrequency(value) {
-  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
-  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
-  if (value?.kind === 'power') return hasFrequency(value.base);
-  if (value?.kind === 'add' || value?.kind === 'multiply') {
-    const values = value.kind === 'add' ? value.terms : value.factors;
-    return values.some(hasFrequency);
-  }
-  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+/** Escape a value for use in SVG text or a quoted attribute. */
+const escapeSvg = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+function strokeParts(styleName, miterLimit, color = DEFAULT_INK, width) {
+  const s = STROKES[styleName] || STROKES.line;
+  const limit = Number.isFinite(miterLimit) && miterLimit > 0 ? ` stroke-miterlimit="${miterLimit}"` : '';
+  return `stroke="${escapeSvg(color)}" stroke-width="${width ?? s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"${limit}`;
 }
 
-function responseRecord(value) {
-  if (value === undefined || value === null) return null;
-  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
-  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
-    return value;
-  }
-  const expression = expressionOf(value);
-  if (expression === undefined || expression === null) return null;
-  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
-  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
+function strokeAttrs(styleName, miterLimit) {
+  return strokeParts(styleName, miterLimit);
 }
 
-function pairFor(source) {
-  if (!source) return { selected: null, exact: null, source: null };
-  const selectedRaw = firstDefined(
-    source.selectedResponse,
-    source.selectedResult,
-    source.selected,
-    source.display,
-    source.approximate,
-    source.expression !== undefined ? source : undefined,
-    isExpression(source) ? source : undefined,
-  );
-  const exactRaw = firstDefined(
-    source.exactResponse,
-    source.exactResult,
-    source.exact,
-    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
-    selectedRaw,
-  );
-  return {
-    selected: responseRecord(selectedRaw),
-    exact: responseRecord(exactRaw),
-    source,
-  };
+/** Resolve the painted stroke width for a style role, including explicit
+ * thin/thick overrides. Consumers that position filled geometry next to a
+ * stroked body should use this instead of duplicating the role table. */
+function strokeWidth(style = {}, base = 'line') {
+  if (style.width === 'thin') return 3;
+  if (style.width === 'thick') return 9;
+  return STROKES[base]?.width ?? STROKES.line.width;
 }
 
-function valueKey(value) {
-  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
-  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
-  if (value?.kind === 'symbol') return `s:${value.name}`;
-  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
-  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
-  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
-  return JSON.stringify(value);
-}
-
-function sameValue(left, right) {
-  if (left === right) return true;
-  if (left === undefined || right === undefined || left === null || right === null) return false;
-  try {
-    return valueKey(left) === valueKey(right);
-  } catch {
-    return false;
-  }
-}
-
-function render(value, options) {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return value;
-  if (value.kind === 'infinity') return renderExpression(value, options);
-  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
-  return String(value);
-}
-
-function responseExpression(response) {
-  return expressionOf(response);
-}
-
-function equation(label, expression, approximate = false, options) {
-  const body = render(expression, options);
-  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
-}
-
-/**
- * The same equation rendered with provenance markers, so the GUI can map a
- * clicked sub-expression back to the devices it came from.
- *
- * This is built here, beside the string it mirrors, for the reason AGENTS.md
- * gives about `equivalenceOptions`: a row rendered anywhere else would have to
- * reproduce this function's label, approximation flag, and equivalence options,
- * and getting any of them wrong fails silently on that row alone.
- */
-function equationProvenance(label, expression, approximate = false, options) {
-  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
-  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
-  // Mirrors `equation()` above exactly, including its relation symbol.
-  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
-  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
-}
-
-function dcValue(limit) {
-  if (!limit) return undefined;
-  if (limit.value !== undefined && limit.value !== null) return limit.value;
-  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
-  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
-    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
-    return infinity(sign);
-  }
-  return undefined;
-}
-
-function equivalenceOptions(source) {
-  return {
-    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
-    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
-  };
-}
-
-function dcResult(label, selected, exact, source) {
-  const selectedLimit = selected?.dc || source?.dc;
-  const exactLimit = exact?.dc || selectedLimit;
-  const selectedValue = dcValue(selectedLimit);
-  const exactValue = dcValue(exactLimit);
-  if (selectedValue === undefined) {
-    return {
-      ok: false,
-      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
-    };
-  }
-  const changed = !sameValue(selectedValue, exactValue);
-  const options = equivalenceOptions(source);
-  return {
-    ok: true,
-    equation: equation(label, selectedValue, changed, options),
-    exactEquation: equation(label, exactValue, false, options),
-    equationProvenance: equationProvenance(label, selectedValue, changed, options),
-    expression: selectedValue,
-    exactExpression: exactValue,
-  };
-}
-
-function rootValue(root) {
-  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
-}
-
-/**
- * The provenance render of one pole or zero. It must mirror the
- * `renderRootEquation` call beside it exactly, options included — a pole row
- * rendered under different options would highlight terms the displayed row
- * does not contain.
- */
-function rootProvenance(kind, index, value) {
-  if (value === undefined || value === null || typeof value === 'string') return undefined;
-  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
-  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
-}
-
-function rootsOf(response, kind) {
-  const roots = response?.[kind] || [];
-  return roots.map((root, index) => {
-    const value = rootValue(root);
-    return {
-      ...root,
-      index,
-      ...(value !== undefined
-        ? {
-          root: value,
-          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
-          equationProvenance: rootProvenance(kind, index, value),
-        }
-        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
-    };
-  });
-}
-
-function frequencyResponse(selected, exact, source) {
-  const has = Boolean(firstDefined(
-    selected?.hasFrequency,
-    exact?.hasFrequency,
-    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
-  ));
-  if (!has) return null;
-  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
-  return {
-    ...base,
-    hasFrequency: true,
-    expression: responseExpression(selected),
-    exactExpression: responseExpression(exact),
-    numerator: selected?.numerator,
-    denominator: selected?.denominator,
-    poles: rootsOf(selected || exact, 'poles'),
-    zeros: rootsOf(selected || exact, 'zeros'),
-  };
-}
-
-function detailsFor(combined, source) {
-  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
-  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
-  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
-  const solution = get('solution');
-  const log = get('log', 'logDetails');
-  return {
-    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
-    ...(solution !== undefined ? { solution } : {}),
-    ...(log !== undefined ? { log } : {}),
-    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
-    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
-    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
-  };
-}
-
-function childSource(combined, key, quantity) {
-  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
-  const names = SOURCE_NAMES[quantity];
-  for (const container of containers) {
-    const found = lookup(container, [key, ...names]);
-    if (found !== undefined) return found;
-  }
-  return null;
-}
-
-function childMetadata(combined, source, key) {
-  const context = combined?.context || {};
-  const metadata = {
-    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
-    input: firstDefined(source?.input, context.input, combined?.input),
-    reference: firstDefined(source?.reference, context.reference, combined?.reference),
-  };
-  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
-}
-
-function childPairs(combined) {
-  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
-    const source = childSource(combined, key, quantity);
-    return [key, pairFor(source)];
-  }));
-}
-
-function adaptChild(combined, key, quantity) {
-  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
-  const raw = childSource(combined, key, quantity);
-  const pair = pairFor(raw);
-  const source = pair.source || {};
-  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
-  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
-  const selected = pair.selected || responseRecord(selectedExpression);
-  const exact = pair.exact || responseRecord(exactExpression);
-  const details = detailsFor(combined, source);
-  const failed = source?.ok === false || (!selectedExpression && source?.error);
-  const reactive = Boolean(frequencyResponse(selected, exact, source));
-  const label = reactive ? `${labelBase}(s)` : labelBase;
-  const changed = !sameValue(selectedExpression, exactExpression);
-  const renderOptions = equivalenceOptions(source);
-  const result = {
-    ...source,
-    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
-    query,
-    ...childMetadata(combined, source, key),
-    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
-    ...(exactExpression !== undefined ? { exactExpression } : {}),
-    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
-    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
-    ...(selectedExpression !== undefined
-      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
-      : {}),
-    ...details,
-    assumptions: unique([combined?.assumptions, source?.assumptions]),
-    approximations: unique([combined?.approximations, source?.approximations]),
-    dependencies: unique([combined?.dependencies, source?.dependencies]),
-    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
-  };
-  if (reactive && key !== 'transfer') delete result.acTransfer;
-  if (!reactive) {
-    delete result.frequencyResponse;
-    delete result.acTransfer;
-  }
-  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
-    result.smallSignalNetlist = combined.smallSignalNetlist;
-  }
-  if (key === 'transfer' && reactive && result.expression !== undefined) {
-    result.acTransfer = {
-      ok: result.ok,
-      equation: result.equation,
-      exactEquation: result.exactEquation,
-      equationProvenance: result.equationProvenance,
-      expression: result.expression,
-      exactExpression: result.exactExpression,
-    };
-  }
-  if (!result.ok) {
-    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
-    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
-    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
-  }
-  return result;
-}
-
-function transferCompanions(combined, children) {
-  const transfer = children.transfer;
-  const input = children.input;
-  const output = children.output;
-  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
-  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
-  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
-  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
-    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
-  }
-  transfer.dcGain = dcGain;
-  transfer.dcInputImpedance = dcInput;
-  transfer.dcOutputImpedance = dcOutput;
-  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
-}
-
-function cleanChild(child) {
-  const result = { ...child };
-  delete result._selected;
-  delete result._exact;
-  delete result._source;
-  return result;
-}
-
-const ROOT_SEPARATOR = ',\\quad ';
-
-/**
- * One Poles or Zeros row: the roots' own equations shown together. The joined
- * provenance render is kept only when every root has one, so the row's markers
- * can never describe a different string than the one displayed.
- */
-function rootRow(roots) {
-  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
-  const parts = roots.map((root) => root.equationProvenance);
-  return {
-    ok: true,
-    equation,
-    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
-  };
-}
-
-/** What the quantities are ratios of, named by the nodes they were taken at. */
-function portEntry(report) {
-  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
-  if (!definitions.length) return null;
-  // A definition, not a derived expression: it names nodes rather than device
-  // parameters, so there is nothing to trace back to the canvas.
-  const lines = definitions.map(({ tex }) => tex);
-  return {
-    title: 'Ports',
-    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
-  };
-}
-
-function equationEntries(reports, report) {
-  const entries = [];
-  const ports = portEntry(report);
-  if (ports) entries.push(ports);
-  const add = (title, result) => {
-    if (result?.ok && result.equation) entries.push({ title, result });
-  };
-  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
-  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
-  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
-  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
-  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
-  add('DC gain', reports.transfer.dcGain);
-  const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
-  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
-  return entries;
-}
-
-/** Convert one exact/selected v2 response set into the legacy child reports. */
-function adaptCombinedReport(report) {
-  if (!report || typeof report !== 'object') {
-    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
-  }
-  const pairs = childPairs(report);
-  const children = {};
-  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
-    const child = adaptChild(report, key, quantity);
-    children[key] = child;
-  }
-  for (const key of Object.keys(children)) {
-    children[key]._selected = pairs[key].selected;
-    children[key]._exact = pairs[key].exact;
-    children[key]._source = pairs[key].source;
-  }
-  const companions = transferCompanions(report, children);
-  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
-  const details = detailsFor(report, report);
-  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
-  const entries = equationEntries(reports, report);
-  const successful = Object.values(reports).filter((child) => child.ok);
-  const context = report.context || {};
-  const inputPort = firstDefined(context.input);
-  const outputPort = firstDefined(context.output);
-  const referencePort = firstDefined(context.reference);
-  const base = {
-    ...report,
-    query: 'combined',
-    ok: successful.length > 0,
-    complete: successful.length === 3,
-    reports,
-    // Port metadata is distinct from the solved impedance and transfer rows.
-    input: inputPort,
-    output: outputPort,
-    reference: referencePort,
-    inputPort,
-    outputPort,
-    referencePort,
-    inputImpedance: reports.input,
-    outputImpedance: reports.output,
-    voltageTransfer: reports.transfer,
-    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
-    ...companions,
-    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
-    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
-    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
-    ...details,
-    equationEntries: entries,
-    equationOrder: entries.map(({ title }) => title),
-    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
-  };
-  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
-  else delete base.frequencyResponse;
-  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
-    base.acTransfer = {
-      ok: reports.transfer.ok,
-      equation: reports.transfer.equation,
-      exactEquation: reports.transfer.exactEquation,
-      expression: reports.transfer.expression,
-      exactExpression: reports.transfer.exactExpression,
-    };
-  } else delete base.acTransfer;
-  return base;
-}
-
-__exports.adaptCombinedReport = adaptCombinedReport;
+/** Text styles for schematic labels, keyed by `fontAttrs` kind. */
+const FONTS = {
+  instance: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
+  label: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
 };
 
-__modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
-const { Circuit } = __require("src/core/model.js");
-const { rectsOverlap } = __require("src/core/geometry.js");
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { renderExpression } = __require("src/core/analysis/present.js");
-/**
- * Draw the small-signal model the solve actually used as an ordinary
- * schematic: one column per node, shunt branches hanging from each node down
- * to a single AC-ground rail, and series branches stacked in rows above the
- * node line. The primitives come from the pipeline *after* its pre-solve
- * transforms (Miller decoupling, `r_o -> infinity`, triode overrides), so the
- * drawing shows the circuit the displayed equations describe, not the
- * schematic they came from.
- *
- * The result is an ordinary `Circuit`: it renders, exports, and analyzes like
- * any other document, which is what makes it checkable -- analyzing the model
- * must reproduce the source schematic's equations.
- */
-
-
-
-
-
-const AC_GROUND_NODE = '@AC_GROUND';
-
-const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
-const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source']);
-const MIN_PITCH = 240;
-const SLOT_PADDING = 240;
-const BUS_Y = 0;
-const SHUNT_Y = 240;
-const RAIL_Y = 480;
-const ROW_H = 240;
-const PORT_GAP = 240;
-
-/** Elements whose branch is drawn with each symbol. */
-const ELEMENT_TYPES = new Map([
-  ['resistor', 'resistor'],
-  ['conductance', 'resistor'],
-  ['triode-resistance', 'resistor'],
-  ['capacitor', 'capacitor'],
-  ['inductor', 'inductor'],
-  ['vccs', 'vccs'],
-  ['current-source', 'current_source'],
-  ['voltage-source', 'voltage_source'],
-]);
-
-function isGround(node) {
-  return node === undefined || node === null || AC_GROUND_NAMES.has(String(node));
+function fontAttrs(kind) {
+  const f = FONTS[kind];
+  if (!f) return '';
+  const parts = [`font-size="${f.size}"`, `fill="${escapeSvg(resolveColor(f.fill))}"`];
+  if (f.weight) parts.push(`font-weight="${f.weight}"`);
+  if (f.italic) parts.push(`font-style="italic"`);
+  return parts.join(' ');
 }
 
-/** Accept every primitive shape the pipeline hands out: branches carry `a`/`b`
- * or `terminals`, controlled sources carry `outPlus`/`outMinus`. */
-function normalize(primitive) {
-  if (!primitive || typeof primitive !== 'object') return null;
-  const a = primitive.a ?? primitive.terminals?.a ?? primitive.outPlus;
-  const b = primitive.b ?? primitive.terminals?.b ?? primitive.outMinus;
-  if (a === undefined && b === undefined) return null;
-  const controlA = primitive.control?.a ?? primitive.controlPlus;
-  const controlB = primitive.control?.b ?? primitive.controlMinus;
+function styleAttrs(style = {}, base = 'symbol', miterLimit) {
+  const width = style.width === 'thin' ? 3 : style.width === 'thick' ? 9 : undefined;
+  const attrs = strokeParts(base, miterLimit, resolveColor(style.color || DEFAULT_INK), width);
+  const dash = style.lineStyle && style.lineStyle !== 'solid'
+    ? { dashed: '12 12', 'dash-dot': '14 10 3 10', dotted: '2 10' }[style.lineStyle]
+    : null;
+  return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
+}
+
+__exports.resolveColor = resolveColor;
+__exports.themeInkSvg = themeInkSvg;
+__exports.setColorToken = setColorToken;
+__exports.strokeAttrs = strokeAttrs;
+__exports.strokeWidth = strokeWidth;
+__exports.fontAttrs = fontAttrs;
+__exports.styleAttrs = styleAttrs;
+__exports.COLOR_PALETTE = COLOR_PALETTE;
+__exports.escapeSvg = escapeSvg;
+};
+
+__modules["src/core/line-style.js"] = function (__require, __exports) {
+/** The one filled triangular arrowhead offered by the shared style menu. */
+const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
+
+function normalizeArrowhead(value, fallback = 'none') {
+  return ARROWHEAD_VALUES.includes(value) ? value : fallback;
+}
+
+function defaultArrowhead(kind) {
+  return kind === 'arrow' || kind === 'connector' ? 'end' : 'none';
+}
+
+function arrowheadEnds(value, fallback = 'none') {
+  const normalized = normalizeArrowhead(typeof value === 'object' ? value?.arrowhead : value, fallback);
   return {
-    id: String(primitive.id || primitive.kind || 'primitive'),
-    kind: String(primitive.kind || '').toLowerCase(),
-    a: isGround(a) ? AC_GROUND_NODE : String(a),
-    b: isGround(b) ? AC_GROUND_NODE : String(b),
-    control: controlA === undefined && controlB === undefined ? null : {
-      a: isGround(controlA) ? AC_GROUND_NODE : String(controlA),
-      b: isGround(controlB) ? AC_GROUND_NODE : String(controlB),
-    },
-    parameter: primitive.parameter ? String(primitive.parameter) : '',
-    value: primitive.value,
-    metadata: primitive.metadata || {},
-    source: primitive,
+    start: normalized === 'start' || normalized === 'both',
+    end: normalized === 'end' || normalized === 'both',
   };
 }
 
-/** `ro1` -> `r_{o1}`, `CGD` -> `C_{GD}`, `gmb2` -> `g_{mb2}`: the same textbook
- * spelling the netlist and the equations use. */
-function textbookSymbol(raw) {
-  const name = String(raw || '');
-  if (!name) return '';
-  if (/^gmb[A-Za-z0-9_]*$/.test(name)) return `g_{mb${name.slice(3)}}`;
-  if (/^gm[A-Za-z0-9_]*$/.test(name)) return `g_{m${name.slice(2)}}`;
-  if (/^go[A-Za-z0-9_]*$/.test(name)) return `g_{o${name.slice(2)}}`;
-  if (/^rds[A-Za-z0-9_]*$/.test(name)) return `r_{ds${name.slice(3)}}`;
-  if (/^ro[A-Za-z0-9_]*$/.test(name)) return `r_{o${name.slice(2)}}`;
-  if (/^[RCL][A-Za-z0-9_]+$/.test(name)) return `${name[0]}_{${name.slice(1)}}`;
-  return name;
-}
-
 /**
- * A controlled source is labelled with its own transconductance times the
- * controlling voltage, the way a hybrid-pi figure is drawn: the control pair
- * is text, never a second pair of wires across the drawing. The pair names the
- * drawing's own nodes -- `g_{m1}(V_{IN} - 0)`, not `g_{m1} v_{gs1}` -- so the
- * reader can follow the control back to a node without decoding a subscript.
+ * Map one shared arrowhead choice onto the individual segments of a
+ * polyline.  A bent route is still one drawable wire, so its heads belong at
+ * the route endpoints rather than at its corner vertices.  On a single
+ * segment both heads can share that segment; otherwise the two heads occupy
+ * the first and last segments independently.
  */
-function controlledSourceLabel(element, nodeName) {
-  const gain = textbookSymbol(element.parameter) || 'g_m';
-  if (!element.control) return gain;
-  const plus = nodeName(element.control.a) || '0';
-  const minus = nodeName(element.control.b) || '0';
-  return `${gain}(${plus} - ${minus})`;
-}
-
-/**
- * A Miller shunt has no parameter symbol of its own, and its admittance is a
- * whole fraction -- far too wide to sit beside a symbol. Name it the way a
- * textbook does and state the value in the legend below the drawing.
- */
-function millerSymbol(element, symbol) {
-  const device = String(element.metadata?.component || '').replace(/\W/g, '') || 'M';
-  const side = element.metadata?.millerSide === 'output' ? 'out' : 'in';
-  return `${symbol === 'capacitor' ? 'C' : 'Y'}_{${device},${side}}`;
-}
-
-/** An admittance divided by `s`, when that leaves no frequency behind: the
- * capacitance a capacitive shunt is drawn as. */
-function perFrequency(value, options) {
-  try {
-    const ops = createRationalOps({ variable: 's', maxOperations: 4000 });
-    const capacitance = ops.div(value, ops.s());
-    if (ops.budget?.exceeded) return null;
-    const rendered = renderExpression(capacitance, options.renderOptions || {});
-    return /(^|[^A-Za-z])s([^A-Za-z]|$)/.test(rendered) ? null : rendered;
-  } catch { return null; }
-}
-
-function elementLabel(element, symbol, options, nodeName) {
-  if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
-  if (element.parameter) return { text: textbookSymbol(element.parameter) };
-  let rendered = '';
-  try { rendered = renderExpression(element.value, options.renderOptions || {}); }
-  catch { rendered = ''; }
-  if (element.kind === 'admittance') {
-    const name = millerSymbol(element, symbol);
-    // A shunt drawn as a capacitor is named as one, so state a capacitance:
-    // the primitive carries the admittance Y = sC, and C = Y/s is the
-    // textbook Miller value.
-    if (symbol === 'capacitor') {
-      const capacitance = perFrequency(element.value, options);
-      if (capacitance) return { text: name, legend: { symbol: name, value: capacitance } };
-    }
-    return { text: name, legend: rendered ? { symbol: `Y_{${name.slice(name.indexOf('{') + 1, -1)}}`, value: rendered } : null };
+function polylineArrowheadValues(points = [], value = 'none') {
+  const route = [];
+  for (const point of points || []) {
+    const next = { x: point.x, y: point.y };
+    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
   }
-  return { text: rendered || element.id };
-}
-
-/**
- * A label's rendered width is only known in a browser, and the drawing has to
- * be laid out before that. Estimate it from the text the way `textWidth` does
- * -- the tight per-glyph model at the label font size -- so columns are spaced
- * for their own contents instead of a fixed guess.
- */
-function estimateLabelWidth(tex) {
-  const plain = String(tex)
-    .replace(/\\left|\\right|\\,|\\;|\\!/g, '')
-    .replace(/\\frac/g, '')
-    .replace(/[{}$]/g, '');
-  return Math.max(120, plain.length * 24);
-}
-
-/** Local offset that renders at a given world offset for a placed symbol. */
-function localOffset(dx, dy, rotation) {
-  const turn = ((rotation % 360) + 360) % 360;
-  if (turn === 90) return { x: dy, y: -dx };
-  if (turn === 180) return { x: -dx, y: -dy };
-  if (turn === 270) return { x: -dy, y: dx };
-  return { x: dx, y: dy };
-}
-
-/** A Miller shunt made only of capacitors is a capacitor in the drawing --
- * that is exactly the textbook Miller capacitance. */
-function elementSymbol(element) {
-  const mapped = ELEMENT_TYPES.get(element.kind);
-  if (mapped) return mapped;
-  if (element.kind === 'admittance') {
-    const kinds = element.metadata?.feedbackKinds || [];
-    if (kinds.length && kinds.every((kind) => kind === 'capacitor')) return 'capacitor';
+  if (route.length < 2) return [];
+  const ends = arrowheadEnds(value);
+  let first = -1;
+  let last = -1;
+  for (let i = 1; i < route.length; i++) {
+    if (samePoint(route[i - 1], route[i])) continue;
+    if (first < 0) first = i;
+    last = i;
   }
-  return 'resistor';
+  if (first < 0) return route.slice(1).map(() => 'none');
+  const values = route.slice(1).map(() => 'none');
+  if (ends.start) values[first - 1] = first === last && ends.end ? 'both' : 'start';
+  if (ends.end) values[last - 1] = ['start', 'both'].includes(values[last - 1]) ? 'both' : 'end';
+  return values;
 }
 
-function uniqueRefdes(base, used) {
-  const clean = String(base || 'X').replace(/[^A-Za-z0-9_]/g, '') || 'X';
-  let candidate = /^[A-Za-z]/.test(clean) ? clean : `X${clean}`;
-  let index = 2;
-  while (used.has(candidate)) candidate = `${clean}_${index++}`;
-  used.add(candidate);
-  return candidate;
+/** Resolve segment-local arrowhead styles to the logical endpoints of a
+ * polyline. This also repairs older documents where an end head was left on
+ * an interior segment after a route gained a bend. */
+function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
+  const values = [];
+  for (let index = 1; index < points.length; index++) {
+    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
+    if (value !== undefined) values.push(normalizeArrowhead(value));
+  }
+  if (!values.length) return normalizeArrowhead(inherited);
+  const start = values.some((value) => arrowheadEnds(value).start);
+  const end = values.some((value) => arrowheadEnds(value).end);
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
 }
 
-/** Node display names, preferring the source circuit's own net names. */
-function nodeNames(report, options) {
-  const names = new Map();
-  const circuit = options.circuit;
-  if (circuit) {
-    for (const net of circuit.nets.values()) names.set(net.id, net.name || net.id);
+/** Return wireStyles with one shared arrowhead choice distributed across a
+ * path's endpoint segments. Existing per-segment appearance is preserved. */
+function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {
+  const next = { ...wireStyles };
+  for (const [index, arrowhead] of polylineArrowheadValues(points, value).entries()) {
+    const key = `${branch}:${index + 1}`;
+    next[key] = { ...(next[key] || {}), arrowhead };
   }
-  for (const [key, value] of options.nodeNames instanceof Map ? options.nodeNames : []) names.set(key, value);
-  return names;
+  return next;
 }
 
-/**
- * Node order across the drawing. The source schematic's own left-to-right
- * order is the one the reader already knows, so use it when the circuit is
- * available; otherwise fall back to first appearance with the analysis input
- * first and its output last.
- */
-function orderNodes(elements, report, options) {
-  const seen = [];
-  for (const element of elements) {
-    for (const node of [element.a, element.b, element.control?.a, element.control?.b]) {
-      if (node && node !== AC_GROUND_NODE && !seen.includes(node)) seen.push(node);
-    }
-  }
-  const circuit = options.circuit;
-  const centre = new Map();
-  if (circuit) {
-    for (const node of seen) {
-      const net = circuit.nets.get(node);
-      const points = (net?.terminals || []).map((terminal) => {
-        try { return circuit.getComponent(terminal.comp).terminalWorld(terminal.term).x; }
-        catch { return null; }
-      }).filter((value) => value !== null);
-      if (points.length) centre.set(node, points.reduce((sum, value) => sum + value, 0) / points.length);
-    }
-  }
-  const inputNode = portNode(report, 'input');
-  const outputNode = portNode(report, 'output');
-  const rank = (node) => node === inputNode ? -Infinity : node === outputNode ? Infinity : 0;
-  return [...seen].sort((left, right) => {
-    const ranked = rank(left) - rank(right);
-    if (Number.isFinite(ranked) && ranked !== 0) return ranked;
-    if (!Number.isFinite(ranked)) return ranked < 0 ? -1 : 1;
-    const a = centre.get(left);
-    const b = centre.get(right);
-    if (a !== undefined && b !== undefined && a !== b) return a - b;
-    return seen.indexOf(left) - seen.indexOf(right);
-  });
-}
+const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
 
-/** The analysis node a port role resolved to, as the context recorded it. */
-function portNode(report, role) {
-  const context = report?.context || report?.details?.pipeline?.context;
-  return context?.[role]?.node || null;
-}
-
-/**
- * Where to hang a node's name: the middle of its longest run, preferring a
- * horizontal one, and only where a label-sized box above the wire clears every
- * symbol. A node whose wires are all crowded keeps its name in the net list
- * rather than printing it over a component.
- */
-function netLabelAnchor(net, width, boxes) {
-  const segments = [];
-  for (const path of (net.paths ? net.paths() : [])) {
-    for (let index = 1; index < path.length; index += 1) segments.push([path[index - 1], path[index]]);
-  }
-  const span = ([a, b]) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-  const horizontal = segments.filter(([a, b]) => a.y === b.y);
-  const ordered = (horizontal.length ? horizontal : segments).sort((left, right) => span(right) - span(left));
-  for (const [a, b] of ordered) {
-    const point = { x: snapTo((a.x + b.x) / 2), y: snapTo((a.y + b.y) / 2) };
-    const box = { x: point.x - width / 2, y: point.y - 120, w: width, h: 120 };
-    if (!boxes.some((other) => rectsOverlap(box, other))) return point;
-  }
-  return null;
-}
-
-function snapTo(value) {
-  return Math.round(value / 40) * 40;
-}
-
-/**
- * Build the drawn model.
- *
- * @param {object} report a successful `analyzeSmallSignalV2` report
- * @param {{circuit?: import('../model.js').Circuit, nodeNames?: Map}} options
- * @returns {{ok: boolean, circuit?: Circuit, correspondence?: Map, notes: string[], error?: string}}
- */
-function smallSignalSchematic(report, options = {}) {
-  const primitives = report?.details?.pipeline?.selected;
-  if (!Array.isArray(primitives) || !primitives.length) {
-    return { ok: false, notes: [], error: 'this analysis produced no small-signal primitives to draw' };
-  }
-  const elements = primitives.map(normalize).filter(Boolean);
-  const names = nodeNames(report, options);
-  // The node's own name, markup included: label text renders `_{...}`.
-  const nodeName = (node) => (!node || node === AC_GROUND_NODE ? '' : String(names.get(node) || node));
-  const plainName = (node) => nodeName(node).replace(/[_^]\{([^}]*)\}/g, '$1');
-  const nodes = orderNodes(elements, report, options);
-  const shunts = new Map(nodes.map((node) => [node, []]));
-  const series = [];
-  for (const element of elements) {
-    const aGround = element.a === AC_GROUND_NODE;
-    const bGround = element.b === AC_GROUND_NODE;
-    if (aGround && bGround) continue;
-    // A controlled source across one node carries no current -- the body
-    // effect of a device whose source is the AC reference. Drawing it says
-    // nothing and costs a column.
-    if (element.control && element.control.a === element.control.b) continue;
-    if (aGround || bGround) shunts.get(bGround ? element.a : element.b).push(element);
-    else series.push(element);
-  }
-
-  // Every element is drawn with its label above it, so a node's slot is as
-  // wide as its own branches need -- a Miller shunt beside a bare r_o should
-  // not push every other column apart.
-  const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
-  const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
-  // A shunt wears its label on its left, so its neighbour must clear it.
-  const widthOf = (element) => Math.max(MIN_PITCH, snapTo(estimateLabelWidth(labels.get(element).text) + 160));
-  const pitches = new Map(nodes.map((node) => [node, Math.max(MIN_PITCH, ...shunts.get(node).map(widthOf))]));
-
-  const columns = new Map();
-  let x = 0;
-  for (const node of nodes) {
-    const count = Math.max(1, shunts.get(node).length);
-    const width = count * pitches.get(node) + 2 * SLOT_PADDING;
-    columns.set(node, snapTo(x + width / 2));
-    x += width;
-  }
-
-  const circuit = new Circuit();
-  const used = new Set();
-  const correspondence = new Map();
-  const notes = [];
-  const legend = [];
-  const attachments = new Map(nodes.map((node) => [node, []]));
-  const groundRefs = [];
-
-  const addElement = (element, placement, upright = true) => {
-    const type = symbols.get(element);
-    const refdes = uniqueRefdes(element.parameter || element.id.replace(/\W/g, ''), used);
-    const component = circuit.addComponent(type, { ...placement, refdes, noLabel: true });
-    const label = labels.get(element);
-    // Plain `_{...}` markup, not a math label: every symbol in the drawing is
-    // a name with a subscript, and a markup label needs no browser
-    // measurement, so the figure lays out the same in a test, an export, and
-    // the dock. The one thing that needs real math -- a Miller admittance --
-    // is named here and stated in the legend instead.
-    //
-    // An upright branch wears its label on the left, where a textbook puts it;
-    // a branch lying along a row wears it above, clear of its own wires. The
-    // offset comes from the label's own measured box rather than the estimate
-    // the columns are spaced by, so the text sits against its symbol instead
-    // of drifting into the gap towards the next one.
-    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
-    const box = owned.bbox();
-    const reach = (extent) => 40 * Math.ceil((40 + extent / 2) / 40);
-    const world = upright ? { x: -reach(box.w), y: 0 } : { x: 0, y: -reach(box.h) };
-    owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
-    owned.clearRenderedTextBounds();
-    if (label.legend) legend.push(label.legend);
-    correspondence.set(refdes, { primitive: element.id, component: element.metadata?.component || null, role: element.kind });
-    return component;
+/** Filled arrowhead geometry for a segment whose tip is `b`. */
+function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const distance = Math.hypot(dx, dy);
+  if (!distance) return null;
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
+  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
+  const normal = { x: uy, y: -ux };
+  return {
+    shaft: base,
+    tip,
+    left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
+    right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
   };
+}
 
-  // Shunt branches: node bus -> element -> ground rail.
-  for (const node of nodes) {
-    const list = shunts.get(node);
-    const centreX = columns.get(node);
-    const pitch = pitches.get(node);
-    list.forEach((element, index) => {
-      const shuntX = snapTo(centreX + (index - (list.length - 1) / 2) * pitch);
-      const vertical = SOURCE_KINDS.has(element.kind);
-      // A source symbol is already vertical; a passive is turned upright. The
-      // current of a controlled source flows from `a` into `b`, so a source
-      // whose ground end is `a` is turned around rather than redrawn.
-      const flipped = element.a === AC_GROUND_NODE;
-      const rotation = vertical ? (flipped ? 180 : 0) : (flipped ? 270 : 90);
-      const component = addElement(element, { x: shuntX, y: SHUNT_Y, rotation }, true);
-      const [top, bottom] = flipped ? ['b', 'a'] : ['a', 'b'];
-      attachments.get(node).push(`${component.refdes}.${top}`);
-      groundRefs.push(`${component.refdes}.${bottom}`);
-    });
+/**
+ * Return a polyline shortened at the decorated endpoints plus the filled
+ * heads. The input is never mutated. Endpoint decoration works for straight,
+ * diagonal, and orthogonal multi-point paths.
+ */
+function polylineArrowheads(points = [], value = 'none', options = {}) {
+  const route = [];
+  for (const point of points || []) {
+    const next = { x: point.x, y: point.y };
+    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
   }
-
-  // Series branches stack in rows above the node line, lowest row first.
-  const rows = [];
-  for (const element of series) {
-    const left = Math.min(columns.get(element.a), columns.get(element.b));
-    const right = Math.max(columns.get(element.a), columns.get(element.b));
-    let row = rows.findIndex((spans) => spans.every(([from, to]) => right <= from || left >= to));
-    if (row < 0) row = rows.push([]) - 1;
-    rows[row].push([left, right]);
-    const y = BUS_Y - (row + 1) * ROW_H;
-    const rotation = SOURCE_KINDS.has(element.kind) ? 270 : 0;
-    const component = addElement(element, { x: snapTo((left + right) / 2), y, rotation }, false);
-    const aLeft = columns.get(element.a) <= columns.get(element.b);
-    attachments.get(element.a).push(`${component.refdes}.${aLeft ? 'a' : 'b'}`);
-    attachments.get(element.b).push(`${component.refdes}.${aLeft ? 'b' : 'a'}`);
+  if (route.length < 2) return { shaftPoints: route, heads: [] };
+  const ends = arrowheadEnds(value, options.fallback || 'none');
+  let first = -1;
+  let last = -1;
+  for (let i = 1; i < route.length; i++) {
+    if (samePoint(route[i - 1], route[i])) continue;
+    if (first < 0) first = i;
+    last = i;
   }
+  if (first < 0) return { shaftPoints: route, heads: [] };
+  const sameSegment = first === last;
+  const fullLength = options.length ?? 32;
+  const halfWidth = options.halfWidth ?? 18;
+  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
+  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
+  const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
+  const length = sameSegment && ends.start && ends.end
+    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
+    : fullLength;
+  const heads = [];
+  const shaftPoints = route.map((point) => ({ ...point }));
+  if (ends.start) {
+    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
+    if (head) {
+      heads.push({ ...head, placement: 'start' });
+      shaftPoints[0] = head.shaft;
+    }
+  }
+  if (ends.end) {
+    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
+    if (head) {
+      heads.push({ ...head, placement: 'end' });
+      shaftPoints[shaftPoints.length - 1] = head.shaft;
+    }
+  }
+  return { shaftPoints, heads };
+}
 
-  // The interface ports read left to right on the node line itself, outside
-  // every column: the input node sorts first and the output node last, so
-  // neither stub crosses another node's bus.
-  const portNodes = new Set();
-  // Outside everything drawn, and outside every column: a node that only
-  // controls a source has a column but nothing standing in it.
-  const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
-  const spans = [...columns.values()];
-  const leftEdge = snapTo(Math.min(...drawn.map((box) => box.x), ...spans) - PORT_GAP);
-  const rightEdge = snapTo(Math.max(...drawn.map((box) => box.x + box.w), ...spans) + PORT_GAP);
-  const portFor = (node, type, side) => {
-    if (!node || !columns.has(node)) return;
-    const refdes = uniqueRefdes(plainName(node), used);
-    const port = circuit.addComponent(type, {
-      refdes, x: side === 'left' ? leftEdge : rightEdge, y: BUS_Y, noLabel: true,
-    });
-    // Above the port, not beside it: an outward-facing port box already
-    // occupies the side its own label offset points at.
-    circuit.addLabel({ owner: refdes, text: nodeName(node), align: 'center', offset: { x: 0, y: -120 } });
-    attachments.get(node).push(`${port.refdes}.p`);
-    portNodes.add(node);
+__exports.normalizeArrowhead = normalizeArrowhead;
+__exports.defaultArrowhead = defaultArrowhead;
+__exports.arrowheadEnds = arrowheadEnds;
+__exports.polylineArrowheadValues = polylineArrowheadValues;
+__exports.polylineArrowheadValue = polylineArrowheadValue;
+__exports.polylineArrowheadStyles = polylineArrowheadStyles;
+__exports.arrowheadGeometry = arrowheadGeometry;
+__exports.polylineArrowheads = polylineArrowheads;
+__exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
+};
+
+__modules["src/core/document.js"] = function (__require, __exports) {
+const { Circuit } = __require("src/core/model.js");
+const { svgString } = __require("src/core/render.js");
+
+
+
+function documentKind(data) {
+  if (data?.kind === 'block') throw new Error('block diagram documents are no longer supported');
+  return 'circuit';
+}
+function documentKindLabel() { return 'Schematic'; }
+function createDocument(kind = 'circuit') {
+  if (kind === 'circuit' || kind === 'schematic') return new Circuit();
+  throw new Error(`unknown document kind "${kind}"`);
+}
+/** Load a saved document. Schematics are normalized to the app's single wire
+ * model: legacy fixed nets become managed nets with protected diagonals. */
+function loadDocument(data) {
+  documentKind(data);
+  const circuit = Circuit.fromJSON(data);
+  circuit.convertFixedNets();
+  return circuit;
+}
+function renderDocument(document, options = {}) { return svgString(document, options); }
+function saveDocument(document) { return document.toJSON(); }
+function isDocument(value) { return value instanceof Circuit; }
+
+__exports.documentKind = documentKind;
+__exports.documentKindLabel = documentKindLabel;
+__exports.createDocument = createDocument;
+__exports.loadDocument = loadDocument;
+__exports.renderDocument = renderDocument;
+__exports.saveDocument = saveDocument;
+__exports.isDocument = isDocument;
+};
+
+__modules["src/core/render.js"] = function (__require, __exports) {
+const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
+const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
+const { autoRoute, steinerBranches } = __require("src/core/router.js");
+const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
+const { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
+const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
+
+
+
+
+
+
+
+function pt(x, y) {
+  return `${fmt(x)} ${fmt(y)}`;
+}
+
+/**
+ * Map an absolute M/L/C path's coordinates through a component transform.
+ * `trim` pulls a straight first/last segment's ends in by that distance, so a
+ * butt-ended lead keeps its exact look inside a square-capped ink path.
+ */
+function transformPathD(d, t, trim = 0) {
+  const tokens = String(d).match(/[MLC]|-?\d*\.?\d+(?:e-?\d+)?/gi) || [];
+  const commands = [];
+  for (const token of tokens) {
+    if (/^[MLC]$/.test(token)) commands.push({ command: token, values: [] });
+    else commands.at(-1)?.values.push(Number(token));
+  }
+  const pull = (point, toward) => {
+    const dx = toward[0] - point[0];
+    const dy = toward[1] - point[1];
+    const length = Math.hypot(dx, dy);
+    if (!length || length <= 2 * trim) return point;
+    return [point[0] + dx / length * trim, point[1] + dy / length * trim];
   };
-  portFor(portNode(report, 'input'), 'input', 'left');
-  portFor(portNode(report, 'output'), 'output', 'right');
+  if (trim > 0 && commands.length >= 2 && commands[0].command === 'M' && commands[1].command === 'L') {
+    const [x, y] = pull(commands[0].values.slice(0, 2), commands[1].values.slice(0, 2));
+    commands[0].values.splice(0, 2, x, y);
+  }
+  const last = commands.at(-1);
+  if (trim > 0 && commands.length >= 2 && last.command === 'L' && last.values.length === 2) {
+    const prev = commands.at(-2).values.slice(-2);
+    const [x, y] = pull(last.values, prev);
+    last.values.splice(0, 2, x, y);
+  }
+  const format = (n) => Number(n.toFixed(3));
+  return commands.map(({ command, values }) => {
+    const points = [];
+    for (let i = 0; i + 1 < values.length; i += 2) {
+      const p = applyTransform(t, values[i], values[i + 1]);
+      points.push(`${format(p.x)} ${format(p.y)}`);
+    }
+    return `${command} ${points.join(' ')}`;
+  }).join(' ');
+}
 
-  // One AC-ground rail under the whole drawing.
-  const railX = snapTo(Math.min(...columns.values()) - SLOT_PADDING);
-  const ground = circuit.addComponent('ground', { refdes: 'GND', x: railX, y: RAIL_Y, noLabel: true });
-  groundRefs.push(`${ground.refdes}.gnd`);
+/** Solid strokes merged into one path render without doubled anti-aliased edges. */
+function solidStyle(style) {
+  return !style?.lineStyle || style.lineStyle === 'solid';
+}
 
-  const failures = [];
-  const wire = (refs, name, stub = null) => {
-    try {
-      // A node that only controls a source -- a bare gate -- has no branch of
-      // its own. Draw its port down to the node line anyway: the controlling
-      // voltage needs somewhere to be read.
-      if (refs.length === 1 && stub) {
-        circuit.wireTo(refs[0], stub);
-        return null;
+function strokeWidthOf(style, base = 'symbol') {
+  return strokeWidth(style, base);
+}
+
+/** These terminals land on the centerline of a stroked body outline. Pull a
+ * filled arrowhead out by half that outline so its tip meets the visible edge
+ * rather than disappearing into the body. */
+function terminalBodyInset(circuit, point) {
+  for (const component of circuit.components.values()) {
+    if (!['block', 'signal_sum', 'signal_multiply'].includes(component.type)) continue;
+    if (component.terminalDefs.some((terminal) => {
+      const world = component.terminalWorld(terminal.name);
+      return world.x === point.x && world.y === point.y;
+    })) return strokeWidthOf(component.style, 'emph') / 2;
+  }
+  return 0;
+}
+
+function wireArrowheadOptions(circuit, points) {
+  return {
+    startInset: terminalBodyInset(circuit, points[0]),
+    endInset: terminalBodyInset(circuit, points.at(-1)),
+  };
+}
+
+// One shared miter limit keeps merged wires and sharp resistor leads in one
+// group, and every ink subpath uses the wires' projecting square cap.
+const INK_MITER_LIMIT = 5;
+function inkAttrs(style) {
+  return styleAttrs(style, 'wire', INK_MITER_LIMIT);
+}
+
+function polygonPoints(g) {
+  if (typeof g.points === 'string') return g.points;
+  return (g.points || []).map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' ');
+}
+
+function graphicsToSvg(g, textTransform = '', objectStyle = null) {
+  const stroke = objectStyle ? styleAttrs(objectStyle, g.style, g.miterLimit) : strokeAttrs(g.style, g.miterLimit);
+  switch (g.kind) {
+    case 'path':
+      return `<path d="${g.d}" fill="none" ${stroke}/>`;
+    case 'circle':
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${stroke}/>`;
+    case 'rect':
+      return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${stroke}/>`;
+    case 'polygon':
+      if (g.fill === 'foreground') {
+        return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(objectStyle?.color || '#111'))}" stroke="none"/>`;
       }
-      if (refs.length < 2) return null;
-      const net = circuit.connect(...refs);
-      if (name && net) circuit.renameNet(net, name);
-      return net;
-    } catch (error) { failures.push(`${name || 'net'}: ${error.message}`); }
-    return null;
-  };
-  const wired = new Map();
-  for (const node of nodes) {
-    wired.set(node, wire(attachments.get(node), nodeName(node) || node, { x: columns.get(node), y: BUS_Y }));
+      return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(g.fill || 'none'))}" ${stroke}/>`;
+    case 'text':
+      return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${escapeSvg(g.text)}</text>`;
+    case 'dot':
+      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${escapeSvg(resolveColor(objectStyle?.color || g.fill || '#111'))}" stroke="none"/>`;
+    default:
+      return '';
   }
-  wire(groundRefs, 'VSS');
-
-  // Name the nodes on the drawing. A node with a port already reads its name
-  // off that port, and the AC-ground rail is what the ground symbol says.
-  // Clear of every symbol *and* every label already placed: a node name that
-  // lands on a branch's own label is as unreadable as one over a symbol.
-  const boxes = [
-    ...[...circuit.components.values()].map((component) => component.bboxWorld()),
-    ...[...circuit.labels.values()].map((label) => label.bbox()),
-  ];
-  for (const node of nodes) {
-    const net = wired.get(node);
-    if (!net || portNodes.has(node) || !net.name) continue;
-    const anchor = netLabelAnchor(net, estimateLabelWidth(net.name), boxes);
-    if (!anchor) continue;
-    try { circuit.addNetLabel(net, { anchor, netSide: 'above' }); }
-    catch { /* a node whose wire the router shaped differently keeps its name in the net list */ }
-  }
-  if (failures.length) notes.push(`${failures.length} connection${failures.length === 1 ? '' : 's'} could not be routed automatically`);
-
-  const miller = (report?.details?.pipeline?.millerSubstitutions || []).map(({ device }) => device).filter(Boolean);
-  if (miller.length) notes.push(`Miller approximation applied to ${miller.join(', ')}`);
-  const omitted = report?.details?.pipeline?.omittedOutputResistances || [];
-  if (omitted.length) notes.push(`r_o omitted for ${omitted.join(', ')}`);
-
-  return { ok: true, circuit, correspondence, notes, legend, failures };
 }
 
-__exports.textbookSymbol = textbookSymbol;
-__exports.smallSignalSchematic = smallSignalSchematic;
-__exports.AC_GROUND_NODE = AC_GROUND_NODE;
+function symbolTextSvg(g, t, color = '#111') {
+  const p = applyTransform(t, g.x, g.y);
+  const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`);
+  const attrs = `x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none"`;
+  const lines = String(g.text ?? '').split('\n');
+  if (lines.length === 1) return `<text ${attrs}>${escapeSvg(lines[0])}</text>`;
+  const lineHeight = g.font === 'label' ? LABEL_FONT_SIZE : 16;
+  const firstDy = -((lines.length - 1) * lineHeight) / 2;
+  const tspans = lines.map((line, index) => `<tspan x="${fmt(p.x)}" dy="${fmt(index ? lineHeight : firstDy)}">${escapeSvg(line)}</tspan>`).join('');
+  return `<text ${attrs}>${tspans}</text>`;
+}
+
+function textEl(x, y, text, anchor, size, fill) {
+  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${escapeSvg(resolveColor(fill || '#111'))}" stroke="none">${escapeSvg(text)}</text>`;
+}
+
+// Label-object text with one of the style.js font kinds ("instance" | "label").
+// Runs with `sub`/`super` render as tspans (baseline-shift + smaller size) so
+// instance labels like M1 render as M with a subscript 1, keeping the text's
+// alignment/anchor untouched (alignment is handled by the parent <text>).
+function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
+  let font = fontAttrs(kind)
+    .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`)
+    .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
+    .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
+  if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
+  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
+  if (runs.length === 1 && !runs[0].sub && !runs[0].super && !runs[0].text.includes('\n')) {
+    return `<text ${attrs}>${escapeSvg(runs[0].text)}</text>`;
+  }
+  const lineRuns = [[]];
+  for (const run of runs) {
+    const parts = String(run.text).split('\n');
+    parts.forEach((part, index) => {
+      if (part) lineRuns.at(-1).push({ ...run, text: part });
+      if (index < parts.length - 1) lineRuns.push([]);
+    });
+  }
+  const renderRuns = (line) => line.map((r) => {
+      if (!r.sub && !r.super) return escapeSvg(r.text);
+      const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
+      const size = r.sub || r.super ? ' font-size="0.62em"' : '';
+      return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
+    }).join('');
+  const body = lineRuns.length === 1
+    ? renderRuns(lineRuns[0])
+    : lineRuns.map((line, lineIndex) => `<tspan x="${fmt(x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
+  return `<text ${attrs}>${body}</text>`;
+}
+
+const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
+
+function mathMlAtom(value, kind = 'mi', attrs = '') {
+  return `<${kind}${attrs ? ` ${attrs}` : ''}>${escapeSvg(value)}</${kind}>`;
+}
+
+function mathMlDelimiter(value, stretchy = true) {
+  // Fences stretch to their own <mrow> (see parseFenced), so no minimum size
+  // is imposed: a short group keeps LaTeX's text-size parenthesis. TeX sets
+  // no space between a fence and its content, so neither do we.
+  return mathMlAtom(value, 'mo', `fence="true" stretchy="${stretchy}" lspace="0em" rspace="0em"`);
+}
+
+// TeX typesets a leading sign as a prefix: `-g_m` is tight, while the `-` of
+// `a - b` keeps binary spacing. It also draws U+2212, which is wider and sits
+// higher than the ASCII hyphen.
+const MATH_SIGNS = { '-': '\u2212', '+': '+' };
+
+// TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
+// Greek upright, which needs the explicit variant.
+const GREEK_LOWER = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
+  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
+  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
+  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'ϕ',
+  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+};
+const GREEK_UPPER = {
+  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+};
+
+// TeX Appendix G rule 18a: when the nucleus is a single character, the script
+// shift ignores that character's own height and depth, so `g_m` and `r_o` set
+// their subscripts on one line. MathML instead drops a subscript clear of a
+// descender (the MATH table's SubscriptBaselineDropMin) and lifts a
+// superscript clear of a tall base, which parts those subscripts by 0.17 em.
+// Zeroing the metric each shift is measured from restores TeX's rule; mpadded
+// changes only the reported box, so the glyph itself is untouched.
+const SINGLE_CHARACTER = /^<m[in](?: [^>]*)?>(?:[^<&]|&[a-z]+;|&#\d+;)<\/m[in]>$/;
+
+// A provenance wrapper (see the `\pv` branch below) must not hide the nucleus
+// it groups: the padding belongs on the character, the `data-node` attribute
+// outside it, so a provenance render lays out exactly like an ordinary one.
+const PROVENANCE_ROW = /^(<mrow data-node="\d+">)([\s\S]*)(<\/mrow>)$/;
+
+function mathMlNucleus(base, metric) {
+  const wrapped = PROVENANCE_ROW.exec(base);
+  if (wrapped) return `${wrapped[1]}${mathMlNucleus(wrapped[2], metric)}${wrapped[3]}`;
+  return SINGLE_CHARACTER.test(base) ? `<mpadded ${metric}="0">${base}</mpadded>` : base;
+}
+
+function mathMlSign(value, prefix) {
+  const glyph = MATH_SIGNS[value];
+  return prefix
+    ? mathMlAtom(glyph, 'mo', 'form="prefix" lspace="0em" rspace="0em"')
+    : mathMlAtom(glyph, 'mo', 'form="infix"');
+}
+
+/** Size table shared by the parallel operator and the evaluation bar. */
+function fenceSize(tall, requestedSize) {
+  if (requestedSize === 'Bigg') return 'minsize="2.8em" maxsize="3.4em"';
+  if (requestedSize === 'bigg') return 'minsize="2.4em" maxsize="3.0em"';
+  if (requestedSize === 'Big') return 'minsize="2.0em" maxsize="2.5em"';
+  if (requestedSize === 'big') return 'minsize="1.6em" maxsize="2.0em"';
+  return tall ? 'minsize="2.2em" maxsize="2.8em"' : 'minsize="1.2em"';
+}
+
+/**
+ * A single tall bar, as in `Z_{out} = v/i \Big\vert_{v_{in}=0}`: the
+ * condition a quantity was evaluated under. It takes the same sizing as the
+ * parallel operator, and hugs its own subscript on the right.
+ */
+function mathMlEvaluationBar(tall = false, requestedSize = null) {
+  const attrs = `fence="true" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0em"`;
+  return mathMlAtom('|', 'mo', attrs);
+}
+
+function mathMlParallel(tall = false, requestedSize = null) {
+  // Use the same single double-bar operator as LaTeX `\Vert`, rather than
+  // two independent bars whose MathML operator spacing creates a large gap.
+  // Explicit Big/Bigg commands win; a fraction on the line gets the compact
+  // `\Big\Vert` treatment automatically.
+  const attrs = `fence="false" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0.15em"`;
+  return mathMlAtom('∥', 'mo', attrs);
+}
+
+/** Pixel size declared on an SVG root, with a sensible fallback. Shared by the
+ *  editor's PNG rasterization and the server's PDF page sizing. */
+function svgPixelSize(svg) {
+  const root = String(svg).match(/<svg\b[^>]*>/i)?.[0] || '';
+  const width = Number(root.match(/\bwidth="([\d.]+)"/i)?.[1]);
+  const height = Number(root.match(/\bheight="([\d.]+)"/i)?.[1]);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : 1000,
+    height: Number.isFinite(height) && height > 0 ? height : 800,
+  };
+}
+
+/** Convert the small TeX subset emitted by symbolic analysis into MathML.
+ * MathML is rendered by the browser inside the live SVG through a
+ * foreignObject; keeping this parser local avoids a runtime CDN dependency. */
+function texToMathML(source) {
+  const text = stripMathDelimiters(source).replace(/\s+/g, ' ').trim();
+  const hasFraction = /\\frac\b/.test(text);
+  let index = 0;
+  const commandSymbols = {
+    parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
+    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→', gg: '≫',
+    ll: '≪', equiv: '≡', propto: '∝', partial: '∂',
+  };
+  let requestedParallelSize = null;
+  const skipSpaces = () => { while (text[index] === ' ') index += 1; };
+  const parseSequence = (stop = null) => {
+    const atoms = [];
+    while (index < text.length) {
+      if (stop && text[index] === stop) { index += 1; break; }
+      const token = text[index];
+      if (token === '_' || token === '^') {
+        index += 1;
+        const script = parseArgument();
+        const base = atoms.pop() || mathMlAtom('', 'mi');
+        atoms.push(token === '_'
+          ? `<msub>${mathMlNucleus(base, 'depth')}${script}</msub>`
+          : `<msup>${mathMlNucleus(base, 'height')}${script}</msup>`);
+        continue;
+      }
+      atoms.push(parseAtom(atoms[atoms.length - 1]));
+    }
+    return atoms.join('');
+  };
+  // A fenced group is its own <mrow>, so its delimiters stretch to that group
+  // and nothing else — what LaTeX's \left…\right does. Without the wrapper
+  // every parenthesis stretches to the tallest thing on the line, so `A_v(s)`
+  // next to a fraction grows parentheses several lines tall.
+  const parseFenced = (open, close) => {
+    const body = parseSequence(close);
+    const closed = text[index - 1] === close;
+    // Only a group that is genuinely taller than one line gets stretched
+    // fences, the way a TeX author reaches for \left…\right there and plain
+    // parentheses everywhere else: a stretched glyph is also padded away from
+    // its content, which reads as a gap around short groups like `(s)`.
+    const tall = /<mfrac|<msqrt/.test(body);
+    return `<mrow>${mathMlDelimiter(open, tall)}${body}${closed ? mathMlDelimiter(close, tall) : ''}</mrow>`;
+  };
+  const parseArgument = () => {
+    skipSpaces();
+    if (text[index] === '{') {
+      index += 1;
+      return `<mrow>${parseSequence('}')}</mrow>`;
+    }
+    return parseAtom();
+  };
+  // A marker argument is read literally: `present.js` writes only digits here
+  // and its contents are an AST node id, not math to typeset.
+  const parseRawArgument = () => {
+    skipSpaces();
+    if (text[index] !== '{') return '';
+    index += 1;
+    let raw = '';
+    while (index < text.length && text[index] !== '}') raw += text[index++];
+    if (text[index] === '}') index += 1;
+    return raw;
+  };
+  const parseTextArgument = () => {
+    skipSpaces();
+    if (text[index] !== '{') return parseArgument();
+    index += 1;
+    let depth = 1;
+    let raw = '';
+    while (index < text.length && depth > 0) {
+      const ch = text[index++];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+      if (depth > 0) raw += ch;
+    }
+    // TeX/editor spacing commands have no literal glyph to emit. Preserve
+    // them as visible word spaces in <mtext> so prose such as "Miller
+    // approximation used for" does not collapse together.
+    const prose = raw
+      // Accept the editor's escaped colon while converting other spacing
+      // commands to ordinary word spaces.
+      .replace(/\\:/g, ':')
+      .replace(/\\qquad/g, '  ')
+      .replace(/\\quad/g, ' ')
+      .replace(/\\[;,!]/g, ' ')
+      .replace(/\\ /g, ' ')
+      .replace(/\s+/g, ' ');
+    return `<mtext>${escapeSvg(prose).replace(/ /g, '&#160;')}</mtext>`;
+  };
+  const parseCommand = () => {
+    index += 1; // backslash
+    const match = text.slice(index).match(/^[A-Za-z]+|^./);
+    if (!match) return mathMlAtom('\\', 'mo');
+    const name = match[0];
+    index += name.length;
+    if (name === 'frac') {
+      const numerator = parseArgument();
+      const denominator = parseArgument();
+      return `<mfrac>${numerator}${denominator}</mfrac>`;
+    }
+    if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
+    if (name === 'pv') {
+      // Provenance marker from `present.js`: the first group is the AST node
+      // id, the second is the sub-expression rendered from it. The wrapper is
+      // an <mrow>, MathML's own grouping element, so it carries the attribute
+      // without changing layout. Ordinary renders emit no markers, so nothing
+      // persisted, exported, or edited as a label ever reaches this branch.
+      const id = parseRawArgument().replace(/[^0-9]/g, '');
+      skipSpaces();
+      if (text[index] !== '{') return `<mrow data-node="${id}">${parseAtom()}</mrow>`;
+      index += 1;
+      return `<mrow data-node="${id}">${parseSequence('}')}</mrow>`;
+    }
+    // \left is transparent: the delimiter after it starts a fenced group like
+    // any other. \right and \middle are dropped without consuming their
+    // delimiter, so the enclosing group closes on it exactly once.
+    if (name === 'left') return parseAtom();
+    if (name === 'right' || name === 'middle') return '';
+    if (name === '|') {
+      // The analysis engine emits the TeX-safe parallel spelling `\|\|`.
+      // Consume both escaped bars as one compact operator so the second bar
+      // is not parsed as an independent stretchy delimiter.
+      if (text[index] === '\\' && text[index + 1] === '|') index += 2;
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (name === 'vert') {
+      const bar = mathMlEvaluationBar(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return bar;
+    }
+    if (name === 'Vert') {
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (name === 'mathrm' || name === 'text' || name === 'operatorname') return parseTextArgument();
+    if (name === 'parallel') {
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (['big', 'Big', 'bigg', 'Bigg'].includes(name)) {
+      requestedParallelSize = name;
+      return '';
+    }
+    if (name === 'quad') return '<mspace width="1em"/>';
+    if (name === 'qquad') return '<mspace width="2em"/>';
+    if (name === '>') return mathMlAtom('>', 'mo');
+    if (GREEK_LOWER[name]) return mathMlAtom(GREEK_LOWER[name], 'mi');
+    if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
+    if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
+    if (name === ',' || name === ';' || name === '!') return '';
+    return mathMlAtom(name, 'mi');
+  };
+  // An atom that follows nothing, or follows an operator, starts an
+  // expression: a sign there is TeX's prefix form.
+  const parseAtom = (previous = null) => {
+    skipSpaces();
+    if (index >= text.length) return '';
+    // Be forgiving for hand-authored labels that use plain `||` rather than
+    // the TeX-safe `\|\|` spelling.  Both forms render identically, while
+    // the stored label source remains untouched for editing.
+    if (text[index] === '|' && text[index + 1] === '|') {
+      index += 2;
+      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
+      requestedParallelSize = null;
+      return parallel;
+    }
+    if (text[index] === '\\') return parseCommand();
+    if (text[index] === '{') {
+      index += 1;
+      return `<mrow>${parseSequence('}')}</mrow>`;
+    }
+    const char = text[index++];
+    if (/[A-Za-z]/.test(char)) return mathMlAtom(char, 'mi');
+    if (/[0-9]/.test(char)) return mathMlAtom(char, 'mn');
+    if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
+    if ('()[]|'.includes(char)) return mathMlDelimiter(char);
+    if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));
+    if (char === ' ' && text[index] === ' ') return '<mspace width="0.25em"/>';
+    return mathMlAtom(char, 'mo');
+  };
+  return `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" style="font-family:${MATH_FONT_FAMILY};color:inherit"><mrow>${parseSequence()}</mrow></math>`;
+}
+
+function mathLabelSvg(label, opacity = '') {
+  const box = label.bbox();
+  const color = resolveColor(label.style?.color || '#111');
+  // Keep the default ink theme-aware.  Math labels live in an XHTML
+  // foreignObject, so the SVG attribute recoloring rules used by ordinary
+  // <text> labels do not reach their inline `color` declaration.  Explicit
+  // user colors remain literal and therefore are not changed by dark mode.
+  const colorCss = color.toLowerCase() === '#111' ? 'var(--svg-ink, #111)' : color;
+  const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
+  const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
+  const aria = escapeSvg(`Math label ${label.text}`);
+  const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
+  const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
+  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;pointer-events:none;`;
+  const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
+  const lines = stripMathDelimiters(label.text).split(/\r?\n/)
+    .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
+    .join('');
+  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
+}
+
+function polylineD(points) {
+  return points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+}
+
+function arrowheadsSvg(heads, color, opacity = '') {
+  return heads.map((head) => `<polygon points="${pt(head.tip.x, head.tip.y)} ${pt(head.left.x, head.left.y)} ${pt(head.right.x, head.right.y)}" fill="${escapeSvg(resolveColor(color || '#111'))}" stroke="none"${opacity}/>`).join('');
+}
+
+function styledPolylineSvg(points, style, base, fallback = 'none', opacity = '') {
+  const geometry = polylineArrowheads(points, style?.arrowhead, { fallback });
+  if (geometry.shaftPoints.length < 2) return '';
+  const attrs = styleAttrs(style, base);
+  return `<path d="${polylineD(geometry.shaftPoints)}" fill="none"${opacity} ${attrs}/>${arrowheadsSvg(geometry.heads, style?.color, opacity)}`;
+}
+
+function shapeAnnotationSvg(label, opacity = '') {
+  const a = label.anchor; const b = label.end;
+  if (label.kind === 'line' || label.kind === 'arrow') {
+    const points = label.points?.length ? label.points : [a, b];
+    return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);
+  }
+  const attrs = styleAttrs(label.style);
+  if (label.kind === 'box') {
+    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+    return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
+  }
+}
+/**
+ * Bare drawable geometry of one component (body graphics plus symbol text),
+ * without ids, labels, or accessibility wrappers. Editor effects restyle it
+ * with CSS, e.g. the commit-feedback glow that traces the symbol itself.
+ */
+function componentShapeSvg(c) {
+  const t = c.transform;
+  const body = c.type === 'block'
+    ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
+    : c.def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
+  const text = c.def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
+  return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
+}
+
+/**
+ * Bare drawable geometry of one label: its text, or the line/arrow/box of a
+ * visual annotation. Math labels are HTML (foreignObject) and return null.
+ */
+function labelShapeSvg(label) {
+  if (['box', 'arrow', 'line'].includes(label.kind)) return shapeAnnotationSvg(label);
+  if (label.math) return null;
+  const t = label.textPos();
+  return labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
+}
+
+/**
+ * Render a Circuit to an SVG string.
+ * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
+ * draw terminal dots / net junction dots. opts.background: white rect.
+ * opts.netNames: label nets by name. opts.includeBBox: draw component bboxes.
+ * opts.emptyHint: draw the 'empty schematic' placeholder (default true).
+ * opts.themeInk: emit default ink as currentColor for theme-aware editor views.
+ * opts.underlay: emit an empty editor-underlay group above the grid for effects.
+ * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
+ * absent, the view auto-fits the circuit contents (used for exports / PNG).
+ */
+function svgString(circuit, opts = {}) {
+  const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
+  const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
+  const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
+  const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
+  const b = circuit.bounds(o.grid || o.background ? 0 : 20);
+  const vp = o.viewport;
+  const empty = b.w <= 0 && b.h <= 0;
+  if (empty && !vp) {
+    const w = 400;
+    const h = 200;
+    const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
+    parts.push(`<rect width="${w}" height="${h}" fill="#fff"/>`);
+    if (o.grid) {
+      for (let x = 0; x <= w; x += GRID) parts.push(`<line class="grid-line" x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="#eee" stroke-width="1"/>`);
+      for (let y = 0; y <= h; y += GRID) parts.push(`<line class="grid-line" x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#eee" stroke-width="1"/>`);
+    }
+    parts.push(textEl(w / 2, h / 2, 'empty schematic', 'middle', 16, '#999'));
+    parts.push('</svg>');
+    return parts.join('\n');
+  }
+
+  // Extents to draw (in world units). With a viewport the window is the exact
+  // view (so free panning never rescales the drawing); without one, the view
+  // auto-fits the circuit contents (exports / PNG).
+  const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
+  const x0 = vp ? vp.x : floorGrid(b.x) - pad;
+  const y0 = vp ? vp.y : floorGrid(b.y) - pad;
+  const x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
+  const y1 = vp ? vp.y + vp.h : ceilGrid(b.y + b.h) + pad;
+  const W = x1 - x0;
+  const H = y1 - y0;
+
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(W)} ${fmt(H)}">`,
+  ];
+
+  if (o.background) parts.push(`<rect x="${fmt(x0)}" y="${fmt(y0)}" width="${fmt(W)}" height="${fmt(H)}" fill="#fff"/>`);
+
+  if (empty && o.emptyHint) parts.push(textEl(x0 + W / 2, y0 + H / 2, 'empty schematic', 'middle', 16, '#999'));
+
+  if (o.grid) {
+    if (vp) {
+      for (let x = ceilGrid(vp.x); x <= ceilGrid(vp.x + vp.w); x += GRID) {
+        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
+      }
+      for (let y = ceilGrid(vp.y); y <= ceilGrid(vp.y + vp.h); y += GRID) {
+        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
+      }
+    } else {
+      for (let x = x0; x <= x1; x += GRID) {
+        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
+      }
+      for (let y = y0; y <= y1; y += GRID) {
+        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
+      }
+    }
+  }
+  // Editor-only slot for transient effects that should glow behind the drawing.
+  if (o.underlay) parts.push('<g class="editor-underlay"></g>');
+  // The crosshair is a navigation aid, not an object highlight. Render it
+  // before components, wires, and labels so those objects remain readable.
+  if (o.cursor && o.cursorCrosshair) {
+    const { x, y } = o.cursor;
+    const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
+    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
+  }
+  const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
+  const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);
+  const labels = [...circuit.labels.values()];
+  const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
+
+  // Bottom layer: visual shape annotations and their child labels. Keeping
+  // these together prevents annotation text from floating above the other
+  // default layers when a box or arrow has a caption.
+  const annotationShapes = labels
+    .filter((label) => ['arrow', 'box', 'line'].includes(label.kind))
+    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
+  for (const label of annotationShapes) {
+    if (label.id === o.editingLabel) continue;
+    const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`${label.kind} annotation ${label.text || label.id}`)}">${shapeAnnotationSvg(label, '')}</g>`);
+    if (label.kind !== 'line') {
+      const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
+      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
+    }
+    for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
+      if (child.id === o.editingLabel) continue;
+      const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+      const t = child.textPos();
+      const childVisual = child.math
+        ? mathLabelSvg(child)
+        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
+      parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${childVisual}</g>`);
+    }
+  }
+
+  // Middle layer: wires deliberately sit behind components and labels. Their
+  // rounded caps still overlap terminal leads at the exact electrical point.
+  const nets = [...circuit.nets.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
+  // Where a wire meets a pin lead (or another wire), two separately drawn
+  // strokes overlap and their anti-aliased edges add up into a visibly
+  // thicker joint. Solid wires and terminal leads of one stroke style are
+  // therefore drawn together as a single path ("ink"), rasterized once.
+  // Per-segment wire elements stay in place, unpainted, for hit targets and
+  // keyboard access; ghosts and dashed strokes keep their own elements.
+  const ink = new Map();
+  const addInk = (attrs, d) => {
+    if (!ink.has(attrs)) ink.set(attrs, []);
+    ink.get(attrs).push(d);
+  };
+  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(c.style);
+  for (const c of comps) {
+    if (!inkLeads(c)) continue;
+    for (const g of c.def.graphics) {
+      if (g.terminalLead) addInk(inkAttrs(c.style), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
+    }
+  }
+  const UNPAINTED = ' stroke-opacity="0"';
+  for (const net of nets) {
+    // Fixed paths are already the complete authored geometry. Keep the legacy
+    // managed fallback below so multi-terminal managed nets retain their old
+    // rendering behavior.
+    const paths = net.routingMode === 'fixed'
+      ? net.paths()
+      : net.branches
+        ? net.branches
+        : !net.route && net.terminals.length >= 3
+          ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
+          : [net.points()];
+    const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
+    for (const [branch, pts] of paths.entries()) {
+      if (!pts || pts.length < 2) continue;
+      const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
+      const wireHelp = net.routingMode === 'fixed'
+        ? 'Fixed/direct wire — drag vertices, segments, or junctions'
+        : 'Managed wire — drag orthogonal segments';
+      const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
+      if (!segmentStyles) {
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        const inked = !opacity && solidStyle(net.style);
+        const geometry = polylineArrowheads(pts, net.style?.arrowhead, wireArrowheadOptions(circuit, pts));
+        if (inked) addInk(inkAttrs(net.style), polylineD(geometry.shaftPoints));
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(arrowheadsSvg(geometry.heads, net.style?.color, opacity));
+        continue;
+      }
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1]; const b = pts[i];
+        const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
+        const segmentStyle = { ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) };
+        const inked = !opacity && solidStyle(segmentStyle);
+        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
+        // Solid wires are painted by the shared ink path below, but dashed
+        // and ghosted wires paint their own element. Use the same shortened
+        // shaft for those visible strokes so a dash cannot run underneath an
+        // endpoint arrowhead.
+        const paintedD = inked ? d : polylineD(geometry.shaftPoints);
+        if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
+        parts.push(`<path class="wire-${wireKind}" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
+      }
+    }
+  }
+  for (const [attrs, ds] of ink) {
+    parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
+  }
+
+  // Top layer: components and their body/value graphics sit above wires.
+  for (const c of comps) {
+    const t = c.transform;
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
+    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
+    parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
+    if (c.type === 'block') {
+      const r = c.blockSize;
+      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`);
+    } else {
+      const leadsInked = inkLeads(c);
+      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', c.style));
+    }
+    parts.push('</g></g>');
+    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
+    if (o.includeBBox) {
+      const r = c.bboxWorld();
+      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
+    }
+  }
+
+  // Junction dots are placed by the routing algorithm as actual `solder`
+  // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
+  // circle at net junctions.
+
+  // Junction dots at multi-terminal net connection points (above the wires).
+  if (o.junctions) {
+    for (const net of circuit.nets.values()) {
+      if (net.terminals.length < 3) continue;
+      for (const { comp, term } of net.terminals) {
+        const c = circuit.components.get(comp);
+        if (!c) continue;
+        const p = c.terminalWorld(term);
+        parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#292929"/>`);
+      }
+    }
+  }
+
+  // Terminal dots.
+  if (o.terminals) {
+    for (const c of comps) {
+      for (const { x, y } of c.worldTerminals()) {
+        parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="3" fill="#111"/>`);
+      }
+    }
+  }
+
+  // Top layer: components, instance labels, free labels, and net labels draw
+  // above the middle wires. Component drawOrder only changes stacking within
+  // this layer, so a pushed-back component remains above every wire.
+  // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
+  for (const c of comps) {
+    const def = c.def;
+    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    if (def.refPrefix && def.refPos && !def.labelOffset) {
+      const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
+      // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
+      // matching the dedicated instance labels used by transistors (e.g. nmos).
+      parts.push(
+        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${escapeSvg(c.refdes)}</text>`,
+      );
+    }
+    const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
+    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
+      const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
+      const valueText = def.textPos.font
+        ? symbolTextSvg({ ...def.textPos, text: c.value }, c.transform, c.style?.color || '#333')
+        : textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333');
+      parts.push(`<g${opacity}>${valueText}</g>`);
+    }
+    if (isReferenceMarker(c) && !def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
+      const marker = referenceMarkerInfo(c.type);
+      const p = applyTransform(c.transform, marker.labelOffset.x, marker.labelOffset.y);
+      parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, 'middle', 12, '#333')}</g>`);
+    }
+  }
+
+  // Dedicated / instance label objects (instance identifiers are bold+italic and
+  // larger than free-standing annotation labels). Text is aligned inside the
+  // label's rendered box (left/center/right) and vertically centered.
+  for (const label of labels
+    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent)
+    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
+    if (label.id === o.editingLabel) continue;
+    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
+    const t = label.textPos();
+    const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
+    const labelVisual = label.math
+      ? mathLabelSvg(label)
+      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
+    if (label.selectable === false) {
+      parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
+    } else {
+      parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
+    }
+  }
+
+  parts.push('</svg>');
+  return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
+}
+
+/**
+ * Editor-only overlays rendered on top of svgString output.
+ * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
+ * halos around each selected component's bbox. opts.nets [net]: highlight
+ * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
+ * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
+ * selection bounds, with small edge ticks and a center marker.
+ * opts.wireMode: show all component terminals, colored by net membership.
+ * opts.terminalSnapTarget {x,y}: Alt-held terminal snap target, emphasized
+ * with an accent halo and ring.
+ * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
+ */
+// Editor overlay colors are semantic and theme-aware (style.css tokens):
+// SELECT (accent blue) = selection, focus, and previews of pending edits;
+// WARN (amber) = needs attention, e.g. an unconnected pin while wiring;
+// DANGER (red) = errors such as cross-net overlaps and focused check issues.
+// Sky-blue center guides are measurement aids and deliberately separate from
+// the accent blue used for selection and pending edits.
+const SELECT = 'var(--accent, #2563eb)';
+const WARN = 'var(--warn, #b45309)';
+const DANGER = 'var(--danger, #c53030)';
+const NEUTRAL = 'var(--svg-faint, #7a7d85)';
+
+function editorOverlay(circuit, opts = {}) {
+  const parts = [];
+  if (opts.cursor && opts.cursorCrosshair) {
+    const { x, y } = opts.cursor;
+    const { x: vx, y: vy, w, h } = opts.cursorCrosshair;
+    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + w)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + h)}" fill="none"/>`);
+  }
+  const halo = (r) =>
+    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${SELECT}" fill-opacity="0.1" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
+  const dangerHalo = (r) =>
+    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${DANGER}" fill-opacity="0.1" stroke="${DANGER}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
+
+  for (const ref of opts.selection || []) {
+    const c = circuit.components.get(ref);
+    if (c) parts.push(halo(c.bboxWorld()));
+  }
+
+  for (const r of opts.layoutPreviewRects || []) {
+    parts.push(`<rect class="layout-preview" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="var(--accent)" fill-opacity="0.06" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7 5" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
+
+  // Equation to schematic highlight: the devices one hovered or locked
+  // sub-expression of a derived equation was built from. Their own geometry is
+  // retraced and restyled by CSS, the way commit feedback traces a committed
+  // shape. Interaction only — the overlay never reaches an export.
+  for (const ref of opts.emphasis || []) {
+    const c = circuit.components.get(ref);
+    if (c) parts.push(`<g class="equation-emphasis">${componentShapeSvg(c)}</g>`);
+  }
+
+  // Resizable schematic blocks use the same eight-handle affordance as block
+  // diagrams. Handles live in the interaction overlay, so they never become
+  // selectable circuit geometry or affect bounds/routing.
+  for (const ref of opts.resizeBlocks || []) {
+    const c = circuit.components.get(ref);
+    if (!c || c.type !== 'block') continue;
+    const r = c.bboxWorld();
+    const handles = [
+      ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
+      ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
+      ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
+    ];
+    parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
+  }
+
+  // Selection centerlines are deliberately sky blue and dashed so they read
+  // as measurement guides rather than cursor crosshairs or circuit geometry.
+  // Keep each guide outside the selected bounds: one grid cell of guide at
+  // each edge is enough to expose the center without crossing the artwork.
+  if (opts.centerGuides) {
+    const r = opts.centerGuides;
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    const pad = GRID;
+    const tick = 10;
+    const color = '#0ea5e9';
+    parts.push(`<g class="selection-center-guides" pointer-events="none" opacity="0.9">` +
+      `<path d="M ${fmt(cx)} ${fmt(r.y - pad)} L ${fmt(cx)} ${fmt(r.y)} M ${fmt(cx)} ${fmt(r.y + r.h)} L ${fmt(cx)} ${fmt(r.y + r.h + pad)} M ${fmt(r.x - pad)} ${fmt(cy)} L ${fmt(r.x)} ${fmt(cy)} M ${fmt(r.x + r.w)} ${fmt(cy)} L ${fmt(r.x + r.w + pad)} ${fmt(cy)}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="9 6"/>` +
+      `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
+      `<rect x="${fmt(cx - 4)}" y="${fmt(cy - 4)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="2" transform="rotate(45 ${fmt(cx)} ${fmt(cy)})"/>` +
+      `</g>`);
+  }
+
+  // Placement guides: the spacing and alignment relationships the object being
+  // placed or moved already stands in. Sky blue, like the selection
+  // centerlines, because both are measurement aids rather than circuit or
+  // selection state. Every measurement is drawn between the two anchors it
+  // measures, with a leader from each anchor to the dimension line, so what
+  // is being compared is never in doubt; two equal intervals carry the same
+  // number side by side. Only the blue anchor/alignment family is rendered.
+  if (opts.placementGuide?.guides?.length) {
+    const { moving, guides } = opts.placementGuide;
+    const ANCHOR_INK = '#0ea5e9';
+    const tick = 9;
+    const dot = (p, solid, ink) => `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="4.5" fill="${p.moving && !p.synthetic && solid ? ink : 'var(--paper, #fff)'}" stroke="${ink}" stroke-width="2"/>`;
+    parts.push(`<g class="placement-guides" pointer-events="none" fill="none" stroke-width="2" vector-effect="non-scaling-stroke">`);
+    for (const guide of guides) {
+      const color = ANCHOR_INK;
+      const axis = guide.axis;
+      const along = axis === 'x' ? 'y' : 'x';
+      const pt = (p, a) => (a === 'x' ? p.x : p.y);
+      // One shared dash rhythm for every "not yet real" stroke (a suggestion,
+      // an alignment reference, a target crossing) keeps the state signal to a
+      // single visual cue instead of several competing rhythms.
+      const SUGGESTION_DASH = '7 5';
+      if (guide.kind === 'align') {
+        const lo = Math.min(...guide.points.map((p) => pt(p, along)));
+        const hi = Math.max(...guide.points.map((p) => pt(p, along)));
+        const line = (a, b) => axis === 'y'
+          ? `M ${fmt(a)} ${fmt(guide.value)} H ${fmt(b)}`
+          : `M ${fmt(guide.value)} ${fmt(a)} V ${fmt(b)}`;
+        parts.push(`<path d="${line(lo - GRID / 2, hi + GRID / 2)}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.85"/>`);
+        parts.push(guide.points.map((p) => dot(p, true, color)).join(''));
+        continue;
+      }
+      // One dimension line clear of every anchor and of the moving symbol. A
+      // guide still being offered is drawn dashed, and its own point stands on
+      // the target rather than on the object, so the two intervals stay the
+      // ones being labelled. Direct one-peer distances use the opposite lane
+      // from target/even-spacing rulers, keeping both useful readings legible.
+      // Everything that only connects an anchor back to that line (leaders,
+      // the halfway reference) stays a quiet solid hairline, so dashing reads
+      // as one thing: not landed yet.
+      const pending = !guide.exact;
+      const dash = pending ? ` stroke-dasharray="${SUGGESTION_DASH}"` : '';
+      const bboxEdge = axis === 'x' ? moving.bbox.y : moving.bbox.x;
+      const bboxFarEdge = axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w;
+      const pointEdges = guide.points.map((p) => pt(p, along));
+      const base = guide.direct
+        ? Math.max(bboxFarEdge, ...pointEdges) + GRID
+        : Math.min(bboxEdge, ...pointEdges) - GRID;
+      if (pending) {
+        // Where to land: the target column or row, across the moving symbol.
+        const lo = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along)));
+        const hi = Math.max(axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w,
+          ...guide.points.map((p) => pt(p, along)));
+        parts.push(`<path d="${axis === 'x'
+          ? `M ${fmt(guide.target)} ${fmt(lo - GRID / 2)} V ${fmt(hi + GRID / 2)}`
+          : `M ${fmt(lo - GRID / 2)} ${fmt(guide.target)} H ${fmt(hi + GRID / 2)}`}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.55"/>`);
+      }
+      const leader = (p) => (axis === 'x'
+        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
+        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
+      parts.push(`<path d="${guide.points.map(leader).join(' ')}" stroke="${color}" stroke-opacity="0.3" stroke-width="1.25"/>`);
+      const span = (a, b) => (axis === 'x'
+        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(b.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(b.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
+        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(b.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(b.y)} H ${fmt(base + tick)}`);
+      const label = (a, b) => (axis === 'x'
+        ? `<text x="${fmt((a.x + b.x) / 2)}" y="${fmt(base - GRID / 3)}" fill="${color}" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`
+        : `<text x="${fmt(base - GRID / 3)}" y="${fmt((a.y + b.y) / 2 + 8)}" fill="${color}" stroke="none" text-anchor="end" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`);
+      for (let i = 0; i + 1 < guide.points.length; i += 1) {
+        const a = guide.points[i];
+        const b = guide.points[i + 1];
+        parts.push(`<path d="${span(a, b)}" stroke="${color}"${dash}/>`);
+        parts.push(label(a, b));
+      }
+      if (guide.halfway) {
+        const { from, at, cells } = guide.halfway;
+        const halfBase = base + tick + 8;
+        const reference = axis === 'x'
+          ? `M ${fmt(at.x)} ${fmt(at.y)} V ${fmt(base)} M ${fmt(from.x)} ${fmt(halfBase)} H ${fmt(at.x)}`
+          : `M ${fmt(at.x)} ${fmt(at.y)} H ${fmt(base)} M ${fmt(halfBase)} ${fmt(from.y)} V ${fmt(at.y)}`;
+        const text = axis === 'x'
+          ? `<text x="${fmt((from.x + at.x) / 2)}" y="${fmt(halfBase + 20)}" fill="${color}" stroke="none" text-anchor="middle" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`
+          : `<text x="${fmt(halfBase + 20)}" y="${fmt((from.y + at.y) / 2 + 7)}" fill="${color}" stroke="none" text-anchor="start" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`;
+        parts.push(`<g class="placement-halfway-reference" stroke="${color}" stroke-opacity="0.4" stroke-width="1.25"><path d="${reference}"/></g>${text}`);
+      }
+      parts.push(guide.points.map((p) => dot(p, guide.exact, color)).join(''));
+    }
+    parts.push('</g>');
+  }
+
+  // A marquee/visual selection is only a preview until its gesture commits.
+  // Keep it visually distinct and never touch the editor's real selection.
+  if (opts.previewSelection) {
+    for (const ref of opts.previewSelection.refs || []) {
+      const c = circuit.components.get(ref);
+      if (c) {
+        const r = c.bboxWorld();
+        parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="3" opacity="0.9"/>`);
+      }
+    }
+    for (const id of opts.previewSelection.labels || []) {
+      const label = circuit.labels.get(id);
+      if (!label) continue;
+      const r = label.bbox();
+      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="2" opacity="0.9"/>`);
+    }
+    for (const id of opts.previewSelection.nets || []) {
+      const net = circuit.nets.get(id);
+      if (!net) continue;
+      for (const pts of net.paths()) {
+        if (!pts || pts.length < 2) continue;
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="7" opacity="0.32" stroke-dasharray="8 5" stroke-linecap="round"/>`);
+      }
+    }
+    for (const { a, b } of opts.previewWireSegments || []) {
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="8" opacity="0.55" stroke-dasharray="8 5" stroke-linecap="round"/>`);
+    }
+  }
+
+  // Solder dots on a highlighted net get a halo so wire junctions stand out.
+  if (opts.netSolder && opts.netSolder.length) {
+    for (const p of opts.netSolder) {
+      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="13" fill="none" stroke="${SELECT}" stroke-width="2" opacity="0.7"/>`);
+      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="${SELECT}"/>`);
+    }
+  }
+
+  if (opts.selLabels && opts.selLabels.length) {
+    for (const id of opts.selLabels) {
+      const label = circuit.labels.get(id);
+      if (!label) continue;
+      const b = label.bbox();
+      const a = label.anchorWorld();
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
+      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
+    }
+  } else if (opts.selLabel) {
+    const label = circuit.labels.get(opts.selLabel);
+    if (label) {
+      const b = label.bbox();
+      const a = label.anchorWorld();
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
+      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
+    }
+  }
+
+  for (const net of opts.nets || []) {
+    const paths = net && typeof net.paths === 'function' ? net.paths() : [net];
+    for (const pts of paths) {
+      if (!pts || pts.length < 2) continue;
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="12" opacity="0.35" stroke-linecap="round" stroke-linejoin="round"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2.4"/>`);
+    }
+  }
+
+  // Design-check focus: the objects behind the selected issue, in the error color.
+  if (opts.diagnostic) {
+    for (const ref of opts.diagnostic.components || []) {
+      const c = circuit.components.get(ref);
+      if (c) parts.push(dangerHalo(c.bboxWorld()));
+    }
+    for (const id of opts.diagnostic.labels || []) {
+      const label = circuit.labels.get(id);
+      if (label) parts.push(dangerHalo(label.bbox()));
+    }
+    for (const id of opts.diagnostic.nets || []) {
+      const net = circuit.nets.get(id);
+      for (const pts of net?.paths?.() || []) {
+        if (!pts || pts.length < 2) continue;
+        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="12" opacity="0.3" stroke-linecap="round" stroke-linejoin="round"/>`);
+        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="2.4"/>`);
+      }
+    }
+  }
+
+  // Cross-net collinear overlaps (a wire dragged on top of another net's wire).
+  if (opts.warnOverlaps && opts.warnOverlaps.length) {
+    for (const o of opts.warnOverlaps) {
+      parts.push(`<line x1="${fmt(o.x0)}" y1="${fmt(o.y0)}" x2="${fmt(o.x1)}" y2="${fmt(o.y1)}" stroke="${DANGER}" stroke-width="9" opacity="0.55" stroke-linecap="round"/>`);
+    }
+  }
+
+  if (opts.wireSegments && opts.wireSegments.length) {
+    for (const { a, b } of opts.wireSegments) {
+      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="9" opacity="0.6" stroke-linecap="round"/>`);
+    }
+  }
+
+  if (opts.fixedDrag) {
+    const { x, y, junction } = opts.fixedDrag;
+    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${junction ? 14 : 10}" fill="none" stroke="${SELECT}" stroke-width="2.5" stroke-dasharray="4 3"/>`);
+  }
+
+  if (opts.wireMode) {
+    const src = opts.wireSource;
+    const snapTarget = opts.terminalSnapTarget;
+    const terminalRadius = 8;
+    const sourceRadius = 8.5;
+    if (snapTarget && Number.isFinite(snapTarget.x) && Number.isFinite(snapTarget.y)) {
+      parts.push(`<circle class="wire-snap-target" cx="${fmt(snapTarget.x)}" cy="${fmt(snapTarget.y)}" r="15" fill="${SELECT}" fill-opacity="0.16"/>`);
+      parts.push(`<circle class="wire-snap-target" cx="${fmt(snapTarget.x)}" cy="${fmt(snapTarget.y)}" r="12" fill="none" stroke="${SELECT}" stroke-width="3" stroke-dasharray="5 3"/>`);
+    }
+    for (const comp of circuit.components.values()) {
+      for (const terminal of comp.worldTerminals()) {
+        const connected = circuit.netOfTerminal({ comp: comp.refdes, term: terminal.name });
+        const isSource = src && src.refdes === comp.refdes && src.term === terminal.name;
+        // Connected pins are quiet; open pins still need a wire (attention).
+        const color = connected ? NEUTRAL : WARN;
+        if (isSource) {
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="12.5" fill="${SELECT}" opacity="0.18"/>`);
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="${sourceRadius}" fill="${SELECT}" stroke="var(--paper, #fff)" stroke-width="2"/>`);
+        } else {
+          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="${terminalRadius}" fill="var(--paper, #fff)" stroke="${color}" stroke-width="2.5"/>`);
+        }
+      }
+    }
+  }
+
+  if (opts.rubber) {
+    const r = opts.rubber;
+    const x = Math.min(r.x0, r.x1);
+    const y = Math.min(r.y0, r.y1);
+    const w = Math.abs(r.x1 - r.x0);
+    const h = Math.abs(r.y1 - r.y0);
+    const color = r.color === 'neutral' ? NEUTRAL : SELECT;
+    parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
+  }
+
+  // The draft wire follows the cursor until it is committed.
+  for (const preview of [opts.wirePreview].filter(Boolean)) {
+    const from = preview.from;
+    const pts = preview.pts || autoRoute([{ x: from.x, y: from.y }, { x: preview.to.x, y: preview.to.y }]);
+    if (pts && pts.length >= 2) {
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="6 5"/>`);
+    }
+    parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="${SELECT}"/>`);
+  }
+  if (opts.annotationPreview) {
+    const { kind, a, b, points } = opts.annotationPreview;
+    const attrs = `stroke="${SELECT}" stroke-width="6" stroke-dasharray="10 7" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
+    if (kind === 'line') {
+      const d = points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
+      parts.push(`<path d="${d}" ${attrs}/>`);
+    } else if (kind === 'box') {
+      const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+      parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
+    } else {
+      const route = points?.length ? points : [a, b];
+      const geometry = polylineArrowheads(route, 'end');
+      parts.push(`<path d="${polylineD(geometry.shaftPoints)}" ${attrs}/>${arrowheadsSvg(geometry.heads, SELECT, ' opacity=".8"')}`);
+    }
+  }
+
+  if (opts.directWirePreview) {
+    const { from, pts } = opts.directWirePreview;
+    if (from && pts && pts.length >= 2) {
+      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
+      parts.push(`<path class="direct-wire-preview" d="${d}" fill="none" stroke="${SELECT}" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>`);
+      for (const p of pts.slice(1, -1)) parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="5" fill="var(--paper, #fff)" stroke="${SELECT}" stroke-width="2"/>`);
+    }
+  }
+
+  if (opts.cursor) {
+    const { x, y } = opts.cursor;
+    const color = opts.directWirePreview || opts.wireMode ? SELECT : '#7a7d85';
+    const radius = opts.wireMode ? 8 : 4;
+    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${radius}" fill="none" stroke="${color}" stroke-width="${opts.wireMode ? 2 : 1.5}"/>`);
+    if (opts.wireMode && !opts.wirePreview && !opts.directWirePreview) {
+      parts.push(`<path d="M ${fmt(x - 14)} ${fmt(y)} L ${fmt(x + 14)} ${fmt(y)} M ${fmt(x)} ${fmt(y - 14)} L ${fmt(x)} ${fmt(y + 14)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="3 2"/>`);
+    }
+  }
+
+  // Symmetric placement: the axis a mirrored pair is being placed about. A
+  // construction line, drawn in the measurement sky blue and never geometry.
+  if (opts.symmetryAxis?.operation && opts.ghost?.def) {
+    const { operation, pin } = opts.symmetryAxis;
+    const g = opts.ghost;
+    // Long enough to read as an axis through whatever is being mirrored.
+    const b = transformRect({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }, g.def.bbox);
+    const reach = operation === 'mirrorX'
+      ? Math.max(Math.abs(b.y - pin.y), Math.abs(b.y + b.h - pin.y)) + GRID
+      : Math.max(Math.abs(b.x - pin.x), Math.abs(b.x + b.w - pin.x)) + GRID;
+    const d = operation === 'mirrorX'
+      ? `M ${fmt(pin.x)} ${fmt(pin.y - reach)} V ${fmt(pin.y + reach)}`
+      : `M ${fmt(pin.x - reach)} ${fmt(pin.y)} H ${fmt(pin.x + reach)}`;
+    parts.push(`<g class="symmetry-axis" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
+      `<path d="${d}" stroke-dasharray="14 5 3 5"/>` +
+      `<circle cx="${fmt(pin.x)}" cy="${fmt(pin.y)}" r="4.5" fill="var(--paper, #fff)" stroke="#0ea5e9" stroke-width="2"/>` +
+      `</g>`);
+    // How far apart the pair is being pulled. Two equal intervals either side
+    // of the axis, dimensioned like a spacing guide, because the number that
+    // decides a differential pair's pitch is the one the gesture is setting.
+    // It sits on the far side of the symbol from the placement guides, which
+    // measure off the top/left edge, so the two readouts never collide.
+    const from = opts.symmetryAxis.from;
+    const axis = operation === 'mirrorX' ? 'x' : 'y';
+    const offset = from ? Math.abs(from[axis] - pin[axis]) : 0;
+    if (offset > 1e-6) {
+      const twin = { x: from.x, y: from.y, [axis]: 2 * pin[axis] - from[axis] };
+      const cells = Math.round((offset / GRID) * 100) / 100;
+      const text = `${cells} ${cells === 1 ? 'cell' : 'cells'}`;
+      const tick = 9;
+      const base = axis === 'x'
+        ? Math.max(b.y + b.h, pin.y, from.y) + GRID
+        : Math.max(b.x + b.w, pin.x, from.x) + GRID;
+      const leader = (p) => (axis === 'x'
+        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
+        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
+      const span = (a, c) => (axis === 'x'
+        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(c.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(c.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
+        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(c.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(c.y)} H ${fmt(base + tick)}`);
+      const label = (a, c) => (axis === 'x'
+        ? `<text x="${fmt((a.x + c.x) / 2)}" y="${fmt(base + GRID * 0.8)}" fill="#0ea5e9" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${text}</text>`
+        : `<text x="${fmt(base + GRID / 3)}" y="${fmt((a.y + c.y) / 2 + 8)}" fill="#0ea5e9" stroke="none" text-anchor="start" font-size="24" font-family="system-ui, sans-serif">${text}</text>`);
+      const at = (p) => ({ x: axis === 'x' ? p.x : base, y: axis === 'x' ? base : p.y });
+      parts.push(`<g class="symmetry-offset" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
+        `<path d="${[twin, pin, from].map(leader).join(' ')}" stroke-opacity="0.4" stroke-dasharray="4 4"/>` +
+        `<path d="${span(twin, pin)}"/><path d="${span(pin, from)}"/>` +
+        label(twin, pin) + label(pin, from) +
+        [twin, from].map((p) => `<circle cx="${fmt(at(p).x)}" cy="${fmt(at(p).y)}" r="4.5" fill="#0ea5e9" stroke="#0ea5e9" stroke-width="2"/>`).join('') +
+        `</g>`);
+    }
+  }
+
+  // Placement ghost: a faded preview of the component (or label) that will be
+  // placed at the snapped cursor once the user clicks or presses Enter. A
+  // symmetric placement previews its mirrored twin the same way.
+  for (const g of [opts.ghost, opts.ghostTwin].filter(Boolean)) {
+    if (g.label) {
+      // Use the same label model and renderer as the committed annotation so
+      // markup, alignment, and the grid-sized footprint are previewed honestly.
+      const preview = new LabelInstance(circuit, {
+        text: g.text || 'label', x: g.x, y: g.y, align: g.align || 'center',
+      });
+      const b = preview.bbox();
+      const t = preview.textPos();
+      parts.push(`<g class="label-placement-ghost" opacity="0.58">`);
+      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#9aa0ab" stroke-width="1.5" stroke-dasharray="4 3"/>`);
+      parts.push(labelTextEl(t.x, t.y, preview.runs(), t.anchor, 'label'));
+      parts.push('</g>');
+    } else if (g.def) {
+      const t = transformToSvg({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY });
+      const body = g.def.graphics.filter((gg) => gg.kind !== 'text').map((gg) => graphicsToSvg(gg)).join('');
+      const text = g.def.graphics.filter((gg) => gg.kind === 'text').map((gg) => symbolTextSvg(gg, { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY })).join('');
+      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>${text}`);
+    }
+  }
+
+  return parts.join('\n');
+}
+
+__exports.svgPixelSize = svgPixelSize;
+__exports.texToMathML = texToMathML;
+__exports.componentShapeSvg = componentShapeSvg;
+__exports.labelShapeSvg = labelShapeSvg;
+__exports.svgString = svgString;
+__exports.editorOverlay = editorOverlay;
+};
+
+__modules["src/core/grid.js"] = function (__require, __exports) {
+/**
+ * Coarse placement grid. Every world coordinate of a terminal, a component
+ * origin, or a wire point must be an integer multiple of GRID.
+ */
+const GRID = 40;
+
+/** Snap a single scalar to the nearest grid multiple. */
+function snap(n) {
+  return Math.round(n / GRID) * GRID;
+}
+
+/** Snap x,y to grid; returns a new point {x,y}. */
+function snapPoint(x, y) {
+  return { x: snap(x), y: snap(y) };
+}
+
+/** True if n is (lexact triangle) a grid multiple. */
+function onGrid(n, eps = 1e-9) {
+  return Math.abs(n / GRID - Math.round(n / GRID)) < eps;
+}
+
+/** Grid index (cell number) of a coordinate. */
+function cell(n) {
+  return Math.round(n / GRID);
+}
+
+/** Nearest multiple of GRID at or below n. */
+function floorGrid(n) {
+  return Math.floor(n / GRID) * GRID;
+}
+
+/** Nearest multiple of GRID at or above n. */
+function ceilGrid(n) {
+  return Math.ceil(n / GRID) * GRID;
+}
+__exports.snap = snap;
+__exports.snapPoint = snapPoint;
+__exports.onGrid = onGrid;
+__exports.cell = cell;
+__exports.floorGrid = floorGrid;
+__exports.ceilGrid = ceilGrid;
+__exports.GRID = GRID;
 };
 
 __modules["src/core/model.js"] = function (__require, __exports) {
@@ -20956,1717 +22718,6 @@ __exports.Net = Net;
 __exports.Circuit = Circuit;
 };
 
-__modules["src/core/render.js"] = function (__require, __exports) {
-const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
-const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
-const { autoRoute, steinerBranches } = __require("src/core/router.js");
-const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
-const { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
-const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
-
-
-
-
-
-
-
-function pt(x, y) {
-  return `${fmt(x)} ${fmt(y)}`;
-}
-
-/**
- * Map an absolute M/L/C path's coordinates through a component transform.
- * `trim` pulls a straight first/last segment's ends in by that distance, so a
- * butt-ended lead keeps its exact look inside a square-capped ink path.
- */
-function transformPathD(d, t, trim = 0) {
-  const tokens = String(d).match(/[MLC]|-?\d*\.?\d+(?:e-?\d+)?/gi) || [];
-  const commands = [];
-  for (const token of tokens) {
-    if (/^[MLC]$/.test(token)) commands.push({ command: token, values: [] });
-    else commands.at(-1)?.values.push(Number(token));
-  }
-  const pull = (point, toward) => {
-    const dx = toward[0] - point[0];
-    const dy = toward[1] - point[1];
-    const length = Math.hypot(dx, dy);
-    if (!length || length <= 2 * trim) return point;
-    return [point[0] + dx / length * trim, point[1] + dy / length * trim];
-  };
-  if (trim > 0 && commands.length >= 2 && commands[0].command === 'M' && commands[1].command === 'L') {
-    const [x, y] = pull(commands[0].values.slice(0, 2), commands[1].values.slice(0, 2));
-    commands[0].values.splice(0, 2, x, y);
-  }
-  const last = commands.at(-1);
-  if (trim > 0 && commands.length >= 2 && last.command === 'L' && last.values.length === 2) {
-    const prev = commands.at(-2).values.slice(-2);
-    const [x, y] = pull(last.values, prev);
-    last.values.splice(0, 2, x, y);
-  }
-  const format = (n) => Number(n.toFixed(3));
-  return commands.map(({ command, values }) => {
-    const points = [];
-    for (let i = 0; i + 1 < values.length; i += 2) {
-      const p = applyTransform(t, values[i], values[i + 1]);
-      points.push(`${format(p.x)} ${format(p.y)}`);
-    }
-    return `${command} ${points.join(' ')}`;
-  }).join(' ');
-}
-
-/** Solid strokes merged into one path render without doubled anti-aliased edges. */
-function solidStyle(style) {
-  return !style?.lineStyle || style.lineStyle === 'solid';
-}
-
-function strokeWidthOf(style, base = 'symbol') {
-  return strokeWidth(style, base);
-}
-
-/** These terminals land on the centerline of a stroked body outline. Pull a
- * filled arrowhead out by half that outline so its tip meets the visible edge
- * rather than disappearing into the body. */
-function terminalBodyInset(circuit, point) {
-  for (const component of circuit.components.values()) {
-    if (!['block', 'signal_sum', 'signal_multiply'].includes(component.type)) continue;
-    if (component.terminalDefs.some((terminal) => {
-      const world = component.terminalWorld(terminal.name);
-      return world.x === point.x && world.y === point.y;
-    })) return strokeWidthOf(component.style, 'emph') / 2;
-  }
-  return 0;
-}
-
-function wireArrowheadOptions(circuit, points) {
-  return {
-    startInset: terminalBodyInset(circuit, points[0]),
-    endInset: terminalBodyInset(circuit, points.at(-1)),
-  };
-}
-
-// One shared miter limit keeps merged wires and sharp resistor leads in one
-// group, and every ink subpath uses the wires' projecting square cap.
-const INK_MITER_LIMIT = 5;
-function inkAttrs(style) {
-  return styleAttrs(style, 'wire', INK_MITER_LIMIT);
-}
-
-function polygonPoints(g) {
-  if (typeof g.points === 'string') return g.points;
-  return (g.points || []).map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(' ');
-}
-
-function graphicsToSvg(g, textTransform = '', objectStyle = null) {
-  const stroke = objectStyle ? styleAttrs(objectStyle, g.style, g.miterLimit) : strokeAttrs(g.style, g.miterLimit);
-  switch (g.kind) {
-    case 'path':
-      return `<path d="${g.d}" fill="none" ${stroke}/>`;
-    case 'circle':
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="#fff" ${stroke}/>`;
-    case 'rect':
-      return `<rect x="${fmt(g.x)}" y="${fmt(g.y)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="#fff" ${stroke}/>`;
-    case 'polygon':
-      if (g.fill === 'foreground') {
-        return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(objectStyle?.color || '#111'))}" stroke="none"/>`;
-      }
-      return `<polygon points="${polygonPoints(g)}" fill="${escapeSvg(resolveColor(g.fill || 'none'))}" ${stroke}/>`;
-    case 'text':
-      return `<text x="${fmt(g.x)}" y="${fmt(g.y)}" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs(g.font || 'label')} stroke="none"${g.keepUpright ? ` transform="${textTransform}"` : ''}>${escapeSvg(g.text)}</text>`;
-    case 'dot':
-      return `<circle cx="${fmt(g.cx)}" cy="${fmt(g.cy)}" r="${fmt(g.r)}" fill="${escapeSvg(resolveColor(objectStyle?.color || g.fill || '#111'))}" stroke="none"/>`;
-    default:
-      return '';
-  }
-}
-
-function symbolTextSvg(g, t, color = '#111') {
-  const p = applyTransform(t, g.x, g.y);
-  const font = fontAttrs(g.font || 'label').replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`);
-  const attrs = `x="${fmt(p.x)}" y="${fmt(p.y)}" dominant-baseline="middle" text-anchor="${g.anchor || 'middle'}" font-family="sans-serif" ${font} stroke="none"`;
-  const lines = String(g.text ?? '').split('\n');
-  if (lines.length === 1) return `<text ${attrs}>${escapeSvg(lines[0])}</text>`;
-  const lineHeight = g.font === 'label' ? LABEL_FONT_SIZE : 16;
-  const firstDy = -((lines.length - 1) * lineHeight) / 2;
-  const tspans = lines.map((line, index) => `<tspan x="${fmt(p.x)}" dy="${fmt(index ? lineHeight : firstDy)}">${escapeSvg(line)}</tspan>`).join('');
-  return `<text ${attrs}>${tspans}</text>`;
-}
-
-function textEl(x, y, text, anchor, size, fill) {
-  return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor || 'middle'}" font-family="sans-serif" font-size="${size || 12}" fill="${escapeSvg(resolveColor(fill || '#111'))}" stroke="none">${escapeSvg(text)}</text>`;
-}
-
-// Label-object text with one of the style.js font kinds ("instance" | "label").
-// Runs with `sub`/`super` render as tspans (baseline-shift + smaller size) so
-// instance labels like M1 render as M with a subscript 1, keeping the text's
-// alignment/anchor untouched (alignment is handled by the parent <text>).
-function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
-  let font = fontAttrs(kind)
-    .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`)
-    .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
-    .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
-  if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
-  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
-  if (runs.length === 1 && !runs[0].sub && !runs[0].super && !runs[0].text.includes('\n')) {
-    return `<text ${attrs}>${escapeSvg(runs[0].text)}</text>`;
-  }
-  const lineRuns = [[]];
-  for (const run of runs) {
-    const parts = String(run.text).split('\n');
-    parts.forEach((part, index) => {
-      if (part) lineRuns.at(-1).push({ ...run, text: part });
-      if (index < parts.length - 1) lineRuns.push([]);
-    });
-  }
-  const renderRuns = (line) => line.map((r) => {
-      if (!r.sub && !r.super) return escapeSvg(r.text);
-      const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
-      const size = r.sub || r.super ? ' font-size="0.62em"' : '';
-      return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
-    }).join('');
-  const body = lineRuns.length === 1
-    ? renderRuns(lineRuns[0])
-    : lineRuns.map((line, lineIndex) => `<tspan x="${fmt(x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
-  return `<text ${attrs}>${body}</text>`;
-}
-
-const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
-
-function mathMlAtom(value, kind = 'mi', attrs = '') {
-  return `<${kind}${attrs ? ` ${attrs}` : ''}>${escapeSvg(value)}</${kind}>`;
-}
-
-function mathMlDelimiter(value, stretchy = true) {
-  // Fences stretch to their own <mrow> (see parseFenced), so no minimum size
-  // is imposed: a short group keeps LaTeX's text-size parenthesis. TeX sets
-  // no space between a fence and its content, so neither do we.
-  return mathMlAtom(value, 'mo', `fence="true" stretchy="${stretchy}" lspace="0em" rspace="0em"`);
-}
-
-// TeX typesets a leading sign as a prefix: `-g_m` is tight, while the `-` of
-// `a - b` keeps binary spacing. It also draws U+2212, which is wider and sits
-// higher than the ASCII hyphen.
-const MATH_SIGNS = { '-': '\u2212', '+': '+' };
-
-// TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
-// Greek upright, which needs the explicit variant.
-const GREEK_LOWER = {
-  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
-  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
-  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
-  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'ϕ',
-  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
-};
-const GREEK_UPPER = {
-  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
-  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
-};
-
-// TeX Appendix G rule 18a: when the nucleus is a single character, the script
-// shift ignores that character's own height and depth, so `g_m` and `r_o` set
-// their subscripts on one line. MathML instead drops a subscript clear of a
-// descender (the MATH table's SubscriptBaselineDropMin) and lifts a
-// superscript clear of a tall base, which parts those subscripts by 0.17 em.
-// Zeroing the metric each shift is measured from restores TeX's rule; mpadded
-// changes only the reported box, so the glyph itself is untouched.
-const SINGLE_CHARACTER = /^<m[in](?: [^>]*)?>(?:[^<&]|&[a-z]+;|&#\d+;)<\/m[in]>$/;
-
-// A provenance wrapper (see the `\pv` branch below) must not hide the nucleus
-// it groups: the padding belongs on the character, the `data-node` attribute
-// outside it, so a provenance render lays out exactly like an ordinary one.
-const PROVENANCE_ROW = /^(<mrow data-node="\d+">)([\s\S]*)(<\/mrow>)$/;
-
-function mathMlNucleus(base, metric) {
-  const wrapped = PROVENANCE_ROW.exec(base);
-  if (wrapped) return `${wrapped[1]}${mathMlNucleus(wrapped[2], metric)}${wrapped[3]}`;
-  return SINGLE_CHARACTER.test(base) ? `<mpadded ${metric}="0">${base}</mpadded>` : base;
-}
-
-function mathMlSign(value, prefix) {
-  const glyph = MATH_SIGNS[value];
-  return prefix
-    ? mathMlAtom(glyph, 'mo', 'form="prefix" lspace="0em" rspace="0em"')
-    : mathMlAtom(glyph, 'mo', 'form="infix"');
-}
-
-/** Size table shared by the parallel operator and the evaluation bar. */
-function fenceSize(tall, requestedSize) {
-  if (requestedSize === 'Bigg') return 'minsize="2.8em" maxsize="3.4em"';
-  if (requestedSize === 'bigg') return 'minsize="2.4em" maxsize="3.0em"';
-  if (requestedSize === 'Big') return 'minsize="2.0em" maxsize="2.5em"';
-  if (requestedSize === 'big') return 'minsize="1.6em" maxsize="2.0em"';
-  return tall ? 'minsize="2.2em" maxsize="2.8em"' : 'minsize="1.2em"';
-}
-
-/**
- * A single tall bar, as in `Z_{out} = v/i \Big\vert_{v_{in}=0}`: the
- * condition a quantity was evaluated under. It takes the same sizing as the
- * parallel operator, and hugs its own subscript on the right.
- */
-function mathMlEvaluationBar(tall = false, requestedSize = null) {
-  const attrs = `fence="true" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0em"`;
-  return mathMlAtom('|', 'mo', attrs);
-}
-
-function mathMlParallel(tall = false, requestedSize = null) {
-  // Use the same single double-bar operator as LaTeX `\Vert`, rather than
-  // two independent bars whose MathML operator spacing creates a large gap.
-  // Explicit Big/Bigg commands win; a fraction on the line gets the compact
-  // `\Big\Vert` treatment automatically.
-  const attrs = `fence="false" stretchy="true" ${fenceSize(tall, requestedSize)} lspace="0.15em" rspace="0.15em"`;
-  return mathMlAtom('∥', 'mo', attrs);
-}
-
-/** Pixel size declared on an SVG root, with a sensible fallback. Shared by the
- *  editor's PNG rasterization and the server's PDF page sizing. */
-function svgPixelSize(svg) {
-  const root = String(svg).match(/<svg\b[^>]*>/i)?.[0] || '';
-  const width = Number(root.match(/\bwidth="([\d.]+)"/i)?.[1]);
-  const height = Number(root.match(/\bheight="([\d.]+)"/i)?.[1]);
-  return {
-    width: Number.isFinite(width) && width > 0 ? width : 1000,
-    height: Number.isFinite(height) && height > 0 ? height : 800,
-  };
-}
-
-/** Convert the small TeX subset emitted by symbolic analysis into MathML.
- * MathML is rendered by the browser inside the live SVG through a
- * foreignObject; keeping this parser local avoids a runtime CDN dependency. */
-function texToMathML(source) {
-  const text = stripMathDelimiters(source).replace(/\s+/g, ' ').trim();
-  const hasFraction = /\\frac\b/.test(text);
-  let index = 0;
-  const commandSymbols = {
-    parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
-    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→', gg: '≫',
-    ll: '≪', equiv: '≡', propto: '∝', partial: '∂',
-  };
-  let requestedParallelSize = null;
-  const skipSpaces = () => { while (text[index] === ' ') index += 1; };
-  const parseSequence = (stop = null) => {
-    const atoms = [];
-    while (index < text.length) {
-      if (stop && text[index] === stop) { index += 1; break; }
-      const token = text[index];
-      if (token === '_' || token === '^') {
-        index += 1;
-        const script = parseArgument();
-        const base = atoms.pop() || mathMlAtom('', 'mi');
-        atoms.push(token === '_'
-          ? `<msub>${mathMlNucleus(base, 'depth')}${script}</msub>`
-          : `<msup>${mathMlNucleus(base, 'height')}${script}</msup>`);
-        continue;
-      }
-      atoms.push(parseAtom(atoms[atoms.length - 1]));
-    }
-    return atoms.join('');
-  };
-  // A fenced group is its own <mrow>, so its delimiters stretch to that group
-  // and nothing else — what LaTeX's \left…\right does. Without the wrapper
-  // every parenthesis stretches to the tallest thing on the line, so `A_v(s)`
-  // next to a fraction grows parentheses several lines tall.
-  const parseFenced = (open, close) => {
-    const body = parseSequence(close);
-    const closed = text[index - 1] === close;
-    // Only a group that is genuinely taller than one line gets stretched
-    // fences, the way a TeX author reaches for \left…\right there and plain
-    // parentheses everywhere else: a stretched glyph is also padded away from
-    // its content, which reads as a gap around short groups like `(s)`.
-    const tall = /<mfrac|<msqrt/.test(body);
-    return `<mrow>${mathMlDelimiter(open, tall)}${body}${closed ? mathMlDelimiter(close, tall) : ''}</mrow>`;
-  };
-  const parseArgument = () => {
-    skipSpaces();
-    if (text[index] === '{') {
-      index += 1;
-      return `<mrow>${parseSequence('}')}</mrow>`;
-    }
-    return parseAtom();
-  };
-  // A marker argument is read literally: `present.js` writes only digits here
-  // and its contents are an AST node id, not math to typeset.
-  const parseRawArgument = () => {
-    skipSpaces();
-    if (text[index] !== '{') return '';
-    index += 1;
-    let raw = '';
-    while (index < text.length && text[index] !== '}') raw += text[index++];
-    if (text[index] === '}') index += 1;
-    return raw;
-  };
-  const parseTextArgument = () => {
-    skipSpaces();
-    if (text[index] !== '{') return parseArgument();
-    index += 1;
-    let depth = 1;
-    let raw = '';
-    while (index < text.length && depth > 0) {
-      const ch = text[index++];
-      if (ch === '{') depth += 1;
-      else if (ch === '}') {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-      if (depth > 0) raw += ch;
-    }
-    // TeX/editor spacing commands have no literal glyph to emit. Preserve
-    // them as visible word spaces in <mtext> so prose such as "Miller
-    // approximation used for" does not collapse together.
-    const prose = raw
-      // Accept the editor's escaped colon while converting other spacing
-      // commands to ordinary word spaces.
-      .replace(/\\:/g, ':')
-      .replace(/\\qquad/g, '  ')
-      .replace(/\\quad/g, ' ')
-      .replace(/\\[;,!]/g, ' ')
-      .replace(/\\ /g, ' ')
-      .replace(/\s+/g, ' ');
-    return `<mtext>${escapeSvg(prose).replace(/ /g, '&#160;')}</mtext>`;
-  };
-  const parseCommand = () => {
-    index += 1; // backslash
-    const match = text.slice(index).match(/^[A-Za-z]+|^./);
-    if (!match) return mathMlAtom('\\', 'mo');
-    const name = match[0];
-    index += name.length;
-    if (name === 'frac') {
-      const numerator = parseArgument();
-      const denominator = parseArgument();
-      return `<mfrac>${numerator}${denominator}</mfrac>`;
-    }
-    if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
-    if (name === 'pv') {
-      // Provenance marker from `present.js`: the first group is the AST node
-      // id, the second is the sub-expression rendered from it. The wrapper is
-      // an <mrow>, MathML's own grouping element, so it carries the attribute
-      // without changing layout. Ordinary renders emit no markers, so nothing
-      // persisted, exported, or edited as a label ever reaches this branch.
-      const id = parseRawArgument().replace(/[^0-9]/g, '');
-      skipSpaces();
-      if (text[index] !== '{') return `<mrow data-node="${id}">${parseAtom()}</mrow>`;
-      index += 1;
-      return `<mrow data-node="${id}">${parseSequence('}')}</mrow>`;
-    }
-    // \left is transparent: the delimiter after it starts a fenced group like
-    // any other. \right and \middle are dropped without consuming their
-    // delimiter, so the enclosing group closes on it exactly once.
-    if (name === 'left') return parseAtom();
-    if (name === 'right' || name === 'middle') return '';
-    if (name === '|') {
-      // The analysis engine emits the TeX-safe parallel spelling `\|\|`.
-      // Consume both escaped bars as one compact operator so the second bar
-      // is not parsed as an independent stretchy delimiter.
-      if (text[index] === '\\' && text[index + 1] === '|') index += 2;
-      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return parallel;
-    }
-    if (name === 'vert') {
-      const bar = mathMlEvaluationBar(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return bar;
-    }
-    if (name === 'Vert') {
-      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return parallel;
-    }
-    if (name === 'mathrm' || name === 'text' || name === 'operatorname') return parseTextArgument();
-    if (name === 'parallel') {
-      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return parallel;
-    }
-    if (['big', 'Big', 'bigg', 'Bigg'].includes(name)) {
-      requestedParallelSize = name;
-      return '';
-    }
-    if (name === 'quad') return '<mspace width="1em"/>';
-    if (name === 'qquad') return '<mspace width="2em"/>';
-    if (name === '>') return mathMlAtom('>', 'mo');
-    if (GREEK_LOWER[name]) return mathMlAtom(GREEK_LOWER[name], 'mi');
-    if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
-    if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
-    if (name === ',' || name === ';' || name === '!') return '';
-    return mathMlAtom(name, 'mi');
-  };
-  // An atom that follows nothing, or follows an operator, starts an
-  // expression: a sign there is TeX's prefix form.
-  const parseAtom = (previous = null) => {
-    skipSpaces();
-    if (index >= text.length) return '';
-    // Be forgiving for hand-authored labels that use plain `||` rather than
-    // the TeX-safe `\|\|` spelling.  Both forms render identically, while
-    // the stored label source remains untouched for editing.
-    if (text[index] === '|' && text[index + 1] === '|') {
-      index += 2;
-      const parallel = mathMlParallel(hasFraction, requestedParallelSize);
-      requestedParallelSize = null;
-      return parallel;
-    }
-    if (text[index] === '\\') return parseCommand();
-    if (text[index] === '{') {
-      index += 1;
-      return `<mrow>${parseSequence('}')}</mrow>`;
-    }
-    const char = text[index++];
-    if (/[A-Za-z]/.test(char)) return mathMlAtom(char, 'mi');
-    if (/[0-9]/.test(char)) return mathMlAtom(char, 'mn');
-    if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
-    if ('()[]|'.includes(char)) return mathMlDelimiter(char);
-    if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));
-    if (char === ' ' && text[index] === ' ') return '<mspace width="0.25em"/>';
-    return mathMlAtom(char, 'mo');
-  };
-  return `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" style="font-family:${MATH_FONT_FAMILY};color:inherit"><mrow>${parseSequence()}</mrow></math>`;
-}
-
-function mathLabelSvg(label, opacity = '') {
-  const box = label.bbox();
-  const color = resolveColor(label.style?.color || '#111');
-  // Keep the default ink theme-aware.  Math labels live in an XHTML
-  // foreignObject, so the SVG attribute recoloring rules used by ordinary
-  // <text> labels do not reach their inline `color` declaration.  Explicit
-  // user colors remain literal and therefore are not changed by dark mode.
-  const colorCss = color.toLowerCase() === '#111' ? 'var(--svg-ink, #111)' : color;
-  const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
-  const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
-  const aria = escapeSvg(`Math label ${label.text}`);
-  const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
-  const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
-  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;pointer-events:none;`;
-  const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
-  const lines = stripMathDelimiters(label.text).split(/\r?\n/)
-    .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
-    .join('');
-  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
-}
-
-function polylineD(points) {
-  return points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-}
-
-function arrowheadsSvg(heads, color, opacity = '') {
-  return heads.map((head) => `<polygon points="${pt(head.tip.x, head.tip.y)} ${pt(head.left.x, head.left.y)} ${pt(head.right.x, head.right.y)}" fill="${escapeSvg(resolveColor(color || '#111'))}" stroke="none"${opacity}/>`).join('');
-}
-
-function styledPolylineSvg(points, style, base, fallback = 'none', opacity = '') {
-  const geometry = polylineArrowheads(points, style?.arrowhead, { fallback });
-  if (geometry.shaftPoints.length < 2) return '';
-  const attrs = styleAttrs(style, base);
-  return `<path d="${polylineD(geometry.shaftPoints)}" fill="none"${opacity} ${attrs}/>${arrowheadsSvg(geometry.heads, style?.color, opacity)}`;
-}
-
-function shapeAnnotationSvg(label, opacity = '') {
-  const a = label.anchor; const b = label.end;
-  if (label.kind === 'line' || label.kind === 'arrow') {
-    const points = label.points?.length ? label.points : [a, b];
-    return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);
-  }
-  const attrs = styleAttrs(label.style);
-  if (label.kind === 'box') {
-    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-    return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
-  }
-}
-/**
- * Bare drawable geometry of one component (body graphics plus symbol text),
- * without ids, labels, or accessibility wrappers. Editor effects restyle it
- * with CSS, e.g. the commit-feedback glow that traces the symbol itself.
- */
-function componentShapeSvg(c) {
-  const t = c.transform;
-  const body = c.type === 'block'
-    ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
-    : c.def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
-  const text = c.def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
-  return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
-}
-
-/**
- * Bare drawable geometry of one label: its text, or the line/arrow/box of a
- * visual annotation. Math labels are HTML (foreignObject) and return null.
- */
-function labelShapeSvg(label) {
-  if (['box', 'arrow', 'line'].includes(label.kind)) return shapeAnnotationSvg(label);
-  if (label.math) return null;
-  const t = label.textPos();
-  return labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
-}
-
-/**
- * Render a Circuit to an SVG string.
- * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
- * draw terminal dots / net junction dots. opts.background: white rect.
- * opts.netNames: label nets by name. opts.includeBBox: draw component bboxes.
- * opts.emptyHint: draw the 'empty schematic' placeholder (default true).
- * opts.themeInk: emit default ink as currentColor for theme-aware editor views.
- * opts.underlay: emit an empty editor-underlay group above the grid for effects.
- * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
- * absent, the view auto-fits the circuit contents (used for exports / PNG).
- */
-function svgString(circuit, opts = {}) {
-  const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
-  const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
-  const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
-  const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
-  const b = circuit.bounds(o.grid || o.background ? 0 : 20);
-  const vp = o.viewport;
-  const empty = b.w <= 0 && b.h <= 0;
-  if (empty && !vp) {
-    const w = 400;
-    const h = 200;
-    const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
-    parts.push(`<rect width="${w}" height="${h}" fill="#fff"/>`);
-    if (o.grid) {
-      for (let x = 0; x <= w; x += GRID) parts.push(`<line class="grid-line" x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="#eee" stroke-width="1"/>`);
-      for (let y = 0; y <= h; y += GRID) parts.push(`<line class="grid-line" x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#eee" stroke-width="1"/>`);
-    }
-    parts.push(textEl(w / 2, h / 2, 'empty schematic', 'middle', 16, '#999'));
-    parts.push('</svg>');
-    return parts.join('\n');
-  }
-
-  // Extents to draw (in world units). With a viewport the window is the exact
-  // view (so free panning never rescales the drawing); without one, the view
-  // auto-fits the circuit contents (exports / PNG).
-  const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
-  const x0 = vp ? vp.x : floorGrid(b.x) - pad;
-  const y0 = vp ? vp.y : floorGrid(b.y) - pad;
-  const x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
-  const y1 = vp ? vp.y + vp.h : ceilGrid(b.y + b.h) + pad;
-  const W = x1 - x0;
-  const H = y1 - y0;
-
-  const parts = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(W)} ${fmt(H)}">`,
-  ];
-
-  if (o.background) parts.push(`<rect x="${fmt(x0)}" y="${fmt(y0)}" width="${fmt(W)}" height="${fmt(H)}" fill="#fff"/>`);
-
-  if (empty && o.emptyHint) parts.push(textEl(x0 + W / 2, y0 + H / 2, 'empty schematic', 'middle', 16, '#999'));
-
-  if (o.grid) {
-    if (vp) {
-      for (let x = ceilGrid(vp.x); x <= ceilGrid(vp.x + vp.w); x += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-      for (let y = ceilGrid(vp.y); y <= ceilGrid(vp.y + vp.h); y += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-    } else {
-      for (let x = x0; x <= x1; x += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-      for (let y = y0; y <= y1; y += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-    }
-  }
-  // Editor-only slot for transient effects that should glow behind the drawing.
-  if (o.underlay) parts.push('<g class="editor-underlay"></g>');
-  // The crosshair is a navigation aid, not an object highlight. Render it
-  // before components, wires, and labels so those objects remain readable.
-  if (o.cursor && o.cursorCrosshair) {
-    const { x, y } = o.cursor;
-    const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
-    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
-  }
-  const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
-  const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);
-  const labels = [...circuit.labels.values()];
-  const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
-
-  // Bottom layer: visual shape annotations and their child labels. Keeping
-  // these together prevents annotation text from floating above the other
-  // default layers when a box or arrow has a caption.
-  const annotationShapes = labels
-    .filter((label) => ['arrow', 'box', 'line'].includes(label.kind))
-    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
-  for (const label of annotationShapes) {
-    if (label.id === o.editingLabel) continue;
-    const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
-    parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`${label.kind} annotation ${label.text || label.id}`)}">${shapeAnnotationSvg(label, '')}</g>`);
-    if (label.kind !== 'line') {
-      const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
-      parts.push(`<g${opacity}>${labelTextEl(mid.x, mid.y, label.runs(), 'middle', 'label', resolveColor(label.style?.color || '#111'), label.style?.width)}</g>`);
-    }
-    for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
-      if (child.id === o.editingLabel) continue;
-      const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
-      const t = child.textPos();
-      const childVisual = child.math
-        ? mathLabelSvg(child)
-        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
-      parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${childVisual}</g>`);
-    }
-  }
-
-  // Middle layer: wires deliberately sit behind components and labels. Their
-  // rounded caps still overlap terminal leads at the exact electrical point.
-  const nets = [...circuit.nets.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
-  // Where a wire meets a pin lead (or another wire), two separately drawn
-  // strokes overlap and their anti-aliased edges add up into a visibly
-  // thicker joint. Solid wires and terminal leads of one stroke style are
-  // therefore drawn together as a single path ("ink"), rasterized once.
-  // Per-segment wire elements stay in place, unpainted, for hit targets and
-  // keyboard access; ghosts and dashed strokes keep their own elements.
-  const ink = new Map();
-  const addInk = (attrs, d) => {
-    if (!ink.has(attrs)) ink.set(attrs, []);
-    ink.get(attrs).push(d);
-  };
-  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(c.style);
-  for (const c of comps) {
-    if (!inkLeads(c)) continue;
-    for (const g of c.def.graphics) {
-      if (g.terminalLead) addInk(inkAttrs(c.style), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
-    }
-  }
-  const UNPAINTED = ' stroke-opacity="0"';
-  for (const net of nets) {
-    // Fixed paths are already the complete authored geometry. Keep the legacy
-    // managed fallback below so multi-terminal managed nets retain their old
-    // rendering behavior.
-    const paths = net.routingMode === 'fixed'
-      ? net.paths()
-      : net.branches
-        ? net.branches
-        : !net.route && net.terminals.length >= 3
-          ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
-          : [net.points()];
-    const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
-    for (const [branch, pts] of paths.entries()) {
-      if (!pts || pts.length < 2) continue;
-      const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
-      const wireHelp = net.routingMode === 'fixed'
-        ? 'Fixed/direct wire — drag vertices, segments, or junctions'
-        : 'Managed wire — drag orthogonal segments';
-      const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
-      if (!segmentStyles) {
-        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        const inked = !opacity && solidStyle(net.style);
-        const geometry = polylineArrowheads(pts, net.style?.arrowhead, wireArrowheadOptions(circuit, pts));
-        if (inked) addInk(inkAttrs(net.style), polylineD(geometry.shaftPoints));
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
-        parts.push(arrowheadsSvg(geometry.heads, net.style?.color, opacity));
-        continue;
-      }
-      for (let i = 1; i < pts.length; i++) {
-        const a = pts[i - 1]; const b = pts[i];
-        const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
-        const segmentStyle = { ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) };
-        const inked = !opacity && solidStyle(segmentStyle);
-        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
-        // Solid wires are painted by the shared ink path below, but dashed
-        // and ghosted wires paint their own element. Use the same shortened
-        // shaft for those visible strokes so a dash cannot run underneath an
-        // endpoint arrowhead.
-        const paintedD = inked ? d : polylineD(geometry.shaftPoints);
-        if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
-        parts.push(`<path class="wire-${wireKind}" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
-        parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
-      }
-    }
-  }
-  for (const [attrs, ds] of ink) {
-    parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
-  }
-
-  // Top layer: components and their body/value graphics sit above wires.
-  for (const c of comps) {
-    const t = c.transform;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
-    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
-    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
-    parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
-    if (c.type === 'block') {
-      const r = c.blockSize;
-      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`);
-    } else {
-      const leadsInked = inkLeads(c);
-      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', c.style));
-    }
-    parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
-    if (o.includeBBox) {
-      const r = c.bboxWorld();
-      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
-    }
-  }
-
-  // Junction dots are placed by the routing algorithm as actual `solder`
-  // components (Circuit#syncJunctionSolders); the renderer draws no lookalike
-  // circle at net junctions.
-
-  // Junction dots at multi-terminal net connection points (above the wires).
-  if (o.junctions) {
-    for (const net of circuit.nets.values()) {
-      if (net.terminals.length < 3) continue;
-      for (const { comp, term } of net.terminals) {
-        const c = circuit.components.get(comp);
-        if (!c) continue;
-        const p = c.terminalWorld(term);
-        parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#292929"/>`);
-      }
-    }
-  }
-
-  // Terminal dots.
-  if (o.terminals) {
-    for (const c of comps) {
-      for (const { x, y } of c.worldTerminals()) {
-        parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="3" fill="#111"/>`);
-      }
-    }
-  }
-
-  // Top layer: components, instance labels, free labels, and net labels draw
-  // above the middle wires. Component drawOrder only changes stacking within
-  // this layer, so a pushed-back component remains above every wire.
-  // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
-  for (const c of comps) {
-    const def = c.def;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
-    if (def.refPrefix && def.refPos && !def.labelOffset) {
-      const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
-      // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
-      // matching the dedicated instance labels used by transistors (e.g. nmos).
-      parts.push(
-        `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${escapeSvg(c.refdes)}</text>`,
-      );
-    }
-    const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
-    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
-      const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
-      const valueText = def.textPos.font
-        ? symbolTextSvg({ ...def.textPos, text: c.value }, c.transform, c.style?.color || '#333')
-        : textEl(p.x, p.y, c.value, def.textPos.anchor, 12, '#333');
-      parts.push(`<g${opacity}>${valueText}</g>`);
-    }
-    if (isReferenceMarker(c) && !def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
-      const marker = referenceMarkerInfo(c.type);
-      const p = applyTransform(c.transform, marker.labelOffset.x, marker.labelOffset.y);
-      parts.push(`<g${opacity}>${textEl(p.x, p.y, c.value, 'middle', 12, '#333')}</g>`);
-    }
-  }
-
-  // Dedicated / instance label objects (instance identifiers are bold+italic and
-  // larger than free-standing annotation labels). Text is aligned inside the
-  // label's rendered box (left/center/right) and vertically centered.
-  for (const label of labels
-    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent)
-    .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
-    if (label.id === o.editingLabel) continue;
-    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
-    const t = label.textPos();
-    const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
-    const labelVisual = label.math
-      ? mathLabelSvg(label)
-      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
-    if (label.selectable === false) {
-      parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
-    } else {
-      parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
-    }
-  }
-
-  parts.push('</svg>');
-  return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
-}
-
-/**
- * Editor-only overlays rendered on top of svgString output.
- * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
- * halos around each selected component's bbox. opts.nets [net]: highlight
- * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
- * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
- * selection bounds, with small edge ticks and a center marker.
- * opts.wireMode: show all component terminals, colored by net membership.
- * opts.terminalSnapTarget {x,y}: Alt-held terminal snap target, emphasized
- * with an accent halo and ring.
- * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
- */
-// Editor overlay colors are semantic and theme-aware (style.css tokens):
-// SELECT (accent blue) = selection, focus, and previews of pending edits;
-// WARN (amber) = needs attention, e.g. an unconnected pin while wiring;
-// DANGER (red) = errors such as cross-net overlaps and focused check issues.
-// Sky-blue center guides are measurement aids and deliberately separate from
-// the accent blue used for selection and pending edits.
-const SELECT = 'var(--accent, #2563eb)';
-const WARN = 'var(--warn, #b45309)';
-const DANGER = 'var(--danger, #c53030)';
-const NEUTRAL = 'var(--svg-faint, #7a7d85)';
-
-function editorOverlay(circuit, opts = {}) {
-  const parts = [];
-  if (opts.cursor && opts.cursorCrosshair) {
-    const { x, y } = opts.cursor;
-    const { x: vx, y: vy, w, h } = opts.cursorCrosshair;
-    parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + w)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + h)}" fill="none"/>`);
-  }
-  const halo = (r) =>
-    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${SELECT}" fill-opacity="0.1" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
-  const dangerHalo = (r) =>
-    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${DANGER}" fill-opacity="0.1" stroke="${DANGER}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
-
-  for (const ref of opts.selection || []) {
-    const c = circuit.components.get(ref);
-    if (c) parts.push(halo(c.bboxWorld()));
-  }
-
-  for (const r of opts.layoutPreviewRects || []) {
-    parts.push(`<rect class="layout-preview" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="var(--accent)" fill-opacity="0.06" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7 5" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
-  }
-
-  // Equation to schematic highlight: the devices one hovered or locked
-  // sub-expression of a derived equation was built from. Their own geometry is
-  // retraced and restyled by CSS, the way commit feedback traces a committed
-  // shape. Interaction only — the overlay never reaches an export.
-  for (const ref of opts.emphasis || []) {
-    const c = circuit.components.get(ref);
-    if (c) parts.push(`<g class="equation-emphasis">${componentShapeSvg(c)}</g>`);
-  }
-
-  // Resizable schematic blocks use the same eight-handle affordance as block
-  // diagrams. Handles live in the interaction overlay, so they never become
-  // selectable circuit geometry or affect bounds/routing.
-  for (const ref of opts.resizeBlocks || []) {
-    const c = circuit.components.get(ref);
-    if (!c || c.type !== 'block') continue;
-    const r = c.bboxWorld();
-    const handles = [
-      ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
-      ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
-      ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
-    ];
-    parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
-  }
-
-  // Selection centerlines are deliberately sky blue and dashed so they read
-  // as measurement guides rather than cursor crosshairs or circuit geometry.
-  // Keep each guide outside the selected bounds: one grid cell of guide at
-  // each edge is enough to expose the center without crossing the artwork.
-  if (opts.centerGuides) {
-    const r = opts.centerGuides;
-    const cx = r.x + r.w / 2;
-    const cy = r.y + r.h / 2;
-    const pad = GRID;
-    const tick = 10;
-    const color = '#0ea5e9';
-    parts.push(`<g class="selection-center-guides" pointer-events="none" opacity="0.9">` +
-      `<path d="M ${fmt(cx)} ${fmt(r.y - pad)} L ${fmt(cx)} ${fmt(r.y)} M ${fmt(cx)} ${fmt(r.y + r.h)} L ${fmt(cx)} ${fmt(r.y + r.h + pad)} M ${fmt(r.x - pad)} ${fmt(cy)} L ${fmt(r.x)} ${fmt(cy)} M ${fmt(r.x + r.w)} ${fmt(cy)} L ${fmt(r.x + r.w + pad)} ${fmt(cy)}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="9 6"/>` +
-      `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
-      `<rect x="${fmt(cx - 4)}" y="${fmt(cy - 4)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="2" transform="rotate(45 ${fmt(cx)} ${fmt(cy)})"/>` +
-      `</g>`);
-  }
-
-  // Placement guides: the spacing and alignment relationships the object being
-  // placed or moved already stands in. Sky blue, like the selection
-  // centerlines, because both are measurement aids rather than circuit or
-  // selection state. Every measurement is drawn between the two anchors it
-  // measures, with a leader from each anchor to the dimension line, so what
-  // is being compared is never in doubt; two equal intervals carry the same
-  // number side by side. Only the blue anchor/alignment family is rendered.
-  if (opts.placementGuide?.guides?.length) {
-    const { moving, guides } = opts.placementGuide;
-    const ANCHOR_INK = '#0ea5e9';
-    const tick = 9;
-    const dot = (p, solid, ink) => `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="4.5" fill="${p.moving && !p.synthetic && solid ? ink : 'var(--paper, #fff)'}" stroke="${ink}" stroke-width="2"/>`;
-    parts.push(`<g class="placement-guides" pointer-events="none" fill="none" stroke-width="2" vector-effect="non-scaling-stroke">`);
-    for (const guide of guides) {
-      const color = ANCHOR_INK;
-      const axis = guide.axis;
-      const along = axis === 'x' ? 'y' : 'x';
-      const pt = (p, a) => (a === 'x' ? p.x : p.y);
-      // One shared dash rhythm for every "not yet real" stroke (a suggestion,
-      // an alignment reference, a target crossing) keeps the state signal to a
-      // single visual cue instead of several competing rhythms.
-      const SUGGESTION_DASH = '7 5';
-      if (guide.kind === 'align') {
-        const lo = Math.min(...guide.points.map((p) => pt(p, along)));
-        const hi = Math.max(...guide.points.map((p) => pt(p, along)));
-        const line = (a, b) => axis === 'y'
-          ? `M ${fmt(a)} ${fmt(guide.value)} H ${fmt(b)}`
-          : `M ${fmt(guide.value)} ${fmt(a)} V ${fmt(b)}`;
-        parts.push(`<path d="${line(lo - GRID / 2, hi + GRID / 2)}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.85"/>`);
-        parts.push(guide.points.map((p) => dot(p, true, color)).join(''));
-        continue;
-      }
-      // One dimension line clear of every anchor and of the moving symbol. A
-      // guide still being offered is drawn dashed, and its own point stands on
-      // the target rather than on the object, so the two intervals stay the
-      // ones being labelled. Direct one-peer distances use the opposite lane
-      // from target/even-spacing rulers, keeping both useful readings legible.
-      // Everything that only connects an anchor back to that line (leaders,
-      // the halfway reference) stays a quiet solid hairline, so dashing reads
-      // as one thing: not landed yet.
-      const pending = !guide.exact;
-      const dash = pending ? ` stroke-dasharray="${SUGGESTION_DASH}"` : '';
-      const bboxEdge = axis === 'x' ? moving.bbox.y : moving.bbox.x;
-      const bboxFarEdge = axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w;
-      const pointEdges = guide.points.map((p) => pt(p, along));
-      const base = guide.direct
-        ? Math.max(bboxFarEdge, ...pointEdges) + GRID
-        : Math.min(bboxEdge, ...pointEdges) - GRID;
-      if (pending) {
-        // Where to land: the target column or row, across the moving symbol.
-        const lo = Math.min(bboxEdge, ...guide.points.map((p) => pt(p, along)));
-        const hi = Math.max(axis === 'x' ? moving.bbox.y + moving.bbox.h : moving.bbox.x + moving.bbox.w,
-          ...guide.points.map((p) => pt(p, along)));
-        parts.push(`<path d="${axis === 'x'
-          ? `M ${fmt(guide.target)} ${fmt(lo - GRID / 2)} V ${fmt(hi + GRID / 2)}`
-          : `M ${fmt(lo - GRID / 2)} ${fmt(guide.target)} H ${fmt(hi + GRID / 2)}`}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.55"/>`);
-      }
-      const leader = (p) => (axis === 'x'
-        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
-        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
-      parts.push(`<path d="${guide.points.map(leader).join(' ')}" stroke="${color}" stroke-opacity="0.3" stroke-width="1.25"/>`);
-      const span = (a, b) => (axis === 'x'
-        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(b.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(b.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
-        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(b.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(b.y)} H ${fmt(base + tick)}`);
-      const label = (a, b) => (axis === 'x'
-        ? `<text x="${fmt((a.x + b.x) / 2)}" y="${fmt(base - GRID / 3)}" fill="${color}" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`
-        : `<text x="${fmt(base - GRID / 3)}" y="${fmt((a.y + b.y) / 2 + 8)}" fill="${color}" stroke="none" text-anchor="end" font-size="24" font-family="system-ui, sans-serif">${guide.cells} cells</text>`);
-      for (let i = 0; i + 1 < guide.points.length; i += 1) {
-        const a = guide.points[i];
-        const b = guide.points[i + 1];
-        parts.push(`<path d="${span(a, b)}" stroke="${color}"${dash}/>`);
-        parts.push(label(a, b));
-      }
-      if (guide.halfway) {
-        const { from, at, cells } = guide.halfway;
-        const halfBase = base + tick + 8;
-        const reference = axis === 'x'
-          ? `M ${fmt(at.x)} ${fmt(at.y)} V ${fmt(base)} M ${fmt(from.x)} ${fmt(halfBase)} H ${fmt(at.x)}`
-          : `M ${fmt(at.x)} ${fmt(at.y)} H ${fmt(base)} M ${fmt(halfBase)} ${fmt(from.y)} V ${fmt(at.y)}`;
-        const text = axis === 'x'
-          ? `<text x="${fmt((from.x + at.x) / 2)}" y="${fmt(halfBase + 20)}" fill="${color}" stroke="none" text-anchor="middle" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`
-          : `<text x="${fmt(halfBase + 20)}" y="${fmt((from.y + at.y) / 2 + 7)}" fill="${color}" stroke="none" text-anchor="start" font-size="20" font-family="system-ui, sans-serif">${cells} cells</text>`;
-        parts.push(`<g class="placement-halfway-reference" stroke="${color}" stroke-opacity="0.4" stroke-width="1.25"><path d="${reference}"/></g>${text}`);
-      }
-      parts.push(guide.points.map((p) => dot(p, guide.exact, color)).join(''));
-    }
-    parts.push('</g>');
-  }
-
-  // A marquee/visual selection is only a preview until its gesture commits.
-  // Keep it visually distinct and never touch the editor's real selection.
-  if (opts.previewSelection) {
-    for (const ref of opts.previewSelection.refs || []) {
-      const c = circuit.components.get(ref);
-      if (c) {
-        const r = c.bboxWorld();
-        parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="3" opacity="0.9"/>`);
-      }
-    }
-    for (const id of opts.previewSelection.labels || []) {
-      const label = circuit.labels.get(id);
-      if (!label) continue;
-      const r = label.bbox();
-      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="5 3" rx="2" opacity="0.9"/>`);
-    }
-    for (const id of opts.previewSelection.nets || []) {
-      const net = circuit.nets.get(id);
-      if (!net) continue;
-      for (const pts of net.paths()) {
-        if (!pts || pts.length < 2) continue;
-        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="7" opacity="0.32" stroke-dasharray="8 5" stroke-linecap="round"/>`);
-      }
-    }
-    for (const { a, b } of opts.previewWireSegments || []) {
-      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="8" opacity="0.55" stroke-dasharray="8 5" stroke-linecap="round"/>`);
-    }
-  }
-
-  // Solder dots on a highlighted net get a halo so wire junctions stand out.
-  if (opts.netSolder && opts.netSolder.length) {
-    for (const p of opts.netSolder) {
-      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="13" fill="none" stroke="${SELECT}" stroke-width="2" opacity="0.7"/>`);
-      parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="${SELECT}"/>`);
-    }
-  }
-
-  if (opts.selLabels && opts.selLabels.length) {
-    for (const id of opts.selLabels) {
-      const label = circuit.labels.get(id);
-      if (!label) continue;
-      const b = label.bbox();
-      const a = label.anchorWorld();
-      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
-      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
-    }
-  } else if (opts.selLabel) {
-    const label = circuit.labels.get(opts.selLabel);
-    if (label) {
-      const b = label.bbox();
-      const a = label.anchorWorld();
-      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
-      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
-    }
-  }
-
-  for (const net of opts.nets || []) {
-    const paths = net && typeof net.paths === 'function' ? net.paths() : [net];
-    for (const pts of paths) {
-      if (!pts || pts.length < 2) continue;
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="12" opacity="0.35" stroke-linecap="round" stroke-linejoin="round"/>`);
-      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2.4"/>`);
-    }
-  }
-
-  // Design-check focus: the objects behind the selected issue, in the error color.
-  if (opts.diagnostic) {
-    for (const ref of opts.diagnostic.components || []) {
-      const c = circuit.components.get(ref);
-      if (c) parts.push(dangerHalo(c.bboxWorld()));
-    }
-    for (const id of opts.diagnostic.labels || []) {
-      const label = circuit.labels.get(id);
-      if (label) parts.push(dangerHalo(label.bbox()));
-    }
-    for (const id of opts.diagnostic.nets || []) {
-      const net = circuit.nets.get(id);
-      for (const pts of net?.paths?.() || []) {
-        if (!pts || pts.length < 2) continue;
-        const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="12" opacity="0.3" stroke-linecap="round" stroke-linejoin="round"/>`);
-        parts.push(`<path d="${d}" fill="none" stroke="${DANGER}" stroke-width="2.4"/>`);
-      }
-    }
-  }
-
-  // Cross-net collinear overlaps (a wire dragged on top of another net's wire).
-  if (opts.warnOverlaps && opts.warnOverlaps.length) {
-    for (const o of opts.warnOverlaps) {
-      parts.push(`<line x1="${fmt(o.x0)}" y1="${fmt(o.y0)}" x2="${fmt(o.x1)}" y2="${fmt(o.y1)}" stroke="${DANGER}" stroke-width="9" opacity="0.55" stroke-linecap="round"/>`);
-    }
-  }
-
-  if (opts.wireSegments && opts.wireSegments.length) {
-    for (const { a, b } of opts.wireSegments) {
-      parts.push(`<path d="M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}" fill="none" stroke="${SELECT}" stroke-width="9" opacity="0.6" stroke-linecap="round"/>`);
-    }
-  }
-
-  if (opts.fixedDrag) {
-    const { x, y, junction } = opts.fixedDrag;
-    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${junction ? 14 : 10}" fill="none" stroke="${SELECT}" stroke-width="2.5" stroke-dasharray="4 3"/>`);
-  }
-
-  if (opts.wireMode) {
-    const src = opts.wireSource;
-    const snapTarget = opts.terminalSnapTarget;
-    const terminalRadius = 8;
-    const sourceRadius = 8.5;
-    if (snapTarget && Number.isFinite(snapTarget.x) && Number.isFinite(snapTarget.y)) {
-      parts.push(`<circle class="wire-snap-target" cx="${fmt(snapTarget.x)}" cy="${fmt(snapTarget.y)}" r="15" fill="${SELECT}" fill-opacity="0.16"/>`);
-      parts.push(`<circle class="wire-snap-target" cx="${fmt(snapTarget.x)}" cy="${fmt(snapTarget.y)}" r="12" fill="none" stroke="${SELECT}" stroke-width="3" stroke-dasharray="5 3"/>`);
-    }
-    for (const comp of circuit.components.values()) {
-      for (const terminal of comp.worldTerminals()) {
-        const connected = circuit.netOfTerminal({ comp: comp.refdes, term: terminal.name });
-        const isSource = src && src.refdes === comp.refdes && src.term === terminal.name;
-        // Connected pins are quiet; open pins still need a wire (attention).
-        const color = connected ? NEUTRAL : WARN;
-        if (isSource) {
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="12.5" fill="${SELECT}" opacity="0.18"/>`);
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="${sourceRadius}" fill="${SELECT}" stroke="var(--paper, #fff)" stroke-width="2"/>`);
-        } else {
-          parts.push(`<circle cx="${fmt(terminal.x)}" cy="${fmt(terminal.y)}" r="${terminalRadius}" fill="var(--paper, #fff)" stroke="${color}" stroke-width="2.5"/>`);
-        }
-      }
-    }
-  }
-
-  if (opts.rubber) {
-    const r = opts.rubber;
-    const x = Math.min(r.x0, r.x1);
-    const y = Math.min(r.y0, r.y1);
-    const w = Math.abs(r.x1 - r.x0);
-    const h = Math.abs(r.y1 - r.y0);
-    const color = r.color === 'neutral' ? NEUTRAL : SELECT;
-    parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
-  }
-
-  // The draft wire follows the cursor until it is committed.
-  for (const preview of [opts.wirePreview].filter(Boolean)) {
-    const from = preview.from;
-    const pts = preview.pts || autoRoute([{ x: from.x, y: from.y }, { x: preview.to.x, y: preview.to.y }]);
-    if (pts && pts.length >= 2) {
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="6 5"/>`);
-    }
-    parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="${SELECT}"/>`);
-  }
-  if (opts.annotationPreview) {
-    const { kind, a, b, points } = opts.annotationPreview;
-    const attrs = `stroke="${SELECT}" stroke-width="6" stroke-dasharray="10 7" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
-    if (kind === 'line') {
-      const d = points.map((point, i) => `${i ? 'L' : 'M'} ${pt(point.x, point.y)}`).join(' ');
-      parts.push(`<path d="${d}" ${attrs}/>`);
-    } else if (kind === 'box') {
-      const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-      parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" ${attrs}/>`);
-    } else {
-      const route = points?.length ? points : [a, b];
-      const geometry = polylineArrowheads(route, 'end');
-      parts.push(`<path d="${polylineD(geometry.shaftPoints)}" ${attrs}/>${arrowheadsSvg(geometry.heads, SELECT, ' opacity=".8"')}`);
-    }
-  }
-
-  if (opts.directWirePreview) {
-    const { from, pts } = opts.directWirePreview;
-    if (from && pts && pts.length >= 2) {
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path class="direct-wire-preview" d="${d}" fill="none" stroke="${SELECT}" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>`);
-      for (const p of pts.slice(1, -1)) parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="5" fill="var(--paper, #fff)" stroke="${SELECT}" stroke-width="2"/>`);
-    }
-  }
-
-  if (opts.cursor) {
-    const { x, y } = opts.cursor;
-    const color = opts.directWirePreview || opts.wireMode ? SELECT : '#7a7d85';
-    const radius = opts.wireMode ? 8 : 4;
-    parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${radius}" fill="none" stroke="${color}" stroke-width="${opts.wireMode ? 2 : 1.5}"/>`);
-    if (opts.wireMode && !opts.wirePreview && !opts.directWirePreview) {
-      parts.push(`<path d="M ${fmt(x - 14)} ${fmt(y)} L ${fmt(x + 14)} ${fmt(y)} M ${fmt(x)} ${fmt(y - 14)} L ${fmt(x)} ${fmt(y + 14)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="3 2"/>`);
-    }
-  }
-
-  // Symmetric placement: the axis a mirrored pair is being placed about. A
-  // construction line, drawn in the measurement sky blue and never geometry.
-  if (opts.symmetryAxis?.operation && opts.ghost?.def) {
-    const { operation, pin } = opts.symmetryAxis;
-    const g = opts.ghost;
-    // Long enough to read as an axis through whatever is being mirrored.
-    const b = transformRect({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }, g.def.bbox);
-    const reach = operation === 'mirrorX'
-      ? Math.max(Math.abs(b.y - pin.y), Math.abs(b.y + b.h - pin.y)) + GRID
-      : Math.max(Math.abs(b.x - pin.x), Math.abs(b.x + b.w - pin.x)) + GRID;
-    const d = operation === 'mirrorX'
-      ? `M ${fmt(pin.x)} ${fmt(pin.y - reach)} V ${fmt(pin.y + reach)}`
-      : `M ${fmt(pin.x - reach)} ${fmt(pin.y)} H ${fmt(pin.x + reach)}`;
-    parts.push(`<g class="symmetry-axis" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
-      `<path d="${d}" stroke-dasharray="14 5 3 5"/>` +
-      `<circle cx="${fmt(pin.x)}" cy="${fmt(pin.y)}" r="4.5" fill="var(--paper, #fff)" stroke="#0ea5e9" stroke-width="2"/>` +
-      `</g>`);
-    // How far apart the pair is being pulled. Two equal intervals either side
-    // of the axis, dimensioned like a spacing guide, because the number that
-    // decides a differential pair's pitch is the one the gesture is setting.
-    // It sits on the far side of the symbol from the placement guides, which
-    // measure off the top/left edge, so the two readouts never collide.
-    const from = opts.symmetryAxis.from;
-    const axis = operation === 'mirrorX' ? 'x' : 'y';
-    const offset = from ? Math.abs(from[axis] - pin[axis]) : 0;
-    if (offset > 1e-6) {
-      const twin = { x: from.x, y: from.y, [axis]: 2 * pin[axis] - from[axis] };
-      const cells = Math.round((offset / GRID) * 100) / 100;
-      const text = `${cells} ${cells === 1 ? 'cell' : 'cells'}`;
-      const tick = 9;
-      const base = axis === 'x'
-        ? Math.max(b.y + b.h, pin.y, from.y) + GRID
-        : Math.max(b.x + b.w, pin.x, from.x) + GRID;
-      const leader = (p) => (axis === 'x'
-        ? `M ${fmt(p.x)} ${fmt(p.y)} V ${fmt(base)}`
-        : `M ${fmt(p.x)} ${fmt(p.y)} H ${fmt(base)}`);
-      const span = (a, c) => (axis === 'x'
-        ? `M ${fmt(a.x)} ${fmt(base)} H ${fmt(c.x)} M ${fmt(a.x)} ${fmt(base - tick)} V ${fmt(base + tick)} M ${fmt(c.x)} ${fmt(base - tick)} V ${fmt(base + tick)}`
-        : `M ${fmt(base)} ${fmt(a.y)} V ${fmt(c.y)} M ${fmt(base - tick)} ${fmt(a.y)} H ${fmt(base + tick)} M ${fmt(base - tick)} ${fmt(c.y)} H ${fmt(base + tick)}`);
-      const label = (a, c) => (axis === 'x'
-        ? `<text x="${fmt((a.x + c.x) / 2)}" y="${fmt(base + GRID * 0.8)}" fill="#0ea5e9" stroke="none" text-anchor="middle" font-size="24" font-family="system-ui, sans-serif">${text}</text>`
-        : `<text x="${fmt(base + GRID / 3)}" y="${fmt((a.y + c.y) / 2 + 8)}" fill="#0ea5e9" stroke="none" text-anchor="start" font-size="24" font-family="system-ui, sans-serif">${text}</text>`);
-      const at = (p) => ({ x: axis === 'x' ? p.x : base, y: axis === 'x' ? base : p.y });
-      parts.push(`<g class="symmetry-offset" pointer-events="none" fill="none" stroke="#0ea5e9" stroke-width="2" vector-effect="non-scaling-stroke">` +
-        `<path d="${[twin, pin, from].map(leader).join(' ')}" stroke-opacity="0.4" stroke-dasharray="4 4"/>` +
-        `<path d="${span(twin, pin)}"/><path d="${span(pin, from)}"/>` +
-        label(twin, pin) + label(pin, from) +
-        [twin, from].map((p) => `<circle cx="${fmt(at(p).x)}" cy="${fmt(at(p).y)}" r="4.5" fill="#0ea5e9" stroke="#0ea5e9" stroke-width="2"/>`).join('') +
-        `</g>`);
-    }
-  }
-
-  // Placement ghost: a faded preview of the component (or label) that will be
-  // placed at the snapped cursor once the user clicks or presses Enter. A
-  // symmetric placement previews its mirrored twin the same way.
-  for (const g of [opts.ghost, opts.ghostTwin].filter(Boolean)) {
-    if (g.label) {
-      // Use the same label model and renderer as the committed annotation so
-      // markup, alignment, and the grid-sized footprint are previewed honestly.
-      const preview = new LabelInstance(circuit, {
-        text: g.text || 'label', x: g.x, y: g.y, align: g.align || 'center',
-      });
-      const b = preview.bbox();
-      const t = preview.textPos();
-      parts.push(`<g class="label-placement-ghost" opacity="0.58">`);
-      parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="#9aa0ab" stroke-width="1.5" stroke-dasharray="4 3"/>`);
-      parts.push(labelTextEl(t.x, t.y, preview.runs(), t.anchor, 'label'));
-      parts.push('</g>');
-    } else if (g.def) {
-      const t = transformToSvg({ x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY });
-      const body = g.def.graphics.filter((gg) => gg.kind !== 'text').map((gg) => graphicsToSvg(gg)).join('');
-      const text = g.def.graphics.filter((gg) => gg.kind === 'text').map((gg) => symbolTextSvg(gg, { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY })).join('');
-      parts.push(`<g transform="${t}" opacity="0.45">${body}</g>${text}`);
-    }
-  }
-
-  return parts.join('\n');
-}
-
-__exports.svgPixelSize = svgPixelSize;
-__exports.texToMathML = texToMathML;
-__exports.componentShapeSvg = componentShapeSvg;
-__exports.labelShapeSvg = labelShapeSvg;
-__exports.svgString = svgString;
-__exports.editorOverlay = editorOverlay;
-};
-
-__modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
-/**
- * Where each symbol in a displayed equation came from.
- *
- * `devices.js` mints every symbolic parameter name through one chokepoint,
- * `parameterName(prefix, refdes)`, and tags every primitive it emits with
- * `metadata.component` and an `id` of the form `<refdes>.<role>`. That makes
- * the inversion below exact: it reads the table devices.js already built
- * rather than guessing at the spelling of a rendered name. Nothing here parses
- * TeX, and nothing here knows about the DOM.
- *
- * Keys are the raw expression symbol names (`gm1`, `ro1`, `RD`) as they appear
- * in `{kind:'symbol', name}` nodes — not their rendered forms (`g_{m1}`).
- * `present.js` owns that spelling and the two must not be confused.
- */
-
-function roleOf(primitive) {
-  const id = String(primitive?.id || '');
-  const dot = id.lastIndexOf('.');
-  const role = dot >= 0 ? id.slice(dot + 1) : '';
-  return role || String(primitive?.kind || '');
-}
-
-/**
- * Invert one or more primitive lists into
- * `{ [symbolName]: {component, role, kind, primitives} }`. Earlier lists win,
- * so pass the solved model first and earlier modeling stages after it.
- *
- * Several lists are needed because a symbol can survive into a displayed
- * equation after its own primitive has left the solved set:
- *
- *  - A Miller shunt carries an expression, not a parameter name, so it mints no
- *    symbol of its own — but that expression still contains the feedback
- *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
- *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
- *    the engine puts `r_o` back when removing it would make the solve singular.
- *
- * A symbol the table cannot resolve simply does not highlight, which is why
- * these gaps are invisible until someone points at the term and nothing
- * happens. Only primitives whose `value` is a symbolic name contribute, and a
- * symbol reached by more than one primitive keeps the first component and
- * accumulates the primitive ids.
- */
-function symbolProvenance(...primitiveLists) {
-  const table = Object.create(null);
-  for (const primitives of primitiveLists) {
-    for (const primitive of primitives || []) {
-      const name = primitive?.value;
-      if (typeof name !== 'string' || !name) continue;
-      const component = primitive?.metadata?.component;
-      if (!component) continue;
-      const existing = table[name];
-      if (existing) {
-        if (!existing.primitives.includes(primitive.id)) existing.primitives.push(primitive.id);
-        continue;
-      }
-      table[name] = {
-        component,
-        role: roleOf(primitive),
-        kind: primitive.kind,
-        primitives: [primitive.id],
-      };
-    }
-  }
-  return table;
-}
-
-/** The distinct components a set of symbol names resolves to, in first-seen
- *  order. Used to label a rendered subexpression with everything it touches. */
-function componentsOfSymbols(names, table) {
-  const seen = [];
-  for (const name of names || []) {
-    const component = table?.[name]?.component;
-    if (component && !seen.includes(component)) seen.push(component);
-  }
-  return seen;
-}
-
-__exports.symbolProvenance = symbolProvenance;
-__exports.componentsOfSymbols = componentsOfSymbols;
-};
-
-__modules["src/core/style.js"] = function (__require, __exports) {
-/**
- * Centralized schematic line styles.
- *
- * Symbols and wires select a stroke role via `style`. Roles differ only in
- * width, cap, and join; filled body shapes use polygon fill instead.
- *
- *   line       legacy/default fallback (flat caps, miter joins)
- *   thick      heavier legacy linework (~1.5x default)
- *   symbol     normal textbook linework
- *   wire       projecting square caps, so the half-width extension at a
- *              terminal overlaps the pin lead inside the shared ink path and a
- *              wire meeting a lead at a right angle fills the corner square
- *   annotation visual lines/arrows (round ends)
- *   emph       emphasis (MOSFET gate bar, BJT base bar)
- *   ground     ground bars
- *   supply     power slabs
- */
-const STROKES = {
-  line: { width: 6, cap: 'flat', join: 'miter' },
-  thick: { width: 9, cap: 'flat', join: 'flat' },
-  symbol: { width: 6, cap: 'butt', join: 'miter' },
-  wire: { width: 6, cap: 'square', join: 'miter' },
-  annotation: { width: 6, cap: 'round', join: 'miter' },
-  emph: { width: 9.6, cap: 'butt', join: 'miter' },
-  ground: { width: 11.6, cap: 'butt', join: 'miter' },
-  supply: { width: 7.2, cap: 'butt', join: 'miter' },
-};
-
-const DEFAULT_INK = '#111';
-
-/** Named semantic colors. Values are intentionally mutable so a theme can
- * update a token and already-loaded drawings immediately pick it up. */
-const COLOR_PALETTE = {
-  red: '#d96c75',
-  orange: '#e59f71',
-  yellow: '#e4c16f',
-  green: '#9acb8a',
-  teal: '#62b5a7',
-  blue: '#6fa8dc',
-  indigo: '#8f8bd1',
-  purple: '#b08ac6',
-  pink: '#d889b5',
-  slate: '#9aa7b8',
-  gray: '#7a7d85',
-};
-
-const LEGACY_COLORS = new Map(Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]));
-function resolveColor(value) {
-  if (typeof value !== 'string' || !value) return DEFAULT_INK;
-  const token = value.startsWith('$') ? value.slice(1) : value;
-  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return COLOR_PALETTE[token];
-  const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
-  return legacyToken ? COLOR_PALETTE[legacyToken] : value;
-}
-
-/** Editor rendering: default ink follows the page theme through CSS `color`.
- * Standalone exports keep literal colors and never use this. */
-function themeInkSvg(svg) {
-  return String(svg).replace(/\b(stroke|fill)="(?:#111|#111111|#292929|#333)"/gi, '$1="currentColor"');
-}
-
-function setColorToken(token, value) {
-  if (!Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) throw new Error(`unknown color token "${token}"`);
-  if (typeof value !== 'string' || !value) throw new Error('color token value must be a CSS color');
-  COLOR_PALETTE[token] = value;
-  return value;
-}
-
-/** Escape a value for use in SVG text or a quoted attribute. */
-const escapeSvg = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-
-function strokeParts(styleName, miterLimit, color = DEFAULT_INK, width) {
-  const s = STROKES[styleName] || STROKES.line;
-  const limit = Number.isFinite(miterLimit) && miterLimit > 0 ? ` stroke-miterlimit="${miterLimit}"` : '';
-  return `stroke="${escapeSvg(color)}" stroke-width="${width ?? s.width}" stroke-linecap="${s.cap}" stroke-linejoin="${s.join}"${limit}`;
-}
-
-function strokeAttrs(styleName, miterLimit) {
-  return strokeParts(styleName, miterLimit);
-}
-
-/** Resolve the painted stroke width for a style role, including explicit
- * thin/thick overrides. Consumers that position filled geometry next to a
- * stroked body should use this instead of duplicating the role table. */
-function strokeWidth(style = {}, base = 'line') {
-  if (style.width === 'thin') return 3;
-  if (style.width === 'thick') return 9;
-  return STROKES[base]?.width ?? STROKES.line.width;
-}
-
-/** Text styles for schematic labels, keyed by `fontAttrs` kind. */
-const FONTS = {
-  instance: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
-  label: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
-};
-
-function fontAttrs(kind) {
-  const f = FONTS[kind];
-  if (!f) return '';
-  const parts = [`font-size="${f.size}"`, `fill="${escapeSvg(resolveColor(f.fill))}"`];
-  if (f.weight) parts.push(`font-weight="${f.weight}"`);
-  if (f.italic) parts.push(`font-style="italic"`);
-  return parts.join(' ');
-}
-
-function styleAttrs(style = {}, base = 'symbol', miterLimit) {
-  const width = style.width === 'thin' ? 3 : style.width === 'thick' ? 9 : undefined;
-  const attrs = strokeParts(base, miterLimit, resolveColor(style.color || DEFAULT_INK), width);
-  const dash = style.lineStyle && style.lineStyle !== 'solid'
-    ? { dashed: '12 12', 'dash-dot': '14 10 3 10', dotted: '2 10' }[style.lineStyle]
-    : null;
-  return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
-}
-
-__exports.resolveColor = resolveColor;
-__exports.themeInkSvg = themeInkSvg;
-__exports.setColorToken = setColorToken;
-__exports.strokeAttrs = strokeAttrs;
-__exports.strokeWidth = strokeWidth;
-__exports.fontAttrs = fontAttrs;
-__exports.styleAttrs = styleAttrs;
-__exports.COLOR_PALETTE = COLOR_PALETTE;
-__exports.escapeSvg = escapeSvg;
-};
-
-__modules["src/core/line-style.js"] = function (__require, __exports) {
-/** The one filled triangular arrowhead offered by the shared style menu. */
-const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
-
-function normalizeArrowhead(value, fallback = 'none') {
-  return ARROWHEAD_VALUES.includes(value) ? value : fallback;
-}
-
-function defaultArrowhead(kind) {
-  return kind === 'arrow' || kind === 'connector' ? 'end' : 'none';
-}
-
-function arrowheadEnds(value, fallback = 'none') {
-  const normalized = normalizeArrowhead(typeof value === 'object' ? value?.arrowhead : value, fallback);
-  return {
-    start: normalized === 'start' || normalized === 'both',
-    end: normalized === 'end' || normalized === 'both',
-  };
-}
-
-/**
- * Map one shared arrowhead choice onto the individual segments of a
- * polyline.  A bent route is still one drawable wire, so its heads belong at
- * the route endpoints rather than at its corner vertices.  On a single
- * segment both heads can share that segment; otherwise the two heads occupy
- * the first and last segments independently.
- */
-function polylineArrowheadValues(points = [], value = 'none') {
-  const route = [];
-  for (const point of points || []) {
-    const next = { x: point.x, y: point.y };
-    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
-  }
-  if (route.length < 2) return [];
-  const ends = arrowheadEnds(value);
-  let first = -1;
-  let last = -1;
-  for (let i = 1; i < route.length; i++) {
-    if (samePoint(route[i - 1], route[i])) continue;
-    if (first < 0) first = i;
-    last = i;
-  }
-  if (first < 0) return route.slice(1).map(() => 'none');
-  const values = route.slice(1).map(() => 'none');
-  if (ends.start) values[first - 1] = first === last && ends.end ? 'both' : 'start';
-  if (ends.end) values[last - 1] = ['start', 'both'].includes(values[last - 1]) ? 'both' : 'end';
-  return values;
-}
-
-/** Resolve segment-local arrowhead styles to the logical endpoints of a
- * polyline. This also repairs older documents where an end head was left on
- * an interior segment after a route gained a bend. */
-function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
-  const values = [];
-  for (let index = 1; index < points.length; index++) {
-    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
-    if (value !== undefined) values.push(normalizeArrowhead(value));
-  }
-  if (!values.length) return normalizeArrowhead(inherited);
-  const start = values.some((value) => arrowheadEnds(value).start);
-  const end = values.some((value) => arrowheadEnds(value).end);
-  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
-}
-
-/** Return wireStyles with one shared arrowhead choice distributed across a
- * path's endpoint segments. Existing per-segment appearance is preserved. */
-function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {
-  const next = { ...wireStyles };
-  for (const [index, arrowhead] of polylineArrowheadValues(points, value).entries()) {
-    const key = `${branch}:${index + 1}`;
-    next[key] = { ...(next[key] || {}), arrowhead };
-  }
-  return next;
-}
-
-const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
-
-/** Filled arrowhead geometry for a segment whose tip is `b`. */
-function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const distance = Math.hypot(dx, dy);
-  if (!distance) return null;
-  const ux = dx / distance;
-  const uy = dy / distance;
-  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
-  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
-  const normal = { x: uy, y: -ux };
-  return {
-    shaft: base,
-    tip,
-    left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
-    right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
-  };
-}
-
-/**
- * Return a polyline shortened at the decorated endpoints plus the filled
- * heads. The input is never mutated. Endpoint decoration works for straight,
- * diagonal, and orthogonal multi-point paths.
- */
-function polylineArrowheads(points = [], value = 'none', options = {}) {
-  const route = [];
-  for (const point of points || []) {
-    const next = { x: point.x, y: point.y };
-    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
-  }
-  if (route.length < 2) return { shaftPoints: route, heads: [] };
-  const ends = arrowheadEnds(value, options.fallback || 'none');
-  let first = -1;
-  let last = -1;
-  for (let i = 1; i < route.length; i++) {
-    if (samePoint(route[i - 1], route[i])) continue;
-    if (first < 0) first = i;
-    last = i;
-  }
-  if (first < 0) return { shaftPoints: route, heads: [] };
-  const sameSegment = first === last;
-  const fullLength = options.length ?? 32;
-  const halfWidth = options.halfWidth ?? 18;
-  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
-  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
-  const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
-  const length = sameSegment && ends.start && ends.end
-    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
-    : fullLength;
-  const heads = [];
-  const shaftPoints = route.map((point) => ({ ...point }));
-  if (ends.start) {
-    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
-    if (head) {
-      heads.push({ ...head, placement: 'start' });
-      shaftPoints[0] = head.shaft;
-    }
-  }
-  if (ends.end) {
-    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
-    if (head) {
-      heads.push({ ...head, placement: 'end' });
-      shaftPoints[shaftPoints.length - 1] = head.shaft;
-    }
-  }
-  return { shaftPoints, heads };
-}
-
-__exports.normalizeArrowhead = normalizeArrowhead;
-__exports.defaultArrowhead = defaultArrowhead;
-__exports.arrowheadEnds = arrowheadEnds;
-__exports.polylineArrowheadValues = polylineArrowheadValues;
-__exports.polylineArrowheadValue = polylineArrowheadValue;
-__exports.polylineArrowheadStyles = polylineArrowheadStyles;
-__exports.arrowheadGeometry = arrowheadGeometry;
-__exports.polylineArrowheads = polylineArrowheads;
-__exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
-};
-
-__modules["src/core/document.js"] = function (__require, __exports) {
-const { Circuit } = __require("src/core/model.js");
-const { svgString } = __require("src/core/render.js");
-
-
-
-function documentKind(data) {
-  if (data?.kind === 'block') throw new Error('block diagram documents are no longer supported');
-  return 'circuit';
-}
-function documentKindLabel() { return 'Schematic'; }
-function createDocument(kind = 'circuit') {
-  if (kind === 'circuit' || kind === 'schematic') return new Circuit();
-  throw new Error(`unknown document kind "${kind}"`);
-}
-/** Load a saved document. Schematics are normalized to the app's single wire
- * model: legacy fixed nets become managed nets with protected diagonals. */
-function loadDocument(data) {
-  documentKind(data);
-  const circuit = Circuit.fromJSON(data);
-  circuit.convertFixedNets();
-  return circuit;
-}
-function renderDocument(document, options = {}) { return svgString(document, options); }
-function saveDocument(document) { return document.toJSON(); }
-function isDocument(value) { return value instanceof Circuit; }
-
-__exports.documentKind = documentKind;
-__exports.documentKindLabel = documentKindLabel;
-__exports.createDocument = createDocument;
-__exports.loadDocument = loadDocument;
-__exports.renderDocument = renderDocument;
-__exports.saveDocument = saveDocument;
-__exports.isDocument = isDocument;
-};
-
-__modules["src/core/grid.js"] = function (__require, __exports) {
-/**
- * Coarse placement grid. Every world coordinate of a terminal, a component
- * origin, or a wire point must be an integer multiple of GRID.
- */
-const GRID = 40;
-
-/** Snap a single scalar to the nearest grid multiple. */
-function snap(n) {
-  return Math.round(n / GRID) * GRID;
-}
-
-/** Snap x,y to grid; returns a new point {x,y}. */
-function snapPoint(x, y) {
-  return { x: snap(x), y: snap(y) };
-}
-
-/** True if n is (lexact triangle) a grid multiple. */
-function onGrid(n, eps = 1e-9) {
-  return Math.abs(n / GRID - Math.round(n / GRID)) < eps;
-}
-
-/** Grid index (cell number) of a coordinate. */
-function cell(n) {
-  return Math.round(n / GRID);
-}
-
-/** Nearest multiple of GRID at or below n. */
-function floorGrid(n) {
-  return Math.floor(n / GRID) * GRID;
-}
-
-/** Nearest multiple of GRID at or above n. */
-function ceilGrid(n) {
-  return Math.ceil(n / GRID) * GRID;
-}
-__exports.snap = snap;
-__exports.snapPoint = snapPoint;
-__exports.onGrid = onGrid;
-__exports.cell = cell;
-__exports.floorGrid = floorGrid;
-__exports.ceilGrid = ceilGrid;
-__exports.GRID = GRID;
-};
-
 __modules["src/core/selection.js"] = function (__require, __exports) {
 const { extractWireFragments } = __require("src/core/model.js");
 
@@ -23096,312 +23147,6 @@ __exports.distanceToSegment = distanceToSegment;
 __exports.fmt = fmt;
 __exports.pt = pt;
 __exports.midSnap = midSnap;
-};
-
-__modules["src/core/wireedit.js"] = function (__require, __exports) {
-const { GRID, snap } = __require("src/core/grid.js");
-
-
-/**
- * Interactive re-routing of an explicit wire polyline by dragging a segment.
- * A route is an ordered list of grid points. By default a "run" is a maximal
- * run of consecutive collinear segments; callers may provide topology breaks
- * to treat aligned segments on either side of a terminal or junction
- * independently. Dragging a segment moves its bounded run perpendicularly.
- * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
- * omitted metadata uses terminal-endpoint behavior. `allowPastNeighbors` is
- * for reversible editor previews: it lets a run pass adjacent bends so a
- * later legal drop is reachable; the caller must validate before committing.
- *
- * Key behaviors:
- *  - By default the run may slide as far as an adjacent run; reaching it
- *    collapses the shared corner, and the now-invisible collinear vertex is
- *    removed.
- *  - By default the run never slides past a neighbour (no inverted folds);
- *    reversible previews may opt out until their final geometry is validated.
- *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
- *    wire with an added connector segment so the pin stays connected.
- *  - A standalone two-point bridge between two junctions moves both junction
- *    endpoints together; a standalone pin-to-pin run remains immovable.
- */
-
-/** Collinear run containing segment `seg`, stopping at optional topology
- * points. Topology breaks let adjacent aligned branch segments move
- * independently when a junction sits between them. */
-function wireRunAt(pts, seg, breaks = null) {
-  const n = pts.length;
-  const i = Math.max(1, Math.min(seg, n - 1));
-  const orient = pts[i - 1].y === pts[i].y ? 'h' : 'v';
-  const val = orient === 'h' ? pts[i].y : pts[i].x;
-  const same = (p) => (orient === 'h' ? p.y === val : p.x === val);
-  const isBreak = (p) => breaks?.has(`${p.x},${p.y}`);
-  let lo = i - 1;
-  let hi = i;
-  while (lo > 0 && same(pts[lo - 1]) && !isBreak(pts[lo])) lo--;
-  while (hi < n - 1 && same(pts[hi + 1]) && !isBreak(pts[hi])) hi++;
-  return { lo, hi, orient, val };
-}
-
-/** Drop consecutive duplicates and any middle point collinear with its
- * neighbours, in place. Endpoints (terminal pins) are always preserved.
- * Returns the new length.
- */
-function collapseCollinear(pts) {
-  let i = pts.length - 2;
-  while (i >= 1) {
-    const a = pts[i - 1];
-    const b = pts[i];
-    const c = pts[i + 1];
-    if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y) || (a.x === b.x && a.y === b.y)) {
-      pts.splice(i, 1);
-    }
-    i--;
-  }
-  return pts.length;
-}
-
-/** Index of a segment lying on the collinear run at perpendicular line `line`
- *  (a y for horizontal runs, an x for vertical runs), or -1 if none. */
-function findRunLine(pts, orient, line) {
-  for (let i = 1; i < pts.length; i++) {
-    const onLine = orient === 'h' ? pts[i].y === line : pts[i].x === line;
-    if (!onLine) continue;
-    const aligned = orient === 'h' ? pts[i - 1].y === pts[i].y : pts[i - 1].x === pts[i].x;
-    if (aligned) return i;
-  }
-  return -1;
-}
-
-/** Move one junction in a managed branch set and rebuild each incident branch
- * endpoint with a local orthogonal elbow when the old and new locations are not
- * collinear with its neighbour. The caller owns the net object; this pure
- * helper mutates `paths` and returns the replacement junction list. */
-function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpointInfo = null) {
-  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return junctions;
-  for (const path of paths || []) {
-    for (let i = 0; i < path.length; i++) {
-      const p = path[i];
-      if (p.x !== oldPoint.x || p.y !== oldPoint.y) continue;
-      const neighbor = i === 0 ? path[1] : path[i - 1];
-      const oldHorizontal = neighbor && neighbor.y === oldPoint.y;
-      const oldVertical = neighbor && neighbor.x === oldPoint.x;
-      const otherIndex = i === 0 ? 1 : i === path.length - 1 ? path.length - 2 : -1;
-      const otherMeta = otherIndex >= 0 && endpointInfo ? endpointInfo(path, otherIndex) : null;
-      p.x = newPoint.x;
-      p.y = newPoint.y;
-      if (neighbor && p.x !== neighbor.x && p.y !== neighbor.y) {
-        const candidates = oldHorizontal
-          ? [{ x: neighbor.x, y: newPoint.y }, { x: newPoint.x, y: neighbor.y }]
-          : oldVertical
-            ? [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }]
-            : [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }];
-        const same = (a, b) => a.x === b.x && a.y === b.y;
-        const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
-        const incoming = (q) => i === 0 ? step(q, neighbor) : step(neighbor, q);
-        const desired = otherMeta?.type === 'terminal' && otherMeta.dir
-          ? { x: -otherMeta.dir.x, y: -otherMeta.dir.y } : null;
-        const valid = candidates.filter((q) =>
-          !same(q, oldPoint) && !same(q, newPoint) && !same(q, neighbor)
-        );
-        const elbow = valid.find((q) =>
-          (!desired || (incoming(q).x === desired.x && incoming(q).y === desired.y))
-        );
-        if (elbow) {
-          path.splice(i === 0 ? 1 : i, 0, elbow);
-        } else if (desired) {
-          // Detour one extra grid cell outward from the terminal to preserve
-          // pin conformity without retaining the junction coordinate.
-          const sign = otherMeta.dir;
-          const distance = same({ x: neighbor.x + sign.x * GRID, y: neighbor.y + sign.y * GRID }, oldPoint) ? 2 : 1;
-          const pinLead = { x: neighbor.x + sign.x * GRID * distance, y: neighbor.y + sign.y * GRID * distance };
-          const detours = newPoint.x === pinLead.x || newPoint.y === pinLead.y ? [] : [
-            { x: newPoint.x, y: pinLead.y },
-            { x: pinLead.x, y: newPoint.y },
-          ];
-          const detour = detours.find((q) => !same(q, oldPoint) && !same(q, newPoint) && !same(q, pinLead));
-          const inserts = i === 0 ? [ ...(detour ? [detour] : []), pinLead ] : [ pinLead, ...(detour ? [detour] : []) ];
-          path.splice(i === 0 ? 1 : i, 0, ...inserts);
-        }
-      }
-    }
-  }
-  return (junctions || []).map((p) => (
-    p.x === oldPoint.x && p.y === oldPoint.y ? { ...newPoint } : p
-  ));
-}
-
-/**
- * Move the collinear run of orientation `orient` presently at perpendicular
- * line `line` to `target` (grid-snapped along the perpendicular axis).
- * `endpointMeta.runBounds` and `endpointMeta.breaks` may bound the run at
- * electrical topology points; otherwise the maximal run is used. The run may
- * slide as far as an adjacent run (reaching it collapses the shared corner)
- * but, by default, never past it (no inverted folds). Reversible previews may
- * set `allowPastNeighbors` and validate the resulting geometry on drop. Runs touching a terminal endpoint
- * keep that pin fixed and extend the wire with a connector segment.
- * `preserveDiagonalNeighbors` keeps a diagonal segment immediately before or
- * after an interior run fixed, adding a perpendicular connector at the old
- * corner instead of stretching the diagonal while the run moves.
- * `endpointMeta` is optional for compatibility with callers whose paths are
- * known to be terminal-ended: `{ start: { type }, end: { type } }`.
- * Returns the perpendicular line value the run actually ended on (== `line`
- * when nothing could move).
- */
-function moveWireRun(pts, orient, line, target, endpointMeta = null) {
-  const si = Number.isInteger(endpointMeta?.segment)
-    ? Math.max(1, Math.min(endpointMeta.segment, pts.length - 1))
-    : findRunLine(pts, orient, line);
-  if (si < 0) return line;
-  const run = wireRunAt(pts, si, endpointMeta?.breaks);
-  const forcedInterior = endpointMeta?.interiorRun === true;
-  const lo = endpointMeta?.runBounds?.lo ?? (forcedInterior ? 1 : run.lo);
-  const hi = endpointMeta?.runBounds?.hi ?? (forcedInterior ? pts.length - 2 : run.hi);
-  const n = pts.length;
-  const loEnd = lo === 0;
-  const hiEnd = hi === n - 1;
-  const startType = endpointMeta?.start?.type || 'terminal';
-  const endType = endpointMeta?.end?.type || 'terminal';
-  const startTerminal = startType === 'terminal';
-  const endTerminal = endType === 'terminal';
-  const val = line;
-  const nv = (idx) => (orient === 'h' ? pts[idx].y : pts[idx].x);
-  let lower = -Infinity;
-  let upper = Infinity;
-  if (!loEnd) {
-    const v = nv(lo - 1);
-    if (v < val) lower = Math.max(lower, v);
-    else upper = Math.min(upper, v);
-  }
-  if (!hiEnd) {
-    const v = nv(hi + 1);
-    if (v < val) lower = Math.max(lower, v);
-    else upper = Math.min(upper, v);
-  }
-  let t = snap(target);
-  if (!endpointMeta?.allowPastNeighbors) {
-    if (t < val) t = Math.max(t, lower);
-    else if (t > val) t = Math.min(t, upper);
-  }
-  if (t === val) return val;
-
-  if (!loEnd && !hiEnd) {
-    // Interior run: slide freely (possibly up to a neighbour to collapse).
-    const preserveDiagonals = endpointMeta?.preserveDiagonalNeighbors === true;
-    const diagonalStart = preserveDiagonals && pts[lo - 1] && pts[lo] &&
-      pts[lo - 1].x !== pts[lo].x && pts[lo - 1].y !== pts[lo].y
-      ? { ...pts[lo] } : null;
-    const diagonalEnd = preserveDiagonals && pts[hi] && pts[hi + 1] &&
-      pts[hi].x !== pts[hi + 1].x && pts[hi].y !== pts[hi + 1].y
-      ? { ...pts[hi] } : null;
-    for (let i = lo; i <= hi; i++) {
-      if (orient === 'h') pts[i].y = t;
-      else pts[i].x = t;
-    }
-    // Keep a mixed route's diagonal geometry literal. The inserted old corner
-    // is connected to the moved run by the perpendicular lead that a normal
-    // orthogonal bend would have stretched into the diagonal otherwise.
-    if (diagonalStart) pts.splice(lo, 0, diagonalStart);
-    if (diagonalEnd) pts.splice(hi + (diagonalStart ? 2 : 1), 0, diagonalEnd);
-    collapseCollinear(pts);
-    return t;
-  }
-
-  const boundedRun = !!endpointMeta?.runBounds;
-  const anchoredStart = boundedRun && loEnd && (startTerminal || startType === 'junction');
-  const anchoredEnd = boundedRun && hiEnd && (endTerminal || endType === 'junction');
-  if (anchoredStart || anchoredEnd) {
-    // A topology-bounded run moves without moving its electrical anchors.
-    // Keep each terminal/junction fixed and add connector legs at the ends;
-    // incident branches therefore remain stationary unless explicitly selected.
-    if (anchoredStart && anchoredEnd) {
-      const a = { ...pts[0] };
-      const b = { ...pts[n - 1] };
-      if (orient === 'h') {
-        for (let i = 1; i < n - 1; i++) pts[i].y = t;
-        pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
-      } else {
-        for (let i = 1; i < n - 1; i++) pts[i].x = t;
-        pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
-      }
-      return t;
-    }
-    if (anchoredStart) {
-      const p = { ...pts[0] };
-      if (orient === 'h') {
-        for (let i = 1; i <= hi; i++) pts[i].y = t;
-        pts.splice(1, 0, { x: p.x, y: t });
-      } else {
-        for (let i = 1; i <= hi; i++) pts[i].x = t;
-        pts.splice(1, 0, { x: t, y: p.y });
-      }
-      return t;
-    }
-    const p = { ...pts[n - 1] };
-    if (orient === 'h') {
-      for (let i = lo; i < n - 1; i++) pts[i].y = t;
-      pts.splice(n - 1, 0, { x: p.x, y: t });
-    } else {
-      for (let i = lo; i < n - 1; i++) pts[i].x = t;
-      pts.splice(n - 1, 0, { x: t, y: p.y });
-    }
-    return t;
-  }
-
-  // A standalone bridge is bounded by two real junctions rather than pins.
-  // Without run bounds, move the whole bridge.
-  if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
-    for (const p of pts) {
-      if (orient === 'h') p.y = t;
-      else p.x = t;
-    }
-    return t;
-  }
-
-  if (loEnd && hiEnd && startTerminal && endTerminal) {
-    if (!boundedRun) return val;
-    const a = { ...pts[0] };
-    const b = { ...pts[n - 1] };
-    if (orient === 'h') {
-      pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
-    } else {
-      pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
-    }
-    return t;
-  }
-  if (orient === 'h') {
-    if (loEnd && (!hiEnd || startTerminal)) {
-      const px = pts[0].x;
-      for (let i = 1; i <= hi; i++) pts[i].y = t;
-      if (startTerminal) pts.splice(1, 0, { x: px, y: t });
-      else pts[0].y = t;
-    } else if (hiEnd) {
-      const px = pts[n - 1].x;
-      for (let i = lo; i <= n - 2; i++) pts[i].y = t;
-      if (endTerminal) pts.splice(n - 1, 0, { x: px, y: t });
-      else pts[n - 1].y = t;
-    }
-  } else {
-    if (loEnd && (!hiEnd || startTerminal)) {
-      const py = pts[0].y;
-      for (let i = 1; i <= hi; i++) pts[i].x = t;
-      if (startTerminal) pts.splice(1, 0, { x: t, y: py });
-      else pts[0].x = t;
-    } else if (hiEnd) {
-      const py = pts[n - 1].y;
-      for (let i = lo; i <= n - 2; i++) pts[i].x = t;
-      if (endTerminal) pts.splice(n - 1, 0, { x: t, y: py });
-      else pts[n - 1].x = t;
-    }
-  }
-  collapseCollinear(pts);
-  return t;
-}
-
-__exports.wireRunAt = wireRunAt;
-__exports.collapseCollinear = collapseCollinear;
-__exports.findRunLine = findRunLine;
-__exports.moveJunctionEndpoint = moveJunctionEndpoint;
-__exports.moveWireRun = moveWireRun;
 };
 
 __modules["src/core/router.js"] = function (__require, __exports) {
@@ -24696,6 +24441,312 @@ __exports.segmentsCross = segmentsCross;
 __exports.segThroughInterior = segThroughInterior;
 __exports.bodyClearanceSafe = bodyClearanceSafe;
 __exports.smartRoute = smartRoute;
+};
+
+__modules["src/core/wireedit.js"] = function (__require, __exports) {
+const { GRID, snap } = __require("src/core/grid.js");
+
+
+/**
+ * Interactive re-routing of an explicit wire polyline by dragging a segment.
+ * A route is an ordered list of grid points. By default a "run" is a maximal
+ * run of consecutive collinear segments; callers may provide topology breaks
+ * to treat aligned segments on either side of a terminal or junction
+ * independently. Dragging a segment moves its bounded run perpendicularly.
+ * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
+ * omitted metadata uses terminal-endpoint behavior. `allowPastNeighbors` is
+ * for reversible editor previews: it lets a run pass adjacent bends so a
+ * later legal drop is reachable; the caller must validate before committing.
+ *
+ * Key behaviors:
+ *  - By default the run may slide as far as an adjacent run; reaching it
+ *    collapses the shared corner, and the now-invisible collinear vertex is
+ *    removed.
+ *  - By default the run never slides past a neighbour (no inverted folds);
+ *    reversible previews may opt out until their final geometry is validated.
+ *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
+ *    wire with an added connector segment so the pin stays connected.
+ *  - A standalone two-point bridge between two junctions moves both junction
+ *    endpoints together; a standalone pin-to-pin run remains immovable.
+ */
+
+/** Collinear run containing segment `seg`, stopping at optional topology
+ * points. Topology breaks let adjacent aligned branch segments move
+ * independently when a junction sits between them. */
+function wireRunAt(pts, seg, breaks = null) {
+  const n = pts.length;
+  const i = Math.max(1, Math.min(seg, n - 1));
+  const orient = pts[i - 1].y === pts[i].y ? 'h' : 'v';
+  const val = orient === 'h' ? pts[i].y : pts[i].x;
+  const same = (p) => (orient === 'h' ? p.y === val : p.x === val);
+  const isBreak = (p) => breaks?.has(`${p.x},${p.y}`);
+  let lo = i - 1;
+  let hi = i;
+  while (lo > 0 && same(pts[lo - 1]) && !isBreak(pts[lo])) lo--;
+  while (hi < n - 1 && same(pts[hi + 1]) && !isBreak(pts[hi])) hi++;
+  return { lo, hi, orient, val };
+}
+
+/** Drop consecutive duplicates and any middle point collinear with its
+ * neighbours, in place. Endpoints (terminal pins) are always preserved.
+ * Returns the new length.
+ */
+function collapseCollinear(pts) {
+  let i = pts.length - 2;
+  while (i >= 1) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const c = pts[i + 1];
+    if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y) || (a.x === b.x && a.y === b.y)) {
+      pts.splice(i, 1);
+    }
+    i--;
+  }
+  return pts.length;
+}
+
+/** Index of a segment lying on the collinear run at perpendicular line `line`
+ *  (a y for horizontal runs, an x for vertical runs), or -1 if none. */
+function findRunLine(pts, orient, line) {
+  for (let i = 1; i < pts.length; i++) {
+    const onLine = orient === 'h' ? pts[i].y === line : pts[i].x === line;
+    if (!onLine) continue;
+    const aligned = orient === 'h' ? pts[i - 1].y === pts[i].y : pts[i - 1].x === pts[i].x;
+    if (aligned) return i;
+  }
+  return -1;
+}
+
+/** Move one junction in a managed branch set and rebuild each incident branch
+ * endpoint with a local orthogonal elbow when the old and new locations are not
+ * collinear with its neighbour. The caller owns the net object; this pure
+ * helper mutates `paths` and returns the replacement junction list. */
+function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpointInfo = null) {
+  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return junctions;
+  for (const path of paths || []) {
+    for (let i = 0; i < path.length; i++) {
+      const p = path[i];
+      if (p.x !== oldPoint.x || p.y !== oldPoint.y) continue;
+      const neighbor = i === 0 ? path[1] : path[i - 1];
+      const oldHorizontal = neighbor && neighbor.y === oldPoint.y;
+      const oldVertical = neighbor && neighbor.x === oldPoint.x;
+      const otherIndex = i === 0 ? 1 : i === path.length - 1 ? path.length - 2 : -1;
+      const otherMeta = otherIndex >= 0 && endpointInfo ? endpointInfo(path, otherIndex) : null;
+      p.x = newPoint.x;
+      p.y = newPoint.y;
+      if (neighbor && p.x !== neighbor.x && p.y !== neighbor.y) {
+        const candidates = oldHorizontal
+          ? [{ x: neighbor.x, y: newPoint.y }, { x: newPoint.x, y: neighbor.y }]
+          : oldVertical
+            ? [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }]
+            : [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }];
+        const same = (a, b) => a.x === b.x && a.y === b.y;
+        const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
+        const incoming = (q) => i === 0 ? step(q, neighbor) : step(neighbor, q);
+        const desired = otherMeta?.type === 'terminal' && otherMeta.dir
+          ? { x: -otherMeta.dir.x, y: -otherMeta.dir.y } : null;
+        const valid = candidates.filter((q) =>
+          !same(q, oldPoint) && !same(q, newPoint) && !same(q, neighbor)
+        );
+        const elbow = valid.find((q) =>
+          (!desired || (incoming(q).x === desired.x && incoming(q).y === desired.y))
+        );
+        if (elbow) {
+          path.splice(i === 0 ? 1 : i, 0, elbow);
+        } else if (desired) {
+          // Detour one extra grid cell outward from the terminal to preserve
+          // pin conformity without retaining the junction coordinate.
+          const sign = otherMeta.dir;
+          const distance = same({ x: neighbor.x + sign.x * GRID, y: neighbor.y + sign.y * GRID }, oldPoint) ? 2 : 1;
+          const pinLead = { x: neighbor.x + sign.x * GRID * distance, y: neighbor.y + sign.y * GRID * distance };
+          const detours = newPoint.x === pinLead.x || newPoint.y === pinLead.y ? [] : [
+            { x: newPoint.x, y: pinLead.y },
+            { x: pinLead.x, y: newPoint.y },
+          ];
+          const detour = detours.find((q) => !same(q, oldPoint) && !same(q, newPoint) && !same(q, pinLead));
+          const inserts = i === 0 ? [ ...(detour ? [detour] : []), pinLead ] : [ pinLead, ...(detour ? [detour] : []) ];
+          path.splice(i === 0 ? 1 : i, 0, ...inserts);
+        }
+      }
+    }
+  }
+  return (junctions || []).map((p) => (
+    p.x === oldPoint.x && p.y === oldPoint.y ? { ...newPoint } : p
+  ));
+}
+
+/**
+ * Move the collinear run of orientation `orient` presently at perpendicular
+ * line `line` to `target` (grid-snapped along the perpendicular axis).
+ * `endpointMeta.runBounds` and `endpointMeta.breaks` may bound the run at
+ * electrical topology points; otherwise the maximal run is used. The run may
+ * slide as far as an adjacent run (reaching it collapses the shared corner)
+ * but, by default, never past it (no inverted folds). Reversible previews may
+ * set `allowPastNeighbors` and validate the resulting geometry on drop. Runs touching a terminal endpoint
+ * keep that pin fixed and extend the wire with a connector segment.
+ * `preserveDiagonalNeighbors` keeps a diagonal segment immediately before or
+ * after an interior run fixed, adding a perpendicular connector at the old
+ * corner instead of stretching the diagonal while the run moves.
+ * `endpointMeta` is optional for compatibility with callers whose paths are
+ * known to be terminal-ended: `{ start: { type }, end: { type } }`.
+ * Returns the perpendicular line value the run actually ended on (== `line`
+ * when nothing could move).
+ */
+function moveWireRun(pts, orient, line, target, endpointMeta = null) {
+  const si = Number.isInteger(endpointMeta?.segment)
+    ? Math.max(1, Math.min(endpointMeta.segment, pts.length - 1))
+    : findRunLine(pts, orient, line);
+  if (si < 0) return line;
+  const run = wireRunAt(pts, si, endpointMeta?.breaks);
+  const forcedInterior = endpointMeta?.interiorRun === true;
+  const lo = endpointMeta?.runBounds?.lo ?? (forcedInterior ? 1 : run.lo);
+  const hi = endpointMeta?.runBounds?.hi ?? (forcedInterior ? pts.length - 2 : run.hi);
+  const n = pts.length;
+  const loEnd = lo === 0;
+  const hiEnd = hi === n - 1;
+  const startType = endpointMeta?.start?.type || 'terminal';
+  const endType = endpointMeta?.end?.type || 'terminal';
+  const startTerminal = startType === 'terminal';
+  const endTerminal = endType === 'terminal';
+  const val = line;
+  const nv = (idx) => (orient === 'h' ? pts[idx].y : pts[idx].x);
+  let lower = -Infinity;
+  let upper = Infinity;
+  if (!loEnd) {
+    const v = nv(lo - 1);
+    if (v < val) lower = Math.max(lower, v);
+    else upper = Math.min(upper, v);
+  }
+  if (!hiEnd) {
+    const v = nv(hi + 1);
+    if (v < val) lower = Math.max(lower, v);
+    else upper = Math.min(upper, v);
+  }
+  let t = snap(target);
+  if (!endpointMeta?.allowPastNeighbors) {
+    if (t < val) t = Math.max(t, lower);
+    else if (t > val) t = Math.min(t, upper);
+  }
+  if (t === val) return val;
+
+  if (!loEnd && !hiEnd) {
+    // Interior run: slide freely (possibly up to a neighbour to collapse).
+    const preserveDiagonals = endpointMeta?.preserveDiagonalNeighbors === true;
+    const diagonalStart = preserveDiagonals && pts[lo - 1] && pts[lo] &&
+      pts[lo - 1].x !== pts[lo].x && pts[lo - 1].y !== pts[lo].y
+      ? { ...pts[lo] } : null;
+    const diagonalEnd = preserveDiagonals && pts[hi] && pts[hi + 1] &&
+      pts[hi].x !== pts[hi + 1].x && pts[hi].y !== pts[hi + 1].y
+      ? { ...pts[hi] } : null;
+    for (let i = lo; i <= hi; i++) {
+      if (orient === 'h') pts[i].y = t;
+      else pts[i].x = t;
+    }
+    // Keep a mixed route's diagonal geometry literal. The inserted old corner
+    // is connected to the moved run by the perpendicular lead that a normal
+    // orthogonal bend would have stretched into the diagonal otherwise.
+    if (diagonalStart) pts.splice(lo, 0, diagonalStart);
+    if (diagonalEnd) pts.splice(hi + (diagonalStart ? 2 : 1), 0, diagonalEnd);
+    collapseCollinear(pts);
+    return t;
+  }
+
+  const boundedRun = !!endpointMeta?.runBounds;
+  const anchoredStart = boundedRun && loEnd && (startTerminal || startType === 'junction');
+  const anchoredEnd = boundedRun && hiEnd && (endTerminal || endType === 'junction');
+  if (anchoredStart || anchoredEnd) {
+    // A topology-bounded run moves without moving its electrical anchors.
+    // Keep each terminal/junction fixed and add connector legs at the ends;
+    // incident branches therefore remain stationary unless explicitly selected.
+    if (anchoredStart && anchoredEnd) {
+      const a = { ...pts[0] };
+      const b = { ...pts[n - 1] };
+      if (orient === 'h') {
+        for (let i = 1; i < n - 1; i++) pts[i].y = t;
+        pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
+      } else {
+        for (let i = 1; i < n - 1; i++) pts[i].x = t;
+        pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
+      }
+      return t;
+    }
+    if (anchoredStart) {
+      const p = { ...pts[0] };
+      if (orient === 'h') {
+        for (let i = 1; i <= hi; i++) pts[i].y = t;
+        pts.splice(1, 0, { x: p.x, y: t });
+      } else {
+        for (let i = 1; i <= hi; i++) pts[i].x = t;
+        pts.splice(1, 0, { x: t, y: p.y });
+      }
+      return t;
+    }
+    const p = { ...pts[n - 1] };
+    if (orient === 'h') {
+      for (let i = lo; i < n - 1; i++) pts[i].y = t;
+      pts.splice(n - 1, 0, { x: p.x, y: t });
+    } else {
+      for (let i = lo; i < n - 1; i++) pts[i].x = t;
+      pts.splice(n - 1, 0, { x: t, y: p.y });
+    }
+    return t;
+  }
+
+  // A standalone bridge is bounded by two real junctions rather than pins.
+  // Without run bounds, move the whole bridge.
+  if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
+    for (const p of pts) {
+      if (orient === 'h') p.y = t;
+      else p.x = t;
+    }
+    return t;
+  }
+
+  if (loEnd && hiEnd && startTerminal && endTerminal) {
+    if (!boundedRun) return val;
+    const a = { ...pts[0] };
+    const b = { ...pts[n - 1] };
+    if (orient === 'h') {
+      pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
+    } else {
+      pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
+    }
+    return t;
+  }
+  if (orient === 'h') {
+    if (loEnd && (!hiEnd || startTerminal)) {
+      const px = pts[0].x;
+      for (let i = 1; i <= hi; i++) pts[i].y = t;
+      if (startTerminal) pts.splice(1, 0, { x: px, y: t });
+      else pts[0].y = t;
+    } else if (hiEnd) {
+      const px = pts[n - 1].x;
+      for (let i = lo; i <= n - 2; i++) pts[i].y = t;
+      if (endTerminal) pts.splice(n - 1, 0, { x: px, y: t });
+      else pts[n - 1].y = t;
+    }
+  } else {
+    if (loEnd && (!hiEnd || startTerminal)) {
+      const py = pts[0].y;
+      for (let i = 1; i <= hi; i++) pts[i].x = t;
+      if (startTerminal) pts.splice(1, 0, { x: t, y: py });
+      else pts[0].x = t;
+    } else if (hiEnd) {
+      const py = pts[n - 1].y;
+      for (let i = lo; i <= n - 2; i++) pts[i].x = t;
+      if (endTerminal) pts.splice(n - 1, 0, { x: t, y: py });
+      else pts[n - 1].x = t;
+    }
+  }
+  collapseCollinear(pts);
+  return t;
+}
+
+__exports.wireRunAt = wireRunAt;
+__exports.collapseCollinear = collapseCollinear;
+__exports.findRunLine = findRunLine;
+__exports.moveJunctionEndpoint = moveJunctionEndpoint;
+__exports.moveWireRun = moveWireRun;
 };
 
 __modules["src/core/wiring.js"] = function (__require, __exports) {
@@ -26835,129 +26886,6 @@ __exports.migrateAnalysisFormState = migrateAnalysisFormState;
 __exports.ANALYSIS_OPTION_DEFAULTS = ANALYSIS_OPTION_DEFAULTS;
 };
 
-__modules["src/web/analysis-state.js"] = function (__require, __exports) {
-const { parseLabelRuns } = __require("src/core/model.js");
-/**
- * Pure helpers for the small-signal analysis form.
- *
- * The form is a user preference surface, not part of the schematic model.
- * Keep its persistence scoped to the visible document and keep references
- * conservative when a schematic has been edited since the last analysis.
- */
-
-
-
-/** Native <option> text cannot render sub/superscripts, so node choices show
- * the net name without `_{…}`/`^{…}` markup, followed by its physical id. */
-function analysisNetOptionText(net) {
-  const name = net?.name ? parseLabelRuns(net.name).map((run) => run.text).join('') : '';
-  if (!name) return `(unnamed) — ${net.id}`;
-  return name === net.id ? name : `${name} — ${net.id}`;
-}
-
-const ANALYSIS_FORM_KEY = 'mosfeteer:analysis-form';
-
-function analysisFormStorageKey(documentName = '') {
-  const scope = String(documentName || 'new').trim() || 'new';
-  return `${ANALYSIS_FORM_KEY}:${encodeURIComponent(scope)}`;
-}
-
-function splitAnalysisValues(value) {
-  if (Array.isArray(value)) return value.flatMap((item) => splitAnalysisValues(item));
-  if (value === undefined || value === null) return [];
-  return String(value).split(',').map((item) => item.trim()).filter(Boolean);
-}
-
-/** Return the names that resolveAcGrounds can accept for the visible nets. */
-function analysisNetAliases(nets = []) {
-  const aliases = new Set();
-  for (const net of nets) {
-    if (!net) continue;
-    if (net.id) aliases.add(String(net.id));
-    if (net.name) aliases.add(String(net.name));
-    for (const terminal of net.terminals || []) {
-      if (terminal?.comp && terminal?.term) aliases.add(`${terminal.comp}.${terminal.term}`);
-    }
-  }
-  return aliases;
-}
-
-function pruneAnalysisNetValues(value, nets = []) {
-  const aliases = analysisNetAliases(nets);
-  return splitAnalysisValues(value).filter((token) => aliases.has(token)).join(', ');
-}
-
-function pruneAnalysisDeviceRegions(value, refdes = []) {
-  const refs = new Set(refdes.map((ref) => String(ref)));
-  const entries = value instanceof Map
-    ? [...value.entries()]
-    : value && typeof value === 'object'
-      ? Object.entries(value)
-      : splitAnalysisValues(value).map((entry) => {
-        const match = String(entry).match(/^([^=:]+)[=:](.+)$/);
-        return match ? [match[1].trim(), match[2].trim()] : null;
-      }).filter(Boolean);
-  const regions = {};
-  for (const [rawRefdes, rawValue] of entries) {
-    const component = String(rawRefdes || '').trim();
-    const region = typeof rawValue === 'object' ? rawValue?.region ?? rawValue?.model : rawValue;
-    if (refs.has(component) && String(region || '').trim().toLowerCase() === 'triode') {
-      regions[component] = { region: 'triode' };
-    }
-  }
-  return regions;
-}
-
-function formatAnalysisDeviceRegions(value = {}) {
-  return Object.keys(value).sort().map((refdes) => `${refdes}=triode`).join(', ');
-}
-
-function firstMatching(nets, predicate, excludedId = '') {
-  return nets.find((net) => net?.id !== excludedId && predicate(net));
-}
-
-/**
- * Choose form defaults from explicit schematic metadata before falling back to
- * a caller hint or a conservative name/type heuristic.  The marked flags let
- * the UI distinguish a deliberate toolbar role from a persisted user choice.
- */
-function analysisFormDefaults(nets = [], { targetNetId = '', componentInputNetIds = [], componentOutputNetIds = [] } = {}) {
-  const usable = nets.filter((net) => net?.id);
-  const markedOutput = firstMatching(usable, (net) => net.analysis?.role === 'output');
-  const targetHint = usable.find((net) => net.id === targetNetId);
-  const componentOutputIds = new Set(componentOutputNetIds);
-  const componentOutput = firstMatching(usable, (net) => componentOutputIds.has(net.id));
-  const namedOutput = firstMatching(usable, (net) => /^(?:v_?\{?out\}?|output|out)$/i.test(String(net.name || '').trim()));
-  const target = markedOutput || targetHint || componentOutput || namedOutput || usable[0] || null;
-
-  const markedInput = firstMatching(usable, (net) => net.analysis?.role === 'input', target?.id);
-  const componentInputIds = new Set(componentInputNetIds);
-  // With a differential input pair, the non-inverting (…P / …+) side is the conventional drive.
-  const componentInput = firstMatching(usable, (net) => componentInputIds.has(net.id) && /(?:p|\+|plus)\}?$/i.test(String(net.name || '')), target?.id)
-    || firstMatching(usable, (net) => componentInputIds.has(net.id), target?.id);
-  const namedInput = firstMatching(usable, (net) => /^(?:v_?\{?in\}?|input|in)$/i.test(String(net.name || '').trim()), target?.id);
-  const firstAlternative = firstMatching(usable, () => true, target?.id);
-  const input = markedInput || componentInput || namedInput || firstAlternative || null;
-
-  return {
-    target: target?.id || '',
-    input: input?.id || '',
-    targetMarked: !!markedOutput,
-    inputMarked: !!markedInput,
-  };
-}
-
-__exports.analysisNetOptionText = analysisNetOptionText;
-__exports.analysisFormStorageKey = analysisFormStorageKey;
-__exports.splitAnalysisValues = splitAnalysisValues;
-__exports.analysisNetAliases = analysisNetAliases;
-__exports.pruneAnalysisNetValues = pruneAnalysisNetValues;
-__exports.pruneAnalysisDeviceRegions = pruneAnalysisDeviceRegions;
-__exports.formatAnalysisDeviceRegions = formatAnalysisDeviceRegions;
-__exports.analysisFormDefaults = analysisFormDefaults;
-__exports.ANALYSIS_FORM_KEY = ANALYSIS_FORM_KEY;
-};
-
 __modules["src/web/interaction.js"] = function (__require, __exports) {
 const { snap, GRID } = __require("src/core/grid.js");
 
@@ -27565,6 +27493,129 @@ __exports.describeGuides = describeGuides;
 __exports.layoutSuggestions = layoutSuggestions;
 };
 
+__modules["src/web/analysis-state.js"] = function (__require, __exports) {
+const { parseLabelRuns } = __require("src/core/model.js");
+/**
+ * Pure helpers for the small-signal analysis form.
+ *
+ * The form is a user preference surface, not part of the schematic model.
+ * Keep its persistence scoped to the visible document and keep references
+ * conservative when a schematic has been edited since the last analysis.
+ */
+
+
+
+/** Native <option> text cannot render sub/superscripts, so node choices show
+ * the net name without `_{…}`/`^{…}` markup, followed by its physical id. */
+function analysisNetOptionText(net) {
+  const name = net?.name ? parseLabelRuns(net.name).map((run) => run.text).join('') : '';
+  if (!name) return `(unnamed) — ${net.id}`;
+  return name === net.id ? name : `${name} — ${net.id}`;
+}
+
+const ANALYSIS_FORM_KEY = 'mosfeteer:analysis-form';
+
+function analysisFormStorageKey(documentName = '') {
+  const scope = String(documentName || 'new').trim() || 'new';
+  return `${ANALYSIS_FORM_KEY}:${encodeURIComponent(scope)}`;
+}
+
+function splitAnalysisValues(value) {
+  if (Array.isArray(value)) return value.flatMap((item) => splitAnalysisValues(item));
+  if (value === undefined || value === null) return [];
+  return String(value).split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+/** Return the names that resolveAcGrounds can accept for the visible nets. */
+function analysisNetAliases(nets = []) {
+  const aliases = new Set();
+  for (const net of nets) {
+    if (!net) continue;
+    if (net.id) aliases.add(String(net.id));
+    if (net.name) aliases.add(String(net.name));
+    for (const terminal of net.terminals || []) {
+      if (terminal?.comp && terminal?.term) aliases.add(`${terminal.comp}.${terminal.term}`);
+    }
+  }
+  return aliases;
+}
+
+function pruneAnalysisNetValues(value, nets = []) {
+  const aliases = analysisNetAliases(nets);
+  return splitAnalysisValues(value).filter((token) => aliases.has(token)).join(', ');
+}
+
+function pruneAnalysisDeviceRegions(value, refdes = []) {
+  const refs = new Set(refdes.map((ref) => String(ref)));
+  const entries = value instanceof Map
+    ? [...value.entries()]
+    : value && typeof value === 'object'
+      ? Object.entries(value)
+      : splitAnalysisValues(value).map((entry) => {
+        const match = String(entry).match(/^([^=:]+)[=:](.+)$/);
+        return match ? [match[1].trim(), match[2].trim()] : null;
+      }).filter(Boolean);
+  const regions = {};
+  for (const [rawRefdes, rawValue] of entries) {
+    const component = String(rawRefdes || '').trim();
+    const region = typeof rawValue === 'object' ? rawValue?.region ?? rawValue?.model : rawValue;
+    if (refs.has(component) && String(region || '').trim().toLowerCase() === 'triode') {
+      regions[component] = { region: 'triode' };
+    }
+  }
+  return regions;
+}
+
+function formatAnalysisDeviceRegions(value = {}) {
+  return Object.keys(value).sort().map((refdes) => `${refdes}=triode`).join(', ');
+}
+
+function firstMatching(nets, predicate, excludedId = '') {
+  return nets.find((net) => net?.id !== excludedId && predicate(net));
+}
+
+/**
+ * Choose form defaults from explicit schematic metadata before falling back to
+ * a caller hint or a conservative name/type heuristic.  The marked flags let
+ * the UI distinguish a deliberate toolbar role from a persisted user choice.
+ */
+function analysisFormDefaults(nets = [], { targetNetId = '', componentInputNetIds = [], componentOutputNetIds = [] } = {}) {
+  const usable = nets.filter((net) => net?.id);
+  const markedOutput = firstMatching(usable, (net) => net.analysis?.role === 'output');
+  const targetHint = usable.find((net) => net.id === targetNetId);
+  const componentOutputIds = new Set(componentOutputNetIds);
+  const componentOutput = firstMatching(usable, (net) => componentOutputIds.has(net.id));
+  const namedOutput = firstMatching(usable, (net) => /^(?:v_?\{?out\}?|output|out)$/i.test(String(net.name || '').trim()));
+  const target = markedOutput || targetHint || componentOutput || namedOutput || usable[0] || null;
+
+  const markedInput = firstMatching(usable, (net) => net.analysis?.role === 'input', target?.id);
+  const componentInputIds = new Set(componentInputNetIds);
+  // With a differential input pair, the non-inverting (…P / …+) side is the conventional drive.
+  const componentInput = firstMatching(usable, (net) => componentInputIds.has(net.id) && /(?:p|\+|plus)\}?$/i.test(String(net.name || '')), target?.id)
+    || firstMatching(usable, (net) => componentInputIds.has(net.id), target?.id);
+  const namedInput = firstMatching(usable, (net) => /^(?:v_?\{?in\}?|input|in)$/i.test(String(net.name || '').trim()), target?.id);
+  const firstAlternative = firstMatching(usable, () => true, target?.id);
+  const input = markedInput || componentInput || namedInput || firstAlternative || null;
+
+  return {
+    target: target?.id || '',
+    input: input?.id || '',
+    targetMarked: !!markedOutput,
+    inputMarked: !!markedInput,
+  };
+}
+
+__exports.analysisNetOptionText = analysisNetOptionText;
+__exports.analysisFormStorageKey = analysisFormStorageKey;
+__exports.splitAnalysisValues = splitAnalysisValues;
+__exports.analysisNetAliases = analysisNetAliases;
+__exports.pruneAnalysisNetValues = pruneAnalysisNetValues;
+__exports.pruneAnalysisDeviceRegions = pruneAnalysisDeviceRegions;
+__exports.formatAnalysisDeviceRegions = formatAnalysisDeviceRegions;
+__exports.analysisFormDefaults = analysisFormDefaults;
+__exports.ANALYSIS_FORM_KEY = ANALYSIS_FORM_KEY;
+};
+
 __modules["src/core/components/resistor.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -27950,6 +28001,43 @@ __exports.portInputOutput = portInputOutput;
 __exports.port = port;
 };
 
+__modules["src/core/components/vccs.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+/**
+ * Voltage-controlled current source: the textbook diamond used to draw a
+ * transconductance branch in a small-signal model. The controlling voltage is
+ * carried by the instance label (`g_{m1} v_{gs1}`), not by a drawn pair of
+ * control wires -- textbooks leave those out for the same reason, a hybrid-pi
+ * figure with them is unreadable.
+ */
+const vccs = defineSymbol({
+  type: 'vccs',
+  description: 'Controlled Current Source',
+  refPrefix: 'G',
+  terminals: [
+    { name: 'a', x: 0, y: -80, direction: 'positive', dir: { x: 0, y: -1 } },
+    { name: 'b', x: 0, y: 80, direction: 'negative', dir: { x: 0, y: 1 } },
+  ],
+  bbox: { x: -40, y: -80, w: 80, h: 160 },
+  graphics: [
+    // An 80x80 diamond: the same visual weight as the round sources beside it.
+    { kind: 'path', d: 'M 0 -40 L 40 0 L 0 40 L -40 0 Z', style: 'symbol' },
+    { kind: 'path', d: 'M 0 -26 L 0 -8', style: 'symbol' },
+    { kind: 'polygon', points: [{ x: 0, y: 26 }, { x: -16, y: -8 }, { x: 16, y: -8 }], fill: 'foreground' },
+    { kind: 'path', d: 'M 0 -40 L 0 -80', style: 'symbol' },
+    { kind: 'path', d: 'M 0 40 L 0 80', style: 'symbol' },
+  ],
+  textPos: { x: 0, y: -52, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: -80, y: 0 },
+  defaultValue: '',
+});
+
+__exports.vccs = vccs;
+};
+
 __modules["src/core/components/current.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -27995,41 +28083,168 @@ __exports.current_source = current_source;
 __exports.voltage_source = voltage_source;
 };
 
-__modules["src/core/components/vccs.js"] = function (__require, __exports) {
+__modules["src/core/components/converter.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
 
-/**
- * Voltage-controlled current source: the textbook diamond used to draw a
- * transconductance branch in a small-signal model. The controlling voltage is
- * carried by the instance label (`g_{m1} v_{gs1}`), not by a drawn pair of
- * control wires -- textbooks leave those out for the same reason, a hybrid-pi
- * figure with them is unreadable.
- */
-const vccs = defineSymbol({
-  type: 'vccs',
-  description: 'Controlled Current Source',
-  refPrefix: 'G',
-  terminals: [
-    { name: 'a', x: 0, y: -80, direction: 'positive', dir: { x: 0, y: -1 } },
-    { name: 'b', x: 0, y: 80, direction: 'negative', dir: { x: 0, y: 1 } },
-  ],
-  bbox: { x: -40, y: -80, w: 80, h: 160 },
-  graphics: [
-    // An 80x80 diamond: the same visual weight as the round sources beside it.
-    { kind: 'path', d: 'M 0 -40 L 40 0 L 0 40 L -40 0 Z', style: 'symbol' },
-    { kind: 'path', d: 'M 0 -26 L 0 -8', style: 'symbol' },
-    { kind: 'polygon', points: [{ x: 0, y: 26 }, { x: -16, y: -8 }, { x: 16, y: -8 }], fill: 'foreground' },
-    { kind: 'path', d: 'M 0 -40 L 0 -80', style: 'symbol' },
-    { kind: 'path', d: 'M 0 40 L 0 80', style: 'symbol' },
-  ],
-  textPos: { x: 0, y: -52, anchor: 'middle' },
-  refPos: null,
-  labelOffset: { x: -80, y: 0 },
-  defaultValue: '',
-});
+const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
+const DAC_BODY = 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z';
 
-__exports.vccs = vccs;
+function converter(type, description, text, terminals, body, signalMark) {
+  return defineSymbol({
+    type,
+    description,
+    refPrefix: 'U',
+    terminals,
+    bbox: { x: -200, y: -120, w: 400, h: 240 },
+    graphics: [
+      ...terminals.map(({ x, y }) => ({
+        kind: 'path',
+        d: `M ${x} ${y} L ${x < 0 ? -120 : 120} ${y}`,
+        style: 'symbol',
+      })),
+      { kind: 'path', d: body, style: 'emph' },
+      { kind: 'path', d: signalMark, style: 'symbol' },
+      { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: { x: 0, y: -160 },
+    defaultValue: '',
+  });
+}
+
+const adc = converter(
+  'adc',
+  'Analog-to-Digital Converter',
+  'ADC',
+  [{ name: 'ain', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'd', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
+  ADC_BODY,
+  'M 154 -8 L 166 8',
+);
+
+const dac = converter(
+  'dac',
+  'Digital-to-Analog Converter',
+  'DAC',
+  [{ name: 'd', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'aout', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
+  DAC_BODY,
+  'M -166 8 L -154 -8',
+);
+
+__exports.adc = adc;
+__exports.dac = dac;
+};
+
+__modules["src/core/components/flipflop.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+const BODY = Object.freeze({ x: -40, y: -80, w: 80, h: 160 });
+const BUBBLE_RADIUS = 13.5;
+
+/** Build a compact D flip-flop or level-sensitive latch with optional reset and active-low pins. */
+function makeSequential(type, description, { latch = false, invertedClock = false, hasReset = false, invertedReset = false, complementaryOutput = false } = {}) {
+  const data = latch ? 'L' : 'D';
+  const clock = latch
+    ? (invertedClock ? 'ENB' : 'EN')
+    : (invertedClock ? 'CLKB' : 'CLK');
+  const reset = invertedReset ? 'RSTB' : 'RST';
+  const terminals = [
+    { name: data, x: -80, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: clock, x: -80, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'Q', x: 80, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
+    ...(complementaryOutput
+      ? [{ name: 'QB', x: 80, y: 40, direction: 'output', dir: { x: 1, y: 0 } }]
+      : []),
+    ...(hasReset ? [{ name: reset, x: 0, y: 120, direction: 'input', dir: { x: 0, y: 1 } }] : []),
+  ];
+
+  const graphics = [
+    { kind: 'rect', x: BODY.x, y: BODY.y, w: BODY.w, h: BODY.h, style: 'emph' },
+    { kind: 'path', d: 'M -80 -40 L -40 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -80 40 L -40 40', style: 'symbol' },
+    { kind: 'path', d: 'M 40 -40 L 80 -40', style: 'symbol' },
+    ...(complementaryOutput ? [{ kind: 'path', d: 'M 40 40 L 80 40', style: 'symbol' }] : []),
+    ...(hasReset ? [{ kind: 'path', d: 'M 0 80 L 0 120', style: 'symbol' }] : []),
+    ...(!latch ? [
+      // Rising-edge clock marker, with both ends on the body edge so it remains
+      // part of the symbol when the component is transformed.
+      { kind: 'path', d: 'M -40 24 L -8 40 L -40 56', style: 'symbol' },
+    ] : []),
+    { kind: 'text', x: 0, y: -40, text: data, anchor: 'middle', font: 'label', keepUpright: true },
+  ];
+
+  if (invertedClock) graphics.push({ kind: 'circle', cx: -54, cy: 40, r: BUBBLE_RADIUS, style: 'emph' });
+  if (hasReset && invertedReset) graphics.push({ kind: 'circle', cx: 0, cy: 94, r: BUBBLE_RADIUS, style: 'emph' });
+  if (complementaryOutput) graphics.push({ kind: 'circle', cx: 54, cy: 40, r: BUBBLE_RADIUS, style: 'emph' });
+
+  return defineSymbol({
+    type,
+    description,
+    refPrefix: 'U',
+    terminals,
+    bbox: { x: -80, y: -80, w: 160, h: hasReset ? 200 : 160 },
+    graphics,
+    textPos: null,
+    refPos: null,
+    labelOffset: { x: 0, y: -120 },
+    defaultValue: '',
+  });
+}
+
+const dff = makeSequential('dff', 'D flip-flop', {});
+const dff_qb = makeSequential('dff_qb', 'D flip-flop with complementary output', { complementaryOutput: true });
+const dff_clkb = makeSequential('dff_clkb', 'D flip-flop with inverted clock', { invertedClock: true });
+const dff_clkb_qb = makeSequential('dff_clkb_qb', 'D flip-flop with inverted clock and complementary output', { invertedClock: true, complementaryOutput: true });
+const dff_rst = makeSequential('dff_rst', 'D flip-flop with reset', { hasReset: true });
+const dff_rst_qb = makeSequential('dff_rst_qb', 'D flip-flop with reset and complementary output', { hasReset: true, complementaryOutput: true });
+const dff_clkb_rst = makeSequential('dff_clkb_rst', 'D flip-flop with inverted clock and reset', { invertedClock: true, hasReset: true });
+const dff_clkb_rst_qb = makeSequential('dff_clkb_rst_qb', 'D flip-flop with inverted clock, reset, and complementary output', { invertedClock: true, hasReset: true, complementaryOutput: true });
+const dff_rstb = makeSequential('dff_rstb', 'D flip-flop with inverted reset', { hasReset: true, invertedReset: true });
+const dff_rstb_qb = makeSequential('dff_rstb_qb', 'D flip-flop with inverted reset and complementary output', { hasReset: true, invertedReset: true, complementaryOutput: true });
+const dff_clkb_rstb = makeSequential('dff_clkb_rstb', 'D flip-flop with inverted clock and reset', { invertedClock: true, hasReset: true, invertedReset: true });
+const dff_clkb_rstb_qb = makeSequential('dff_clkb_rstb_qb', 'D flip-flop with inverted clock and reset and complementary output', { invertedClock: true, hasReset: true, invertedReset: true, complementaryOutput: true });
+
+const latch = makeSequential('latch', 'L latch', { latch: true });
+const latch_qb = makeSequential('latch_qb', 'L latch with complementary output', { latch: true, complementaryOutput: true });
+const latch_enb = makeSequential('latch_enb', 'L latch with inverted enable', { latch: true, invertedClock: true });
+const latch_enb_qb = makeSequential('latch_enb_qb', 'L latch with inverted enable and complementary output', { latch: true, invertedClock: true, complementaryOutput: true });
+const latch_rst = makeSequential('latch_rst', 'L latch with reset', { latch: true, hasReset: true });
+const latch_rst_qb = makeSequential('latch_rst_qb', 'L latch with reset and complementary output', { latch: true, hasReset: true, complementaryOutput: true });
+const latch_enb_rst = makeSequential('latch_enb_rst', 'L latch with inverted enable and reset', { latch: true, invertedClock: true, hasReset: true });
+const latch_enb_rst_qb = makeSequential('latch_enb_rst_qb', 'L latch with inverted enable, reset, and complementary output', { latch: true, invertedClock: true, hasReset: true, complementaryOutput: true });
+const latch_rstb = makeSequential('latch_rstb', 'L latch with inverted reset', { latch: true, hasReset: true, invertedReset: true });
+const latch_rstb_qb = makeSequential('latch_rstb_qb', 'L latch with inverted reset and complementary output', { latch: true, hasReset: true, invertedReset: true, complementaryOutput: true });
+const latch_enb_rstb = makeSequential('latch_enb_rstb', 'L latch with inverted enable and reset', { latch: true, invertedClock: true, hasReset: true, invertedReset: true });
+const latch_enb_rstb_qb = makeSequential('latch_enb_rstb_qb', 'L latch with inverted enable and reset and complementary output', { latch: true, invertedClock: true, hasReset: true, invertedReset: true, complementaryOutput: true });
+
+__exports.dff = dff;
+__exports.dff_qb = dff_qb;
+__exports.dff_clkb = dff_clkb;
+__exports.dff_clkb_qb = dff_clkb_qb;
+__exports.dff_rst = dff_rst;
+__exports.dff_rst_qb = dff_rst_qb;
+__exports.dff_clkb_rst = dff_clkb_rst;
+__exports.dff_clkb_rst_qb = dff_clkb_rst_qb;
+__exports.dff_rstb = dff_rstb;
+__exports.dff_rstb_qb = dff_rstb_qb;
+__exports.dff_clkb_rstb = dff_clkb_rstb;
+__exports.dff_clkb_rstb_qb = dff_clkb_rstb_qb;
+__exports.latch = latch;
+__exports.latch_qb = latch_qb;
+__exports.latch_enb = latch_enb;
+__exports.latch_enb_qb = latch_enb_qb;
+__exports.latch_rst = latch_rst;
+__exports.latch_rst_qb = latch_rst_qb;
+__exports.latch_enb_rst = latch_enb_rst;
+__exports.latch_enb_rst_qb = latch_enb_rst_qb;
+__exports.latch_rstb = latch_rstb;
+__exports.latch_rstb_qb = latch_rstb_qb;
+__exports.latch_enb_rstb = latch_enb_rstb;
+__exports.latch_enb_rstb_qb = latch_enb_rstb_qb;
 };
 
 __modules["src/core/components/logic.js"] = function (__require, __exports) {
@@ -28260,170 +28475,6 @@ __exports.or3_gate = or3_gate;
 __exports.nor3_gate = nor3_gate;
 __exports.xor3_gate = xor3_gate;
 __exports.xnor3_gate = xnor3_gate;
-};
-
-__modules["src/core/components/converter.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
-const DAC_BODY = 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z';
-
-function converter(type, description, text, terminals, body, signalMark) {
-  return defineSymbol({
-    type,
-    description,
-    refPrefix: 'U',
-    terminals,
-    bbox: { x: -200, y: -120, w: 400, h: 240 },
-    graphics: [
-      ...terminals.map(({ x, y }) => ({
-        kind: 'path',
-        d: `M ${x} ${y} L ${x < 0 ? -120 : 120} ${y}`,
-        style: 'symbol',
-      })),
-      { kind: 'path', d: body, style: 'emph' },
-      { kind: 'path', d: signalMark, style: 'symbol' },
-      { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
-    ],
-    textPos: null,
-    refPos: null,
-    labelOffset: { x: 0, y: -160 },
-    defaultValue: '',
-  });
-}
-
-const adc = converter(
-  'adc',
-  'Analog-to-Digital Converter',
-  'ADC',
-  [{ name: 'ain', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'd', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
-  ADC_BODY,
-  'M 154 -8 L 166 8',
-);
-
-const dac = converter(
-  'dac',
-  'Digital-to-Analog Converter',
-  'DAC',
-  [{ name: 'd', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'aout', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
-  DAC_BODY,
-  'M -166 8 L -154 -8',
-);
-
-__exports.adc = adc;
-__exports.dac = dac;
-};
-
-__modules["src/core/components/flipflop.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-const BODY = Object.freeze({ x: -40, y: -80, w: 80, h: 160 });
-const BUBBLE_RADIUS = 13.5;
-
-/** Build a compact D flip-flop or level-sensitive latch with optional reset and active-low pins. */
-function makeSequential(type, description, { latch = false, invertedClock = false, hasReset = false, invertedReset = false, complementaryOutput = false } = {}) {
-  const data = latch ? 'L' : 'D';
-  const clock = latch
-    ? (invertedClock ? 'ENB' : 'EN')
-    : (invertedClock ? 'CLKB' : 'CLK');
-  const reset = invertedReset ? 'RSTB' : 'RST';
-  const terminals = [
-    { name: data, x: -80, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: clock, x: -80, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'Q', x: 80, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
-    ...(complementaryOutput
-      ? [{ name: 'QB', x: 80, y: 40, direction: 'output', dir: { x: 1, y: 0 } }]
-      : []),
-    ...(hasReset ? [{ name: reset, x: 0, y: 120, direction: 'input', dir: { x: 0, y: 1 } }] : []),
-  ];
-
-  const graphics = [
-    { kind: 'rect', x: BODY.x, y: BODY.y, w: BODY.w, h: BODY.h, style: 'emph' },
-    { kind: 'path', d: 'M -80 -40 L -40 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -80 40 L -40 40', style: 'symbol' },
-    { kind: 'path', d: 'M 40 -40 L 80 -40', style: 'symbol' },
-    ...(complementaryOutput ? [{ kind: 'path', d: 'M 40 40 L 80 40', style: 'symbol' }] : []),
-    ...(hasReset ? [{ kind: 'path', d: 'M 0 80 L 0 120', style: 'symbol' }] : []),
-    ...(!latch ? [
-      // Rising-edge clock marker, with both ends on the body edge so it remains
-      // part of the symbol when the component is transformed.
-      { kind: 'path', d: 'M -40 24 L -8 40 L -40 56', style: 'symbol' },
-    ] : []),
-    { kind: 'text', x: 0, y: -40, text: data, anchor: 'middle', font: 'label', keepUpright: true },
-  ];
-
-  if (invertedClock) graphics.push({ kind: 'circle', cx: -54, cy: 40, r: BUBBLE_RADIUS, style: 'emph' });
-  if (hasReset && invertedReset) graphics.push({ kind: 'circle', cx: 0, cy: 94, r: BUBBLE_RADIUS, style: 'emph' });
-  if (complementaryOutput) graphics.push({ kind: 'circle', cx: 54, cy: 40, r: BUBBLE_RADIUS, style: 'emph' });
-
-  return defineSymbol({
-    type,
-    description,
-    refPrefix: 'U',
-    terminals,
-    bbox: { x: -80, y: -80, w: 160, h: hasReset ? 200 : 160 },
-    graphics,
-    textPos: null,
-    refPos: null,
-    labelOffset: { x: 0, y: -120 },
-    defaultValue: '',
-  });
-}
-
-const dff = makeSequential('dff', 'D flip-flop', {});
-const dff_qb = makeSequential('dff_qb', 'D flip-flop with complementary output', { complementaryOutput: true });
-const dff_clkb = makeSequential('dff_clkb', 'D flip-flop with inverted clock', { invertedClock: true });
-const dff_clkb_qb = makeSequential('dff_clkb_qb', 'D flip-flop with inverted clock and complementary output', { invertedClock: true, complementaryOutput: true });
-const dff_rst = makeSequential('dff_rst', 'D flip-flop with reset', { hasReset: true });
-const dff_rst_qb = makeSequential('dff_rst_qb', 'D flip-flop with reset and complementary output', { hasReset: true, complementaryOutput: true });
-const dff_clkb_rst = makeSequential('dff_clkb_rst', 'D flip-flop with inverted clock and reset', { invertedClock: true, hasReset: true });
-const dff_clkb_rst_qb = makeSequential('dff_clkb_rst_qb', 'D flip-flop with inverted clock, reset, and complementary output', { invertedClock: true, hasReset: true, complementaryOutput: true });
-const dff_rstb = makeSequential('dff_rstb', 'D flip-flop with inverted reset', { hasReset: true, invertedReset: true });
-const dff_rstb_qb = makeSequential('dff_rstb_qb', 'D flip-flop with inverted reset and complementary output', { hasReset: true, invertedReset: true, complementaryOutput: true });
-const dff_clkb_rstb = makeSequential('dff_clkb_rstb', 'D flip-flop with inverted clock and reset', { invertedClock: true, hasReset: true, invertedReset: true });
-const dff_clkb_rstb_qb = makeSequential('dff_clkb_rstb_qb', 'D flip-flop with inverted clock and reset and complementary output', { invertedClock: true, hasReset: true, invertedReset: true, complementaryOutput: true });
-
-const latch = makeSequential('latch', 'L latch', { latch: true });
-const latch_qb = makeSequential('latch_qb', 'L latch with complementary output', { latch: true, complementaryOutput: true });
-const latch_enb = makeSequential('latch_enb', 'L latch with inverted enable', { latch: true, invertedClock: true });
-const latch_enb_qb = makeSequential('latch_enb_qb', 'L latch with inverted enable and complementary output', { latch: true, invertedClock: true, complementaryOutput: true });
-const latch_rst = makeSequential('latch_rst', 'L latch with reset', { latch: true, hasReset: true });
-const latch_rst_qb = makeSequential('latch_rst_qb', 'L latch with reset and complementary output', { latch: true, hasReset: true, complementaryOutput: true });
-const latch_enb_rst = makeSequential('latch_enb_rst', 'L latch with inverted enable and reset', { latch: true, invertedClock: true, hasReset: true });
-const latch_enb_rst_qb = makeSequential('latch_enb_rst_qb', 'L latch with inverted enable, reset, and complementary output', { latch: true, invertedClock: true, hasReset: true, complementaryOutput: true });
-const latch_rstb = makeSequential('latch_rstb', 'L latch with inverted reset', { latch: true, hasReset: true, invertedReset: true });
-const latch_rstb_qb = makeSequential('latch_rstb_qb', 'L latch with inverted reset and complementary output', { latch: true, hasReset: true, invertedReset: true, complementaryOutput: true });
-const latch_enb_rstb = makeSequential('latch_enb_rstb', 'L latch with inverted enable and reset', { latch: true, invertedClock: true, hasReset: true, invertedReset: true });
-const latch_enb_rstb_qb = makeSequential('latch_enb_rstb_qb', 'L latch with inverted enable and reset and complementary output', { latch: true, invertedClock: true, hasReset: true, invertedReset: true, complementaryOutput: true });
-
-__exports.dff = dff;
-__exports.dff_qb = dff_qb;
-__exports.dff_clkb = dff_clkb;
-__exports.dff_clkb_qb = dff_clkb_qb;
-__exports.dff_rst = dff_rst;
-__exports.dff_rst_qb = dff_rst_qb;
-__exports.dff_clkb_rst = dff_clkb_rst;
-__exports.dff_clkb_rst_qb = dff_clkb_rst_qb;
-__exports.dff_rstb = dff_rstb;
-__exports.dff_rstb_qb = dff_rstb_qb;
-__exports.dff_clkb_rstb = dff_clkb_rstb;
-__exports.dff_clkb_rstb_qb = dff_clkb_rstb_qb;
-__exports.latch = latch;
-__exports.latch_qb = latch_qb;
-__exports.latch_enb = latch_enb;
-__exports.latch_enb_qb = latch_enb_qb;
-__exports.latch_rst = latch_rst;
-__exports.latch_rst_qb = latch_rst_qb;
-__exports.latch_enb_rst = latch_enb_rst;
-__exports.latch_enb_rst_qb = latch_enb_rst_qb;
-__exports.latch_rstb = latch_rstb;
-__exports.latch_rstb_qb = latch_rstb_qb;
-__exports.latch_enb_rstb = latch_enb_rstb;
-__exports.latch_enb_rstb_qb = latch_enb_rstb_qb;
 };
 
 __modules["src/core/components/variable.js"] = function (__require, __exports) {
@@ -28780,6 +28831,814 @@ __exports.analyzeTransferFunction = analyzeTransferFunction;
 __exports.expressionHasFrequency = expressionHasFrequency;
 };
 
+__modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
+const { integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js");
+/**
+ * Adapt rational.js to the small algebra contract used by MNA and solve.
+ *
+ * MNA values are always rational-function nodes. Keeping quotients inside the
+ * adapter avoids mixing raw expression nodes with rational nodes during a
+ * solve, while rational.js remains responsible for canonicalization.
+ */
+
+
+
+function isRational(value) {
+  return value?.kind === 'rational';
+}
+
+function expressionIsZero(value) {
+  if (typeof value === 'number') return value === 0;
+  if (typeof value === 'bigint') return value === 0n;
+  return value?.kind === 'number' && value.numerator === 0n;
+}
+
+function rationalIsZero(value) {
+  return isRational(value) && value.budgetExceeded !== true && expressionIsZero(value.numerator);
+}
+
+function withBudgetFlag(value) {
+  if (!isRational(value) || value.budgetExceeded === true) return value;
+  return Object.freeze({ ...value, budgetExceeded: true });
+}
+
+function normalize(value, variable, budget = null) {
+  if (isInfinite(value)) return value;
+  if (isRational(value)) {
+    if (value.variable !== variable) {
+      throw new RangeError(`rational variable must be ${variable}`);
+    }
+    return value;
+  }
+  return rationalFunction(value, integer(1), { variable, ...(budget ? { budget } : {}) });
+}
+
+/**
+ * Build an exact rational algebra implementation for MNA and solve.
+ *
+ * `maxOperations` is a shared dispatch budget. Each adapter operation passes
+ * the same budget to rational.js. Exhaustion is terminal for the analysis.
+ */
+function createRationalOps(options = {}) {
+  const variable = String(options.variable || 's');
+  if (!variable) throw new TypeError('rational variable must not be empty');
+  const budget = options.budget || createOperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  if (!Number.isFinite(budget.limit) || !Number.isSafeInteger(budget.limit) || budget.limit < 0) {
+    throw new RangeError('budget.limit must be a finite non-negative integer');
+  }
+
+  const zero = normalize(integer(0), variable);
+  const one = normalize(integer(1), variable);
+
+  function operation(run, inputs = []) {
+    const values = inputs.map((value) => normalize(value, variable, budget));
+    if (budget.exceeded || values.some((value) => value?.budgetExceeded === true)) {
+      budget.exceeded = true;
+      return withBudgetFlag(zero);
+    }
+    let result;
+    try {
+      budget.step();
+      result = run(values, { budget });
+    } catch (error) {
+      if (!budget.exceeded) throw error;
+      return withBudgetFlag(zero);
+    }
+    if (!isRational(result)) result = normalize(result, variable);
+    if (budget.exceeded || values.some((value) => value.budgetExceeded === true) || result.budgetExceeded === true) {
+      budget.exceeded = true;
+      return withBudgetFlag(result);
+    }
+    return result;
+  }
+
+  const ops = {
+    zero,
+    one,
+    add: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalAdd(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    sub: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalAdd(a, rationalMultiply(b, normalize(integer(-1), variable, shared), {
+        variable,
+        budget: shared,
+      }), { variable, budget: shared }),
+      [left, right],
+    ),
+    mul: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalMultiply(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    div: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalDivide(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    neg: (value) => operation(
+      ([a], { budget: shared }) => rationalMultiply(a, normalize(integer(-1), variable, shared), {
+        variable,
+        budget: shared,
+      }),
+      [value],
+    ),
+    isZero: (value) => isRational(value) ? rationalIsZero(value) : expressionIsZero(value),
+    infinity: (sign = 1) => infinity(sign),
+    symbol: (name) => INFINITY_NAMES.has(String(name).trim().toLowerCase())
+      ? infinity()
+      : normalize(makeSymbol(name), variable, budget),
+    s: () => normalize(makeSymbol(variable), variable, budget),
+  };
+
+  Object.defineProperties(ops, {
+    variable: { value: variable, enumerable: true },
+    budget: { value: budget, enumerable: true },
+  });
+  return Object.freeze(ops);
+}
+
+__exports.createRationalOps = createRationalOps;
+};
+
+__modules["src/core/analysis/present.js"] = function (__require, __exports) {
+const { INFINITY_NAMES, ONE, isNumber, isZero, keyOf } = __require("src/core/analysis/rational.js");
+
+
+const PRECEDENCE = Object.freeze({ sum: 10, product: 20, power: 30, atom: 40 });
+const PARALLEL_KINDS = new Set(['parallel', 'parallel-resistance']);
+
+function isNegativeNumber(value) {
+  return isNumber(value) && value.numerator < 0n;
+}
+
+function isNegative(value) {
+  if (isNegativeNumber(value)) return true;
+  if (value?.kind === 'rational') return isNegative(value.numerator);
+  return value?.kind === 'multiply' && isNegativeNumber(value.factors[0]);
+}
+
+function structuralKey(value) {
+  if (value?.kind === 'rational') {
+    return `q:${value.variable}:${structuralKey(value.numerator)}/${structuralKey(value.denominator)}`;
+  }
+  if (value?.kind === 'infinity') return `i:${value.sign < 0 ? -1 : 1}`;
+  if (value?.kind === 'multiply') return `m:${value.factors.map(structuralKey).join(',')}`;
+  if (value?.kind === 'add') return `a:${value.terms.map(structuralKey).join(',')}`;
+  if (value?.kind === 'power') return `p:${structuralKey(value.base)}^${value.exponent}`;
+  return keyOf(value);
+}
+
+function displayProduct(factors) {
+  let coefficient = 1n;
+  const visible = factors.filter((factor) => {
+    if (isNumber(factor) && factor.denominator === 1n) {
+      coefficient *= factor.numerator;
+      return false;
+    }
+    return true;
+  });
+  if (coefficient !== 1n || !visible.length) visible.unshift({ ...ONE, numerator: coefficient });
+  return visible.length === 1 ? visible[0] : { kind: 'multiply', factors: visible };
+}
+
+/** Display-only fraction composition. Parallel identities remain indivisible
+ * factors; no circuit polynomial is expanded or approximated here. */
+function composedFraction(value, context, options) {
+  const usedProofs = new Set();
+  let visited = 0;
+  function parts(node, path = new Set()) {
+    if (++visited > 256) throw new RangeError('fraction presentation limit');
+    if (explicitParallel(node, options)) return { n: [node], d: [] };
+    const key = structuralKey(node);
+    const proof = !path.has(key) && options.equivalences?.get?.(key);
+    const nestedPath = new Set([...path, key]);
+    let kind = node.kind;
+    let operands;
+    if (proof?.proven && ['product', 'quotient', 'sum'].includes(proof.kind)) {
+      kind = proof.kind;
+      operands = proof.operands;
+      usedProofs.add(key);
+    }
+    if (kind === 'rational' || kind === 'quotient') {
+      const a = parts(operands?.[0] || node.numerator, nestedPath);
+      const b = parts(operands?.[1] || node.denominator, nestedPath);
+      return { n: [...a.n, ...b.d], d: [...a.d, ...b.n] };
+    }
+    if (kind === 'number') {
+      return { n: [{ ...ONE, numerator: node.numerator }], d: node.denominator === 1n ? [] : [{ ...ONE, numerator: node.denominator }] };
+    }
+    if (kind === 'multiply' || kind === 'product') {
+      const factors = (operands || node.factors).map((factor) => parts(factor, nestedPath));
+      return { n: factors.flatMap((factor) => factor.n), d: factors.flatMap((factor) => factor.d) };
+    }
+    if (kind === 'power') {
+      const base = parts(node.base, nestedPath);
+      const exponent = Math.abs(node.exponent);
+      const powered = (factors) => !factors.length ? [] : exponent === 1 ? factors : [{ kind: 'power', base: displayProduct(factors), exponent }];
+      if (node.exponent === 0) return { n: [ONE], d: [] };
+      return node.exponent < 0 ? { n: powered(base.d), d: powered(base.n) } : { n: powered(base.n), d: powered(base.d) };
+    }
+    if (kind === 'add' || kind === 'sum') {
+      const terms = (operands || node.terms).map((term) => parts(term, nestedPath));
+      if (!terms.some((term) => term.d.some((factor) => !isNumber(factor) || factor.numerator !== factor.denominator))) {
+        return { n: [operands ? { kind: 'add', terms: terms.map((term) => displayProduct(term.n)), ordered: true } : node], d: [] };
+      }
+      // Common denominator uses the largest multiplicity of each factor,
+      // avoiding repeated denominators in 1/a + 1/a without distributing sums.
+      const common = new Map();
+      const denominators = terms.map((term) => {
+        const counts = new Map();
+        for (const factor of term.d) {
+          if (isNumber(factor) && factor.numerator === 1n) continue;
+          const key = structuralKey(factor);
+          const entry = counts.get(key) || { factor, count: 0 };
+          entry.count++;
+          counts.set(key, entry);
+        }
+        for (const [key, entry] of counts) if ((common.get(key)?.count || 0) < entry.count) common.set(key, entry);
+        return counts;
+      });
+      const numerator = { kind: 'add', terms: terms.map((term, index) => displayProduct([
+        ...term.n,
+        ...[...common].flatMap(([key, entry]) => Array(entry.count - (denominators[index].get(key)?.count || 0)).fill(entry.factor)),
+      ])) };
+      return { n: [numerator], d: [...common.values()].flatMap((entry) => Array(entry.count).fill(entry.factor)) };
+    }
+    return { n: [node], d: [] };
+  }
+  try {
+    const { n, d } = parts(value);
+    const denominator = displayProduct(d);
+    if (isNumber(denominator) && denominator.numerator === 1n) return null;
+    const numerator = displayProduct(n);
+    const negative = isNegative(numerator) !== isNegative(denominator);
+    const equivalences = new Map(options.equivalences instanceof Map
+      ? options.equivalences : Object.entries(options.equivalences || {}));
+    usedProofs.forEach((key) => equivalences.delete(key));
+    const nested = { ...options, equivalences };
+    return `${negative ? '-' : ''}\\frac{${render(unsigned(numerator), 0, context, nested)}}{${render(unsigned(denominator), 0, context, nested)}}`;
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
+}
+
+function equivalent(left, right) {
+  if (left?.kind !== right?.kind) return false;
+  if (left?.kind === 'rational') {
+    return left.variable === right.variable
+      && equivalent(left.numerator, right.numerator)
+      && equivalent(left.denominator, right.denominator);
+  }
+  if (left?.kind === 'infinity') return (left.sign < 0) === (right.sign < 0);
+  return structuralKey(left) === structuralKey(right);
+}
+
+function absoluteNumber(value) {
+  return value.numerator < 0n
+    ? { ...value, numerator: -value.numerator }
+    : value;
+}
+
+function unsigned(value) {
+  if (isNegativeNumber(value)) return absoluteNumber(value);
+  if (value?.kind === 'rational' && isNegative(value.numerator)) {
+    return Object.freeze({ ...value, numerator: unsigned(value.numerator) });
+  }
+  if (value?.kind === 'multiply' && isNegativeNumber(value.factors[0])) {
+    const [coefficient, ...factors] = value.factors;
+    const positive = absoluteNumber(coefficient);
+    if (isNumber(positive) && positive.numerator === 1n && positive.denominator === 1n) {
+      if (factors.length === 0) return positive;
+      return factors.length === 1 ? factors[0] : Object.freeze({ ...value, factors: Object.freeze(factors) });
+    }
+    return factors.length === 0 ? positive : Object.freeze({ ...value, factors: Object.freeze([positive, ...factors]) });
+  }
+  return value;
+}
+
+function symbolText(name) {
+  const raw = String(name);
+  if (INFINITY_NAMES.has(raw.toLowerCase())) return '\\infty';
+  if (raw === 's') return 's';
+  if (raw.includes('_{') || raw.includes('^{')) return raw;
+  if (raw.length < 2) return raw;
+  const first = raw[0];
+  if (!/[A-Za-z]/.test(first)) return raw;
+  const rest = raw.slice(1).replace(/^_/, '');
+  if (!rest || !/^[A-Za-z0-9]+$/.test(rest)) return raw;
+  const shouldSubscript = first === first.toUpperCase()
+    || /[0-9]/.test(rest)
+    || raw.includes('_')
+    || /^[grclviapz][A-Za-z]/i.test(raw);
+  if (!shouldSubscript) return raw;
+  return `${first}_{${rest}}`;
+}
+
+function variableName(context) {
+  return context.variable || 's';
+}
+
+function isVariable(value, context) {
+  return value?.kind === 'symbol' && value.name === variableName(context);
+}
+
+function variableDegree(value, context) {
+  if (isVariable(value, context)) return 1;
+  if (value?.kind === 'power' && value.exponent >= 0 && isVariable(value.base, context)) return value.exponent;
+  if (value?.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + variableDegree(factor, context), 0);
+  return 0;
+}
+
+function sortSumTerms(terms, context) {
+  return [...terms].sort((left, right) => variableDegree(right, context) - variableDegree(left, context)
+    || structuralKey(left).localeCompare(structuralKey(right)));
+}
+
+function isVariablePower(value, context) {
+  return isVariable(value, context)
+    || (value?.kind === 'power' && value.exponent > 0 && isVariable(value.base, context));
+}
+
+function factorRank(value, context) {
+  if (isVariablePower(value, context)) return 0;
+  if (isNumber(value)) return 1;
+  if (value?.kind === 'symbol' || value?.kind === 'power') return 2;
+  return 3;
+}
+
+function sortProductFactors(factors, context) {
+  const sorted = [...factors].sort((left, right) => factorRank(left, context) - factorRank(right, context)
+    || structuralKey(left).localeCompare(structuralKey(right)));
+  // Put each transistor's gm*ro together before other resistance factors.
+  for (let i = 0; i < sorted.length; i++) {
+    const match = sorted[i]?.kind === 'symbol' && /^gm(.+)$/.exec(sorted[i].name);
+    if (!match) continue;
+    const j = sorted.findIndex((factor, index) => index > i && factor.kind === 'symbol' && factor.name === `ro${match[1]}`);
+    if (j > i + 1) sorted.splice(i + 1, 0, sorted.splice(j, 1)[0]);
+  }
+  return sorted;
+}
+
+// Algebra may factor ro*(gm*ro + 1) for cancellation. For presentation,
+// flatten small resistive sums without expanding frequency polynomials or
+// topology-proven gain/load products. This never changes the solver's AST.
+function flatResistiveSum(value) {
+  if (value?.kind !== 'multiply' || !value.factors.some((factor) => factor.kind === 'symbol' && /^ro.+$/.test(factor.name))) return null;
+  let terms = [[]];
+  for (const factor of value.factors) {
+    const choices = factor.kind === 'add' ? factor.terms : [factor];
+    if (terms.length * choices.length > 4) return null;
+    if (choices.some((choice) => choice.kind === 'rational' || choice.kind === 'add'
+      || (choice.kind === 'multiply' && choice.factors.some((part) => !['number', 'symbol', 'power'].includes(part.kind))))) return null;
+    terms = terms.flatMap((term) => choices.map((choice) => [...term, ...(choice.kind === 'multiply' ? choice.factors : [choice])]));
+  }
+  if (terms.length < 2 || terms.some((term) => term.some((factor) => factor.kind === 'symbol' && factor.name === 's'))) return null;
+  return { kind: 'add', terms: terms.map((factors) => {
+    factors = factors.filter((factor) => !isNumber(factor) || factor.numerator !== factor.denominator);
+    return factors.length === 1 ? factors[0] : { kind: 'multiply', factors };
+  }) };
+}
+
+function parenthesize(text) {
+  return `\\left(${text}\\right)`;
+}
+
+/**
+ * Provenance markers. `\pv{n}{…}` wraps one rendered sub-expression so the
+ * MathML it becomes can carry a `data-node` attribute back to the AST node it
+ * was rendered from. TeX stays the single source of truth for the displayed
+ * equation: markers appear only when a caller asks for provenance, and nothing
+ * persisted, exported, or edited as a label ever sees one.
+ *
+ * A few renderers post-process a child's rendered text (stripping a leading
+ * minus, comparing against `1`). They reach through the wrapper with the two
+ * helpers below, so a provenance render differs from an ordinary one by
+ * exactly the markers — which `analysis-present-v2.test.js` asserts directly.
+ */
+function unmark(text) {
+  if (!text.startsWith('\\pv{')) return null;
+  const idEnd = text.indexOf('}', 4);
+  if (idEnd < 0 || text[idEnd + 1] !== '{') return null;
+  let depth = 1;
+  for (let i = idEnd + 2; i < text.length; i += 1) {
+    if (text[i] === '{') depth += 1;
+    else if (text[i] === '}') {
+      depth -= 1;
+      // Only a marker spanning the whole string is this text's own wrapper;
+      // `\pv{1}{A} + \pv{2}{B}` is a sequence and must not be unwrapped.
+      if (depth === 0) return i === text.length - 1 ? { id: text.slice(4, idEnd), body: text.slice(idEnd + 2, i) } : null;
+    }
+  }
+  return null;
+}
+
+/** A child's rendered text with its own provenance wrapper removed. */
+function markedBody(text) {
+  return unmark(text)?.body ?? text;
+}
+
+/** Rewrite a child's rendered text while preserving its provenance wrapper. */
+function mapMarked(text, fn) {
+  const marked = unmark(text);
+  return marked ? `\\pv{${marked.id}}{${fn(marked.body)}}` : fn(text);
+}
+
+/**
+ * The symbol names in one subtree. The AST is immutable and shared, so
+ * identity memoization keeps a whole provenance pass linear in the tree
+ * instead of quadratic in its depth.
+ */
+const SYMBOL_NAMES = new WeakMap();
+function symbolNames(value) {
+  if (!value || typeof value !== 'object') return [];
+  const cached = SYMBOL_NAMES.get(value);
+  if (cached) return cached;
+  let names;
+  if (value.kind === 'symbol') names = [value.name];
+  else if (value.kind === 'rational') names = [...symbolNames(value.numerator), ...symbolNames(value.denominator)];
+  else if (value.kind === 'multiply') names = value.factors.flatMap(symbolNames);
+  else if (value.kind === 'add') names = value.terms.flatMap(symbolNames);
+  else if (value.kind === 'power') names = symbolNames(value.base);
+  else if (value.kind === 'quadratic-formula') {
+    names = [
+      ...symbolNames(value.numerator?.linear),
+      ...symbolNames(value.discriminant),
+      ...symbolNames(value.denominator),
+    ];
+  } else names = [];
+  const unique = Object.freeze([...new Set(names)]);
+  SYMBOL_NAMES.set(value, unique);
+  return unique;
+}
+
+function createProvenanceCollector() {
+  const symbols = new Map();
+  let next = 0;
+  return {
+    wrap(value, text) {
+      const id = (next += 1);
+      symbols.set(id, symbolNames(value));
+      return `\\pv{${id}}{${text}}`;
+    },
+    /**
+     * Only ids that survived into the rendered string are real: a speculative
+     * render the presenter then discards (`composedFraction` probing a shape
+     * it rejects) allocates an id that never appears in the output.
+     */
+    resolve(tex) {
+      const used = new Set();
+      for (const match of String(tex).matchAll(/\\pv\{(\d+)\}/g)) used.add(Number(match[1]));
+      return [...used].sort((a, b) => a - b)
+        .map((id) => ({ id, symbols: [...(symbols.get(id) || [])] }));
+    },
+  };
+}
+
+/**
+ * Strip every provenance marker, leaving exactly the TeX an ordinary render
+ * would have produced. A balanced scan, because a marker's body contains
+ * arbitrary nested braces.
+ */
+function stripProvenanceMarkers(tex) {
+  const text = String(tex);
+  let out = '';
+  const markers = [];
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '\\') {
+      const marker = /^\\pv\{\d+\}\{/.exec(text.slice(i));
+      if (marker) {
+        markers.push(depth);
+        depth += 1;
+        i += marker[0].length - 1;
+        continue;
+      }
+    }
+    const char = text[i];
+    if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      // This closes the innermost open marker rather than a TeX group.
+      if (markers.length && markers[markers.length - 1] === depth) { markers.pop(); continue; }
+    }
+    out += char;
+  }
+  return out;
+}
+
+function renderNumber(value) {
+  const numerator = value.numerator;
+  const denominator = value.denominator;
+  if (denominator === 1n) return String(numerator);
+  const sign = numerator < 0n ? '-' : '';
+  return `${sign}\\frac{${numerator < 0n ? -numerator : numerator}}{${denominator}}`;
+}
+
+function renderPower(value, context, options) {
+  if (value.exponent < 0) {
+    return `\\frac{1}{${renderPower({ ...value, exponent: -value.exponent }, context, options)}}`;
+  }
+  if (value.exponent === 1) return render(value.base, 0, context, options);
+  const baseText = render(value.base, PRECEDENCE.power, context, options);
+  return `${baseText}^{${value.exponent}}`;
+}
+
+function renderProduct(value, context, options) {
+  const fraction = composedFraction(value, context, options);
+  if (fraction) return fraction;
+  const negative = isNegative(value);
+  const positive = unsigned(value);
+  const visible = sortProductFactors(positive.kind === 'multiply' ? positive.factors : [positive], context);
+  const body = visible.length
+    ? visible.map((factor) => render(factor, PRECEDENCE.product, context, options)).join(' \\, ')
+    : '1';
+  if (!negative) return body;
+  if (visible.length === 1 && visible[0]?.kind === 'add') return `-${parenthesize(render(visible[0], 0, context, options))}`;
+  return `-${body}`;
+}
+
+function renderSum(value, context, options) {
+  const flat = value.terms.flatMap((term) => flatResistiveSum(term)?.terms || [term]);
+  const terms = options.orderedSum || value.ordered ? flat : sortSumTerms(flat, context);
+  return terms.map((term, index) => {
+    const negative = isNegative(term);
+    const body = render(unsigned(term), negative || explicitParallel(term, options) ? PRECEDENCE.product : PRECEDENCE.sum, context, options);
+    if (index === 0) return negative ? `-${body}` : body;
+    return negative ? ` - ${body}` : ` + ${body}`;
+  }).join('');
+}
+
+function renderRational(value, context, options) {
+  if (isZero(value.numerator)) return '0';
+  const composed = composedFraction(value, context, options);
+  if (composed) return composed;
+  const numeratorNegative = isNegative(value.numerator);
+  const denominatorNegative = isNegative(value.denominator);
+  const negative = numeratorNegative !== denominatorNegative;
+  const numerator = negative ? unsigned(value.numerator) : value.numerator;
+  const denominator = denominatorNegative ? unsigned(value.denominator) : value.denominator;
+  const numeratorText = render(numerator, 0, context, options);
+  const denominatorText = render(denominator, 0, context, options);
+  const fraction = isNumber(denominator) && denominator.numerator === 1n && denominator.denominator === 1n
+    ? numeratorText
+    : `\\frac{${numeratorText}}{${denominatorText}}`;
+  return negative ? `-${markedBody(denominatorText) === '1' && numerator.kind === 'add' ? parenthesize(fraction) : fraction}` : fraction;
+}
+
+function operandsOf(metadata) {
+  if (!metadata || metadata.proven !== true || !PARALLEL_KINDS.has(metadata.kind)) return null;
+  const operands = metadata.operands || [metadata.left, metadata.right];
+  return Array.isArray(operands) && operands.length >= 2 && metadata.equivalent !== undefined ? operands : null;
+}
+
+/**
+ * `options.equivalence`/`options.parallel` proves parallel notation for one
+ * specific value (checked at every recursive `render` call, so it can match
+ * a nested sub-expression, not just the top-level one). `options.equivalences`
+ * additionally carries a whole table of such proofs — e.g. from a network's
+ * general series/parallel pre-reduction (`reduce.js`), which can prove many
+ * unrelated sub-networks at once — keyed by `structuralKey` of the value each
+ * one proves, for the same reason `equivalent()` below reduces to that key.
+ */
+function explicitParallel(value, options) {
+  const direct = options.equivalence || options.parallel;
+  const directOperands = operandsOf(direct);
+  if (directOperands && equivalent(value, direct.equivalent)) return directOperands;
+  const table = options.equivalences;
+  if (!table) return null;
+  const key = structuralKey(value);
+  const entry = table instanceof Map ? table.get(key) : table[key];
+  return operandsOf(entry);
+}
+
+function renderParallel(value, context, options) {
+  const operands = explicitParallel(value, options);
+  if (!operands) return null;
+  function flatten(operand, seen) {
+    const key = structuralKey(operand);
+    const nested = !seen.has(key) && explicitParallel(operand, options);
+    if (!nested) return [operand];
+    return nested.flatMap((branch) => flatten(branch, new Set([...seen, key])));
+  }
+  const flat = operands.flatMap((operand) => flatten(operand, new Set([structuralKey(value)])));
+  const body = flat.map((operand) => render(operand, PRECEDENCE.product, context, options)).join(' \\parallel ');
+  return body;
+}
+
+function precedence(value) {
+  if (value?.kind === 'add') return PRECEDENCE.sum;
+  if (value?.kind === 'multiply') return PRECEDENCE.product;
+  if (value?.kind === 'power') return PRECEDENCE.power;
+  return PRECEDENCE.atom;
+}
+
+function renderQuadraticFormula(value, context, options) {
+  const linear = value.numerator?.linear;
+  const root = `\\sqrt{${render(value.discriminant, 0, context, options)}}`;
+  const sign = value.sign < 0 ? '-' : '+';
+  const numerator = isZero(linear)
+    ? `${sign === '-' ? '-' : ''}${root}`
+    : `${render(linear, PRECEDENCE.sum, context, options)} ${sign} ${root}`;
+  return `\\frac{${numerator}}{${render(value.denominator, 0, context, options)}}`;
+}
+
+function renderNode(value, parentPrecedence, context, options = {}) {
+  if (value?.kind === 'quadratic-formula') return renderQuadraticFormula(value, context, options);
+  let text;
+  const proof = options.equivalences?.get?.(structuralKey(value));
+  if (proof?.proven === true && ['quotient', 'sum'].includes(proof.kind)) {
+    const equivalences = new Map(options.equivalences);
+    equivalences.delete(structuralKey(value));
+    const nested = { ...options, equivalences };
+    if (proof.kind === 'quotient') return composedFraction(value, context, options)
+      || renderRational({ kind: 'rational', numerator: proof.operands[0], denominator: proof.operands[1] }, context, nested);
+    const body = renderSum({ kind: 'add', terms: proof.operands }, context, { ...nested, orderedSum: true });
+    return parentPrecedence > PRECEDENCE.sum ? parenthesize(body) : body;
+  }
+  if (proof?.proven === true && proof.kind === 'product') {
+    // Remove this identity while visiting its factors: a unit factor must
+    // never make a display proof recurse back into itself.
+    const equivalences = new Map(options.equivalences);
+    equivalences.delete(structuralKey(value));
+    const negative = proof.operands.filter(isNegative).length % 2 === 1;
+    const factors = proof.operands.map((factor) => {
+      const text = render(factor, PRECEDENCE.product, context, { ...options, equivalences });
+      return isNegative(factor)
+        ? mapMarked(text, (body) => (body.startsWith('-') ? body.slice(1) : body))
+        : text;
+    });
+    const body = `${negative ? '-' : ''}${factors.join(' \\, ')}`;
+    return parentPrecedence > PRECEDENCE.product ? parenthesize(body) : body;
+  }
+  if (value?.kind === 'infinity') return value.sign < 0 ? '-\\infty' : '\\infty';
+  if (value?.kind === 'number') return renderNumber(value);
+  if (value?.kind === 'symbol') return symbolText(value.name);
+  if (value?.kind === 'rational') {
+    const parallel = renderParallel(value, context, options);
+    text = parallel || renderRational(value, context, options);
+  } else if (value?.kind === 'power') {
+    text = renderPower(value, context, options);
+  } else if (value?.kind === 'multiply') {
+    const parallel = renderParallel(value, context, options);
+    const flat = !parallel && flatResistiveSum(value);
+    if (flat) return render(flat, parentPrecedence, context, options);
+    text = parallel || renderProduct(value, context, options);
+  } else if (value?.kind === 'add') {
+    text = renderSum(value, context, options);
+  } else {
+    throw new TypeError(`unknown expression kind ${value?.kind}`);
+  }
+  const parallel = explicitParallel(value, options);
+  const rank = parallel ? PRECEDENCE.sum
+    : value?.kind === 'rational' && isNumber(value.denominator) && value.denominator.numerator === value.denominator.denominator
+      ? precedence(value.numerator) : precedence(value);
+  return rank < parentPrecedence ? parenthesize(text) : text;
+}
+
+/**
+ * Render one node. With `options.provenance` set, the result is wrapped in a
+ * `\pv{…}` marker naming the AST node it came from; without it this is a
+ * direct call through to `renderNode` and costs nothing.
+ */
+function render(value, parentPrecedence, context, options = {}) {
+  const text = renderNode(value, parentPrecedence, context, options);
+  return options.provenance ? options.provenance.wrap(value, text) : text;
+}
+
+/** Render an immutable rational AST as deterministic textbook TeX. */
+function renderExpression(value, options = {}) {
+  return render(value, 0, { variable: options.variable || 's' }, options);
+}
+
+/**
+ * Render as `renderExpression` does, but with every sub-expression wrapped in a
+ * provenance marker, and return the node table alongside the TeX. Each entry is
+ * `{id, symbols}`; resolving those symbol names to circuit objects is
+ * `provenance.js`'s job, and turning the markers into `data-node` attributes is
+ * `texToMathML`'s.
+ */
+function renderExpressionWithProvenance(value, options = {}) {
+  const provenance = createProvenanceCollector();
+  const tex = render(value, 0, { variable: options.variable || 's' }, { ...options, provenance });
+  return { tex, nodes: provenance.resolve(tex) };
+}
+
+/** `renderEquation` with provenance markers, for the same reason. */
+function renderEquationWithProvenance(label, value, options = {}) {
+  const { tex, nodes } = renderExpressionWithProvenance(value, options);
+  return { tex: `${label} = ${tex}`, nodes };
+}
+
+/** `renderRootEquation` with provenance markers, for the same reason. */
+function renderRootEquationWithProvenance(kind, index, value, options = {}) {
+  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
+  return renderEquationWithProvenance(`${prefix}_{${index}}`, value, options);
+}
+
+/**
+ * Join several provenance renders into one, renumbering so node ids stay
+ * unique across the result. A pole or zero row is several root equations shown
+ * together, each rendered on its own; without renumbering the second root's
+ * nodes would collide with the first's and highlight the wrong devices.
+ */
+function joinProvenanceRenders(parts, separator = '') {
+  const pieces = [];
+  const nodes = [];
+  let offset = 0;
+  for (const part of parts) {
+    if (!part) continue;
+    const shift = offset;
+    pieces.push(String(part.tex).replace(/\\pv\{(\d+)\}/g, (match, id) => `\\pv{${Number(id) + shift}}`));
+    for (const node of part.nodes) nodes.push({ id: node.id + shift, symbols: [...node.symbols] });
+    offset += part.nodes.reduce((highest, node) => Math.max(highest, node.id), 0);
+  }
+  return { tex: pieces.join(separator), nodes };
+}
+
+/** Render an equation with an already formatted left-hand label. */
+function renderEquation(label, value, options = {}) {
+  return `${label} = ${renderExpression(value, options)}`;
+}
+
+const QUANTITY_LABELS = Object.freeze({
+  zin: 'Z_{in}',
+  zout: 'Z_{out}',
+  av: 'A_v',
+  gain: 'A_v',
+});
+
+/** Return the standard analysis label for AC or DC quantities. */
+function quantityLabel(quantity, argument = undefined) {
+  const key = String(quantity).replace(/[^A-Za-z]/g, '').toLowerCase();
+  const base = QUANTITY_LABELS[key] || String(quantity);
+  return argument === undefined || argument === null ? base : `${base}(${argument})`;
+}
+
+/** Render `Z_in(s)`, `Z_out(0)`, or `A_v(s)` with its expression. */
+function renderQuantityEquation(quantity, argument, value, options = {}) {
+  return renderEquation(quantityLabel(quantity, argument), value, options);
+}
+
+/** Render a zero-based pole or zero equation. */
+function renderRootEquation(kind, index, value, options = {}) {
+  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
+  return renderEquation(`${prefix}_{${index}}`, value, options);
+}
+
+/**
+ * Build the `options.equivalences` table `render` checks at every recursive
+ * call (see `explicitParallel`) from a list of `provenParallel(...)` results
+ * (or equivalent `{ equivalent, operands }` records) — e.g. one per parallel
+ * merge a network's series/parallel pre-reduction (`reduce.js`) performed.
+ */
+function equivalenceTable(proofs) {
+  const table = new Map();
+  for (const proof of proofs) table.set(structuralKey(proof.equivalent), proof);
+  return table;
+}
+
+/** Build explicit metadata for a caller-proven parallel-resistance display. */
+function provenParallel(equivalent, ...operands) {
+  return Object.freeze({
+    kind: 'parallel-resistance',
+    proven: true,
+    equivalent,
+    operands: Object.freeze(operands),
+  });
+}
+
+/** A factored identity established by the circuit's linear port model. */
+function provenProduct(equivalent, ...operands) {
+  return Object.freeze({ kind: 'product', proven: true, equivalent, operands: Object.freeze(operands) });
+}
+
+/** Ratios and sums whose recombination the caller has checked exactly. */
+function provenQuotient(equivalent, numerator, denominator) {
+  return Object.freeze({ kind: 'quotient', proven: true, equivalent, operands: Object.freeze([numerator, denominator]) });
+}
+
+function provenSum(equivalent, ...operands) {
+  return Object.freeze({ kind: 'sum', proven: true, equivalent, operands: Object.freeze(operands) });
+}
+
+
+__exports.stripProvenanceMarkers = stripProvenanceMarkers;
+__exports.renderExpression = renderExpression;
+__exports.renderExpressionWithProvenance = renderExpressionWithProvenance;
+__exports.renderEquationWithProvenance = renderEquationWithProvenance;
+__exports.renderRootEquationWithProvenance = renderRootEquationWithProvenance;
+__exports.joinProvenanceRenders = joinProvenanceRenders;
+__exports.renderEquation = renderEquation;
+__exports.quantityLabel = quantityLabel;
+__exports.renderQuantityEquation = renderQuantityEquation;
+__exports.renderRootEquation = renderRootEquation;
+__exports.equivalenceTable = equivalenceTable;
+__exports.provenParallel = provenParallel;
+__exports.provenProduct = provenProduct;
+__exports.provenQuotient = provenQuotient;
+__exports.provenSum = provenSum;
+};
+
 __modules["src/core/analysis/shared.js"] = function (__require, __exports) {
 /** Leaf helpers and vocabulary shared across the small-signal analysis modules. */
 
@@ -28801,6 +29660,1100 @@ __exports.firstDefined = firstDefined;
 __exports.OWN = OWN;
 __exports.MOS_TYPES = MOS_TYPES;
 __exports.PASSIVE_KINDS = PASSIVE_KINDS;
+};
+
+__modules["src/core/analysis/response.js"] = function (__require, __exports) {
+const { add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js");
+
+
+const DEFAULT_VARIABLE = 's';
+const ZERO = integer(0);
+const ONE = integer(1);
+
+function asRational(value, variable, options) {
+  if (value?.kind === 'rational') {
+    return rationalFunction(value.numerator, value.denominator, {
+      ...options,
+      variable,
+    });
+  }
+  return rationalFunction(value ?? ONE, ONE, { ...options, variable });
+}
+
+function quotient(numerator, denominator) {
+  if (denominator.kind === 'number') {
+    if (numerator.kind === 'number') {
+      return rational(
+        numerator.numerator * denominator.denominator,
+        numerator.denominator * denominator.numerator,
+      );
+    }
+    return multiply(numerator, rational(denominator.denominator, denominator.numerator));
+  }
+  return multiply(numerator, power(denominator, -1));
+}
+
+function coefficientAt(coefficients, exponent) {
+  return coefficients.find(({ power: powerValue }) => powerValue === exponent)?.coefficient || ZERO;
+}
+
+function polynomialInfo(expression, variable, options) {
+  const coefficients = polynomialCoefficients(expression, variable, options);
+  if (!coefficients) return null;
+  return Object.freeze({
+    coefficients,
+    degree: coefficients.length ? coefficients[0].power : null,
+    valuation: coefficients.length ? coefficients[coefficients.length - 1].power : null,
+  });
+}
+
+function limitAtZero(numeratorInfo, denominatorInfo) {
+  if (!numeratorInfo || !denominatorInfo) {
+    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
+  }
+  if (numeratorInfo.valuation === null) {
+    return Object.freeze({ kind: 'zero', value: ZERO, order: null, coefficient: ZERO });
+  }
+  if (denominatorInfo.valuation === null) {
+    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
+  }
+
+  const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.valuation);
+  const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.valuation);
+  const order = denominatorInfo.valuation - numeratorInfo.valuation;
+  if (order > 0) {
+    return Object.freeze({
+      kind: 'pole',
+      value: null,
+      order,
+      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
+    });
+  }
+  if (order < 0) {
+    return Object.freeze({
+      kind: 'zero',
+      value: ZERO,
+      order: -order,
+      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
+    });
+  }
+  const value = quotient(numeratorCoefficient, denominatorCoefficient);
+  return Object.freeze({
+    kind: value === ZERO ? 'zero' : 'finite',
+    value,
+    order: 0,
+    coefficient: value,
+  });
+}
+
+function limitAtInfinity(numeratorInfo, denominatorInfo) {
+  if (!numeratorInfo || !denominatorInfo) {
+    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
+  }
+  if (numeratorInfo.degree === null) {
+    return Object.freeze({ kind: 'zero', value: ZERO, order: null, coefficient: ZERO });
+  }
+  if (denominatorInfo.degree === null) {
+    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
+  }
+
+  const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.degree);
+  const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.degree);
+  const order = numeratorInfo.degree - denominatorInfo.degree;
+  if (order > 0) {
+    return Object.freeze({
+      kind: 'pole',
+      value: null,
+      order,
+      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
+    });
+  }
+  if (order < 0) {
+    return Object.freeze({
+      kind: 'zero',
+      value: ZERO,
+      order: -order,
+      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
+    });
+  }
+  const value = quotient(numeratorCoefficient, denominatorCoefficient);
+  return Object.freeze({
+    kind: value === ZERO ? 'zero' : 'finite',
+    value,
+    order: 0,
+    coefficient: value,
+  });
+}
+
+function polynomialExpression(coefficients, variable) {
+  return add(coefficients.map(({ power: exponent, coefficient }) => (
+    exponent === 0 ? coefficient : multiply(coefficient, power(symbol(variable), exponent))
+  )));
+}
+
+function isZeroExpression(value) {
+  return value?.kind === 'number' && value.numerator === 0n;
+}
+
+function integerSquareRoot(value) {
+  if (value < 0n) return null;
+  if (value < 2n) return value;
+  let x = BigInt(Math.floor(Math.sqrt(Number(value))));
+  while (x * x > value) x -= 1n;
+  while ((x + 1n) * (x + 1n) <= value) x += 1n;
+  return x * x === value ? x : null;
+}
+
+/** Exact square root of a monomial with even exponents (e.g. `4 C_M^2 g_m^2`), or null. */
+function monomialSquareRoot(value) {
+  if (value.kind === 'number') {
+    const numerator = integerSquareRoot(value.numerator);
+    const denominator = integerSquareRoot(value.denominator);
+    return numerator === null || denominator === null ? null : rational(numerator, denominator);
+  }
+  if (value.kind === 'symbol') return null;
+  if (value.kind === 'power') {
+    return value.exponent % 2 === 0 && value.base.kind !== 'number' ? power(value.base, value.exponent / 2) : null;
+  }
+  if (value.kind === 'multiply') {
+    const roots = value.factors.map(monomialSquareRoot);
+    return roots.some((root) => root === null) ? null : multiply(roots);
+  }
+  return null;
+}
+
+/** Cancel common factors of a root fraction (as a rational function). */
+function rootValue(numerator, denominator, variable) {
+  return rationalFunction(numerator, denominator, { variable });
+}
+
+/** A root location expression from its cancelled fraction. */
+function rootExpression(numerator, denominator, variable) {
+  const value = rootValue(numerator, denominator, variable);
+  return isOneExpression(value.denominator) ? value.numerator : quotient(value.numerator, value.denominator);
+}
+
+function rootRecords(coefficients, role, variable) {
+  if (!coefficients?.length) return [];
+  const degree = coefficients[0].power;
+  if (degree === 0) return [];
+  const polynomial = polynomialExpression(coefficients, variable);
+  const base = { role, order: degree, polynomial, coefficients };
+  // Roots at the origin are exact and need no formula: s^k * P(s).
+  const valuation = coefficients[coefficients.length - 1].power;
+  if (valuation > 0) {
+    const reduced = coefficients.map(({ power: exponent, coefficient }) => ({ power: exponent - valuation, coefficient }));
+    const origin = Array.from({ length: valuation }, () => ({ ...base, kind: 'root', root: ZERO }));
+    return [...origin, ...rootRecords(reduced, role, variable)]
+      .map((record, index) => ({ ...record, ...base, index }));
+  }
+  if (degree === 1) {
+    const linear = coefficientAt(coefficients, 1);
+    const constant = coefficientAt(coefficients, 0);
+    return [{ ...base, index: 0, kind: 'root', root: rootExpression(negate(constant), linear, variable) }];
+  }
+  if (degree === 2) {
+    const a = coefficientAt(coefficients, 2);
+    const b = coefficientAt(coefficients, 1);
+    const c = coefficientAt(coefficients, 0);
+    const discriminant = add(multiply(b, b), negate(multiply(integer(4), a, c)));
+    // Monic form s^2 + B s + C, B = b/a and C = c/a, both cancelled, so
+    // s = (-B_n +- sqrt(B_n^2 - 4 C B_d^2)) / (2 B_d).
+    const monicLinear = rootValue(b, a, variable);
+    const monicConstant = rootValue(c, a, variable);
+    const reducedDiscriminant = rootValue(
+      add(
+        multiply(monicLinear.numerator, monicLinear.numerator, monicConstant.denominator),
+        negate(multiply(integer(4), monicConstant.numerator, power(monicLinear.denominator, 2))),
+      ),
+      monicConstant.denominator,
+      variable,
+    );
+    const monic = isOneExpression(reducedDiscriminant.denominator);
+    const shownDiscriminant = monic ? reducedDiscriminant.numerator : discriminant;
+    const linear = monic ? negate(monicLinear.numerator) : negate(b);
+    const denominator = monic ? multiply(integer(2), monicLinear.denominator) : multiply(integer(2), a);
+    const squareRoot = monomialSquareRoot(shownDiscriminant);
+    return [-1, 1].map((sign, index) => {
+      if (squareRoot) {
+        return {
+          ...base, index, kind: 'root',
+          root: rootExpression(add(linear, sign < 0 ? negate(squareRoot) : squareRoot), denominator, variable),
+        };
+      }
+      return {
+        ...base,
+        index,
+        kind: 'quadratic-root',
+        root: {
+          kind: 'quadratic-formula',
+          sign,
+          numerator: { kind: 'quadratic-numerator', linear, discriminant: shownDiscriminant },
+          denominator,
+          a,
+          b,
+          c,
+          discriminant: shownDiscriminant,
+        },
+      };
+    });
+  }
+  return [{ ...base, index: 0, kind: 'polynomial' }];
+}
+
+function isOneExpression(value) {
+  return value?.kind === 'number' && value.numerator === 1n && value.denominator === 1n;
+}
+
+function responseRecord(value, options = {}) {
+  const variable = options.variable || value?.variable || DEFAULT_VARIABLE;
+  const expression = asRational(value, variable, options);
+  const numeratorInfo = polynomialInfo(expression.numerator, variable, options);
+  const denominatorInfo = polynomialInfo(expression.denominator, variable, options);
+  const hasFrequency = Boolean(
+    numeratorInfo?.coefficients.some(({ power: exponent }) => exponent > 0)
+    || denominatorInfo?.coefficients.some(({ power: exponent }) => exponent > 0),
+  );
+  return Object.freeze({
+    expression,
+    numerator: expression.numerator,
+    denominator: expression.denominator,
+    numeratorCoefficients: numeratorInfo?.coefficients || null,
+    denominatorCoefficients: denominatorInfo?.coefficients || null,
+    numeratorDegree: numeratorInfo?.degree ?? null,
+    denominatorDegree: denominatorInfo?.degree ?? null,
+    numeratorValuation: numeratorInfo?.valuation ?? null,
+    denominatorValuation: denominatorInfo?.valuation ?? null,
+    degrees: Object.freeze({ numerator: numeratorInfo?.degree ?? null, denominator: denominatorInfo?.degree ?? null }),
+    dc: limitAtZero(numeratorInfo, denominatorInfo),
+    infinity: limitAtInfinity(numeratorInfo, denominatorInfo),
+    hasFrequency,
+    poles: hasFrequency ? rootRecords(denominatorInfo?.coefficients, 'pole', variable) : [],
+    zeros: hasFrequency ? rootRecords(numeratorInfo?.coefficients, 'zero', variable) : [],
+  });
+}
+
+/** Canonicalize one exact response and derive limits, degrees, poles, and zeros. */
+function analyzeResponse(value, options = {}) {
+  return responseRecord(value, options);
+}
+
+/** Process the Av/Zin/Zout response set through one topology-independent path. */
+function processResponses(responses = {}, options = {}) {
+  const variable = options.variable || DEFAULT_VARIABLE;
+  const result = {};
+  for (const name of ['Av', 'Zin', 'Zout']) {
+    if (responses[name] !== undefined && responses[name] !== null) {
+      result[name] = responseRecord(responses[name], { ...options, variable });
+    }
+  }
+  return Object.freeze(result);
+}
+
+__exports.analyzeResponse = analyzeResponse;
+__exports.processResponses = processResponses;
+};
+
+__modules["src/core/analysis/rational.js"] = function (__require, __exports) {
+const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
+const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
+const MINUS_ONE = Object.freeze({ kind: 'number', numerator: -1n, denominator: 1n });
+const DEFAULT_MAX_OPERATIONS = 200000;
+
+function gcd(a, b) {
+  let x = a < 0n ? -a : a;
+  let y = b < 0n ? -b : b;
+  while (y !== 0n) [x, y] = [y, x % y];
+  return x || 1n;
+}
+
+function integerValue(value) {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value);
+  if (typeof value === 'string' && /^[-+]?\d+$/.test(value.trim())) return BigInt(value.trim());
+  throw new TypeError(`expected an exact integer, got ${String(value)}`);
+}
+
+function exactNumber(numerator, denominator = 1n) {
+  let n = integerValue(numerator);
+  let d = integerValue(denominator);
+  if (d === 0n) throw new RangeError('rational denominator must not be zero');
+  if (d < 0n) [n, d] = [-n, -d];
+  const divisor = gcd(n, d);
+  n /= divisor;
+  d /= divisor;
+  if (n === 0n) return ZERO;
+  if (n === 1n && d === 1n) return ONE;
+  if (n === -1n && d === 1n) return MINUS_ONE;
+  return Object.freeze({ kind: 'number', numerator: n, denominator: d });
+}
+
+function isNumber(value) {
+  return value?.kind === 'number';
+}
+
+function isZero(value) {
+  return isNumber(value) && value.numerator === 0n;
+}
+
+function isInfinity(value) {
+  return value?.kind === 'infinity';
+}
+
+function isOne(value) {
+  return isNumber(value) && value.numerator === 1n && value.denominator === 1n;
+}
+
+function isMinusOne(value) {
+  return value === MINUS_ONE;
+}
+
+function asExpression(value) {
+  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
+  if (value?.kind) return value;
+  return exactNumber(value);
+}
+
+function argumentList(values) {
+  return values.length === 1 && Array.isArray(values[0]) ? values[0] : values;
+}
+
+function expressionKey(value) {
+  switch (value.kind) {
+    case 'number': return `n:${value.numerator}/${value.denominator}`;
+    case 'symbol': return `s:${value.name}`;
+    case 'infinity': return `i:${value.sign < 0 ? -1 : 1}`;
+    case 'power': return `p:${expressionKey(value.base)}^${value.exponent}`;
+    case 'multiply': return `m:${value.factors.map(expressionKey).join(',')}`;
+    case 'add': return `a:${value.terms.map(expressionKey).join(',')}`;
+    default: throw new TypeError(`unknown expression kind ${value.kind}`);
+  }
+}
+
+function factorRank(value) {
+  if (isNumber(value)) return 0;
+  if (value.kind === 'symbol') return 1;
+  if (value.kind === 'power') return 2;
+  if (value.kind === 'multiply') return 3;
+  return 4;
+}
+
+function compareKeys(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareFactors(left, right) {
+  return factorRank(left) - factorRank(right) || compareKeys(expressionKey(left), expressionKey(right));
+}
+
+function variableDegree(value, variable = 's') {
+  if (value?.kind === 'symbol') return value.name === variable ? 1 : 0;
+  if (value?.kind === 'power' && value.exponent >= 0) {
+    return value.base?.kind === 'symbol' && value.base.name === variable ? value.exponent : 0;
+  }
+  if (value?.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + variableDegree(factor, variable), 0);
+  return 0;
+}
+
+function numericAdd(left, right) {
+  return exactNumber(
+    left.numerator * right.denominator + right.numerator * left.denominator,
+    left.denominator * right.denominator,
+  );
+}
+
+function numericMultiply(left, right) {
+  return exactNumber(left.numerator * right.numerator, left.denominator * right.denominator);
+}
+
+function numericPower(value, exponent) {
+  if (exponent === 0) return ONE;
+  if (value.numerator === 0n && exponent < 0) throw new RangeError('zero cannot have a negative power');
+  if (exponent > 0) return exactNumber(value.numerator ** BigInt(exponent), value.denominator ** BigInt(exponent));
+  return exactNumber(value.denominator ** BigInt(-exponent), value.numerator ** BigInt(-exponent));
+}
+
+function factorEntries(value) {
+  if (value.kind === 'multiply') return value.factors.flatMap(factorEntries);
+  if (value.kind === 'power' && value.exponent !== 0) return [[value.base, value.exponent]];
+  return [[value, 1]];
+}
+
+function factorsFromEntries(entries) {
+  const factors = [];
+  for (const [factor, exponent] of entries) {
+    if (exponent === 0 || isOne(factor)) continue;
+    factors.push(exponent === 1 ? factor : power(factor, exponent));
+  }
+  return factors;
+}
+
+function nonNumericFactors(value) {
+  return factorEntries(value).filter(([factor]) => !isNumber(factor));
+}
+
+function makeMultiply(values) {
+  return multiply(...values);
+}
+
+// A term shaped like `numericCoefficient * (sum)` (and nothing else) is kept
+// factored by default so unrelated `add()` calls elsewhere in the pipeline
+// can still find it as a shared multiplicative factor. It is only expanded
+// here, on a trial basis, when doing so lets its pieces cancel against
+// sibling terms (for example `-1*(gm1+gm2) + gm1 + gm2` collapsing to `0`);
+// see `combineTerms`/`distributeScaledSum` below.
+function distributeScaledSum(term) {
+  if (term.kind !== 'multiply') return null;
+  const nonNumeric = term.factors.filter((factor) => !isNumber(factor));
+  if (nonNumeric.length !== 1 || nonNumeric[0].kind !== 'add') return null;
+  const coefficient = term.factors.find((factor) => isNumber(factor)) || ONE;
+  return nonNumeric[0].terms.map((subterm) => makeMultiply([coefficient, subterm]));
+}
+
+function combineTerms(terms) {
+  const combined = new Map();
+  for (const rawTerm of terms) {
+    const term = asExpression(rawTerm);
+    const entries = term.kind === 'multiply' ? term.factors : [term];
+    const coefficient = entries.length && isNumber(entries[0]) ? entries[0] : ONE;
+    const core = entries.length && isNumber(entries[0]) ? makeMultiply(entries.slice(1)) : term;
+    const key = expressionKey(core);
+    const previous = combined.get(key);
+    combined.set(key, previous
+      ? { coefficient: numericAdd(previous.coefficient, coefficient), core: previous.core }
+      : { coefficient, core });
+  }
+  const result = [];
+  for (const { coefficient, core } of combined.values()) {
+    if (isZero(coefficient)) continue;
+    result.push(isOne(core) ? coefficient : makeMultiply([coefficient, core]));
+  }
+  return result;
+}
+
+function makeAdd(values, factorCommon) {
+  const terms = values.flatMap(value => value.kind === 'add' ? value.terms : [value]).map(asExpression);
+  const infinities = terms.filter(isInfinity);
+  if (infinities.length) {
+    const signs = new Set(infinities.map(value => value.sign < 0 ? -1 : 1));
+    if (signs.size > 1) throw new RangeError('undefined infinity addition');
+    return infinity(infinities[0].sign);
+  }
+  const direct = combineTerms(terms);
+  let normalized = direct;
+  if (terms.some(term => distributeScaledSum(term) !== null)) {
+    const expandedTerms = terms.flatMap(term => distributeScaledSum(term) || [term]);
+    const expanded = combineTerms(expandedTerms);
+    if (expanded.length < direct.length) normalized = expanded;
+  }
+  if (!normalized.length) return ZERO;
+  if (normalized.length === 1) return normalized[0];
+
+  const allNegative = normalized.every(term => {
+    const coefficient = term.kind === 'multiply' && isNumber(term.factors[0]) ? term.factors[0] : (isNumber(term) ? term : ONE);
+    return coefficient.numerator < 0n;
+  });
+  if (allNegative) {
+    return makeMultiply([MINUS_ONE, makeAdd(normalized.map(term => negate(term)), factorCommon)]);
+  }
+
+  if (factorCommon) {
+    const factorMaps = normalized.map(term => {
+      const coefficient = term.kind === 'multiply' && isNumber(term.factors[0]) ? term.factors[0] : (isNumber(term) ? term : ONE);
+      const core = term.kind === 'multiply' && isNumber(term.factors[0]) ? makeMultiply(term.factors.slice(1)) : term;
+      const counts = new Map();
+      for (const [factor, exponent] of nonNumericFactors(core)) {
+        const key = expressionKey(factor);
+        counts.set(key, { factor, exponent: (counts.get(key)?.exponent || 0) + exponent });
+      }
+      return { coefficient, core, counts };
+    });
+    const common = [];
+    for (const [key, first] of factorMaps[0].counts) {
+      const exponent = Math.min(...factorMaps.map(({ counts }) => counts.get(key)?.exponent || 0));
+      if (exponent) common.push([first.factor, exponent]);
+    }
+    if (common.length) {
+      const residual = factorMaps.map(({ coefficient, counts }) => {
+        const remaining = [];
+        for (const [key, entry] of counts) remaining.push([entry.factor, entry.exponent - (common.find(([factor]) => expressionKey(factor) === key)?.[1] || 0)]);
+        return makeMultiply([coefficient, ...factorsFromEntries(remaining)]);
+      });
+      return makeMultiply([...factorsFromEntries(common), makeAdd(residual, false)]);
+    }
+  }
+
+  normalized.sort((left, right) => compareKeys(expressionKey(left), expressionKey(right)));
+  return Object.freeze({ kind: 'add', terms: Object.freeze(normalized) });
+}
+
+/** Create an exact integer or rational number node. */
+function rational(numerator, denominator = 1n) {
+  return exactNumber(numerator, denominator);
+}
+
+/** Create an exact integer node. */
+function integer(value) {
+  return exactNumber(value);
+}
+
+/** Create a named symbolic parameter node. */
+function symbol(name) {
+  const text = String(name);
+  if (!text) throw new TypeError('symbol name must not be empty');
+  return Object.freeze({ kind: 'symbol', name: text });
+}
+
+/** Create a normalized sum of exact expressions. */
+function add(...values) {
+  return makeAdd(argumentList(values).map(asExpression), true);
+}
+
+/** Create a normalized product of exact expressions. */
+function multiply(...values) {
+  const factors = argumentList(values).map(asExpression);
+  const infinities = factors.filter(isInfinity);
+  if (infinities.length) {
+    if (factors.some(isZero)) throw new RangeError('undefined zero times infinity');
+    const sign = infinities.reduce((result, value) => result * (value.sign < 0 ? -1 : 1), 1)
+      * factors.filter(isNumber).reduce((result, value) => result * (value.numerator < 0n ? -1 : 1), 1);
+    return infinity(sign);
+  }
+  let coefficient = ONE;
+  const counts = new Map();
+  for (const factor of factors) {
+    if (isZero(factor)) return ZERO;
+    for (const [base, exponent] of factorEntries(factor)) {
+      if (isNumber(base)) {
+        coefficient = numericMultiply(coefficient, numericPower(base, exponent));
+        continue;
+      }
+      const key = expressionKey(base);
+      counts.set(key, { base, exponent: (counts.get(key)?.exponent || 0) + exponent });
+    }
+  }
+  if (isZero(coefficient)) return ZERO;
+  const combined = factorsFromEntries([...counts.values()].map(({ base, exponent }) => [base, exponent]));
+  combined.sort(compareFactors);
+  if (!isOne(coefficient)) combined.unshift(coefficient);
+  if (!combined.length) return ONE;
+  if (combined.length === 1) return combined[0];
+  return Object.freeze({ kind: 'multiply', factors: Object.freeze(combined) });
+}
+
+/** Create a normalized integer power. */
+function power(base, exponent) {
+  const value = asExpression(base);
+  const powerValue = Number(integerValue(exponent));
+  if (!Number.isSafeInteger(powerValue)) throw new RangeError('power exponent must be a safe integer');
+  if (powerValue === 0) return ONE;
+  if (powerValue === 1) return value;
+  if (isNumber(value)) return numericPower(value, powerValue);
+  if (value.kind === 'power') return power(value.base, value.exponent * powerValue);
+  return Object.freeze({ kind: 'power', base: value, exponent: powerValue });
+}
+
+/** Create the exact additive inverse. */
+function negate(value) {
+  return multiply(MINUS_ONE, asExpression(value));
+}
+
+/** Substitute exact expressions by symbol name without mutating the source. */
+function substitute(value, replacements) {
+  const source = asExpression(value);
+  if (isInfinity(source)) return source;
+  const lookup = replacements instanceof Map ? replacements : new Map(Object.entries(replacements || {}));
+  if (source.kind === 'symbol') return lookup.has(source.name) ? asExpression(lookup.get(source.name)) : source;
+  if (source.kind === 'number') return source;
+  if (source.kind === 'power') return power(substitute(source.base, lookup), source.exponent);
+  if (source.kind === 'multiply') return multiply(source.factors.map(factor => substitute(factor, lookup)));
+  return add(source.terms.map(term => substitute(term, lookup)));
+}
+
+/** Test exact structural equality after canonical construction. */
+function equals(left, right) {
+  return expressionKey(asExpression(left)) === expressionKey(asExpression(right));
+}
+
+function cancelFactors(numerator, denominator, budget = null) {
+  budget?.step();
+  if (equals(numerator, denominator)) return [ONE, ONE];
+  const exponents = new Map();
+  for (const [factor, exponent] of factorEntries(numerator)) {
+    const key = expressionKey(factor);
+    exponents.set(key, { factor, exponent: (exponents.get(key)?.exponent || 0) + exponent });
+  }
+  for (const [factor, exponent] of factorEntries(denominator)) {
+    const key = expressionKey(factor);
+    exponents.set(key, { factor, exponent: (exponents.get(key)?.exponent || 0) - exponent });
+  }
+  const reducedNumerator = [];
+  const reducedDenominator = [];
+  for (const { factor, exponent } of exponents.values()) {
+    if (exponent > 0) reducedNumerator.push([factor, exponent]);
+    if (exponent < 0) reducedDenominator.push([factor, -exponent]);
+  }
+  return [makeMultiply(factorsFromEntries(reducedNumerator)), makeMultiply(factorsFromEntries(reducedDenominator))];
+}
+
+function splitNumericFactor(value) {
+  if (isNumber(value)) return { coefficient: value, rest: ONE };
+  if (value.kind !== 'multiply' || !isNumber(value.factors[0])) return { coefficient: ONE, rest: value };
+  return { coefficient: value.factors[0], rest: makeMultiply(value.factors.slice(1)) };
+}
+
+function absoluteNumeric(value) {
+  return value.numerator < 0n ? exactNumber(-value.numerator, value.denominator) : value;
+}
+
+function numericGcd(values) {
+  const numbers = values.map(absoluteNumeric);
+  let numerator = numbers.reduce((result, value) => gcd(result, value.numerator), 0n);
+  let denominator = numbers.reduce((result, value) => {
+    return result / gcd(result, value.denominator) * value.denominator;
+  }, 1n);
+  if (numerator === 0n) return ONE;
+  return exactNumber(numerator, denominator);
+}
+
+function factorCounts(value) {
+  const counts = new Map();
+  for (const [factor, exponent] of nonNumericFactors(value)) {
+    const key = expressionKey(factor);
+    counts.set(key, { factor, exponent: (counts.get(key)?.exponent || 0) + exponent });
+  }
+  return counts;
+}
+
+function commonFactor(values) {
+  const expressions = values.filter(value => !isZero(value));
+  if (!expressions.length) return ONE;
+  const parts = expressions.map(splitNumericFactor);
+  const coefficient = numericGcd(parts.map(({ coefficient }) => coefficient));
+  const first = factorCounts(parts[0].rest);
+  const common = [];
+  for (const [key, entry] of first) {
+    const exponent = Math.min(...parts.slice(1).map(({ rest }) => factorCounts(rest).get(key)?.exponent || 0), entry.exponent);
+    if (exponent > 0) common.push([entry.factor, exponent]);
+  }
+  return makeMultiply([coefficient, ...factorsFromEntries(common)]);
+}
+
+function divideByFactor(value, factor, budget = null) {
+  if (isOne(factor)) return value;
+  budget?.step();
+  const valueParts = splitNumericFactor(value);
+  const factorParts = splitNumericFactor(factor);
+  const numeric = exactNumber(
+    valueParts.coefficient.numerator * factorParts.coefficient.denominator,
+    valueParts.coefficient.denominator * factorParts.coefficient.numerator,
+  );
+  const [rest, remainder] = cancelFactors(valueParts.rest, factorParts.rest, budget);
+  if (!isOne(remainder)) return null;
+  return makeMultiply([numeric, rest]);
+}
+
+function cancelPolynomialContent(map, factor, budget) {
+  if (isOne(factor)) return map;
+  const result = new Map();
+  for (const [powerValue, coefficient] of map) {
+    budget.step();
+    const reduced = divideByFactor(coefficient, factor, budget);
+    if (reduced === null) return null;
+    if (!isZero(reduced)) result.set(powerValue, reduced);
+  }
+  return result;
+}
+
+function fallbackRational(numerator, denominator, variable, budgetExceeded = false) {
+  if (isInfinity(numerator)) {
+    return Object.freeze({ kind: 'rational', variable, numerator, denominator: ONE, budgetExceeded, infinite: true });
+  }
+  if (isInfinity(denominator)) {
+    return Object.freeze({ kind: 'rational', variable, numerator: ZERO, denominator: ONE, budgetExceeded });
+  }
+  if (isZero(denominator)) throw new RangeError('rational denominator must not be zero');
+  if (isZero(numerator)) return Object.freeze({ kind: 'rational', variable, numerator: ZERO, denominator: ONE, budgetExceeded });
+  return Object.freeze({ kind: 'rational', variable, numerator, denominator, budgetExceeded });
+}
+
+function canonicalRational(numerator, denominator, variable, budgetExceeded = false, budget = null) {
+  const fallback = () => fallbackRational(numerator, denominator, variable, budgetExceeded);
+  if (isInfinity(numerator) || isInfinity(denominator)) return fallback();
+  if (isZero(denominator)) throw new RangeError('rational denominator must not be zero');
+  budget?.step();
+  let [n, d] = cancelFactors(numerator, denominator, budget);
+  if (isZero(n)) return fallbackRational(ZERO, ONE, variable, budgetExceeded);
+  const nc = splitNumericFactor(n);
+  const dc = splitNumericFactor(d);
+  const coefficient = numericMultiply(nc.coefficient, exactNumber(dc.coefficient.denominator, dc.coefficient.numerator));
+  n = makeMultiply([coefficient, nc.rest]);
+  d = dc.rest;
+  if (isMinusOne(d)) {
+    n = negate(n);
+    d = ONE;
+  }
+  return Object.freeze({ kind: 'rational', variable, numerator: n, denominator: d, budgetExceeded });
+}
+
+class OperationBudget {
+  constructor(limit = DEFAULT_MAX_OPERATIONS) {
+    if (!Number.isFinite(limit)) throw new RangeError('maxOperations must be finite');
+    this.limit = Math.max(0, Math.floor(limit));
+    this.used = 0;
+    this.exceeded = false;
+  }
+
+  step(amount = 1) {
+    if (!Number.isSafeInteger(amount) || amount < 0) throw new RangeError('budget step must be a non-negative integer');
+    if (this.exceeded || this.used + amount > this.limit) {
+      this.used = this.limit;
+      this.exceeded = true;
+      throw new BudgetExceeded();
+    }
+    this.used += amount;
+  }
+}
+
+class BudgetExceeded extends Error {}
+
+function polynomialMap(value, variable, budget) {
+  budget.step();
+  if (isNumber(value)) return new Map([[0, value]]);
+  if (value.kind === 'symbol') return new Map([[value.name === variable ? 1 : 0, value.name === variable ? ONE : value]]);
+  if (value.kind === 'add') {
+    const result = new Map();
+    for (const term of value.terms) {
+      const termMap = polynomialMap(term, variable, budget);
+      if (!termMap) return null;
+      mergeCoefficientMap(result, termMap, budget);
+    }
+    return result;
+  }
+  if (value.kind === 'multiply') {
+    let result = new Map([[0, ONE]]);
+    for (const factor of value.factors) {
+      const factorMap = polynomialMap(factor, variable, budget);
+      if (!factorMap) return null;
+      result = multiplyPolynomialMaps(result, factorMap, budget);
+    }
+    return result;
+  }
+  if (value.kind === 'power' && value.exponent >= 0) {
+    let result = new Map([[0, ONE]]);
+    const base = polynomialMap(value.base, variable, budget);
+    if (!base) return null;
+    for (let index = 0; index < value.exponent; index += 1) result = multiplyPolynomialMaps(result, base, budget);
+    return result;
+  }
+  return null;
+}
+
+function mergeCoefficientMap(target, source, budget) {
+  for (const [powerValue, coefficient] of source) {
+    budget.step();
+    target.set(powerValue, target.has(powerValue) ? add(target.get(powerValue), coefficient) : coefficient);
+  }
+}
+
+function multiplyPolynomialMaps(left, right, budget) {
+  const result = new Map();
+  for (const [leftPower, leftCoefficient] of left) {
+    for (const [rightPower, rightCoefficient] of right) {
+      budget.step();
+      const powerValue = leftPower + rightPower;
+      const coefficient = multiply(leftCoefficient, rightCoefficient);
+      result.set(powerValue, result.has(powerValue) ? add(result.get(powerValue), coefficient) : coefficient);
+    }
+  }
+  return result;
+}
+
+function polynomialExpression(coefficients, variable) {
+  const terms = [];
+  for (const { power: powerValue, coefficient } of coefficients) {
+    if (isZero(coefficient)) continue;
+    terms.push(powerValue === 0 ? coefficient : multiply(coefficient, power(symbol(variable), powerValue)));
+  }
+  return makeAdd(terms, true);
+}
+
+function coefficientsFromMap(map) {
+  return Object.freeze([...map.entries()]
+    .filter(([, coefficient]) => !isZero(coefficient))
+    .sort(([left], [right]) => right - left)
+    .map(([powerValue, coefficient]) => Object.freeze({ power: powerValue, coefficient })));
+}
+
+/** Return polynomial coefficients in descending powers of the chosen variable. */
+function polynomialCoefficients(value, variable = 's', options = {}) {
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  try {
+    const map = polynomialMap(asExpression(value), variable, budget);
+    if (!map) return null;
+    return coefficientsFromMap(map);
+  } catch (error) {
+    if (error instanceof BudgetExceeded) return null;
+    throw error;
+  }
+}
+
+/** Normalize a rational function and cancel structurally provable factors. */
+function rationalFunction(numerator, denominator = ONE, options = {}) {
+  const variable = options.variable || 's';
+  const rawNumerator = asExpression(numerator);
+  const rawDenominator = asExpression(denominator);
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  let result;
+  try {
+    result = canonicalRational(rawNumerator, rawDenominator, variable, false, budget);
+    const numeratorMap = polynomialMap(result.numerator, variable, budget);
+    const denominatorMap = polynomialMap(result.denominator, variable, budget);
+    if (numeratorMap && denominatorMap) {
+      const content = commonFactor([
+        commonFactor([...numeratorMap.values()]),
+        commonFactor([...denominatorMap.values()]),
+      ]);
+      const reducedNumeratorMap = cancelPolynomialContent(numeratorMap, content, budget);
+      const reducedDenominatorMap = cancelPolynomialContent(denominatorMap, content, budget);
+      // A content factor that does not divide every coefficient exactly is a
+      // structural outcome, not exhaustion: keep the uncancelled coefficients
+      // rather than failing the whole analysis as over budget.
+      const cancelled = reducedNumeratorMap && reducedDenominatorMap;
+      const numeratorCoefficients = coefficientsFromMap(cancelled ? reducedNumeratorMap : numeratorMap);
+      const denominatorCoefficients = coefficientsFromMap(cancelled ? reducedDenominatorMap : denominatorMap);
+      budget.step(numeratorCoefficients.length + denominatorCoefficients.length);
+      const normalizedNumerator = polynomialExpression(numeratorCoefficients, variable);
+      const normalizedDenominator = polynomialExpression(denominatorCoefficients, variable);
+      result = canonicalRational(normalizedNumerator, normalizedDenominator, variable, false, budget);
+    }
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    result = fallbackRational(rawNumerator, rawDenominator, variable, true);
+  }
+  return result;
+}
+
+function asRational(value, variable = 's', options = {}) {
+  if (isInfinity(value)) return value;
+  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
+  return value?.kind === 'rational' ? value : rationalFunction(value, ONE, { ...options, variable });
+}
+
+/** Add two rational functions, preserving a valid factored fallback on budget exhaustion. */
+function rationalAdd(left, right, options = {}) {
+  const variable = options.variable || left?.variable || right?.variable || 's';
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  const a = asRational(left, variable, { ...options, budget });
+  const b = asRational(right, variable, { ...options, budget });
+  if (isInfinity(a)) {
+    if (isInfinity(b) && a.sign !== b.sign) throw new RangeError('undefined infinity addition');
+    return infinity(a.sign);
+  }
+  if (isInfinity(b)) return infinity(b.sign);
+  try {
+    budget.step(2);
+    const numerator = add(multiply(a.numerator, b.denominator), multiply(b.numerator, a.denominator));
+    const denominator = multiply(a.denominator, b.denominator);
+    return rationalFunction(numerator, denominator, { ...options, budget });
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    return fallbackRational(a.numerator, a.denominator, variable, true);
+  }
+}
+
+/** Multiply two rational functions. */
+function rationalMultiply(left, right, options = {}) {
+  const variable = options.variable || left?.variable || right?.variable || 's';
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  const a = asRational(left, variable, { ...options, budget });
+  const b = asRational(right, variable, { ...options, budget });
+  if (isInfinity(a) || isInfinity(b)) {
+    if (isInfinity(a) && isInfinity(b)) return infinity(a.sign * b.sign);
+    const other = isInfinity(a) ? b : a;
+    if (isZero(other?.numerator)) throw new RangeError('undefined zero times infinity');
+    const sign = (isInfinity(a) ? a.sign : b.sign)
+      * (other?.numerator?.numerator < 0n ? -1 : 1);
+    return infinity(sign);
+  }
+  try {
+    budget.step(2);
+    return rationalFunction(
+      multiply(a.numerator, b.numerator),
+      multiply(a.denominator, b.denominator),
+      { ...options, budget },
+    );
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    return fallbackRational(a.numerator, a.denominator, variable, true);
+  }
+}
+
+/** Divide two rational functions. */
+function rationalDivide(left, right, options = {}) {
+  const variable = options.variable || left?.variable || right?.variable || 's';
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  const a = asRational(left, variable, { ...options, budget });
+  const b = asRational(right, variable, { ...options, budget });
+  if (isInfinity(a)) {
+    if (isInfinity(b) || isZero(b.numerator)) throw new RangeError('undefined infinity division');
+    return infinity(a.sign);
+  }
+  if (isInfinity(b)) return ZERO;
+  if (isZero(b.numerator)) {
+    if (isZero(a.numerator)) throw new RangeError('undefined zero divided by zero');
+    return infinity(a.numerator?.kind === 'number' && a.numerator.numerator < 0n ? -1 : 1);
+  }
+  try {
+    budget.step(2);
+    return rationalFunction(
+      multiply(a.numerator, b.denominator),
+      multiply(a.denominator, b.numerator),
+      { ...options, budget },
+    );
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    return fallbackRational(a.numerator, a.denominator, variable, true);
+  }
+}
+
+/** Substitute exact expressions into a rational function. */
+function substituteRational(value, replacements, options = {}) {
+  if (isInfinity(value)) return value;
+  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  const rationalValue = asRational(value, 's', { ...options, budget });
+  if (rationalValue.budgetExceeded === true) return rationalValue;
+  try {
+    budget.step();
+    return rationalFunction(
+      substitute(rationalValue.numerator, replacements),
+      substitute(rationalValue.denominator, replacements),
+      { ...options, budget, variable: rationalValue.variable },
+    );
+  } catch (error) {
+    if (!(error instanceof BudgetExceeded)) throw error;
+    budget.exceeded = true;
+    return fallbackRational(rationalValue.numerator, rationalValue.denominator, rationalValue.variable, true);
+  }
+}
+
+/** Evaluate a rational function at an exact value. */
+function rationalAt(value, argument, options = {}) {
+  if (isInfinity(value)) return value;
+  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
+  const rationalValue = asRational(value, 's', options);
+  const replacements = new Map([[rationalValue.variable, asExpression(argument)]]);
+  const numerator = substitute(rationalValue.numerator, replacements);
+  const denominator = substitute(rationalValue.denominator, replacements);
+  if (isZero(denominator)) throw new RangeError('rational function is singular at this value');
+  if (isZero(numerator)) return ZERO;
+  if (isNumber(numerator) && isNumber(denominator)) {
+    return rational(numerator.numerator * denominator.denominator, numerator.denominator * denominator.numerator);
+  }
+  return rationalFunction(numerator, denominator, { ...options, variable: rationalValue.variable });
+}
+
+/** Rebuild an already canonical expression under an optional operation budget. */
+function simplify(value, options = {}) {
+  const expression = asExpression(value);
+  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  try {
+    budget.step(expressionNodeCount(expression));
+    return substitute(expression, new Map());
+  } catch (error) {
+    if (error instanceof BudgetExceeded) return expression;
+    throw error;
+  }
+}
+
+function expressionNodeCount(value) {
+  if (value.kind === 'number' || value.kind === 'symbol') return 1;
+  if (value.kind === 'power') return 1 + expressionNodeCount(value.base);
+  return 1 + value[`${value.kind === 'add' ? 'terms' : 'factors'}`].reduce((count, child) => count + expressionNodeCount(child), 0);
+}
+
+/** Return a deterministic structural string for diagnostics and focused tests. */
+function formatExpression(value) {
+  const expression = asExpression(value);
+  if (isInfinity(expression)) return expression.sign < 0 ? '-infinity' : 'infinity';
+  if (isNumber(expression)) return expression.denominator === 1n ? String(expression.numerator) : `${expression.numerator}/${expression.denominator}`;
+  if (expression.kind === 'symbol') return expression.name;
+  if (expression.kind === 'power') {
+    const base = expression.base.kind === 'symbol' ? formatExpression(expression.base) : `(${formatExpression(expression.base)})`;
+    return `${base}^${expression.exponent}`;
+  }
+  if (expression.kind === 'multiply') {
+    const negative = isMinusOne(expression.factors[0]);
+    const factors = negative ? expression.factors.slice(1) : expression.factors;
+    const body = factors.map(factor => factor.kind === 'add' ? `(${formatExpression(factor)})` : formatExpression(factor)).join('*');
+    if (negative) return `-${body}`;
+    return body;
+  }
+  const terms = [...expression.terms].sort((left, right) => variableDegree(right) - variableDegree(left)
+    || compareKeys(expressionKey(left), expressionKey(right)));
+  return terms.map((term, index) => {
+    const negative = term.kind === 'multiply' && isMinusOne(term.factors[0]);
+    if (negative) return `${index ? ' - ' : '-'}${formatExpression(negate(term))}`;
+    if (isNumber(term) && term.numerator < 0n) return `${index ? ' - ' : '-'}${formatExpression(negate(term))}`;
+    return `${index ? ' + ' : ''}${formatExpression(term)}`;
+  }).join('');
+}
+
+/** Return a canonical expression's stable identity. */
+function keyOf(value) {
+  return expressionKey(asExpression(value));
+}
+
+/** Text spellings accepted and rendered for the infinity sentinel. */
+const INFINITY_NAMES = new Set(['inf', 'infinity', 'infty', '∞', '\\infty']);
+
+/** Return an exact signed infinity sentinel. */
+function infinity(sign = 1) {
+  return Object.freeze({ kind: 'infinity', sign: sign < 0 ? -1 : 1 });
+}
+
+/** Test the exact infinity sentinel. */
+function isInfinite(value) {
+  return isInfinity(value);
+}
+
+/** Create the finite mutable budget shared by one exact analysis. */
+function createOperationBudget(limit = DEFAULT_MAX_OPERATIONS) {
+  return new OperationBudget(limit);
+}
+
+__exports.isNumber = isNumber;
+__exports.isZero = isZero;
+__exports.rational = rational;
+__exports.integer = integer;
+__exports.symbol = symbol;
+__exports.add = add;
+__exports.multiply = multiply;
+__exports.power = power;
+__exports.negate = negate;
+__exports.substitute = substitute;
+__exports.equals = equals;
+__exports.polynomialCoefficients = polynomialCoefficients;
+__exports.rationalFunction = rationalFunction;
+__exports.rationalAdd = rationalAdd;
+__exports.rationalMultiply = rationalMultiply;
+__exports.rationalDivide = rationalDivide;
+__exports.substituteRational = substituteRational;
+__exports.rationalAt = rationalAt;
+__exports.simplify = simplify;
+__exports.formatExpression = formatExpression;
+__exports.keyOf = keyOf;
+__exports.infinity = infinity;
+__exports.isInfinite = isInfinite;
+__exports.createOperationBudget = createOperationBudget;
+__exports.ONE = ONE;
+__exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
+__exports.INFINITY_NAMES = INFINITY_NAMES;
 };
 
 __modules["src/core/analysis/approximation.js"] = function (__require, __exports) {
@@ -29699,134 +31652,6 @@ function cancelCommonPolynomialFactor(value, options = {}) {
 }
 
 __exports.cancelCommonPolynomialFactor = cancelCommonPolynomialFactor;
-};
-
-__modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
-const { integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js");
-/**
- * Adapt rational.js to the small algebra contract used by MNA and solve.
- *
- * MNA values are always rational-function nodes. Keeping quotients inside the
- * adapter avoids mixing raw expression nodes with rational nodes during a
- * solve, while rational.js remains responsible for canonicalization.
- */
-
-
-
-function isRational(value) {
-  return value?.kind === 'rational';
-}
-
-function expressionIsZero(value) {
-  if (typeof value === 'number') return value === 0;
-  if (typeof value === 'bigint') return value === 0n;
-  return value?.kind === 'number' && value.numerator === 0n;
-}
-
-function rationalIsZero(value) {
-  return isRational(value) && value.budgetExceeded !== true && expressionIsZero(value.numerator);
-}
-
-function withBudgetFlag(value) {
-  if (!isRational(value) || value.budgetExceeded === true) return value;
-  return Object.freeze({ ...value, budgetExceeded: true });
-}
-
-function normalize(value, variable, budget = null) {
-  if (isInfinite(value)) return value;
-  if (isRational(value)) {
-    if (value.variable !== variable) {
-      throw new RangeError(`rational variable must be ${variable}`);
-    }
-    return value;
-  }
-  return rationalFunction(value, integer(1), { variable, ...(budget ? { budget } : {}) });
-}
-
-/**
- * Build an exact rational algebra implementation for MNA and solve.
- *
- * `maxOperations` is a shared dispatch budget. Each adapter operation passes
- * the same budget to rational.js. Exhaustion is terminal for the analysis.
- */
-function createRationalOps(options = {}) {
-  const variable = String(options.variable || 's');
-  if (!variable) throw new TypeError('rational variable must not be empty');
-  const budget = options.budget || createOperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  if (!Number.isFinite(budget.limit) || !Number.isSafeInteger(budget.limit) || budget.limit < 0) {
-    throw new RangeError('budget.limit must be a finite non-negative integer');
-  }
-
-  const zero = normalize(integer(0), variable);
-  const one = normalize(integer(1), variable);
-
-  function operation(run, inputs = []) {
-    const values = inputs.map((value) => normalize(value, variable, budget));
-    if (budget.exceeded || values.some((value) => value?.budgetExceeded === true)) {
-      budget.exceeded = true;
-      return withBudgetFlag(zero);
-    }
-    let result;
-    try {
-      budget.step();
-      result = run(values, { budget });
-    } catch (error) {
-      if (!budget.exceeded) throw error;
-      return withBudgetFlag(zero);
-    }
-    if (!isRational(result)) result = normalize(result, variable);
-    if (budget.exceeded || values.some((value) => value.budgetExceeded === true) || result.budgetExceeded === true) {
-      budget.exceeded = true;
-      return withBudgetFlag(result);
-    }
-    return result;
-  }
-
-  const ops = {
-    zero,
-    one,
-    add: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalAdd(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    sub: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalAdd(a, rationalMultiply(b, normalize(integer(-1), variable, shared), {
-        variable,
-        budget: shared,
-      }), { variable, budget: shared }),
-      [left, right],
-    ),
-    mul: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalMultiply(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    div: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalDivide(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    neg: (value) => operation(
-      ([a], { budget: shared }) => rationalMultiply(a, normalize(integer(-1), variable, shared), {
-        variable,
-        budget: shared,
-      }),
-      [value],
-    ),
-    isZero: (value) => isRational(value) ? rationalIsZero(value) : expressionIsZero(value),
-    infinity: (sign = 1) => infinity(sign),
-    symbol: (name) => INFINITY_NAMES.has(String(name).trim().toLowerCase())
-      ? infinity()
-      : normalize(makeSymbol(name), variable, budget),
-    s: () => normalize(makeSymbol(variable), variable, budget),
-  };
-
-  Object.defineProperties(ops, {
-    variable: { value: variable, enumerable: true },
-    budget: { value: budget, enumerable: true },
-  });
-  return Object.freeze(ops);
-}
-
-__exports.createRationalOps = createRationalOps;
 };
 
 __modules["src/core/analysis/pipeline.js"] = function (__require, __exports) {
@@ -31141,298 +32966,6 @@ __exports.formatSmallSignalNetlist = formatSmallSignalNetlist;
 __exports.describeSmallSignalNetlist = describeSmallSignalNetlist;
 };
 
-__modules["src/core/analysis/response.js"] = function (__require, __exports) {
-const { add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js");
-
-
-const DEFAULT_VARIABLE = 's';
-const ZERO = integer(0);
-const ONE = integer(1);
-
-function asRational(value, variable, options) {
-  if (value?.kind === 'rational') {
-    return rationalFunction(value.numerator, value.denominator, {
-      ...options,
-      variable,
-    });
-  }
-  return rationalFunction(value ?? ONE, ONE, { ...options, variable });
-}
-
-function quotient(numerator, denominator) {
-  if (denominator.kind === 'number') {
-    if (numerator.kind === 'number') {
-      return rational(
-        numerator.numerator * denominator.denominator,
-        numerator.denominator * denominator.numerator,
-      );
-    }
-    return multiply(numerator, rational(denominator.denominator, denominator.numerator));
-  }
-  return multiply(numerator, power(denominator, -1));
-}
-
-function coefficientAt(coefficients, exponent) {
-  return coefficients.find(({ power: powerValue }) => powerValue === exponent)?.coefficient || ZERO;
-}
-
-function polynomialInfo(expression, variable, options) {
-  const coefficients = polynomialCoefficients(expression, variable, options);
-  if (!coefficients) return null;
-  return Object.freeze({
-    coefficients,
-    degree: coefficients.length ? coefficients[0].power : null,
-    valuation: coefficients.length ? coefficients[coefficients.length - 1].power : null,
-  });
-}
-
-function limitAtZero(numeratorInfo, denominatorInfo) {
-  if (!numeratorInfo || !denominatorInfo) {
-    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
-  }
-  if (numeratorInfo.valuation === null) {
-    return Object.freeze({ kind: 'zero', value: ZERO, order: null, coefficient: ZERO });
-  }
-  if (denominatorInfo.valuation === null) {
-    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
-  }
-
-  const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.valuation);
-  const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.valuation);
-  const order = denominatorInfo.valuation - numeratorInfo.valuation;
-  if (order > 0) {
-    return Object.freeze({
-      kind: 'pole',
-      value: null,
-      order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  if (order < 0) {
-    return Object.freeze({
-      kind: 'zero',
-      value: ZERO,
-      order: -order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  const value = quotient(numeratorCoefficient, denominatorCoefficient);
-  return Object.freeze({
-    kind: value === ZERO ? 'zero' : 'finite',
-    value,
-    order: 0,
-    coefficient: value,
-  });
-}
-
-function limitAtInfinity(numeratorInfo, denominatorInfo) {
-  if (!numeratorInfo || !denominatorInfo) {
-    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
-  }
-  if (numeratorInfo.degree === null) {
-    return Object.freeze({ kind: 'zero', value: ZERO, order: null, coefficient: ZERO });
-  }
-  if (denominatorInfo.degree === null) {
-    return Object.freeze({ kind: 'unknown', value: null, order: null, coefficient: null });
-  }
-
-  const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.degree);
-  const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.degree);
-  const order = numeratorInfo.degree - denominatorInfo.degree;
-  if (order > 0) {
-    return Object.freeze({
-      kind: 'pole',
-      value: null,
-      order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  if (order < 0) {
-    return Object.freeze({
-      kind: 'zero',
-      value: ZERO,
-      order: -order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  const value = quotient(numeratorCoefficient, denominatorCoefficient);
-  return Object.freeze({
-    kind: value === ZERO ? 'zero' : 'finite',
-    value,
-    order: 0,
-    coefficient: value,
-  });
-}
-
-function polynomialExpression(coefficients, variable) {
-  return add(coefficients.map(({ power: exponent, coefficient }) => (
-    exponent === 0 ? coefficient : multiply(coefficient, power(symbol(variable), exponent))
-  )));
-}
-
-function isZeroExpression(value) {
-  return value?.kind === 'number' && value.numerator === 0n;
-}
-
-function integerSquareRoot(value) {
-  if (value < 0n) return null;
-  if (value < 2n) return value;
-  let x = BigInt(Math.floor(Math.sqrt(Number(value))));
-  while (x * x > value) x -= 1n;
-  while ((x + 1n) * (x + 1n) <= value) x += 1n;
-  return x * x === value ? x : null;
-}
-
-/** Exact square root of a monomial with even exponents (e.g. `4 C_M^2 g_m^2`), or null. */
-function monomialSquareRoot(value) {
-  if (value.kind === 'number') {
-    const numerator = integerSquareRoot(value.numerator);
-    const denominator = integerSquareRoot(value.denominator);
-    return numerator === null || denominator === null ? null : rational(numerator, denominator);
-  }
-  if (value.kind === 'symbol') return null;
-  if (value.kind === 'power') {
-    return value.exponent % 2 === 0 && value.base.kind !== 'number' ? power(value.base, value.exponent / 2) : null;
-  }
-  if (value.kind === 'multiply') {
-    const roots = value.factors.map(monomialSquareRoot);
-    return roots.some((root) => root === null) ? null : multiply(roots);
-  }
-  return null;
-}
-
-/** Cancel common factors of a root fraction (as a rational function). */
-function rootValue(numerator, denominator, variable) {
-  return rationalFunction(numerator, denominator, { variable });
-}
-
-/** A root location expression from its cancelled fraction. */
-function rootExpression(numerator, denominator, variable) {
-  const value = rootValue(numerator, denominator, variable);
-  return isOneExpression(value.denominator) ? value.numerator : quotient(value.numerator, value.denominator);
-}
-
-function rootRecords(coefficients, role, variable) {
-  if (!coefficients?.length) return [];
-  const degree = coefficients[0].power;
-  if (degree === 0) return [];
-  const polynomial = polynomialExpression(coefficients, variable);
-  const base = { role, order: degree, polynomial, coefficients };
-  // Roots at the origin are exact and need no formula: s^k * P(s).
-  const valuation = coefficients[coefficients.length - 1].power;
-  if (valuation > 0) {
-    const reduced = coefficients.map(({ power: exponent, coefficient }) => ({ power: exponent - valuation, coefficient }));
-    const origin = Array.from({ length: valuation }, () => ({ ...base, kind: 'root', root: ZERO }));
-    return [...origin, ...rootRecords(reduced, role, variable)]
-      .map((record, index) => ({ ...record, ...base, index }));
-  }
-  if (degree === 1) {
-    const linear = coefficientAt(coefficients, 1);
-    const constant = coefficientAt(coefficients, 0);
-    return [{ ...base, index: 0, kind: 'root', root: rootExpression(negate(constant), linear, variable) }];
-  }
-  if (degree === 2) {
-    const a = coefficientAt(coefficients, 2);
-    const b = coefficientAt(coefficients, 1);
-    const c = coefficientAt(coefficients, 0);
-    const discriminant = add(multiply(b, b), negate(multiply(integer(4), a, c)));
-    // Monic form s^2 + B s + C, B = b/a and C = c/a, both cancelled, so
-    // s = (-B_n +- sqrt(B_n^2 - 4 C B_d^2)) / (2 B_d).
-    const monicLinear = rootValue(b, a, variable);
-    const monicConstant = rootValue(c, a, variable);
-    const reducedDiscriminant = rootValue(
-      add(
-        multiply(monicLinear.numerator, monicLinear.numerator, monicConstant.denominator),
-        negate(multiply(integer(4), monicConstant.numerator, power(monicLinear.denominator, 2))),
-      ),
-      monicConstant.denominator,
-      variable,
-    );
-    const monic = isOneExpression(reducedDiscriminant.denominator);
-    const shownDiscriminant = monic ? reducedDiscriminant.numerator : discriminant;
-    const linear = monic ? negate(monicLinear.numerator) : negate(b);
-    const denominator = monic ? multiply(integer(2), monicLinear.denominator) : multiply(integer(2), a);
-    const squareRoot = monomialSquareRoot(shownDiscriminant);
-    return [-1, 1].map((sign, index) => {
-      if (squareRoot) {
-        return {
-          ...base, index, kind: 'root',
-          root: rootExpression(add(linear, sign < 0 ? negate(squareRoot) : squareRoot), denominator, variable),
-        };
-      }
-      return {
-        ...base,
-        index,
-        kind: 'quadratic-root',
-        root: {
-          kind: 'quadratic-formula',
-          sign,
-          numerator: { kind: 'quadratic-numerator', linear, discriminant: shownDiscriminant },
-          denominator,
-          a,
-          b,
-          c,
-          discriminant: shownDiscriminant,
-        },
-      };
-    });
-  }
-  return [{ ...base, index: 0, kind: 'polynomial' }];
-}
-
-function isOneExpression(value) {
-  return value?.kind === 'number' && value.numerator === 1n && value.denominator === 1n;
-}
-
-function responseRecord(value, options = {}) {
-  const variable = options.variable || value?.variable || DEFAULT_VARIABLE;
-  const expression = asRational(value, variable, options);
-  const numeratorInfo = polynomialInfo(expression.numerator, variable, options);
-  const denominatorInfo = polynomialInfo(expression.denominator, variable, options);
-  const hasFrequency = Boolean(
-    numeratorInfo?.coefficients.some(({ power: exponent }) => exponent > 0)
-    || denominatorInfo?.coefficients.some(({ power: exponent }) => exponent > 0),
-  );
-  return Object.freeze({
-    expression,
-    numerator: expression.numerator,
-    denominator: expression.denominator,
-    numeratorCoefficients: numeratorInfo?.coefficients || null,
-    denominatorCoefficients: denominatorInfo?.coefficients || null,
-    numeratorDegree: numeratorInfo?.degree ?? null,
-    denominatorDegree: denominatorInfo?.degree ?? null,
-    numeratorValuation: numeratorInfo?.valuation ?? null,
-    denominatorValuation: denominatorInfo?.valuation ?? null,
-    degrees: Object.freeze({ numerator: numeratorInfo?.degree ?? null, denominator: denominatorInfo?.degree ?? null }),
-    dc: limitAtZero(numeratorInfo, denominatorInfo),
-    infinity: limitAtInfinity(numeratorInfo, denominatorInfo),
-    hasFrequency,
-    poles: hasFrequency ? rootRecords(denominatorInfo?.coefficients, 'pole', variable) : [],
-    zeros: hasFrequency ? rootRecords(numeratorInfo?.coefficients, 'zero', variable) : [],
-  });
-}
-
-/** Canonicalize one exact response and derive limits, degrees, poles, and zeros. */
-function analyzeResponse(value, options = {}) {
-  return responseRecord(value, options);
-}
-
-/** Process the Av/Zin/Zout response set through one topology-independent path. */
-function processResponses(responses = {}, options = {}) {
-  const variable = options.variable || DEFAULT_VARIABLE;
-  const result = {};
-  for (const name of ['Av', 'Zin', 'Zout']) {
-    if (responses[name] !== undefined && responses[name] !== null) {
-      result[name] = responseRecord(responses[name], { ...options, variable });
-    }
-  }
-  return Object.freeze(result);
-}
-
-__exports.analyzeResponse = analyzeResponse;
-__exports.processResponses = processResponses;
-};
-
 __modules["src/core/analysis/topology.js"] = function (__require, __exports) {
 const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
 const { solveMNA } = __require("src/core/analysis/solve.js");
@@ -31657,808 +33190,6 @@ __exports.approximateTopology = approximateTopology;
 __exports.buildTopologyIdentities = buildTopologyIdentities;
 };
 
-__modules["src/core/analysis/rational.js"] = function (__require, __exports) {
-const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
-const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
-const MINUS_ONE = Object.freeze({ kind: 'number', numerator: -1n, denominator: 1n });
-const DEFAULT_MAX_OPERATIONS = 200000;
-
-function gcd(a, b) {
-  let x = a < 0n ? -a : a;
-  let y = b < 0n ? -b : b;
-  while (y !== 0n) [x, y] = [y, x % y];
-  return x || 1n;
-}
-
-function integerValue(value) {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value);
-  if (typeof value === 'string' && /^[-+]?\d+$/.test(value.trim())) return BigInt(value.trim());
-  throw new TypeError(`expected an exact integer, got ${String(value)}`);
-}
-
-function exactNumber(numerator, denominator = 1n) {
-  let n = integerValue(numerator);
-  let d = integerValue(denominator);
-  if (d === 0n) throw new RangeError('rational denominator must not be zero');
-  if (d < 0n) [n, d] = [-n, -d];
-  const divisor = gcd(n, d);
-  n /= divisor;
-  d /= divisor;
-  if (n === 0n) return ZERO;
-  if (n === 1n && d === 1n) return ONE;
-  if (n === -1n && d === 1n) return MINUS_ONE;
-  return Object.freeze({ kind: 'number', numerator: n, denominator: d });
-}
-
-function isNumber(value) {
-  return value?.kind === 'number';
-}
-
-function isZero(value) {
-  return isNumber(value) && value.numerator === 0n;
-}
-
-function isInfinity(value) {
-  return value?.kind === 'infinity';
-}
-
-function isOne(value) {
-  return isNumber(value) && value.numerator === 1n && value.denominator === 1n;
-}
-
-function isMinusOne(value) {
-  return value === MINUS_ONE;
-}
-
-function asExpression(value) {
-  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
-  if (value?.kind) return value;
-  return exactNumber(value);
-}
-
-function argumentList(values) {
-  return values.length === 1 && Array.isArray(values[0]) ? values[0] : values;
-}
-
-function expressionKey(value) {
-  switch (value.kind) {
-    case 'number': return `n:${value.numerator}/${value.denominator}`;
-    case 'symbol': return `s:${value.name}`;
-    case 'infinity': return `i:${value.sign < 0 ? -1 : 1}`;
-    case 'power': return `p:${expressionKey(value.base)}^${value.exponent}`;
-    case 'multiply': return `m:${value.factors.map(expressionKey).join(',')}`;
-    case 'add': return `a:${value.terms.map(expressionKey).join(',')}`;
-    default: throw new TypeError(`unknown expression kind ${value.kind}`);
-  }
-}
-
-function factorRank(value) {
-  if (isNumber(value)) return 0;
-  if (value.kind === 'symbol') return 1;
-  if (value.kind === 'power') return 2;
-  if (value.kind === 'multiply') return 3;
-  return 4;
-}
-
-function compareKeys(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function compareFactors(left, right) {
-  return factorRank(left) - factorRank(right) || compareKeys(expressionKey(left), expressionKey(right));
-}
-
-function variableDegree(value, variable = 's') {
-  if (value?.kind === 'symbol') return value.name === variable ? 1 : 0;
-  if (value?.kind === 'power' && value.exponent >= 0) {
-    return value.base?.kind === 'symbol' && value.base.name === variable ? value.exponent : 0;
-  }
-  if (value?.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + variableDegree(factor, variable), 0);
-  return 0;
-}
-
-function numericAdd(left, right) {
-  return exactNumber(
-    left.numerator * right.denominator + right.numerator * left.denominator,
-    left.denominator * right.denominator,
-  );
-}
-
-function numericMultiply(left, right) {
-  return exactNumber(left.numerator * right.numerator, left.denominator * right.denominator);
-}
-
-function numericPower(value, exponent) {
-  if (exponent === 0) return ONE;
-  if (value.numerator === 0n && exponent < 0) throw new RangeError('zero cannot have a negative power');
-  if (exponent > 0) return exactNumber(value.numerator ** BigInt(exponent), value.denominator ** BigInt(exponent));
-  return exactNumber(value.denominator ** BigInt(-exponent), value.numerator ** BigInt(-exponent));
-}
-
-function factorEntries(value) {
-  if (value.kind === 'multiply') return value.factors.flatMap(factorEntries);
-  if (value.kind === 'power' && value.exponent !== 0) return [[value.base, value.exponent]];
-  return [[value, 1]];
-}
-
-function factorsFromEntries(entries) {
-  const factors = [];
-  for (const [factor, exponent] of entries) {
-    if (exponent === 0 || isOne(factor)) continue;
-    factors.push(exponent === 1 ? factor : power(factor, exponent));
-  }
-  return factors;
-}
-
-function nonNumericFactors(value) {
-  return factorEntries(value).filter(([factor]) => !isNumber(factor));
-}
-
-function makeMultiply(values) {
-  return multiply(...values);
-}
-
-// A term shaped like `numericCoefficient * (sum)` (and nothing else) is kept
-// factored by default so unrelated `add()` calls elsewhere in the pipeline
-// can still find it as a shared multiplicative factor. It is only expanded
-// here, on a trial basis, when doing so lets its pieces cancel against
-// sibling terms (for example `-1*(gm1+gm2) + gm1 + gm2` collapsing to `0`);
-// see `combineTerms`/`distributeScaledSum` below.
-function distributeScaledSum(term) {
-  if (term.kind !== 'multiply') return null;
-  const nonNumeric = term.factors.filter((factor) => !isNumber(factor));
-  if (nonNumeric.length !== 1 || nonNumeric[0].kind !== 'add') return null;
-  const coefficient = term.factors.find((factor) => isNumber(factor)) || ONE;
-  return nonNumeric[0].terms.map((subterm) => makeMultiply([coefficient, subterm]));
-}
-
-function combineTerms(terms) {
-  const combined = new Map();
-  for (const rawTerm of terms) {
-    const term = asExpression(rawTerm);
-    const entries = term.kind === 'multiply' ? term.factors : [term];
-    const coefficient = entries.length && isNumber(entries[0]) ? entries[0] : ONE;
-    const core = entries.length && isNumber(entries[0]) ? makeMultiply(entries.slice(1)) : term;
-    const key = expressionKey(core);
-    const previous = combined.get(key);
-    combined.set(key, previous
-      ? { coefficient: numericAdd(previous.coefficient, coefficient), core: previous.core }
-      : { coefficient, core });
-  }
-  const result = [];
-  for (const { coefficient, core } of combined.values()) {
-    if (isZero(coefficient)) continue;
-    result.push(isOne(core) ? coefficient : makeMultiply([coefficient, core]));
-  }
-  return result;
-}
-
-function makeAdd(values, factorCommon) {
-  const terms = values.flatMap(value => value.kind === 'add' ? value.terms : [value]).map(asExpression);
-  const infinities = terms.filter(isInfinity);
-  if (infinities.length) {
-    const signs = new Set(infinities.map(value => value.sign < 0 ? -1 : 1));
-    if (signs.size > 1) throw new RangeError('undefined infinity addition');
-    return infinity(infinities[0].sign);
-  }
-  const direct = combineTerms(terms);
-  let normalized = direct;
-  if (terms.some(term => distributeScaledSum(term) !== null)) {
-    const expandedTerms = terms.flatMap(term => distributeScaledSum(term) || [term]);
-    const expanded = combineTerms(expandedTerms);
-    if (expanded.length < direct.length) normalized = expanded;
-  }
-  if (!normalized.length) return ZERO;
-  if (normalized.length === 1) return normalized[0];
-
-  const allNegative = normalized.every(term => {
-    const coefficient = term.kind === 'multiply' && isNumber(term.factors[0]) ? term.factors[0] : (isNumber(term) ? term : ONE);
-    return coefficient.numerator < 0n;
-  });
-  if (allNegative) {
-    return makeMultiply([MINUS_ONE, makeAdd(normalized.map(term => negate(term)), factorCommon)]);
-  }
-
-  if (factorCommon) {
-    const factorMaps = normalized.map(term => {
-      const coefficient = term.kind === 'multiply' && isNumber(term.factors[0]) ? term.factors[0] : (isNumber(term) ? term : ONE);
-      const core = term.kind === 'multiply' && isNumber(term.factors[0]) ? makeMultiply(term.factors.slice(1)) : term;
-      const counts = new Map();
-      for (const [factor, exponent] of nonNumericFactors(core)) {
-        const key = expressionKey(factor);
-        counts.set(key, { factor, exponent: (counts.get(key)?.exponent || 0) + exponent });
-      }
-      return { coefficient, core, counts };
-    });
-    const common = [];
-    for (const [key, first] of factorMaps[0].counts) {
-      const exponent = Math.min(...factorMaps.map(({ counts }) => counts.get(key)?.exponent || 0));
-      if (exponent) common.push([first.factor, exponent]);
-    }
-    if (common.length) {
-      const residual = factorMaps.map(({ coefficient, counts }) => {
-        const remaining = [];
-        for (const [key, entry] of counts) remaining.push([entry.factor, entry.exponent - (common.find(([factor]) => expressionKey(factor) === key)?.[1] || 0)]);
-        return makeMultiply([coefficient, ...factorsFromEntries(remaining)]);
-      });
-      return makeMultiply([...factorsFromEntries(common), makeAdd(residual, false)]);
-    }
-  }
-
-  normalized.sort((left, right) => compareKeys(expressionKey(left), expressionKey(right)));
-  return Object.freeze({ kind: 'add', terms: Object.freeze(normalized) });
-}
-
-/** Create an exact integer or rational number node. */
-function rational(numerator, denominator = 1n) {
-  return exactNumber(numerator, denominator);
-}
-
-/** Create an exact integer node. */
-function integer(value) {
-  return exactNumber(value);
-}
-
-/** Create a named symbolic parameter node. */
-function symbol(name) {
-  const text = String(name);
-  if (!text) throw new TypeError('symbol name must not be empty');
-  return Object.freeze({ kind: 'symbol', name: text });
-}
-
-/** Create a normalized sum of exact expressions. */
-function add(...values) {
-  return makeAdd(argumentList(values).map(asExpression), true);
-}
-
-/** Create a normalized product of exact expressions. */
-function multiply(...values) {
-  const factors = argumentList(values).map(asExpression);
-  const infinities = factors.filter(isInfinity);
-  if (infinities.length) {
-    if (factors.some(isZero)) throw new RangeError('undefined zero times infinity');
-    const sign = infinities.reduce((result, value) => result * (value.sign < 0 ? -1 : 1), 1)
-      * factors.filter(isNumber).reduce((result, value) => result * (value.numerator < 0n ? -1 : 1), 1);
-    return infinity(sign);
-  }
-  let coefficient = ONE;
-  const counts = new Map();
-  for (const factor of factors) {
-    if (isZero(factor)) return ZERO;
-    for (const [base, exponent] of factorEntries(factor)) {
-      if (isNumber(base)) {
-        coefficient = numericMultiply(coefficient, numericPower(base, exponent));
-        continue;
-      }
-      const key = expressionKey(base);
-      counts.set(key, { base, exponent: (counts.get(key)?.exponent || 0) + exponent });
-    }
-  }
-  if (isZero(coefficient)) return ZERO;
-  const combined = factorsFromEntries([...counts.values()].map(({ base, exponent }) => [base, exponent]));
-  combined.sort(compareFactors);
-  if (!isOne(coefficient)) combined.unshift(coefficient);
-  if (!combined.length) return ONE;
-  if (combined.length === 1) return combined[0];
-  return Object.freeze({ kind: 'multiply', factors: Object.freeze(combined) });
-}
-
-/** Create a normalized integer power. */
-function power(base, exponent) {
-  const value = asExpression(base);
-  const powerValue = Number(integerValue(exponent));
-  if (!Number.isSafeInteger(powerValue)) throw new RangeError('power exponent must be a safe integer');
-  if (powerValue === 0) return ONE;
-  if (powerValue === 1) return value;
-  if (isNumber(value)) return numericPower(value, powerValue);
-  if (value.kind === 'power') return power(value.base, value.exponent * powerValue);
-  return Object.freeze({ kind: 'power', base: value, exponent: powerValue });
-}
-
-/** Create the exact additive inverse. */
-function negate(value) {
-  return multiply(MINUS_ONE, asExpression(value));
-}
-
-/** Substitute exact expressions by symbol name without mutating the source. */
-function substitute(value, replacements) {
-  const source = asExpression(value);
-  if (isInfinity(source)) return source;
-  const lookup = replacements instanceof Map ? replacements : new Map(Object.entries(replacements || {}));
-  if (source.kind === 'symbol') return lookup.has(source.name) ? asExpression(lookup.get(source.name)) : source;
-  if (source.kind === 'number') return source;
-  if (source.kind === 'power') return power(substitute(source.base, lookup), source.exponent);
-  if (source.kind === 'multiply') return multiply(source.factors.map(factor => substitute(factor, lookup)));
-  return add(source.terms.map(term => substitute(term, lookup)));
-}
-
-/** Test exact structural equality after canonical construction. */
-function equals(left, right) {
-  return expressionKey(asExpression(left)) === expressionKey(asExpression(right));
-}
-
-function cancelFactors(numerator, denominator, budget = null) {
-  budget?.step();
-  if (equals(numerator, denominator)) return [ONE, ONE];
-  const exponents = new Map();
-  for (const [factor, exponent] of factorEntries(numerator)) {
-    const key = expressionKey(factor);
-    exponents.set(key, { factor, exponent: (exponents.get(key)?.exponent || 0) + exponent });
-  }
-  for (const [factor, exponent] of factorEntries(denominator)) {
-    const key = expressionKey(factor);
-    exponents.set(key, { factor, exponent: (exponents.get(key)?.exponent || 0) - exponent });
-  }
-  const reducedNumerator = [];
-  const reducedDenominator = [];
-  for (const { factor, exponent } of exponents.values()) {
-    if (exponent > 0) reducedNumerator.push([factor, exponent]);
-    if (exponent < 0) reducedDenominator.push([factor, -exponent]);
-  }
-  return [makeMultiply(factorsFromEntries(reducedNumerator)), makeMultiply(factorsFromEntries(reducedDenominator))];
-}
-
-function splitNumericFactor(value) {
-  if (isNumber(value)) return { coefficient: value, rest: ONE };
-  if (value.kind !== 'multiply' || !isNumber(value.factors[0])) return { coefficient: ONE, rest: value };
-  return { coefficient: value.factors[0], rest: makeMultiply(value.factors.slice(1)) };
-}
-
-function absoluteNumeric(value) {
-  return value.numerator < 0n ? exactNumber(-value.numerator, value.denominator) : value;
-}
-
-function numericGcd(values) {
-  const numbers = values.map(absoluteNumeric);
-  let numerator = numbers.reduce((result, value) => gcd(result, value.numerator), 0n);
-  let denominator = numbers.reduce((result, value) => {
-    return result / gcd(result, value.denominator) * value.denominator;
-  }, 1n);
-  if (numerator === 0n) return ONE;
-  return exactNumber(numerator, denominator);
-}
-
-function factorCounts(value) {
-  const counts = new Map();
-  for (const [factor, exponent] of nonNumericFactors(value)) {
-    const key = expressionKey(factor);
-    counts.set(key, { factor, exponent: (counts.get(key)?.exponent || 0) + exponent });
-  }
-  return counts;
-}
-
-function commonFactor(values) {
-  const expressions = values.filter(value => !isZero(value));
-  if (!expressions.length) return ONE;
-  const parts = expressions.map(splitNumericFactor);
-  const coefficient = numericGcd(parts.map(({ coefficient }) => coefficient));
-  const first = factorCounts(parts[0].rest);
-  const common = [];
-  for (const [key, entry] of first) {
-    const exponent = Math.min(...parts.slice(1).map(({ rest }) => factorCounts(rest).get(key)?.exponent || 0), entry.exponent);
-    if (exponent > 0) common.push([entry.factor, exponent]);
-  }
-  return makeMultiply([coefficient, ...factorsFromEntries(common)]);
-}
-
-function divideByFactor(value, factor, budget = null) {
-  if (isOne(factor)) return value;
-  budget?.step();
-  const valueParts = splitNumericFactor(value);
-  const factorParts = splitNumericFactor(factor);
-  const numeric = exactNumber(
-    valueParts.coefficient.numerator * factorParts.coefficient.denominator,
-    valueParts.coefficient.denominator * factorParts.coefficient.numerator,
-  );
-  const [rest, remainder] = cancelFactors(valueParts.rest, factorParts.rest, budget);
-  if (!isOne(remainder)) return null;
-  return makeMultiply([numeric, rest]);
-}
-
-function cancelPolynomialContent(map, factor, budget) {
-  if (isOne(factor)) return map;
-  const result = new Map();
-  for (const [powerValue, coefficient] of map) {
-    budget.step();
-    const reduced = divideByFactor(coefficient, factor, budget);
-    if (reduced === null) return null;
-    if (!isZero(reduced)) result.set(powerValue, reduced);
-  }
-  return result;
-}
-
-function fallbackRational(numerator, denominator, variable, budgetExceeded = false) {
-  if (isInfinity(numerator)) {
-    return Object.freeze({ kind: 'rational', variable, numerator, denominator: ONE, budgetExceeded, infinite: true });
-  }
-  if (isInfinity(denominator)) {
-    return Object.freeze({ kind: 'rational', variable, numerator: ZERO, denominator: ONE, budgetExceeded });
-  }
-  if (isZero(denominator)) throw new RangeError('rational denominator must not be zero');
-  if (isZero(numerator)) return Object.freeze({ kind: 'rational', variable, numerator: ZERO, denominator: ONE, budgetExceeded });
-  return Object.freeze({ kind: 'rational', variable, numerator, denominator, budgetExceeded });
-}
-
-function canonicalRational(numerator, denominator, variable, budgetExceeded = false, budget = null) {
-  const fallback = () => fallbackRational(numerator, denominator, variable, budgetExceeded);
-  if (isInfinity(numerator) || isInfinity(denominator)) return fallback();
-  if (isZero(denominator)) throw new RangeError('rational denominator must not be zero');
-  budget?.step();
-  let [n, d] = cancelFactors(numerator, denominator, budget);
-  if (isZero(n)) return fallbackRational(ZERO, ONE, variable, budgetExceeded);
-  const nc = splitNumericFactor(n);
-  const dc = splitNumericFactor(d);
-  const coefficient = numericMultiply(nc.coefficient, exactNumber(dc.coefficient.denominator, dc.coefficient.numerator));
-  n = makeMultiply([coefficient, nc.rest]);
-  d = dc.rest;
-  if (isMinusOne(d)) {
-    n = negate(n);
-    d = ONE;
-  }
-  return Object.freeze({ kind: 'rational', variable, numerator: n, denominator: d, budgetExceeded });
-}
-
-class OperationBudget {
-  constructor(limit = DEFAULT_MAX_OPERATIONS) {
-    if (!Number.isFinite(limit)) throw new RangeError('maxOperations must be finite');
-    this.limit = Math.max(0, Math.floor(limit));
-    this.used = 0;
-    this.exceeded = false;
-  }
-
-  step(amount = 1) {
-    if (!Number.isSafeInteger(amount) || amount < 0) throw new RangeError('budget step must be a non-negative integer');
-    if (this.exceeded || this.used + amount > this.limit) {
-      this.used = this.limit;
-      this.exceeded = true;
-      throw new BudgetExceeded();
-    }
-    this.used += amount;
-  }
-}
-
-class BudgetExceeded extends Error {}
-
-function polynomialMap(value, variable, budget) {
-  budget.step();
-  if (isNumber(value)) return new Map([[0, value]]);
-  if (value.kind === 'symbol') return new Map([[value.name === variable ? 1 : 0, value.name === variable ? ONE : value]]);
-  if (value.kind === 'add') {
-    const result = new Map();
-    for (const term of value.terms) {
-      const termMap = polynomialMap(term, variable, budget);
-      if (!termMap) return null;
-      mergeCoefficientMap(result, termMap, budget);
-    }
-    return result;
-  }
-  if (value.kind === 'multiply') {
-    let result = new Map([[0, ONE]]);
-    for (const factor of value.factors) {
-      const factorMap = polynomialMap(factor, variable, budget);
-      if (!factorMap) return null;
-      result = multiplyPolynomialMaps(result, factorMap, budget);
-    }
-    return result;
-  }
-  if (value.kind === 'power' && value.exponent >= 0) {
-    let result = new Map([[0, ONE]]);
-    const base = polynomialMap(value.base, variable, budget);
-    if (!base) return null;
-    for (let index = 0; index < value.exponent; index += 1) result = multiplyPolynomialMaps(result, base, budget);
-    return result;
-  }
-  return null;
-}
-
-function mergeCoefficientMap(target, source, budget) {
-  for (const [powerValue, coefficient] of source) {
-    budget.step();
-    target.set(powerValue, target.has(powerValue) ? add(target.get(powerValue), coefficient) : coefficient);
-  }
-}
-
-function multiplyPolynomialMaps(left, right, budget) {
-  const result = new Map();
-  for (const [leftPower, leftCoefficient] of left) {
-    for (const [rightPower, rightCoefficient] of right) {
-      budget.step();
-      const powerValue = leftPower + rightPower;
-      const coefficient = multiply(leftCoefficient, rightCoefficient);
-      result.set(powerValue, result.has(powerValue) ? add(result.get(powerValue), coefficient) : coefficient);
-    }
-  }
-  return result;
-}
-
-function polynomialExpression(coefficients, variable) {
-  const terms = [];
-  for (const { power: powerValue, coefficient } of coefficients) {
-    if (isZero(coefficient)) continue;
-    terms.push(powerValue === 0 ? coefficient : multiply(coefficient, power(symbol(variable), powerValue)));
-  }
-  return makeAdd(terms, true);
-}
-
-function coefficientsFromMap(map) {
-  return Object.freeze([...map.entries()]
-    .filter(([, coefficient]) => !isZero(coefficient))
-    .sort(([left], [right]) => right - left)
-    .map(([powerValue, coefficient]) => Object.freeze({ power: powerValue, coefficient })));
-}
-
-/** Return polynomial coefficients in descending powers of the chosen variable. */
-function polynomialCoefficients(value, variable = 's', options = {}) {
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  try {
-    const map = polynomialMap(asExpression(value), variable, budget);
-    if (!map) return null;
-    return coefficientsFromMap(map);
-  } catch (error) {
-    if (error instanceof BudgetExceeded) return null;
-    throw error;
-  }
-}
-
-/** Normalize a rational function and cancel structurally provable factors. */
-function rationalFunction(numerator, denominator = ONE, options = {}) {
-  const variable = options.variable || 's';
-  const rawNumerator = asExpression(numerator);
-  const rawDenominator = asExpression(denominator);
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  let result;
-  try {
-    result = canonicalRational(rawNumerator, rawDenominator, variable, false, budget);
-    const numeratorMap = polynomialMap(result.numerator, variable, budget);
-    const denominatorMap = polynomialMap(result.denominator, variable, budget);
-    if (numeratorMap && denominatorMap) {
-      const content = commonFactor([
-        commonFactor([...numeratorMap.values()]),
-        commonFactor([...denominatorMap.values()]),
-      ]);
-      const reducedNumeratorMap = cancelPolynomialContent(numeratorMap, content, budget);
-      const reducedDenominatorMap = cancelPolynomialContent(denominatorMap, content, budget);
-      // A content factor that does not divide every coefficient exactly is a
-      // structural outcome, not exhaustion: keep the uncancelled coefficients
-      // rather than failing the whole analysis as over budget.
-      const cancelled = reducedNumeratorMap && reducedDenominatorMap;
-      const numeratorCoefficients = coefficientsFromMap(cancelled ? reducedNumeratorMap : numeratorMap);
-      const denominatorCoefficients = coefficientsFromMap(cancelled ? reducedDenominatorMap : denominatorMap);
-      budget.step(numeratorCoefficients.length + denominatorCoefficients.length);
-      const normalizedNumerator = polynomialExpression(numeratorCoefficients, variable);
-      const normalizedDenominator = polynomialExpression(denominatorCoefficients, variable);
-      result = canonicalRational(normalizedNumerator, normalizedDenominator, variable, false, budget);
-    }
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    result = fallbackRational(rawNumerator, rawDenominator, variable, true);
-  }
-  return result;
-}
-
-function asRational(value, variable = 's', options = {}) {
-  if (isInfinity(value)) return value;
-  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
-  return value?.kind === 'rational' ? value : rationalFunction(value, ONE, { ...options, variable });
-}
-
-/** Add two rational functions, preserving a valid factored fallback on budget exhaustion. */
-function rationalAdd(left, right, options = {}) {
-  const variable = options.variable || left?.variable || right?.variable || 's';
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  const a = asRational(left, variable, { ...options, budget });
-  const b = asRational(right, variable, { ...options, budget });
-  if (isInfinity(a)) {
-    if (isInfinity(b) && a.sign !== b.sign) throw new RangeError('undefined infinity addition');
-    return infinity(a.sign);
-  }
-  if (isInfinity(b)) return infinity(b.sign);
-  try {
-    budget.step(2);
-    const numerator = add(multiply(a.numerator, b.denominator), multiply(b.numerator, a.denominator));
-    const denominator = multiply(a.denominator, b.denominator);
-    return rationalFunction(numerator, denominator, { ...options, budget });
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    return fallbackRational(a.numerator, a.denominator, variable, true);
-  }
-}
-
-/** Multiply two rational functions. */
-function rationalMultiply(left, right, options = {}) {
-  const variable = options.variable || left?.variable || right?.variable || 's';
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  const a = asRational(left, variable, { ...options, budget });
-  const b = asRational(right, variable, { ...options, budget });
-  if (isInfinity(a) || isInfinity(b)) {
-    if (isInfinity(a) && isInfinity(b)) return infinity(a.sign * b.sign);
-    const other = isInfinity(a) ? b : a;
-    if (isZero(other?.numerator)) throw new RangeError('undefined zero times infinity');
-    const sign = (isInfinity(a) ? a.sign : b.sign)
-      * (other?.numerator?.numerator < 0n ? -1 : 1);
-    return infinity(sign);
-  }
-  try {
-    budget.step(2);
-    return rationalFunction(
-      multiply(a.numerator, b.numerator),
-      multiply(a.denominator, b.denominator),
-      { ...options, budget },
-    );
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    return fallbackRational(a.numerator, a.denominator, variable, true);
-  }
-}
-
-/** Divide two rational functions. */
-function rationalDivide(left, right, options = {}) {
-  const variable = options.variable || left?.variable || right?.variable || 's';
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  const a = asRational(left, variable, { ...options, budget });
-  const b = asRational(right, variable, { ...options, budget });
-  if (isInfinity(a)) {
-    if (isInfinity(b) || isZero(b.numerator)) throw new RangeError('undefined infinity division');
-    return infinity(a.sign);
-  }
-  if (isInfinity(b)) return ZERO;
-  if (isZero(b.numerator)) {
-    if (isZero(a.numerator)) throw new RangeError('undefined zero divided by zero');
-    return infinity(a.numerator?.kind === 'number' && a.numerator.numerator < 0n ? -1 : 1);
-  }
-  try {
-    budget.step(2);
-    return rationalFunction(
-      multiply(a.numerator, b.denominator),
-      multiply(a.denominator, b.numerator),
-      { ...options, budget },
-    );
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    return fallbackRational(a.numerator, a.denominator, variable, true);
-  }
-}
-
-/** Substitute exact expressions into a rational function. */
-function substituteRational(value, replacements, options = {}) {
-  if (isInfinity(value)) return value;
-  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  const rationalValue = asRational(value, 's', { ...options, budget });
-  if (rationalValue.budgetExceeded === true) return rationalValue;
-  try {
-    budget.step();
-    return rationalFunction(
-      substitute(rationalValue.numerator, replacements),
-      substitute(rationalValue.denominator, replacements),
-      { ...options, budget, variable: rationalValue.variable },
-    );
-  } catch (error) {
-    if (!(error instanceof BudgetExceeded)) throw error;
-    budget.exceeded = true;
-    return fallbackRational(rationalValue.numerator, rationalValue.denominator, rationalValue.variable, true);
-  }
-}
-
-/** Evaluate a rational function at an exact value. */
-function rationalAt(value, argument, options = {}) {
-  if (isInfinity(value)) return value;
-  if (value?.kind === 'rational' && value.infinite === true) return value.numerator;
-  const rationalValue = asRational(value, 's', options);
-  const replacements = new Map([[rationalValue.variable, asExpression(argument)]]);
-  const numerator = substitute(rationalValue.numerator, replacements);
-  const denominator = substitute(rationalValue.denominator, replacements);
-  if (isZero(denominator)) throw new RangeError('rational function is singular at this value');
-  if (isZero(numerator)) return ZERO;
-  if (isNumber(numerator) && isNumber(denominator)) {
-    return rational(numerator.numerator * denominator.denominator, numerator.denominator * denominator.numerator);
-  }
-  return rationalFunction(numerator, denominator, { ...options, variable: rationalValue.variable });
-}
-
-/** Rebuild an already canonical expression under an optional operation budget. */
-function simplify(value, options = {}) {
-  const expression = asExpression(value);
-  const budget = options.budget || new OperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  try {
-    budget.step(expressionNodeCount(expression));
-    return substitute(expression, new Map());
-  } catch (error) {
-    if (error instanceof BudgetExceeded) return expression;
-    throw error;
-  }
-}
-
-function expressionNodeCount(value) {
-  if (value.kind === 'number' || value.kind === 'symbol') return 1;
-  if (value.kind === 'power') return 1 + expressionNodeCount(value.base);
-  return 1 + value[`${value.kind === 'add' ? 'terms' : 'factors'}`].reduce((count, child) => count + expressionNodeCount(child), 0);
-}
-
-/** Return a deterministic structural string for diagnostics and focused tests. */
-function formatExpression(value) {
-  const expression = asExpression(value);
-  if (isInfinity(expression)) return expression.sign < 0 ? '-infinity' : 'infinity';
-  if (isNumber(expression)) return expression.denominator === 1n ? String(expression.numerator) : `${expression.numerator}/${expression.denominator}`;
-  if (expression.kind === 'symbol') return expression.name;
-  if (expression.kind === 'power') {
-    const base = expression.base.kind === 'symbol' ? formatExpression(expression.base) : `(${formatExpression(expression.base)})`;
-    return `${base}^${expression.exponent}`;
-  }
-  if (expression.kind === 'multiply') {
-    const negative = isMinusOne(expression.factors[0]);
-    const factors = negative ? expression.factors.slice(1) : expression.factors;
-    const body = factors.map(factor => factor.kind === 'add' ? `(${formatExpression(factor)})` : formatExpression(factor)).join('*');
-    if (negative) return `-${body}`;
-    return body;
-  }
-  const terms = [...expression.terms].sort((left, right) => variableDegree(right) - variableDegree(left)
-    || compareKeys(expressionKey(left), expressionKey(right)));
-  return terms.map((term, index) => {
-    const negative = term.kind === 'multiply' && isMinusOne(term.factors[0]);
-    if (negative) return `${index ? ' - ' : '-'}${formatExpression(negate(term))}`;
-    if (isNumber(term) && term.numerator < 0n) return `${index ? ' - ' : '-'}${formatExpression(negate(term))}`;
-    return `${index ? ' + ' : ''}${formatExpression(term)}`;
-  }).join('');
-}
-
-/** Return a canonical expression's stable identity. */
-function keyOf(value) {
-  return expressionKey(asExpression(value));
-}
-
-/** Text spellings accepted and rendered for the infinity sentinel. */
-const INFINITY_NAMES = new Set(['inf', 'infinity', 'infty', '∞', '\\infty']);
-
-/** Return an exact signed infinity sentinel. */
-function infinity(sign = 1) {
-  return Object.freeze({ kind: 'infinity', sign: sign < 0 ? -1 : 1 });
-}
-
-/** Test the exact infinity sentinel. */
-function isInfinite(value) {
-  return isInfinity(value);
-}
-
-/** Create the finite mutable budget shared by one exact analysis. */
-function createOperationBudget(limit = DEFAULT_MAX_OPERATIONS) {
-  return new OperationBudget(limit);
-}
-
-__exports.isNumber = isNumber;
-__exports.isZero = isZero;
-__exports.rational = rational;
-__exports.integer = integer;
-__exports.symbol = symbol;
-__exports.add = add;
-__exports.multiply = multiply;
-__exports.power = power;
-__exports.negate = negate;
-__exports.substitute = substitute;
-__exports.equals = equals;
-__exports.polynomialCoefficients = polynomialCoefficients;
-__exports.rationalFunction = rationalFunction;
-__exports.rationalAdd = rationalAdd;
-__exports.rationalMultiply = rationalMultiply;
-__exports.rationalDivide = rationalDivide;
-__exports.substituteRational = substituteRational;
-__exports.rationalAt = rationalAt;
-__exports.simplify = simplify;
-__exports.formatExpression = formatExpression;
-__exports.keyOf = keyOf;
-__exports.infinity = infinity;
-__exports.isInfinite = isInfinite;
-__exports.createOperationBudget = createOperationBudget;
-__exports.ONE = ONE;
-__exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
-__exports.INFINITY_NAMES = INFINITY_NAMES;
-};
-
 __modules["src/core/analysis/compact.js"] = function (__require, __exports) {
 const { add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js");
 
@@ -32502,686 +33233,6 @@ function compactRational(value, ops) {
 }
 
 __exports.compactRational = compactRational;
-};
-
-__modules["src/core/analysis/present.js"] = function (__require, __exports) {
-const { INFINITY_NAMES, ONE, isNumber, isZero, keyOf } = __require("src/core/analysis/rational.js");
-
-
-const PRECEDENCE = Object.freeze({ sum: 10, product: 20, power: 30, atom: 40 });
-const PARALLEL_KINDS = new Set(['parallel', 'parallel-resistance']);
-
-function isNegativeNumber(value) {
-  return isNumber(value) && value.numerator < 0n;
-}
-
-function isNegative(value) {
-  if (isNegativeNumber(value)) return true;
-  if (value?.kind === 'rational') return isNegative(value.numerator);
-  return value?.kind === 'multiply' && isNegativeNumber(value.factors[0]);
-}
-
-function structuralKey(value) {
-  if (value?.kind === 'rational') {
-    return `q:${value.variable}:${structuralKey(value.numerator)}/${structuralKey(value.denominator)}`;
-  }
-  if (value?.kind === 'infinity') return `i:${value.sign < 0 ? -1 : 1}`;
-  if (value?.kind === 'multiply') return `m:${value.factors.map(structuralKey).join(',')}`;
-  if (value?.kind === 'add') return `a:${value.terms.map(structuralKey).join(',')}`;
-  if (value?.kind === 'power') return `p:${structuralKey(value.base)}^${value.exponent}`;
-  return keyOf(value);
-}
-
-function displayProduct(factors) {
-  let coefficient = 1n;
-  const visible = factors.filter((factor) => {
-    if (isNumber(factor) && factor.denominator === 1n) {
-      coefficient *= factor.numerator;
-      return false;
-    }
-    return true;
-  });
-  if (coefficient !== 1n || !visible.length) visible.unshift({ ...ONE, numerator: coefficient });
-  return visible.length === 1 ? visible[0] : { kind: 'multiply', factors: visible };
-}
-
-/** Display-only fraction composition. Parallel identities remain indivisible
- * factors; no circuit polynomial is expanded or approximated here. */
-function composedFraction(value, context, options) {
-  const usedProofs = new Set();
-  let visited = 0;
-  function parts(node, path = new Set()) {
-    if (++visited > 256) throw new RangeError('fraction presentation limit');
-    if (explicitParallel(node, options)) return { n: [node], d: [] };
-    const key = structuralKey(node);
-    const proof = !path.has(key) && options.equivalences?.get?.(key);
-    const nestedPath = new Set([...path, key]);
-    let kind = node.kind;
-    let operands;
-    if (proof?.proven && ['product', 'quotient', 'sum'].includes(proof.kind)) {
-      kind = proof.kind;
-      operands = proof.operands;
-      usedProofs.add(key);
-    }
-    if (kind === 'rational' || kind === 'quotient') {
-      const a = parts(operands?.[0] || node.numerator, nestedPath);
-      const b = parts(operands?.[1] || node.denominator, nestedPath);
-      return { n: [...a.n, ...b.d], d: [...a.d, ...b.n] };
-    }
-    if (kind === 'number') {
-      return { n: [{ ...ONE, numerator: node.numerator }], d: node.denominator === 1n ? [] : [{ ...ONE, numerator: node.denominator }] };
-    }
-    if (kind === 'multiply' || kind === 'product') {
-      const factors = (operands || node.factors).map((factor) => parts(factor, nestedPath));
-      return { n: factors.flatMap((factor) => factor.n), d: factors.flatMap((factor) => factor.d) };
-    }
-    if (kind === 'power') {
-      const base = parts(node.base, nestedPath);
-      const exponent = Math.abs(node.exponent);
-      const powered = (factors) => !factors.length ? [] : exponent === 1 ? factors : [{ kind: 'power', base: displayProduct(factors), exponent }];
-      if (node.exponent === 0) return { n: [ONE], d: [] };
-      return node.exponent < 0 ? { n: powered(base.d), d: powered(base.n) } : { n: powered(base.n), d: powered(base.d) };
-    }
-    if (kind === 'add' || kind === 'sum') {
-      const terms = (operands || node.terms).map((term) => parts(term, nestedPath));
-      if (!terms.some((term) => term.d.some((factor) => !isNumber(factor) || factor.numerator !== factor.denominator))) {
-        return { n: [operands ? { kind: 'add', terms: terms.map((term) => displayProduct(term.n)), ordered: true } : node], d: [] };
-      }
-      // Common denominator uses the largest multiplicity of each factor,
-      // avoiding repeated denominators in 1/a + 1/a without distributing sums.
-      const common = new Map();
-      const denominators = terms.map((term) => {
-        const counts = new Map();
-        for (const factor of term.d) {
-          if (isNumber(factor) && factor.numerator === 1n) continue;
-          const key = structuralKey(factor);
-          const entry = counts.get(key) || { factor, count: 0 };
-          entry.count++;
-          counts.set(key, entry);
-        }
-        for (const [key, entry] of counts) if ((common.get(key)?.count || 0) < entry.count) common.set(key, entry);
-        return counts;
-      });
-      const numerator = { kind: 'add', terms: terms.map((term, index) => displayProduct([
-        ...term.n,
-        ...[...common].flatMap(([key, entry]) => Array(entry.count - (denominators[index].get(key)?.count || 0)).fill(entry.factor)),
-      ])) };
-      return { n: [numerator], d: [...common.values()].flatMap((entry) => Array(entry.count).fill(entry.factor)) };
-    }
-    return { n: [node], d: [] };
-  }
-  try {
-    const { n, d } = parts(value);
-    const denominator = displayProduct(d);
-    if (isNumber(denominator) && denominator.numerator === 1n) return null;
-    const numerator = displayProduct(n);
-    const negative = isNegative(numerator) !== isNegative(denominator);
-    const equivalences = new Map(options.equivalences instanceof Map
-      ? options.equivalences : Object.entries(options.equivalences || {}));
-    usedProofs.forEach((key) => equivalences.delete(key));
-    const nested = { ...options, equivalences };
-    return `${negative ? '-' : ''}\\frac{${render(unsigned(numerator), 0, context, nested)}}{${render(unsigned(denominator), 0, context, nested)}}`;
-  } catch (error) {
-    if (error instanceof RangeError) return null;
-    throw error;
-  }
-}
-
-function equivalent(left, right) {
-  if (left?.kind !== right?.kind) return false;
-  if (left?.kind === 'rational') {
-    return left.variable === right.variable
-      && equivalent(left.numerator, right.numerator)
-      && equivalent(left.denominator, right.denominator);
-  }
-  if (left?.kind === 'infinity') return (left.sign < 0) === (right.sign < 0);
-  return structuralKey(left) === structuralKey(right);
-}
-
-function absoluteNumber(value) {
-  return value.numerator < 0n
-    ? { ...value, numerator: -value.numerator }
-    : value;
-}
-
-function unsigned(value) {
-  if (isNegativeNumber(value)) return absoluteNumber(value);
-  if (value?.kind === 'rational' && isNegative(value.numerator)) {
-    return Object.freeze({ ...value, numerator: unsigned(value.numerator) });
-  }
-  if (value?.kind === 'multiply' && isNegativeNumber(value.factors[0])) {
-    const [coefficient, ...factors] = value.factors;
-    const positive = absoluteNumber(coefficient);
-    if (isNumber(positive) && positive.numerator === 1n && positive.denominator === 1n) {
-      if (factors.length === 0) return positive;
-      return factors.length === 1 ? factors[0] : Object.freeze({ ...value, factors: Object.freeze(factors) });
-    }
-    return factors.length === 0 ? positive : Object.freeze({ ...value, factors: Object.freeze([positive, ...factors]) });
-  }
-  return value;
-}
-
-function symbolText(name) {
-  const raw = String(name);
-  if (INFINITY_NAMES.has(raw.toLowerCase())) return '\\infty';
-  if (raw === 's') return 's';
-  if (raw.includes('_{') || raw.includes('^{')) return raw;
-  if (raw.length < 2) return raw;
-  const first = raw[0];
-  if (!/[A-Za-z]/.test(first)) return raw;
-  const rest = raw.slice(1).replace(/^_/, '');
-  if (!rest || !/^[A-Za-z0-9]+$/.test(rest)) return raw;
-  const shouldSubscript = first === first.toUpperCase()
-    || /[0-9]/.test(rest)
-    || raw.includes('_')
-    || /^[grclviapz][A-Za-z]/i.test(raw);
-  if (!shouldSubscript) return raw;
-  return `${first}_{${rest}}`;
-}
-
-function variableName(context) {
-  return context.variable || 's';
-}
-
-function isVariable(value, context) {
-  return value?.kind === 'symbol' && value.name === variableName(context);
-}
-
-function variableDegree(value, context) {
-  if (isVariable(value, context)) return 1;
-  if (value?.kind === 'power' && value.exponent >= 0 && isVariable(value.base, context)) return value.exponent;
-  if (value?.kind === 'multiply') return value.factors.reduce((sum, factor) => sum + variableDegree(factor, context), 0);
-  return 0;
-}
-
-function sortSumTerms(terms, context) {
-  return [...terms].sort((left, right) => variableDegree(right, context) - variableDegree(left, context)
-    || structuralKey(left).localeCompare(structuralKey(right)));
-}
-
-function isVariablePower(value, context) {
-  return isVariable(value, context)
-    || (value?.kind === 'power' && value.exponent > 0 && isVariable(value.base, context));
-}
-
-function factorRank(value, context) {
-  if (isVariablePower(value, context)) return 0;
-  if (isNumber(value)) return 1;
-  if (value?.kind === 'symbol' || value?.kind === 'power') return 2;
-  return 3;
-}
-
-function sortProductFactors(factors, context) {
-  const sorted = [...factors].sort((left, right) => factorRank(left, context) - factorRank(right, context)
-    || structuralKey(left).localeCompare(structuralKey(right)));
-  // Put each transistor's gm*ro together before other resistance factors.
-  for (let i = 0; i < sorted.length; i++) {
-    const match = sorted[i]?.kind === 'symbol' && /^gm(.+)$/.exec(sorted[i].name);
-    if (!match) continue;
-    const j = sorted.findIndex((factor, index) => index > i && factor.kind === 'symbol' && factor.name === `ro${match[1]}`);
-    if (j > i + 1) sorted.splice(i + 1, 0, sorted.splice(j, 1)[0]);
-  }
-  return sorted;
-}
-
-// Algebra may factor ro*(gm*ro + 1) for cancellation. For presentation,
-// flatten small resistive sums without expanding frequency polynomials or
-// topology-proven gain/load products. This never changes the solver's AST.
-function flatResistiveSum(value) {
-  if (value?.kind !== 'multiply' || !value.factors.some((factor) => factor.kind === 'symbol' && /^ro.+$/.test(factor.name))) return null;
-  let terms = [[]];
-  for (const factor of value.factors) {
-    const choices = factor.kind === 'add' ? factor.terms : [factor];
-    if (terms.length * choices.length > 4) return null;
-    if (choices.some((choice) => choice.kind === 'rational' || choice.kind === 'add'
-      || (choice.kind === 'multiply' && choice.factors.some((part) => !['number', 'symbol', 'power'].includes(part.kind))))) return null;
-    terms = terms.flatMap((term) => choices.map((choice) => [...term, ...(choice.kind === 'multiply' ? choice.factors : [choice])]));
-  }
-  if (terms.length < 2 || terms.some((term) => term.some((factor) => factor.kind === 'symbol' && factor.name === 's'))) return null;
-  return { kind: 'add', terms: terms.map((factors) => {
-    factors = factors.filter((factor) => !isNumber(factor) || factor.numerator !== factor.denominator);
-    return factors.length === 1 ? factors[0] : { kind: 'multiply', factors };
-  }) };
-}
-
-function parenthesize(text) {
-  return `\\left(${text}\\right)`;
-}
-
-/**
- * Provenance markers. `\pv{n}{…}` wraps one rendered sub-expression so the
- * MathML it becomes can carry a `data-node` attribute back to the AST node it
- * was rendered from. TeX stays the single source of truth for the displayed
- * equation: markers appear only when a caller asks for provenance, and nothing
- * persisted, exported, or edited as a label ever sees one.
- *
- * A few renderers post-process a child's rendered text (stripping a leading
- * minus, comparing against `1`). They reach through the wrapper with the two
- * helpers below, so a provenance render differs from an ordinary one by
- * exactly the markers — which `analysis-present-v2.test.js` asserts directly.
- */
-function unmark(text) {
-  if (!text.startsWith('\\pv{')) return null;
-  const idEnd = text.indexOf('}', 4);
-  if (idEnd < 0 || text[idEnd + 1] !== '{') return null;
-  let depth = 1;
-  for (let i = idEnd + 2; i < text.length; i += 1) {
-    if (text[i] === '{') depth += 1;
-    else if (text[i] === '}') {
-      depth -= 1;
-      // Only a marker spanning the whole string is this text's own wrapper;
-      // `\pv{1}{A} + \pv{2}{B}` is a sequence and must not be unwrapped.
-      if (depth === 0) return i === text.length - 1 ? { id: text.slice(4, idEnd), body: text.slice(idEnd + 2, i) } : null;
-    }
-  }
-  return null;
-}
-
-/** A child's rendered text with its own provenance wrapper removed. */
-function markedBody(text) {
-  return unmark(text)?.body ?? text;
-}
-
-/** Rewrite a child's rendered text while preserving its provenance wrapper. */
-function mapMarked(text, fn) {
-  const marked = unmark(text);
-  return marked ? `\\pv{${marked.id}}{${fn(marked.body)}}` : fn(text);
-}
-
-/**
- * The symbol names in one subtree. The AST is immutable and shared, so
- * identity memoization keeps a whole provenance pass linear in the tree
- * instead of quadratic in its depth.
- */
-const SYMBOL_NAMES = new WeakMap();
-function symbolNames(value) {
-  if (!value || typeof value !== 'object') return [];
-  const cached = SYMBOL_NAMES.get(value);
-  if (cached) return cached;
-  let names;
-  if (value.kind === 'symbol') names = [value.name];
-  else if (value.kind === 'rational') names = [...symbolNames(value.numerator), ...symbolNames(value.denominator)];
-  else if (value.kind === 'multiply') names = value.factors.flatMap(symbolNames);
-  else if (value.kind === 'add') names = value.terms.flatMap(symbolNames);
-  else if (value.kind === 'power') names = symbolNames(value.base);
-  else if (value.kind === 'quadratic-formula') {
-    names = [
-      ...symbolNames(value.numerator?.linear),
-      ...symbolNames(value.discriminant),
-      ...symbolNames(value.denominator),
-    ];
-  } else names = [];
-  const unique = Object.freeze([...new Set(names)]);
-  SYMBOL_NAMES.set(value, unique);
-  return unique;
-}
-
-function createProvenanceCollector() {
-  const symbols = new Map();
-  let next = 0;
-  return {
-    wrap(value, text) {
-      const id = (next += 1);
-      symbols.set(id, symbolNames(value));
-      return `\\pv{${id}}{${text}}`;
-    },
-    /**
-     * Only ids that survived into the rendered string are real: a speculative
-     * render the presenter then discards (`composedFraction` probing a shape
-     * it rejects) allocates an id that never appears in the output.
-     */
-    resolve(tex) {
-      const used = new Set();
-      for (const match of String(tex).matchAll(/\\pv\{(\d+)\}/g)) used.add(Number(match[1]));
-      return [...used].sort((a, b) => a - b)
-        .map((id) => ({ id, symbols: [...(symbols.get(id) || [])] }));
-    },
-  };
-}
-
-/**
- * Strip every provenance marker, leaving exactly the TeX an ordinary render
- * would have produced. A balanced scan, because a marker's body contains
- * arbitrary nested braces.
- */
-function stripProvenanceMarkers(tex) {
-  const text = String(tex);
-  let out = '';
-  const markers = [];
-  let depth = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    if (text[i] === '\\') {
-      const marker = /^\\pv\{\d+\}\{/.exec(text.slice(i));
-      if (marker) {
-        markers.push(depth);
-        depth += 1;
-        i += marker[0].length - 1;
-        continue;
-      }
-    }
-    const char = text[i];
-    if (char === '{') depth += 1;
-    else if (char === '}') {
-      depth -= 1;
-      // This closes the innermost open marker rather than a TeX group.
-      if (markers.length && markers[markers.length - 1] === depth) { markers.pop(); continue; }
-    }
-    out += char;
-  }
-  return out;
-}
-
-function renderNumber(value) {
-  const numerator = value.numerator;
-  const denominator = value.denominator;
-  if (denominator === 1n) return String(numerator);
-  const sign = numerator < 0n ? '-' : '';
-  return `${sign}\\frac{${numerator < 0n ? -numerator : numerator}}{${denominator}}`;
-}
-
-function renderPower(value, context, options) {
-  if (value.exponent < 0) {
-    return `\\frac{1}{${renderPower({ ...value, exponent: -value.exponent }, context, options)}}`;
-  }
-  if (value.exponent === 1) return render(value.base, 0, context, options);
-  const baseText = render(value.base, PRECEDENCE.power, context, options);
-  return `${baseText}^{${value.exponent}}`;
-}
-
-function renderProduct(value, context, options) {
-  const fraction = composedFraction(value, context, options);
-  if (fraction) return fraction;
-  const negative = isNegative(value);
-  const positive = unsigned(value);
-  const visible = sortProductFactors(positive.kind === 'multiply' ? positive.factors : [positive], context);
-  const body = visible.length
-    ? visible.map((factor) => render(factor, PRECEDENCE.product, context, options)).join(' \\, ')
-    : '1';
-  if (!negative) return body;
-  if (visible.length === 1 && visible[0]?.kind === 'add') return `-${parenthesize(render(visible[0], 0, context, options))}`;
-  return `-${body}`;
-}
-
-function renderSum(value, context, options) {
-  const flat = value.terms.flatMap((term) => flatResistiveSum(term)?.terms || [term]);
-  const terms = options.orderedSum || value.ordered ? flat : sortSumTerms(flat, context);
-  return terms.map((term, index) => {
-    const negative = isNegative(term);
-    const body = render(unsigned(term), negative || explicitParallel(term, options) ? PRECEDENCE.product : PRECEDENCE.sum, context, options);
-    if (index === 0) return negative ? `-${body}` : body;
-    return negative ? ` - ${body}` : ` + ${body}`;
-  }).join('');
-}
-
-function renderRational(value, context, options) {
-  if (isZero(value.numerator)) return '0';
-  const composed = composedFraction(value, context, options);
-  if (composed) return composed;
-  const numeratorNegative = isNegative(value.numerator);
-  const denominatorNegative = isNegative(value.denominator);
-  const negative = numeratorNegative !== denominatorNegative;
-  const numerator = negative ? unsigned(value.numerator) : value.numerator;
-  const denominator = denominatorNegative ? unsigned(value.denominator) : value.denominator;
-  const numeratorText = render(numerator, 0, context, options);
-  const denominatorText = render(denominator, 0, context, options);
-  const fraction = isNumber(denominator) && denominator.numerator === 1n && denominator.denominator === 1n
-    ? numeratorText
-    : `\\frac{${numeratorText}}{${denominatorText}}`;
-  return negative ? `-${markedBody(denominatorText) === '1' && numerator.kind === 'add' ? parenthesize(fraction) : fraction}` : fraction;
-}
-
-function operandsOf(metadata) {
-  if (!metadata || metadata.proven !== true || !PARALLEL_KINDS.has(metadata.kind)) return null;
-  const operands = metadata.operands || [metadata.left, metadata.right];
-  return Array.isArray(operands) && operands.length >= 2 && metadata.equivalent !== undefined ? operands : null;
-}
-
-/**
- * `options.equivalence`/`options.parallel` proves parallel notation for one
- * specific value (checked at every recursive `render` call, so it can match
- * a nested sub-expression, not just the top-level one). `options.equivalences`
- * additionally carries a whole table of such proofs — e.g. from a network's
- * general series/parallel pre-reduction (`reduce.js`), which can prove many
- * unrelated sub-networks at once — keyed by `structuralKey` of the value each
- * one proves, for the same reason `equivalent()` below reduces to that key.
- */
-function explicitParallel(value, options) {
-  const direct = options.equivalence || options.parallel;
-  const directOperands = operandsOf(direct);
-  if (directOperands && equivalent(value, direct.equivalent)) return directOperands;
-  const table = options.equivalences;
-  if (!table) return null;
-  const key = structuralKey(value);
-  const entry = table instanceof Map ? table.get(key) : table[key];
-  return operandsOf(entry);
-}
-
-function renderParallel(value, context, options) {
-  const operands = explicitParallel(value, options);
-  if (!operands) return null;
-  function flatten(operand, seen) {
-    const key = structuralKey(operand);
-    const nested = !seen.has(key) && explicitParallel(operand, options);
-    if (!nested) return [operand];
-    return nested.flatMap((branch) => flatten(branch, new Set([...seen, key])));
-  }
-  const flat = operands.flatMap((operand) => flatten(operand, new Set([structuralKey(value)])));
-  const body = flat.map((operand) => render(operand, PRECEDENCE.product, context, options)).join(' \\parallel ');
-  return body;
-}
-
-function precedence(value) {
-  if (value?.kind === 'add') return PRECEDENCE.sum;
-  if (value?.kind === 'multiply') return PRECEDENCE.product;
-  if (value?.kind === 'power') return PRECEDENCE.power;
-  return PRECEDENCE.atom;
-}
-
-function renderQuadraticFormula(value, context, options) {
-  const linear = value.numerator?.linear;
-  const root = `\\sqrt{${render(value.discriminant, 0, context, options)}}`;
-  const sign = value.sign < 0 ? '-' : '+';
-  const numerator = isZero(linear)
-    ? `${sign === '-' ? '-' : ''}${root}`
-    : `${render(linear, PRECEDENCE.sum, context, options)} ${sign} ${root}`;
-  return `\\frac{${numerator}}{${render(value.denominator, 0, context, options)}}`;
-}
-
-function renderNode(value, parentPrecedence, context, options = {}) {
-  if (value?.kind === 'quadratic-formula') return renderQuadraticFormula(value, context, options);
-  let text;
-  const proof = options.equivalences?.get?.(structuralKey(value));
-  if (proof?.proven === true && ['quotient', 'sum'].includes(proof.kind)) {
-    const equivalences = new Map(options.equivalences);
-    equivalences.delete(structuralKey(value));
-    const nested = { ...options, equivalences };
-    if (proof.kind === 'quotient') return composedFraction(value, context, options)
-      || renderRational({ kind: 'rational', numerator: proof.operands[0], denominator: proof.operands[1] }, context, nested);
-    const body = renderSum({ kind: 'add', terms: proof.operands }, context, { ...nested, orderedSum: true });
-    return parentPrecedence > PRECEDENCE.sum ? parenthesize(body) : body;
-  }
-  if (proof?.proven === true && proof.kind === 'product') {
-    // Remove this identity while visiting its factors: a unit factor must
-    // never make a display proof recurse back into itself.
-    const equivalences = new Map(options.equivalences);
-    equivalences.delete(structuralKey(value));
-    const negative = proof.operands.filter(isNegative).length % 2 === 1;
-    const factors = proof.operands.map((factor) => {
-      const text = render(factor, PRECEDENCE.product, context, { ...options, equivalences });
-      return isNegative(factor)
-        ? mapMarked(text, (body) => (body.startsWith('-') ? body.slice(1) : body))
-        : text;
-    });
-    const body = `${negative ? '-' : ''}${factors.join(' \\, ')}`;
-    return parentPrecedence > PRECEDENCE.product ? parenthesize(body) : body;
-  }
-  if (value?.kind === 'infinity') return value.sign < 0 ? '-\\infty' : '\\infty';
-  if (value?.kind === 'number') return renderNumber(value);
-  if (value?.kind === 'symbol') return symbolText(value.name);
-  if (value?.kind === 'rational') {
-    const parallel = renderParallel(value, context, options);
-    text = parallel || renderRational(value, context, options);
-  } else if (value?.kind === 'power') {
-    text = renderPower(value, context, options);
-  } else if (value?.kind === 'multiply') {
-    const parallel = renderParallel(value, context, options);
-    const flat = !parallel && flatResistiveSum(value);
-    if (flat) return render(flat, parentPrecedence, context, options);
-    text = parallel || renderProduct(value, context, options);
-  } else if (value?.kind === 'add') {
-    text = renderSum(value, context, options);
-  } else {
-    throw new TypeError(`unknown expression kind ${value?.kind}`);
-  }
-  const parallel = explicitParallel(value, options);
-  const rank = parallel ? PRECEDENCE.sum
-    : value?.kind === 'rational' && isNumber(value.denominator) && value.denominator.numerator === value.denominator.denominator
-      ? precedence(value.numerator) : precedence(value);
-  return rank < parentPrecedence ? parenthesize(text) : text;
-}
-
-/**
- * Render one node. With `options.provenance` set, the result is wrapped in a
- * `\pv{…}` marker naming the AST node it came from; without it this is a
- * direct call through to `renderNode` and costs nothing.
- */
-function render(value, parentPrecedence, context, options = {}) {
-  const text = renderNode(value, parentPrecedence, context, options);
-  return options.provenance ? options.provenance.wrap(value, text) : text;
-}
-
-/** Render an immutable rational AST as deterministic textbook TeX. */
-function renderExpression(value, options = {}) {
-  return render(value, 0, { variable: options.variable || 's' }, options);
-}
-
-/**
- * Render as `renderExpression` does, but with every sub-expression wrapped in a
- * provenance marker, and return the node table alongside the TeX. Each entry is
- * `{id, symbols}`; resolving those symbol names to circuit objects is
- * `provenance.js`'s job, and turning the markers into `data-node` attributes is
- * `texToMathML`'s.
- */
-function renderExpressionWithProvenance(value, options = {}) {
-  const provenance = createProvenanceCollector();
-  const tex = render(value, 0, { variable: options.variable || 's' }, { ...options, provenance });
-  return { tex, nodes: provenance.resolve(tex) };
-}
-
-/** `renderEquation` with provenance markers, for the same reason. */
-function renderEquationWithProvenance(label, value, options = {}) {
-  const { tex, nodes } = renderExpressionWithProvenance(value, options);
-  return { tex: `${label} = ${tex}`, nodes };
-}
-
-/** `renderRootEquation` with provenance markers, for the same reason. */
-function renderRootEquationWithProvenance(kind, index, value, options = {}) {
-  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
-  return renderEquationWithProvenance(`${prefix}_{${index}}`, value, options);
-}
-
-/**
- * Join several provenance renders into one, renumbering so node ids stay
- * unique across the result. A pole or zero row is several root equations shown
- * together, each rendered on its own; without renumbering the second root's
- * nodes would collide with the first's and highlight the wrong devices.
- */
-function joinProvenanceRenders(parts, separator = '') {
-  const pieces = [];
-  const nodes = [];
-  let offset = 0;
-  for (const part of parts) {
-    if (!part) continue;
-    const shift = offset;
-    pieces.push(String(part.tex).replace(/\\pv\{(\d+)\}/g, (match, id) => `\\pv{${Number(id) + shift}}`));
-    for (const node of part.nodes) nodes.push({ id: node.id + shift, symbols: [...node.symbols] });
-    offset += part.nodes.reduce((highest, node) => Math.max(highest, node.id), 0);
-  }
-  return { tex: pieces.join(separator), nodes };
-}
-
-/** Render an equation with an already formatted left-hand label. */
-function renderEquation(label, value, options = {}) {
-  return `${label} = ${renderExpression(value, options)}`;
-}
-
-const QUANTITY_LABELS = Object.freeze({
-  zin: 'Z_{in}',
-  zout: 'Z_{out}',
-  av: 'A_v',
-  gain: 'A_v',
-});
-
-/** Return the standard analysis label for AC or DC quantities. */
-function quantityLabel(quantity, argument = undefined) {
-  const key = String(quantity).replace(/[^A-Za-z]/g, '').toLowerCase();
-  const base = QUANTITY_LABELS[key] || String(quantity);
-  return argument === undefined || argument === null ? base : `${base}(${argument})`;
-}
-
-/** Render `Z_in(s)`, `Z_out(0)`, or `A_v(s)` with its expression. */
-function renderQuantityEquation(quantity, argument, value, options = {}) {
-  return renderEquation(quantityLabel(quantity, argument), value, options);
-}
-
-/** Render a zero-based pole or zero equation. */
-function renderRootEquation(kind, index, value, options = {}) {
-  const prefix = String(kind).toLowerCase().startsWith('z') ? 'z' : 'p';
-  return renderEquation(`${prefix}_{${index}}`, value, options);
-}
-
-/**
- * Build the `options.equivalences` table `render` checks at every recursive
- * call (see `explicitParallel`) from a list of `provenParallel(...)` results
- * (or equivalent `{ equivalent, operands }` records) — e.g. one per parallel
- * merge a network's series/parallel pre-reduction (`reduce.js`) performed.
- */
-function equivalenceTable(proofs) {
-  const table = new Map();
-  for (const proof of proofs) table.set(structuralKey(proof.equivalent), proof);
-  return table;
-}
-
-/** Build explicit metadata for a caller-proven parallel-resistance display. */
-function provenParallel(equivalent, ...operands) {
-  return Object.freeze({
-    kind: 'parallel-resistance',
-    proven: true,
-    equivalent,
-    operands: Object.freeze(operands),
-  });
-}
-
-/** A factored identity established by the circuit's linear port model. */
-function provenProduct(equivalent, ...operands) {
-  return Object.freeze({ kind: 'product', proven: true, equivalent, operands: Object.freeze(operands) });
-}
-
-/** Ratios and sums whose recombination the caller has checked exactly. */
-function provenQuotient(equivalent, numerator, denominator) {
-  return Object.freeze({ kind: 'quotient', proven: true, equivalent, operands: Object.freeze([numerator, denominator]) });
-}
-
-function provenSum(equivalent, ...operands) {
-  return Object.freeze({ kind: 'sum', proven: true, equivalent, operands: Object.freeze(operands) });
-}
-
-
-__exports.stripProvenanceMarkers = stripProvenanceMarkers;
-__exports.renderExpression = renderExpression;
-__exports.renderExpressionWithProvenance = renderExpressionWithProvenance;
-__exports.renderEquationWithProvenance = renderEquationWithProvenance;
-__exports.renderRootEquationWithProvenance = renderRootEquationWithProvenance;
-__exports.joinProvenanceRenders = joinProvenanceRenders;
-__exports.renderEquation = renderEquation;
-__exports.quantityLabel = quantityLabel;
-__exports.renderQuantityEquation = renderQuantityEquation;
-__exports.renderRootEquation = renderRootEquation;
-__exports.equivalenceTable = equivalenceTable;
-__exports.provenParallel = provenParallel;
-__exports.provenProduct = provenProduct;
-__exports.provenQuotient = provenQuotient;
-__exports.provenSum = provenSum;
 };
 
 __modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
@@ -33318,6 +33369,409 @@ function createMos(type, { pmos = false, bulk = false } = {}) {
 }
 
 __exports.createMos = createMos;
+};
+
+__modules["src/core/analysis/context.js"] = function (__require, __exports) {
+const { MOS_TYPES } = __require("src/core/analysis/shared.js");
+const { canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js");
+
+
+
+const AC_GROUND = '@AC_GROUND';
+const REFERENCE_NAMES = new Set(['GND', 'VSS', 'VDD', 'VCM']);
+
+function diagnostic(code, message, details = {}) {
+  return { code, message, ...details };
+}
+
+function componentTerminalNet(circuit, component, term) {
+  return circuit.netOfTerminal({ comp: component.refdes, term });
+}
+
+function asValues(value) {
+  if (value == null || value === '') return [];
+  if (value instanceof Set || Array.isArray(value)) return [...value];
+  return [value];
+}
+
+function netByValue(circuit, value, role) {
+  if (value && typeof value === 'object' && value.comp && value.term) {
+    try {
+      const terminal = circuit.resolveTerm(value);
+      const net = circuit.netOfTerminal(terminal);
+      return net
+        ? { ok: true, net, value: `${value.comp}.${value.term}` }
+        : { ok: false, diagnostic: diagnostic('unconnected-port', `${role} terminal "${value.comp}.${value.term}" is not connected to a net`) };
+    } catch {
+      return { ok: false, diagnostic: diagnostic('unknown-terminal', `unknown ${role} terminal "${value.comp}.${value.term}"`) };
+    }
+  }
+  if (value && typeof value === 'object' && value.id) {
+    const net = circuit.nets.get(value.id);
+    return net
+      ? { ok: true, net, value: value.id }
+      : { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${value.id}"`) };
+  }
+
+  const raw = String(value ?? '').trim();
+  if (!raw) return { ok: false, diagnostic: diagnostic('missing-port', `${role} net is required`) };
+  const byId = circuit.nets.get(raw);
+  if (byId) return { ok: true, net: byId, value: raw };
+
+  if (raw.includes('.')) {
+    try {
+      const terminal = circuit.resolveTerm(raw);
+      const net = circuit.netOfTerminal(terminal);
+      return net
+        ? { ok: true, net, value: raw }
+        : { ok: false, diagnostic: diagnostic('unconnected-port', `${role} terminal "${raw}" is not connected to a net`) };
+    } catch {
+      return { ok: false, diagnostic: diagnostic('unknown-terminal', `unknown ${role} terminal "${raw}"`) };
+    }
+  }
+
+  const matches = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
+  // Several physical nets carrying one name are one node (a virtual
+  // connection), so the first of them answers for the whole group.
+  if (matches.length) return { ok: true, net: matches[0], value: raw };
+  return { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${raw}"`) };
+}
+
+function roleCandidates(circuit, role) {
+  const candidates = [];
+  const seen = new Set();
+  const add = (net) => {
+    if (net && !seen.has(net.id)) {
+      seen.add(net.id);
+      candidates.push(net);
+    }
+  };
+  for (const net of circuit.nets.values()) {
+    if (net.analysis?.role === role) add(net);
+  }
+  for (const component of circuit.components.values()) {
+    const typeMatches = role === 'input'
+      ? component.type === 'input'
+      : role === 'output' ? component.type === 'output' : false;
+    if (typeMatches || component.analysis?.role === role) {
+      add(componentTerminalNet(circuit, component, 'p'));
+    }
+  }
+  const namePattern = role === 'input'
+    ? /^(?:V_?IN|INPUT|IN)$/i
+    : /^(?:V_?OUT|OUTPUT|OUT)$/i;
+  if (candidates.length === 0) {
+    for (const net of circuit.nets.values()) {
+      if (namePattern.test(canonicalNetName(net.name))) add(net);
+    }
+  }
+  return candidates;
+}
+
+function resolveAnalysisPort(circuit, value, role) {
+  if (value != null && value !== '') return netByValue(circuit, value, role);
+  const all = roleCandidates(circuit, role);
+  // Candidates that share a name are one node, so they cannot be ambiguous.
+  const seenNames = new Set();
+  const candidates = all.filter((net) => {
+    const name = canonicalNetName(net.name);
+    if (!name || !seenNames.has(name)) {
+      if (name) seenNames.add(name);
+      return true;
+    }
+    return false;
+  });
+  if (candidates.length === 1) {
+    return { ok: true, net: candidates[0], value: candidates[0].id, inferred: true };
+  }
+  if (candidates.length > 1) {
+    return {
+      ok: false,
+      diagnostic: diagnostic('ambiguous-port', `${role} port is ambiguous`, {
+        candidates: candidates.map((net) => net.id),
+      }),
+    };
+  }
+  return { ok: false, diagnostic: diagnostic('missing-port', `${role} port is required`) };
+}
+
+function markerNet(circuit, component) {
+  const info = referenceMarkerInfo(component.type);
+  return info ? componentTerminalNet(circuit, component, info.terminal) : null;
+}
+
+function isGlobalReferenceNet(component, net) {
+  if (!net) return false;
+  const info = referenceMarkerInfo(component.type);
+  return !referenceMarkerIsLocal(component)
+    || isReferenceMarkerGlobalName(info, net.name)
+    || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase());
+}
+
+function collectAcGrounds(circuit, values = []) {
+  const ids = new Set();
+  const diagnostics = [];
+  for (const component of circuit.components.values()) {
+    if (!isReferenceMarker(component)) continue;
+    const net = markerNet(circuit, component);
+    if (isGlobalReferenceNet(component, net)) ids.add(net.id);
+  }
+  for (const net of circuit.nets.values()) {
+    if (net.analysis?.acGround === true || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase())) {
+      ids.add(net.id);
+    }
+  }
+  for (const value of asValues(values)) {
+    const result = netByValue(circuit, value, 'AC-ground');
+    if (result.ok) ids.add(result.net.id);
+    else diagnostics.push(result.diagnostic);
+  }
+  return { ids, diagnostics };
+}
+
+/** Physical nets that share a canonical name are one electrical node: a
+ * deliberate virtual connection drawn without a wire (a repeated net label, or
+ * a port and a label carrying the same name). Their drawable geometry stays
+ * separate, so the solve maps every member onto the first one it meets. The
+ * returned map holds only the members that are not the representative. */
+function virtualNetAliases(circuit) {
+  const byName = new Map();
+  for (const net of circuit.nets.values()) {
+    const name = canonicalNetName(net.name);
+    if (!name) continue;
+    // Case-sensitive, like `Circuit#logicallyConnected` and the net list's
+    // own grouping: one spelling is one name.
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(net.id);
+  }
+  const aliases = new Map();
+  for (const ids of byName.values()) {
+    for (const id of ids.slice(1)) aliases.set(id, ids[0]);
+  }
+  return aliases;
+}
+
+/** A virtual connection to an AC-reference rail grounds every member of the
+ * group, so the alias never points at a node the solve has removed. */
+function expandGroundsThroughAliases(acGroundIds, aliases) {
+  for (const [member, representative] of aliases) {
+    if (acGroundIds.has(member) || acGroundIds.has(representative)) {
+      acGroundIds.add(member);
+      acGroundIds.add(representative);
+    }
+  }
+  return acGroundIds;
+}
+
+/**
+ * Take the chosen ports out of the AC-reference set, name group and all.
+ * Returns whether anything was released, so an analysis that just removed its
+ * own last reference can say so instead of solving a floating model.
+ */
+function releasePortsFromReference(acGroundIds, results, aliases) {
+  const representative = (id) => aliases?.get(id) ?? id;
+  const ports = new Set(results.filter((result) => result?.ok).map((result) => representative(result.net.id)));
+  if (!ports.size || !acGroundIds.size) return false;
+  let released = false;
+  for (const id of [...acGroundIds]) {
+    if (!ports.has(representative(id))) continue;
+    acGroundIds.delete(id);
+    released = true;
+  }
+  return released;
+}
+
+function nodeForNet(netId, acGroundIds, aliases = null) {
+  if (!netId) return netId;
+  if (acGroundIds.has(netId)) return AC_GROUND;
+  return aliases?.get(netId) ?? netId;
+}
+
+function resolveMosBulk(circuit, component, acGroundIds = new Set(), aliases = null) {
+  if (!component || !MOS_TYPES.has(component.type)) {
+    return { ok: false, diagnostic: diagnostic('not-mos', 'bulk resolution requires a MOS component') };
+  }
+  const hasExplicitBulk = component.def?.terminals?.some(({ name }) => name === 'b');
+  if (hasExplicitBulk) {
+    const net = componentTerminalNet(circuit, component, 'b');
+    if (!net) {
+      return {
+        ok: false,
+        diagnostic: diagnostic('unconnected-bulk', `${component.refdes} has an unconnected explicit bulk terminal`, {
+          component: component.refdes,
+        }),
+      };
+    }
+    return {
+      ok: true,
+      component: component.refdes,
+      kind: 'explicit',
+      reference: null,
+      netId: net.id,
+      node: nodeForNet(net.id, acGroundIds, aliases),
+    };
+  }
+  const reference = component.type.startsWith('pmos') ? 'VDD' : 'VSS';
+  return {
+    ok: true,
+    component: component.refdes,
+    kind: 'implicit',
+    reference,
+    netId: null,
+    node: AC_GROUND,
+  };
+}
+
+function normalizedPort(result, role, acGroundIds, aliases) {
+  return {
+    role,
+    value: result.value,
+    netId: result.net.id,
+    name: canonicalNetName(result.net.name) || result.net.id,
+    node: nodeForNet(result.net.id, acGroundIds, aliases),
+    inferred: result.inferred === true,
+  };
+}
+
+function optionValue(options, role) {
+  const ports = options.ports || {};
+  if (role === 'input') return options.input ?? options.inputName ?? options.inputNet ?? ports.input;
+  return options.output ?? options.outputName ?? options.outputNet ?? options.target ?? options.targetName ?? ports.output;
+}
+
+function normalizeDeviceRegions(options) {
+  const source = options.deviceRegions
+    ?? options.modelOverrides
+    ?? options.models
+    ?? options.devices;
+  if (!source) return new Map();
+  const entries = source instanceof Map
+    ? [...source.entries()]
+    : Array.isArray(source)
+      ? source.map((entry) => {
+        const match = String(entry).trim().match(/^([^:=\s]+)\s*[:=]\s*(.+)$/);
+        return match ? [match[1], match[2]] : [];
+      }).filter(([refdes]) => refdes)
+      : typeof source === 'string'
+        ? source.split(',').map((entry) => {
+          const match = entry.trim().match(/^([^:=\s]+)\s*[:=]\s*(.+)$/);
+          return match ? [match[1], match[2]] : [];
+        }).filter(([refdes]) => refdes)
+        : Object.entries(source);
+  const regions = new Map();
+  for (const [refdes, value] of entries) {
+    if (value === undefined || value === null || value === '') continue;
+    regions.set(String(refdes), value && typeof value === 'object' ? { ...value } : { model: value });
+  }
+  return regions;
+}
+
+function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}) {
+  const normalizedOptions = typeof options === 'string'
+    ? { ...legacyOptions, output: options }
+    : options || {};
+  const diagnostics = [];
+  const inputResult = resolveAnalysisPort(circuit, optionValue(normalizedOptions, 'input'), 'input');
+  const outputResult = resolveAnalysisPort(circuit, optionValue(normalizedOptions, 'output'), 'output');
+  if (!inputResult.ok) diagnostics.push(inputResult.diagnostic);
+  if (!outputResult.ok) diagnostics.push(outputResult.diagnostic);
+
+  const groundValues = [
+    ...asValues(normalizedOptions.acGrounds ?? normalizedOptions.acGround),
+    ...asValues(normalizedOptions.reference),
+  ];
+  const groundResult = collectAcGrounds(circuit, groundValues);
+  diagnostics.push(...groundResult.diagnostics);
+  const virtualAliases = virtualNetAliases(circuit);
+  expandGroundsThroughAliases(groundResult.ids, virtualAliases);
+
+  // A node chosen as a port is driven or observed there, so it is not the AC
+  // reference any more. That is what lets a supply rail answer as an input --
+  // a supply-rejection query is an ordinary transfer between two nodes, with
+  // no rule of its own -- and the rail's whole name group leaves with it.
+  const released = releasePortsFromReference(groundResult.ids, [inputResult, outputResult], virtualAliases);
+  if (released && !groundResult.ids.size) {
+    diagnostics.push(diagnostic('missing-reference', 'the selected ports are the only AC reference: mark another net as AC ground'));
+  }
+
+  const input = inputResult.ok ? normalizedPort(inputResult, 'input', groundResult.ids, virtualAliases) : null;
+  const output = outputResult.ok ? normalizedPort(outputResult, 'output', groundResult.ids, virtualAliases) : null;
+  if (input && output && input.node === output.node) {
+    diagnostics.push(diagnostic('same-port', 'input and output must be different nodes', {
+      input: input.netId,
+      output: output.netId,
+    }));
+  }
+
+  const bulks = new Map();
+  for (const component of circuit.components.values()) {
+    if (!MOS_TYPES.has(component.type)) continue;
+    const result = resolveMosBulk(circuit, component, groundResult.ids, virtualAliases);
+    if (result.ok) bulks.set(component.refdes, result);
+    else diagnostics.push(result.diagnostic);
+  }
+
+  const nodeAliases = new Map([
+    ...virtualAliases,
+    ...[...groundResult.ids].map((id) => [id, AC_GROUND]),
+  ]);
+  const terminalNodes = new Map();
+  for (const component of circuit.components.values()) {
+    for (const terminal of component.def?.terminals || []) {
+      const net = componentTerminalNet(circuit, component, terminal.name);
+      if (net) terminalNodes.set(`${component.refdes}.${terminal.name}`, nodeForNet(net.id, groundResult.ids, virtualAliases));
+    }
+  }
+  const referenceNodes = new Map([
+    ['GND', AC_GROUND],
+    ['VSS', AC_GROUND],
+    ['VDD', AC_GROUND],
+    ['VCM', AC_GROUND],
+  ]);
+  // An implicit bulk names its rail rather than a net. When that rail is the
+  // port under test it is a live node, and the bulks must follow it there.
+  for (const port of [input, output]) {
+    if (!port) continue;
+    const rail = canonicalNetName(port.name).replace(/[_^]\{([^}]*)\}/g, '$1').toUpperCase();
+    if (!referenceNodes.has(rail)) continue;
+    referenceNodes.set(rail, port.node);
+    if (rail === 'VSS') referenceNodes.set('GND', port.node);
+    if (rail === 'GND') referenceNodes.set('VSS', port.node);
+  }
+  const deviceRegions = normalizeDeviceRegions(normalizedOptions);
+  // Device capacitances are opt-in: off unless the request asks for them, and
+  // a device's own attribute can still opt in or out on its own.
+  const parasitics = normalizedOptions.parasitics === true
+    || normalizedOptions.deviceCapacitances === true
+    || normalizedOptions.includeParasitics === true;
+  const ok = diagnostics.length === 0;
+  return {
+    ok,
+    input,
+    output,
+    acGround: AC_GROUND,
+    acGroundIds: groundResult.ids,
+    referenceIds: groundResult.ids,
+    nodeAliases,
+    terminalNodes,
+    referenceNodes,
+    referenceNets: referenceNodes,
+    rails: referenceNodes,
+    deviceRegions,
+    parasitics,
+    acGroundNode: AC_GROUND,
+    bulks,
+    diagnostics: { errors: diagnostics, warnings: [] },
+    error: ok ? null : diagnostics.map(({ message }) => message).join('; '),
+  };
+}
+
+__exports.resolveAnalysisPort = resolveAnalysisPort;
+__exports.collectAcGrounds = collectAcGrounds;
+__exports.virtualNetAliases = virtualNetAliases;
+__exports.resolveMosBulk = resolveMosBulk;
+__exports.resolveAnalysisContext = resolveAnalysisContext;
+__exports.AC_GROUND = AC_GROUND;
 };
 
 __modules["src/core/analysis/devices.js"] = function (__require, __exports) {
@@ -33950,409 +34404,6 @@ function coupledSubgraph(primitives = [], roots = [], options = {}) {
 
 __exports.splitAtNode = splitAtNode;
 __exports.coupledSubgraph = coupledSubgraph;
-};
-
-__modules["src/core/analysis/context.js"] = function (__require, __exports) {
-const { MOS_TYPES } = __require("src/core/analysis/shared.js");
-const { canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js");
-
-
-
-const AC_GROUND = '@AC_GROUND';
-const REFERENCE_NAMES = new Set(['GND', 'VSS', 'VDD', 'VCM']);
-
-function diagnostic(code, message, details = {}) {
-  return { code, message, ...details };
-}
-
-function componentTerminalNet(circuit, component, term) {
-  return circuit.netOfTerminal({ comp: component.refdes, term });
-}
-
-function asValues(value) {
-  if (value == null || value === '') return [];
-  if (value instanceof Set || Array.isArray(value)) return [...value];
-  return [value];
-}
-
-function netByValue(circuit, value, role) {
-  if (value && typeof value === 'object' && value.comp && value.term) {
-    try {
-      const terminal = circuit.resolveTerm(value);
-      const net = circuit.netOfTerminal(terminal);
-      return net
-        ? { ok: true, net, value: `${value.comp}.${value.term}` }
-        : { ok: false, diagnostic: diagnostic('unconnected-port', `${role} terminal "${value.comp}.${value.term}" is not connected to a net`) };
-    } catch {
-      return { ok: false, diagnostic: diagnostic('unknown-terminal', `unknown ${role} terminal "${value.comp}.${value.term}"`) };
-    }
-  }
-  if (value && typeof value === 'object' && value.id) {
-    const net = circuit.nets.get(value.id);
-    return net
-      ? { ok: true, net, value: value.id }
-      : { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${value.id}"`) };
-  }
-
-  const raw = String(value ?? '').trim();
-  if (!raw) return { ok: false, diagnostic: diagnostic('missing-port', `${role} net is required`) };
-  const byId = circuit.nets.get(raw);
-  if (byId) return { ok: true, net: byId, value: raw };
-
-  if (raw.includes('.')) {
-    try {
-      const terminal = circuit.resolveTerm(raw);
-      const net = circuit.netOfTerminal(terminal);
-      return net
-        ? { ok: true, net, value: raw }
-        : { ok: false, diagnostic: diagnostic('unconnected-port', `${role} terminal "${raw}" is not connected to a net`) };
-    } catch {
-      return { ok: false, diagnostic: diagnostic('unknown-terminal', `unknown ${role} terminal "${raw}"`) };
-    }
-  }
-
-  const matches = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
-  // Several physical nets carrying one name are one node (a virtual
-  // connection), so the first of them answers for the whole group.
-  if (matches.length) return { ok: true, net: matches[0], value: raw };
-  return { ok: false, diagnostic: diagnostic('unknown-net', `unknown ${role} net "${raw}"`) };
-}
-
-function roleCandidates(circuit, role) {
-  const candidates = [];
-  const seen = new Set();
-  const add = (net) => {
-    if (net && !seen.has(net.id)) {
-      seen.add(net.id);
-      candidates.push(net);
-    }
-  };
-  for (const net of circuit.nets.values()) {
-    if (net.analysis?.role === role) add(net);
-  }
-  for (const component of circuit.components.values()) {
-    const typeMatches = role === 'input'
-      ? component.type === 'input'
-      : role === 'output' ? component.type === 'output' : false;
-    if (typeMatches || component.analysis?.role === role) {
-      add(componentTerminalNet(circuit, component, 'p'));
-    }
-  }
-  const namePattern = role === 'input'
-    ? /^(?:V_?IN|INPUT|IN)$/i
-    : /^(?:V_?OUT|OUTPUT|OUT)$/i;
-  if (candidates.length === 0) {
-    for (const net of circuit.nets.values()) {
-      if (namePattern.test(canonicalNetName(net.name))) add(net);
-    }
-  }
-  return candidates;
-}
-
-function resolveAnalysisPort(circuit, value, role) {
-  if (value != null && value !== '') return netByValue(circuit, value, role);
-  const all = roleCandidates(circuit, role);
-  // Candidates that share a name are one node, so they cannot be ambiguous.
-  const seenNames = new Set();
-  const candidates = all.filter((net) => {
-    const name = canonicalNetName(net.name);
-    if (!name || !seenNames.has(name)) {
-      if (name) seenNames.add(name);
-      return true;
-    }
-    return false;
-  });
-  if (candidates.length === 1) {
-    return { ok: true, net: candidates[0], value: candidates[0].id, inferred: true };
-  }
-  if (candidates.length > 1) {
-    return {
-      ok: false,
-      diagnostic: diagnostic('ambiguous-port', `${role} port is ambiguous`, {
-        candidates: candidates.map((net) => net.id),
-      }),
-    };
-  }
-  return { ok: false, diagnostic: diagnostic('missing-port', `${role} port is required`) };
-}
-
-function markerNet(circuit, component) {
-  const info = referenceMarkerInfo(component.type);
-  return info ? componentTerminalNet(circuit, component, info.terminal) : null;
-}
-
-function isGlobalReferenceNet(component, net) {
-  if (!net) return false;
-  const info = referenceMarkerInfo(component.type);
-  return !referenceMarkerIsLocal(component)
-    || isReferenceMarkerGlobalName(info, net.name)
-    || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase());
-}
-
-function collectAcGrounds(circuit, values = []) {
-  const ids = new Set();
-  const diagnostics = [];
-  for (const component of circuit.components.values()) {
-    if (!isReferenceMarker(component)) continue;
-    const net = markerNet(circuit, component);
-    if (isGlobalReferenceNet(component, net)) ids.add(net.id);
-  }
-  for (const net of circuit.nets.values()) {
-    if (net.analysis?.acGround === true || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase())) {
-      ids.add(net.id);
-    }
-  }
-  for (const value of asValues(values)) {
-    const result = netByValue(circuit, value, 'AC-ground');
-    if (result.ok) ids.add(result.net.id);
-    else diagnostics.push(result.diagnostic);
-  }
-  return { ids, diagnostics };
-}
-
-/** Physical nets that share a canonical name are one electrical node: a
- * deliberate virtual connection drawn without a wire (a repeated net label, or
- * a port and a label carrying the same name). Their drawable geometry stays
- * separate, so the solve maps every member onto the first one it meets. The
- * returned map holds only the members that are not the representative. */
-function virtualNetAliases(circuit) {
-  const byName = new Map();
-  for (const net of circuit.nets.values()) {
-    const name = canonicalNetName(net.name);
-    if (!name) continue;
-    // Case-sensitive, like `Circuit#logicallyConnected` and the net list's
-    // own grouping: one spelling is one name.
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push(net.id);
-  }
-  const aliases = new Map();
-  for (const ids of byName.values()) {
-    for (const id of ids.slice(1)) aliases.set(id, ids[0]);
-  }
-  return aliases;
-}
-
-/** A virtual connection to an AC-reference rail grounds every member of the
- * group, so the alias never points at a node the solve has removed. */
-function expandGroundsThroughAliases(acGroundIds, aliases) {
-  for (const [member, representative] of aliases) {
-    if (acGroundIds.has(member) || acGroundIds.has(representative)) {
-      acGroundIds.add(member);
-      acGroundIds.add(representative);
-    }
-  }
-  return acGroundIds;
-}
-
-/**
- * Take the chosen ports out of the AC-reference set, name group and all.
- * Returns whether anything was released, so an analysis that just removed its
- * own last reference can say so instead of solving a floating model.
- */
-function releasePortsFromReference(acGroundIds, results, aliases) {
-  const representative = (id) => aliases?.get(id) ?? id;
-  const ports = new Set(results.filter((result) => result?.ok).map((result) => representative(result.net.id)));
-  if (!ports.size || !acGroundIds.size) return false;
-  let released = false;
-  for (const id of [...acGroundIds]) {
-    if (!ports.has(representative(id))) continue;
-    acGroundIds.delete(id);
-    released = true;
-  }
-  return released;
-}
-
-function nodeForNet(netId, acGroundIds, aliases = null) {
-  if (!netId) return netId;
-  if (acGroundIds.has(netId)) return AC_GROUND;
-  return aliases?.get(netId) ?? netId;
-}
-
-function resolveMosBulk(circuit, component, acGroundIds = new Set(), aliases = null) {
-  if (!component || !MOS_TYPES.has(component.type)) {
-    return { ok: false, diagnostic: diagnostic('not-mos', 'bulk resolution requires a MOS component') };
-  }
-  const hasExplicitBulk = component.def?.terminals?.some(({ name }) => name === 'b');
-  if (hasExplicitBulk) {
-    const net = componentTerminalNet(circuit, component, 'b');
-    if (!net) {
-      return {
-        ok: false,
-        diagnostic: diagnostic('unconnected-bulk', `${component.refdes} has an unconnected explicit bulk terminal`, {
-          component: component.refdes,
-        }),
-      };
-    }
-    return {
-      ok: true,
-      component: component.refdes,
-      kind: 'explicit',
-      reference: null,
-      netId: net.id,
-      node: nodeForNet(net.id, acGroundIds, aliases),
-    };
-  }
-  const reference = component.type.startsWith('pmos') ? 'VDD' : 'VSS';
-  return {
-    ok: true,
-    component: component.refdes,
-    kind: 'implicit',
-    reference,
-    netId: null,
-    node: AC_GROUND,
-  };
-}
-
-function normalizedPort(result, role, acGroundIds, aliases) {
-  return {
-    role,
-    value: result.value,
-    netId: result.net.id,
-    name: canonicalNetName(result.net.name) || result.net.id,
-    node: nodeForNet(result.net.id, acGroundIds, aliases),
-    inferred: result.inferred === true,
-  };
-}
-
-function optionValue(options, role) {
-  const ports = options.ports || {};
-  if (role === 'input') return options.input ?? options.inputName ?? options.inputNet ?? ports.input;
-  return options.output ?? options.outputName ?? options.outputNet ?? options.target ?? options.targetName ?? ports.output;
-}
-
-function normalizeDeviceRegions(options) {
-  const source = options.deviceRegions
-    ?? options.modelOverrides
-    ?? options.models
-    ?? options.devices;
-  if (!source) return new Map();
-  const entries = source instanceof Map
-    ? [...source.entries()]
-    : Array.isArray(source)
-      ? source.map((entry) => {
-        const match = String(entry).trim().match(/^([^:=\s]+)\s*[:=]\s*(.+)$/);
-        return match ? [match[1], match[2]] : [];
-      }).filter(([refdes]) => refdes)
-      : typeof source === 'string'
-        ? source.split(',').map((entry) => {
-          const match = entry.trim().match(/^([^:=\s]+)\s*[:=]\s*(.+)$/);
-          return match ? [match[1], match[2]] : [];
-        }).filter(([refdes]) => refdes)
-        : Object.entries(source);
-  const regions = new Map();
-  for (const [refdes, value] of entries) {
-    if (value === undefined || value === null || value === '') continue;
-    regions.set(String(refdes), value && typeof value === 'object' ? { ...value } : { model: value });
-  }
-  return regions;
-}
-
-function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}) {
-  const normalizedOptions = typeof options === 'string'
-    ? { ...legacyOptions, output: options }
-    : options || {};
-  const diagnostics = [];
-  const inputResult = resolveAnalysisPort(circuit, optionValue(normalizedOptions, 'input'), 'input');
-  const outputResult = resolveAnalysisPort(circuit, optionValue(normalizedOptions, 'output'), 'output');
-  if (!inputResult.ok) diagnostics.push(inputResult.diagnostic);
-  if (!outputResult.ok) diagnostics.push(outputResult.diagnostic);
-
-  const groundValues = [
-    ...asValues(normalizedOptions.acGrounds ?? normalizedOptions.acGround),
-    ...asValues(normalizedOptions.reference),
-  ];
-  const groundResult = collectAcGrounds(circuit, groundValues);
-  diagnostics.push(...groundResult.diagnostics);
-  const virtualAliases = virtualNetAliases(circuit);
-  expandGroundsThroughAliases(groundResult.ids, virtualAliases);
-
-  // A node chosen as a port is driven or observed there, so it is not the AC
-  // reference any more. That is what lets a supply rail answer as an input --
-  // a supply-rejection query is an ordinary transfer between two nodes, with
-  // no rule of its own -- and the rail's whole name group leaves with it.
-  const released = releasePortsFromReference(groundResult.ids, [inputResult, outputResult], virtualAliases);
-  if (released && !groundResult.ids.size) {
-    diagnostics.push(diagnostic('missing-reference', 'the selected ports are the only AC reference: mark another net as AC ground'));
-  }
-
-  const input = inputResult.ok ? normalizedPort(inputResult, 'input', groundResult.ids, virtualAliases) : null;
-  const output = outputResult.ok ? normalizedPort(outputResult, 'output', groundResult.ids, virtualAliases) : null;
-  if (input && output && input.node === output.node) {
-    diagnostics.push(diagnostic('same-port', 'input and output must be different nodes', {
-      input: input.netId,
-      output: output.netId,
-    }));
-  }
-
-  const bulks = new Map();
-  for (const component of circuit.components.values()) {
-    if (!MOS_TYPES.has(component.type)) continue;
-    const result = resolveMosBulk(circuit, component, groundResult.ids, virtualAliases);
-    if (result.ok) bulks.set(component.refdes, result);
-    else diagnostics.push(result.diagnostic);
-  }
-
-  const nodeAliases = new Map([
-    ...virtualAliases,
-    ...[...groundResult.ids].map((id) => [id, AC_GROUND]),
-  ]);
-  const terminalNodes = new Map();
-  for (const component of circuit.components.values()) {
-    for (const terminal of component.def?.terminals || []) {
-      const net = componentTerminalNet(circuit, component, terminal.name);
-      if (net) terminalNodes.set(`${component.refdes}.${terminal.name}`, nodeForNet(net.id, groundResult.ids, virtualAliases));
-    }
-  }
-  const referenceNodes = new Map([
-    ['GND', AC_GROUND],
-    ['VSS', AC_GROUND],
-    ['VDD', AC_GROUND],
-    ['VCM', AC_GROUND],
-  ]);
-  // An implicit bulk names its rail rather than a net. When that rail is the
-  // port under test it is a live node, and the bulks must follow it there.
-  for (const port of [input, output]) {
-    if (!port) continue;
-    const rail = canonicalNetName(port.name).replace(/[_^]\{([^}]*)\}/g, '$1').toUpperCase();
-    if (!referenceNodes.has(rail)) continue;
-    referenceNodes.set(rail, port.node);
-    if (rail === 'VSS') referenceNodes.set('GND', port.node);
-    if (rail === 'GND') referenceNodes.set('VSS', port.node);
-  }
-  const deviceRegions = normalizeDeviceRegions(normalizedOptions);
-  // Device capacitances are opt-in: off unless the request asks for them, and
-  // a device's own attribute can still opt in or out on its own.
-  const parasitics = normalizedOptions.parasitics === true
-    || normalizedOptions.deviceCapacitances === true
-    || normalizedOptions.includeParasitics === true;
-  const ok = diagnostics.length === 0;
-  return {
-    ok,
-    input,
-    output,
-    acGround: AC_GROUND,
-    acGroundIds: groundResult.ids,
-    referenceIds: groundResult.ids,
-    nodeAliases,
-    terminalNodes,
-    referenceNodes,
-    referenceNets: referenceNodes,
-    rails: referenceNodes,
-    deviceRegions,
-    parasitics,
-    acGroundNode: AC_GROUND,
-    bulks,
-    diagnostics: { errors: diagnostics, warnings: [] },
-    error: ok ? null : diagnostics.map(({ message }) => message).join('; '),
-  };
-}
-
-__exports.resolveAnalysisPort = resolveAnalysisPort;
-__exports.collectAcGrounds = collectAcGrounds;
-__exports.virtualNetAliases = virtualNetAliases;
-__exports.resolveMosBulk = resolveMosBulk;
-__exports.resolveAnalysisContext = resolveAnalysisContext;
-__exports.AC_GROUND = AC_GROUND;
 };
 
 __modules["src/core/analysis/mna.js"] = function (__require, __exports) {

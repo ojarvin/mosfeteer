@@ -2466,8 +2466,41 @@ function restackSelected(direction) {
   render();
 }
 
-function refreshCopyGhostBase() {
+function mirroredCopyGhostOperation(operation) {
+  if (operation === 'rotate') return 'rotateCCW';
+  if (operation === 'rotateCCW') return 'rotate';
+  return operation;
+}
+
+/** Keep the secondary copy as the exact symmetric image of a transformed
+ * primary copy. Keyboard transforms do not pass through moveCopyGhost(), so
+ * the mirror must be transformed in the same event instead of waiting for a
+ * later pointer move to rebuild it. */
+function refreshCopyGhostMirror({ operation = null, pivot = null, translation = null } = {}) {
+  const ghost = drag?.ghost;
+  const mirror = ghost?.mirror;
+  if (!ghost || !mirror || !symmetry?.operation) return true;
+  if (translation) {
+    const dx = symmetry.operation === 'mirrorX' ? -translation.dx : translation.dx;
+    const dy = symmetry.operation === 'mirrorY' ? -translation.dy : translation.dy;
+    translateCopyGhost(mirror, dx, dy);
+  } else if (operation && pivot) {
+    const mirrorPivot = transformWorldPoints([pivot], symmetry.pin, symmetry.operation)[0];
+    restoreCopyGhostSelection(mirror);
+    const changed = transformMixedSelection(mirroredCopyGhostOperation(operation), {
+      recordHistory: false,
+      center: mirrorPivot,
+    });
+    restoreCopyGhostSelection(ghost);
+    if (!changed) return false;
+  }
+  mirror.baseGeometry = captureCopyGhostGeometry(mirror);
+  return true;
+}
+
+function refreshCopyGhostBase(transform = {}) {
   if (drag?.mode === 'copyghost' && drag.ghost) {
+    refreshCopyGhostMirror(transform);
     drag.ghost.baseSnapshot = snapshot();
     drag.ghost.baseGeometry = captureCopyGhostGeometry(drag.ghost);
     // The base snapshot now already contains the ghost at the current cursor.
@@ -2545,9 +2578,9 @@ function applySingletonWorldMirror(comp, axis, pivot = null) {
 }
 
 /**
- * Rotate a singleton component about its own origin, or about the copy point
- * while a copy ghost is active. Multi-component and mixed selections are
- * transformed as one world-space set by transformMixedSelection.
+ * Rotate a selection about the copy point or selected component origin.
+ * Copy ghosts and mixed selections share transformMixedSelection so their
+ * mirrored halves follow the same world-space operation.
  */
 function moveGhostActive() {
   return drag?.mode === 'move' && drag.modal;
@@ -2605,14 +2638,15 @@ function rotateSelectionAbout(deg) {
   const inCopyGhost = drag?.mode === 'copyghost';
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
-  if (multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
-    const turns = ((deg % 360) + 360) % 360;
+  const turns = ((deg % 360) + 360) % 360;
+  const operation = turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate';
+  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
     const changed = transformMixedSelection(
-      turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate',
+      operation,
       { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
     );
     if (changed && inCopyGhost) {
-      refreshCopyGhostBase();
+      refreshCopyGhostBase({ operation, pivot });
       cursor = pivot;
     } else if (changed && inMoveGhost) {
       cursor = pivot;
@@ -2628,11 +2662,7 @@ function rotateSelectionAbout(deg) {
     }
     rerouteTouchedNets(refs, null, true);
   };
-  if (inCopyGhost) {
-    apply();
-    refreshCopyGhostBase();
-    cursor = pivot;
-  } else if (inMoveGhost) {
+  if (inMoveGhost) {
     apply();
     cursor = pivot;
     recordMoveGhostMutation();
@@ -2642,21 +2672,22 @@ function rotateSelectionAbout(deg) {
 }
 
 /**
- * Mirror a singleton component about a world vertical (x) or horizontal (y)
- * axis through the origin. Multi-component and mixed selections are
- * transformed as one world-space set by transformMixedSelection.
+ * Mirror a selection about a world vertical (x) or horizontal (y) axis.
+ * Copy ghosts and mixed selections share transformMixedSelection so their
+ * mirrored halves follow the same world-space operation.
  */
 function mirrorSelectionAbout(axis) {
   const inCopyGhost = drag?.mode === 'copyghost';
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
-  if (multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+  const operation = axis === 'x' ? 'mirrorX' : 'mirrorY';
+  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
     const changed = transformMixedSelection(
-      axis === 'x' ? 'mirrorX' : 'mirrorY',
+      operation,
       { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
     );
     if (changed && inCopyGhost) {
-      refreshCopyGhostBase();
+      refreshCopyGhostBase({ operation, pivot });
       cursor = pivot;
     } else if (changed && inMoveGhost) {
       cursor = pivot;
@@ -2669,11 +2700,7 @@ function mirrorSelectionAbout(axis) {
     for (const c of selectedComps()) applySingletonWorldMirror(c, axis, pivot);
     rerouteTouchedNets(refs, null, true);
   };
-  if (inCopyGhost) {
-    apply();
-    refreshCopyGhostBase();
-    cursor = pivot;
-  } else if (inMoveGhost) {
+  if (inMoveGhost) {
     apply();
     cursor = pivot;
     recordMoveGhostMutation();
@@ -3354,15 +3381,25 @@ function symmetryTwin(base = pendingTransform()) {
 }
 
 /** Copy ghosts preserve the pointer as their drag anchor, but symmetry should
- *  read from the copied component's origin, just like insert mode. For a
+ *  read from the copied component set: a single device uses its origin, while
+ *  a multi-device copy uses the midpoint of its component origins. For a
  *  non-component selection there is no symbol origin, so keep the pointer
  *  anchor as the sensible fallback. */
 function copyGhostSymmetryPin() {
-  const ref = drag?.ghost?.refs?.[0];
-  const component = ref && circuit.components.get(ref);
-  return component
-    ? { x: component.transform.x, y: component.transform.y }
-    : { ...cursor };
+  const components = (drag?.ghost?.refs || [])
+    .map((ref) => circuit.components.get(ref))
+    .filter(Boolean);
+  if (components.length === 1) {
+    return { x: components[0].transform.x, y: components[0].transform.y };
+  }
+  if (components.length > 1) {
+    const x0 = Math.min(...components.map((component) => component.transform.x));
+    const x1 = Math.max(...components.map((component) => component.transform.x));
+    const y0 = Math.min(...components.map((component) => component.transform.y));
+    const y1 = Math.max(...components.map((component) => component.transform.y));
+    return { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
+  }
+  return { ...cursor };
 }
 
 /** Point the mirror at whichever way the cursor has travelled since Alt went
@@ -3378,7 +3415,11 @@ function copyGhostSymmetryPin() {
 function syncSymmetryOperation() {
   if (!symmetry || symmetry.settled) return;
   if (symmetry.waitingForMotion) return;
-  symmetry.operation = symmetryOperation(symmetry.pin, cursor, symmetry.operation);
+  // A copy can be armed from an arbitrary point in a multi-device selection.
+  // Choose the axis from the post-Alt drag direction, not from that click's
+  // offset to the selection centre or first component.
+  const directionPin = symmetry.armedCursor || symmetry.pin;
+  symmetry.operation = symmetryOperation(directionPin, cursor, symmetry.operation);
   // A copy ghost is already committed, so the first move off the axis says
   // where the mirror goes; a later turn must not swing it.
   if (symmetry.operation && drag?.mode === 'copyghost') symmetry.settled = true;
@@ -9598,11 +9639,12 @@ function onNormalKey(key, shiftKey = false) {
     if (comps.length || labs.length || hasWireSelection) {
       const dx = nudgeKey[0] * count * GRID;
       const dy = nudgeKey[1] * count * GRID;
-      transformMixedSelection('translate', { translation: { dx, dy } });
+      const changed = transformMixedSelection('translate', { translation: { dx, dy } });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
       if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       else if (a) cursor = { x: a.x, y: a.y };
+      if (changed && drag?.mode === 'copyghost') refreshCopyGhostBase({ translation: { dx, dy } });
       followCursor();
     } else {
       moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
@@ -9621,8 +9663,7 @@ function onNormalKey(key, shiftKey = false) {
       const total = ((90 * count) % 360 + 360) % 360;
       if (total) rotateSelectionAbout(total);
       const primary = selectedComp() || selectedComps()[0];
-      if (copyPivot) cursor = copyPivot;
-      else if (primary) cursor = { x: primary.transform.x, y: primary.transform.y };
+      if (drag?.mode !== 'copyghost' && primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       render();
     }
     return;
@@ -10058,12 +10099,12 @@ function moveCopyGhost(w) {
   markModelChanged();
 }
 
-/** Arm the mirrored half of a copy ghost: a second paste of the same
- *  clipboard, reflected about the axis as one mixed-selection transform, which
- *  is what flips the symbols as well as moving them. Keeping its own base
- *  geometry means every later pointer move is only a translation, since
- *  reflecting a translated set is the same as translating a reflected one by
- *  the reflected delta. */
+/** Arm the mirrored half of a copy ghost. Duplicate the primary ghost's
+ *  current state first, so an explicit rotate/mirror performed before Alt is
+ *  preserved, then reflect that duplicate about the drag-selected axis.
+ *  Keeping its own base geometry means every later pointer move is only a
+ *  translation, since reflecting a translated set is the same as translating
+ *  the reflected one by the reflected delta. */
 function armCopyGhostMirror() {
   const ghost = drag?.ghost;
   if (!ghost || !symmetry?.operation || ghost.mirror || !clipboard) return false;
@@ -10072,12 +10113,23 @@ function armCopyGhostMirror() {
   const existingComps = new Set(circuit.components.keys());
   const existingLabels = new Set(circuit.labels.keys());
   const savedCursor = { ...cursor };
-  // Lay the second copy over the primary's own base placement, then reflect:
-  // one transform both carries it to the far side and mirrors every symbol.
-  // Basing it on the base rather than the current position is what lets every
-  // later pointer move be a plain reflected translation.
-  cursor = { ...(ghost.startWorld || cursor) };
-  pasteClipboard({ recordHistory: false, connect: false });
+  const savedClipboard = clipboard;
+  // Re-copy the live primary ghost instead of using the original clipboard.
+  // This carries its current component transforms, labels, and internal nets
+  // into the new half before the symmetry transform is applied.
+  restoreCopyGhostSelection(ghost);
+  if (!copySelection()) {
+    clipboard = savedClipboard;
+    cursor = savedCursor;
+    return false;
+  }
+  cursor = { ...clipboard.anchor };
+  try {
+    pasteClipboard({ recordHistory: false, connect: false });
+  } finally {
+    clipboard = savedClipboard;
+    cursor = savedCursor;
+  }
   const mirror = {
     refs: [...circuit.components.keys()].filter((ref) => !existingComps.has(ref)),
     labels: [...circuit.labels.keys()].filter((id) => !existingLabels.has(id)),
@@ -10090,7 +10142,6 @@ function armCopyGhostMirror() {
     cursor = savedCursor;
     return false;
   }
-  if (ghost.anchorShift) translateCopyGhost(mirror, ghost.anchorShift.x, ghost.anchorShift.y);
   restoreCopyGhostSelection(mirror);
   const moved = transformMixedSelection(symmetry.operation, { recordHistory: false, center: symmetry.pin });
   cursor = savedCursor;
