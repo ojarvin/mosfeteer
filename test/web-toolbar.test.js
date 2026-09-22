@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INSERT_RECENT_LIMIT, componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, minimalRevealScroll, placementSearchScore, withRecentType, PLACEMENT_ALIASES, PLACEMENT_LABELS } from '../src/web/toolbar.js';
+import { INSERT_RECENT_LIMIT, componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, placementSearchScore, withRecentType, PLACEMENT_ALIASES, PLACEMENT_LABELS } from '../src/web/toolbar.js';
 
 test('component palette omits generated solder dots but keeps real components', () => {
   const items = componentPaletteItems([
@@ -144,4 +144,23 @@ test('mode toolbar reveal scrolls only the hidden distance and clamps at the rai
   assert.equal(minimalRevealScroll(0, 100, 120, 140, 30, 200), 70, 'below-view targets move by their overflow');
   assert.equal(minimalRevealScroll(0, 100, -40, -20, 30, 200), 0, 'above-view targets move by their overflow');
   assert.equal(minimalRevealScroll(0, 100, 320, 340, 30, 200), 200, 'the rail does not scroll beyond its end');
+});
+
+test('Ctrl/Cmd+Shift+arrows align the selection; a repeat centres that axis', () => {
+  assert.deepEqual(layoutAlignKey({ key: 'ArrowLeft', shiftKey: true, ctrlKey: true }), { align: 'left', repeat: 'center-x' });
+  assert.deepEqual(layoutAlignKey({ key: 'ArrowRight', shiftKey: true, metaKey: true }), { align: 'right', repeat: 'center-x' });
+  assert.deepEqual(layoutAlignKey({ key: 'ArrowUp', shiftKey: true, ctrlKey: true }), { align: 'top', repeat: 'center-y' });
+  assert.deepEqual(layoutAlignKey({ key: 'ArrowDown', shiftKey: true, ctrlKey: true }), { align: 'bottom', repeat: 'center-y' });
+  for (const state of [
+    // Shift alone keeps text alignment and layering.
+    { key: 'ArrowLeft', shiftKey: true },
+    { key: 'ArrowUp', shiftKey: true },
+    { key: 'ArrowLeft', ctrlKey: true },
+    { key: 'ArrowLeft', shiftKey: true, ctrlKey: true, altKey: true },
+    { key: 'Home', shiftKey: true, ctrlKey: true },
+    { key: 'ArrowLeft', shiftKey: true, ctrlKey: true, mode: 'insert' },
+    { key: 'ArrowLeft', shiftKey: true, ctrlKey: true, wire: true },
+    { key: 'ArrowLeft', shiftKey: true, ctrlKey: true, drag: true },
+    { key: 'ArrowLeft', shiftKey: true, ctrlKey: true, textEntry: true },
+  ]) assert.equal(layoutAlignKey(state), null);
 });

@@ -179,6 +179,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Delete', 'persistent delete; click objects while armed'],
     ['dd', 'delete the selected object set'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
+    ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
     ['t', 'edit the primary selected label (no-op otherwise)'],
     ['Ctrl/Cmd+i', 'toggle italic on selected labels'],
     ['Ctrl/Cmd+b', 'toggle bold on selected labels'],
@@ -295,4 +296,24 @@ export function layerActionForKey({
   if (key === 'ArrowUp') return 'bring-front';
   if (key === 'ArrowDown') return 'send-back';
   return null;
+}
+
+const LAYOUT_ALIGN_KEYS = {
+  ArrowLeft: { align: 'left', repeat: 'center-x' },
+  ArrowRight: { align: 'right', repeat: 'center-x' },
+  ArrowUp: { align: 'top', repeat: 'center-y' },
+  ArrowDown: { align: 'bottom', repeat: 'center-y' },
+};
+
+/** Ctrl/Cmd+Shift+arrow aligns the selected set's edges, like the Align
+ * buttons. Like Shift+Left/Right for text, repeating the key on an already
+ * aligned set centres that axis (`repeat`). Idle normal editor only. */
+export function layoutAlignKey({
+  key, shiftKey = false, ctrlKey = false, metaKey = false, altKey = false,
+  mode = 'normal', wire = false, directWire = false, visual = false, drag = false,
+  moveMode = null, copyMode = false, deleteMode = false, labelMode = null, textEntry = false,
+} = {}) {
+  if (textEntry || !shiftKey || !(ctrlKey || metaKey) || altKey || mode !== 'normal'
+      || wire || directWire || visual || drag || moveMode || copyMode || deleteMode || labelMode) return null;
+  return LAYOUT_ALIGN_KEYS[key] || null;
 }

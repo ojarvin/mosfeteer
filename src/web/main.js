@@ -34,7 +34,7 @@ import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
-import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
+import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
 import { createPersistenceAdapter, defaultExportDirectory, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
@@ -2569,6 +2569,18 @@ function applyLayoutPlan(plan) {
     render();
     return false;
   }
+}
+
+/** Ctrl/Cmd+Shift+arrow: align the selected set's edges. Once the set is
+ * already aligned that way, the same key centres it on that axis instead. */
+function alignSelectionByKey({ align, repeat }) {
+  if (layoutSelection().count < 2) {
+    hintLine('select two or more objects to align them');
+    return;
+  }
+  let plan = layoutPlan(align);
+  if (plan.ok && plan.deltas.every(({ dx, dy }) => !dx && !dy)) plan = layoutPlan(repeat);
+  applyLayoutPlan(plan);
 }
 
 function previewLayoutPlan(plan) {
@@ -13599,6 +13611,19 @@ window.addEventListener('keydown', (ev) => {
     } else {
       selectedTransform('mirror-y');
     }
+    return;
+  }
+  // Ctrl/Cmd+Shift+arrows align the selected set, in the idle normal editor
+  // only. Checked before the Ctrl/Cmd shortcuts below, which claim every
+  // Ctrl/Cmd key.
+  const alignKey = layoutAlignKey({
+    key: ev.key, shiftKey: ev.shiftKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, altKey: ev.altKey,
+    mode, wire: !!wire, directWire: !!directWire, visual: !!visual, drag: !!drag,
+    moveMode, copyMode, deleteMode, labelMode,
+  });
+  if (alignKey) {
+    ev.preventDefault();
+    alignSelectionByKey(alignKey);
     return;
   }
   if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {
