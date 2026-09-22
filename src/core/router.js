@@ -750,17 +750,11 @@ export function segThroughInterior(a, b, r) {
 // collinear overlaps, most clearance (>= 1 grid cell from every body, barring
 // the pin legs), best straight-on pin access, fewest bends, shortest route,
 // optionally bends closest to the route midpoint, then fewest legal crossings
-// of other wires. If no enumerated candidate is hard-safe, A* is used as a
-// bounded fallback; failure to find a hard-safe route is reported as null
-// rather than returning an unsafe candidate.
+// of other wires. If no enumerated candidate is hard-safe the answer is null
+// rather than an unsafe candidate.
 // ---------------------------------------------------------------------------
 
 const STEP = 40;
-const wireOccupancyCache = new WeakMap();
-
-function strictlyInside(p, r) {
-  return p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
-}
 
 function bboxCrossings(pts, env) {
   let n = 0;
@@ -791,39 +785,6 @@ function overlapSpan(a, b, c, d) {
     return hi - lo > 0;
   }
   return false;
-}
-
-function wireOccupancy(env) {
-  let index = wireOccupancyCache.get(env);
-  if (index) return index;
-  index = new Map();
-  const key = (x, y) => `${Math.floor(x / STEP)},${Math.floor(y / STEP)}`;
-  let order = 0;
-  for (const wire of env.wires || []) for (let i = 1; i < wire.length; i++) {
-    const a = wire[i - 1], b = wire[i];
-    const record = { a, b, order: order++ };
-    for (let x = Math.floor(Math.min(a.x, b.x) / STEP); x <= Math.floor(Math.max(a.x, b.x) / STEP); x++) {
-      for (let y = Math.floor(Math.min(a.y, b.y) / STEP); y <= Math.floor(Math.max(a.y, b.y) / STEP); y++) {
-        const bucket = key(x * STEP, y * STEP);
-        if (!index.has(bucket)) index.set(bucket, []);
-        index.get(bucket).push(record);
-      }
-    }
-  }
-  wireOccupancyCache.set(env, index);
-  return index;
-}
-
-function occupiedWire(a, b, env) {
-  const index = wireOccupancy(env);
-  const key = (x, y) => `${Math.floor(x / STEP)},${Math.floor(y / STEP)}`;
-  const records = new Set();
-  for (let x = Math.floor(Math.min(a.x, b.x) / STEP); x <= Math.floor(Math.max(a.x, b.x) / STEP); x++) {
-    for (let y = Math.floor(Math.min(a.y, b.y) / STEP); y <= Math.floor(Math.max(a.y, b.y) / STEP); y++) {
-      for (const record of index.get(key(x * STEP, y * STEP)) || []) records.add(record);
-    }
-  }
-  return [...records].sort((a, b) => a.order - b.order).some(record => overlapSpan(a, b, record.a, record.b));
 }
 
 function wireConflicts(pts, env) {
@@ -1077,158 +1038,14 @@ function routeCandidates(from, to) {
   return out;
 }
 
-/** A* on the coarse grid avoiding strict rect interiors, turn-averse. */
-function astar(from, to, env) {
-  const sx = Math.round(from.x / STEP);
-  const sy = Math.round(from.y / STEP);
-  const tx = Math.round(to.x / STEP);
-  const ty = Math.round(to.y / STEP);
-  if (sx === tx && sy === ty) return [{ ...from }];
-  for (const margin of [20, 40]) {
-    const x0 = Math.min(sx, tx) - margin;
-    const x1 = Math.max(sx, tx) + margin;
-    const y0 = Math.min(sy, ty) - margin;
-    const y1 = Math.max(sy, ty) + margin;
-    const blocked = (cx, cy) => {
-      if ((cx === sx && cy === sy) || (cx === tx && cy === ty)) return false;
-      const w = { x: cx * STEP, y: cy * STEP };
-      for (const r of env.rects || []) {
-        const clear = { x: r.x - STEP, y: r.y - STEP, w: r.w + 2 * STEP, h: r.h + 2 * STEP };
-        const gateRow = (env.gatePassages || []).some((passage) => {
-          if (passage.rect.x !== r.x || passage.rect.y !== r.y ||
-              passage.rect.w !== r.w || passage.rect.h !== r.h) return false;
-          return passage.dir.x !== 0 ? w.y === passage.point.y : w.x === passage.point.x;
-        });
-        if (strictlyInside(w, clear) && !gateRow) return true;
-      }
-      return false;
-    };
-    const occupied = (a, b) => occupiedWire(a, b, env);
-    const LENGTH_WEIGHT = 1;
-    const BEND_WEIGHT = 20;
-    const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-    const g = new Map();
-    const back = new Map();
-    // Binary heap keeps A* from degenerating to O(n²) selection as the
-    // bounded search window grows around large obstacles.
-    const open = [];
-    let sequence = 0;
-    // The sequence tie-break preserves the old linear scan's insertion order
-    // for equal f/g scores, keeping route choice deterministic.
-    const less = (a, b) => a[0] !== b[0] ? a[0] < b[0] :
-      a[1] !== b[1] ? a[1] < b[1] : a[5] < b[5];
-    const pushOpen = (item) => {
-      let i = open.length;
-      open.push(item);
-      while (i > 0) {
-        const p = (i - 1) >> 1;
-        if (!less(item, open[p])) break;
-        open[i] = open[p]; i = p;
-      }
-      open[i] = item;
-    };
-    const popOpen = () => {
-      const first = open[0];
-      const last = open.pop();
-      if (open.length && last) {
-        let i = 0;
-        while (true) {
-          let child = i * 2 + 1;
-          if (child >= open.length) break;
-          if (child + 1 < open.length && less(open[child + 1], open[child])) child++;
-          if (!less(open[child], last)) break;
-          open[i] = open[child]; i = child;
-        }
-        open[i] = last;
-      }
-      return first;
-    };
-    const addOpen = (cost, cx0, cy0, d) => {
-      pushOpen([cost + (Math.abs(cx0 - tx) + Math.abs(cy0 - ty)) * LENGTH_WEIGHT, cost, cx0, cy0, d, sequence++]);
-    };
-    for (let d = 0; d < 4; d++) {
-      const nx = sx + D[d][0];
-      const ny = sy + D[d][1];
-      if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
-      if (!terminalEdgeValid({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
-      if (occupied({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
-      g.set(`${nx},${ny},${d}`, LENGTH_WEIGHT);
-      back.set(`${nx},${ny},${d}`, `${sx},${sy},-1`);
-      addOpen(LENGTH_WEIGHT, nx, ny, d);
-    }
-    let best = null;
-    while (open.length) {
-      const [, cost, cx0, cy0, d] = popOpen();
-      const key = `${cx0},${cy0},${d}`;
-      if (cost > (g.get(key) ?? Infinity)) continue;
-      if (cx0 === tx && cy0 === ty) {
-        best = { cx: cx0, cy: cy0 };
-        break;
-      }
-      for (let nd = 0; nd < 4; nd++) {
-        const nx = cx0 + D[nd][0];
-        const ny = cy0 + D[nd][1];
-        if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
-        if (!terminalEdgeValid({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
-        const nc = cost + LENGTH_WEIGHT + (nd === d ? 0 : BEND_WEIGHT);
-        const nk = `${nx},${ny},${nd}`;
-        if (nc < (g.get(nk) ?? Infinity)) {
-          g.set(nk, nc);
-          back.set(nk, key);
-          addOpen(nc, nx, ny, nd);
-        }
-      }
-    }
-    if (!best) continue;
-    const path = [{ x: best.cx * STEP, y: best.cy * STEP }];
-    let cur = `${best.cx},${best.cy},${0}`;
-    // recover the direction of the goal from an open node with that cell
-    let dirSeen = null;
-    for (const [k] of g) {
-      const m = k.split(',');
-      if (Number(m[0]) === best.cx && Number(m[1]) === best.cy) {
-        dirSeen = Number(m[2]);
-        break;
-      }
-    }
-    // re-derive direction: goal cell has a back entry per direction; use any whose g is the min
-    let minG = Infinity;
-    let dirKey = null;
-    for (let d = 0; d < 4; d++) {
-      const k = `${best.cx},${best.cy},${d}`;
-      const gg = g.get(k);
-      if (gg !== undefined && gg <= minG) {
-        minG = gg;
-        dirKey = k;
-      }
-    }
-    if (dirKey) cur = dirKey;
-    const ordered = [cur];
-    let node = back.get(cur);
-    const guard = new Set(ordered);
-    while (node && !guard.has(node)) {
-      ordered.unshift(node);
-      guard.add(node);
-      node = back.get(node);
-    }
-    for (const k of ordered) {
-      const [x, y] = k.split(',').map(Number);
-      path.unshift({ x: x * STEP, y: y * STEP });
-    }
-    return compressElbow(path);
-  }
-  return null;
-}
-
 /**
  * Pick the best orthogonal route from -> to given the routing environment.
  * When an endpoint is a component pin, candidates that first extend one grid
  * cell OUTWARD in the pin's direction (a clean outside bend, never drilling
  * the body) are generated alongside the plain straight/L/Z ones; the conform
  * score prefers them, except when a constrained shared MOS gate passage makes
- * the direct gate bus intentional. The A* fallback only kicks in when every
- * enumerated candidate is rejected by the hard-safety checks. It is accepted
- * only after the same checks pass.
+ * the direct gate bus intentional. When every candidate fails the hard-safety
+ * checks the answer is null — no safe route — and the caller decides what to do.
  */
 export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   const f = snapP(from);
@@ -1258,10 +1075,7 @@ export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: 
   if (f2 && !t2) for (const c of routeCandidates(f2, t)) cands.push(wrap(c));
   if (!f2 && t2) for (const c of routeCandidates(f, t2)) cands.push(wrap(c));
   const viable = cands.filter((candidate) => hardSafe(candidate, env));
-  if (!viable.length) {
-    const ast = astar(f, t, env);
-    return ast && hardSafe(ast, env) ? ast : null;
-  }
+  if (!viable.length) return null;
   const pool = viable;
   let best = pool[0];
   let bestScore = scoreCandidate(best, env);

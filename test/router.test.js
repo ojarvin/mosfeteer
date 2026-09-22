@@ -713,3 +713,30 @@ test('smartRoute still prefers the straight run for facing pins in open space', 
   const pts = smartRoute({ x: 160, y: 0 }, { x: 400, y: 0 }, { rects, pins, wires: [] });
   assert.deepEqual(pts, [{ x: 160, y: 0 }, { x: 400, y: 0 }]);
 });
+
+test('smartRoute reports no route instead of a path that misses the source', () => {
+  // The destination sits on a body edge, so no enumerated route is safe. The
+  // old A* fallback answered with a zero-length "route" at the destination,
+  // which callers took for a connection.
+  const env = { rects: [{ x: 120, y: 280, w: 200, h: 80 }], pins: new Map(), wires: [] };
+  assert.equal(smartRoute({ x: 200, y: 480 }, { x: 200, y: 360 }, env), null);
+});
+
+test('every smartRoute result runs orthogonally from source to destination', () => {
+  let seed = 11;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  for (let k = 0; k < 300; k++) {
+    const rects = Array.from({ length: ri(3, 14) }, () => ({ x: ri(-10, 10) * 40, y: ri(-10, 10) * 40, w: ri(1, 5) * 40, h: ri(1, 5) * 40 }));
+    const wires = Array.from({ length: ri(0, 6) }, () => { const y = ri(-12, 12) * 40; return [{ x: ri(-12, 0) * 40, y }, { x: ri(0, 12) * 40, y }]; });
+    const from = { x: ri(-14, 14) * 40, y: ri(-14, 14) * 40 };
+    const to = { x: ri(-14, 14) * 40, y: ri(-14, 14) * 40 };
+    const route = smartRoute(from, to, { rects, pins: new Map(), wires });
+    if (!route) continue;
+    assert.deepEqual(route[0], from);
+    assert.deepEqual(route.at(-1), to);
+    for (let i = 1; i < route.length; i++) {
+      assert.ok(route[i].x === route[i - 1].x || route[i].y === route[i - 1].y, 'orthogonal leg');
+    }
+  }
+});

@@ -36,7 +36,7 @@ src/
 │   ├── model.js        Circuit, Component, Net, LabelInstance. Pure data + ops.
 │   ├── commands.js     Command language (runCommand). One entry point for
 │   │                   the editor, the CLI, and any future API.
-│   ├── router.js       smartRoute + astar fallback; pin escapes; clearance.
+│   ├── router.js       smartRoute candidates; pin escapes; clearance.
 │   ├── wiring.js       Wire geometry, branch joining, normalizePath.
 │   ├── wireedit.js     Wire drag/edit primitives.
 │   ├── render.js       SVG renderer (svgString, editorOverlay).
