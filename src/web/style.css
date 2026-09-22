@@ -216,17 +216,19 @@ button:focus-visible {
   flex: 1 1 0;
 }
 
-/* Keep one row as long as possible: secondary file actions drop their text first. */
-@media (max-width: 1180px) and (min-width: 761px) {
-  #btn-new-document,
-  #btn-check,
-  #btn-export {
-    width: 30px;
-    padding: 0;
-    justify-content: center;
-    gap: 0;
-    font-size: 0;
-  }
+/* The toolbar is always one row. As its space runs out, main.js adds stages
+   to data-compact (toolbar-fit.js): file actions drop their text one by one,
+   then Analyze, then New, Export, and the view toggles fold into the More menu
+   (as proxies), and last Save becomes an icon. */
+.toolbar[data-compact~="export"] #btn-export,
+.toolbar[data-compact~="new"] #btn-new-document,
+.toolbar[data-compact~="analyze"] #btn-analysis,
+.toolbar[data-compact~="save"] #btn-save {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+  font-size: 0;
 }
 
 .toolbar button,
@@ -485,22 +487,63 @@ button:focus-visible {
   }
 }
 
-@media (min-width: 761px) {
-  .toolbar {
-    flex-wrap: nowrap;
-  }
+.toolbar {
+  flex-wrap: nowrap;
+}
 
-  .toolbar > :not(.document-cluster, .toolbar-spacer) {
-    flex-shrink: 0;
-  }
+.toolbar > :not(.document-cluster, .toolbar-spacer) {
+  flex-shrink: 0;
+}
 
-  .document-cluster {
-    flex: 0 1 auto;
-  }
+.document-cluster {
+  flex: 0 1 auto;
+}
 
-  .circuit-picker {
-    flex: 0 1 auto;
-  }
+.circuit-picker {
+  flex: 0 1 auto;
+}
+
+.toolbar-menu .fold-only {
+  display: none;
+}
+
+.toolbar-menu kbd {
+  margin-left: auto;
+}
+
+/* Checkable items with a key hint keep a fixed slot for the check mark, so
+   the hints line up whether or not an item is on. */
+.toolbar-menu [role="menuitemcheckbox"]:has(kbd)::after {
+  content: '✓';
+  width: 1em;
+  margin-left: 8px;
+  color: var(--accent);
+  visibility: hidden;
+}
+
+.toolbar-menu [role="menuitemcheckbox"]:has(kbd)[aria-checked="true"]::after {
+  visibility: visible;
+}
+
+.toolbar[data-compact~="fold"] {
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.toolbar[data-compact~="fold"] :is(.view-cluster, #btn-new-document, #btn-export) {
+  display: none;
+}
+
+.toolbar[data-compact~="fold"] .toolbar-menu button.fold-only {
+  display: inline-flex;
+}
+
+.toolbar[data-compact~="fold"] .toolbar-menu span.fold-only {
+  display: block;
+}
+
+.toolbar[data-compact~="save"] .circuit-picker #circuit-name {
+  min-width: 4rem;
 }
 
 .toolbar .circuit-picker #circuit-name:focus {
@@ -1925,6 +1968,15 @@ button:disabled {
   background: var(--danger);
 }
 
+/* Clear is an icon beside Re-check, so the heading keeps room for its count. */
+.check-clear-icon {
+  width: 22px;
+  padding: 0 !important;
+  justify-content: center;
+  gap: 0 !important;
+  font-size: 0 !important;
+}
+
 .check-clear {
   height: 22px;
   padding: 0 6px;
@@ -2259,7 +2311,7 @@ button.status-chip:hover {
   font-weight: 600;
 }
 
-.status-check:not(.issue) {
+.status-check:not(.issue, .pending) {
   color: var(--ok);
 }
 
@@ -2946,12 +2998,18 @@ button.off {
   min-height: 0;
 }
 
-@media (max-width: 760px) {
-  /* The horizontal strip hugs its tools and scrolls only when the canvas is
-     narrower than they are. */
+/* The tool rail follows the canvas, not the window: it stays vertical while
+   the canvas is tall enough for every tool and lies along the top edge when it
+   is not. The horizontal strip hugs its tools, leaves room for the panel
+   toggle, and scrolls only when the canvas is narrower than the tools. */
+.canvas-pane {
+  container: canvas-pane / size;
+}
+
+@container canvas-pane (max-height: 380px) {
   .mode-toolbar {
     width: max-content;
-    max-width: calc(100% - 16px);
+    max-width: calc(100% - 60px);
     max-height: none;
     flex-direction: row;
     flex-wrap: nowrap;
@@ -2976,20 +3034,9 @@ button.off {
     height: 20px;
     margin: auto 2px;
   }
+}
 
-  .toolbar-spacer {
-    display: none;
-  }
-
-  .document-cluster {
-    flex: 1 1 100%;
-  }
-
-  .circuit-picker > input {
-    flex: 1 1 0;
-    width: auto;
-  }
-
+@media (max-width: 760px) {
   .side-panel {
     width: min(var(--side-panel-width), 42vw);
   }
@@ -3000,30 +3047,77 @@ button.off {
   }
 }
 
+/* ----- side panel toggle and drawer ------------------------------ */
+
+.side-panel-toggle {
+  position: absolute;
+  z-index: 5;
+  top: 8px;
+  right: 8px;
+  width: 36px !important;
+  height: 36px;
+  border-radius: 9px;
+  color: var(--text-dim);
+}
+
+.side-panel-toggle:hover {
+  color: var(--text);
+}
+
+.side-panel-toggle .button-icon {
+  width: 19px;
+  height: 19px;
+}
+
+/* A wide window docks the panel; the toggle (or P) can collapse it. */
+@media (min-width: 601px) {
+  body.side-panel-collapsed .side-panel {
+    display: none;
+  }
+}
+
+/* A narrow window gives the canvas the whole area and slides the panel over
+   it from the right as a drawer. */
 @media (max-width: 600px) {
   .layout {
-    flex-direction: column;
+    overflow: clip;
   }
 
-  .canvas-pane {
-    min-height: 240px;
+  .side-panel {
+    position: absolute;
+    z-index: 15;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(20rem, 88%);
+    transform: translateX(100%);
+    visibility: hidden;
+    transition: transform 180ms ease, visibility 0s linear 180ms;
+  }
+
+  body.side-panel-open .side-panel {
+    transform: none;
+    visibility: visible;
+    box-shadow: -8px 0 24px rgba(20, 24, 34, 0.28);
+    transition: transform 180ms ease;
   }
 
   .side-panel-resizer {
     display: none;
   }
+}
 
-  .side-panel .panel-group,
-  .side-panel .panel-group:not(.collapsed) {
-    flex: none;
+/* A short window keeps only the mode, the message, the check result, and help
+   in the status bar, and a smaller log drawer. */
+@media (max-height: 500px) {
+  .status-cursor,
+  .status-selection,
+  .status-zoom {
+    display: none;
   }
 
-  .side-panel {
-    overflow-y: auto;
-    width: auto;
+  .log-drawer {
     max-height: 40vh;
-    border-left: 0;
-    border-top: 1px solid var(--border);
   }
 }
 
@@ -3344,6 +3438,10 @@ button.off {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .side-panel {
+    transition: none !important;
+  }
+
   .radial-hub,
   .radial-item,
   .quick-add,
@@ -3389,7 +3487,7 @@ button.off {
   stroke-width: 1.5;
 }
 
-.toolbar-menu [role="menuitemcheckbox"][aria-checked="true"]::after {
+.toolbar-menu [role="menuitemcheckbox"]:not(:has(kbd))[aria-checked="true"]::after {
   content: '✓';
   margin-left: auto;
   color: var(--accent);

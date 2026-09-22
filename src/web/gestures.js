@@ -187,6 +187,15 @@ export function spliceCandidate(terminalPoints, paths) {
   return null;
 }
 
+/** Radius (world units) of a pin handle. It scales with the drawing like the
+ * pin itself, but stays between `minPx` and `maxPx` on screen so it neither
+ * vanishes when zoomed out nor swells when zoomed in. `unitsPerPx` is world
+ * units per screen pixel. */
+export function pinHandleRadius(unitsPerPx, { world = 6, minPx = 2, maxPx = 4.5 } = {}) {
+  const scale = Number.isFinite(unitsPerPx) && unitsPerPx > 0 ? unitsPerPx : 1;
+  return Math.min(Math.max(world, minPx * scale), maxPx * scale);
+}
+
 /** What a wheel event means. `mouse` zooms on every wheel (the historical
  * behavior); `trackpad` pans two-finger scrolls and zooms on pinch, which
  * browsers report as a ctrl-modified wheel. */

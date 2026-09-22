@@ -225,7 +225,7 @@ Core keyboard vocabulary:
 | Context | Keys |
 | --- | --- |
 | normal | `i` insert, `w` wire, `m` move, `Shift+m` detached move, `c` copy, `r` rotate, `Shift+r`/`Ctrl+r` mirrors, `x` check, `u`/`U` undo/redo |
-| view | `F` fit, `#` grid, `C` crosshair, `G` guides, `D` theme, `?` help, `:` command line (log drawer) |
+| view | `F` fit, `#` grid, `C` crosshair, `G` guides, `D` theme, `P` side panel, `?` help, `:` command line (log drawer) |
 | editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or nearest-terminal cursor snapping while wiring |
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |

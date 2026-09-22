@@ -252,3 +252,50 @@ test('Ctrl+A selects nets that join touching pins without any wire', async () =>
   assert.equal(circuit.nets.size, 1);
   assert.deepEqual(selectAllNetIds(circuit), [...circuit.nets.keys()]);
 });
+
+test('small windows: rail follows canvas height, one-row toolbar, drawer panel', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  // The rail turns horizontal by canvas height, not window width.
+  assert.match(css, /container: canvas-pane \/ size;/);
+  assert.match(css, /@container canvas-pane \(max-height: 380px\) \{\s*\.mode-toolbar \{\s*width: max-content;/);
+  // The toolbar never wraps; narrow windows fold buttons into More as proxies.
+  assert.match(css, /^\.toolbar \{\s*flex-wrap: nowrap;/m);
+  for (const id of ['btn-new-document', 'btn-export', 'btn-grid', 'btn-guides', 'btn-crosshair', 'btn-theme']) {
+    assert.match(html, new RegExp(`class="fold-only"[^>]*data-proxy-for="${id}"`));
+  }
+  // The panel toggle works at every size: collapse when docked, drawer when narrow.
+  assert.match(html, /id="btn-side-panel"[^>]*aria-controls="side-panel"/);
+  assert.match(css, /body\.side-panel-collapsed \.side-panel \{\s*display: none;/);
+  assert.match(css, /body\.side-panel-open \.side-panel \{\s*transform: none;/);
+  assert.match(main, /else if \(key === 'P'\) toggleSidePanel\(\);/);
+  assert.match(main, /window\.matchMedia\('\(max-width: 600px\)'\)/);
+});
+
+test('Design check runs from its panel section and an always-visible status chip', async () => {
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const toolbar = html.slice(html.indexOf('<header class="toolbar">'), html.indexOf('</header>'));
+  assert.doesNotMatch(toolbar, /id="btn-check"/);
+  const section = html.slice(html.indexOf('id="check-summary"'), html.indexOf('id="check-summary-body"'));
+  assert.match(section, /id="btn-check"[^>]*data-action="check"/);
+  assert.match(section, /id="btn-clear-check"[^>]*hidden/);
+  assert.doesNotMatch(html, /id="status-check"[^>]*hidden/);
+  // The chip runs a check when there is no report and opens it otherwise.
+  assert.match(main, /statusCheckEl\?\.addEventListener\('click', \(\) => \{\s*if \(lastCheckReport\) focusCheckSummary\(\);\s*else runCheck\(\);/);
+  assert.match(main, /function focusCheckSummary\(\) \{\s*if \(!sidePanelVisible\(\)\) setSidePanelVisible\(true\);/);
+});
+
+test('pin handles scale with the drawing within a screen-size band', async () => {
+  const { pinHandleRadius } = await import('../src/web/gestures.js');
+  // Mid zoom: the world radius (6 units) wins.
+  assert.equal(pinHandleRadius(1.5), 6);
+  // Zoomed in (0.5 units/px): capped at 4.5 px on screen.
+  assert.equal(pinHandleRadius(0.5) / 0.5, 4.5);
+  // Zoomed far out (6 units/px): kept at 2 px so it stays visible.
+  assert.equal(pinHandleRadius(6) / 6, 2);
+  assert.equal(pinHandleRadius(0), 4.5);
+});

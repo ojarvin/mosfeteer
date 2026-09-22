@@ -40,7 +40,8 @@ import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
-import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
+import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
+import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 
@@ -164,6 +165,7 @@ const ICON_PATHS = {
   'folder-open': '<path d="M3 6.5h6l2 2h10v9H3z"/><path d="M3 6.5V5h7l2 2h9"/>',
   folder: '<path d="M3 6.5h6l2 2h10v10H3z" fill="currentColor" fill-opacity=".16"/><path d="M3 6.5V5h7l2 2"/>',
   workspace: '<path d="M4 5h16v14H4z" fill="currentColor" fill-opacity=".16"/><path d="M4 9h16"/>',
+  sidebar: '<path d="M4 5h16v14H4z"/><path d="M14 5h6v14h-6z" fill="currentColor" fill-opacity=".16"/>',
   'file-plus': '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M12 11v6M9 14h6"/>',
   trash: '<path d="M4 6.5h16M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5l1 13h9l1-13" fill="currentColor" fill-opacity=".16"/><path d="M10.5 10.5v6M13.5 10.5v6"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
@@ -1314,7 +1316,49 @@ async function revealCurrentDocument() {
   }
 }
 
+// ----- toolbar fitting -------------------------------------------------------------
+// The top toolbar drops button text in stages as its row runs out of space (see
+// toolbar-fit.js). Refit when the bar resizes or the document title changes.
+const toolbarEl = document.querySelector('.toolbar');
+let toolbarFitFrame = 0;
+let titleMeasureContext = null;
+
+function titleTextWidth() {
+  const style = getComputedStyle(circuitNameEl);
+  titleMeasureContext ||= document.createElement('canvas').getContext('2d');
+  titleMeasureContext.font = style.font;
+  const text = circuitNameEl.value || circuitNameEl.placeholder || '';
+  return titleMeasureContext.measureText(text).width
+    + parseFloat(style.paddingLeft || '0') + parseFloat(style.paddingRight || '0');
+}
+
+function fitToolbar() {
+  toolbarFitFrame = 0;
+  if (!toolbarEl) return;
+  const wanted = titleTextWidth();
+  const stage = chooseToolbarStage((count) => {
+    toolbarEl.dataset.compact = toolbarStageTokens(count);
+    return toolbarFits({
+      scrollWidth: toolbarEl.scrollWidth,
+      clientWidth: toolbarEl.clientWidth,
+      titleWidth: circuitNameEl.getBoundingClientRect().width,
+      titleTextWidth: wanted,
+    });
+  });
+  toolbarEl.dataset.compact = toolbarStageTokens(stage);
+}
+
+function scheduleToolbarFit() {
+  if (!toolbarFitFrame) toolbarFitFrame = requestAnimationFrame(fitToolbar);
+}
+
+if (toolbarEl) {
+  new ResizeObserver(scheduleToolbarFit).observe(toolbarEl);
+  document.fonts?.ready?.then(scheduleToolbarFit);
+}
+
 function renderSaveState() {
+  scheduleToolbarFit();
   const dirty = hasUnsavedChanges();
   const dirtyDot = document.getElementById('dirty-dot');
   if (dirtyDot) dirtyDot.hidden = !dirty;
@@ -4591,7 +4635,7 @@ function withGestureOverlay(svg, ghost) {
   const pinsComp = !drag && hoverPinsRef ? circuit.components.get(hoverPinsRef) : null;
   if (pinsComp) {
     const p = paneSize();
-    const r = 4.5 * (p ? view.w / p.w : 1);
+    const r = pinHandleRadius(p ? view.w / p.w : 1);
     for (const t of pinsComp.worldTerminals()) parts.push(`<circle class="gesture-pin" cx="${t.x}" cy="${t.y}" r="${r}" vector-effect="non-scaling-stroke"/>`);
   }
   // The canvas already shows the part under the pointer; only a panel hover
@@ -10371,6 +10415,7 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'C' || (key === 'c' && shiftKey)) setCrosshair(!crosshairVisible);
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
   else if (key === 'D') toggleTheme();
+  else if (key === 'P') toggleSidePanel();
   else if (key === '?') showHelp();
   else return false;
   return true;
@@ -12330,17 +12375,30 @@ function checkIssueLocation(issue) {
   return value.replace(/@\((-?[\d.]+),\s*(-?[\d.]+)\)/g, '  ($1, $2)');
 }
 
+/** Design check has one control in the status bar whether or not the side
+ * panel is showing: "Check" runs it; after a run the chip shows the result
+ * and opens the report. The panel's own button reads Re-check once a report
+ * exists, and Clear appears beside it. */
 function syncCheckChip(count) {
-  if (!statusCheckEl) return;
-  statusCheckEl.hidden = count === null || count === undefined;
-  statusCheckEl.textContent = count ? `⚠ ${count}` : '✓';
-  statusCheckEl.classList.toggle('issue', !!count);
-  statusCheckEl.title = count
-    ? `${count} design check issue${count === 1 ? '' : 's'}; click to review`
-    : 'Design check passed';
+  const pending = count === null || count === undefined;
+  if (statusCheckEl) {
+    statusCheckEl.textContent = pending ? 'Check' : count ? `⚠ ${count}` : '✓';
+    statusCheckEl.classList.toggle('pending', pending);
+    statusCheckEl.classList.toggle('issue', !!count);
+    statusCheckEl.title = pending
+      ? 'Check the current schematic (x)'
+      : count
+        ? `${count} design check issue${count === 1 ? '' : 's'}; click to review`
+        : 'Design check passed; click to review';
+  }
+  const runButton = document.getElementById('btn-check');
+  const label = runButton ? [...runButton.childNodes].find((node) => node.nodeType === Node.TEXT_NODE) : null;
+  if (label) label.textContent = pending ? 'Check' : 'Re-check';
+  if (clearCheckButtonEl) clearCheckButtonEl.hidden = pending;
 }
 
 function focusCheckSummary() {
+  if (!sidePanelVisible()) setSidePanelVisible(true);
   setPanelCollapsed('check-summary', false);
   const section = document.getElementById('check-summary');
   section?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -12951,9 +13009,10 @@ for (const [button, menu] of toolbarMenus) {
     ev.preventDefault();
     if (!menu.hidden) { closeToolbarMenu(button, menu); return; }
     for (const [otherButton, otherMenu] of toolbarMenus) closeToolbarMenu(otherButton, otherMenu);
+    syncMenuProxies(menu);
     menu.hidden = false;
     button.setAttribute('aria-expanded', 'true');
-    menu.querySelector('[role="menuitem"]:not(:disabled)')?.focus();
+    [...menu.querySelectorAll('[role^="menuitem"]:not(:disabled)')].find((item) => item.getClientRects().length)?.focus();
   });
   menu.addEventListener('click', (ev) => {
     if (ev.target.closest?.('[role="menuitem"]')) closeToolbarMenu(button, menu);
@@ -12961,11 +13020,99 @@ for (const [button, menu] of toolbarMenus) {
   menu.addEventListener('keydown', (ev) => {
     if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
     ev.preventDefault();
-    const items = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+    // Items folded in only for narrow windows are display:none otherwise.
+    const items = [...menu.querySelectorAll('[role^="menuitem"]:not(:disabled)')].filter((item) => item.getClientRects().length);
     const next = items.indexOf(document.activeElement) + (ev.key === 'ArrowDown' ? 1 : -1);
     items[(next + items.length) % items.length]?.focus();
   });
 }
+// ----- narrow-window folding --------------------------------------------------
+// A narrow toolbar hides New, Export, and the view toggles; the More menu shows
+// proxy items that click the real buttons, and mirror their pressed state.
+function syncMenuProxies(menu) {
+  for (const item of menu.querySelectorAll('[data-proxy-for][role="menuitemcheckbox"]')) {
+    const target = document.getElementById(item.dataset.proxyFor);
+    item.setAttribute('aria-checked', String(target?.getAttribute('aria-pressed') === 'true'));
+  }
+}
+
+for (const item of document.querySelectorAll('[data-proxy-for]')) {
+  item.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    document.getElementById(item.dataset.proxyFor)?.click();
+    syncMenuProxies(item.closest('[role="menu"]'));
+  });
+}
+
+// ----- side panel ----------------------------------------------------------------
+// One toggle (button or P) at every size. A wide window docks the panel and the
+// toggle collapses it, remembered per browser. A narrow window (see style.css)
+// slides it over the canvas as a drawer that starts closed and closes on a
+// canvas press or Escape.
+const sidePanelEl = document.getElementById('side-panel');
+const sidePanelToggleEl = document.getElementById('btn-side-panel');
+const narrowPanelQuery = window.matchMedia('(max-width: 600px)');
+const SIDE_PANEL_COLLAPSED_KEY = 'mosfeteer.sidePanelCollapsed';
+
+function sidePanelVisible() {
+  return narrowPanelQuery.matches
+    ? document.body.classList.contains('side-panel-open')
+    : !document.body.classList.contains('side-panel-collapsed');
+}
+
+function syncSidePanelToggle() {
+  const visible = sidePanelVisible();
+  sidePanelToggleEl?.setAttribute('aria-expanded', String(visible));
+  sidePanelToggleEl?.setAttribute('aria-pressed', String(visible));
+  if (sidePanelToggleEl) sidePanelToggleEl.title = `${visible ? 'Hide' : 'Show'} the components, nets, and selection panel (P)`;
+  if (sidePanelEl) sidePanelEl.inert = !visible;
+}
+
+function setSidePanelVisible(visible) {
+  if (narrowPanelQuery.matches) {
+    document.body.classList.toggle('side-panel-open', visible);
+  } else {
+    document.body.classList.toggle('side-panel-collapsed', !visible);
+    try { localStorage.setItem(SIDE_PANEL_COLLAPSED_KEY, visible ? '0' : '1'); } catch {}
+  }
+  syncSidePanelToggle();
+  // The canvas changes size when the docked panel collapses or returns.
+  requestAnimationFrame(() => render());
+}
+
+function toggleSidePanel() {
+  setSidePanelVisible(!sidePanelVisible());
+}
+
+try {
+  document.body.classList.toggle('side-panel-collapsed', localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) === '1');
+} catch {}
+narrowPanelQuery.addEventListener('change', () => {
+  document.body.classList.remove('side-panel-open');
+  syncSidePanelToggle();
+});
+syncSidePanelToggle();
+sidePanelToggleEl?.addEventListener('click', (ev) => {
+  toggleSidePanel();
+  if (ev.detail > 0) canvasEl.focus({ preventScroll: true });
+});
+// Focusing into the panel (Ctrl+F filter, Tab) reveals it; a canvas press or
+// Escape puts the drawer away again.
+sidePanelEl?.addEventListener('focusin', () => {
+  if (!sidePanelVisible()) setSidePanelVisible(true);
+});
+document.querySelector('.canvas-pane')?.addEventListener('pointerdown', (ev) => {
+  if (narrowPanelQuery.matches && document.body.classList.contains('side-panel-open') && ev.target !== sidePanelToggleEl && !sidePanelToggleEl?.contains(ev.target)) {
+    setSidePanelVisible(false);
+  }
+}, true);
+window.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape' || !narrowPanelQuery.matches || !document.body.classList.contains('side-panel-open')) return;
+  if (!sidePanelEl?.contains(document.activeElement)) return;
+  setSidePanelVisible(false);
+  canvasEl.focus({ preventScroll: true });
+});
+
 function dismissToolbarMenusOutside(ev) {
   for (const [button, menu] of toolbarMenus) {
     if (!menu.contains(ev.target) && !button.contains(ev.target)) closeToolbarMenu(button, menu);
@@ -13603,5 +13750,8 @@ if (consoleEl && logDrawerEl) {
 }
 
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
-statusCheckEl?.addEventListener('click', () => focusCheckSummary());
+statusCheckEl?.addEventListener('click', () => {
+  if (lastCheckReport) focusCheckSummary();
+  else runCheck();
+});
 

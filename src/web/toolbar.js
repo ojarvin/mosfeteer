@@ -197,6 +197,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['C', 'toggle crosshair visibility'],
     ['G', 'toggle the spacing and alignment guides'],
     ['D', 'toggle dark mode'],
+    ['P', 'show or hide the components, nets, and selection panel'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],
