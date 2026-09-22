@@ -40,6 +40,7 @@ import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
+import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 
 // ----- boot failure surface --------------------------------------
@@ -67,7 +68,15 @@ const accessibilityAnnouncementEl = document.getElementById('accessibility-annou
 const logEl = document.getElementById('log');
 const cmdInput = document.getElementById('cmd-input');
 const consoleEl = document.getElementById('console-panel');
-const consoleResizerEl = document.getElementById('console-resizer');
+const statusModeEl = document.getElementById('status-mode');
+const statusSelectionEl = document.getElementById('status-selection');
+const statusCursorEl = document.getElementById('status-cursor');
+const statusZoomEl = document.getElementById('status-zoom');
+const statusCheckEl = document.getElementById('status-check');
+const statusMessageEl = document.getElementById('status-message');
+const logDrawerEl = document.getElementById('log-drawer');
+const logPinEl = document.getElementById('log-pin');
+const logClearEl = document.getElementById('log-clear');
 const circuitSelectEl = document.getElementById('circuit-select');
 const circuitNameEl = document.getElementById('circuit-name');
 const newDocumentButton = document.getElementById('btn-new-document');
@@ -169,6 +178,7 @@ const ICON_PATHS = {
   'align-center': '<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>',
   'align-right': '<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>',
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
+  pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
   'route-orthogonal': '<path d="M4 18h8V6h8"/>',
   'route-diagonal': '<path d="M4 18h5l6-12h5"/>',
   cursor: '<path d="M6 3.5 18.5 12l-5.8 1.4L9.5 19.5z" fill="currentColor" fill-opacity=".16"/>',
@@ -510,18 +520,28 @@ function viewFromCenter(cx, cy) {
   return { x: snap(cx - w / 2), y: snap(cy - h / 2), w, h };
 }
 
-/** Re-fit the fixed window to the pane size exactly (keeps center AND scale). */
+// The pane size the current view was laid out for. When the pane changes
+// (window resize, side panel drag, analysis dock) the view keeps its scale and
+// its top-left corner, so the drawing neither jumps nor rescales.
+let viewPane = null;
+
+/** Re-fit the fixed window to the pane size exactly (keeps top-left AND scale). */
 function resizeView() {
   const p = paneSize();
   if (!p) return;
-  const pxPerUnit = p.w / view.w;
-  const cx = view.x + view.w / 2;
-  const cy = view.y + view.h / 2;
+  const pxPerUnit = (viewPane?.w || p.w) / view.w;
   view.w = p.w / pxPerUnit;
   view.h = p.h / pxPerUnit;
   clampViewScale();
-  view.x = cx - view.w / 2;
-  view.y = cy - view.h / 2;
+  viewPane = p;
+}
+
+/** Called by render(): a pane that changed since the last layout re-fits first. */
+function syncViewToPane() {
+  const p = paneSize();
+  if (!p) return;
+  if (viewPane && (Math.abs(p.w - viewPane.w) > 0.5 || Math.abs(p.h - viewPane.h) > 0.5)) resizeView();
+  viewPane = p;
 }
 
 /** Zoom limits: never zoom in so close that a grid cell (40 units) exceeds
@@ -554,15 +574,74 @@ function clampViewScale() {
   }
 }
 
-// ----- console log --------------------------------------------------
+// ----- status bar and log drawer ------------------------------------
+// The log is an overlay drawer; the status bar's message chip always shows
+// the latest line. Guidance that merely repeats the live status hint goes
+// through hintLine() and never enters the log.
 
-function logLine(text, cls) {
+let logDrawerState = LOG_DRAWER_CLOSED;
+let logPeekTimer = 0;
+let logHoverTimer = 0;
+let pointerInConsole = false;
+
+function setStatusMessage(text, cls) {
+  if (!statusMessageEl) return;
+  const lines = String(text).split('\n');
+  statusMessageEl.textContent = lines.length > 1 ? `${lines[0]} …` : lines[0];
+  statusMessageEl.dataset.kind = cls || 'info';
+  statusMessageEl.title = `${text}\nClick to open the log and command line (:)`;
+  // Restart the fade: a fresh message is bright, then settles to dim.
+  statusMessageEl.classList.remove('fresh');
+  void statusMessageEl.offsetWidth;
+  statusMessageEl.classList.add('fresh');
+}
+
+function logLine(text, cls, { peek = true } = {}) {
   const line = document.createElement('div');
   if (cls) line.className = cls;
   line.textContent = text;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
+  if (cls !== 'cmd') setStatusMessage(text, cls);
+  if (cls === 'error' && peek) applyLogDrawerEvent({ type: 'error' });
   if (cls === 'error' || cls === 'status') announce(text);
+}
+
+/** Transient guidance: shown in the message chip, never appended to the log. */
+function hintLine(text) {
+  setStatusMessage(text, 'hint');
+}
+
+function applyLogDrawerEvent(event) {
+  const before = logDrawerState;
+  logDrawerState = logDrawerTransition(logDrawerState, event);
+  if (logDrawerState === before) return;
+  syncLogDrawer();
+  window.clearTimeout(logPeekTimer);
+  if (logDrawerState.open && logDrawerState.reason === 'peek') {
+    logPeekTimer = window.setTimeout(() => applyLogDrawerEvent({ type: 'peek-timeout', inside: pointerInConsole }), 3500);
+  }
+}
+
+function syncLogDrawer() {
+  if (!logDrawerEl) return;
+  const { open, pinned, reason } = logDrawerState;
+  logDrawerEl.hidden = !open;
+  logDrawerEl.dataset.reason = reason || '';
+  statusMessageEl?.setAttribute('aria-expanded', String(open));
+  logPinEl?.setAttribute('aria-pressed', String(pinned));
+  if (open) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function openCommandLine(prefill = '') {
+  applyLogDrawerEvent({ type: 'command' });
+  cmdInput.value = prefill;
+  cmdInput.focus();
+  cmdInput.setSelectionRange(prefill.length, prefill.length);
+}
+
+function logCommand(line) {
+  logLine(`> ${line}`, 'cmd');
 }
 
 function announce(text) {
@@ -571,9 +650,6 @@ function announce(text) {
   requestAnimationFrame(() => { accessibilityAnnouncementEl.textContent = text; });
 }
 
-function logCommand(line) {
-  logLine(`> ${line}`, 'cmd');
-}
 
 function noteActionPrevented(error) {
   const detail = error?.message || String(error || 'the requested change was rejected');
@@ -1214,6 +1290,8 @@ async function revealCurrentDocument() {
 
 function renderSaveState() {
   const dirty = hasUnsavedChanges();
+  const dirtyDot = document.getElementById('dirty-dot');
+  if (dirtyDot) dirtyDot.hidden = !dirty;
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentDocumentPath || deleteInFlight;
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !currentDocumentPath;
   circuitNameEl.title = currentDocumentPath
@@ -3104,6 +3182,7 @@ function fitView() {
   view.h = th;
   view.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
   view.y = (y0 + y1) / 2 - th * usableCenterPy / paneH;
+  viewPane = paneSize();
   render();
 }
 
@@ -3341,7 +3420,7 @@ function placeShapeAnnotation(world, endOverride = null) {
     if (!annotationStart) {
       annotationStart = point;
       annotationPoints = [point];
-      logLine('ARROW: choose intermediate/end points; press Enter to commit');
+      hintLine('ARROW: choose intermediate/end points; press Enter to commit');
       render();
       return false;
     }
@@ -3349,13 +3428,13 @@ function placeShapeAnnotation(world, endOverride = null) {
     const next = endOverride || point;
     const previous = annotationPoints.at(-1);
     if (!previous || previous.x !== next.x || previous.y !== next.y) annotationPoints.push(next);
-    logLine(`arrow point ${annotationPoints.length}; press Enter to commit`);
+    hintLine(`arrow point ${annotationPoints.length}; press Enter to commit`);
     render();
     return false;
   }
   if (!annotationStart) {
     annotationStart = point;
-    logLine(`${labelMode.toUpperCase()}: choose the end point`);
+    hintLine(`${labelMode.toUpperCase()}: choose the end point`);
     render();
     return;
   }
@@ -3382,7 +3461,7 @@ function placeShapeAnnotation(world, endOverride = null) {
 function placeNetLabelAt(world) {
   const target = netLabelTargetAt(world);
   if (!target) {
-    logLine('NET LABEL: click a physical wire');
+    hintLine('NET LABEL: click a physical wire');
     return false;
   }
   if (target.ambiguous) {
@@ -3672,6 +3751,7 @@ function syncEmptyState() {
 function render() {
   syncDocumentSurface();
   syncEmptyState();
+  syncViewToPane();
   // A context menu is independent of canvas repainting. Closing it here made
   // it vanish on the first pointer move after opening it.
   syncSelectedNetSolders();
@@ -4493,7 +4573,7 @@ function fixedWireDragAt(hit, w, startClient, ev) {
     fixedSnapshots, startSnapshot, rubber: null,
   };
   cursor = { x: snap(w.x), y: snap(w.y) };
-  logLine(junction >= 0 ? 'fixed junction — drag to move its dot' : vertex >= 0 ? 'fixed vertex — drag to move it' : 'fixed path — drag to move its segment');
+  hintLine(junction >= 0 ? 'fixed junction — drag to move its dot' : vertex >= 0 ? 'fixed vertex — drag to move it' : 'fixed path — drag to move its segment');
   render();
   return true;
 }
@@ -4516,7 +4596,7 @@ function fixedEndpointDragAt(endpoint, startWorld, startClient) {
     moved: false, committed: false, startSnapshot, saved,
   };
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-  logLine('fixed open endpoint — drag to move, or use Wire to extend');
+  hintLine('fixed open endpoint — drag to move, or use Wire to extend');
   render();
   return true;
 }
@@ -4809,7 +4889,7 @@ function doDirectWireClick(x, y, fixedEndpoint = null) {
     directWire.source = { fixed: fixedEndpoint };
     directWire.points = [];
     cursor = { x: fixedEndpoint.point.x, y: fixedEndpoint.point.y };
-    logLine(`${activeDirectLabel()} from fixed open endpoint @ (${fixedEndpoint.point.x},${fixedEndpoint.point.y}) — click waypoints, then target`);
+    hintLine(`${activeDirectLabel()} from fixed open endpoint @ (${fixedEndpoint.point.x},${fixedEndpoint.point.y}) — click waypoints, then target`);
     render();
     return;
   }
@@ -4824,7 +4904,7 @@ function doDirectWireClick(x, y, fixedEndpoint = null) {
     if (!directWire.source) {
       directWire.source = { refdes: hit.refdes, term: hit.term };
       cursor = { x: hit.x, y: hit.y };
-      logLine(`${activeDirectLabel()} from ${hit.refdes}.${hit.term} — click points, then a target terminal`);
+      hintLine(`${activeDirectLabel()} from ${hit.refdes}.${hit.term} — click points, then a target terminal`);
     } else if (directWire.source.fixed) {
       const result = commitFixedEndpointDraft(directWire.source.fixed, `${hit.refdes}.${hit.term}`, directWire.points, 'literal');
       if (result) directWire = { source: null, points: [] };
@@ -4838,9 +4918,9 @@ function doDirectWireClick(x, y, fixedEndpoint = null) {
     // particular, crossing an existing wire never splices or joins it.
     directWire.points.push({ x, y });
     cursor = { x, y };
-    logLine(`direct point @ (${x},${y})`);
+    hintLine(`direct point @ (${x},${y})`);
   } else {
-    logLine(`${activeDirectLabel()}: click a terminal or open fixed endpoint to start`);
+    hintLine(`${activeDirectLabel()}: click a terminal or open fixed endpoint to start`);
   }
   render();
 }
@@ -4867,7 +4947,7 @@ function commitDirectWire(dst) {
 
 function commitDirectAtCursor() {
   if (!directWire?.source) {
-    logLine(`${activeDirectLabel()}: click a terminal or open fixed endpoint to start`);
+    hintLine(`${activeDirectLabel()}: click a terminal or open fixed endpoint to start`);
     return;
   }
   const hit = nearestTerminal(cursor);
@@ -4934,7 +5014,7 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
     wire.source = { fixed: fixedEndpoint };
     wire.points = [];
     cursor = { x: fixedEndpoint.point.x, y: fixedEndpoint.point.y };
-    logLine(`wire from fixed open endpoint @ (${fixedEndpoint.point.x},${fixedEndpoint.point.y}) — click points, then target`);
+    hintLine(`wire from fixed open endpoint @ (${fixedEndpoint.point.x},${fixedEndpoint.point.y}) — click points, then target`);
     return;
   }
   if (fixedEndpoint && wire.source?.fixed) {
@@ -4953,7 +5033,7 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
       wire.source = { refdes: hit.refdes, term: hit.term };
       wire.points = [];
       cursor = { x: hit.x ?? x, y: hit.y ?? y };
-      logLine(`wire from ${hit.refdes}.${hit.term} — terminal clicks commit; other clicks guide; Enter commits elsewhere`);
+      hintLine(`wire from ${hit.refdes}.${hit.term} — terminal clicks commit; other clicks guide; Enter commits elsewhere`);
     } else if (hit.refdes === wire.source.refdes && hit.term === wire.source.term) {
       logLine('same terminal — click the other terminal');
     } else {
@@ -4981,7 +5061,7 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
     // Build the wire in segments: each empty-space click appends a bend point.
     wire.points.push({ x, y });
     cursor = { x, y };
-    logLine(`wire segment @ (${x},${y}) — click more points or commit`);
+    hintLine(`wire segment @ (${x},${y}) — click more points or commit`);
   } else {
     // Starting a wire needs no terminal: click any grid point (or a wire) and
     // the draft grows from there.
@@ -5015,12 +5095,12 @@ function startWireAt(w) {
     wire.source = { x: P.x, y: P.y, netId: wireHit.net.id };
     wire.points = [];
     cursor = { x: P.x, y: P.y };
-    logLine(`wire from net ${wireHit.net.id} @ (${P.x},${P.y}) — click points, then click/Enter on a target`);
+    hintLine(`wire from net ${wireHit.net.id} @ (${P.x},${P.y}) — click points, then click/Enter on a target`);
   } else {
     wire.source = { x: snap(w.x), y: snap(w.y) };
     wire.points = [];
     cursor = { x: snap(w.x), y: snap(w.y) };
-    logLine('wire from a free point — click points, then commit');
+    hintLine('wire from a free point — click points, then commit');
   }
 }
 
@@ -5547,7 +5627,7 @@ function canvasMouseDown(ev) {
       armModalLabelMove(annotationHit, startWorld, startClient);
       return;
     }
-    logLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a component, label, or wire`);
+    hintLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a component, label, or wire`);
     return;
   }
   const endpointHit = annotationEndpointAt(startWorld);
@@ -5746,7 +5826,7 @@ function canvasMouseDown(ev) {
         selectedWire = null;
         selectedWires.clear();
         selectedNets = new Set([net.id]);
-        logLine(`selected fixed net ${net.id} — geometry is literal; open endpoints can be reconnected`);
+        hintLine(`selected fixed net ${net.id} — geometry is literal; open endpoints can be reconnected`);
         render();
         return;
       }
@@ -6273,7 +6353,7 @@ function beginCopySource(startWorld, startClient) {
     } else if (hit?.refdes) {
       setSelection([hit.refdes]);
     } else {
-      logLine('COPY: click a component, label, or wire source');
+      hintLine('COPY: click a component, label, or wire source');
       return false;
     }
   }
@@ -6589,7 +6669,7 @@ function canvasMouseMove(ev) {
           }
           drag.startAnchors = new Map(selectedLabels().map((l) => [l.id, { x: l.anchorWorld().x, y: l.anchorWorld().y }]));
           drag.labelId = selLabel;
-          logLine('duplicated selection — dragging the copy');
+          hintLine('duplicated selection — dragging the copy');
         } else if (!drag.modal) {
           recordHistoryEntry(snapshot(), true, 'defer');
         }
@@ -6622,7 +6702,7 @@ function canvasMouseMove(ev) {
           }
           drag.origins = new Map(selectedComps().map((c) => [c.refdes, { x: c.transform.x, y: c.transform.y }]));
           drag.labelOrigins = new Map(selectedLabels().map((l) => [l.id, { x: l.anchorWorld().x, y: l.anchorWorld().y }]));
-          logLine('duplicated selection — dragging the copy');
+          hintLine('duplicated selection — dragging the copy');
         }
         if (drag.detached) {
           const selectedNetIds = detachMoveComponents(drag);
@@ -9352,7 +9432,7 @@ function onWireKey(key) {
     selectedWire = null;
     selectedWires.clear();
     selectedNets.clear();
-    logLine('wiring cancelled');
+    hintLine('wiring cancelled');
   } else if (key === 'Backspace') {
     if (wire?.points?.length) {
       wire.points.pop();
@@ -9360,7 +9440,7 @@ function onWireKey(key) {
       if (last && Number.isFinite(last.x) && Number.isFinite(last.y)) {
         cursor = { x: snap(last.x), y: snap(last.y) };
       }
-      logLine('removed last wire vertex');
+      hintLine('removed last wire vertex');
     }
   } else if (key === 'Enter') {
     commitWireAtCursor();
@@ -9376,7 +9456,7 @@ function onWireKey(key) {
     } else if (!wire.source) {
       wire.source = { refdes: comp.refdes, term: key };
       wire.points = [];
-      logLine(`wire from ${comp.refdes}.${key} — click/type the target terminal`);
+      hintLine(`wire from ${comp.refdes}.${key} — click/type the target terminal`);
     } else if (comp.refdes === wire.source.refdes && key === wire.source.term) {
       logLine('same terminal');
     } else {
@@ -9813,9 +9893,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === ':') {
-    cmdInput.value = ':';
-    cmdInput.focus();
-    cmdInput.setSelectionRange(1, 1);
+    openCommandLine();
     return;
   }
 
@@ -10540,11 +10618,98 @@ let lastModeToolbarControl = null;
 
 function modeToolbarControlFor(state) {
   if (!modeToolbarEl) return null;
-  return toolbarElements(state.toolbar).find((el) => (
+  const direct = toolbarElements(state.toolbar).find((el) => (
     el.classList.contains('mode-control')
     && !el.hidden
     && el.closest('.mode-toolbar') === modeToolbarEl
-  )) || null;
+  ));
+  if (direct) return direct;
+  return RAIL_FLYOUT_TOOLS.includes(state.toolbar) ? railFlyoutProxyEl : null;
+}
+
+// ----- annotation flyout ----------------------------------------------------
+// Text, arrow, box, and line share one rail slot. The slot shows the last-used
+// tool and activates it on click; hover, right-click, or a long press opens
+// the strip with all four. The real tool buttons live in the strip, so their
+// bindings and pressed state are unchanged.
+const RAIL_FLYOUT_TOOLS = ['annotation', 'arrow', 'box', 'line'];
+const railFlyoutProxyEl = document.getElementById('btn-rail-annotate');
+const railFlyoutEl = document.getElementById('rail-flyout');
+let railFlyoutTool = 'annotation';
+let railFlyoutTimer = 0;
+
+function railFlyoutButton(tool) {
+  return railFlyoutEl?.querySelector(`[data-action="${tool}"]`) || null;
+}
+
+function syncRailFlyout(state) {
+  if (!railFlyoutProxyEl) return;
+  if (RAIL_FLYOUT_TOOLS.includes(state.toolbar)) railFlyoutTool = state.toolbar;
+  const active = RAIL_FLYOUT_TOOLS.includes(state.toolbar);
+  railFlyoutProxyEl.setAttribute('aria-pressed', String(active));
+  railFlyoutProxyEl.classList.toggle('active', active);
+  const source = railFlyoutButton(railFlyoutTool);
+  const icon = railFlyoutProxyEl.querySelector('.button-icon');
+  if (source && icon && railFlyoutProxyEl.dataset.icon !== source.dataset.icon) {
+    railFlyoutProxyEl.dataset.icon = source.dataset.icon;
+    icon.innerHTML = ICON_PATHS[source.dataset.icon] || '';
+  }
+  if (source) railFlyoutProxyEl.title = `${source.title} · hover or right-click for all annotation tools`;
+}
+
+function openRailFlyout() {
+  if (!railFlyoutEl || !railFlyoutProxyEl || !railFlyoutEl.hidden) return;
+  const pane = document.querySelector('.canvas-pane').getBoundingClientRect();
+  const r = railFlyoutProxyEl.getBoundingClientRect();
+  railFlyoutEl.hidden = false;
+  railFlyoutEl.style.left = `${r.right - pane.left + 8}px`;
+  railFlyoutEl.style.top = `${r.top - pane.top - 5}px`;
+  railFlyoutProxyEl.setAttribute('aria-expanded', 'true');
+}
+
+function closeRailFlyout() {
+  window.clearTimeout(railFlyoutTimer);
+  if (!railFlyoutEl || railFlyoutEl.hidden) return;
+  railFlyoutEl.hidden = true;
+  railFlyoutProxyEl?.setAttribute('aria-expanded', 'false');
+}
+
+if (railFlyoutProxyEl && railFlyoutEl) {
+  railFlyoutProxyEl.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    closeRailFlyout();
+    railFlyoutButton(railFlyoutTool)?.click();
+  });
+  railFlyoutProxyEl.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    openRailFlyout();
+  });
+  railFlyoutProxyEl.addEventListener('pointerdown', (ev) => {
+    if (ev.pointerType === 'mouse') return;
+    railFlyoutTimer = window.setTimeout(openRailFlyout, 400);
+  });
+  const hoverIn = () => {
+    window.clearTimeout(railFlyoutTimer);
+    railFlyoutTimer = window.setTimeout(openRailFlyout, 350);
+  };
+  const hoverOut = (ev) => {
+    if (railFlyoutEl.contains(ev.relatedTarget) || railFlyoutProxyEl.contains(ev.relatedTarget)) return;
+    window.clearTimeout(railFlyoutTimer);
+    railFlyoutTimer = window.setTimeout(closeRailFlyout, 220);
+  };
+  railFlyoutProxyEl.addEventListener('pointerenter', hoverIn);
+  railFlyoutProxyEl.addEventListener('pointerleave', hoverOut);
+  railFlyoutEl.addEventListener('pointerenter', () => window.clearTimeout(railFlyoutTimer));
+  railFlyoutEl.addEventListener('pointerleave', hoverOut);
+  railFlyoutEl.addEventListener('click', (ev) => {
+    if (ev.target.closest('button')) closeRailFlyout();
+  });
+  railFlyoutEl.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    ev.stopPropagation();
+    closeRailFlyout();
+    railFlyoutProxyEl.focus();
+  });
 }
 
 /** Reveal a newly selected mode with the smallest possible rail scroll. */
@@ -10604,6 +10769,7 @@ function syncInteractionUI() {
   canvasEl.classList.add(state.canvasClass);
   if (wire) canvasEl.classList.add('wire-mode');
   if (directWire) canvasEl.classList.add('direct-wire-mode');
+  syncRailFlyout(state);
   syncToolCursor(state);
   return state;
 }
@@ -10616,8 +10782,8 @@ function renderStatus() {
     ? `${label.isNetLabel?.() ? 'net' : label.owner ? 'instance' : 'annotation'} "${label.text}"${selLabels.size > 1 ? ` +${selLabels.size - 1}` : ''}`
     : comp
       ? `${comp.refdes}${multi.size > 1 ? ` +${multi.size - 1}` : ''}`
-      : '-';
-  const parts = [analysisPick ? 'PICK NET' : interaction.label, `sel ${sel}`, `@${cursor.x},${cursor.y}`];
+      : '';
+  const parts = [];
   if (analysisPick) parts.push('click a wire or pin for the analysis node · Esc cancel');
   if (visual) {
     parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
@@ -10658,11 +10824,27 @@ function renderStatus() {
   if (netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
   if (circuit.netNameWarnings?.length) parts.push('⚠ merged net names require reconciliation');
   if (clipboardNotice) parts.unshift(clipboardNotice);
-  statusEl.textContent = parts.join('  ·  ');
+  const fields = statusFields({
+    mode: analysisPick ? 'PICK NET' : interaction.label,
+    selection: sel,
+    cursor,
+    hints: parts,
+  });
+  statusEl.textContent = fields.hint;
   statusEl.className = `status ${interaction.key}`;
   if (directWire) statusEl.classList.add('direct-wire');
   else if (wire) statusEl.classList.add('wire');
   else if (mode === 'insert') statusEl.classList.add('insert');
+  if (statusModeEl) {
+    statusModeEl.textContent = fields.mode;
+    statusModeEl.className = `status-mode ${statusEl.className.replace(/^status\s*/, '')}`;
+  }
+  if (statusSelectionEl) {
+    statusSelectionEl.textContent = fields.selection;
+    statusSelectionEl.hidden = !fields.selection;
+  }
+  if (statusCursorEl) statusCursorEl.textContent = fields.cursor;
+  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(view, paneSize()?.w, zoom)}%`;
 }
 
 // ----- insert-mode menu ----------------------------------------------------
@@ -10968,7 +11150,7 @@ function activateWire() {
   // F3 changes the route style of this same managed workflow.  Diagonal wires
   // never become direct/fixed nets.
   wire = newWireDraft();
-  logLine(`wiring (${routeMode}): click a terminal or point to start; Alt snaps to the nearest terminal; terminal clicks commit, Enter commits elsewhere`);
+  hintLine(`wiring (${routeMode}): click a terminal or point to start; Alt snaps to the nearest terminal; terminal clicks commit, Enter commits elsewhere`);
   render();
 }
 
@@ -10999,7 +11181,7 @@ function activateCopy() {
   labelMode = null;
   annotationPoints = [];
   copyMode = true; // source click and placement are handled by the canvas
-  logLine('COPY: click an object, or use the existing selection; move the copy, then click/Enter (Esc exits)');
+  hintLine('COPY: click an object, or use the existing selection; move the copy, then click/Enter (Esc exits)');
   render();
 }
 
@@ -11149,12 +11331,15 @@ function focusCheckIssue(issue) {
   view.h = h;
   view.x = (x0 + x1) / 2 - w / 2;
   view.y = (y0 + y1) / 2 - h / 2;
+  viewPane = p;
   cursor = { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
   render();
 }
 
 let renderedCheckReport;
 
+/** One collapsible group per issue category; rows show only the location,
+ * since the group header already names the problem. */
 function renderCheckSummary() {
   if (!checkSummaryBodyEl || renderedCheckReport === lastCheckReport) return;
   renderedCheckReport = lastCheckReport;
@@ -11163,24 +11348,49 @@ function renderCheckSummary() {
   if (!lastCheckReport) {
     if (countEl) countEl.textContent = '';
     checkSummaryBodyEl.textContent = 'Not checked yet.';
+    syncCheckChip(null);
     return;
   }
   const issues = checkIssues(lastCheckReport);
+  syncCheckChip(issues.length);
   if (countEl) {
     countEl.textContent = issues.length ? String(issues.length) : '✓';
     countEl.classList.toggle('issue', issues.length > 0);
   }
-  const result = document.createElement('div');
-  result.className = issues.length ? 'check-issues' : 'check-pass';
-  result.textContent = issues.length ? `Issues found: ${issues.length}` : 'Pass: no issues found';
-  checkSummaryBodyEl.appendChild(result);
+  if (!issues.length && !(lastCheckReport.netNameWarnings || []).length) {
+    const pass = document.createElement('div');
+    pass.className = 'check-pass';
+    pass.textContent = 'No issues found';
+    checkSummaryBodyEl.appendChild(pass);
+    return;
+  }
   for (const [key, label] of CHECK_CATEGORIES) {
-    const count = (lastCheckReport[key] || []).length;
-    if (!count) continue;
-    const row = document.createElement('div');
-    row.className = count ? 'check-category issue' : 'check-category';
-    row.textContent = `${label}: ${count}`;
-    checkSummaryBodyEl.appendChild(row);
+    const group = issues.filter((issue) => issue.category === key);
+    if (!group.length) continue;
+    const details = document.createElement('details');
+    details.className = 'check-group';
+    details.open = true;
+    const summary = document.createElement('summary');
+    summary.className = 'check-category issue';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const count = document.createElement('span');
+    count.className = 'check-group-count';
+    count.textContent = String(group.length);
+    summary.append(name, count);
+    details.appendChild(summary);
+    for (const issue of group) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'check-issue';
+      button.textContent = checkIssueLocation(issue);
+      const spoken = `${issue.label}: ${button.textContent}`;
+      button.title = issue.detail?.hint ? `${spoken}\n${issue.detail.hint}` : spoken;
+      button.setAttribute('aria-label', issue.detail?.hint ? `${spoken}. ${issue.detail.hint}` : spoken);
+      button.addEventListener('click', () => focusCheckIssue(issue));
+      details.appendChild(button);
+    }
+    checkSummaryBodyEl.appendChild(details);
   }
   for (const warning of lastCheckReport.netNameWarnings || []) {
     const row = document.createElement('div');
@@ -11188,18 +11398,30 @@ function renderCheckSummary() {
     row.textContent = `Net naming warning: ${warning.message}`;
     checkSummaryBodyEl.appendChild(row);
   }
-  for (const issue of issues) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'check-issue';
-    button.textContent = `${issue.label}: ${typeof issue.value === 'string' ? issue.value : `${issue.value.x0},${issue.value.y0}–${issue.value.x1},${issue.value.y1}`}`;
-    if (issue.detail?.hint) {
-      button.title = issue.detail.hint;
-      button.setAttribute('aria-label', `${button.textContent}. ${issue.detail.hint}`);
-    }
-    button.addEventListener('click', () => focusCheckIssue(issue));
-    checkSummaryBodyEl.appendChild(button);
-  }
+}
+
+/** `M1.d@(80,80)` reads as `M1.d  (80, 80)`; boxes read as their corners. */
+function checkIssueLocation(issue) {
+  const value = issue.value;
+  if (typeof value !== 'string') return `(${value.x0}, ${value.y0}) – (${value.x1}, ${value.y1})`;
+  return value.replace(/@\((-?[\d.]+),\s*(-?[\d.]+)\)/g, '  ($1, $2)');
+}
+
+function syncCheckChip(count) {
+  if (!statusCheckEl) return;
+  statusCheckEl.hidden = count === null || count === undefined;
+  statusCheckEl.textContent = count ? `⚠ ${count}` : '✓';
+  statusCheckEl.classList.toggle('issue', !!count);
+  statusCheckEl.title = count
+    ? `${count} design check issue${count === 1 ? '' : 's'}; click to review`
+    : 'Design check passed';
+}
+
+function focusCheckSummary() {
+  setPanelCollapsed('check-summary', false);
+  const section = document.getElementById('check-summary');
+  section?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  (section?.querySelector('.check-issue') || document.getElementById('check-summary-heading'))?.focus();
 }
 
 function runCheck() {
@@ -11212,7 +11434,7 @@ function runCheck() {
     document.getElementById('check-summary')?.scrollIntoView({ block: 'nearest' });
     const hasProblems = report.ok === false || CHECK_CATEGORIES.map(([key]) => key)
       .some((key) => report[key]?.length);
-    logLine(evaluationText(report), hasProblems ? 'error' : undefined);
+    logLine(evaluationText(report), hasProblems ? 'error' : undefined, { peek: false });
     return report;
   } catch (err) {
     logLine(`Check failed: ${err.message || err}`, 'error');
@@ -11977,7 +12199,7 @@ function setGrid(on) {
     gridBtn.title = showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
   }
   render();
-  logLine(showGrid ? 'grid shown' : 'grid hidden');
+  hintLine(showGrid ? 'grid shown' : 'grid hidden');
 }
 
 if (gridBtn) {
@@ -11998,7 +12220,7 @@ function setCrosshair(on, announce = true) {
     crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
   }
   render();
-  if (announce) logLine(crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
+  if (announce) hintLine(crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
 }
 // Placement guides are advisory, so they are a view toggle like the grid and
 // the crosshair rather than anything the document carries.
@@ -12010,7 +12232,7 @@ function setGuides(on, announce = true) {
     guidesBtn.title = guidesVisible ? 'Hide the spacing and alignment guides (G)' : 'Show the spacing and alignment guides (G)';
   }
   render();
-  if (announce) logLine(guidesVisible ? 'placement guides shown' : 'placement guides hidden');
+  if (announce) hintLine(guidesVisible ? 'placement guides shown' : 'placement guides hidden');
 }
 if (guidesBtn) {
   guidesBtn.addEventListener('click', () => setGuides(!guidesVisible));
@@ -12074,6 +12296,7 @@ window.addEventListener('keydown', (ev) => {
       return;
     }
   }
+  if (ev.key === 'Escape' && logDrawerState.open) applyLogDrawerEvent({ type: 'dismiss' });
   if (analysisPick && ev.key === 'Escape') {
     ev.preventDefault();
     setAnalysisPick(null);
@@ -12266,7 +12489,7 @@ window.addEventListener('keydown', (ev) => {
       return;
     } else if (key === 'Escape') {
       directWire = null;
-      logLine('direct wire cancelled');
+      hintLine('direct wire cancelled');
     } else if (key === 'Backspace') {
       if (directWire.points.length) directWire.points.pop();
     } else if (key === 'Enter') {
@@ -12285,15 +12508,36 @@ window.addEventListener('keydown', (ev) => {
   ev.preventDefault();
 });
 
+// The command line keeps its own history; the drawer stays open after Enter
+// so the output lands right above the input.
+const commandHistory = [];
+let commandHistoryIndex = -1;
 cmdInput.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter') {
-    let line = cmdInput.value.replace(/^:+/, '').trim();
+    const line = cmdInput.value.replace(/^:+/, '').trim();
     cmdInput.value = '';
-    cmdInput.blur();
-    if (line) runLine(line);
+    commandHistoryIndex = -1;
+    if (!line) {
+      cmdInput.blur();
+      return;
+    }
+    if (commandHistory.at(-1) !== line) commandHistory.push(line);
+    runLine(line);
   } else if (ev.key === 'Escape') {
+    ev.preventDefault();
+    ev.stopPropagation();
     cmdInput.value = '';
+    commandHistoryIndex = -1;
     cmdInput.blur();
+    applyLogDrawerEvent({ type: 'command-done' });
+    canvasEl.focus();
+  } else if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && commandHistory.length) {
+    ev.preventDefault();
+    const last = commandHistory.length - 1;
+    commandHistoryIndex = ev.key === 'ArrowUp'
+      ? (commandHistoryIndex < 0 ? last : Math.max(0, commandHistoryIndex - 1))
+      : (commandHistoryIndex < 0 || commandHistoryIndex >= last ? -1 : commandHistoryIndex + 1);
+    cmdInput.value = commandHistoryIndex < 0 ? '' : commandHistory[commandHistoryIndex];
   }
 });
 
@@ -12394,66 +12638,32 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
   }).observe(paneEl);
 }
 
-// The footer also has a native CSS resize affordance. This small handle adds
-// keyboard access and keeps its separator value useful to assistive tech.
-function consoleHeightBounds() {
-  if (!consoleEl) return { min: 92, max: 420 };
-  const style = getComputedStyle(consoleEl);
-  const min = Number.parseFloat(style.minHeight) || 92;
-  const maxValue = Number.parseFloat(style.maxHeight);
-  return { min, max: Number.isFinite(maxValue) ? Math.max(min, maxValue) : Math.max(min, window.innerHeight) };
+// The log drawer opens from the message chip (click, or a short hover), from
+// `:`, and briefly on errors. It overlays the canvas, so nothing reflows.
+if (consoleEl && logDrawerEl) {
+  consoleEl.addEventListener('pointerenter', () => { pointerInConsole = true; });
+  consoleEl.addEventListener('pointerleave', () => {
+    pointerInConsole = false;
+    window.clearTimeout(logHoverTimer);
+    if (document.activeElement !== cmdInput) applyLogDrawerEvent({ type: 'leave' });
+  });
+  statusMessageEl?.addEventListener('click', () => applyLogDrawerEvent({ type: 'toggle' }));
+  statusMessageEl?.addEventListener('pointerenter', () => {
+    window.clearTimeout(logHoverTimer);
+    logHoverTimer = window.setTimeout(() => applyLogDrawerEvent({ type: 'hover' }), 300);
+  });
+  statusMessageEl?.addEventListener('pointerleave', () => window.clearTimeout(logHoverTimer));
+  logPinEl?.addEventListener('click', () => applyLogDrawerEvent({ type: 'pin' }));
+  logClearEl?.addEventListener('click', () => { logEl.replaceChildren(); });
+  window.addEventListener('pointerdown', (ev) => {
+    if (logDrawerState.open && !consoleEl.contains(ev.target)) applyLogDrawerEvent({ type: 'dismiss' });
+  }, true);
+  cmdInput.addEventListener('blur', () => {
+    // Keep a hovered drawer open; it closes when the pointer leaves.
+    if (!pointerInConsole) applyLogDrawerEvent({ type: 'command-done' });
+  });
 }
 
-function syncConsoleResizer() {
-  if (!consoleEl || !consoleResizerEl) return;
-  const { min, max } = consoleHeightBounds();
-  const height = Math.round(consoleEl.getBoundingClientRect().height);
-  consoleResizerEl.setAttribute('aria-valuemin', String(Math.round(min)));
-  consoleResizerEl.setAttribute('aria-valuemax', String(Math.round(max)));
-  consoleResizerEl.setAttribute('aria-valuenow', String(Math.max(Math.round(min), Math.min(Math.round(max), height))));
-  consoleResizerEl.setAttribute('aria-valuetext', `${height} pixels`);
-}
+statusZoomEl?.addEventListener('click', () => { fitView(); render(); });
+statusCheckEl?.addEventListener('click', () => focusCheckSummary());
 
-function setConsoleHeight(height) {
-  if (!consoleEl) return;
-  const { min, max } = consoleHeightBounds();
-  consoleEl.style.height = `${Math.max(min, Math.min(max, height))}px`;
-  syncConsoleResizer();
-}
-
-if (consoleResizerEl && consoleEl) {
-  let resizeStart = null;
-  consoleResizerEl.addEventListener('pointerdown', (ev) => {
-    if (ev.button !== 0) return;
-    resizeStart = { y: ev.clientY, height: consoleEl.getBoundingClientRect().height };
-    consoleResizerEl.setPointerCapture?.(ev.pointerId);
-    consoleResizerEl.classList.add('dragging');
-    ev.preventDefault();
-  });
-  consoleResizerEl.addEventListener('pointermove', (ev) => {
-    if (!resizeStart) return;
-    setConsoleHeight(resizeStart.height - ev.clientY + resizeStart.y);
-    ev.preventDefault();
-  });
-  const endConsoleResize = (ev) => {
-    if (!resizeStart) return;
-    resizeStart = null;
-    consoleResizerEl.classList.remove('dragging');
-    if (ev.pointerId !== undefined) consoleResizerEl.releasePointerCapture?.(ev.pointerId);
-  };
-  consoleResizerEl.addEventListener('pointerup', endConsoleResize);
-  consoleResizerEl.addEventListener('pointercancel', endConsoleResize);
-  consoleResizerEl.addEventListener('keydown', (ev) => {
-    const { min, max } = consoleHeightBounds();
-    const step = ev.shiftKey ? 64 : 16;
-    if (ev.key === 'ArrowUp') setConsoleHeight(consoleEl.getBoundingClientRect().height + step);
-    else if (ev.key === 'ArrowDown') setConsoleHeight(consoleEl.getBoundingClientRect().height - step);
-    else if (ev.key === 'Home') setConsoleHeight(min);
-    else if (ev.key === 'End') setConsoleHeight(max);
-    else return;
-    ev.preventDefault();
-  });
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(syncConsoleResizer).observe(consoleEl);
-  window.addEventListener('resize', syncConsoleResizer);
-  syncConsoleResizer();
-}

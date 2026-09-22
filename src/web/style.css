@@ -40,6 +40,12 @@
   --label-edit-bg: rgba(255, 255, 255, 0.9);
   --logo-blade: var(--text);
   --logo-sheen: #8a93a3;
+  /* One translucent surface for everything that floats over the drawing:
+     tool rail, menus, the log drawer, the radial menu. */
+  --glass-bg: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  --glass-border: color-mix(in srgb, var(--border) 80%, transparent);
+  --glass-filter: blur(14px) saturate(1.4);
+  --glass-shadow: 0 8px 28px rgba(20, 24, 34, 0.16), 0 1px 3px rgba(20, 24, 34, 0.08);
   color-scheme: light;
   /* Native checkboxes/radios otherwise pick up the OS/browser accent color
      (which can be anything, including purple) instead of the app's own. */
@@ -313,10 +319,12 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
   border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(20, 24, 34, 0.22);
+  box-shadow: var(--glass-shadow);
 }
 
 #document-menu {
@@ -421,27 +429,90 @@ button:focus-visible {
   color: var(--accent);
 }
 
+/* The document is one title: click the name to rename it, the chevron lists
+   the workspace documents, and a dot marks unsaved changes. */
 .circuit-picker {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
+  height: 30px;
+  padding: 0 2px 0 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
 
-#circuit-select {
-  width: 12rem;
-  min-width: 0;
+.circuit-picker:hover,
+.circuit-picker:focus-within {
+  border-color: var(--border);
+  background: var(--bg-panel);
 }
 
-#circuit-name {
-  width: 10rem;
+.toolbar .circuit-picker #circuit-name {
+  width: 13rem;
   min-width: 0;
+  height: 28px;
   font-weight: 600;
+  font-size: 0.875rem;
+  border: 0;
+  background: transparent;
+  text-overflow: ellipsis;
+}
+
+/* The title hugs its text so the unsaved dot and chevron sit right after it. */
+@supports (field-sizing: content) {
+  .toolbar .circuit-picker #circuit-name {
+    field-sizing: content;
+    width: auto;
+    min-width: 6rem;
+    max-width: 18rem;
+    padding-right: 4px;
+  }
+}
+
+.toolbar .circuit-picker #circuit-name:focus {
+  outline: none;
+}
+
+.dirty-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--warn);
+  animation: dirty-dot-in 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes dirty-dot-in {
+  from { transform: scale(0); }
+}
+
+.toolbar .circuit-picker #circuit-select {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: transparent;
+  cursor: pointer;
+  appearance: none;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237a8394' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") center / 16px no-repeat;
+}
+
+.toolbar .circuit-picker #circuit-select:hover {
+  background-color: var(--bg-hover);
+}
+
+#circuit-select option {
+  color: var(--text);
+  background: var(--bg-panel);
 }
 
 @media (max-width: 1280px) {
-  #circuit-select { width: 9rem; }
-  #circuit-name { width: 8rem; }
+  .toolbar .circuit-picker #circuit-name { width: 9rem; max-width: 11rem; }
 }
 
 .danger-action {
@@ -1546,7 +1617,6 @@ button:disabled {
   border-top: 1px solid var(--border);
 }
 
-.align-panel:not([hidden]) + .style-panel { margin-top: 0; }
 
 .align-controls { display: grid; gap: 7px; }
 .align-button-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
@@ -1556,16 +1626,22 @@ button:disabled {
 .align-measure-label { color: var(--text-dim); font-size: 0.72rem; }
 .align-note { min-height: 1.1em; color: var(--text-dim); font-size: 0.72rem; line-height: 1.35; }
 
+/* Style controls are part of the Selection inspector, directly under the
+   object they apply to. */
 .style-panel {
-  flex: none;
-  margin-top: auto;
   display: grid;
   gap: 6px;
-  padding-block: 8px 10px;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
-  border-bottom: 0;
-  box-shadow: 0 -6px 12px -10px rgba(20, 24, 34, 0.35);
+  margin: 8px 0 2px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.style-heading {
+  color: var(--text-dim);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .style-row {
@@ -2062,111 +2138,232 @@ button:disabled {
   outline-offset: 1px;
 }
 
-/* ----- console ------------------------------------------------- */
+/* ----- status bar and log drawer -------------------------------- */
 
-.console {
+/* One slim line: mode pill, live hint, fixed chips. The log and command line
+   are an overlay drawer, so opening them never reflows the canvas. */
+.statusbar {
   position: relative;
+  z-index: 40;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 6px 0 8px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
-  display: flex;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.status-mode {
   flex: 0 0 auto;
-  flex-direction: column;
-  height: 140px;
-  min-height: 92px;
-  max-height: min(50vh, 420px);
-  overflow: hidden;
-  resize: vertical;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font: 600 0.6875rem/16px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  background: var(--bg-elevated);
+  transition: color 160ms ease, background-color 160ms ease;
 }
 
-.console-resizer {
-  position: absolute;
-  z-index: 2;
-  top: -3px;
-  right: 0;
-  left: 0;
-  height: 6px;
-  cursor: ns-resize;
-  touch-action: none;
+.status-mode:not(.normal) {
+  color: var(--accent);
+  background: var(--accent-dim);
 }
 
-.console-resizer::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  right: 45%;
-  left: 45%;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--border);
-  opacity: 0;
-}
-
-.console-resizer:hover::after,
-.console-resizer:focus-visible::after {
-  opacity: 1;
-}
-
-.console-resizer:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
+.status-mode.delete {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg-panel));
 }
 
 .status {
-  padding: 5px 16px;
-  font-size: 0.75rem;
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--text-dim);
-  border-bottom: 1px solid var(--border);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.status.normal {
-  color: var(--text-dim);
+.status:not(.normal) {
+  color: var(--text);
 }
 
-/* An active tool is shown in the accent color, like the pressed rail button;
-   only the destructive delete tool uses the danger color. */
-.status:not(.normal) {
-  color: var(--accent);
+.status-chips {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.status-chip {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font: 0.6875rem/20px ui-monospace, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+button.status-chip:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.status-cursor {
+  min-width: 9ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-selection {
+  color: var(--text);
+}
+
+.status-check.issue {
+  color: var(--danger);
   font-weight: 600;
 }
 
-.status.delete {
+.status-check:not(.issue) {
+  color: var(--ok);
+}
+
+.status-message {
+  max-width: min(34vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: inherit;
+  font-size: 0.75rem;
+}
+
+.status-message:empty {
+  display: none;
+}
+
+.status-message[data-kind="error"] {
   color: var(--danger);
 }
 
-.status.direct-wire {
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
-  border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+.status-message[data-kind="hint"] {
+  font-style: italic;
+}
+
+.status-message.fresh {
+  animation: status-message-fresh 4s ease-out both;
+}
+
+@keyframes status-message-fresh {
+  0%, 60% { color: var(--text); }
+}
+
+.status-message[data-kind="error"].fresh {
+  animation-name: status-message-error;
+}
+
+@keyframes status-message-error {
+  0%, 60% { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+}
+
+.status-help {
+  width: 20px;
+  padding: 0;
+  font-family: inherit;
+  font-weight: 600;
+  border-radius: 999px;
+}
+
+.log-drawer {
+  position: absolute;
+  right: 6px;
+  bottom: calc(100% + 6px);
+  width: min(760px, calc(100vw - 12px));
+  max-height: min(46vh, 420px);
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+  animation: log-drawer-in 140ms ease-out;
+  transform-origin: bottom right;
+}
+
+@keyframes log-drawer-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+}
+
+.log-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px 0 12px;
+}
+
+.log-drawer-title {
+  flex: 1;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.log-drawer-head .icon-button {
+  width: 24px;
+  height: 24px;
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+}
+
+.log-drawer-head .icon-button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-dim);
 }
 
 .console-row {
   display: flex;
-  gap: 8px;
-  padding: 8px 16px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 8px 12px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.console-prompt {
+  font: 600 0.8125rem ui-monospace, Menlo, Consolas, monospace;
+  color: var(--accent);
 }
 
 #cmd-input {
   flex: 1;
-  font: inherit;
+  height: 26px;
+  font: 0.8125rem ui-monospace, Menlo, Consolas, monospace;
   color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  padding: 0 4px;
 }
 
 #cmd-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border: 0;
 }
 
 .log {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 48px;
   margin: 0;
-  padding: 8px 16px 12px;
+  padding: 4px 12px 8px;
   overflow-y: auto;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 0.75rem;
@@ -2191,10 +2388,12 @@ button:disabled {
   z-index: 300;
   min-width: 140px;
   max-width: calc(100vw - 16px);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(20, 24, 34, 0.18);
+  box-shadow: var(--glass-shadow);
   padding: 4px;
   font-size: 0.8125rem;
   user-select: none;
@@ -2302,10 +2501,12 @@ button:disabled {
   flex-direction: column;
   gap: 2px;
   color: var(--text);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(20, 24, 34, 0.24);
+  box-shadow: var(--glass-shadow);
   font-size: 0.8125rem;
 }
 
@@ -2473,6 +2674,7 @@ html.dark {
   --label-edit-bg: rgba(25, 28, 36, 0.94);
   --logo-blade: var(--text);
   --logo-sheen: #8a93a3;
+  --glass-shadow: 0 10px 32px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
   color-scheme: dark;
 }
 
@@ -2538,10 +2740,12 @@ button.off {
   scrollbar-gutter: auto;
   scrollbar-width: none;
   padding: 4px;
-  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  box-shadow: 0 2px 8px rgba(20, 24, 34, 0.16);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
+  border-radius: 9px;
+  box-shadow: var(--glass-shadow);
 }
 
 /* The fade is conditional so a full-height rail does not make its last tool
@@ -2550,7 +2754,7 @@ button.off {
 .mode-toolbar[data-overflow-end] {
   box-shadow:
     inset 0 -18px 12px -14px color-mix(in srgb, var(--bg-panel) 96%, transparent),
-    0 2px 8px rgba(20, 24, 34, 0.16);
+    var(--glass-shadow);
 }
 
 .mode-toolbar::-webkit-scrollbar {
@@ -2565,7 +2769,7 @@ button.off {
   clip-path: inset(50%);
 }
 
-.mode-toolbar .mode-control {
+:is(.mode-toolbar, .rail-flyout) .mode-control {
   width: 34px;
   height: 34px;
   min-height: 34px;
@@ -2580,9 +2784,49 @@ button.off {
   border-radius: 7px;
 }
 
-.mode-toolbar .mode-control:hover {
+:is(.mode-toolbar, .rail-flyout) .mode-control:hover {
   color: var(--text);
   background: var(--bg-hover);
+}
+
+/* The annotation flyout: a horizontal strip beside its rail slot. */
+.rail-flyout {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 8px;
+  animation: rail-flyout-in 120ms ease-out;
+  transform-origin: left center;
+}
+
+@keyframes rail-flyout-in {
+  from { opacity: 0; transform: translateX(-4px) scale(0.97); }
+}
+
+/* A small corner mark says "more tools here", like the wire button's. */
+.rail-flyout-proxy {
+  position: relative;
+}
+
+.rail-flyout-proxy::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  border: 3px solid transparent;
+  border-right-color: currentColor;
+  border-bottom-color: currentColor;
+  opacity: 0.55;
+}
+
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
 }
 
 .mode-separator {
@@ -2593,16 +2837,16 @@ button.off {
   background: var(--border);
 }
 
-.mode-toolbar .mode-control kbd {
+:is(.mode-toolbar, .rail-flyout) .mode-control kbd {
   display: none;
 }
-.mode-toolbar .mode-control .button-icon {
+:is(.mode-toolbar, .rail-flyout) .mode-control .button-icon {
   width: 20px;
   height: 20px;
   stroke-width: 2;
 }
 
-.mode-toolbar .mode-control[aria-pressed="true"] {
+:is(.mode-toolbar, .rail-flyout) .mode-control[aria-pressed="true"] {
   color: var(--accent);
   background: var(--accent-dim);
   border-color: transparent;
@@ -2610,7 +2854,7 @@ button.off {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
-.mode-toolbar .mode-control[data-action="delete"][aria-pressed="true"] {
+:is(.mode-toolbar, .rail-flyout) .mode-control[data-action="delete"][aria-pressed="true"] {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent);
@@ -2618,15 +2862,15 @@ button.off {
 
 /* Tool selection feedback: colors ease in, a press dips, and the newly
    active tool's icon gives one small pop. */
-.mode-toolbar .mode-control {
+:is(.mode-toolbar, .rail-flyout) .mode-control {
   transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 90ms ease;
 }
 
-.mode-toolbar .mode-control:active {
+:is(.mode-toolbar, .rail-flyout) .mode-control:active {
   transform: scale(0.92);
 }
 
-.mode-toolbar .mode-control[aria-pressed="true"] .button-icon {
+:is(.mode-toolbar, .rail-flyout) .mode-control[aria-pressed="true"] .button-icon {
   animation: tool-pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -2636,9 +2880,9 @@ button.off {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mode-toolbar .mode-control,
-  .mode-toolbar .mode-control[aria-pressed="true"] .button-icon,
-  .mode-toolbar .mode-control.tool-flash {
+  :is(.mode-toolbar, .rail-flyout) .mode-control,
+  :is(.mode-toolbar, .rail-flyout) .mode-control[aria-pressed="true"] .button-icon,
+  :is(.mode-toolbar, .rail-flyout) .mode-control.tool-flash {
     transition: none;
     animation: none;
   }
@@ -2661,12 +2905,12 @@ button.off {
 
 /* A tool change (or a wire-shape change) pulses the active rail button once,
    so a keyboard switch is confirmed in peripheral vision. */
-.mode-toolbar .mode-control.tool-flash {
+:is(.mode-toolbar, .rail-flyout) .mode-control.tool-flash {
   --tool-flash: var(--accent);
   animation: tool-flash 600ms ease-out;
 }
 
-.mode-toolbar .mode-control[data-action="delete"].tool-flash {
+:is(.mode-toolbar, .rail-flyout) .mode-control[data-action="delete"].tool-flash {
   --tool-flash: var(--danger);
 }
 
@@ -2675,17 +2919,13 @@ button.off {
   100% { box-shadow: 0 0 0 10px transparent; }
 }
 
-.mode-toolbar .mode-control:focus-visible {
+:is(.mode-toolbar, .rail-flyout) .mode-control:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
   outline-offset: 1px;
 }
 
 .layout {
   min-height: 0;
-}
-
-.console {
-  height: 140px;
 }
 
 @media (max-width: 760px) {
@@ -2707,7 +2947,7 @@ button.off {
       0 2px 8px rgba(20, 24, 34, 0.16);
   }
 
-  .mode-toolbar .mode-control {
+  :is(.mode-toolbar, .rail-flyout) .mode-control {
     flex: 0 0 34px;
   }
 
@@ -2725,7 +2965,6 @@ button.off {
     flex: 1 1 100%;
   }
 
-  .circuit-picker > select,
   .circuit-picker > input {
     flex: 1 1 0;
     width: auto;
@@ -2735,8 +2974,9 @@ button.off {
     width: min(var(--side-panel-width), 42vw);
   }
 
-  .console {
-    height: 92px;
+  .status-cursor,
+  .status-selection {
+    display: none;
   }
 }
 

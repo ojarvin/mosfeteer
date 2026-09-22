@@ -16,11 +16,12 @@
   <header class="toolbar">
     <div class="toolbar-cluster document-cluster" role="group" aria-label="Document">
       <span class="app-mark" role="img" aria-label="Mosfeteer" title="Mosfeteer"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></span>
-      <div class="circuit-picker">
+      <div class="circuit-picker" title="">
+        <input id="circuit-name" type="text" placeholder="Untitled" autocomplete="off" spellcheck="false" aria-label="Document name" title="Name used when saving this document to the workspace folder" />
+        <span id="dirty-dot" class="dirty-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" hidden></span>
         <select id="circuit-select" aria-label="Open a document" title="Open a document">
           <option value="">Open document…</option>
         </select>
-        <input id="circuit-name" type="text" placeholder="Untitled" autocomplete="off" spellcheck="false" aria-label="Document name" title="Name used when saving this document to the workspace folder" />
       </div>
     </div>
 
@@ -152,13 +153,13 @@
         <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc (Delete)" aria-label="Delete selected objects">Delete <kbd>Delete</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
         <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a label on a physical wire (L)" aria-label="Place a label on a physical wire">Net label <kbd>L</kbd></button>
+        <button id="btn-rail-annotate" class="mode-control annotation-control rail-flyout-proxy" data-icon="text" data-flyout-proxy="annotate" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="rail-flyout" title="Annotation tools: text, arrow, box, line (hover or right-click for all)" aria-label="Annotation tools">Annotate</button>
+      </div>
+      <div id="rail-flyout" class="rail-flyout glass" role="group" aria-label="Annotation tools" hidden>
         <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-icon="text" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires (Shift+N)" aria-label="Place annotation">Annotation <kbd>Shift+N</kbd></button>
         <button id="btn-mode-arrow" class="mode-control annotation-control" data-icon="arrow" data-action="arrow" aria-pressed="false" title="Draw a multi-point arrow; press Enter to commit (a)" aria-label="Draw multi-point arrow">Arrow <kbd>a</kbd></button>
         <button id="btn-mode-box" class="mode-control annotation-control" data-icon="rectangle" data-action="box" aria-pressed="false" title="Draw a two-point box (b)" aria-label="Draw box">Box <kbd>b</kbd></button>
         <button id="btn-mode-line" class="mode-control annotation-control" data-icon="line" data-action="line" aria-pressed="false" title="Draw a non-connectivity line annotation (l)" aria-label="Draw line annotation">Line <kbd>l</kbd></button>
-        <span class="mode-separator" role="separator" aria-hidden="true"></span>
-        <button id="btn-bring-front" class="mode-control layer-control" data-icon="front" data-action="bring-front" aria-pressed="false" aria-keyshortcuts="Shift+ArrowUp" title="Bring selected objects to the front (Shift+Up)" aria-label="Bring selected objects to front">Bring to front <kbd>Shift+↑</kbd></button>
-        <button id="btn-send-back" class="mode-control layer-control" data-icon="back" data-action="send-back" aria-pressed="false" aria-keyshortcuts="Shift+ArrowDown" title="Send selected objects to the back (Shift+Down)" aria-label="Send selected objects to back">Send to back <kbd>Shift+↓</kbd></button>
       </div>
       <div id="empty-state" class="empty-state" hidden>
         <div class="empty-state-head"><span class="app-mark empty-state-mark" aria-hidden="true"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></span><div class="empty-state-title">Empty schematic</div></div>
@@ -205,15 +206,15 @@
           </div>
           <fieldset class="analysis-approximations">
             <legend>Model simplifications</legend>
-            <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</label>
-            <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</label>
+            <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> <span>Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</span></label>
+            <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> <span>Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</span></label>
             <label><input id="analysis-approx-miller" name="approxMiller" type="checkbox" checked /> Miller approximation for gate–drain feedback</label>
-            <label><input id="analysis-parasitics" name="parasitics" type="checkbox" /> Include MOS device capacitances (<span class="math-inline">C<sub>gs</sub></span>, <span class="math-inline">C<sub>gd</sub></span>)</label>
+            <label><input id="analysis-parasitics" name="parasitics" type="checkbox" /> <span>Include MOS device capacitances (<span class="math-inline">C<sub>gs</sub></span>, <span class="math-inline">C<sub>gd</sub></span>)</span></label>
             <p class="field-hint">These change the model before it is solved: the branch is left out, so the small-signal netlist and the Model tab show what was actually solved.</p>
           </fieldset>
           <fieldset class="analysis-approximations">
             <legend>Equation approximations</legend>
-            <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></label>
+            <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> <span>Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></span></label>
             <label><input id="analysis-approx-dominant-pole" name="approxDominantPole" type="checkbox" /> Use dominant-pole approximation when multiple AC poles are present</label>
             <p class="field-hint">These simplify the displayed equations only. Exact equations remain in the Log tab.</p>
           </fieldset>
@@ -286,6 +287,63 @@
           <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="detail">Selection</button>
         </div>
         <div class="detail" id="detail"></div>
+        <div class="style-panel" id="style-panel" role="group" aria-labelledby="style-heading" hidden>
+          <div class="style-heading" id="style-heading">Style</div>
+          <div class="style-row style-row-swatches">
+            <div id="style-color" class="swatches" role="radiogroup" aria-label="Color" title="Apply color to selected objects; Ctrl/Cmd+Shift+V pastes all style fields from the copied object">
+              <button type="button" class="swatch swatch-ink" role="radio" data-value="#111" aria-label="Ink" style="--swatch:#111"></button>
+              <button type="button" class="swatch" role="radio" data-value="#7a7d85" aria-label="Grey" style="--swatch:#7a7d85"></button>
+              <button type="button" class="swatch" role="radio" data-value="#d96c75" aria-label="Red" style="--swatch:#d96c75"></button>
+              <button type="button" class="swatch" role="radio" data-value="#e59f71" aria-label="Orange" style="--swatch:#e59f71"></button>
+              <button type="button" class="swatch" role="radio" data-value="#e4c16f" aria-label="Yellow" style="--swatch:#e4c16f"></button>
+              <button type="button" class="swatch" role="radio" data-value="#9acb8a" aria-label="Green" style="--swatch:#9acb8a"></button>
+              <button type="button" class="swatch" role="radio" data-value="#62b5a7" aria-label="Teal" style="--swatch:#62b5a7"></button>
+              <button type="button" class="swatch" role="radio" data-value="#6fa8dc" aria-label="Blue" style="--swatch:#6fa8dc"></button>
+              <button type="button" class="swatch" role="radio" data-value="#8f8bd1" aria-label="Indigo" style="--swatch:#8f8bd1"></button>
+              <button type="button" class="swatch" role="radio" data-value="#b08ac6" aria-label="Purple" style="--swatch:#b08ac6"></button>
+              <button type="button" class="swatch" role="radio" data-value="#d889b5" aria-label="Pink" style="--swatch:#d889b5"></button>
+              <button type="button" class="swatch" role="radio" data-value="#9aa7b8" aria-label="Slate" style="--swatch:#9aa7b8"></button>
+            </div>
+          </div>
+          <div class="style-row" id="style-text-row" hidden>
+            <span class="style-row-label">Text</span>
+            <div class="style-text-controls">
+              <div class="segmented" role="group" aria-label="Text alignment">
+                <button type="button" class="icon-button" data-icon="align-left" data-style-align="left" aria-pressed="false" aria-label="Align left" title="Align left (Shift+Left)">Left</button>
+                <button type="button" class="icon-button" data-icon="align-center" data-style-align="center" aria-pressed="false" aria-label="Align center" title="Align center">Center</button>
+                <button type="button" class="icon-button" data-icon="align-right" data-style-align="right" aria-pressed="false" aria-label="Align right" title="Align right (Shift+Right)">Right</button>
+              </div>
+              <div class="segmented" role="group" aria-label="Font style">
+                <button type="button" class="text-toggle text-toggle-bold" data-style-font="bold" aria-pressed="false" aria-label="Bold" title="Bold (Ctrl/Cmd+B)">B</button>
+                <button type="button" class="text-toggle text-toggle-italic" data-style-font="italic" aria-pressed="false" aria-label="Italic" title="Italic (Ctrl/Cmd+I)">I</button>
+              </div>
+            </div>
+          </div>
+          <div class="style-row" id="style-line-row">
+            <span class="style-row-label">Line</span>
+            <div class="segmented" role="group" aria-label="Line style and arrowheads">
+              <button type="button" class="icon-button" id="style-arrow-start" data-icon="arrow-start" data-arrow-end="start" aria-pressed="false" aria-label="Arrowhead at line start" title="Toggle an arrowhead at the line start"></button>
+              <div class="toolbar-popover">
+                <button type="button" class="icon-button" id="style-line-pattern" data-icon="line-solid" aria-haspopup="menu" aria-expanded="false" aria-controls="style-line-menu" aria-label="Line style" title="Choose a line style"></button>
+                <div id="style-line-menu" class="toolbar-menu style-line-menu" role="menu" aria-label="Line style" hidden>
+                  <button type="button" role="menuitem" class="icon-button" data-icon="line-solid" data-line-style="solid" aria-label="Solid" title="Solid"></button>
+                  <button type="button" role="menuitem" class="icon-button" data-icon="line-dashed" data-line-style="dashed" aria-label="Dashed" title="Dashed"></button>
+                  <button type="button" role="menuitem" class="icon-button" data-icon="line-dash-dot" data-line-style="dash-dot" aria-label="Dash-dot" title="Dash-dot"></button>
+                  <button type="button" role="menuitem" class="icon-button" data-icon="line-dotted" data-line-style="dotted" aria-label="Dotted" title="Dotted"></button>
+                </div>
+              </div>
+              <button type="button" class="icon-button" id="style-arrow-end" data-icon="arrow-end" data-arrow-end="end" aria-pressed="false" aria-label="Arrowhead at line end" title="Toggle an arrowhead at the line end"></button>
+            </div>
+          </div>
+          <div class="style-row" id="style-width-row">
+            <span class="style-row-label">Width</span>
+            <div class="segmented" role="group" aria-label="Stroke width">
+              <button type="button" class="icon-button" data-icon="width-thin" data-width="thin" aria-pressed="false" aria-label="Thin" title="Thin stroke"></button>
+              <button type="button" class="icon-button" data-icon="width-normal" data-width="normal" aria-pressed="false" aria-label="Normal" title="Normal stroke"></button>
+              <button type="button" class="icon-button" data-icon="width-thick" data-width="thick" aria-pressed="false" aria-label="Thick" title="Thick stroke"></button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="panel-group check-summary" id="check-summary" data-panel="check-summary" data-doc-kind="schematic" aria-labelledby="check-summary-heading">
@@ -321,86 +379,33 @@
           <div class="align-note" id="align-note" aria-live="polite"></div>
         </div>
       </section>
-      <section class="panel-group style-panel" id="style-panel" aria-labelledby="style-heading" hidden>
-        <h2 class="panel-heading" id="style-heading">Style</h2>
-        <div class="style-row style-row-swatches">
-          <div id="style-color" class="swatches" role="radiogroup" aria-label="Color" title="Apply color to selected objects; Ctrl/Cmd+Shift+V pastes all style fields from the copied object">
-            <button type="button" class="swatch swatch-ink" role="radio" data-value="#111" aria-label="Ink" style="--swatch:#111"></button>
-            <button type="button" class="swatch" role="radio" data-value="#7a7d85" aria-label="Grey" style="--swatch:#7a7d85"></button>
-            <button type="button" class="swatch" role="radio" data-value="#d96c75" aria-label="Red" style="--swatch:#d96c75"></button>
-            <button type="button" class="swatch" role="radio" data-value="#e59f71" aria-label="Orange" style="--swatch:#e59f71"></button>
-            <button type="button" class="swatch" role="radio" data-value="#e4c16f" aria-label="Yellow" style="--swatch:#e4c16f"></button>
-            <button type="button" class="swatch" role="radio" data-value="#9acb8a" aria-label="Green" style="--swatch:#9acb8a"></button>
-            <button type="button" class="swatch" role="radio" data-value="#62b5a7" aria-label="Teal" style="--swatch:#62b5a7"></button>
-            <button type="button" class="swatch" role="radio" data-value="#6fa8dc" aria-label="Blue" style="--swatch:#6fa8dc"></button>
-            <button type="button" class="swatch" role="radio" data-value="#8f8bd1" aria-label="Indigo" style="--swatch:#8f8bd1"></button>
-            <button type="button" class="swatch" role="radio" data-value="#b08ac6" aria-label="Purple" style="--swatch:#b08ac6"></button>
-            <button type="button" class="swatch" role="radio" data-value="#d889b5" aria-label="Pink" style="--swatch:#d889b5"></button>
-            <button type="button" class="swatch" role="radio" data-value="#9aa7b8" aria-label="Slate" style="--swatch:#9aa7b8"></button>
-          </div>
-        </div>
-        <div class="style-row" id="style-text-row" hidden>
-          <span class="style-row-label">Text</span>
-          <div class="style-text-controls">
-            <div class="segmented" role="group" aria-label="Text alignment">
-              <button type="button" class="icon-button" data-icon="align-left" data-style-align="left" aria-pressed="false" aria-label="Align left" title="Align left (Shift+Left)">Left</button>
-              <button type="button" class="icon-button" data-icon="align-center" data-style-align="center" aria-pressed="false" aria-label="Align center" title="Align center">Center</button>
-              <button type="button" class="icon-button" data-icon="align-right" data-style-align="right" aria-pressed="false" aria-label="Align right" title="Align right (Shift+Right)">Right</button>
-            </div>
-            <div class="segmented" role="group" aria-label="Font style">
-              <button type="button" class="text-toggle text-toggle-bold" data-style-font="bold" aria-pressed="false" aria-label="Bold" title="Bold (Ctrl/Cmd+B)">B</button>
-              <button type="button" class="text-toggle text-toggle-italic" data-style-font="italic" aria-pressed="false" aria-label="Italic" title="Italic (Ctrl/Cmd+I)">I</button>
-            </div>
-          </div>
-        </div>
-        <div class="style-row" id="style-line-row">
-          <span class="style-row-label">Line</span>
-          <div class="segmented" role="group" aria-label="Line style and arrowheads">
-            <button type="button" class="icon-button" id="style-arrow-start" data-icon="arrow-start" data-arrow-end="start" aria-pressed="false" aria-label="Arrowhead at line start" title="Toggle an arrowhead at the line start"></button>
-            <div class="toolbar-popover">
-              <button type="button" class="icon-button" id="style-line-pattern" data-icon="line-solid" aria-haspopup="menu" aria-expanded="false" aria-controls="style-line-menu" aria-label="Line style" title="Choose a line style"></button>
-              <div id="style-line-menu" class="toolbar-menu style-line-menu" role="menu" aria-label="Line style" hidden>
-                <button type="button" role="menuitem" class="icon-button" data-icon="line-solid" data-line-style="solid" aria-label="Solid" title="Solid"></button>
-                <button type="button" role="menuitem" class="icon-button" data-icon="line-dashed" data-line-style="dashed" aria-label="Dashed" title="Dashed"></button>
-                <button type="button" role="menuitem" class="icon-button" data-icon="line-dash-dot" data-line-style="dash-dot" aria-label="Dash-dot" title="Dash-dot"></button>
-                <button type="button" role="menuitem" class="icon-button" data-icon="line-dotted" data-line-style="dotted" aria-label="Dotted" title="Dotted"></button>
-              </div>
-            </div>
-            <button type="button" class="icon-button" id="style-arrow-end" data-icon="arrow-end" data-arrow-end="end" aria-pressed="false" aria-label="Arrowhead at line end" title="Toggle an arrowhead at the line end"></button>
-          </div>
-        </div>
-        <div class="style-row" id="style-width-row">
-          <span class="style-row-label">Width</span>
-          <div class="segmented" role="group" aria-label="Stroke width">
-            <button type="button" class="icon-button" data-icon="width-thin" data-width="thin" aria-pressed="false" aria-label="Thin" title="Thin stroke"></button>
-            <button type="button" class="icon-button" data-icon="width-normal" data-width="normal" aria-pressed="false" aria-label="Normal" title="Normal stroke"></button>
-            <button type="button" class="icon-button" data-icon="width-thick" data-width="thick" aria-pressed="false" aria-label="Thick" title="Thick stroke"></button>
-          </div>
-        </div>
-      </section>
     </aside>
   </main>
 
-  <footer class="console" id="console-panel" role="region" aria-label="Command and status panel">
-    <div
-      id="console-resizer"
-      class="console-resizer"
-      role="separator"
-      aria-orientation="horizontal"
-      aria-label="Resize command and status panel"
-      aria-controls="cmd-input log"
-      aria-valuemin="92"
-      aria-valuemax="420"
-      aria-valuenow="140"
-      tabindex="0"
-    ></div>
+  <footer class="statusbar" id="console-panel" role="region" aria-label="Status and command log">
+    <span id="status-mode" class="status-mode" aria-hidden="true">NORMAL</span>
     <div class="status" id="status" role="status" aria-live="polite"></div>
     <div id="accessibility-announcement" class="visually-hidden" role="status" aria-live="polite"></div>
-    <div class="console-row">
-      <button id="btn-help" data-icon="help" title="Show keyboard and command help (?)">Help</button>
-      <input id="cmd-input" type="text" placeholder="Enter a command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)" autocomplete="off" spellcheck="false" />
+    <div class="status-chips">
+      <span id="status-selection" class="status-chip status-selection" title="Current selection" hidden></span>
+      <span id="status-cursor" class="status-chip status-cursor" title="Cursor position (world units)"></span>
+      <button id="status-zoom" type="button" class="status-chip status-zoom" title="Zoom level; click to fit the drawing (F)">100%</button>
+      <button id="status-check" type="button" class="status-chip status-check" title="Design check issues; click to review" hidden></button>
+      <button id="status-message" type="button" class="status-chip status-message" aria-expanded="false" aria-controls="log-drawer" title="Last message; click to open the log and command line (:)"></button>
+      <button id="btn-help" type="button" class="status-chip status-help" title="Show keyboard and command help (?)" aria-label="Help">?</button>
     </div>
-    <pre class="log" id="log"></pre>
+    <section id="log-drawer" class="log-drawer" aria-label="Log and command line" hidden>
+      <header class="log-drawer-head">
+        <span class="log-drawer-title">Log</span>
+        <button id="log-pin" type="button" class="icon-button" data-icon="pin" aria-pressed="false" aria-label="Keep the log open" title="Keep the log open">Pin</button>
+        <button id="log-clear" type="button" class="icon-button" data-icon="trash" aria-label="Clear the log" title="Clear the log">Clear</button>
+      </header>
+      <pre class="log" id="log"></pre>
+      <div class="console-row">
+        <span class="console-prompt" aria-hidden="true">:</span>
+        <input id="cmd-input" type="text" placeholder="Enter a command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)" autocomplete="off" spellcheck="false" aria-label="Command" />
+      </div>
+    </section>
   </footer>
 
   <script type="module" src="main.js?v=41"></script>
