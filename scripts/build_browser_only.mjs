@@ -98,7 +98,10 @@ while (pending.size) {
   await Promise.all(jobs);
 }
 
-const moduleSource = [...modules.entries()].map(([id, module]) => [
+// Source reads finish in any order, so emit modules sorted by id: the bundle
+// only registers them (each runs on first __require), and a stable order keeps
+// rebuilds of unchanged sources byte-identical.
+const moduleSource = [...modules.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, module]) => [
   `__modules[${JSON.stringify(id)}] = function (__require, __exports) {`,
   ...module.dependencies,
   module.source,
