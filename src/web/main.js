@@ -10,7 +10,7 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
@@ -575,6 +575,11 @@ function logCommand(line) {
   logLine(`> ${line}`, 'cmd');
 }
 
+function noteActionPrevented(error) {
+  const detail = error?.message || String(error || 'the requested change was rejected');
+  logLine(`action prevented: ${detail}`, 'status');
+}
+
 // ----- history --------------------------------------------------------
 
 function markModelChanged(wires = true) {
@@ -591,9 +596,20 @@ function markModelChanged(wires = true) {
 }
 
 function commit(fn) {
-  recordHistoryEntry(snapshot(), true, 'defer');
-  fn();
+  const before = snapshot();
+  let result;
+  try {
+    result = fn();
+  } catch (error) {
+    // Model edits such as an unsafe reroute roll themselves back before
+    // returning here.  Do not turn that rejected action into an undo entry.
+    noteActionPrevented(error);
+    return false;
+  }
+  if (snapshot() === before) return result;
+  recordHistoryEntry(before, true, 'defer');
   markModelChanged();
+  return result;
 }
 
 function snapshot() {
@@ -2658,12 +2674,14 @@ function rotateSelectionAbout(deg) {
     return;
   }
   const refs = selectedComps().map((c) => c.refdes);
+  const beforeComponents = captureComponentTerminalPositions(refs);
+  const beforeTerminals = captureNetTerminalPositions(refs);
   const apply = () => {
     for (const c of selectedComps()) {
       if (pivot) applySingletonWorldTransform(c, 'rotate', pivot);
       else circuit.setTransform(c.refdes, { rotation: (((c.transform.rotation + deg) % 360) + 360) % 360 });
     }
-    rerouteTouchedNets(refs, null, true);
+    rerouteTouchedNets(refs, null, true, beforeTerminals, componentTerminalMoves(refs, beforeComponents));
   };
   if (inMoveGhost) {
     apply();
@@ -2699,9 +2717,11 @@ function mirrorSelectionAbout(axis) {
     return;
   }
   const refs = selectedComps().map((c) => c.refdes);
+  const beforeComponents = captureComponentTerminalPositions(refs);
+  const beforeTerminals = captureNetTerminalPositions(refs);
   const apply = () => {
     for (const c of selectedComps()) applySingletonWorldMirror(c, axis, pivot);
-    rerouteTouchedNets(refs, null, true);
+    rerouteTouchedNets(refs, null, true, beforeTerminals, componentTerminalMoves(refs, beforeComponents));
   };
   if (inMoveGhost) {
     apply();
@@ -2745,6 +2765,8 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
   }
   const refs = selectedComps().map((c) => c.refdes);
   const selectedRefSet = new Set(refs);
+  const beforeComponents = captureComponentTerminalPositions(refs);
+  const beforeTerminals = captureNetTerminalPositions(refs);
   const geometryNetIds = new Set(byNet.keys());
   const canTransformNet = (net) => !net.terminals.length || net.terminals.every((t) => selectedRefSet.has(t.comp));
   for (const id of selectedNets) {
@@ -2851,7 +2873,14 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     for (const id of netsTouching(refs)) {
       const net = circuit.nets.get(id);
       if (net && !transformed.has(id)) {
-        if (rerouteNet(net, 'refresh') === false) throw new Error(`unable to reroute net ${id} safely`);
+        const terminalsChanged = !beforeTerminals.has(id)
+          || beforeTerminals.get(id) !== netTerminalPositionKey(circuit, net);
+        const routeArg = net.routingMode === 'fixed'
+          ? 'refresh'
+          : componentTerminalMoves(refs, beforeComponents);
+        if (terminalsChanged && rerouteNet(net, routeArg) === false) {
+          throw new Error(`unable to reroute net ${id} safely`);
+        }
       }
     }
     if (delta) circuit.reconnectCoincidentNets();
@@ -2879,7 +2908,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
       directWire = null;
     }
     markModelChanged();
-    logLine(`transform cancelled: ${err.message}`, 'error');
+    noteActionPrevented(err);
     return false;
   }
 }
@@ -2887,10 +2916,50 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
 /** Re-route every net touching the given components (holistic, from terminals).
  *  `moved` (optional) is a Map of refdes -> {dx,dy} so drawn wire shapes are
  *  preserved instead of recomputed when a component is dragged. */
-function rerouteTouchedNets(refs, moved, fresh = false) {
+function captureNetTerminalPositions(refs) {
+  const ids = netsTouching(refs);
+  return new Map([...ids].map((id) => {
+    const net = circuit.nets.get(id);
+    return [id, netTerminalPositionKey(circuit, net)];
+  }));
+}
+
+function captureComponentTerminalPositions(refs) {
+  return new Map(refs.map((refdes) => {
+    const component = circuit.components.get(refdes);
+    return [refdes, {
+      origin: component ? { x: component.transform.x, y: component.transform.y } : null,
+      terminals: new Map(component?.worldTerminals().map((terminal) => [terminal.name, { x: terminal.x, y: terminal.y }]) || []),
+    }];
+  }));
+}
+
+function componentTerminalMoves(refs, before) {
+  return new Map(refs.map((refdes) => {
+    const component = circuit.components.get(refdes);
+    const previous = before.get(refdes);
+    const terminals = new Map(component?.worldTerminals().map((terminal) => [terminal.name, {
+      before: previous?.terminals.get(terminal.name) || { x: terminal.x, y: terminal.y },
+      after: { x: terminal.x, y: terminal.y },
+    }]) || []);
+    return [refdes, {
+      dx: component && previous?.origin ? component.transform.x - previous.origin.x : 0,
+      dy: component && previous?.origin ? component.transform.y - previous.origin.y : 0,
+      terminals,
+    }];
+  }));
+}
+
+function rerouteTouchedNets(refs, moved, fresh = false, beforeTerminals = null, terminalMoves = null) {
   for (const id of netsTouching(refs)) {
     const net = circuit.nets.get(id);
-    if (net) rerouteNet(net, fresh ? 'refresh' : moved);
+    if (!net) continue;
+    const unchanged = fresh && beforeTerminals?.has(id)
+      && beforeTerminals.get(id) === netTerminalPositionKey(circuit, net);
+    const routeArg = unchanged ? null
+      : net.routingMode === 'fixed' ? (fresh ? 'refresh' : moved)
+        : terminalMoves || (fresh ? 'refresh' : moved);
+    if (rerouteNet(net, routeArg) === false) throw new Error(`unable to reroute net ${id} safely`);
   }
 }
 
@@ -3642,7 +3711,24 @@ function draftRoutePath(draft, to = cursor) {
   const allowDiagonal = draft.routeStyle === 'diagonal';
   const sourceNetId = draft.source.netId ||
     (draft.source.refdes ? circuit.netOfTerminal(`${draft.source.refdes}.${draft.source.term}`)?.id : null);
-  const env = circuit._netEnv(sourceNetId);
+  // The destination may already belong to a net while the source terminal is
+  // still unconnected. Exclude both sides from the preview environment: a
+  // same-net branch is allowed to meet its existing geometry, and the commit
+  // path will splice it at the selected terminal/wire target. Without this,
+  // the preview treats the destination net as an obstacle and rejects valid
+  // terminal orders such as M3 -> M1 after M2 -> M1.
+  const excludedNets = new Set(sourceNetId ? [sourceNetId] : []);
+  for (const component of circuit.components.values()) {
+    for (const terminal of component.worldTerminals()) {
+      if (terminal.x !== endpoints.at(-1).x || terminal.y !== endpoints.at(-1).y) continue;
+      const net = circuit.netOfTerminal({ comp: component.refdes, term: terminal.name });
+      if (net) excludedNets.add(net.id);
+    }
+  }
+  for (const net of circuit.nets.values()) {
+    if (net.paths().some((path) => pointOnPath(endpoints.at(-1), path))) excludedNets.add(net.id);
+  }
+  const env = circuit._netEnv(excludedNets);
   // Diagonal drafts use the model's own geometry: literal legs between clicked
   // points, auto-routed legs at pins.
   if (allowDiagonal) return diagonalDraftPath(circuit, endpoints, env) || undefined;

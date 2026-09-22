@@ -3353,6 +3353,104 @@ test('diff-pair virtual-ground net routes sources down with the T one cell clear
   }
 });
 
+test('partial mirror re-routes only the changed terminal leg of a managed net', () => {
+  const c = new Circuit();
+  c.addComponent('nmos', { refdes: 'M2', x: 40, y: -80, mirrorX: false, mirrorY: false });
+  c.addComponent('nmos', { refdes: 'M3', x: 440, y: -80, mirrorX: true, mirrorY: false });
+  c.addComponent('nmos', { refdes: 'M1', x: 240, y: 160, mirrorX: false, mirrorY: false });
+  const net = c.connect('M2.s', 'M3.s', 'M1.d');
+  const untouched = net.paths().slice(1).map((path) => path.map((point) => ({ ...point })));
+  const junction = net.junctions.map((point) => ({ ...point }));
+  const m2 = c.getComponent('M2');
+  const before = new Map(m2.worldTerminals().map((terminal) => [terminal.name, { x: terminal.x, y: terminal.y }]));
+
+  c.setTransform('M2', { mirrorY: true });
+  const terminals = new Map(m2.worldTerminals().map((terminal) => [terminal.name, {
+    before: before.get(terminal.name),
+    after: { x: terminal.x, y: terminal.y },
+  }]));
+  assert.equal(c.rerouteNet(net, new Map([['M2', { dx: 0, dy: 0, terminals }]])), true);
+
+  assert.deepEqual(net.paths().slice(1), untouched, 'the M3/M1 side remains byte-for-byte stable');
+  assert.deepEqual(net.junctions, junction, 'the existing solder junction stays put');
+  assert.deepEqual(net.paths()[0][0], m2.terminalWorld('s'), 'the moved source is re-anchored');
+  assert.ok(net.paths()[0].some((point) => point.y < -160), 'the moved leg escapes above the flipped device');
+  assert.equal(net.wiringErrors().length, 0);
+
+  const flippedPaths = net.paths();
+  const flippedJunctions = net.junctions.map((point) => ({ ...point }));
+  const beforeReturn = new Map(m2.worldTerminals().map((terminal) => [terminal.name, { x: terminal.x, y: terminal.y }]));
+  c.setTransform('M2', { mirrorY: false });
+  const returnTerminals = new Map(m2.worldTerminals().map((terminal) => [terminal.name, {
+    before: beforeReturn.get(terminal.name),
+    after: { x: terminal.x, y: terminal.y },
+  }]));
+  assert.equal(c.rerouteNet(net, new Map([['M2', { dx: 0, dy: 0, terminals: returnTerminals }]])), true);
+
+  assert.deepEqual(net.paths().slice(1), flippedPaths.slice(1), 'returning the mirror keeps the untouched side stable');
+  assert.deepEqual(net.paths()[0], [
+    { x: 40, y: 0 },
+    { x: 40, y: 40 },
+    { x: 240, y: 40 },
+  ], 'returning the mirror simplifies the changed branch to the minimum-bend route');
+  assert.deepEqual(net.junctions, junction, 'returning the mirror removes stale junctions');
+  assert.equal(net.wiringErrors().length, 0);
+});
+
+test('three-terminal autorouting is order-independent for a symmetric tail net', () => {
+  const edges = [
+    ['M1.d', 'M2.s'],
+    ['M1.d', 'M3.s'],
+    ['M2.s', 'M3.s'],
+  ];
+  const make = () => {
+    const c = new Circuit();
+    c.addComponent('nmos', { refdes: 'M2', x: 40, y: -80, mirrorX: false, mirrorY: false });
+    c.addComponent('nmos', { refdes: 'M3', x: 440, y: -80, mirrorX: true, mirrorY: false });
+    c.addComponent('nmos', { refdes: 'M1', x: 240, y: 160, mirrorX: false, mirrorY: false });
+    return c;
+  };
+  const pointOf = (c, ref) => {
+    const [comp, term] = ref.split('.');
+    return c.getComponent(comp).terminalWorld(term);
+  };
+  const canonical = (net) => {
+    const paths = net.paths().map((path) => {
+      const points = [path[0]];
+      for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1];
+        const b = path[i];
+        for (const junction of net.junctions) {
+          const onSegment = a.x === b.x
+            ? junction.x === a.x && junction.y > Math.min(a.y, b.y) && junction.y < Math.max(a.y, b.y)
+            : junction.y === a.y && junction.x > Math.min(a.x, b.x) && junction.x < Math.max(a.x, b.x);
+          if (onSegment) points.push({ ...junction });
+        }
+        points.push(b);
+      }
+      return points;
+    }).flatMap((path) => path.slice(1).map((point, i) => [path[i], point]));
+    const segments = new Set(paths.map(([a, b]) => {
+      const left = `${a.x},${a.y}`;
+      const right = `${b.x},${b.y}`;
+      return left < right ? `${left}-${right}` : `${right}-${left}`;
+    }));
+    return JSON.stringify([...segments].sort());
+  };
+  const results = new Set();
+  for (const first of edges) for (const second of edges) {
+    if (first === second) continue;
+    const c = make();
+    let net;
+    assert.doesNotThrow(() => {
+      net = c.wireTo(first[0], pointOf(c, first[1]));
+      net = c.wireTo(second[0], pointOf(c, second[1]));
+    }, `${first.join(' -> ')} then ${second.join(' -> ')}`);
+    results.add(canonical(net));
+  }
+  assert.equal(results.size, 1, 'all symmetric connection orders produce the same tree');
+});
+
 test('a set move carries its wires (no stale endpoints, no floating stubs)', () => {
   // Two components wired together, both moved by the same delta (a Ctrl+A
   // style multi-select drag): the wire must translate with the set.

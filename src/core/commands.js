@@ -1,4 +1,4 @@
-import { Circuit, canonicalNetName, transformComponentWorld } from './model.js';
+import { Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { applyDir, applyTransform, fmt, rectsOverlap } from './geometry.js';
@@ -19,7 +19,46 @@ function routeNet(circuit, net) {
 /** Re-route every net that touches any of the given component refdes.
  *  `moved` (optional) is a Map of refdes -> {dx,dy} so hand-drawn wire shapes
  *  are preserved (slid / re-anchored) instead of recomputed. */
-function rerouteNetsFor(circuit, refs, moved, fresh = false) {
+function captureNetTerminalPositions(circuit, refs) {
+  const ids = new Set();
+  for (const refdes of refs) {
+    const component = circuit.components.get(refdes);
+    if (!component) continue;
+    for (const terminal of component.terminalDefs) {
+      const net = circuit.netOfTerminal({ comp: refdes, term: terminal.name });
+      if (net) ids.add(net.id);
+    }
+  }
+  return new Map([...ids].map((id) => [id, netTerminalPositionKey(circuit, circuit.nets.get(id))]));
+}
+
+function captureComponentTerminalPositions(circuit, refs) {
+  return new Map(refs.map((refdes) => {
+    const component = circuit.components.get(refdes);
+    return [refdes, {
+      origin: component ? { x: component.transform.x, y: component.transform.y } : null,
+      terminals: new Map(component?.worldTerminals().map((terminal) => [terminal.name, { x: terminal.x, y: terminal.y }]) || []),
+    }];
+  }));
+}
+
+function componentTerminalMoves(circuit, refs, before) {
+  return new Map(refs.map((refdes) => {
+    const component = circuit.components.get(refdes);
+    const previous = before.get(refdes);
+    const terminals = new Map(component?.worldTerminals().map((terminal) => [terminal.name, {
+      before: previous?.terminals.get(terminal.name) || { x: terminal.x, y: terminal.y },
+      after: { x: terminal.x, y: terminal.y },
+    }]) || []);
+    return [refdes, {
+      dx: component && previous?.origin ? component.transform.x - previous.origin.x : 0,
+      dy: component && previous?.origin ? component.transform.y - previous.origin.y : 0,
+      terminals,
+    }];
+  }));
+}
+
+function rerouteNetsFor(circuit, refs, moved, fresh = false, beforeTerminals = null, terminalMoves = null) {
   const touched = new Set();
   for (const r of refs) {
     const c = circuit.components.get(r);
@@ -31,7 +70,13 @@ function rerouteNetsFor(circuit, refs, moved, fresh = false) {
   }
   for (const id of touched) {
     const net = circuit.nets.get(id);
-    if (net && circuit.rerouteNet(net, fresh ? 'refresh' : moved) === false) {
+    if (!net) continue;
+    const unchanged = fresh && beforeTerminals?.has(id)
+      && beforeTerminals.get(id) === netTerminalPositionKey(circuit, net);
+    const routeArg = unchanged ? null
+      : net.routingMode === 'fixed' ? (fresh ? 'refresh' : moved)
+        : terminalMoves || (fresh ? 'refresh' : moved);
+    if (circuit.rerouteNet(net, routeArg) === false) {
       throw new Error('unable to route wire safely');
     }
   }
@@ -654,8 +699,11 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'rotate') {
     const c = circuit.getComponent(pos[0]);
     const deg = pos[1] !== undefined ? Number(pos[1]) : 90;
+    const beforeComponents = captureComponentTerminalPositions(circuit, [c.refdes]);
+    const beforeTerminals = captureNetTerminalPositions(circuit, [c.refdes]);
     circuit.setTransform(c.refdes, { rotation: c.transform.rotation + deg });
-    rerouteNetsFor(circuit, [c.refdes], null, true);
+    rerouteNetsFor(circuit, [c.refdes], null, true, beforeTerminals,
+      componentTerminalMoves(circuit, [c.refdes], beforeComponents));
     circuit.reconnectCoincidentNets();
     return result(`rotated ${c.refdes} to ${c.transform.rotation}°`, { refdes: c.refdes, rotation: c.transform.rotation }, true);
   }
@@ -663,6 +711,8 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const c = circuit.getComponent(pos[0]);
     const axis = (pos[1] || 'x').toLowerCase();
     if (axis !== 'x' && axis !== 'y') throw new Error('mirror axis must be x or y');
+    const beforeComponents = captureComponentTerminalPositions(circuit, [c.refdes]);
+    const beforeTerminals = captureNetTerminalPositions(circuit, [c.refdes]);
     const operation = axis === 'x' ? 'mirrorX' : 'mirrorY';
     const next = transformComponentWorld(
       c.transform,
@@ -674,7 +724,8 @@ function dispatch(circuit, cmd, pos, flags, io) {
       mirrorX: next.mirrorX,
       mirrorY: next.mirrorY,
     });
-    rerouteNetsFor(circuit, [c.refdes], null, true);
+    rerouteNetsFor(circuit, [c.refdes], null, true, beforeTerminals,
+      componentTerminalMoves(circuit, [c.refdes], beforeComponents));
     circuit.reconnectCoincidentNets();
     circuit.syncJunctionSolders();
     return result(`mirrored ${c.refdes} along ${axis}`, { refdes: c.refdes, axis }, true);

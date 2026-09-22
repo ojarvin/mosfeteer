@@ -263,6 +263,33 @@ test('mirroring a routed-in component re-routes the net to the new terminal', ()
   assert.deepEqual(net.route[net.route.length - 1], c.getComponent('R2').terminalWorld('a'));
 });
 
+test('mirroring an unrelated terminal preserves authored geometry on a net', () => {
+  const c = fresh();
+  c.addComponent('nmos', { refdes: 'M2', x: 40, y: -80, mirrorX: false, mirrorY: false });
+  c.addComponent('nmos', { refdes: 'M3', x: 440, y: -80, mirrorX: true, mirrorY: false });
+  c.addComponent('nmos', { refdes: 'M1', x: 240, y: 160, mirrorX: false, mirrorY: false });
+  const net = c.connect('M2.s', 'M3.s', 'M1.d');
+
+  // This is a deliberate, valid reroute with a lower centered junction. The
+  // mirror changes M2.g only; M2.s remains at the same world point, so this
+  // authored tail geometry must not be replaced by a fresh autoroute.
+  net.branches = [
+    [{ x: 40, y: 0 }, { x: 40, y: 120 }, { x: 240, y: 120 }],
+    [{ x: 440, y: 0 }, { x: 440, y: 120 }, { x: 240, y: 120 }],
+    [{ x: 240, y: 80 }, { x: 240, y: 120 }],
+  ];
+  net.route = net.branches[0].map((point) => ({ ...point }));
+  net.junctions = [{ x: 240, y: 120 }];
+  const before = net.branches.map((path) => path.map((point) => ({ ...point })));
+  const sourceBefore = c.getComponent('M2').terminalWorld('s');
+
+  runCommand(c, 'mirror M2 x');
+
+  assert.deepEqual(c.getComponent('M2').terminalWorld('s'), sourceBefore, 'the connected source terminal did not move');
+  assert.deepEqual(net.branches, before, 'the net geometry is preserved');
+  assert.deepEqual(net.junctions, [{ x: 240, y: 120 }], 'the authored junction is preserved');
+});
+
 test('mirror command uses world axes after rotation', () => {
   const c = fresh();
   runCommand(c, 'add nmosb M1 --at 120 80 --rot 90');

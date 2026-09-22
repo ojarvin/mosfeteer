@@ -419,6 +419,18 @@ export function transformComponentWorld(transform, center, operation = 'rotate')
   return best || { ...transform, x: origin.x, y: origin.y };
 }
 
+/** Stable snapshot of the world positions that anchor a physical net. A
+ * component transform may change its body or an unrelated terminal without
+ * moving any terminal on a particular net; that net's authored geometry must
+ * then remain untouched. */
+export function netTerminalPositionKey(circuit, net) {
+  return net.terminals.map((terminal) => {
+    const component = circuit.components.get(terminal.comp);
+    const point = component?.terminalWorld(terminal.term);
+    return `${terminal.comp}.${terminal.term}:${point?.x},${point?.y}`;
+  }).sort().join('|');
+}
+
 let _uid = 0;
 function uid() {
   return `x${(_uid++).toString(36)}${Date.now().toString(36).slice(-4)}`;
@@ -2684,7 +2696,9 @@ export class Circuit {
   }
 
   /** Re-route a net, preserving hand-drawn wire shapes. `moved` (optional) is a
-   *  Map of refdes -> {dx,dy} for components that just moved: polylines whose
+   *  Map of refdes -> {dx,dy} for components that just moved. Transform-aware
+   *  callers may also supply `terminals: Map<name, {before,after}>` for a
+   *  component whose pins changed by rotation or mirroring. Polylines whose
    *  endpoint terminals share one move delta slide with it (manual loops are
    *  kept), one-end-moved legs get re-anchored at the new pin with their drawn
    *  body intact, and untouched polylines stay byte-identical. Routes that were
@@ -2742,6 +2756,14 @@ export class Circuit {
         }
         if (!delta) delta = terminalDelta;
         else if (delta.dx !== terminalDelta.dx || delta.dy !== terminalDelta.dy) {
+          rigid = false;
+          break;
+        }
+        const terminalMove = terminalDelta.terminals?.get(terminal.term);
+        if (terminalMove &&
+            (terminalMove.before.x !== terminalMove.after.x || terminalMove.before.y !== terminalMove.after.y) &&
+            (terminalMove.before.x !== terminalMove.after.x - delta.dx ||
+             terminalMove.before.y !== terminalMove.after.y - delta.dy)) {
           rigid = false;
           break;
         }
@@ -3001,9 +3023,17 @@ export class Circuit {
         const c = this.components.get(refdes);
         if (!c) continue;
         for (const t of c.terminalDefs) {
-          const cur = c.terminalWorld(t.name);
-          const old = { x: cur.x - delta.dx, y: cur.y - delta.dy };
-          if (Math.abs(p.x - old.x) <= 1 && Math.abs(p.y - old.y) <= 1) return { refdes, cur, delta };
+          const terminalMove = delta.terminals?.get(t.name);
+          const current = terminalMove?.after || c.terminalWorld(t.name);
+          const old = terminalMove?.before || {
+            x: current.x - delta.dx,
+            y: current.y - delta.dy,
+          };
+          if (Math.abs(p.x - old.x) <= 1 && Math.abs(p.y - old.y) <= 1) {
+            const translated = !terminalMove ||
+              (old.x === current.x - delta.dx && old.y === current.y - delta.dy);
+            return { refdes, cur: current, delta, freshLeg: !translated };
+          }
         }
       }
       return null;
@@ -3031,6 +3061,12 @@ export class Circuit {
     // connector joins the pin to its old end. Orthogonal legs below are
     // re-anchored like any managed wire.
     const endpointLeg = (oldEnd, bodyEnd, currentEnd, atStart) => {
+      const movedEndpoint = atStart ? a0 : a1;
+      if (movedEndpoint?.freshLeg) {
+        return atStart
+          ? smartRoute(currentEnd, bodyEnd, routeEnv)
+          : smartRoute(bodyEnd, currentEnd, routeEnv);
+      }
       if (isDiagonalSegment(oldEnd, bodyEnd)) {
         const stretched = atStart ? [{ ...currentEnd }, { ...bodyEnd }] : [{ ...bodyEnd }, { ...currentEnd }];
         if (safeCandidate(stretched)) return stretched;
@@ -3050,6 +3086,17 @@ export class Circuit {
         ? smartRoute(currentEnd, bodyEnd, routeEnv)
         : smartRoute(bodyEnd, currentEnd, routeEnv);
     };
+    if (a0?.freshLeg || a1?.freshLeg) {
+      // A transform that changes a terminal anchor invalidates the complete
+      // branch leading to that terminal.  Routing only to the old first
+      // body point can preserve a stale detour when the terminal is moved
+      // back, producing a loop or an extra junction.  Re-route to the
+      // branch's other endpoint instead; smartRoute then minimizes the
+      // bends for the current geometry while leaving sibling branches alone.
+      if (a0 && a1) return smartRoute(a0.cur, a1.cur, routeEnv);
+      if (a0) return smartRoute(a0.cur, poly[n - 1], routeEnv);
+      return smartRoute(poly[0], a1.cur, routeEnv);
+    }
     if (a0 && a1) {
       // The endpoint terminals moved by different deltas. Re-anchor only the
       // two terminal legs, retaining the authored body between them.
@@ -3170,7 +3217,8 @@ export class Circuit {
       if (!component) continue;
       const now = component.terminalWorld(terminal.term);
       const delta = moved.get(terminal.comp) || null;
-      const before = delta ? { x: now.x - delta.dx, y: now.y - delta.dy } : now;
+      const terminalMove = delta?.terminals?.get(terminal.term);
+      const before = terminalMove?.before || (delta ? { x: now.x - delta.dx, y: now.y - delta.dy } : now);
       deltaAt.set(`${before.x},${before.y}`, delta);
     }
     for (const junction of net.junctions) {

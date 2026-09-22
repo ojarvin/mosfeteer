@@ -472,6 +472,16 @@ test('arrow-key nudging moves mixed selections atomically', () => {
   assert.match(main, /transformMixedSelection\('translate', \{ translation: \{ dx, dy \} \}\)/);
 });
 
+test('wire previews exclude the destination net and transformed nets keep terminal moves', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const preview = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview(', main.indexOf('function draftRoutePath(')));
+  assert.match(preview, /const excludedNets = new Set\(sourceNetId \? \[sourceNetId\] : \[\]\)/);
+  assert.match(preview, /circuit\._netEnv\(excludedNets\)/);
+  const transform = main.slice(main.indexOf('function transformMixedSelection('), main.indexOf('/** Re-route every net', main.indexOf('function transformMixedSelection(')));
+  assert.match(transform, /componentTerminalMoves\(refs, beforeComponents\)/);
+  assert.match(main, /net\.routingMode === 'fixed' \? \(fresh \? 'refresh' : moved\)/);
+});
+
 test('startup paints before listing documents and restoring the requested document', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /const listPromise = refreshCircuitList\(\);/);
@@ -648,6 +658,18 @@ test('Ctrl+r still mirrors vertically while Alt symmetry is held', () => {
   assert.match(between, /ev\.preventDefault\(\);/);
   assert.match(between, /transformPendingComponent\('mirrorY'\);/);
   assert.match(between, /selectedTransform\('mirror-y'\);/);
+});
+
+test('rejected actions do not create history entries and use the shared note', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function commit(fn)');
+  const end = main.indexOf('\nfunction snapshot()', start);
+  const commit = main.slice(start, end);
+  assert.match(commit, /const before = snapshot\(\);/);
+  assert.match(commit, /if \(snapshot\(\) === before\) return result;/);
+  assert.match(commit, /noteActionPrevented\(error\)/);
+  assert.match(main, /if \(rerouteNet\(net, routeArg\) === false\) throw new Error\(`unable to reroute net \$\{id\} safely`\)/);
+  assert.match(main, /function noteActionPrevented\(error\)/);
 });
 test('the placement guides are a view toggle beside the grid', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');

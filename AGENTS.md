@@ -155,10 +155,11 @@ The model is topological; geometry is a route, not connectivity.
   growth normally appends one branch and preserves existing geometry. Fixed or
   authored paths change only through an explicit edit, transform, reroute, or
   topology repair.
-- Moving, rotating, mirroring, or resizing components reroutes every touched
-  managed net using terminals plus the routing environment. If all terminals
-  share one displacement, translate the net rigidly. Detached moves split
-  selected wire islands without moving unselected islands.
+- Moving, rotating, mirroring, or resizing components reroutes touched managed
+  nets whose terminal anchors move, while preserving geometry for touched nets
+  whose connected terminals stay put. If all terminals share one displacement,
+  translate the net rigidly. Detached moves split selected wire islands without
+  moving unselected islands.
 - Wire editing is transactional. A click without sufficient movement does not
   mutate the model; invalid overlaps restore the pre-drag document; mouseup or
   Enter creates one history entry.
