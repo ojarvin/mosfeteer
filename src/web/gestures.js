@@ -102,6 +102,13 @@ function betterQuickAdd(a, b) {
   return false;
 }
 
+/** Ring radius that leaves `gap` pixels between neighbouring round tiles of
+ * diameter `tile` when `count` of them sit at equal angles. */
+export function radialRingRadius(count, tile, gap) {
+  if (count < 2) return 0;
+  return Math.ceil((tile + gap) / (2 * Math.sin(Math.PI / count)));
+}
+
 /** Radial (marking) menu sector for a pointer offset. Sector 0 is straight up
  * and indices run clockwise. Inside the dead zone nothing is chosen (-1). */
 export function radialSector(dx, dy, count, deadZone = 18) {

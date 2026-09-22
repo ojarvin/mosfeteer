@@ -4,7 +4,7 @@ import { getSymbol } from '../src/core/components/index.js';
 import { applyTransform } from '../src/core/geometry.js';
 import {
   arrivalDirection, easeOutCubic, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement,
-  radialSector, segmentsIntersect, spliceCandidate, wheelIntent,
+  radialRingRadius, radialSector, segmentsIntersect, spliceCandidate, wheelIntent,
 } from '../src/web/gestures.js';
 
 const def = (type) => getSymbol(type);
@@ -302,4 +302,13 @@ test('pin handles scale with the drawing within a screen-size band', async () =>
   // Zoomed far out (6 units/px): kept at 2 px so it stays visible.
   assert.equal(pinHandleRadius(6) / 6, 2);
   assert.equal(pinHandleRadius(0), 4.5);
+});
+
+test('radial tiles on the ring are separated by the same gap', () => {
+  for (const count of [3, 5, 7, 8]) {
+    const radius = radialRingRadius(count, 64, 10);
+    const chord = 2 * radius * Math.sin(Math.PI / count);
+    assert.ok(chord - 64 >= 10 && chord - 64 < 12, `count ${count}: gap ${chord - 64}`);
+  }
+  assert.equal(radialRingRadius(1, 64, 10), 0);
 });

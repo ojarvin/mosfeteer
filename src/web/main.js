@@ -41,7 +41,7 @@ import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOpti
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { alignedAnchorShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
-import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
+import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 
@@ -5852,7 +5852,10 @@ function radialMove(radial, at, kind) {
   cursor = { x: snap(at.world.x), y: snap(at.world.y) };
   armModalMove({ refdes: radial.refdes }, at.world, at.client);
 }
-const RADIAL_RADIUS = 72;
+// Round tiles of one size at equal angles, on a ring sized so every pair of
+// neighbours has the same gap.
+const RADIAL_TILE = 64;
+const RADIAL_RADIUS = radialRingRadius(RADIAL_ITEMS.length, RADIAL_TILE, 10);
 let radialMenuEl = null;
 
 function openRadialMenu(radial) {
@@ -5867,17 +5870,20 @@ function openRadialMenu(radial) {
   radialMenuEl.setAttribute('role', 'menu');
   radialMenuEl.style.left = `${radial.startClient.x}px`;
   radialMenuEl.style.top = `${radial.startClient.y}px`;
+  radialMenuEl.style.setProperty('--radial-radius', `${RADIAL_RADIUS}px`);
+  radialMenuEl.style.setProperty('--radial-tile', `${RADIAL_TILE}px`);
   const hub = document.createElement('div');
   hub.className = 'radial-hub glass';
   hub.textContent = radial.refdes;
   radialMenuEl.appendChild(hub);
   RADIAL_ITEMS.forEach((item, index) => {
-    const angle = (index / RADIAL_ITEMS.length) * Math.PI * 2;
     const el = document.createElement('div');
     el.className = `radial-item glass${item.danger ? ' danger' : ''}`;
     el.setAttribute('role', 'menuitem');
-    el.style.left = `${Math.sin(angle) * RADIAL_RADIUS}px`;
-    el.style.top = `${-Math.cos(angle) * RADIAL_RADIUS}px`;
+    // Placed by CSS from its angle, so the opening animation can sweep it
+    // around the hub and out to the ring.
+    el.style.setProperty('--radial-angle', `${(index / RADIAL_ITEMS.length) * 360}deg`);
+    el.style.setProperty('--radial-delay', `${index * 14}ms`);
     el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
     el.title = item.label;
     const text = document.createElement('span');
