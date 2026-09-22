@@ -8,9 +8,8 @@ export function pngDataUrlBlob(dataUrl) {
   return new Blob([bytes], { type: 'image/png' });
 }
 
-/** Start the write before awaiting font loading or rasterization. Safari's
- * transient user activation can expire across those awaits. SVG is carried
- * as plain text because browsers do not share support for an SVG image type. */
+/** Start both clipboard payloads immediately; SVG is carried as plain text for
+ * browsers without a portable SVG clipboard image type. */
 export function writeDrawingToClipboard(svg, {
   clipboard = globalThis.navigator?.clipboard,
   ClipboardItem = globalThis.ClipboardItem,

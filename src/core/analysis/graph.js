@@ -1,4 +1,4 @@
-import { PASSIVE_KINDS } from './shared.js';
+import { asList, PASSIVE_KINDS } from './shared.js';
 import { AC_GROUND } from './context.js';
 
 const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs']);
@@ -60,8 +60,7 @@ function canonicalizer(options = {}) {
 }
 
 function rootsFrom(value, canonicalNode) {
-  const values = value instanceof Set || Array.isArray(value) ? [...value] : [value];
-  return [...new Set(values.map((root) => canonicalNode(asNode(root))).filter((root) => root && root !== AC_GROUND))];
+  return [...new Set(asList(value).map((root) => canonicalNode(asNode(root))).filter((root) => root && root !== AC_GROUND))];
 }
 
 /**

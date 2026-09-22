@@ -5,6 +5,12 @@ export function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null);
 }
 
+/** Normalize a scalar, array, or set into a list of meaningful values. */
+export function asList(value) {
+  if (value === undefined || value === null || value === '') return [];
+  return value instanceof Set || Array.isArray(value) ? [...value] : [value];
+}
+
 /** Safe own-property test for plain option/record objects. */
 export const OWN = Object.prototype.hasOwnProperty;
 

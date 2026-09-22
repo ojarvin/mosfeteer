@@ -9,19 +9,11 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
-import { documentKind, loadDocument } from '../core/document.js';
+import { documentKind, loadDocument, validDocumentName } from '../core/document.js';
+export { validDocumentName } from '../core/document.js';
 
 export const DOCUMENT_EXTENSION = '.json';
 export const LEGACY_DOCUMENT_EXTENSION = '.schematic.json';
-
-const FORBIDDEN_NAME_CHARS = /[/\\:*?"<>|\u0000-\u001f\u007f]/;
-
-/** Names become file names, so reject separators and characters that are invalid on any common OS. */
-export function validDocumentName(value) {
-  const name = String(value ?? '').trim();
-  if (!name || name.length > 120 || name.startsWith('.') || FORBIDDEN_NAME_CHARS.test(name)) return null;
-  return name;
-}
 
 /** Display name of a document file: its base name without the document extension. */
 export function documentNameFromPath(path) {

@@ -1,4 +1,4 @@
-import { firstDefined } from './shared.js';
+import { asList, firstDefined } from './shared.js';
 const STAGES = Object.freeze([
   'context', 'primitive', 'primitives', 'conversion', 'devices', 'graph', 'mna', 'solver', 'solve',
 ]);
@@ -56,11 +56,6 @@ function cleanCode(value) {
 function severityOf(value, fallback = 'error') {
   const severity = asText(value).toLowerCase();
   return Object.hasOwn(SEVERITY_ORDER, severity) ? severity : fallback;
-}
-
-function asList(value) {
-  if (value === undefined || value === null || value === '') return [];
-  return value instanceof Set || Array.isArray(value) ? [...value] : [value];
 }
 
 function stableValue(value) {

@@ -1,4 +1,4 @@
-import { MOS_TYPES } from './shared.js';
+import { asList, MOS_TYPES } from './shared.js';
 import {
   canonicalNetName,
   isReferenceMarker,
@@ -16,12 +16,6 @@ function diagnostic(code, message, details = {}) {
 
 function componentTerminalNet(circuit, component, term) {
   return circuit.netOfTerminal({ comp: component.refdes, term });
-}
-
-function asValues(value) {
-  if (value == null || value === '') return [];
-  if (value instanceof Set || Array.isArray(value)) return [...value];
-  return [value];
 }
 
 function netByValue(circuit, value, role) {
@@ -151,7 +145,7 @@ export function collectAcGrounds(circuit, values = []) {
       ids.add(net.id);
     }
   }
-  for (const value of asValues(values)) {
+  for (const value of asList(values)) {
     const result = netByValue(circuit, value, 'AC-ground');
     if (result.ok) ids.add(result.net.id);
     else diagnostics.push(result.diagnostic);
@@ -307,8 +301,8 @@ export function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}
   if (!outputResult.ok) diagnostics.push(outputResult.diagnostic);
 
   const groundValues = [
-    ...asValues(normalizedOptions.acGrounds ?? normalizedOptions.acGround),
-    ...asValues(normalizedOptions.reference),
+    ...asList(normalizedOptions.acGrounds ?? normalizedOptions.acGround),
+    ...asList(normalizedOptions.reference),
   ];
   const groundResult = collectAcGrounds(circuit, groundValues);
   diagnostics.push(...groundResult.diagnostics);

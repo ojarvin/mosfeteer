@@ -80,7 +80,7 @@ test('insert categories keep switches and macros separate and include vccs with 
   assert.match(main, /\['Signal flow', \/\^signal_\(sum\|multiply\)\$\//);
 });
 
-test('selection style controls keep their text-target result shape after block mode removal', () => {
+test('selection style controls keep their text-target result shape', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function selectedTextTargets()');
   const end = main.indexOf('\nfunction selectedFontState(', start);
@@ -150,6 +150,7 @@ test('component drag snapshots restore segment styles with route geometry', () =
     return { captureNetGeometry, translateNetGeometry };
   })()`, {
     cloneFixedPaths: (entries) => entries,
+    cloneWireStyles: (styles) => Object.fromEntries(Object.entries(styles || {}).map(([key, style]) => [key, { ...style }])),
     captureRouteGeometry: (net, move = (point) => ({ ...point })) => ({
       route: net.route ? net.route.map(move) : null,
       branches: net.branches ? net.branches.map((path) => path.map(move)) : null,

@@ -5,7 +5,6 @@ import { applyDir, applyTransform, fmt, rectsOverlap } from './geometry.js';
 import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
-import { renderDocument } from './document.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal

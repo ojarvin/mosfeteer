@@ -1497,6 +1497,9 @@ function cloneFixedPaths(entries, move = clonePoint) {
     end: entry.end ? { ...entry.end } : null,
   }));
 }
+function cloneWireStyles(styles) {
+  return Object.fromEntries(Object.entries(styles || {}).map(([key, style]) => [key, { ...style }]));
+}
 /** Fixed geometry of one net, detached from the live model. */
 function captureFixedGeometry(net) {
   return { fixedPaths: cloneFixedPaths(net.fixedPaths), junctions: clonePoints(net.junctions) };
@@ -5972,11 +5975,9 @@ function captureNetGeometry(net) {
   return {
     ...captureRouteGeometry(net),
     fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
-    // Segment styles are keyed by route position. A component drag restores
-    // this geometry before each preview reroute, so restore the styles with
-    // it or a previous preview's endpoint arrowhead can be read as the wrong
-    // logical endpoint on the next mousemove.
-    wireStyles: Object.fromEntries(Object.entries(net.wireStyles || {}).map(([key, style]) => [key, { ...style }])),
+    // Segment styles are keyed by route position, so snapshot them with the
+    // geometry they decorate.
+    wireStyles: cloneWireStyles(net.wireStyles),
   };
 }
 /** One route snapshot per distinct net behind a set of dragged wire runs. */
@@ -5988,7 +5989,7 @@ function captureRunNetGeometry(runs) {
       id: run.net.id,
       net: run.net,
       ...captureRouteGeometry(run.net),
-      wireStyles: Object.fromEntries(Object.entries(run.net.wireStyles || {}).map(([key, style]) => [key, { ...style }])),
+      wireStyles: cloneWireStyles(run.net.wireStyles),
     });
   }
   return snapshots;
@@ -6006,7 +6007,7 @@ function translateNetGeometry(net, saved, dx, dy) {
   Object.assign(net, captureRouteGeometry(saved, move));
   if (net.routingMode === 'fixed' && saved.fixedPaths) net.fixedPaths = cloneFixedPaths(saved.fixedPaths, move);
   if (saved.wireStyles) {
-    net.wireStyles = Object.fromEntries(Object.entries(saved.wireStyles).map(([key, style]) => [key, { ...style }]));
+    net.wireStyles = cloneWireStyles(saved.wireStyles);
   }
 }
 
@@ -6740,9 +6741,7 @@ function canvasMouseUp(ev) {
         // head can remain on a removed segment and disappear.
         const saved = drag.netSnapshots?.get(id);
         if (saved?.wireStyles) {
-          net.wireStyles = Object.fromEntries(
-            Object.entries(saved.wireStyles).map(([key, style]) => [key, { ...style }]),
-          );
+          net.wireStyles = cloneWireStyles(saved.wireStyles);
           const previousPaths = saved.branches || (saved.route ? [saved.route] : []);
           circuit._reanchorWireArrowheads(net, previousPaths, net.paths(), saved.wireStyles);
         }
@@ -10158,20 +10157,14 @@ function armCopyGhostMirror() {
   return true;
 }
 
-/** Drop the mirrored half, leaving the primary ghost exactly where it is.
- *  The mirror's snapshot is intentionally based at the ghost's original
- *  placement, so restore it and replay the primary ghost's current delta
- *  before removing the mirror. Otherwise releasing Alt snaps the primary
- *  ghost back onto the source component. */
+/** Drop the mirrored half while preserving the primary ghost's current offset. */
 function dropCopyGhostMirror() {
   const ghost = drag?.ghost;
   if (!ghost?.mirror) return;
   const dx = snap(cursor.x) - snap(drag.startWorld.x);
   const dy = snap(cursor.y) - snap(drag.startWorld.y);
-  // The mirror snapshot has the primary ghost at its base position, which is
-  // deliberately allowed to overlap the source while the ghost is transient.
-  // A normal fromJSON() repairs that overlap into real electrical contacts;
-  // keep this restore topology-only until the primary has been translated.
+  // Restore the pre-mirror topology without repairing the transient overlap;
+  // translate the primary ghost before normal coincidence repair resumes.
   const beforeMirror = JSON.parse(ghost.mirror.beforeSnapshot);
   beforeMirror.topologyOnly = true;
   circuit = Circuit.fromJSON(beforeMirror);

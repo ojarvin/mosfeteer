@@ -7,12 +7,8 @@
  * editor and circuit core do not need to know where a document is stored.
  */
 
-/** Mirrors the server rule: document names become file names. */
-export function validDocumentName(value) {
-  const name = String(value ?? '').trim();
-  if (!name || name.length > 120 || name.startsWith('.') || /[/\\:*?"<>|\u0000-\u001f\u007f]/.test(name)) return null;
-  return name;
-}
+import { validDocumentName } from '../core/document.js';
+export { validDocumentName };
 
 const BROWSER_DOCUMENTS_KEY = 'mosfeteer:browser-documents';
 const BROWSER_DOWNLOADS = 'Browser downloads';

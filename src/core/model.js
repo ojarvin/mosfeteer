@@ -162,14 +162,7 @@ function charWidth(c) {
   return _UNIT;
 }
 
-/**
- * Parse label text into rich-text runs. `_{...}` and `^{...}` mark subscript /
- * superscript runs (e.g. "C_{GS}", "V^{DD}"). The optional
- * `autoSubscript` option is retained for compatibility with old callers, but
- * is intentionally ignored: component labels now persist explicit `_{...}`
- * markup, so plain `M1` stays plain text and only `M_{1}` renders with a
- * subscript. Returns [{text, sub, super}].
- */
+/** Parse label source into rich-text runs for subscript and superscript markup. */
 export function parseLabelRuns(text, opts = {}) {
   const str = String(text);
   const runs = [];
