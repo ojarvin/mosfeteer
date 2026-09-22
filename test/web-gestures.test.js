@@ -105,3 +105,37 @@ test('view easing interpolates and clamps', () => {
   assert.ok(mid.x > 50 && mid.x < 100);
   assert.deepEqual(lerpView({ x: 0, y: 0, w: 1, h: 1 }, { x: 5, y: 6, w: 7, h: 8 }, 1), { x: 5, y: 6, w: 7, h: 8 });
 });
+
+test('editor gestures are wired through the shared draft, history, and menus', async () => {
+  const { readFileSync } = await import('node:fs');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  // A pin press stays a component click until it moves; then it is a wire draft.
+  assert.match(main, /isPinDragCandidate\(componentHit\?\.def\)\) \{\s*drag\.pinGrab = /);
+  assert.match(main, /drag\.mode === 'move' && drag\.pinGrab && !drag\.moved && movedOut\) \{\s*beginPinWire\(drag, w\);/);
+  // Quick-add places and wires the part as one history entry.
+  const pick = main.slice(main.indexOf('function pickQuickAdd('), main.indexOf("window.addEventListener('pointerdown', (ev) => {\n  if (quickAdd"));
+  assert.match(pick, /const before = snapshot\(\);/);
+  assert.match(pick, /connectWireToTerminal\(\{ refdes: comp\.refdes, term: placement\.terminal[^)]*\}, before\)/);
+  assert.match(pick, /applyJson\(before\)/);
+  assert.match(main, /function connectTwo\(src, dst, points, before = snapshot\(\)\)/);
+  // Splicing applies to placement and to a single-part drop.
+  assert.match(main, /if \(placed\.length === 1\) spliceIfOnWire\(placed\[0\]\);/);
+  assert.match(main, /if \(!moveDrag\.detached && refs\.length === 1\) spliceIfOnWire\(/);
+  // The context menu waits for the release while a right press is undecided.
+  assert.match(main, /if \(drag\?\.mode === 'radialpending' \|\| drag\?\.mode === 'radial'\) return;/);
+  assert.match(main, /drag\.mode === 'radialpending'\) \{\s*window\.clearTimeout\(drag\.holdTimer\);\s*drag = null;\s*suppressContextMenuUntil/);
+  // Ctrl/Cmd-drag copies preview inside a transaction and keep the clipboard.
+  assert.match(main, /const savedClipboard = clipboard;[\s\S]{0,300}pasteClipboard\(\{ recordHistory: false, connect: false \}\);[\s\S]{0,40}clipboard = savedClipboard;/);
+  assert.match(main, /beginPreviewTransaction\(startSnapshot\);\n\s*const componentRefs/);
+  // Live drags accept transforms without their own history entry.
+  assert.match(main, /if \(drag\.modal && !drag\.committed\) \{\s*recordHistoryEntry/);
+  // Knife, corner flip, double-click insert, Space pan, trackpad scheme.
+  assert.match(main, /knife: ev\.shiftKey \? \[/);
+  assert.match(main, /cutWiresAlong\(\[\.\.\.drag\.knife/);
+  assert.match(main, /key === '\/'\) \{[\s\S]{0,120}wire\.flipCorner = !wire\.flipCorner;/);
+  assert.match(main, /if \(draft\.flipCorner && i === endpoints\.length - 1\) leg = flippedCornerLeg\(leg, route\) \|\| leg;/);
+  assert.match(main, /Double-clicking empty paper opens the insert menu right there\.\s*cursor = snappedWorld\(w\);\s*activatePlace\(\);/);
+  assert.match(main, /if \(b === 1 \|\| \(b === 0 && spaceHeld\)\)/);
+  assert.match(main, /if \(wheelIntent\(ev, scrollScheme\) === 'pan'\)/);
+  assert.match(main, /localStorage\.setItem\('mosfeteer\.scrollScheme', scrollScheme\)/);
+});

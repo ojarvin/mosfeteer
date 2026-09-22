@@ -28,7 +28,9 @@ test('layer shortcuts dispatch only in an idle normal editor', () => {
 test('keyboard help is generated from current bindings without Vim movement keys', () => {
   const help = editorKeymapText();
   assert.match(help, /Arrow keys/);
-  assert.match(help, /console separator/);
+  assert.match(help, /status message\s+click \(or hover\) the last message to open the log/);
+  assert.match(help, /drag from a pin/);
+  assert.doesNotMatch(help, /console separator/);
   assert.match(help, /-- draw --\n/);
   assert.match(help, /-- file and console --\n/);
   assert.doesNotMatch(help, /\\n/);

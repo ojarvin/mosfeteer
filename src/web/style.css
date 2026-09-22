@@ -3389,3 +3389,69 @@ button.off {
   stroke: var(--accent);
   stroke-width: 1.5;
 }
+
+/* Selection: the symbol's own linework glows in the accent. */
+.selection-glow * {
+  stroke: var(--accent) !important;
+  stroke-width: 12px !important;
+  stroke-opacity: 0.22 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  fill: var(--accent) !important;
+  fill-opacity: 0.16 !important;
+  vector-effect: none !important;
+}
+
+.selection-glow [fill="none"] {
+  fill: none !important;
+}
+
+.selection-glow text,
+.selection-glow foreignObject {
+  display: none;
+}
+
+.selection-net-tint {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 7;
+  stroke-opacity: 0.12;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ----- snap pulse and theme crossfade ------------------------------ */
+
+.snap-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.snap-pulse {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: snap-pulse 420ms ease-out forwards;
+}
+
+@keyframes snap-pulse {
+  from { opacity: 0.9; transform: scale(0.6); }
+  to { opacity: 0; transform: scale(2.4); }
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snap-pulse {
+    animation: none;
+    opacity: 0;
+  }
+}

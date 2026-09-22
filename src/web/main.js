@@ -4221,6 +4221,13 @@ function renderCanvas(modelKey) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
+    // The snap pulse lives outside the per-frame overlay so its animation
+    // plays once per new target instead of restarting on every repaint.
+    snapLayerEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    snapLayerEl.setAttribute('class', 'snap-layer');
+    snapLayerEl.setAttribute('pointer-events', 'none');
+    canvasSvgEl.appendChild(snapLayerEl);
+    snapPulseKey = '';
   }
   // Design-check focus is drawn separately (error color); only real selection is blue.
   const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
@@ -4380,6 +4387,7 @@ function renderCanvas(modelKey) {
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
   overlayEl.innerHTML = themeInkSvg(withGestureOverlay(overlay, ghost));
+  syncSnapPulse();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
 }
@@ -4433,6 +4441,30 @@ function updateCanvasHover(w) {
   setHoverTarget(net ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id) } : null);
 }
 
+// ----- snap pulse ------------------------------------------------------------------
+let snapLayerEl = null;
+let snapPulseKey = '';
+
+/** A wire end that lands on a pin gets one small ripple at that pin. */
+function syncSnapPulse() {
+  if (!snapLayerEl) return;
+  const source = (wire || directWire)?.source;
+  let key = '';
+  if (source) {
+    const target = nearestTerminal(cursor);
+    if (target && target.x === cursor.x && target.y === cursor.y
+        && !(target.refdes === source.refdes && target.term === source.term)) key = `${target.x},${target.y}`;
+  }
+  if (key === snapPulseKey) return;
+  snapPulseKey = key;
+  if (!key) {
+    snapLayerEl.replaceChildren();
+    return;
+  }
+  const [x, y] = key.split(',');
+  snapLayerEl.innerHTML = `<circle class="snap-ring" cx="${x}" cy="${y}" r="10"/><circle class="snap-pulse" cx="${x}" cy="${y}" r="10"/>`;
+}
+
 /** Every drawn wire path, fixed and managed, for knife hit tests. */
 function allWirePaths() {
   return [...circuit.nets.values()].flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
@@ -4457,6 +4489,14 @@ function cutWiresAlong(stroke) {
 /** Gesture feedback appended to the editor overlay's elements, in world units. */
 function withGestureOverlay(svg, ghost) {
   const parts = [];
+  // Nets attached to the selected parts carry a faint tint of the selection.
+  if (multi.size && !drag) {
+    for (const id of netsTouching([...multi])) {
+      for (const pts of circuit.nets.get(id)?.paths() || []) {
+        if (pts.length > 1) parts.push(`<polyline class="selection-net-tint" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+      }
+    }
+  }
   if (hoverTarget?.kind === 'net' && !drag) {
     for (const id of hoverTarget.ids) {
       for (const pts of circuit.nets.get(id)?.paths() || []) {
@@ -6881,7 +6921,12 @@ function canvasMouseMove(ev) {
     return;
   }
   if (drag.mode === 'pinwire') {
-    cursor = pinWireCursor(w);
+    // Repaint only when the snapped end moves, so the snap pulse can play.
+    const next = pinWireCursor(w);
+    cursor = next;
+    const key = `${next.x},${next.y}`;
+    if (drag.drawnEnd === key) return;
+    drag.drawnEnd = key;
     scheduleInteractionRender();
     return;
   }
@@ -11199,8 +11244,10 @@ function openRailFlyout() {
   const pane = document.querySelector('.canvas-pane').getBoundingClientRect();
   const r = railFlyoutProxyEl.getBoundingClientRect();
   railFlyoutEl.hidden = false;
-  railFlyoutEl.style.left = `${r.right - pane.left + 8}px`;
-  railFlyoutEl.style.top = `${r.top - pane.top - 5}px`;
+  // Beside a vertical rail; below the horizontal strip a narrow window uses.
+  const horizontal = modeToolbarEl && getComputedStyle(modeToolbarEl).flexDirection === 'row';
+  railFlyoutEl.style.left = `${horizontal ? r.left - pane.left - 5 : r.right - pane.left + 8}px`;
+  railFlyoutEl.style.top = `${horizontal ? r.bottom - pane.top + 8 : r.top - pane.top - 5}px`;
   railFlyoutProxyEl.setAttribute('aria-expanded', 'true');
 }
 
@@ -11737,7 +11784,7 @@ function activateLabelPlacement(kind) {
   labelMode = kind;
   annotationStart = null;
   annotationPoints = [];
-  logLine(kind === 'net'
+  hintLine(kind === 'net'
     ? 'NET LABEL: click a physical wire; stays active until Esc'
     : kind === 'annotation'
       ? 'ANNOTATION: click anywhere to place free text; stays active until Esc'
@@ -12884,7 +12931,10 @@ function applyTheme(dark) {
 }
 
 function toggleTheme() {
-  applyTheme(!document.documentElement.classList.contains('dark'));
+  const next = !document.documentElement.classList.contains('dark');
+  // Crossfade the whole window where the browser supports view transitions.
+  if (document.startViewTransition && !prefersReducedMotion()) document.startViewTransition(() => applyTheme(next));
+  else applyTheme(next);
 }
 
 // Persist the theme across reloads; default to light unless the system prefers dark.
@@ -13264,7 +13314,6 @@ cmdInput.addEventListener('keydown', (ev) => {
 // ----- boot ------------------------------------------------------------
 
 window.__run = (line) => { runLine(line); };
-window.__dbg = () => JSON.stringify({ drag: drag && { mode: drag.mode, moved: drag.moved }, wire: !!wire, multi: [...multi] });
 window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); fitView(); };
 window.__circuit = () => ({
   kind: 'circuit',

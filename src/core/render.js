@@ -839,14 +839,19 @@ export function editorOverlay(circuit, opts = {}) {
     const { x: vx, y: vy, w, h } = opts.cursorCrosshair;
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + w)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + h)}" fill="none"/>`);
   }
-  const halo = (r) =>
-    `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${SELECT}" fill-opacity="0.1" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
   const dangerHalo = (r) =>
     `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${DANGER}" fill-opacity="0.1" stroke="${DANGER}" stroke-width="2" vector-effect="non-scaling-stroke" rx="3"/>`;
 
+  // A selected part glows along its own linework (styled by the editor as a
+  // wide translucent accent stroke) inside a light, unfilled outline, so the
+  // symbol itself stays legible instead of sitting under a tinted box.
   for (const ref of opts.selection || []) {
     const c = circuit.components.get(ref);
-    if (c) parts.push(halo(c.bboxWorld()));
+    if (!c) continue;
+    const r = c.bboxWorld();
+    const pad = 6;
+    parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c)}</g>`);
+    parts.push(`<rect class="selection-outline" x="${fmt(r.x - pad)}" y="${fmt(r.y - pad)}" width="${fmt(r.w + pad * 2)}" height="${fmt(r.h + pad * 2)}" fill="none" stroke="${SELECT}" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" rx="6" pointer-events="none"/>`);
   }
 
   for (const r of opts.layoutPreviewRects || []) {
@@ -1131,9 +1136,11 @@ export function editorOverlay(circuit, opts = {}) {
     const pts = preview.pts || autoRoute([{ x: from.x, y: from.y }, { x: preview.to.x, y: preview.to.y }]);
     if (pts && pts.length >= 2) {
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2" stroke-dasharray="6 5"/>`);
+      // Drawn as the wire it will become: full wire weight in the accent,
+      // translucent until the commit flash settles it into ink.
+      parts.push(`<path class="wire-draft" d="${d}" fill="none" stroke="${SELECT}" stroke-width="6" stroke-opacity="0.55" stroke-linecap="square" stroke-linejoin="miter"/>`);
     }
-    parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="4.5" fill="${SELECT}"/>`);
+    parts.push(`<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="5.5" fill="${SELECT}"/>`);
   }
   if (opts.annotationPreview) {
     const { kind, a, b, points } = opts.annotationPreview;
