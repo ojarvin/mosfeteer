@@ -10,7 +10,7 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
@@ -11401,25 +11401,32 @@ let contextMenuDismiss = null;
  * on a crossing, a wire or pin drag onto another named net, a splice, a move
  * onto a pin) asks which name the merged net keeps. The question is one menu
  * at the short: a pick applies the name, Escape or an outside click cancels
- * the whole edit. `choice` is { point, names, pick(name), cancel() }. */
+ * the whole edit. `choice` is { point, names, pick(name), cancel(), heading? }. */
 function askNetNameChoice(choice) {
   pendingNetNameChoice = choice;
   requestAnimationFrame(openNetNameChoiceMenu);
 }
 
-/** Model merges that allow name conflicts keep one name and leave a
- * netNameWarnings entry. A commit that adds one asks the user instead: the
- * pick renames the merged net, a cancel restores the pre-commit document. */
+/** A commit that shorts two given names asks which one survives; a cancel
+ * restores the pre-commit document. */
 function askNameForNewNetNameConflict(startSnapshot) {
   if (pendingNetNameChoice || suppressNetNameChoice) return;
+  if (askForNewNetNameWarning(startSnapshot)) return;
+  askForNewReferenceShort(startSnapshot);
+}
+
+/** Model merges that allow name conflicts keep one name and leave a
+ * netNameWarnings entry. A commit that adds one asks the user instead: the
+ * pick renames the merged net. */
+function askForNewNetNameWarning(startSnapshot) {
   const warnings = circuit.netNameWarnings || [];
-  if (!warnings.length) return;
+  if (!warnings.length) return false;
   let previous = [];
-  try { previous = JSON.parse(startSnapshot).netNameWarnings || []; } catch { return; }
+  try { previous = JSON.parse(startSnapshot).netNameWarnings || []; } catch { return false; }
   const key = (warning) => `${warning.netId}:${warning.names.join('|')}`;
   const known = new Set(previous.map(key));
   const warning = warnings.find((entry) => !known.has(key(entry)) && circuit.nets.has(entry.netId));
-  if (!warning) return;
+  if (!warning) return false;
   const historyLength = history.length;
   const netId = warning.netId;
   askNetNameChoice({
@@ -11438,6 +11445,42 @@ function askNameForNewNetNameConflict(startSnapshot) {
       logLine('connection cancelled: no net name chosen');
     },
   });
+  return true;
+}
+
+/** An unnamed ground, supply, or VCM marker joined to a named net ties that
+ * name into the shared rail without any model warning. A commit that makes
+ * such a join asks to rename the net to the rail; a cancel reverts the edit. */
+function askForNewReferenceShort(startSnapshot) {
+  const conflicts = referenceMarkerNameConflicts(circuit);
+  if (!conflicts.length) return false;
+  let known;
+  try {
+    known = new Set(referenceMarkerNameConflicts(loadDocument(JSON.parse(startSnapshot)))
+      .map((entry) => `${entry.refdes}:${entry.name}`));
+  } catch { return false; }
+  const conflict = conflicts.find((entry) => !known.has(`${entry.refdes}:${entry.name}`));
+  if (!conflict) return false;
+  const historyLength = history.length;
+  const marker = circuit.components.get(conflict.refdes);
+  askNetNameChoice({
+    point: marker ? { x: marker.transform.x, y: marker.transform.y } : { ...cursor },
+    heading: 'Rename net to',
+    names: [conflict.railName],
+    pick(name) {
+      const net = circuit.nets.get(conflict.netId);
+      if (!net) return;
+      circuit.renameNet(net, name);
+      markModelChanged();
+      logLine(`net ${conflict.name} joins ${conflict.refdes} and is renamed ${name}`);
+    },
+    cancel() {
+      if (history.length === historyLength) history.pop();
+      applyJson(startSnapshot);
+      logLine(`connection cancelled: ${conflict.name} stays off the ${conflict.railName} rail`);
+    },
+  });
+  return true;
 }
 
 function openNetNameChoiceMenu() {
@@ -11451,7 +11494,7 @@ function openNetNameChoiceMenu() {
   menu.style.top = `${Math.max(4, at.y - 12)}px`;
   const heading = document.createElement('div');
   heading.className = 'context-menu-heading';
-  heading.textContent = 'Keep net name';
+  heading.textContent = choice.heading || 'Keep net name';
   menu.appendChild(heading);
   for (const name of choice.names) {
     const item = appendContextItem(menu, '', () => {

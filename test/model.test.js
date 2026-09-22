@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
+import { Circuit, referenceMarkerNameConflicts, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
 import { GRID, snap, onGrid } from '../src/core/grid.js';
 import { segThroughInterior } from '../src/core/router.js';
 import { svgString } from '../src/core/render.js';
@@ -3664,4 +3664,27 @@ test('moveDiagonalSegment is atomic when the moved diagonal would drill a compon
   assert.equal(c.moveDiagonalSegment(d, 0, 1, { dx: 200, dy: 0 }), false);
   assert.equal(JSON.stringify(c.toJSON()), before);
   assert.ok(n);
+});
+
+test('an unnamed reference marker on a differently named net is a rail conflict', async () => {
+  const { runCommand } = await import('../src/core/commands.js');
+  const c = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'connect R1.b R2.a --name OUT', 'add ground G1 --at 160 200', 'add supply P1 --at 800 -200', 'add resistor R3 --at 800 0']) runCommand(c, line);
+  assert.deepEqual(referenceMarkerNameConflicts(c), []);
+
+  runCommand(c, 'connect R1.b G1.gnd');
+  const net = c.netOfTerminal({ comp: 'G1', term: 'gnd' });
+  assert.equal(net.name, 'OUT');
+  assert.deepEqual(referenceMarkerNameConflicts(c), [{ netId: net.id, refdes: 'G1', name: 'OUT', railName: 'VSS' }]);
+
+  // Taking the rail name resolves it; the marker stays a global reference.
+  c.renameNet(net, 'VSS');
+  assert.deepEqual(referenceMarkerNameConflicts(c), []);
+  assert.equal(c.labelOf('G1'), null);
+
+  // An unnamed net simply takes the rail name, and a legacy alias is no conflict.
+  runCommand(c, 'connect R3.b P1.p');
+  assert.equal(c.netOfTerminal({ comp: 'P1', term: 'p' }).name, 'VDD');
+  c.renameNet(net, 'GND');
+  assert.deepEqual(referenceMarkerNameConflicts(c), []);
 });

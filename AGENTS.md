@@ -128,7 +128,10 @@ Any interactive edit that shorts nets with different given names (a solder
 dot, a wire or pin drag, a splice, a move onto a pin) asks which name the merged
 net keeps, in one shared picker; Escape or an outside click cancels the whole
 edit. Scripted commands never prompt: the model keeps one name and records a
-`netNameWarnings` entry for Design Check.
+`netNameWarnings` entry for Design Check. Joining an unnamed `ground`,
+`supply`, or `vcm` marker to a net with another given name is the same kind of
+short: the editor asks, in the same picker, to rename the net to the rail
+(`VSS`/`VDD`/`VCM`), and a cancel reverts the whole edit.
 
 ### Rendering and math
 

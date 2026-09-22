@@ -177,8 +177,12 @@ test('named-net shorts share one name picker; scripted commands never prompt', a
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   // Every recorded edit checks for a new merged-name conflict.
   assert.match(main, /queueCommitFeedback\(startSnapshot, feedback\);\s*askNameForNewNetNameConflict\(startSnapshot\);/);
-  // Solder and wire shorts go through the same picker.
-  assert.equal((main.match(/askNetNameChoice\(\{/g) || []).length, 2);
+  // Solder, wire, and reference-rail shorts go through the same picker.
+  assert.equal((main.match(/askNetNameChoice\(\{/g) || []).length, 3);
+  // A commit that joins an unnamed ground/supply/VCM marker to a named net
+  // asks to take the rail name; the picker's cancel reverts the edit.
+  assert.match(main, /if \(askForNewNetNameWarning\(startSnapshot\)\) return;\s*askForNewReferenceShort\(startSnapshot\);/);
+  assert.match(main, /heading: 'Rename net to',\s*names: \[conflict\.railName\]/);
   // Command-line edits keep the model's name instead of prompting.
   assert.match(main, /suppressNetNameChoice = true;\s*try \{ recordHistoryEntry\(before\); \} finally \{ suppressNetNameChoice = false; \}/);
 });

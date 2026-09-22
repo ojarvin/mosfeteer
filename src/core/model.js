@@ -107,6 +107,25 @@ export function referenceMarkerName(component) {
   return canonicalNetName(label?._text || '');
 }
 
+/** Unnamed (global) reference markers attached to a net that carries a
+ * different given name, e.g. a ground on `OUT`. The net keeps its name, but
+ * the marker still ties it into the shared rail, so the join shorts two names.
+ * Each entry is { netId, refdes, name, railName }. */
+export function referenceMarkerNameConflicts(circuit) {
+  const conflicts = [];
+  for (const net of circuit.nets.values()) {
+    if (!net.name) continue;
+    for (const terminal of net.terminals) {
+      const component = circuit.components.get(terminal.comp);
+      if (!isReferenceMarker(component) || referenceMarkerName(component)) continue;
+      const info = referenceMarkerInfo(component.type);
+      if (terminal.term !== info.terminal || isReferenceMarkerGlobalName(info, net.name)) continue;
+      conflicts.push({ netId: net.id, refdes: component.refdes, name: net.name, railName: info.globalName });
+    }
+  }
+  return conflicts;
+}
+
 /** Whether a marker's owned label is an intentional local-rail label. Labels
  * synthesized only to preserve legacy net renames opt out of this flag until
  * the user edits/commits the marker label explicitly. */
