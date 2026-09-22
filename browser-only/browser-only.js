@@ -17,7 +17,7 @@ const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
 const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
 const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
 const { smallSignalSchematic } = __require("src/core/analysis/model-schematic.js");
-const { componentShapeSvg, editorOverlay, svgString, texToMathML } = __require("src/core/render.js");
+const { componentShapeSvg, editorOverlay, svgString, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js");
 const { componentsOfSymbols } = __require("src/core/analysis/provenance.js");
 const { themeInkSvg } = __require("src/core/style.js");
 const { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js");
@@ -40,7 +40,7 @@ const { createPersistenceAdapter, defaultExportDirectory, validDocumentName } = 
 const { confirmChoice, showFileDialog } = __require("src/web/file-dialog.js");
 const { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js");
 const { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js");
-const { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js");
+const { alignedAnchorShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js");
 const { chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js");
 const { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js");
 const { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js");
@@ -470,6 +470,7 @@ let visual = null; // visual mode: anchor grid point {x,y} the selection box sta
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
 let wirePreview = null;
+let wirePreviewStale = false;
 let terminalSnap = false; // Alt-held wiring cursor: snap to the nearest terminal
 let spaceHeld = false; // Space turns a left drag into a pan
 // 'mouse': the wheel zooms. 'trackpad': two-finger scroll pans, pinch zooms.
@@ -523,6 +524,7 @@ let labelCache = null;
 let wireHitIndex = null;
 let wireHitIndexRevision = -1;
 let committedCanvasKey = '';
+let committedViewKey = '';
 let canvasSvgEl = null;
 let overlayEl = null;
 let labelMetricsRenderPending = false;
@@ -927,7 +929,9 @@ function flushDraft() {
   } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
 }
 function scheduleInteractionRender() {
-  wirePreview = wire ? draftWirePreview(wire) : null;
+  // Routing the draft is the costly part of a wire-mode repaint; do it once
+  // per painted frame rather than once per input event.
+  wirePreviewStale = true;
   if (renderFrame !== null) return;
   renderFrame = requestAnimationFrame(() => { renderFrame = null; render(); });
 }
@@ -1404,9 +1408,18 @@ if (toolbarEl) {
   document.fonts?.ready?.then(scheduleToolbarFit);
 }
 
+let toolbarFitKey = '';
+
 function renderSaveState() {
-  scheduleToolbarFit();
   const dirty = hasUnsavedChanges();
+  // Fitting measures the toolbar at each compaction stage (a forced layout
+  // apiece), so refit only when the title or dirty dot can change its width;
+  // the toolbar's ResizeObserver covers everything else.
+  const fitKey = `${circuitNameEl.value}|${circuitNameEl.placeholder}|${dirty}`;
+  if (fitKey !== toolbarFitKey) {
+    toolbarFitKey = fitKey;
+    scheduleToolbarFit();
+  }
   const dirtyDot = document.getElementById('dirty-dot');
   if (dirtyDot) dirtyDot.hidden = !dirty;
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentDocumentPath || deleteInFlight;
@@ -3895,15 +3908,27 @@ function updateNetWarnings() {
   netWarnings = crossNetOverlaps(nets);
 }
 
+let documentSurfaceShown = false;
+
 function syncDocumentSurface() {
-  for (const element of document.querySelectorAll('[data-doc-kind]')) {
-    element.hidden = false;
+  // Reveal the schematic surface once. Later visibility belongs to each
+  // control's owner: unhiding here on every repaint flip-flopped the align
+  // panel against updateAlignControls, re-laying out the side panel per frame.
+  if (!documentSurfaceShown) {
+    documentSurfaceShown = true;
+    for (const element of document.querySelectorAll('[data-doc-kind]')) {
+      element.hidden = false;
+    }
   }
+  // Every repaint calls this. Write only real changes: rewriting the toolbar
+  // heading's text is a DOM mutation, and the toolbar's overflow observer
+  // answers each one with a forced layout.
   const heading = document.getElementById('mode-heading');
-  if (heading) heading.textContent = 'Schematic tools';
-  if (cmdInput) cmdInput.placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
+  if (heading && heading.textContent !== 'Schematic tools') heading.textContent = 'Schematic tools';
+  const placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
+  if (cmdInput && cmdInput.placeholder !== placeholder) cmdInput.placeholder = placeholder;
   const netLabelButton = document.getElementById('btn-mode-net-label');
-  if (netLabelButton) {
+  if (netLabelButton && netLabelButton.title !== 'Place a label on a physical wire (L)') {
     netLabelButton.title = 'Place a label on a physical wire (L)';
     netLabelButton.setAttribute('aria-label', 'Place a label on a physical wire');
   }
@@ -4258,14 +4283,15 @@ function syncRenderedLabelMetrics() {
     // crosses a cell boundary jump one square left on every reload.
     if (label.id.startsWith('category_')) continue;
     if (label.math && !mathFontReady) continue;
-    const group = groups.get(label.id);
-    const bounds = renderedLabelTextBounds(group);
-    if (!bounds) continue;
     // A measured bbox is a one-time model resize for the current text. Do not
     // feed a later container-size measurement back into the model or a
     // foreignObject can resize itself forever. Text edits clear this runtime
-    // metric and allow one fresh pass.
+    // metric and allow one fresh pass. Checking first also spares the forced
+    // layout that measuring costs on every rebuild.
     if (label._renderedTextBounds) continue;
+    const group = groups.get(label.id);
+    const bounds = renderedLabelTextBounds(group);
+    if (!bounds) continue;
     const before = label.bbox();
     if (!label.setRenderedTextBounds(bounds.w, bounds.h)) continue;
     keepAlignedEdge(label, before);
@@ -4312,10 +4338,18 @@ function renderCanvas(modelKey) {
     for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
   }
   const editingLabelId = inlineInput?.dataset.labelId || '';
-  const canvasKey = `${modelKey}|${showGrid}|${view.x},${view.y},${view.w},${view.h}|${editingLabelId}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
-  const canvasRebuilt = canvasKey !== committedCanvasKey;
+  // The drawing is in world coordinates; only its frame depends on the view.
+  // Pan and zoom therefore re-apply the frame and keep the drawing's DOM.
+  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
+  const viewKey = `${view.x},${view.y},${view.w},${view.h}`;
+  const canvasRebuilt = canvasKey !== committedCanvasKey || !canvasSvgEl;
+  if (!canvasRebuilt && viewKey !== committedViewKey) {
+    committedViewKey = viewKey;
+    applyCanvasViewport();
+  }
   if (canvasRebuilt) {
     committedCanvasKey = canvasKey;
+    committedViewKey = viewKey;
     canvasEl.innerHTML = svgString(circuit, {
       themeInk: true,
       underlay: true,
@@ -4495,7 +4529,7 @@ function renderCanvas(modelKey) {
       : drag && drag.rubber
         ? drag.rubber
         : undefined,
-    wirePreview: wire ? wirePreview : null,
+    wirePreview: wire ? currentWirePreview() : null,
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
@@ -4508,6 +4542,28 @@ function renderCanvas(modelKey) {
   syncSnapPulse();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
+}
+
+function currentWirePreview() {
+  if (wirePreviewStale) {
+    wirePreview = wire ? draftWirePreview(wire) : null;
+    wirePreviewStale = false;
+  }
+  return wirePreview;
+}
+
+/** Re-frame the committed drawing for the current view: root size, background,
+ * and grid. Same output as a full svgString rebuild at this viewport. */
+function applyCanvasViewport() {
+  const vp = { x: view.x, y: view.y, w: view.w, h: view.h };
+  const frame = viewportFrame(vp);
+  canvasSvgEl.setAttribute('width', frame.width);
+  canvasSvgEl.setAttribute('height', frame.height);
+  canvasSvgEl.setAttribute('viewBox', frame.viewBox);
+  const background = canvasSvgEl.firstElementChild;
+  if (background?.tagName !== 'rect') return;
+  for (const [name, value] of Object.entries(frame.background)) background.setAttribute(name, value);
+  canvasSvgEl.querySelector(':scope > .grid-line')?.setAttribute('d', viewportGridPath(vp));
 }
 
 // ----- hover preview -------------------------------------------------------------
@@ -7146,11 +7202,14 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'blockresize') {
     if (!movedOut) return;
     drag.moved = true;
+    const rect = blockResizeRect(drag.origin, drag.handle, movedWorld);
+    const rectKey = `${rect.x},${rect.y},${rect.w},${rect.h}`;
+    if (drag.appliedRect === rectKey) return; // same snapped rectangle as the last preview
+    drag.appliedRect = rectKey;
     try {
       // Rebuild each preview from the immutable pointer-down snapshot. This
       // keeps corner drags reversible and avoids accumulating grid rounding.
       circuit = loadDocument(JSON.parse(drag.startSnapshot));
-      const rect = blockResizeRect(drag.origin, drag.handle, movedWorld);
       circuit.resizeBlock(drag.refdes, rect);
       drag.invalid = false;
       drag.previewRevision = (drag.previewRevision || 0) + 1;
@@ -7280,6 +7339,15 @@ function canvasMouseMove(ev) {
           else r.net.route = r.pts;
         }
       }
+      const axis = drag.orient === 'h' ? movedWorld.y : movedWorld.x;
+      const delta = axis - drag.startAxis;
+      // Runs sit on grid lines and moveWireRun snaps its target, so a delta
+      // within the same cell reproduces the previous frame exactly.
+      if (drag.appliedDelta === snap(delta)) {
+        scheduleInteractionRender();
+        return;
+      }
+      drag.appliedDelta = snap(delta);
       // Rebuild from the drag-start topology before every frame. Without this,
       // moving a run onto an adjacent run collapses the two terminal legs into
       // one straight segment, making the original run impossible to drag back.
@@ -7293,8 +7361,6 @@ function canvasMouseMove(ev) {
         r.pts = paths[r.branch] || paths[0];
         r.line = r.startLine;
       }
-      const axis = drag.orient === 'h' ? movedWorld.y : movedWorld.x;
-      const delta = axis - drag.startAxis;
       for (const r of drag.runs) {
         const target = r.startLine + delta;
         moveManagedWireRun(r, target);
@@ -7443,6 +7509,12 @@ function canvasMouseMove(ev) {
         drag.committed = true;
       }
       const delta = snappedDragDelta(drag.startWorld, movedWorld);
+      // Most pointer events land in the same grid cell as the last one; the
+      // re-anchored preview would be identical, so skip the reroute. A rebase
+      // (rotate/mirror mid-drag) installs new origins and invalidates this.
+      if (drag.appliedDelta?.origins === drag.origins &&
+          drag.appliedDelta.dx === delta.dx && drag.appliedDelta.dy === delta.dy) return;
+      drag.appliedDelta = { origins: drag.origins, dx: delta.dx, dy: delta.dy };
       for (const [r, o] of drag.origins) {
         const c = circuit.components.get(r);
         if (!c) continue;
@@ -7915,8 +7987,12 @@ function canvasMouseUp(ev) {
   render();
 }
 canvasEl.addEventListener('mousedown', canvasMouseDown);
-canvasEl.addEventListener('mousemove', canvasMouseMove);
-canvasEl.addEventListener('pointermove', canvasMouseMove);
+const isCompatibilityMove = compatibilityMoveFilter();
+function canvasPointerMove(ev) {
+  if (!isCompatibilityMove(ev)) canvasMouseMove(ev);
+}
+canvasEl.addEventListener('mousemove', canvasPointerMove);
+canvasEl.addEventListener('pointermove', canvasPointerMove);
 
 // SVG objects are keyboard-addressable even though the committed scene is
 // regenerated during edits.  The semantic hit is resolved from data-* attrs,
@@ -7985,7 +8061,7 @@ function forwardCanvasMove(ev) {
   if (!shouldForwardCanvasMove(ev.target, canvasEl)) return;
   const r = document.querySelector('.canvas-pane')?.getBoundingClientRect();
   if (!r || ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) return;
-  canvasMouseMove(ev);
+  canvasPointerMove(ev);
 }
 window.addEventListener('pointermove', forwardCanvasMove, true);
 window.addEventListener('mousemove', forwardCanvasMove, true);
@@ -9689,7 +9765,7 @@ canvasEl.addEventListener(
       const unitsPerPx = p ? view.w / p.w : 1;
       view.x += ev.deltaX * scale * unitsPerPx;
       view.y += ev.deltaY * scale * unitsPerPx;
-      render();
+      scheduleInteractionRender();
       return;
     }
     // Pinch arrives as a ctrl-wheel with small deltas; give it a finer base.
@@ -9701,7 +9777,7 @@ canvasEl.addEventListener(
     view.y = w.y - (w.y - view.y) * factor;
     view.w = nw;
     view.h *= factor;
-    render();
+    scheduleInteractionRender();
   },
   { passive: false }
 );
@@ -10227,7 +10303,7 @@ function onWireKey(key) {
     // Flip which way the corner of the leg under the cursor turns.
     if (wire) {
       wire.flipCorner = !wire.flipCorner;
-      wirePreview = draftWirePreview(wire);
+      wirePreviewStale = true;
     }
     hintLine(wire?.flipCorner ? 'corner flipped' : 'corner restored');
   } else if (key === 'Tab') {
@@ -11311,10 +11387,22 @@ function interactionState() {
   return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, movePending, copyPending, routeMode });
 }
 
+/** Elements matched by `selectors`, cached: the toolbars are static markup and
+ * every repaint syncs them, so re-query only once a cached node was removed. */
+const staticElementCache = new Map();
+function staticElements(key, selectors) {
+  const cached = staticElementCache.get(key);
+  if (cached && cached.every((el) => el.isConnected)) return cached;
+  const found = [...new Set(selectors().flatMap((selector) => [...document.querySelectorAll(selector)]))];
+  staticElementCache.set(key, found);
+  return found;
+}
+
 function toolbarElements(action) {
-  const selectors = (TOOLBAR_IDS[action] || []).map((id) => `#${id}`);
-  selectors.push(`[data-interaction="${action}"]`, `[data-tool="${action}"]`, `[data-mode="${action}"]`, `[data-action="${action}"]`);
-  return [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
+  return staticElements(`toolbar:${action}`, () => [
+    ...(TOOLBAR_IDS[action] || []).map((id) => `#${id}`),
+    `[data-interaction="${action}"]`, `[data-tool="${action}"]`, `[data-mode="${action}"]`, `[data-action="${action}"]`,
+  ]);
 }
 
 /** Short the nets crossing at a just-placed solder dot. Returns true when the
@@ -11614,10 +11702,14 @@ function syncInteractionUI() {
     const select = document.getElementById(id);
     if (select?.tagName === 'SELECT') select.value = routeMode;
   }
-  canvasEl.classList.remove('mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-annotation', 'wire-mode', 'direct-wire-mode');
-  canvasEl.classList.add(state.canvasClass);
-  if (wire) canvasEl.classList.add('wire-mode');
-  if (directWire) canvasEl.classList.add('direct-wire-mode');
+  // Toggle only real changes: rewriting the canvas class invalidates style
+  // for the whole drawing, and this runs on every repaint.
+  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-annotation']) {
+    canvasEl.classList.toggle(name, name === state.canvasClass);
+  }
+  canvasEl.classList.toggle(state.canvasClass, true);
+  canvasEl.classList.toggle('wire-mode', !!wire || state.canvasClass === 'wire-mode');
+  canvasEl.classList.toggle('direct-wire-mode', !!directWire || state.canvasClass === 'direct-wire-mode');
   syncRailFlyout(state);
   syncToolCursor(state);
   return state;
@@ -11693,7 +11785,9 @@ function renderStatus() {
     statusSelectionEl.hidden = !fields.selection;
   }
   if (statusCursorEl) statusCursorEl.textContent = fields.cursor;
-  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(view, paneSize()?.w, zoom)}%`;
+  // render() measured the pane before writing the DOM; measuring again here
+  // would force a synchronous layout on every frame.
+  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(view, (viewPane || paneSize())?.w, zoom)}%`;
 }
 
 // ----- insert-mode menu ----------------------------------------------------
@@ -12476,9 +12570,10 @@ const ROUTE_MODE_IDS = {
 };
 
 function routeModeElements(kind) {
-  const selectors = (ROUTE_MODE_IDS[kind] || []).map((id) => `#${id}`);
-  selectors.push(`[data-route-mode="${kind}"]`, `[data-route="${kind}"]`);
-  return [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
+  return staticElements(`route:${kind}`, () => [
+    ...(ROUTE_MODE_IDS[kind] || []).map((id) => `#${id}`),
+    `[data-route-mode="${kind}"]`, `[data-route="${kind}"]`,
+  ]);
 }
 
 function routeChoiceContainers() {
@@ -13805,655 +13900,6 @@ statusCheckEl?.addEventListener('click', () => {
 
 __exports.selectAllNetIds = selectAllNetIds;
 __exports.deriveInteractionState = deriveInteractionState;
-};
-
-__modules["src/core/components/index.js"] = function (__require, __exports) {
-const { resistor } = __require("src/core/components/resistor.js");
-const { capacitor } = __require("src/core/components/capacitor.js");
-const { inductor } = __require("src/core/components/inductor.js");
-const { diode } = __require("src/core/components/diode.js");
-const { nmos } = __require("src/core/components/nmos.js");
-const { pmos } = __require("src/core/components/pmos.js");
-const { nmosb } = __require("src/core/components/nmosb.js");
-const { pmosb } = __require("src/core/components/pmosb.js");
-const { npn } = __require("src/core/components/npn.js");
-const { pnp } = __require("src/core/components/pnp.js");
-const { ground } = __require("src/core/components/ground.js");
-const { vcm } = __require("src/core/components/vcm.js");
-const { supply } = __require("src/core/components/supply.js");
-const { portInput, portOutput, portInputOutput, port } = __require("src/core/components/port.js");
-const { current_source, voltage_source } = __require("src/core/components/current.js");
-const { vccs } = __require("src/core/components/vccs.js");
-const { opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js");
-const { adc, dac } = __require("src/core/components/converter.js");
-const { dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } = __require("src/core/components/flipflop.js");
-const { variable_resistor, variable_capacitor, variable_inductor } = __require("src/core/components/variable.js");
-const { solder } = __require("src/core/components/solder.js");
-const { switch_open, switch_closed } = __require("src/core/components/switch.js");
-const { block } = __require("src/core/components/block.js");
-const { mux2 } = __require("src/core/components/mux.js");
-const { signal_sum, signal_multiply } = __require("src/core/components/signal-flow.js");
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/** All registered symbol definitions, keyed by type name. */
-const symbolTypes = {
-  resistor,
-  capacitor,
-  inductor,
-  diode,
-  nmos,
-  pmos,
-  nmosb,
-  pmosb,
-  npn,
-  pnp,
-  ground,
-  vcm,
-  supply,
-  input: portInput,
-  output: portOutput,
-  inputoutput: portInputOutput,
-  port,
-  current_source,
-  voltage_source,
-  vccs,
-  opamp,
-  opamp_diff: opampDiff,
-  inverter,
-  buffer,
-  tristate_inverter: tristateInverter,
-  tristate_buffer: tristateBuffer,
-  mux2,
-  and2_gate,
-  nand2_gate,
-  or2_gate,
-  nor2_gate,
-  xor2_gate,
-  xnor2_gate,
-  and3_gate,
-  nand3_gate,
-  or3_gate,
-  nor3_gate,
-  xor3_gate,
-  xnor3_gate,
-  adc,
-  dac,
-  dff,
-  dff_qb,
-  dff_clkb,
-  dff_clkb_qb,
-  dff_rst,
-  dff_rst_qb,
-  dff_clkb_rst,
-  dff_clkb_rst_qb,
-  dff_rstb,
-  dff_rstb_qb,
-  dff_clkb_rstb,
-  dff_clkb_rstb_qb,
-  latch,
-  latch_qb,
-  latch_enb,
-  latch_enb_qb,
-  latch_rst,
-  latch_rst_qb,
-  latch_enb_rst,
-  latch_enb_rst_qb,
-  latch_rstb,
-  latch_rstb_qb,
-  latch_enb_rstb,
-  latch_enb_rstb_qb,
-  variable_resistor,
-  variable_capacitor,
-  variable_inductor,
-  solder,
-  switch_open,
-  switch_closed,
-  block,
-  signal_sum,
-  signal_multiply,
-};
-
-/** Ordered list of type names (for palettes / docs). */
-const symbolTypeNames = Object.keys(symbolTypes);
-
-/** Look up a symbol definition by type; throws on unknown type. */
-function getSymbol(type) {
-  const def = Object.hasOwn(symbolTypes, type) ? symbolTypes[type] : undefined;
-  if (!def) {
-    throw new Error(`unknown component type "${type}"; known: ${symbolTypeNames.join(', ')}`);
-  }
-  return def;
-}
-
-/** Terminal names a part joins in series when dropped along a straight wire:
- * the declared `seriesTerminals` pair (MOS drain/source, BJT collector/emitter)
- * or both pins of any two-terminal part. Returns null for other parts. */
-function seriesTerminalNames(def) {
-  if (Array.isArray(def?.seriesTerminals) && def.seriesTerminals.length === 2) return [...def.seriesTerminals];
-  const terminals = def?.terminals || [];
-  return terminals.length === 2 ? terminals.map((terminal) => terminal.name) : null;
-}
-
-__exports.getSymbol = getSymbol;
-__exports.seriesTerminalNames = seriesTerminalNames;
-__exports.symbolTypes = symbolTypes;
-__exports.symbolTypeNames = symbolTypeNames;
-};
-
-__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
-const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
-const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
-const { infinity } = __require("src/core/analysis/rational.js");
-
-
-
-
-
-const QUANTITIES = Object.freeze([
-  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
-  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
-  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
-]);
-
-const SOURCE_NAMES = Object.freeze({
-  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
-  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
-  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
-});
-
-function asArray(value) {
-  if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-function unique(values) {
-  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
-}
-
-function lookup(source, names) {
-  if (!source || typeof source !== 'object') return undefined;
-  for (const name of names) {
-    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
-  }
-  return undefined;
-}
-
-function isExpression(value) {
-  return value && typeof value === 'object' && typeof value.kind === 'string';
-}
-
-function expressionOf(value) {
-  if (value === undefined || value === null) return undefined;
-  if (value.kind === 'rational') return value;
-  if (isExpression(value)) return value;
-  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
-  return value;
-}
-
-function hasFrequency(value) {
-  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
-  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
-  if (value?.kind === 'power') return hasFrequency(value.base);
-  if (value?.kind === 'add' || value?.kind === 'multiply') {
-    const values = value.kind === 'add' ? value.terms : value.factors;
-    return values.some(hasFrequency);
-  }
-  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
-}
-
-function responseRecord(value) {
-  if (value === undefined || value === null) return null;
-  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
-  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
-    return value;
-  }
-  const expression = expressionOf(value);
-  if (expression === undefined || expression === null) return null;
-  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
-  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
-}
-
-function pairFor(source) {
-  if (!source) return { selected: null, exact: null, source: null };
-  const selectedRaw = firstDefined(
-    source.selectedResponse,
-    source.selectedResult,
-    source.selected,
-    source.display,
-    source.approximate,
-    source.expression !== undefined ? source : undefined,
-    isExpression(source) ? source : undefined,
-  );
-  const exactRaw = firstDefined(
-    source.exactResponse,
-    source.exactResult,
-    source.exact,
-    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
-    selectedRaw,
-  );
-  return {
-    selected: responseRecord(selectedRaw),
-    exact: responseRecord(exactRaw),
-    source,
-  };
-}
-
-function valueKey(value) {
-  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
-  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
-  if (value?.kind === 'symbol') return `s:${value.name}`;
-  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
-  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
-  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
-  return JSON.stringify(value);
-}
-
-function sameValue(left, right) {
-  if (left === right) return true;
-  if (left === undefined || right === undefined || left === null || right === null) return false;
-  try {
-    return valueKey(left) === valueKey(right);
-  } catch {
-    return false;
-  }
-}
-
-function render(value, options) {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return value;
-  if (value.kind === 'infinity') return renderExpression(value, options);
-  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
-  return String(value);
-}
-
-function responseExpression(response) {
-  return expressionOf(response);
-}
-
-function equation(label, expression, approximate = false, options) {
-  const body = render(expression, options);
-  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
-}
-
-/**
- * The same equation rendered with provenance markers, so the GUI can map a
- * clicked sub-expression back to the devices it came from.
- *
- * This is built here, beside the string it mirrors, for the reason AGENTS.md
- * gives about `equivalenceOptions`: a row rendered anywhere else would have to
- * reproduce this function's label, approximation flag, and equivalence options,
- * and getting any of them wrong fails silently on that row alone.
- */
-function equationProvenance(label, expression, approximate = false, options) {
-  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
-  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
-  // Mirrors `equation()` above exactly, including its relation symbol.
-  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
-  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
-}
-
-function dcValue(limit) {
-  if (!limit) return undefined;
-  if (limit.value !== undefined && limit.value !== null) return limit.value;
-  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
-  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
-    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
-    return infinity(sign);
-  }
-  return undefined;
-}
-
-function equivalenceOptions(source) {
-  return {
-    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
-    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
-  };
-}
-
-function dcResult(label, selected, exact, source) {
-  const selectedLimit = selected?.dc || source?.dc;
-  const exactLimit = exact?.dc || selectedLimit;
-  const selectedValue = dcValue(selectedLimit);
-  const exactValue = dcValue(exactLimit);
-  if (selectedValue === undefined) {
-    return {
-      ok: false,
-      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
-    };
-  }
-  const changed = !sameValue(selectedValue, exactValue);
-  const options = equivalenceOptions(source);
-  return {
-    ok: true,
-    equation: equation(label, selectedValue, changed, options),
-    exactEquation: equation(label, exactValue, false, options),
-    equationProvenance: equationProvenance(label, selectedValue, changed, options),
-    expression: selectedValue,
-    exactExpression: exactValue,
-  };
-}
-
-function rootValue(root) {
-  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
-}
-
-/**
- * The provenance render of one pole or zero. It must mirror the
- * `renderRootEquation` call beside it exactly, options included — a pole row
- * rendered under different options would highlight terms the displayed row
- * does not contain.
- */
-function rootProvenance(kind, index, value) {
-  if (value === undefined || value === null || typeof value === 'string') return undefined;
-  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
-  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
-}
-
-function rootsOf(response, kind) {
-  const roots = response?.[kind] || [];
-  return roots.map((root, index) => {
-    const value = rootValue(root);
-    return {
-      ...root,
-      index,
-      ...(value !== undefined
-        ? {
-          root: value,
-          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
-          equationProvenance: rootProvenance(kind, index, value),
-        }
-        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
-    };
-  });
-}
-
-function frequencyResponse(selected, exact, source) {
-  const has = Boolean(firstDefined(
-    selected?.hasFrequency,
-    exact?.hasFrequency,
-    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
-  ));
-  if (!has) return null;
-  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
-  return {
-    ...base,
-    hasFrequency: true,
-    expression: responseExpression(selected),
-    exactExpression: responseExpression(exact),
-    numerator: selected?.numerator,
-    denominator: selected?.denominator,
-    poles: rootsOf(selected || exact, 'poles'),
-    zeros: rootsOf(selected || exact, 'zeros'),
-  };
-}
-
-function detailsFor(combined, source) {
-  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
-  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
-  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
-  const solution = get('solution');
-  const log = get('log', 'logDetails');
-  return {
-    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
-    ...(solution !== undefined ? { solution } : {}),
-    ...(log !== undefined ? { log } : {}),
-    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
-    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
-    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
-  };
-}
-
-function childSource(combined, key, quantity) {
-  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
-  const names = SOURCE_NAMES[quantity];
-  for (const container of containers) {
-    const found = lookup(container, [key, ...names]);
-    if (found !== undefined) return found;
-  }
-  return null;
-}
-
-function childMetadata(combined, source, key) {
-  const context = combined?.context || {};
-  const metadata = {
-    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
-    input: firstDefined(source?.input, context.input, combined?.input),
-    reference: firstDefined(source?.reference, context.reference, combined?.reference),
-  };
-  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
-}
-
-function childPairs(combined) {
-  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
-    const source = childSource(combined, key, quantity);
-    return [key, pairFor(source)];
-  }));
-}
-
-function adaptChild(combined, key, quantity) {
-  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
-  const raw = childSource(combined, key, quantity);
-  const pair = pairFor(raw);
-  const source = pair.source || {};
-  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
-  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
-  const selected = pair.selected || responseRecord(selectedExpression);
-  const exact = pair.exact || responseRecord(exactExpression);
-  const details = detailsFor(combined, source);
-  const failed = source?.ok === false || (!selectedExpression && source?.error);
-  const reactive = Boolean(frequencyResponse(selected, exact, source));
-  const label = reactive ? `${labelBase}(s)` : labelBase;
-  const changed = !sameValue(selectedExpression, exactExpression);
-  const renderOptions = equivalenceOptions(source);
-  const result = {
-    ...source,
-    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
-    query,
-    ...childMetadata(combined, source, key),
-    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
-    ...(exactExpression !== undefined ? { exactExpression } : {}),
-    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
-    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
-    ...(selectedExpression !== undefined
-      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
-      : {}),
-    ...details,
-    assumptions: unique([combined?.assumptions, source?.assumptions]),
-    approximations: unique([combined?.approximations, source?.approximations]),
-    dependencies: unique([combined?.dependencies, source?.dependencies]),
-    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
-  };
-  if (reactive && key !== 'transfer') delete result.acTransfer;
-  if (!reactive) {
-    delete result.frequencyResponse;
-    delete result.acTransfer;
-  }
-  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
-    result.smallSignalNetlist = combined.smallSignalNetlist;
-  }
-  if (key === 'transfer' && reactive && result.expression !== undefined) {
-    result.acTransfer = {
-      ok: result.ok,
-      equation: result.equation,
-      exactEquation: result.exactEquation,
-      equationProvenance: result.equationProvenance,
-      expression: result.expression,
-      exactExpression: result.exactExpression,
-    };
-  }
-  if (!result.ok) {
-    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
-    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
-    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
-  }
-  return result;
-}
-
-function transferCompanions(combined, children) {
-  const transfer = children.transfer;
-  const input = children.input;
-  const output = children.output;
-  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
-  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
-  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
-  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
-    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
-  }
-  transfer.dcGain = dcGain;
-  transfer.dcInputImpedance = dcInput;
-  transfer.dcOutputImpedance = dcOutput;
-  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
-}
-
-function cleanChild(child) {
-  const result = { ...child };
-  delete result._selected;
-  delete result._exact;
-  delete result._source;
-  return result;
-}
-
-const ROOT_SEPARATOR = ',\\quad ';
-
-/**
- * One Poles or Zeros row: the roots' own equations shown together. The joined
- * provenance render is kept only when every root has one, so the row's markers
- * can never describe a different string than the one displayed.
- */
-function rootRow(roots) {
-  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
-  const parts = roots.map((root) => root.equationProvenance);
-  return {
-    ok: true,
-    equation,
-    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
-  };
-}
-
-/** What the quantities are ratios of, named by the nodes they were taken at. */
-function portEntry(report) {
-  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
-  if (!definitions.length) return null;
-  // A definition, not a derived expression: it names nodes rather than device
-  // parameters, so there is nothing to trace back to the canvas.
-  const lines = definitions.map(({ tex }) => tex);
-  return {
-    title: 'Ports',
-    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
-  };
-}
-
-function equationEntries(reports, report) {
-  const entries = [];
-  const ports = portEntry(report);
-  if (ports) entries.push(ports);
-  const add = (title, result) => {
-    if (result?.ok && result.equation) entries.push({ title, result });
-  };
-  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
-  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
-  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
-  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
-  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
-  add('DC gain', reports.transfer.dcGain);
-  const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
-  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
-  return entries;
-}
-
-/** Convert one exact/selected v2 response set into the legacy child reports. */
-function adaptCombinedReport(report) {
-  if (!report || typeof report !== 'object') {
-    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
-  }
-  const pairs = childPairs(report);
-  const children = {};
-  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
-    const child = adaptChild(report, key, quantity);
-    children[key] = child;
-  }
-  for (const key of Object.keys(children)) {
-    children[key]._selected = pairs[key].selected;
-    children[key]._exact = pairs[key].exact;
-    children[key]._source = pairs[key].source;
-  }
-  const companions = transferCompanions(report, children);
-  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
-  const details = detailsFor(report, report);
-  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
-  const entries = equationEntries(reports, report);
-  const successful = Object.values(reports).filter((child) => child.ok);
-  const context = report.context || {};
-  const inputPort = firstDefined(context.input);
-  const outputPort = firstDefined(context.output);
-  const referencePort = firstDefined(context.reference);
-  const base = {
-    ...report,
-    query: 'combined',
-    ok: successful.length > 0,
-    complete: successful.length === 3,
-    reports,
-    // Port metadata is distinct from the solved impedance and transfer rows.
-    input: inputPort,
-    output: outputPort,
-    reference: referencePort,
-    inputPort,
-    outputPort,
-    referencePort,
-    inputImpedance: reports.input,
-    outputImpedance: reports.output,
-    voltageTransfer: reports.transfer,
-    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
-    ...companions,
-    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
-    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
-    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
-    ...details,
-    equationEntries: entries,
-    equationOrder: entries.map(({ title }) => title),
-    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
-  };
-  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
-  else delete base.frequencyResponse;
-  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
-    base.acTransfer = {
-      ok: reports.transfer.ok,
-      equation: reports.transfer.equation,
-      exactEquation: reports.transfer.exactEquation,
-      expression: reports.transfer.expression,
-      exactExpression: reports.transfer.exactExpression,
-    };
-  } else delete base.acTransfer;
-  return base;
-}
-
-__exports.adaptCombinedReport = adaptCombinedReport;
 };
 
 __modules["src/core/model.js"] = function (__require, __exports) {
@@ -20173,1303 +19619,653 @@ __exports.Net = Net;
 __exports.Circuit = Circuit;
 };
 
-__modules["src/core/analysis/engine.js"] = function (__require, __exports) {
-const { MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js");
-const { applyApproximations } = __require("src/core/analysis/approximation.js");
-const { cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js");
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { symbolProvenance } = __require("src/core/analysis/provenance.js");
-const { buildExactAnalysisPipeline } = __require("src/core/analysis/pipeline.js");
-const { presentDiagnostics } = __require("src/core/analysis/diagnostics.js");
-const { describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js");
+__modules["src/core/components/index.js"] = function (__require, __exports) {
+const { resistor } = __require("src/core/components/resistor.js");
+const { capacitor } = __require("src/core/components/capacitor.js");
+const { inductor } = __require("src/core/components/inductor.js");
+const { diode } = __require("src/core/components/diode.js");
+const { nmos } = __require("src/core/components/nmos.js");
+const { pmos } = __require("src/core/components/pmos.js");
+const { nmosb } = __require("src/core/components/nmosb.js");
+const { pmosb } = __require("src/core/components/pmosb.js");
+const { npn } = __require("src/core/components/npn.js");
+const { pnp } = __require("src/core/components/pnp.js");
+const { ground } = __require("src/core/components/ground.js");
+const { vcm } = __require("src/core/components/vcm.js");
+const { supply } = __require("src/core/components/supply.js");
+const { portInput, portOutput, portInputOutput, port } = __require("src/core/components/port.js");
+const { current_source, voltage_source } = __require("src/core/components/current.js");
+const { vccs } = __require("src/core/components/vccs.js");
+const { opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js");
+const { adc, dac } = __require("src/core/components/converter.js");
+const { dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } = __require("src/core/components/flipflop.js");
+const { variable_resistor, variable_capacitor, variable_inductor } = __require("src/core/components/variable.js");
+const { solder } = __require("src/core/components/solder.js");
+const { switch_open, switch_closed } = __require("src/core/components/switch.js");
+const { block } = __require("src/core/components/block.js");
+const { mux2 } = __require("src/core/components/mux.js");
+const { signal_sum, signal_multiply } = __require("src/core/components/signal-flow.js");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/** All registered symbol definitions, keyed by type name. */
+const symbolTypes = {
+  resistor,
+  capacitor,
+  inductor,
+  diode,
+  nmos,
+  pmos,
+  nmosb,
+  pmosb,
+  npn,
+  pnp,
+  ground,
+  vcm,
+  supply,
+  input: portInput,
+  output: portOutput,
+  inputoutput: portInputOutput,
+  port,
+  current_source,
+  voltage_source,
+  vccs,
+  opamp,
+  opamp_diff: opampDiff,
+  inverter,
+  buffer,
+  tristate_inverter: tristateInverter,
+  tristate_buffer: tristateBuffer,
+  mux2,
+  and2_gate,
+  nand2_gate,
+  or2_gate,
+  nor2_gate,
+  xor2_gate,
+  xnor2_gate,
+  and3_gate,
+  nand3_gate,
+  or3_gate,
+  nor3_gate,
+  xor3_gate,
+  xnor3_gate,
+  adc,
+  dac,
+  dff,
+  dff_qb,
+  dff_clkb,
+  dff_clkb_qb,
+  dff_rst,
+  dff_rst_qb,
+  dff_clkb_rst,
+  dff_clkb_rst_qb,
+  dff_rstb,
+  dff_rstb_qb,
+  dff_clkb_rstb,
+  dff_clkb_rstb_qb,
+  latch,
+  latch_qb,
+  latch_enb,
+  latch_enb_qb,
+  latch_rst,
+  latch_rst_qb,
+  latch_enb_rst,
+  latch_enb_rst_qb,
+  latch_rstb,
+  latch_rstb_qb,
+  latch_enb_rstb,
+  latch_enb_rstb_qb,
+  variable_resistor,
+  variable_capacitor,
+  variable_inductor,
+  solder,
+  switch_open,
+  switch_closed,
+  block,
+  signal_sum,
+  signal_multiply,
+};
+
+/** Ordered list of type names (for palettes / docs). */
+const symbolTypeNames = Object.keys(symbolTypes);
+
+/** Look up a symbol definition by type; throws on unknown type. */
+function getSymbol(type) {
+  const def = Object.hasOwn(symbolTypes, type) ? symbolTypes[type] : undefined;
+  if (!def) {
+    throw new Error(`unknown component type "${type}"; known: ${symbolTypeNames.join(', ')}`);
+  }
+  return def;
+}
+
+/** Terminal names a part joins in series when dropped along a straight wire:
+ * the declared `seriesTerminals` pair (MOS drain/source, BJT collector/emitter)
+ * or both pins of any two-terminal part. Returns null for other parts. */
+function seriesTerminalNames(def) {
+  if (Array.isArray(def?.seriesTerminals) && def.seriesTerminals.length === 2) return [...def.seriesTerminals];
+  const terminals = def?.terminals || [];
+  return terminals.length === 2 ? terminals.map((terminal) => terminal.name) : null;
+}
+
+__exports.getSymbol = getSymbol;
+__exports.seriesTerminalNames = seriesTerminalNames;
+__exports.symbolTypes = symbolTypes;
+__exports.symbolTypeNames = symbolTypeNames;
+};
+
+__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
+const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
 const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { approximateTopology, buildTopologyIdentities } = __require("src/core/analysis/topology.js");
-const { compactRational } = __require("src/core/analysis/compact.js");
-const { infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js");
-const { equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js");
+const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
+const { infinity } = __require("src/core/analysis/rational.js");
 
 
 
 
 
+const QUANTITIES = Object.freeze([
+  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
+  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
+  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
+]);
 
-
-
-
-
-
-
-
-
-const DEFAULTS = Object.freeze({
-  ignoreBodyEffect: true,
-  gmroLarge: true,
-  ignoreChannelLengthModulation: false,
-  dominantPoleApproximation: false,
+const SOURCE_NAMES = Object.freeze({
+  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
+  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
+  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
 });
 
-function lookup(values, key) {
-  if (!values || key == null) return undefined;
-  if (typeof values.get === 'function') return values.get(key);
-  return Object.hasOwn(values, key) ? values[key] : undefined;
-}
-
-function decimalValue(value) {
-  if (typeof value === 'bigint') return integer(value);
-  if (typeof value === 'number' && Number.isSafeInteger(value)) return integer(value);
-  const text = String(value).trim();
-  if (/^[+-]?\d+$/.test(text)) return integer(BigInt(text));
-  const match = text.match(/^([+-]?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
-  if (!match) return null;
-  const sign = match[1] === '-' ? -1n : 1n;
-  const whole = match[2];
-  const fraction = match[3] || '';
-  const exponent = Number(match[4] || 0);
-  let numerator = BigInt(`${whole}${fraction}`) * sign;
-  const scale = fraction.length - exponent;
-  if (scale <= 0) return integer(numerator * 10n ** BigInt(-scale));
-  return rational(numerator, 10n ** BigInt(scale));
-}
-
-function mapObject(values) {
-  if (!values) return {};
-  if (values instanceof Map) return Object.fromEntries(values);
-  return { ...values };
-}
-
-function modelRegions(options) {
-  const explicit = firstDefined(
-    options.deviceRegions,
-    options.modelOverrides,
-    options.models,
-  );
-  if (explicit !== undefined) return explicit;
-  const source = firstDefined(options.devices, options.deviceOverrides);
-  if (!source || typeof source === 'string') return source;
-  const entries = (source instanceof Map ? [...source.entries()] : Object.entries(source))
-    .filter(([, value]) => typeof value === 'string'
-      || (value && typeof value === 'object' && (value.model !== undefined || value.region !== undefined)));
-  return entries.length ? Object.fromEntries(entries) : undefined;
-}
-
-function symbolicValue(value, primitive, options, ops) {
-  if (value?.kind) return value;
-  const supplied = lookup(options.values || options.parameters || options.params, primitive?.parameter || value);
-  const resolved = supplied === undefined ? value : supplied;
-  if (resolved === undefined || resolved === null || resolved === '') return ops.zero;
-  if (typeof resolved === 'string') {
-    const exact = decimalValue(resolved);
-    return exact || ops.symbol(resolved);
-  }
-  const exact = decimalValue(resolved);
-  if (exact) return exact;
-  return ops.symbol(String(resolved));
-}
-
-function normaliseOptions(options, circuit, symbolic, ops) {
-  const assumptions = options.assumptions && typeof options.assumptions === 'object'
-    ? options.assumptions
-    : {};
-  const body = firstDefined(
-    options.ignoreBodyEffect,
-    options.neglectBodyEffect,
-    options.gmb0,
-    assumptions.ignoreBodyEffect,
-    assumptions.neglectBodyEffect,
-    assumptions.gmb0,
-    DEFAULTS.ignoreBodyEffect,
-  );
-  const intrinsic = firstDefined(
-    options.gmroLarge,
-    options.highIntrinsicGain,
-    assumptions.gmroLarge,
-    assumptions.highIntrinsicGain,
-    DEFAULTS.gmroLarge,
-  );
-  const output = firstDefined(
-    options.ignoreChannelLengthModulation,
-    options.neglectChannelLengthModulation,
-    options.roInfinity,
-    assumptions.ignoreChannelLengthModulation,
-    assumptions.neglectChannelLengthModulation,
-    assumptions.roInfinity,
-    DEFAULTS.ignoreChannelLengthModulation,
-  );
-  const dominantPole = firstDefined(
-    options.dominantPoleApproximation,
-    options.dominantPole,
-    assumptions.dominantPoleApproximation,
-    assumptions.dominantPole,
-    DEFAULTS.dominantPoleApproximation,
-  );
-
-  const devices = mapObject(options.devices || options.deviceOptions || options.deviceOverrides);
-  for (const component of circuit.components.values()) {
-    if (!MOS_TYPES.has(component.type)) continue;
-    const suffix = String(component.refdes).replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
-    // Per-device overrides may use the canonical request names
-    // (neglectBodyEffect, highIntrinsicGain, neglectChannelLengthModulation);
-    // resolve them here so the engine's own flags never shadow them.
-    const override = devices[component.refdes] || {};
-    devices[component.refdes] = {
-      id: component.refdes,
-      gm: `gm${suffix}`,
-      gmb: `gmb${suffix}`,
-      ro: `ro${suffix}`,
-      highIntrinsicGain: Boolean(firstDefined(override.highIntrinsicGain, override.gmroLarge, intrinsic)),
-      gmb0: Boolean(firstDefined(override.gmb0, override.ignoreBodyEffect, override.neglectBodyEffect, body)),
-      roInfinity: Boolean(firstDefined(override.roInfinity, override.ignoreChannelLengthModulation, override.neglectChannelLengthModulation, output)),
-      // A large gm*ro product does not license gm*RS >> 1 or an active
-      // branch's impedance >> RD. Preserve those independent dependencies.
-      intrinsicProduct: true,
-      ...(devices[component.refdes] || {}),
-    };
-  }
-  return {
-    ...options,
-    ...(!Object.hasOwn(options, 'ignoreBodyEffect') ? { ignoreBodyEffect: Boolean(body) } : {}),
-    ...(!Object.hasOwn(options, 'gmroLarge') ? { gmroLarge: Boolean(intrinsic) } : {}),
-    ...(!Object.hasOwn(options, 'ignoreChannelLengthModulation') ? { ignoreChannelLengthModulation: Boolean(output) } : {}),
-    ...(!Object.hasOwn(options, 'dominantPoleApproximation') ? { dominantPoleApproximation: Boolean(dominantPole) } : {}),
-    assumptions: { ...assumptions, gmb0: Boolean(body), gmroLarge: Boolean(intrinsic), dominantPole: Boolean(dominantPole) },
-    devices,
-    ...(symbolic ? { valueOf: (value, primitive) => symbolicValue(value, primitive, options, ops) } : {}),
-  };
-}
-
-function makeEngineOps(options) {
-  const base = options.ops || createRationalOps({
-      variable: options.variable || 's',
-      maxOperations: options.maxOperations,
-    });
-  const ops = {
-    ...base,
-    div: (left, right) => {
-      try {
-        return base.div(left, right);
-      } catch (error) {
-        if (base.isZero(right)) return infinity();
-        throw error;
-      }
-    },
-  };
-  return { ops, symbolic: !options.ops };
-}
-
-function responseOptions(options) {
-  return {
-    variable: options.variable || 's',
-    maxOperations: options.maxOperations,
-    ...(options.budget ? { budget: options.budget } : {}),
-  };
-}
-
-function renderRoot(root, kind, index, options) {
-  if (!root.root?.kind) return `${kind}_{${index}}: roots of the reported polynomial`;
-  return renderRootEquation(kind, index, root.root, options);
-}
-
-function combineParallel(values, ops) {
-  return values.reduce((left, right) => (
-    left === null ? right : ops.div(ops.mul(left, right), ops.add(left, right))
-  ), null);
-}
-
-function dcLimitOf(value, variable) {
-  try {
-    const limit = substituteRational(value, new Map([[variable, integer(0)]]), { variable });
-    return limit.kind === 'infinity' ? null : limit;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Turn each `reduce.js` parallel-merge proof into `present.js` equivalences
- * for every form that might actually get displayed: the exact AC value (as
- * solved), the same branches reduced under whichever assumptions are
- * selected (e.g. `g_m r_o >> 1`) and recombined — the textbook default `A_v`/
- * `Z_in`/`Z_out` equation comes from one leading-term reduction of the
- * *whole* expression, which generally does not preserve this factored
- * structure, so without this the `\|` only ever showed up on the exact row
- * — and each of those at `s=0` for the DC-limit row, dropping any branch
- * that's an open circuit at DC (a capacitor) rather than trying to combine
- * an infinite impedance in parallel with the rest.
- */
-function buildParallelEquivalenceProofs(networkReductionProofs, approximationOptions, ops) {
-  const variable = ops.variable || 's';
-  return (networkReductionProofs || []).flatMap(({ impedance, operands }) => {
-    const proofs = [provenParallel(impedance, ...operands)];
-    const dcOperands = operands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
-    if (dcOperands.length >= 2) {
-      const dcCombined = combineParallel(dcOperands, ops);
-      if (dcCombined) proofs.push(provenParallel(dcCombined, ...dcOperands));
-    }
-    try {
-      const reducedOperands = operands.map((operand) => applyApproximations(operand, approximationOptions).selected);
-      const combined = combineParallel(reducedOperands, ops);
-      if (combined) proofs.push(provenParallel(combined, ...reducedOperands));
-      const reducedDcOperands = reducedOperands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
-      if (reducedDcOperands.length >= 2) {
-        const reducedDcCombined = combineParallel(reducedDcOperands, ops);
-        if (reducedDcCombined) proofs.push(provenParallel(reducedDcCombined, ...reducedDcOperands));
-      }
-    } catch {
-      // Leave whichever proofs already built if the reduced form fails.
-    }
-    return proofs;
-  });
-}
-
-function buildTopologyProofs(topology, queries, approximations, approximationOptions) {
-  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
-  const proofs = [];
-  const identities = [
-    ...['inputImpedance', 'outputImpedance'].flatMap((key) => queries[key].equivalence ? [queries[key].equivalence] : []),
-    ...topology.identities, ...(topology.selectedIdentities || []),
-  ];
-  const multiply = (operands) => operands.reduce((a, b) => ops.mul(a, b), ops.one);
-  const addProof = (identity, equivalent, operands) => {
-    if (!equivalent || operands.some((value) => !value || value.kind === 'infinity')) return;
-    const product = identity.kind === 'product';
-    if (product) operands = operands.filter((value) => !ops.isZero(ops.sub(value, ops.one)));
-    if (operands.length < 2) return;
-    // A product is worth showing factored only while the factors are the
-    // shorter read: once a load has collapsed to 1/g_m, `g_m (1/g_m)` says
-    // less than the 1 it multiplies out to.
-    if (product && !operands.some(carriesSum)) return;
-    const combined = product ? multiply(operands) : combineParallel(operands, ops);
-    if (!ops.isZero(compactRational(ops.sub(combined, equivalent), ops)) || ops.budget.exceeded) return;
-    const response = canonicalResponseValue(equivalent, { variable: ops.variable });
-    const prove = product ? provenProduct : provenParallel;
-    proofs.push(prove(response.expression, ...operands));
-    const dcOperands = operands.map((value) => dcLimitOf(value, ops.variable));
-    // An infinite branch drops out of a parallel DC limit. In a product,
-    // zero times infinity needs a limit of the complete expression instead.
-    const finite = product ? dcOperands : dcOperands.filter(Boolean);
-    if (response.dc.kind === 'finite' && finite.length >= 2 && finite.every(Boolean)) {
-      const dcCombined = product ? multiply(finite) : combineParallel(finite, ops);
-      if (ops.isZero(ops.sub(dcCombined, response.dc.value))) proofs.push(prove(response.dc.value, ...finite));
-    }
-  };
-  try {
-    for (const identity of identities) {
-      addProof(identity, identity.equivalent, identity.operands);
-      const localOptions = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
-      const selected = applyApproximations(identity.equivalent, localOptions).selected;
-      const operands = identity.operands.map((value) => applyApproximations(value, localOptions).selected);
-      addProof(identity, selected, operands);
-    }
-    // Bind the top-level proof to the actual selected query (including a
-    // dominant-pole reduction), rather than assuming local reductions commute.
-    if (topology.stages.length === 1 && !topology.selectedIdentities?.length) {
-      const impedance = approximations.Zout.selected;
-      if (!ops.isZero(impedance) && impedance.kind !== 'infinity') addProof(
-        { kind: 'product' }, approximations.Av.selected,
-        [compactRational(ops.div(approximations.Av.selected, impedance), ops), impedance],
-      );
-    }
-  } catch {
-    return [];
-  }
-  return ops.budget.exceeded ? [] : proofs;
-}
-
-function buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions) {
-  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
-  const options = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
-  const proofs = [];
-  const addProof = (proof, combined) => {
-    if (!ops.isZero(compactRational(ops.sub(proof.equivalent, combined), ops))) return;
-    proofs.push(proof);
-    const response = canonicalResponseValue(compactRational(proof.equivalent, ops), { variable: ops.variable });
-    proofs.push({ ...proof, equivalent: response.expression });
-    const operands = proof.operands.map((value) => dcLimitOf(value, ops.variable));
-    if (response.dc.value && operands.every(Boolean)) proofs.push({ ...proof, equivalent: response.dc.value, operands });
-  };
-  try {
-    for (const stage of [...(pipeline.millerSubstitutions || []), ...(pipeline.retainedFeedbackNetworks || [])]) {
-      const { gain, outputImpedance: load, transadmittance: gm, loadOperands, feedbackImpedance: feedback } = stage;
-      if (loadOperands.length >= 2) addProof(provenParallel(load, ...loadOperands), combineParallel(loadOperands, ops));
-      addProof(provenProduct(gain, gm, load), ops.mul(gm, load));
-      const positiveGain = ops.neg(gain);
-      addProof(provenProduct(positiveGain, ops.neg(gm), load), ops.mul(ops.neg(gm), load));
-      const inverse = ops.div(ops.one, positiveGain);
-      addProof(provenQuotient(inverse, ops.one, positiveGain), ops.div(ops.one, positiveGain));
-      for (const term of [positiveGain, inverse]) {
-        const factor = ops.add(ops.one, term);
-        addProof(provenSum(factor, ops.one, term), ops.add(ops.one, term));
-        const admittance = ops.div(factor, feedback);
-        addProof(provenQuotient(admittance, factor, feedback), ops.div(factor, feedback));
-        const impedance = ops.div(feedback, factor);
-        addProof(provenQuotient(impedance, feedback, factor), ops.div(feedback, factor));
-        const selected = applyApproximations(impedance, options).selected;
-        const selectedFeedback = applyApproximations(feedback, options).selected;
-        const selectedFactor = applyApproximations(factor, options).selected;
-        if (!ops.isZero(ops.sub(selectedFactor, ops.one))) {
-          addProof(provenQuotient(selected, selectedFeedback, selectedFactor), ops.div(selectedFeedback, selectedFactor));
-        }
-      }
-      if (pipeline.retainedFeedbackNetworks?.includes(stage)
-        && stage.gate === pipeline.context.input.node && stage.drain === pipeline.context.output.node) {
-        // Resistive feedback: Zin = (Zfb + Ro)/(1 - Aopen), provided
-        // the actual input query proves this identity (additional gate
-        // loading or another feedback path may invalidate it).
-        const numerator = ops.add(feedback, load);
-        const denominator = ops.add(ops.one, positiveGain);
-        const zin = pipeline.queries.inputImpedance.value;
-        addProof(provenSum(numerator, feedback, load), ops.add(feedback, load));
-        addProof(provenQuotient(zin, numerator, denominator), ops.div(numerator, denominator));
-        const selectedZin = approximations.Zin.selected;
-        const selectedNumerator = applyApproximations(numerator, options).selected;
-        const selectedDenominator = applyApproximations(denominator, options).selected;
-        addProof(provenQuotient(selectedZin, selectedNumerator, selectedDenominator), ops.div(selectedNumerator, selectedDenominator));
-        const shortGm = topology.stages.length === 1 ? topology.stages[0].transadmittance : null;
-        if (shortGm) addProof(provenSum(shortGm, gm, ops.div(ops.one, feedback)), ops.add(gm, ops.div(ops.one, feedback)));
-      }
-    }
-  } catch { /* retain the exact identities already checked within budget */ }
-  return proofs;
-}
-
-/**
- * A first-order root location with the selected post-solve assumptions
- * (for example `g_m r_o >> 1`) applied to it as a quantity of its own: the
- * root of an approximated response still carries every subdominant term.
- */
-function approximatedRoot(root, approximationOptions) {
-  if (!approximationOptions || root.kind !== 'root' || !root.root?.kind || root.root.kind === 'number') return root;
-  try {
-    const approximated = applyApproximations(root.root, { ...approximationOptions, dominantPoleApproximation: false, dominantPole: false });
-    const { selected, changed } = approximated;
-    if (!changed || selected.budgetExceeded) return root;
-    const value = selected.denominator.kind === 'number' && selected.denominator.numerator === selected.denominator.denominator
-      ? selected.numerator
-      : { kind: 'rational', variable: selected.variable, numerator: selected.numerator, denominator: selected.denominator };
-    return { ...root, root: value, exactRoot: root.root, assumptions: approximated.assumptions };
-  } catch {
-    return root;
-  }
-}
-
-/** Poles, zeros, and degrees from the response with common factors cancelled. */
-function withCancelledRoots(response, value, options, approximationOptions) {
-  const cancelled = value?.kind === 'rational'
-    ? cancelCommonPolynomialFactor(value, { variable: options.variable || 's' })
-    : value;
-  const reduced = cancelled === value ? response : analyzeResponse(cancelled, options);
-  return {
-    ...response,
-    numeratorDegree: reduced.numeratorDegree,
-    denominatorDegree: reduced.denominatorDegree,
-    degrees: reduced.degrees,
-    poles: reduced.poles.map((root) => approximatedRoot(root, approximationOptions)),
-    zeros: reduced.zeros.map((root) => approximatedRoot(root, approximationOptions)),
-  };
-}
-
-function displayResponse(name, exact, approximation, options, approximationOptions = null) {
-  const selected = withCancelledRoots(canonicalResponseValue(approximation.selected, options), approximation.selected, options, approximationOptions);
-  const exactResponse = canonicalResponseValue(exact, options);
-  const argument = selected.hasFrequency ? 's' : null;
-  const ac = selected.hasFrequency
-    ? {
-      expression: selected.expression,
-      equation: renderQuantityEquation(name, argument, selected.expression, options),
-      exactEquation: renderQuantityEquation(name, argument, exactResponse.expression, options),
-    }
-    : null;
-  const dc = selected.dc.value
-    ? {
-      ...selected.dc,
-      equation: renderQuantityEquation(name, 0, selected.dc.value, options),
-    }
-    : { ...selected.dc, equation: null };
-  return {
-    exact: exactResponse,
-    approximation,
-    response: selected,
-    expression: selected.expression,
-    ac,
-    dc,
-    dcLimit: selected.dc,
-    poles: selected.poles,
-    zeros: selected.zeros,
-    equations: [ac?.equation, dc.equation].filter(Boolean),
-    ...(options.equivalence ? { equivalence: options.equivalence } : {}),
-    ...(options.equivalences ? { equivalences: options.equivalences } : {}),
-  };
-}
-
-function canonicalResponseValue(value, options) {
-  const canonical = value === Infinity || value === -Infinity
-    ? infinity(value < 0 ? -1 : 1)
-    : value?.kind ? value : decimalValue(value);
-  if (canonical?.kind === 'infinity') {
-    return {
-      expression: canonical,
-      numerator: canonical,
-      denominator: null,
-      numeratorCoefficients: null,
-      denominatorCoefficients: null,
-      numeratorDegree: null,
-      denominatorDegree: null,
-      numeratorValuation: null,
-      denominatorValuation: null,
-      degrees: { numerator: null, denominator: null },
-      dc: { kind: 'infinite', value: canonical, order: null, coefficient: canonical },
-      infinity: { kind: 'infinite', value: canonical, order: null, coefficient: canonical },
-      hasFrequency: false,
-      poles: [],
-      zeros: [],
-    };
-  }
-  const response = analyzeResponse(canonical ?? value, options);
-  if (response.dc.kind !== 'finite' || !response.numeratorCoefficients || !response.denominatorCoefficients) return response;
-  const numerator = response.numeratorCoefficients.find(({ power }) => power === 0)?.coefficient;
-  const denominator = response.denominatorCoefficients.find(({ power }) => power === 0)?.coefficient;
-  if (numerator === undefined || denominator === undefined) return response;
-  const valueAtZero = rationalFunction(numerator, denominator, { variable: options.variable || 's' });
-  return {
-    ...response,
-    dc: { ...response.dc, value: valueAtZero, coefficient: valueAtZero },
-  };
-}
-
-function rootRows(transfer, options) {
-  return [
-    ...transfer.poles.map((root) => ({ ...root, equation: renderRoot(root, 'p', root.index, options) })),
-    ...transfer.zeros.map((root) => ({ ...root, equation: renderRoot(root, 'z', root.index, options) })),
-  ];
-}
-
-/**
- * Whether an expression carries a sum. A product is worth showing factored
- * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
- * better than the ratio it expands to -- but two monomials multiplied are
- * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`.
- */
-function carriesSum(value) {
-  if (!value || typeof value !== 'object') return false;
-  if (value.kind === 'add') return true;
-  if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);
-  if (value.kind === 'multiply') return value.factors.some(carriesSum);
-  if (value.kind === 'power') return carriesSum(value.base);
-  return false;
+function asArray(value) {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
 }
 
 function unique(values) {
-  return [...new Set(values.filter(Boolean))];
+  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
 }
 
-function nodeNames(circuit) {
-  return new Map([...circuit.nets.values()].map((net) => [net.id, net.name || net.id]));
+function lookup(source, names) {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const name of names) {
+    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
+  }
+  return undefined;
 }
 
-function solveFailureSource(pipeline) {
-  const failure = pipeline?.solution || pipeline;
-  const code = String(failure?.code || '').toLowerCase();
-  const text = `${failure?.error || ''} ${pipeline?.error || ''}`.toLowerCase();
-  const singular = code === 'singular'
-    || code === 'inconsistent'
-    || code === 'singular-system'
-    || code === 'inconsistent-system'
-    || text.includes('singular system')
-    || text.includes('no pivot');
-  if (!singular) return failure;
+function isExpression(value) {
+  return value && typeof value === 'object' && typeof value.kind === 'string';
+}
+
+function expressionOf(value) {
+  if (value === undefined || value === null) return undefined;
+  if (value.kind === 'rational') return value;
+  if (isExpression(value)) return value;
+  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
+  return value;
+}
+
+function hasFrequency(value) {
+  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
+  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
+  if (value?.kind === 'power') return hasFrequency(value.base);
+  if (value?.kind === 'add' || value?.kind === 'multiply') {
+    const values = value.kind === 'add' ? value.terms : value.factors;
+    return values.some(hasFrequency);
+  }
+  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+}
+
+function responseRecord(value) {
+  if (value === undefined || value === null) return null;
+  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
+  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
+    return value;
+  }
+  const expression = expressionOf(value);
+  if (expression === undefined || expression === null) return null;
+  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
+  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
+}
+
+function pairFor(source) {
+  if (!source) return { selected: null, exact: null, source: null };
+  const selectedRaw = firstDefined(
+    source.selectedResponse,
+    source.selectedResult,
+    source.selected,
+    source.display,
+    source.approximate,
+    source.expression !== undefined ? source : undefined,
+    isExpression(source) ? source : undefined,
+  );
+  const exactRaw = firstDefined(
+    source.exactResponse,
+    source.exactResult,
+    source.exact,
+    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
+    selectedRaw,
+  );
   return {
-    code: 'singular-system',
-    severity: 'error',
-    stage: 'solve',
-    error: failure?.error || pipeline?.error || 'small-signal solve has no unique solution',
-    metadata: {
-      cause: 'no-pivot',
-      ...(failure?.pivotColumn === undefined ? {} : { pivotColumn: failure.pivotColumn }),
-      ...(failure?.pivotRow === undefined ? {} : { pivotRow: failure.pivotRow }),
-      ...(code && code !== 'singular-system' ? { originalCode: code } : {}),
-    },
+    selected: responseRecord(selectedRaw),
+    exact: responseRecord(exactRaw),
+    source,
   };
 }
 
-function failureReport(pipeline, options, error = null) {
-  const source = pipeline?.stage === 'solve'
-    ? { solve: [solveFailureSource(pipeline)] }
-    : pipeline
-      ? { ...pipeline }
-      : { error: error?.message || error || 'analysis failed' };
-  const diagnostics = presentDiagnostics(source);
+function valueKey(value) {
+  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
+  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
+  if (value?.kind === 'symbol') return `s:${value.name}`;
+  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
+  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
+  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
+  return JSON.stringify(value);
+}
+
+function sameValue(left, right) {
+  if (left === right) return true;
+  if (left === undefined || right === undefined || left === null || right === null) return false;
+  try {
+    return valueKey(left) === valueKey(right);
+  } catch {
+    return false;
+  }
+}
+
+function render(value, options) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value;
+  if (value.kind === 'infinity') return renderExpression(value, options);
+  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
+  return String(value);
+}
+
+function responseExpression(response) {
+  return expressionOf(response);
+}
+
+function equation(label, expression, approximate = false, options) {
+  const body = render(expression, options);
+  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
+}
+
+/**
+ * The same equation rendered with provenance markers, so the GUI can map a
+ * clicked sub-expression back to the devices it came from.
+ *
+ * This is built here, beside the string it mirrors, for the reason AGENTS.md
+ * gives about `equivalenceOptions`: a row rendered anywhere else would have to
+ * reproduce this function's label, approximation flag, and equivalence options,
+ * and getting any of them wrong fails silently on that row alone.
+ */
+function equationProvenance(label, expression, approximate = false, options) {
+  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
+  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
+  // Mirrors `equation()` above exactly, including its relation symbol.
+  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
+  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
+}
+
+function dcValue(limit) {
+  if (!limit) return undefined;
+  if (limit.value !== undefined && limit.value !== null) return limit.value;
+  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
+  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
+    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
+    return infinity(sign);
+  }
+  return undefined;
+}
+
+function equivalenceOptions(source) {
   return {
-    ok: false,
-    version: 2,
-    stage: pipeline?.stage || 'analysis',
-    error: pipeline?.error || error?.message || String(error || 'analysis failed'),
-    context: pipeline?.context || null,
-    exact: null,
-    approximate: null,
-    input: null,
-    output: null,
-    transfer: null,
-    dc: null,
-    poles: [],
-    zeros: [],
-    assumptions: [],
-    details: pipeline || null,
-    netlist: describeSmallSignalNetlist([], options),
-    smallSignalNetlist: '',
-    diagnostics,
-    log: diagnostics.logText,
+    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
+    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
   };
 }
 
-/**
- * The budget is a real size limit, not a timeout: an exact symbolic solve of a
- * large reactive model grows faster than any budget worth waiting for. Say
- * what can be made smaller, because the form has no budget control.
- */
-/**
- * What the three quantities are a ratio of, in the drawing's own node names.
- * The quantity symbols stay canonical -- `A_v`, `Z_{in}`, `Z_{out}` -- and this
- * says which nodes they were taken between, which is the whole answer for a
- * query like "what does the supply do to the output": nothing about a rail is
- * special, it is simply the node the input was taken at.
- */
-function portSymbols(name) {
-  const raw = String(name || '');
-  const flat = raw.replace(/[_^]\{([^}]*)\}/g, '$1');
-  // A node already named as a voltage lends its subscript to the current, so
-  // the pair reads as one: V_{DD} with I_{DD}. A name written without markup
-  // is given the same textbook spelling rather than one of each.
-  if (/^V.+/.test(flat)) {
-    const subscript = flat.slice(1);
-    return { voltage: /[_^]\{/.test(raw) ? raw : `V_{${subscript}}`, current: `I_{${subscript}}` };
+function dcResult(label, selected, exact, source) {
+  const selectedLimit = selected?.dc || source?.dc;
+  const exactLimit = exact?.dc || selectedLimit;
+  const selectedValue = dcValue(selectedLimit);
+  const exactValue = dcValue(exactLimit);
+  if (selectedValue === undefined) {
+    return {
+      ok: false,
+      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
+    };
   }
-  return { voltage: `v_{${flat}}`, current: `i_{${flat}}` };
-}
-
-function portDefinitions(context) {
-  const input = context?.input;
-  const output = context?.output;
-  if (!input || !output) return [];
-  const from = portSymbols(input.name || input.netId);
-  const to = portSymbols(output.name || output.netId);
-  // Each impedance states the condition it was measured under, the way a
-  // textbook writes it: the output port carries no external current while the
-  // input drives, and the input is zeroed while the output port is driven.
-  return [
-    { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
-    { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}` },
-    { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}} \\Big\\vert_{${from.voltage} = 0}` },
-  ];
-}
-
-function budgetFailureReport(stage, budget, options) {
-  return failureReport({
-    ok: false,
-    stage: 'budget',
-    code: 'operation-budget',
-    error: `symbolic operation budget exhausted during ${stage}: this model is too large to solve exactly. `
-      + 'Simplify it — fewer device capacitances, r_o → ∞ on bias devices, or analyze one stage at a time.',
-    budget: { used: budget.used, limit: budget.limit },
-  }, options);
-}
-
-/**
- * Run the topology-independent symbolic small-signal analysis pipeline.
- * Exact canonical responses are retained beside any selected approximation.
- */
-function analyzeSmallSignalV2(circuit, options = {}) {
-  if (!circuit) throw new TypeError('circuit is required');
-  const { ops, symbolic } = makeEngineOps(options);
-  const normalized = normaliseOptions(options, circuit, symbolic, ops);
-  const analysisOptions = { ...normalized, ...(ops.budget ? { budget: ops.budget } : {}) };
-  const regions = modelRegions(options);
-  const pipelineOptions = {
-    ...normalized,
-    ops,
-    devices: regions,
-    deviceRegions: regions,
-    deviceAssumptions: normalized.devices,
-    s: options.s === undefined
-      ? (symbolic ? ops.s() : (typeof ops.s === 'function' ? ops.s() : ops.one))
-      : (symbolic ? symbolicValue(options.s, {}, options, ops) : options.s),
-  };
-  let pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);
-  let retainedOutputResistance = false;
-  // Leaving r_o out can float a node driven only by current sources (an
-  // inverter's output). Then fall back to the exact model and take the
-  // post-solve r_o -> infinity limit, which shows how the result grows.
-  if (!pipeline.ok && pipeline.stage === 'solve' && Object.values(normalized.devices || {}).some((device) => device.roInfinity)) {
-    const retained = buildExactAnalysisPipeline(circuit, { ...pipelineOptions, deviceAssumptions: null });
-    if (retained.ok) {
-      pipeline = retained;
-      retainedOutputResistance = true;
-    }
-  }
-  if (!pipeline.ok) return failureReport(pipeline, normalized);
-  if (ops.budget?.exceeded) return budgetFailureReport('exact solve', ops.budget, analysisOptions);
-
-  const queries = pipeline.queries;
-  if (ops.budget?.exceeded) return budgetFailureReport('query extraction', ops.budget, analysisOptions);
-  const values = {
-    Av: queries?.transfer?.value,
-    Zin: queries?.inputImpedance?.value,
-    Zout: queries?.outputImpedance?.value,
-  };
-  if (Object.values(values).some((value) => value === undefined)) return failureReport({
-    ...pipeline,
-    stage: 'queries',
-    error: 'pipeline query results are incomplete',
-    queries,
-  }, normalized);
-
-  const approximationOptions = {
-    ...analysisOptions,
-    parameters: analysisOptions.parameters || {},
-    rational: {
-      maxOperations: options.maxOperations,
-      ...(ops.budget ? { budget: ops.budget } : {}),
-    },
-  };
-
-  const equivalences = equivalenceTable(buildParallelEquivalenceProofs(pipeline.networkReductionProofs, approximationOptions, ops));
-  const withEquivalences = (options) => ({ ...options, equivalences });
-
-  const exact = {};
-  for (const [name, value] of Object.entries(values)) {
-    const cleanupOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
-    const compact = compactRational(value, cleanupOps);
-    exact[name] = canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, withEquivalences(responseOptions(analysisOptions)));
-    if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
-  }
-  if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
-  const approximations = {};
-  for (const [name, response] of Object.entries(exact)) {
-    approximations[name] = response.expression?.kind === 'infinity'
-      ? { exact: response.expression, selected: response.expression, changed: false, assumptions: [] }
-      : applyApproximations(response.expression, approximationOptions);
-    if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
-  }
-  const topology = buildTopologyIdentities(pipeline, analysisOptions);
-  // A dominant-pole reduction acts on the whole transfer function; stage
-  // factoring must not silently replace that explicitly selected reduction.
-  const topologicalApproximation = analysisOptions.dominantPoleApproximation ? null
-    : approximateTopology(topology, queries, approximationOptions);
-  if (topologicalApproximation) {
-    for (const [name, composed, stageAssumptions] of [
-      ['Av', topologicalApproximation.selected, topologicalApproximation.assumptions],
-      ['Zout', topologicalApproximation.output.selected, topologicalApproximation.output.assumptions],
-    ]) {
-      // The stages were reduced one at a time; run the selected assumptions
-      // over what they compose to as well. Without this the topological form
-      // silently replaced a stronger whole-expression reduction -- a diode
-      // load stayed 1/g_m2 || r_o1 || r_o2 where g_m r_o >> 1 says 1/g_m2.
-      const reduced = applyApproximations(composed, approximationOptions);
-      const selected = reduced.selected;
-      const assumptions = unique([...stageAssumptions, ...reduced.assumptions]);
-      const comparisonOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
-      const changed = !comparisonOps.isZero(compactRational(comparisonOps.sub(selected, exact[name].expression), comparisonOps));
-      approximations[name] = { ...approximations[name], selected, changed, assumptions: changed ? assumptions : [] };
-    }
-    topology.selectedIdentities = topologicalApproximation.identities;
-  }
-  for (const [key, proof] of equivalenceTable(buildTopologyProofs(topology, queries, approximations, approximationOptions))) {
-    equivalences.set(key, proof);
-  }
-  for (const [key, proof] of equivalenceTable(buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions))) {
-    equivalences.set(key, proof);
-  }
-  const displayed = {
-    transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions)), approximationOptions),
-    input: displayResponse('Zin', exact.Zin.expression, approximations.Zin, withEquivalences({
-      ...responseOptions(analysisOptions),
-      ...(queries.inputImpedance.equivalence ? { equivalence: queries.inputImpedance.equivalence } : {}),
-    }), approximationOptions),
-    output: displayResponse('Zout', exact.Zout.expression, approximations.Zout, withEquivalences({
-      ...responseOptions(analysisOptions),
-      ...(queries.outputImpedance.equivalence ? { equivalence: queries.outputImpedance.equivalence } : {}),
-    }), approximationOptions),
-  };
-  if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
-  const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
-  const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
-  // One global statement when the option is global: the model dropped every
-  // device's body-effect branch, and four identical per-device lines say
-  // nothing the single rule does not.
-  const omittedBody = pipeline.omittedBodyEffect || [];
-  const bodyEffectAssumptions = omittedBody.length
-    ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
-    : [];
-  const assumptions = unique([
-    ...millerAssumptions,
-    ...bodyEffectAssumptions,
-    ...outputResistanceAssumptions,
-    ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
-    ...Object.values(displayed).flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
-      .flatMap((root) => root.assumptions || []),
-  ]);
-  const transfer = displayed.transfer.response;
-  const roots = rootRows(transfer, responseOptions(analysisOptions));
-  if (ops.budget?.exceeded) return budgetFailureReport('pole and zero extraction', ops.budget, analysisOptions);
-  const netlist = describeSmallSignalNetlist(pipeline.selected, {
-    ...normalized,
-    equivalences,
-    acGroundIds: pipeline.context.acGroundIds,
-    nodeAliases: pipeline.context.nodeAliases,
-    nodeNames: nodeNames(circuit),
-  });
-  const diagnostics = presentDiagnostics({
-    context: pipeline.context,
-    conversion: pipeline.conversion,
-    graph: pipeline.coupled,
-    queries,
-  });
-  const names = nodeNames(circuit);
-  const portName = (variable) => {
-    const node = variable.slice(2, -1);
-    return names.get(node) || node;
-  };
-  const topologyLog = topology.stages.map((stage, index) => (
-    `Stage ${index + 1}: ${portName(stage.from)} -> ${portName(stage.to)}; gain = signed transadmittance times loaded output impedance.`
-  ));
+  const changed = !sameValue(selectedValue, exactValue);
+  const options = equivalenceOptions(source);
   return {
     ok: true,
-    version: 2,
-    context: pipeline.context,
-    input: displayed.input,
-    output: displayed.output,
-    transfer: displayed.transfer,
-    exact,
-    approximate: approximations,
-    dc: {
-      input: displayed.input.dcLimit,
-      output: displayed.output.dcLimit,
-      transfer: displayed.transfer.dcLimit,
-    },
-    dcLimits: {
-      input: displayed.input.dcLimit,
-      output: displayed.output.dcLimit,
-      transfer: displayed.transfer.dcLimit,
-    },
-    poles: transfer.poles,
-    zeros: transfer.zeros,
-    roots,
-    assumptions,
-    portDefinitions: portDefinitions(pipeline.context),
-    equations: [
-      ...displayed.input.equations,
-      ...displayed.output.equations,
-      ...displayed.transfer.equations,
-      ...roots.map(({ equation }) => equation),
-    ],
-    details: {
-      topology,
-      pipeline,
-      queries,
-      exact,
-      approximations,
-      system: pipeline.system,
-      solution: pipeline.solution,
-    },
-    netlist,
-    smallSignalNetlist: netlist.text,
-    // Where each symbol in the equations above came from. The solved primitive
-    // set describes the model that produced them, and the conversion set fills
-    // in symbols whose own primitive left the model but whose name survived
-    // into an equation — a Miller-absorbed feedback capacitor, or an r_o the
-    // engine had to keep. See `provenance.js`.
-    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives),
-    diagnostics,
-    log: [
-      diagnostics.logText,
-      ...(retainedOutputResistance
-        ? ['r_o -> infinity: removing r_o leaves a node with no conducting path (for example an output driven only by current sources), so r_o was kept and only its large-r_o limit applied.']
-        : []),
-      ...topologyLog,
-    ].filter(Boolean).join('\n'),
+    equation: equation(label, selectedValue, changed, options),
+    exactEquation: equation(label, exactValue, false, options),
+    equationProvenance: equationProvenance(label, selectedValue, changed, options),
+    expression: selectedValue,
+    exactExpression: exactValue,
   };
 }
 
-__exports.portDefinitions = portDefinitions;
-__exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
-};
-
-__modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
-const { Circuit } = __require("src/core/model.js");
-const { rectsOverlap } = __require("src/core/geometry.js");
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { renderExpression } = __require("src/core/analysis/present.js");
-/**
- * Draw the small-signal model the solve actually used as an ordinary
- * schematic: one column per node, shunt branches hanging from each node down
- * to a single AC-ground rail, and series branches stacked in rows above the
- * node line. The primitives come from the pipeline *after* its pre-solve
- * transforms (Miller decoupling, `r_o -> infinity`, triode overrides), so the
- * drawing shows the circuit the displayed equations describe, not the
- * schematic they came from.
- *
- * The result is an ordinary `Circuit`: it renders, exports, and analyzes like
- * any other document, which is what makes it checkable -- analyzing the model
- * must reproduce the source schematic's equations.
- */
-
-
-
-
-
-const AC_GROUND_NODE = '@AC_GROUND';
-
-const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
-const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source']);
-const MIN_PITCH = 240;
-const SLOT_PADDING = 240;
-const BUS_Y = 0;
-const SHUNT_Y = 240;
-const RAIL_Y = 480;
-const ROW_H = 240;
-const PORT_GAP = 240;
-
-/** Elements whose branch is drawn with each symbol. */
-const ELEMENT_TYPES = new Map([
-  ['resistor', 'resistor'],
-  ['conductance', 'resistor'],
-  ['triode-resistance', 'resistor'],
-  ['capacitor', 'capacitor'],
-  ['inductor', 'inductor'],
-  ['vccs', 'vccs'],
-  ['current-source', 'current_source'],
-  ['voltage-source', 'voltage_source'],
-]);
-
-function isGround(node) {
-  return node === undefined || node === null || AC_GROUND_NAMES.has(String(node));
-}
-
-/** Accept every primitive shape the pipeline hands out: branches carry `a`/`b`
- * or `terminals`, controlled sources carry `outPlus`/`outMinus`. */
-function normalize(primitive) {
-  if (!primitive || typeof primitive !== 'object') return null;
-  const a = primitive.a ?? primitive.terminals?.a ?? primitive.outPlus;
-  const b = primitive.b ?? primitive.terminals?.b ?? primitive.outMinus;
-  if (a === undefined && b === undefined) return null;
-  const controlA = primitive.control?.a ?? primitive.controlPlus;
-  const controlB = primitive.control?.b ?? primitive.controlMinus;
-  return {
-    id: String(primitive.id || primitive.kind || 'primitive'),
-    kind: String(primitive.kind || '').toLowerCase(),
-    a: isGround(a) ? AC_GROUND_NODE : String(a),
-    b: isGround(b) ? AC_GROUND_NODE : String(b),
-    control: controlA === undefined && controlB === undefined ? null : {
-      a: isGround(controlA) ? AC_GROUND_NODE : String(controlA),
-      b: isGround(controlB) ? AC_GROUND_NODE : String(controlB),
-    },
-    parameter: primitive.parameter ? String(primitive.parameter) : '',
-    value: primitive.value,
-    metadata: primitive.metadata || {},
-    source: primitive,
-  };
-}
-
-/** `ro1` -> `r_{o1}`, `CGD` -> `C_{GD}`, `gmb2` -> `g_{mb2}`: the same textbook
- * spelling the netlist and the equations use. */
-function textbookSymbol(raw) {
-  const name = String(raw || '');
-  if (!name) return '';
-  if (/^gmb[A-Za-z0-9_]*$/.test(name)) return `g_{mb${name.slice(3)}}`;
-  if (/^gm[A-Za-z0-9_]*$/.test(name)) return `g_{m${name.slice(2)}}`;
-  if (/^go[A-Za-z0-9_]*$/.test(name)) return `g_{o${name.slice(2)}}`;
-  if (/^rds[A-Za-z0-9_]*$/.test(name)) return `r_{ds${name.slice(3)}}`;
-  if (/^ro[A-Za-z0-9_]*$/.test(name)) return `r_{o${name.slice(2)}}`;
-  if (/^[RCL][A-Za-z0-9_]+$/.test(name)) return `${name[0]}_{${name.slice(1)}}`;
-  return name;
+function rootValue(root) {
+  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
 }
 
 /**
- * A controlled source is labelled with its own transconductance times the
- * controlling voltage, the way a hybrid-pi figure is drawn: the control pair
- * is text, never a second pair of wires across the drawing. The pair names the
- * drawing's own nodes -- `g_{m1}(V_{IN} - 0)`, not `g_{m1} v_{gs1}` -- so the
- * reader can follow the control back to a node without decoding a subscript.
+ * The provenance render of one pole or zero. It must mirror the
+ * `renderRootEquation` call beside it exactly, options included — a pole row
+ * rendered under different options would highlight terms the displayed row
+ * does not contain.
  */
-function controlledSourceLabel(element, nodeName) {
-  const gain = textbookSymbol(element.parameter) || 'g_m';
-  if (!element.control) return gain;
-  const plus = nodeName(element.control.a) || '0';
-  const minus = nodeName(element.control.b) || '0';
-  return `${gain}(${plus} - ${minus})`;
+function rootProvenance(kind, index, value) {
+  if (value === undefined || value === null || typeof value === 'string') return undefined;
+  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
+  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
 }
 
-/**
- * A Miller shunt has no parameter symbol of its own, and its admittance is a
- * whole fraction -- far too wide to sit beside a symbol. Name it the way a
- * textbook does and state the value in the legend below the drawing.
- */
-function millerSymbol(element, symbol) {
-  const device = String(element.metadata?.component || '').replace(/\W/g, '') || 'M';
-  const side = element.metadata?.millerSide === 'output' ? 'out' : 'in';
-  return `${symbol === 'capacitor' ? 'C' : 'Y'}_{${device},${side}}`;
-}
-
-/** An admittance divided by `s`, when that leaves no frequency behind: the
- * capacitance a capacitive shunt is drawn as. */
-function perFrequency(value, options) {
-  try {
-    const ops = createRationalOps({ variable: 's', maxOperations: 4000 });
-    const capacitance = ops.div(value, ops.s());
-    if (ops.budget?.exceeded) return null;
-    const rendered = renderExpression(capacitance, options.renderOptions || {});
-    return /(^|[^A-Za-z])s([^A-Za-z]|$)/.test(rendered) ? null : rendered;
-  } catch { return null; }
-}
-
-function elementLabel(element, symbol, options, nodeName) {
-  if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
-  if (element.parameter) return { text: textbookSymbol(element.parameter) };
-  let rendered = '';
-  try { rendered = renderExpression(element.value, options.renderOptions || {}); }
-  catch { rendered = ''; }
-  if (element.kind === 'admittance') {
-    const name = millerSymbol(element, symbol);
-    // A shunt drawn as a capacitor is named as one, so state a capacitance:
-    // the primitive carries the admittance Y = sC, and C = Y/s is the
-    // textbook Miller value.
-    if (symbol === 'capacitor') {
-      const capacitance = perFrequency(element.value, options);
-      if (capacitance) return { text: name, legend: { symbol: name, value: capacitance } };
-    }
-    return { text: name, legend: rendered ? { symbol: `Y_{${name.slice(name.indexOf('{') + 1, -1)}}`, value: rendered } : null };
-  }
-  return { text: rendered || element.id };
-}
-
-/**
- * A label's rendered width is only known in a browser, and the drawing has to
- * be laid out before that. Estimate it from the text the way `textWidth` does
- * -- the tight per-glyph model at the label font size -- so columns are spaced
- * for their own contents instead of a fixed guess.
- */
-function estimateLabelWidth(tex) {
-  const plain = String(tex)
-    .replace(/\\left|\\right|\\,|\\;|\\!/g, '')
-    .replace(/\\frac/g, '')
-    .replace(/[{}$]/g, '');
-  return Math.max(120, plain.length * 24);
-}
-
-/** Local offset that renders at a given world offset for a placed symbol. */
-function localOffset(dx, dy, rotation) {
-  const turn = ((rotation % 360) + 360) % 360;
-  if (turn === 90) return { x: dy, y: -dx };
-  if (turn === 180) return { x: -dx, y: -dy };
-  if (turn === 270) return { x: -dy, y: dx };
-  return { x: dx, y: dy };
-}
-
-/** A Miller shunt made only of capacitors is a capacitor in the drawing --
- * that is exactly the textbook Miller capacitance. */
-function elementSymbol(element) {
-  const mapped = ELEMENT_TYPES.get(element.kind);
-  if (mapped) return mapped;
-  if (element.kind === 'admittance') {
-    const kinds = element.metadata?.feedbackKinds || [];
-    if (kinds.length && kinds.every((kind) => kind === 'capacitor')) return 'capacitor';
-  }
-  return 'resistor';
-}
-
-function uniqueRefdes(base, used) {
-  const clean = String(base || 'X').replace(/[^A-Za-z0-9_]/g, '') || 'X';
-  let candidate = /^[A-Za-z]/.test(clean) ? clean : `X${clean}`;
-  let index = 2;
-  while (used.has(candidate)) candidate = `${clean}_${index++}`;
-  used.add(candidate);
-  return candidate;
-}
-
-/** Node display names, preferring the source circuit's own net names. */
-function nodeNames(report, options) {
-  const names = new Map();
-  const circuit = options.circuit;
-  if (circuit) {
-    for (const net of circuit.nets.values()) names.set(net.id, net.name || net.id);
-  }
-  for (const [key, value] of options.nodeNames instanceof Map ? options.nodeNames : []) names.set(key, value);
-  return names;
-}
-
-/**
- * Node order across the drawing. The source schematic's own left-to-right
- * order is the one the reader already knows, so use it when the circuit is
- * available; otherwise fall back to first appearance with the analysis input
- * first and its output last.
- */
-function orderNodes(elements, report, options) {
-  const seen = [];
-  for (const element of elements) {
-    for (const node of [element.a, element.b, element.control?.a, element.control?.b]) {
-      if (node && node !== AC_GROUND_NODE && !seen.includes(node)) seen.push(node);
-    }
-  }
-  const circuit = options.circuit;
-  const centre = new Map();
-  if (circuit) {
-    for (const node of seen) {
-      const net = circuit.nets.get(node);
-      const points = (net?.terminals || []).map((terminal) => {
-        try { return circuit.getComponent(terminal.comp).terminalWorld(terminal.term).x; }
-        catch { return null; }
-      }).filter((value) => value !== null);
-      if (points.length) centre.set(node, points.reduce((sum, value) => sum + value, 0) / points.length);
-    }
-  }
-  const inputNode = portNode(report, 'input');
-  const outputNode = portNode(report, 'output');
-  const rank = (node) => node === inputNode ? -Infinity : node === outputNode ? Infinity : 0;
-  return [...seen].sort((left, right) => {
-    const ranked = rank(left) - rank(right);
-    if (Number.isFinite(ranked) && ranked !== 0) return ranked;
-    if (!Number.isFinite(ranked)) return ranked < 0 ? -1 : 1;
-    const a = centre.get(left);
-    const b = centre.get(right);
-    if (a !== undefined && b !== undefined && a !== b) return a - b;
-    return seen.indexOf(left) - seen.indexOf(right);
+function rootsOf(response, kind) {
+  const roots = response?.[kind] || [];
+  return roots.map((root, index) => {
+    const value = rootValue(root);
+    return {
+      ...root,
+      index,
+      ...(value !== undefined
+        ? {
+          root: value,
+          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
+          equationProvenance: rootProvenance(kind, index, value),
+        }
+        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
+    };
   });
 }
 
-/** The analysis node a port role resolved to, as the context recorded it. */
-function portNode(report, role) {
-  const context = report?.context || report?.details?.pipeline?.context;
-  return context?.[role]?.node || null;
+function frequencyResponse(selected, exact, source) {
+  const has = Boolean(firstDefined(
+    selected?.hasFrequency,
+    exact?.hasFrequency,
+    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
+  ));
+  if (!has) return null;
+  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
+  return {
+    ...base,
+    hasFrequency: true,
+    expression: responseExpression(selected),
+    exactExpression: responseExpression(exact),
+    numerator: selected?.numerator,
+    denominator: selected?.denominator,
+    poles: rootsOf(selected || exact, 'poles'),
+    zeros: rootsOf(selected || exact, 'zeros'),
+  };
 }
 
-/**
- * Where to hang a node's name: the middle of its longest run, preferring a
- * horizontal one, and only where a label-sized box above the wire clears every
- * symbol. A node whose wires are all crowded keeps its name in the net list
- * rather than printing it over a component.
- */
-function netLabelAnchor(net, width, boxes) {
-  const segments = [];
-  for (const path of (net.paths ? net.paths() : [])) {
-    for (let index = 1; index < path.length; index += 1) segments.push([path[index - 1], path[index]]);
-  }
-  const span = ([a, b]) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-  const horizontal = segments.filter(([a, b]) => a.y === b.y);
-  const ordered = (horizontal.length ? horizontal : segments).sort((left, right) => span(right) - span(left));
-  for (const [a, b] of ordered) {
-    const point = { x: snapTo((a.x + b.x) / 2), y: snapTo((a.y + b.y) / 2) };
-    const box = { x: point.x - width / 2, y: point.y - 120, w: width, h: 120 };
-    if (!boxes.some((other) => rectsOverlap(box, other))) return point;
+function detailsFor(combined, source) {
+  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
+  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
+  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
+  const solution = get('solution');
+  const log = get('log', 'logDetails');
+  return {
+    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
+    ...(solution !== undefined ? { solution } : {}),
+    ...(log !== undefined ? { log } : {}),
+    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
+    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
+    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
+  };
+}
+
+function childSource(combined, key, quantity) {
+  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
+  const names = SOURCE_NAMES[quantity];
+  for (const container of containers) {
+    const found = lookup(container, [key, ...names]);
+    if (found !== undefined) return found;
   }
   return null;
 }
 
-function snapTo(value) {
-  return Math.round(value / 40) * 40;
+function childMetadata(combined, source, key) {
+  const context = combined?.context || {};
+  const metadata = {
+    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
+    input: firstDefined(source?.input, context.input, combined?.input),
+    reference: firstDefined(source?.reference, context.reference, combined?.reference),
+  };
+  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
 }
+
+function childPairs(combined) {
+  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
+    const source = childSource(combined, key, quantity);
+    return [key, pairFor(source)];
+  }));
+}
+
+function adaptChild(combined, key, quantity) {
+  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
+  const raw = childSource(combined, key, quantity);
+  const pair = pairFor(raw);
+  const source = pair.source || {};
+  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
+  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
+  const selected = pair.selected || responseRecord(selectedExpression);
+  const exact = pair.exact || responseRecord(exactExpression);
+  const details = detailsFor(combined, source);
+  const failed = source?.ok === false || (!selectedExpression && source?.error);
+  const reactive = Boolean(frequencyResponse(selected, exact, source));
+  const label = reactive ? `${labelBase}(s)` : labelBase;
+  const changed = !sameValue(selectedExpression, exactExpression);
+  const renderOptions = equivalenceOptions(source);
+  const result = {
+    ...source,
+    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
+    query,
+    ...childMetadata(combined, source, key),
+    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
+    ...(exactExpression !== undefined ? { exactExpression } : {}),
+    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
+    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
+    ...(selectedExpression !== undefined
+      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
+      : {}),
+    ...details,
+    assumptions: unique([combined?.assumptions, source?.assumptions]),
+    approximations: unique([combined?.approximations, source?.approximations]),
+    dependencies: unique([combined?.dependencies, source?.dependencies]),
+    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
+  };
+  if (reactive && key !== 'transfer') delete result.acTransfer;
+  if (!reactive) {
+    delete result.frequencyResponse;
+    delete result.acTransfer;
+  }
+  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
+    result.smallSignalNetlist = combined.smallSignalNetlist;
+  }
+  if (key === 'transfer' && reactive && result.expression !== undefined) {
+    result.acTransfer = {
+      ok: result.ok,
+      equation: result.equation,
+      exactEquation: result.exactEquation,
+      equationProvenance: result.equationProvenance,
+      expression: result.expression,
+      exactExpression: result.exactExpression,
+    };
+  }
+  if (!result.ok) {
+    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
+    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
+    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
+  }
+  return result;
+}
+
+function transferCompanions(combined, children) {
+  const transfer = children.transfer;
+  const input = children.input;
+  const output = children.output;
+  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
+  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
+  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
+  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
+    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
+  }
+  transfer.dcGain = dcGain;
+  transfer.dcInputImpedance = dcInput;
+  transfer.dcOutputImpedance = dcOutput;
+  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
+}
+
+function cleanChild(child) {
+  const result = { ...child };
+  delete result._selected;
+  delete result._exact;
+  delete result._source;
+  return result;
+}
+
+const ROOT_SEPARATOR = ',\\quad ';
 
 /**
- * Build the drawn model.
- *
- * @param {object} report a successful `analyzeSmallSignalV2` report
- * @param {{circuit?: import('../model.js').Circuit, nodeNames?: Map}} options
- * @returns {{ok: boolean, circuit?: Circuit, correspondence?: Map, notes: string[], error?: string}}
+ * One Poles or Zeros row: the roots' own equations shown together. The joined
+ * provenance render is kept only when every root has one, so the row's markers
+ * can never describe a different string than the one displayed.
  */
-function smallSignalSchematic(report, options = {}) {
-  const primitives = report?.details?.pipeline?.selected;
-  if (!Array.isArray(primitives) || !primitives.length) {
-    return { ok: false, notes: [], error: 'this analysis produced no small-signal primitives to draw' };
-  }
-  const elements = primitives.map(normalize).filter(Boolean);
-  const names = nodeNames(report, options);
-  // The node's own name, markup included: label text renders `_{...}`.
-  const nodeName = (node) => (!node || node === AC_GROUND_NODE ? '' : String(names.get(node) || node));
-  const plainName = (node) => nodeName(node).replace(/[_^]\{([^}]*)\}/g, '$1');
-  const nodes = orderNodes(elements, report, options);
-  const shunts = new Map(nodes.map((node) => [node, []]));
-  const series = [];
-  for (const element of elements) {
-    const aGround = element.a === AC_GROUND_NODE;
-    const bGround = element.b === AC_GROUND_NODE;
-    if (aGround && bGround) continue;
-    // A controlled source across one node carries no current -- the body
-    // effect of a device whose source is the AC reference. Drawing it says
-    // nothing and costs a column.
-    if (element.control && element.control.a === element.control.b) continue;
-    if (aGround || bGround) shunts.get(bGround ? element.a : element.b).push(element);
-    else series.push(element);
-  }
-
-  // Every element is drawn with its label above it, so a node's slot is as
-  // wide as its own branches need -- a Miller shunt beside a bare r_o should
-  // not push every other column apart.
-  const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
-  const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
-  // A shunt wears its label on its left, so its neighbour must clear it.
-  const widthOf = (element) => Math.max(MIN_PITCH, snapTo(estimateLabelWidth(labels.get(element).text) + 160));
-  const pitches = new Map(nodes.map((node) => [node, Math.max(MIN_PITCH, ...shunts.get(node).map(widthOf))]));
-
-  const columns = new Map();
-  let x = 0;
-  for (const node of nodes) {
-    const count = Math.max(1, shunts.get(node).length);
-    const width = count * pitches.get(node) + 2 * SLOT_PADDING;
-    columns.set(node, snapTo(x + width / 2));
-    x += width;
-  }
-
-  const circuit = new Circuit();
-  const used = new Set();
-  const correspondence = new Map();
-  const notes = [];
-  const legend = [];
-  const attachments = new Map(nodes.map((node) => [node, []]));
-  const groundRefs = [];
-
-  const addElement = (element, placement, upright = true) => {
-    const type = symbols.get(element);
-    const refdes = uniqueRefdes(element.parameter || element.id.replace(/\W/g, ''), used);
-    const component = circuit.addComponent(type, { ...placement, refdes, noLabel: true });
-    const label = labels.get(element);
-    // Plain `_{...}` markup, not a math label: every symbol in the drawing is
-    // a name with a subscript, and a markup label needs no browser
-    // measurement, so the figure lays out the same in a test, an export, and
-    // the dock. The one thing that needs real math -- a Miller admittance --
-    // is named here and stated in the legend instead.
-    //
-    // An upright branch wears its label on the left, where a textbook puts it;
-    // a branch lying along a row wears it above, clear of its own wires. The
-    // offset comes from the label's own measured box rather than the estimate
-    // the columns are spaced by, so the text sits against its symbol instead
-    // of drifting into the gap towards the next one.
-    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
-    const box = owned.bbox();
-    const reach = (extent) => 40 * Math.ceil((40 + extent / 2) / 40);
-    const world = upright ? { x: -reach(box.w), y: 0 } : { x: 0, y: -reach(box.h) };
-    owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
-    owned.clearRenderedTextBounds();
-    if (label.legend) legend.push(label.legend);
-    correspondence.set(refdes, { primitive: element.id, component: element.metadata?.component || null, role: element.kind });
-    return component;
+function rootRow(roots) {
+  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
+  const parts = roots.map((root) => root.equationProvenance);
+  return {
+    ok: true,
+    equation,
+    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
   };
-
-  // Shunt branches: node bus -> element -> ground rail.
-  for (const node of nodes) {
-    const list = shunts.get(node);
-    const centreX = columns.get(node);
-    const pitch = pitches.get(node);
-    list.forEach((element, index) => {
-      const shuntX = snapTo(centreX + (index - (list.length - 1) / 2) * pitch);
-      const vertical = SOURCE_KINDS.has(element.kind);
-      // A source symbol is already vertical; a passive is turned upright. The
-      // current of a controlled source flows from `a` into `b`, so a source
-      // whose ground end is `a` is turned around rather than redrawn.
-      const flipped = element.a === AC_GROUND_NODE;
-      const rotation = vertical ? (flipped ? 180 : 0) : (flipped ? 270 : 90);
-      const component = addElement(element, { x: shuntX, y: SHUNT_Y, rotation }, true);
-      const [top, bottom] = flipped ? ['b', 'a'] : ['a', 'b'];
-      attachments.get(node).push(`${component.refdes}.${top}`);
-      groundRefs.push(`${component.refdes}.${bottom}`);
-    });
-  }
-
-  // Series branches stack in rows above the node line, lowest row first.
-  const rows = [];
-  for (const element of series) {
-    const left = Math.min(columns.get(element.a), columns.get(element.b));
-    const right = Math.max(columns.get(element.a), columns.get(element.b));
-    let row = rows.findIndex((spans) => spans.every(([from, to]) => right <= from || left >= to));
-    if (row < 0) row = rows.push([]) - 1;
-    rows[row].push([left, right]);
-    const y = BUS_Y - (row + 1) * ROW_H;
-    const rotation = SOURCE_KINDS.has(element.kind) ? 270 : 0;
-    const component = addElement(element, { x: snapTo((left + right) / 2), y, rotation }, false);
-    const aLeft = columns.get(element.a) <= columns.get(element.b);
-    attachments.get(element.a).push(`${component.refdes}.${aLeft ? 'a' : 'b'}`);
-    attachments.get(element.b).push(`${component.refdes}.${aLeft ? 'b' : 'a'}`);
-  }
-
-  // The interface ports read left to right on the node line itself, outside
-  // every column: the input node sorts first and the output node last, so
-  // neither stub crosses another node's bus.
-  const portNodes = new Set();
-  // Outside everything drawn, and outside every column: a node that only
-  // controls a source has a column but nothing standing in it.
-  const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
-  const spans = [...columns.values()];
-  const leftEdge = snapTo(Math.min(...drawn.map((box) => box.x), ...spans) - PORT_GAP);
-  const rightEdge = snapTo(Math.max(...drawn.map((box) => box.x + box.w), ...spans) + PORT_GAP);
-  const portFor = (node, type, side) => {
-    if (!node || !columns.has(node)) return;
-    const refdes = uniqueRefdes(plainName(node), used);
-    const port = circuit.addComponent(type, {
-      refdes, x: side === 'left' ? leftEdge : rightEdge, y: BUS_Y, noLabel: true,
-    });
-    // Above the port, not beside it: an outward-facing port box already
-    // occupies the side its own label offset points at.
-    circuit.addLabel({ owner: refdes, text: nodeName(node), align: 'center', offset: { x: 0, y: -120 } });
-    attachments.get(node).push(`${port.refdes}.p`);
-    portNodes.add(node);
-  };
-  portFor(portNode(report, 'input'), 'input', 'left');
-  portFor(portNode(report, 'output'), 'output', 'right');
-
-  // One AC-ground rail under the whole drawing.
-  const railX = snapTo(Math.min(...columns.values()) - SLOT_PADDING);
-  const ground = circuit.addComponent('ground', { refdes: 'GND', x: railX, y: RAIL_Y, noLabel: true });
-  groundRefs.push(`${ground.refdes}.gnd`);
-
-  const failures = [];
-  const wire = (refs, name, stub = null) => {
-    try {
-      // A node that only controls a source -- a bare gate -- has no branch of
-      // its own. Draw its port down to the node line anyway: the controlling
-      // voltage needs somewhere to be read.
-      if (refs.length === 1 && stub) {
-        circuit.wireTo(refs[0], stub);
-        return null;
-      }
-      if (refs.length < 2) return null;
-      const net = circuit.connect(...refs);
-      if (name && net) circuit.renameNet(net, name);
-      return net;
-    } catch (error) { failures.push(`${name || 'net'}: ${error.message}`); }
-    return null;
-  };
-  const wired = new Map();
-  for (const node of nodes) {
-    wired.set(node, wire(attachments.get(node), nodeName(node) || node, { x: columns.get(node), y: BUS_Y }));
-  }
-  wire(groundRefs, 'VSS');
-
-  // Name the nodes on the drawing. A node with a port already reads its name
-  // off that port, and the AC-ground rail is what the ground symbol says.
-  // Clear of every symbol *and* every label already placed: a node name that
-  // lands on a branch's own label is as unreadable as one over a symbol.
-  const boxes = [
-    ...[...circuit.components.values()].map((component) => component.bboxWorld()),
-    ...[...circuit.labels.values()].map((label) => label.bbox()),
-  ];
-  for (const node of nodes) {
-    const net = wired.get(node);
-    if (!net || portNodes.has(node) || !net.name) continue;
-    const anchor = netLabelAnchor(net, estimateLabelWidth(net.name), boxes);
-    if (!anchor) continue;
-    try { circuit.addNetLabel(net, { anchor, netSide: 'above' }); }
-    catch { /* a node whose wire the router shaped differently keeps its name in the net list */ }
-  }
-  if (failures.length) notes.push(`${failures.length} connection${failures.length === 1 ? '' : 's'} could not be routed automatically`);
-
-  const miller = (report?.details?.pipeline?.millerSubstitutions || []).map(({ device }) => device).filter(Boolean);
-  if (miller.length) notes.push(`Miller approximation applied to ${miller.join(', ')}`);
-  const omitted = report?.details?.pipeline?.omittedOutputResistances || [];
-  if (omitted.length) notes.push(`r_o omitted for ${omitted.join(', ')}`);
-
-  return { ok: true, circuit, correspondence, notes, legend, failures };
 }
 
-__exports.textbookSymbol = textbookSymbol;
-__exports.smallSignalSchematic = smallSignalSchematic;
-__exports.AC_GROUND_NODE = AC_GROUND_NODE;
+/** What the quantities are ratios of, named by the nodes they were taken at. */
+function portEntry(report) {
+  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
+  if (!definitions.length) return null;
+  // A definition, not a derived expression: it names nodes rather than device
+  // parameters, so there is nothing to trace back to the canvas.
+  const lines = definitions.map(({ tex }) => tex);
+  return {
+    title: 'Ports',
+    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
+  };
+}
+
+function equationEntries(reports, report) {
+  const entries = [];
+  const ports = portEntry(report);
+  if (ports) entries.push(ports);
+  const add = (title, result) => {
+    if (result?.ok && result.equation) entries.push({ title, result });
+  };
+  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
+  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
+  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
+  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
+  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
+  add('DC gain', reports.transfer.dcGain);
+  const frequency = reports.transfer.frequencyResponse;
+  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
+  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
+  return entries;
+}
+
+/** Convert one exact/selected v2 response set into the legacy child reports. */
+function adaptCombinedReport(report) {
+  if (!report || typeof report !== 'object') {
+    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
+  }
+  const pairs = childPairs(report);
+  const children = {};
+  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
+    const child = adaptChild(report, key, quantity);
+    children[key] = child;
+  }
+  for (const key of Object.keys(children)) {
+    children[key]._selected = pairs[key].selected;
+    children[key]._exact = pairs[key].exact;
+    children[key]._source = pairs[key].source;
+  }
+  const companions = transferCompanions(report, children);
+  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
+  const details = detailsFor(report, report);
+  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
+  const entries = equationEntries(reports, report);
+  const successful = Object.values(reports).filter((child) => child.ok);
+  const context = report.context || {};
+  const inputPort = firstDefined(context.input);
+  const outputPort = firstDefined(context.output);
+  const referencePort = firstDefined(context.reference);
+  const base = {
+    ...report,
+    query: 'combined',
+    ok: successful.length > 0,
+    complete: successful.length === 3,
+    reports,
+    // Port metadata is distinct from the solved impedance and transfer rows.
+    input: inputPort,
+    output: outputPort,
+    reference: referencePort,
+    inputPort,
+    outputPort,
+    referencePort,
+    inputImpedance: reports.input,
+    outputImpedance: reports.output,
+    voltageTransfer: reports.transfer,
+    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
+    ...companions,
+    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
+    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
+    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
+    ...details,
+    equationEntries: entries,
+    equationOrder: entries.map(({ title }) => title),
+    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
+  };
+  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
+  else delete base.frequencyResponse;
+  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
+    base.acTransfer = {
+      ok: reports.transfer.ok,
+      equation: reports.transfer.equation,
+      exactEquation: reports.transfer.exactEquation,
+      expression: reports.transfer.expression,
+      exactExpression: reports.transfer.exactExpression,
+    };
+  } else delete base.acTransfer;
+  return base;
+}
+
+__exports.adaptCombinedReport = adaptCombinedReport;
 };
 
 __modules["src/core/commands.js"] = function (__require, __exports) {
@@ -22542,6 +21338,485 @@ __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 };
 
+__modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
+const { Circuit } = __require("src/core/model.js");
+const { rectsOverlap } = __require("src/core/geometry.js");
+const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
+const { renderExpression } = __require("src/core/analysis/present.js");
+/**
+ * Draw the small-signal model the solve actually used as an ordinary
+ * schematic: one column per node, shunt branches hanging from each node down
+ * to a single AC-ground rail, and series branches stacked in rows above the
+ * node line. The primitives come from the pipeline *after* its pre-solve
+ * transforms (Miller decoupling, `r_o -> infinity`, triode overrides), so the
+ * drawing shows the circuit the displayed equations describe, not the
+ * schematic they came from.
+ *
+ * The result is an ordinary `Circuit`: it renders, exports, and analyzes like
+ * any other document, which is what makes it checkable -- analyzing the model
+ * must reproduce the source schematic's equations.
+ */
+
+
+
+
+
+const AC_GROUND_NODE = '@AC_GROUND';
+
+const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
+const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source']);
+const MIN_PITCH = 240;
+const SLOT_PADDING = 240;
+const BUS_Y = 0;
+const SHUNT_Y = 240;
+const RAIL_Y = 480;
+const ROW_H = 240;
+const PORT_GAP = 240;
+
+/** Elements whose branch is drawn with each symbol. */
+const ELEMENT_TYPES = new Map([
+  ['resistor', 'resistor'],
+  ['conductance', 'resistor'],
+  ['triode-resistance', 'resistor'],
+  ['capacitor', 'capacitor'],
+  ['inductor', 'inductor'],
+  ['vccs', 'vccs'],
+  ['current-source', 'current_source'],
+  ['voltage-source', 'voltage_source'],
+]);
+
+function isGround(node) {
+  return node === undefined || node === null || AC_GROUND_NAMES.has(String(node));
+}
+
+/** Accept every primitive shape the pipeline hands out: branches carry `a`/`b`
+ * or `terminals`, controlled sources carry `outPlus`/`outMinus`. */
+function normalize(primitive) {
+  if (!primitive || typeof primitive !== 'object') return null;
+  const a = primitive.a ?? primitive.terminals?.a ?? primitive.outPlus;
+  const b = primitive.b ?? primitive.terminals?.b ?? primitive.outMinus;
+  if (a === undefined && b === undefined) return null;
+  const controlA = primitive.control?.a ?? primitive.controlPlus;
+  const controlB = primitive.control?.b ?? primitive.controlMinus;
+  return {
+    id: String(primitive.id || primitive.kind || 'primitive'),
+    kind: String(primitive.kind || '').toLowerCase(),
+    a: isGround(a) ? AC_GROUND_NODE : String(a),
+    b: isGround(b) ? AC_GROUND_NODE : String(b),
+    control: controlA === undefined && controlB === undefined ? null : {
+      a: isGround(controlA) ? AC_GROUND_NODE : String(controlA),
+      b: isGround(controlB) ? AC_GROUND_NODE : String(controlB),
+    },
+    parameter: primitive.parameter ? String(primitive.parameter) : '',
+    value: primitive.value,
+    metadata: primitive.metadata || {},
+    source: primitive,
+  };
+}
+
+/** `ro1` -> `r_{o1}`, `CGD` -> `C_{GD}`, `gmb2` -> `g_{mb2}`: the same textbook
+ * spelling the netlist and the equations use. */
+function textbookSymbol(raw) {
+  const name = String(raw || '');
+  if (!name) return '';
+  if (/^gmb[A-Za-z0-9_]*$/.test(name)) return `g_{mb${name.slice(3)}}`;
+  if (/^gm[A-Za-z0-9_]*$/.test(name)) return `g_{m${name.slice(2)}}`;
+  if (/^go[A-Za-z0-9_]*$/.test(name)) return `g_{o${name.slice(2)}}`;
+  if (/^rds[A-Za-z0-9_]*$/.test(name)) return `r_{ds${name.slice(3)}}`;
+  if (/^ro[A-Za-z0-9_]*$/.test(name)) return `r_{o${name.slice(2)}}`;
+  if (/^[RCL][A-Za-z0-9_]+$/.test(name)) return `${name[0]}_{${name.slice(1)}}`;
+  return name;
+}
+
+/**
+ * A controlled source is labelled with its own transconductance times the
+ * controlling voltage, the way a hybrid-pi figure is drawn: the control pair
+ * is text, never a second pair of wires across the drawing. The pair names the
+ * drawing's own nodes -- `g_{m1}(V_{IN} - 0)`, not `g_{m1} v_{gs1}` -- so the
+ * reader can follow the control back to a node without decoding a subscript.
+ */
+function controlledSourceLabel(element, nodeName) {
+  const gain = textbookSymbol(element.parameter) || 'g_m';
+  if (!element.control) return gain;
+  const plus = nodeName(element.control.a) || '0';
+  const minus = nodeName(element.control.b) || '0';
+  return `${gain}(${plus} - ${minus})`;
+}
+
+/**
+ * A Miller shunt has no parameter symbol of its own, and its admittance is a
+ * whole fraction -- far too wide to sit beside a symbol. Name it the way a
+ * textbook does and state the value in the legend below the drawing.
+ */
+function millerSymbol(element, symbol) {
+  const device = String(element.metadata?.component || '').replace(/\W/g, '') || 'M';
+  const side = element.metadata?.millerSide === 'output' ? 'out' : 'in';
+  return `${symbol === 'capacitor' ? 'C' : 'Y'}_{${device},${side}}`;
+}
+
+/** An admittance divided by `s`, when that leaves no frequency behind: the
+ * capacitance a capacitive shunt is drawn as. */
+function perFrequency(value, options) {
+  try {
+    const ops = createRationalOps({ variable: 's', maxOperations: 4000 });
+    const capacitance = ops.div(value, ops.s());
+    if (ops.budget?.exceeded) return null;
+    const rendered = renderExpression(capacitance, options.renderOptions || {});
+    return /(^|[^A-Za-z])s([^A-Za-z]|$)/.test(rendered) ? null : rendered;
+  } catch { return null; }
+}
+
+function elementLabel(element, symbol, options, nodeName) {
+  if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
+  if (element.parameter) return { text: textbookSymbol(element.parameter) };
+  let rendered = '';
+  try { rendered = renderExpression(element.value, options.renderOptions || {}); }
+  catch { rendered = ''; }
+  if (element.kind === 'admittance') {
+    const name = millerSymbol(element, symbol);
+    // A shunt drawn as a capacitor is named as one, so state a capacitance:
+    // the primitive carries the admittance Y = sC, and C = Y/s is the
+    // textbook Miller value.
+    if (symbol === 'capacitor') {
+      const capacitance = perFrequency(element.value, options);
+      if (capacitance) return { text: name, legend: { symbol: name, value: capacitance } };
+    }
+    return { text: name, legend: rendered ? { symbol: `Y_{${name.slice(name.indexOf('{') + 1, -1)}}`, value: rendered } : null };
+  }
+  return { text: rendered || element.id };
+}
+
+/**
+ * A label's rendered width is only known in a browser, and the drawing has to
+ * be laid out before that. Estimate it from the text the way `textWidth` does
+ * -- the tight per-glyph model at the label font size -- so columns are spaced
+ * for their own contents instead of a fixed guess.
+ */
+function estimateLabelWidth(tex) {
+  const plain = String(tex)
+    .replace(/\\left|\\right|\\,|\\;|\\!/g, '')
+    .replace(/\\frac/g, '')
+    .replace(/[{}$]/g, '');
+  return Math.max(120, plain.length * 24);
+}
+
+/** Local offset that renders at a given world offset for a placed symbol. */
+function localOffset(dx, dy, rotation) {
+  const turn = ((rotation % 360) + 360) % 360;
+  if (turn === 90) return { x: dy, y: -dx };
+  if (turn === 180) return { x: -dx, y: -dy };
+  if (turn === 270) return { x: -dy, y: dx };
+  return { x: dx, y: dy };
+}
+
+/** A Miller shunt made only of capacitors is a capacitor in the drawing --
+ * that is exactly the textbook Miller capacitance. */
+function elementSymbol(element) {
+  const mapped = ELEMENT_TYPES.get(element.kind);
+  if (mapped) return mapped;
+  if (element.kind === 'admittance') {
+    const kinds = element.metadata?.feedbackKinds || [];
+    if (kinds.length && kinds.every((kind) => kind === 'capacitor')) return 'capacitor';
+  }
+  return 'resistor';
+}
+
+function uniqueRefdes(base, used) {
+  const clean = String(base || 'X').replace(/[^A-Za-z0-9_]/g, '') || 'X';
+  let candidate = /^[A-Za-z]/.test(clean) ? clean : `X${clean}`;
+  let index = 2;
+  while (used.has(candidate)) candidate = `${clean}_${index++}`;
+  used.add(candidate);
+  return candidate;
+}
+
+/** Node display names, preferring the source circuit's own net names. */
+function nodeNames(report, options) {
+  const names = new Map();
+  const circuit = options.circuit;
+  if (circuit) {
+    for (const net of circuit.nets.values()) names.set(net.id, net.name || net.id);
+  }
+  for (const [key, value] of options.nodeNames instanceof Map ? options.nodeNames : []) names.set(key, value);
+  return names;
+}
+
+/**
+ * Node order across the drawing. The source schematic's own left-to-right
+ * order is the one the reader already knows, so use it when the circuit is
+ * available; otherwise fall back to first appearance with the analysis input
+ * first and its output last.
+ */
+function orderNodes(elements, report, options) {
+  const seen = [];
+  for (const element of elements) {
+    for (const node of [element.a, element.b, element.control?.a, element.control?.b]) {
+      if (node && node !== AC_GROUND_NODE && !seen.includes(node)) seen.push(node);
+    }
+  }
+  const circuit = options.circuit;
+  const centre = new Map();
+  if (circuit) {
+    for (const node of seen) {
+      const net = circuit.nets.get(node);
+      const points = (net?.terminals || []).map((terminal) => {
+        try { return circuit.getComponent(terminal.comp).terminalWorld(terminal.term).x; }
+        catch { return null; }
+      }).filter((value) => value !== null);
+      if (points.length) centre.set(node, points.reduce((sum, value) => sum + value, 0) / points.length);
+    }
+  }
+  const inputNode = portNode(report, 'input');
+  const outputNode = portNode(report, 'output');
+  const rank = (node) => node === inputNode ? -Infinity : node === outputNode ? Infinity : 0;
+  return [...seen].sort((left, right) => {
+    const ranked = rank(left) - rank(right);
+    if (Number.isFinite(ranked) && ranked !== 0) return ranked;
+    if (!Number.isFinite(ranked)) return ranked < 0 ? -1 : 1;
+    const a = centre.get(left);
+    const b = centre.get(right);
+    if (a !== undefined && b !== undefined && a !== b) return a - b;
+    return seen.indexOf(left) - seen.indexOf(right);
+  });
+}
+
+/** The analysis node a port role resolved to, as the context recorded it. */
+function portNode(report, role) {
+  const context = report?.context || report?.details?.pipeline?.context;
+  return context?.[role]?.node || null;
+}
+
+/**
+ * Where to hang a node's name: the middle of its longest run, preferring a
+ * horizontal one, and only where a label-sized box above the wire clears every
+ * symbol. A node whose wires are all crowded keeps its name in the net list
+ * rather than printing it over a component.
+ */
+function netLabelAnchor(net, width, boxes) {
+  const segments = [];
+  for (const path of (net.paths ? net.paths() : [])) {
+    for (let index = 1; index < path.length; index += 1) segments.push([path[index - 1], path[index]]);
+  }
+  const span = ([a, b]) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  const horizontal = segments.filter(([a, b]) => a.y === b.y);
+  const ordered = (horizontal.length ? horizontal : segments).sort((left, right) => span(right) - span(left));
+  for (const [a, b] of ordered) {
+    const point = { x: snapTo((a.x + b.x) / 2), y: snapTo((a.y + b.y) / 2) };
+    const box = { x: point.x - width / 2, y: point.y - 120, w: width, h: 120 };
+    if (!boxes.some((other) => rectsOverlap(box, other))) return point;
+  }
+  return null;
+}
+
+function snapTo(value) {
+  return Math.round(value / 40) * 40;
+}
+
+/**
+ * Build the drawn model.
+ *
+ * @param {object} report a successful `analyzeSmallSignalV2` report
+ * @param {{circuit?: import('../model.js').Circuit, nodeNames?: Map}} options
+ * @returns {{ok: boolean, circuit?: Circuit, correspondence?: Map, notes: string[], error?: string}}
+ */
+function smallSignalSchematic(report, options = {}) {
+  const primitives = report?.details?.pipeline?.selected;
+  if (!Array.isArray(primitives) || !primitives.length) {
+    return { ok: false, notes: [], error: 'this analysis produced no small-signal primitives to draw' };
+  }
+  const elements = primitives.map(normalize).filter(Boolean);
+  const names = nodeNames(report, options);
+  // The node's own name, markup included: label text renders `_{...}`.
+  const nodeName = (node) => (!node || node === AC_GROUND_NODE ? '' : String(names.get(node) || node));
+  const plainName = (node) => nodeName(node).replace(/[_^]\{([^}]*)\}/g, '$1');
+  const nodes = orderNodes(elements, report, options);
+  const shunts = new Map(nodes.map((node) => [node, []]));
+  const series = [];
+  for (const element of elements) {
+    const aGround = element.a === AC_GROUND_NODE;
+    const bGround = element.b === AC_GROUND_NODE;
+    if (aGround && bGround) continue;
+    // A controlled source across one node carries no current -- the body
+    // effect of a device whose source is the AC reference. Drawing it says
+    // nothing and costs a column.
+    if (element.control && element.control.a === element.control.b) continue;
+    if (aGround || bGround) shunts.get(bGround ? element.a : element.b).push(element);
+    else series.push(element);
+  }
+
+  // Every element is drawn with its label above it, so a node's slot is as
+  // wide as its own branches need -- a Miller shunt beside a bare r_o should
+  // not push every other column apart.
+  const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
+  const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
+  // A shunt wears its label on its left, so its neighbour must clear it.
+  const widthOf = (element) => Math.max(MIN_PITCH, snapTo(estimateLabelWidth(labels.get(element).text) + 160));
+  const pitches = new Map(nodes.map((node) => [node, Math.max(MIN_PITCH, ...shunts.get(node).map(widthOf))]));
+
+  const columns = new Map();
+  let x = 0;
+  for (const node of nodes) {
+    const count = Math.max(1, shunts.get(node).length);
+    const width = count * pitches.get(node) + 2 * SLOT_PADDING;
+    columns.set(node, snapTo(x + width / 2));
+    x += width;
+  }
+
+  const circuit = new Circuit();
+  const used = new Set();
+  const correspondence = new Map();
+  const notes = [];
+  const legend = [];
+  const attachments = new Map(nodes.map((node) => [node, []]));
+  const groundRefs = [];
+
+  const addElement = (element, placement, upright = true) => {
+    const type = symbols.get(element);
+    const refdes = uniqueRefdes(element.parameter || element.id.replace(/\W/g, ''), used);
+    const component = circuit.addComponent(type, { ...placement, refdes, noLabel: true });
+    const label = labels.get(element);
+    // Plain `_{...}` markup, not a math label: every symbol in the drawing is
+    // a name with a subscript, and a markup label needs no browser
+    // measurement, so the figure lays out the same in a test, an export, and
+    // the dock. The one thing that needs real math -- a Miller admittance --
+    // is named here and stated in the legend instead.
+    //
+    // An upright branch wears its label on the left, where a textbook puts it;
+    // a branch lying along a row wears it above, clear of its own wires. The
+    // offset comes from the label's own measured box rather than the estimate
+    // the columns are spaced by, so the text sits against its symbol instead
+    // of drifting into the gap towards the next one.
+    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
+    const box = owned.bbox();
+    const reach = (extent) => 40 * Math.ceil((40 + extent / 2) / 40);
+    const world = upright ? { x: -reach(box.w), y: 0 } : { x: 0, y: -reach(box.h) };
+    owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
+    owned.clearRenderedTextBounds();
+    if (label.legend) legend.push(label.legend);
+    correspondence.set(refdes, { primitive: element.id, component: element.metadata?.component || null, role: element.kind });
+    return component;
+  };
+
+  // Shunt branches: node bus -> element -> ground rail.
+  for (const node of nodes) {
+    const list = shunts.get(node);
+    const centreX = columns.get(node);
+    const pitch = pitches.get(node);
+    list.forEach((element, index) => {
+      const shuntX = snapTo(centreX + (index - (list.length - 1) / 2) * pitch);
+      const vertical = SOURCE_KINDS.has(element.kind);
+      // A source symbol is already vertical; a passive is turned upright. The
+      // current of a controlled source flows from `a` into `b`, so a source
+      // whose ground end is `a` is turned around rather than redrawn.
+      const flipped = element.a === AC_GROUND_NODE;
+      const rotation = vertical ? (flipped ? 180 : 0) : (flipped ? 270 : 90);
+      const component = addElement(element, { x: shuntX, y: SHUNT_Y, rotation }, true);
+      const [top, bottom] = flipped ? ['b', 'a'] : ['a', 'b'];
+      attachments.get(node).push(`${component.refdes}.${top}`);
+      groundRefs.push(`${component.refdes}.${bottom}`);
+    });
+  }
+
+  // Series branches stack in rows above the node line, lowest row first.
+  const rows = [];
+  for (const element of series) {
+    const left = Math.min(columns.get(element.a), columns.get(element.b));
+    const right = Math.max(columns.get(element.a), columns.get(element.b));
+    let row = rows.findIndex((spans) => spans.every(([from, to]) => right <= from || left >= to));
+    if (row < 0) row = rows.push([]) - 1;
+    rows[row].push([left, right]);
+    const y = BUS_Y - (row + 1) * ROW_H;
+    const rotation = SOURCE_KINDS.has(element.kind) ? 270 : 0;
+    const component = addElement(element, { x: snapTo((left + right) / 2), y, rotation }, false);
+    const aLeft = columns.get(element.a) <= columns.get(element.b);
+    attachments.get(element.a).push(`${component.refdes}.${aLeft ? 'a' : 'b'}`);
+    attachments.get(element.b).push(`${component.refdes}.${aLeft ? 'b' : 'a'}`);
+  }
+
+  // The interface ports read left to right on the node line itself, outside
+  // every column: the input node sorts first and the output node last, so
+  // neither stub crosses another node's bus.
+  const portNodes = new Set();
+  // Outside everything drawn, and outside every column: a node that only
+  // controls a source has a column but nothing standing in it.
+  const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
+  const spans = [...columns.values()];
+  const leftEdge = snapTo(Math.min(...drawn.map((box) => box.x), ...spans) - PORT_GAP);
+  const rightEdge = snapTo(Math.max(...drawn.map((box) => box.x + box.w), ...spans) + PORT_GAP);
+  const portFor = (node, type, side) => {
+    if (!node || !columns.has(node)) return;
+    const refdes = uniqueRefdes(plainName(node), used);
+    const port = circuit.addComponent(type, {
+      refdes, x: side === 'left' ? leftEdge : rightEdge, y: BUS_Y, noLabel: true,
+    });
+    // Above the port, not beside it: an outward-facing port box already
+    // occupies the side its own label offset points at.
+    circuit.addLabel({ owner: refdes, text: nodeName(node), align: 'center', offset: { x: 0, y: -120 } });
+    attachments.get(node).push(`${port.refdes}.p`);
+    portNodes.add(node);
+  };
+  portFor(portNode(report, 'input'), 'input', 'left');
+  portFor(portNode(report, 'output'), 'output', 'right');
+
+  // One AC-ground rail under the whole drawing.
+  const railX = snapTo(Math.min(...columns.values()) - SLOT_PADDING);
+  const ground = circuit.addComponent('ground', { refdes: 'GND', x: railX, y: RAIL_Y, noLabel: true });
+  groundRefs.push(`${ground.refdes}.gnd`);
+
+  const failures = [];
+  const wire = (refs, name, stub = null) => {
+    try {
+      // A node that only controls a source -- a bare gate -- has no branch of
+      // its own. Draw its port down to the node line anyway: the controlling
+      // voltage needs somewhere to be read.
+      if (refs.length === 1 && stub) {
+        circuit.wireTo(refs[0], stub);
+        return null;
+      }
+      if (refs.length < 2) return null;
+      const net = circuit.connect(...refs);
+      if (name && net) circuit.renameNet(net, name);
+      return net;
+    } catch (error) { failures.push(`${name || 'net'}: ${error.message}`); }
+    return null;
+  };
+  const wired = new Map();
+  for (const node of nodes) {
+    wired.set(node, wire(attachments.get(node), nodeName(node) || node, { x: columns.get(node), y: BUS_Y }));
+  }
+  wire(groundRefs, 'VSS');
+
+  // Name the nodes on the drawing. A node with a port already reads its name
+  // off that port, and the AC-ground rail is what the ground symbol says.
+  // Clear of every symbol *and* every label already placed: a node name that
+  // lands on a branch's own label is as unreadable as one over a symbol.
+  const boxes = [
+    ...[...circuit.components.values()].map((component) => component.bboxWorld()),
+    ...[...circuit.labels.values()].map((label) => label.bbox()),
+  ];
+  for (const node of nodes) {
+    const net = wired.get(node);
+    if (!net || portNodes.has(node) || !net.name) continue;
+    const anchor = netLabelAnchor(net, estimateLabelWidth(net.name), boxes);
+    if (!anchor) continue;
+    try { circuit.addNetLabel(net, { anchor, netSide: 'above' }); }
+    catch { /* a node whose wire the router shaped differently keeps its name in the net list */ }
+  }
+  if (failures.length) notes.push(`${failures.length} connection${failures.length === 1 ? '' : 's'} could not be routed automatically`);
+
+  const miller = (report?.details?.pipeline?.millerSubstitutions || []).map(({ device }) => device).filter(Boolean);
+  if (miller.length) notes.push(`Miller approximation applied to ${miller.join(', ')}`);
+  const omitted = report?.details?.pipeline?.omittedOutputResistances || [];
+  if (omitted.length) notes.push(`r_o omitted for ${omitted.join(', ')}`);
+
+  return { ok: true, circuit, correspondence, notes, legend, failures };
+}
+
+__exports.textbookSymbol = textbookSymbol;
+__exports.smallSignalSchematic = smallSignalSchematic;
+__exports.AC_GROUND_NODE = AC_GROUND_NODE;
+};
+
 __modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
 /**
  * Where each symbol in a displayed equation came from.
@@ -22748,6 +22023,982 @@ __exports.fontAttrs = fontAttrs;
 __exports.styleAttrs = styleAttrs;
 __exports.COLOR_PALETTE = COLOR_PALETTE;
 __exports.escapeSvg = escapeSvg;
+};
+
+__modules["src/core/analysis/engine.js"] = function (__require, __exports) {
+const { MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js");
+const { applyApproximations } = __require("src/core/analysis/approximation.js");
+const { cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js");
+const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
+const { symbolProvenance } = __require("src/core/analysis/provenance.js");
+const { buildExactAnalysisPipeline } = __require("src/core/analysis/pipeline.js");
+const { presentDiagnostics } = __require("src/core/analysis/diagnostics.js");
+const { describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js");
+const { analyzeResponse } = __require("src/core/analysis/response.js");
+const { approximateTopology, buildTopologyIdentities } = __require("src/core/analysis/topology.js");
+const { compactRational } = __require("src/core/analysis/compact.js");
+const { infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js");
+const { equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const DEFAULTS = Object.freeze({
+  ignoreBodyEffect: true,
+  gmroLarge: true,
+  ignoreChannelLengthModulation: false,
+  dominantPoleApproximation: false,
+});
+
+function lookup(values, key) {
+  if (!values || key == null) return undefined;
+  if (typeof values.get === 'function') return values.get(key);
+  return Object.hasOwn(values, key) ? values[key] : undefined;
+}
+
+function decimalValue(value) {
+  if (typeof value === 'bigint') return integer(value);
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return integer(value);
+  const text = String(value).trim();
+  if (/^[+-]?\d+$/.test(text)) return integer(BigInt(text));
+  const match = text.match(/^([+-]?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
+  if (!match) return null;
+  const sign = match[1] === '-' ? -1n : 1n;
+  const whole = match[2];
+  const fraction = match[3] || '';
+  const exponent = Number(match[4] || 0);
+  let numerator = BigInt(`${whole}${fraction}`) * sign;
+  const scale = fraction.length - exponent;
+  if (scale <= 0) return integer(numerator * 10n ** BigInt(-scale));
+  return rational(numerator, 10n ** BigInt(scale));
+}
+
+function mapObject(values) {
+  if (!values) return {};
+  if (values instanceof Map) return Object.fromEntries(values);
+  return { ...values };
+}
+
+function modelRegions(options) {
+  const explicit = firstDefined(
+    options.deviceRegions,
+    options.modelOverrides,
+    options.models,
+  );
+  if (explicit !== undefined) return explicit;
+  const source = firstDefined(options.devices, options.deviceOverrides);
+  if (!source || typeof source === 'string') return source;
+  const entries = (source instanceof Map ? [...source.entries()] : Object.entries(source))
+    .filter(([, value]) => typeof value === 'string'
+      || (value && typeof value === 'object' && (value.model !== undefined || value.region !== undefined)));
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function symbolicValue(value, primitive, options, ops) {
+  if (value?.kind) return value;
+  const supplied = lookup(options.values || options.parameters || options.params, primitive?.parameter || value);
+  const resolved = supplied === undefined ? value : supplied;
+  if (resolved === undefined || resolved === null || resolved === '') return ops.zero;
+  if (typeof resolved === 'string') {
+    const exact = decimalValue(resolved);
+    return exact || ops.symbol(resolved);
+  }
+  const exact = decimalValue(resolved);
+  if (exact) return exact;
+  return ops.symbol(String(resolved));
+}
+
+function normaliseOptions(options, circuit, symbolic, ops) {
+  const assumptions = options.assumptions && typeof options.assumptions === 'object'
+    ? options.assumptions
+    : {};
+  const body = firstDefined(
+    options.ignoreBodyEffect,
+    options.neglectBodyEffect,
+    options.gmb0,
+    assumptions.ignoreBodyEffect,
+    assumptions.neglectBodyEffect,
+    assumptions.gmb0,
+    DEFAULTS.ignoreBodyEffect,
+  );
+  const intrinsic = firstDefined(
+    options.gmroLarge,
+    options.highIntrinsicGain,
+    assumptions.gmroLarge,
+    assumptions.highIntrinsicGain,
+    DEFAULTS.gmroLarge,
+  );
+  const output = firstDefined(
+    options.ignoreChannelLengthModulation,
+    options.neglectChannelLengthModulation,
+    options.roInfinity,
+    assumptions.ignoreChannelLengthModulation,
+    assumptions.neglectChannelLengthModulation,
+    assumptions.roInfinity,
+    DEFAULTS.ignoreChannelLengthModulation,
+  );
+  const dominantPole = firstDefined(
+    options.dominantPoleApproximation,
+    options.dominantPole,
+    assumptions.dominantPoleApproximation,
+    assumptions.dominantPole,
+    DEFAULTS.dominantPoleApproximation,
+  );
+
+  const devices = mapObject(options.devices || options.deviceOptions || options.deviceOverrides);
+  for (const component of circuit.components.values()) {
+    if (!MOS_TYPES.has(component.type)) continue;
+    const suffix = String(component.refdes).replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
+    // Per-device overrides may use the canonical request names
+    // (neglectBodyEffect, highIntrinsicGain, neglectChannelLengthModulation);
+    // resolve them here so the engine's own flags never shadow them.
+    const override = devices[component.refdes] || {};
+    devices[component.refdes] = {
+      id: component.refdes,
+      gm: `gm${suffix}`,
+      gmb: `gmb${suffix}`,
+      ro: `ro${suffix}`,
+      highIntrinsicGain: Boolean(firstDefined(override.highIntrinsicGain, override.gmroLarge, intrinsic)),
+      gmb0: Boolean(firstDefined(override.gmb0, override.ignoreBodyEffect, override.neglectBodyEffect, body)),
+      roInfinity: Boolean(firstDefined(override.roInfinity, override.ignoreChannelLengthModulation, override.neglectChannelLengthModulation, output)),
+      // A large gm*ro product does not license gm*RS >> 1 or an active
+      // branch's impedance >> RD. Preserve those independent dependencies.
+      intrinsicProduct: true,
+      ...(devices[component.refdes] || {}),
+    };
+  }
+  return {
+    ...options,
+    ...(!Object.hasOwn(options, 'ignoreBodyEffect') ? { ignoreBodyEffect: Boolean(body) } : {}),
+    ...(!Object.hasOwn(options, 'gmroLarge') ? { gmroLarge: Boolean(intrinsic) } : {}),
+    ...(!Object.hasOwn(options, 'ignoreChannelLengthModulation') ? { ignoreChannelLengthModulation: Boolean(output) } : {}),
+    ...(!Object.hasOwn(options, 'dominantPoleApproximation') ? { dominantPoleApproximation: Boolean(dominantPole) } : {}),
+    assumptions: { ...assumptions, gmb0: Boolean(body), gmroLarge: Boolean(intrinsic), dominantPole: Boolean(dominantPole) },
+    devices,
+    ...(symbolic ? { valueOf: (value, primitive) => symbolicValue(value, primitive, options, ops) } : {}),
+  };
+}
+
+function makeEngineOps(options) {
+  const base = options.ops || createRationalOps({
+      variable: options.variable || 's',
+      maxOperations: options.maxOperations,
+    });
+  const ops = {
+    ...base,
+    div: (left, right) => {
+      try {
+        return base.div(left, right);
+      } catch (error) {
+        if (base.isZero(right)) return infinity();
+        throw error;
+      }
+    },
+  };
+  return { ops, symbolic: !options.ops };
+}
+
+function responseOptions(options) {
+  return {
+    variable: options.variable || 's',
+    maxOperations: options.maxOperations,
+    ...(options.budget ? { budget: options.budget } : {}),
+  };
+}
+
+function renderRoot(root, kind, index, options) {
+  if (!root.root?.kind) return `${kind}_{${index}}: roots of the reported polynomial`;
+  return renderRootEquation(kind, index, root.root, options);
+}
+
+function combineParallel(values, ops) {
+  return values.reduce((left, right) => (
+    left === null ? right : ops.div(ops.mul(left, right), ops.add(left, right))
+  ), null);
+}
+
+function dcLimitOf(value, variable) {
+  try {
+    const limit = substituteRational(value, new Map([[variable, integer(0)]]), { variable });
+    return limit.kind === 'infinity' ? null : limit;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Turn each `reduce.js` parallel-merge proof into `present.js` equivalences
+ * for every form that might actually get displayed: the exact AC value (as
+ * solved), the same branches reduced under whichever assumptions are
+ * selected (e.g. `g_m r_o >> 1`) and recombined — the textbook default `A_v`/
+ * `Z_in`/`Z_out` equation comes from one leading-term reduction of the
+ * *whole* expression, which generally does not preserve this factored
+ * structure, so without this the `\|` only ever showed up on the exact row
+ * — and each of those at `s=0` for the DC-limit row, dropping any branch
+ * that's an open circuit at DC (a capacitor) rather than trying to combine
+ * an infinite impedance in parallel with the rest.
+ */
+function buildParallelEquivalenceProofs(networkReductionProofs, approximationOptions, ops) {
+  const variable = ops.variable || 's';
+  return (networkReductionProofs || []).flatMap(({ impedance, operands }) => {
+    const proofs = [provenParallel(impedance, ...operands)];
+    const dcOperands = operands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
+    if (dcOperands.length >= 2) {
+      const dcCombined = combineParallel(dcOperands, ops);
+      if (dcCombined) proofs.push(provenParallel(dcCombined, ...dcOperands));
+    }
+    try {
+      const reducedOperands = operands.map((operand) => applyApproximations(operand, approximationOptions).selected);
+      const combined = combineParallel(reducedOperands, ops);
+      if (combined) proofs.push(provenParallel(combined, ...reducedOperands));
+      const reducedDcOperands = reducedOperands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
+      if (reducedDcOperands.length >= 2) {
+        const reducedDcCombined = combineParallel(reducedDcOperands, ops);
+        if (reducedDcCombined) proofs.push(provenParallel(reducedDcCombined, ...reducedDcOperands));
+      }
+    } catch {
+      // Leave whichever proofs already built if the reduced form fails.
+    }
+    return proofs;
+  });
+}
+
+function buildTopologyProofs(topology, queries, approximations, approximationOptions) {
+  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
+  const proofs = [];
+  const identities = [
+    ...['inputImpedance', 'outputImpedance'].flatMap((key) => queries[key].equivalence ? [queries[key].equivalence] : []),
+    ...topology.identities, ...(topology.selectedIdentities || []),
+  ];
+  const multiply = (operands) => operands.reduce((a, b) => ops.mul(a, b), ops.one);
+  const addProof = (identity, equivalent, operands) => {
+    if (!equivalent || operands.some((value) => !value || value.kind === 'infinity')) return;
+    const product = identity.kind === 'product';
+    if (product) operands = operands.filter((value) => !ops.isZero(ops.sub(value, ops.one)));
+    if (operands.length < 2) return;
+    // A product is worth showing factored only while the factors are the
+    // shorter read: once a load has collapsed to 1/g_m, `g_m (1/g_m)` says
+    // less than the 1 it multiplies out to.
+    if (product && !operands.some(carriesSum)) return;
+    const combined = product ? multiply(operands) : combineParallel(operands, ops);
+    if (!ops.isZero(compactRational(ops.sub(combined, equivalent), ops)) || ops.budget.exceeded) return;
+    const response = canonicalResponseValue(equivalent, { variable: ops.variable });
+    const prove = product ? provenProduct : provenParallel;
+    proofs.push(prove(response.expression, ...operands));
+    const dcOperands = operands.map((value) => dcLimitOf(value, ops.variable));
+    // An infinite branch drops out of a parallel DC limit. In a product,
+    // zero times infinity needs a limit of the complete expression instead.
+    const finite = product ? dcOperands : dcOperands.filter(Boolean);
+    if (response.dc.kind === 'finite' && finite.length >= 2 && finite.every(Boolean)) {
+      const dcCombined = product ? multiply(finite) : combineParallel(finite, ops);
+      if (ops.isZero(ops.sub(dcCombined, response.dc.value))) proofs.push(prove(response.dc.value, ...finite));
+    }
+  };
+  try {
+    for (const identity of identities) {
+      addProof(identity, identity.equivalent, identity.operands);
+      const localOptions = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
+      const selected = applyApproximations(identity.equivalent, localOptions).selected;
+      const operands = identity.operands.map((value) => applyApproximations(value, localOptions).selected);
+      addProof(identity, selected, operands);
+    }
+    // Bind the top-level proof to the actual selected query (including a
+    // dominant-pole reduction), rather than assuming local reductions commute.
+    if (topology.stages.length === 1 && !topology.selectedIdentities?.length) {
+      const impedance = approximations.Zout.selected;
+      if (!ops.isZero(impedance) && impedance.kind !== 'infinity') addProof(
+        { kind: 'product' }, approximations.Av.selected,
+        [compactRational(ops.div(approximations.Av.selected, impedance), ops), impedance],
+      );
+    }
+  } catch {
+    return [];
+  }
+  return ops.budget.exceeded ? [] : proofs;
+}
+
+function buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions) {
+  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
+  const options = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
+  const proofs = [];
+  const addProof = (proof, combined) => {
+    if (!ops.isZero(compactRational(ops.sub(proof.equivalent, combined), ops))) return;
+    proofs.push(proof);
+    const response = canonicalResponseValue(compactRational(proof.equivalent, ops), { variable: ops.variable });
+    proofs.push({ ...proof, equivalent: response.expression });
+    const operands = proof.operands.map((value) => dcLimitOf(value, ops.variable));
+    if (response.dc.value && operands.every(Boolean)) proofs.push({ ...proof, equivalent: response.dc.value, operands });
+  };
+  try {
+    for (const stage of [...(pipeline.millerSubstitutions || []), ...(pipeline.retainedFeedbackNetworks || [])]) {
+      const { gain, outputImpedance: load, transadmittance: gm, loadOperands, feedbackImpedance: feedback } = stage;
+      if (loadOperands.length >= 2) addProof(provenParallel(load, ...loadOperands), combineParallel(loadOperands, ops));
+      addProof(provenProduct(gain, gm, load), ops.mul(gm, load));
+      const positiveGain = ops.neg(gain);
+      addProof(provenProduct(positiveGain, ops.neg(gm), load), ops.mul(ops.neg(gm), load));
+      const inverse = ops.div(ops.one, positiveGain);
+      addProof(provenQuotient(inverse, ops.one, positiveGain), ops.div(ops.one, positiveGain));
+      for (const term of [positiveGain, inverse]) {
+        const factor = ops.add(ops.one, term);
+        addProof(provenSum(factor, ops.one, term), ops.add(ops.one, term));
+        const admittance = ops.div(factor, feedback);
+        addProof(provenQuotient(admittance, factor, feedback), ops.div(factor, feedback));
+        const impedance = ops.div(feedback, factor);
+        addProof(provenQuotient(impedance, feedback, factor), ops.div(feedback, factor));
+        const selected = applyApproximations(impedance, options).selected;
+        const selectedFeedback = applyApproximations(feedback, options).selected;
+        const selectedFactor = applyApproximations(factor, options).selected;
+        if (!ops.isZero(ops.sub(selectedFactor, ops.one))) {
+          addProof(provenQuotient(selected, selectedFeedback, selectedFactor), ops.div(selectedFeedback, selectedFactor));
+        }
+      }
+      if (pipeline.retainedFeedbackNetworks?.includes(stage)
+        && stage.gate === pipeline.context.input.node && stage.drain === pipeline.context.output.node) {
+        // Resistive feedback: Zin = (Zfb + Ro)/(1 - Aopen), provided
+        // the actual input query proves this identity (additional gate
+        // loading or another feedback path may invalidate it).
+        const numerator = ops.add(feedback, load);
+        const denominator = ops.add(ops.one, positiveGain);
+        const zin = pipeline.queries.inputImpedance.value;
+        addProof(provenSum(numerator, feedback, load), ops.add(feedback, load));
+        addProof(provenQuotient(zin, numerator, denominator), ops.div(numerator, denominator));
+        const selectedZin = approximations.Zin.selected;
+        const selectedNumerator = applyApproximations(numerator, options).selected;
+        const selectedDenominator = applyApproximations(denominator, options).selected;
+        addProof(provenQuotient(selectedZin, selectedNumerator, selectedDenominator), ops.div(selectedNumerator, selectedDenominator));
+        const shortGm = topology.stages.length === 1 ? topology.stages[0].transadmittance : null;
+        if (shortGm) addProof(provenSum(shortGm, gm, ops.div(ops.one, feedback)), ops.add(gm, ops.div(ops.one, feedback)));
+      }
+    }
+  } catch { /* retain the exact identities already checked within budget */ }
+  return proofs;
+}
+
+/**
+ * A first-order root location with the selected post-solve assumptions
+ * (for example `g_m r_o >> 1`) applied to it as a quantity of its own: the
+ * root of an approximated response still carries every subdominant term.
+ */
+function approximatedRoot(root, approximationOptions) {
+  if (!approximationOptions || root.kind !== 'root' || !root.root?.kind || root.root.kind === 'number') return root;
+  try {
+    const approximated = applyApproximations(root.root, { ...approximationOptions, dominantPoleApproximation: false, dominantPole: false });
+    const { selected, changed } = approximated;
+    if (!changed || selected.budgetExceeded) return root;
+    const value = selected.denominator.kind === 'number' && selected.denominator.numerator === selected.denominator.denominator
+      ? selected.numerator
+      : { kind: 'rational', variable: selected.variable, numerator: selected.numerator, denominator: selected.denominator };
+    return { ...root, root: value, exactRoot: root.root, assumptions: approximated.assumptions };
+  } catch {
+    return root;
+  }
+}
+
+/** Poles, zeros, and degrees from the response with common factors cancelled. */
+function withCancelledRoots(response, value, options, approximationOptions) {
+  const cancelled = value?.kind === 'rational'
+    ? cancelCommonPolynomialFactor(value, { variable: options.variable || 's' })
+    : value;
+  const reduced = cancelled === value ? response : analyzeResponse(cancelled, options);
+  return {
+    ...response,
+    numeratorDegree: reduced.numeratorDegree,
+    denominatorDegree: reduced.denominatorDegree,
+    degrees: reduced.degrees,
+    poles: reduced.poles.map((root) => approximatedRoot(root, approximationOptions)),
+    zeros: reduced.zeros.map((root) => approximatedRoot(root, approximationOptions)),
+  };
+}
+
+function displayResponse(name, exact, approximation, options, approximationOptions = null) {
+  const selected = withCancelledRoots(canonicalResponseValue(approximation.selected, options), approximation.selected, options, approximationOptions);
+  const exactResponse = canonicalResponseValue(exact, options);
+  const argument = selected.hasFrequency ? 's' : null;
+  const ac = selected.hasFrequency
+    ? {
+      expression: selected.expression,
+      equation: renderQuantityEquation(name, argument, selected.expression, options),
+      exactEquation: renderQuantityEquation(name, argument, exactResponse.expression, options),
+    }
+    : null;
+  const dc = selected.dc.value
+    ? {
+      ...selected.dc,
+      equation: renderQuantityEquation(name, 0, selected.dc.value, options),
+    }
+    : { ...selected.dc, equation: null };
+  return {
+    exact: exactResponse,
+    approximation,
+    response: selected,
+    expression: selected.expression,
+    ac,
+    dc,
+    dcLimit: selected.dc,
+    poles: selected.poles,
+    zeros: selected.zeros,
+    equations: [ac?.equation, dc.equation].filter(Boolean),
+    ...(options.equivalence ? { equivalence: options.equivalence } : {}),
+    ...(options.equivalences ? { equivalences: options.equivalences } : {}),
+  };
+}
+
+function canonicalResponseValue(value, options) {
+  const canonical = value === Infinity || value === -Infinity
+    ? infinity(value < 0 ? -1 : 1)
+    : value?.kind ? value : decimalValue(value);
+  if (canonical?.kind === 'infinity') {
+    return {
+      expression: canonical,
+      numerator: canonical,
+      denominator: null,
+      numeratorCoefficients: null,
+      denominatorCoefficients: null,
+      numeratorDegree: null,
+      denominatorDegree: null,
+      numeratorValuation: null,
+      denominatorValuation: null,
+      degrees: { numerator: null, denominator: null },
+      dc: { kind: 'infinite', value: canonical, order: null, coefficient: canonical },
+      infinity: { kind: 'infinite', value: canonical, order: null, coefficient: canonical },
+      hasFrequency: false,
+      poles: [],
+      zeros: [],
+    };
+  }
+  const response = analyzeResponse(canonical ?? value, options);
+  if (response.dc.kind !== 'finite' || !response.numeratorCoefficients || !response.denominatorCoefficients) return response;
+  const numerator = response.numeratorCoefficients.find(({ power }) => power === 0)?.coefficient;
+  const denominator = response.denominatorCoefficients.find(({ power }) => power === 0)?.coefficient;
+  if (numerator === undefined || denominator === undefined) return response;
+  const valueAtZero = rationalFunction(numerator, denominator, { variable: options.variable || 's' });
+  return {
+    ...response,
+    dc: { ...response.dc, value: valueAtZero, coefficient: valueAtZero },
+  };
+}
+
+function rootRows(transfer, options) {
+  return [
+    ...transfer.poles.map((root) => ({ ...root, equation: renderRoot(root, 'p', root.index, options) })),
+    ...transfer.zeros.map((root) => ({ ...root, equation: renderRoot(root, 'z', root.index, options) })),
+  ];
+}
+
+/**
+ * Whether an expression carries a sum. A product is worth showing factored
+ * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
+ * better than the ratio it expands to -- but two monomials multiplied are
+ * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`.
+ */
+function carriesSum(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (value.kind === 'add') return true;
+  if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);
+  if (value.kind === 'multiply') return value.factors.some(carriesSum);
+  if (value.kind === 'power') return carriesSum(value.base);
+  return false;
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function nodeNames(circuit) {
+  return new Map([...circuit.nets.values()].map((net) => [net.id, net.name || net.id]));
+}
+
+function solveFailureSource(pipeline) {
+  const failure = pipeline?.solution || pipeline;
+  const code = String(failure?.code || '').toLowerCase();
+  const text = `${failure?.error || ''} ${pipeline?.error || ''}`.toLowerCase();
+  const singular = code === 'singular'
+    || code === 'inconsistent'
+    || code === 'singular-system'
+    || code === 'inconsistent-system'
+    || text.includes('singular system')
+    || text.includes('no pivot');
+  if (!singular) return failure;
+  return {
+    code: 'singular-system',
+    severity: 'error',
+    stage: 'solve',
+    error: failure?.error || pipeline?.error || 'small-signal solve has no unique solution',
+    metadata: {
+      cause: 'no-pivot',
+      ...(failure?.pivotColumn === undefined ? {} : { pivotColumn: failure.pivotColumn }),
+      ...(failure?.pivotRow === undefined ? {} : { pivotRow: failure.pivotRow }),
+      ...(code && code !== 'singular-system' ? { originalCode: code } : {}),
+    },
+  };
+}
+
+function failureReport(pipeline, options, error = null) {
+  const source = pipeline?.stage === 'solve'
+    ? { solve: [solveFailureSource(pipeline)] }
+    : pipeline
+      ? { ...pipeline }
+      : { error: error?.message || error || 'analysis failed' };
+  const diagnostics = presentDiagnostics(source);
+  return {
+    ok: false,
+    version: 2,
+    stage: pipeline?.stage || 'analysis',
+    error: pipeline?.error || error?.message || String(error || 'analysis failed'),
+    context: pipeline?.context || null,
+    exact: null,
+    approximate: null,
+    input: null,
+    output: null,
+    transfer: null,
+    dc: null,
+    poles: [],
+    zeros: [],
+    assumptions: [],
+    details: pipeline || null,
+    netlist: describeSmallSignalNetlist([], options),
+    smallSignalNetlist: '',
+    diagnostics,
+    log: diagnostics.logText,
+  };
+}
+
+/**
+ * The budget is a real size limit, not a timeout: an exact symbolic solve of a
+ * large reactive model grows faster than any budget worth waiting for. Say
+ * what can be made smaller, because the form has no budget control.
+ */
+/**
+ * What the three quantities are a ratio of, in the drawing's own node names.
+ * The quantity symbols stay canonical -- `A_v`, `Z_{in}`, `Z_{out}` -- and this
+ * says which nodes they were taken between, which is the whole answer for a
+ * query like "what does the supply do to the output": nothing about a rail is
+ * special, it is simply the node the input was taken at.
+ */
+function portSymbols(name) {
+  const raw = String(name || '');
+  const flat = raw.replace(/[_^]\{([^}]*)\}/g, '$1');
+  // A node already named as a voltage lends its subscript to the current, so
+  // the pair reads as one: V_{DD} with I_{DD}. A name written without markup
+  // is given the same textbook spelling rather than one of each.
+  if (/^V.+/.test(flat)) {
+    const subscript = flat.slice(1);
+    return { voltage: /[_^]\{/.test(raw) ? raw : `V_{${subscript}}`, current: `I_{${subscript}}` };
+  }
+  return { voltage: `v_{${flat}}`, current: `i_{${flat}}` };
+}
+
+function portDefinitions(context) {
+  const input = context?.input;
+  const output = context?.output;
+  if (!input || !output) return [];
+  const from = portSymbols(input.name || input.netId);
+  const to = portSymbols(output.name || output.netId);
+  // Each impedance states the condition it was measured under, the way a
+  // textbook writes it: the output port carries no external current while the
+  // input drives, and the input is zeroed while the output port is driven.
+  return [
+    { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
+    { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}` },
+    { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}} \\Big\\vert_{${from.voltage} = 0}` },
+  ];
+}
+
+function budgetFailureReport(stage, budget, options) {
+  return failureReport({
+    ok: false,
+    stage: 'budget',
+    code: 'operation-budget',
+    error: `symbolic operation budget exhausted during ${stage}: this model is too large to solve exactly. `
+      + 'Simplify it — fewer device capacitances, r_o → ∞ on bias devices, or analyze one stage at a time.',
+    budget: { used: budget.used, limit: budget.limit },
+  }, options);
+}
+
+/**
+ * Run the topology-independent symbolic small-signal analysis pipeline.
+ * Exact canonical responses are retained beside any selected approximation.
+ */
+function analyzeSmallSignalV2(circuit, options = {}) {
+  if (!circuit) throw new TypeError('circuit is required');
+  const { ops, symbolic } = makeEngineOps(options);
+  const normalized = normaliseOptions(options, circuit, symbolic, ops);
+  const analysisOptions = { ...normalized, ...(ops.budget ? { budget: ops.budget } : {}) };
+  const regions = modelRegions(options);
+  const pipelineOptions = {
+    ...normalized,
+    ops,
+    devices: regions,
+    deviceRegions: regions,
+    deviceAssumptions: normalized.devices,
+    s: options.s === undefined
+      ? (symbolic ? ops.s() : (typeof ops.s === 'function' ? ops.s() : ops.one))
+      : (symbolic ? symbolicValue(options.s, {}, options, ops) : options.s),
+  };
+  let pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);
+  let retainedOutputResistance = false;
+  // Leaving r_o out can float a node driven only by current sources (an
+  // inverter's output). Then fall back to the exact model and take the
+  // post-solve r_o -> infinity limit, which shows how the result grows.
+  if (!pipeline.ok && pipeline.stage === 'solve' && Object.values(normalized.devices || {}).some((device) => device.roInfinity)) {
+    const retained = buildExactAnalysisPipeline(circuit, { ...pipelineOptions, deviceAssumptions: null });
+    if (retained.ok) {
+      pipeline = retained;
+      retainedOutputResistance = true;
+    }
+  }
+  if (!pipeline.ok) return failureReport(pipeline, normalized);
+  if (ops.budget?.exceeded) return budgetFailureReport('exact solve', ops.budget, analysisOptions);
+
+  const queries = pipeline.queries;
+  if (ops.budget?.exceeded) return budgetFailureReport('query extraction', ops.budget, analysisOptions);
+  const values = {
+    Av: queries?.transfer?.value,
+    Zin: queries?.inputImpedance?.value,
+    Zout: queries?.outputImpedance?.value,
+  };
+  if (Object.values(values).some((value) => value === undefined)) return failureReport({
+    ...pipeline,
+    stage: 'queries',
+    error: 'pipeline query results are incomplete',
+    queries,
+  }, normalized);
+
+  const approximationOptions = {
+    ...analysisOptions,
+    parameters: analysisOptions.parameters || {},
+    rational: {
+      maxOperations: options.maxOperations,
+      ...(ops.budget ? { budget: ops.budget } : {}),
+    },
+  };
+
+  const equivalences = equivalenceTable(buildParallelEquivalenceProofs(pipeline.networkReductionProofs, approximationOptions, ops));
+  const withEquivalences = (options) => ({ ...options, equivalences });
+
+  const exact = {};
+  for (const [name, value] of Object.entries(values)) {
+    const cleanupOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
+    const compact = compactRational(value, cleanupOps);
+    exact[name] = canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, withEquivalences(responseOptions(analysisOptions)));
+    if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
+  }
+  if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
+  const approximations = {};
+  for (const [name, response] of Object.entries(exact)) {
+    approximations[name] = response.expression?.kind === 'infinity'
+      ? { exact: response.expression, selected: response.expression, changed: false, assumptions: [] }
+      : applyApproximations(response.expression, approximationOptions);
+    if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
+  }
+  const topology = buildTopologyIdentities(pipeline, analysisOptions);
+  // A dominant-pole reduction acts on the whole transfer function; stage
+  // factoring must not silently replace that explicitly selected reduction.
+  const topologicalApproximation = analysisOptions.dominantPoleApproximation ? null
+    : approximateTopology(topology, queries, approximationOptions);
+  if (topologicalApproximation) {
+    for (const [name, composed, stageAssumptions] of [
+      ['Av', topologicalApproximation.selected, topologicalApproximation.assumptions],
+      ['Zout', topologicalApproximation.output.selected, topologicalApproximation.output.assumptions],
+    ]) {
+      // The stages were reduced one at a time; run the selected assumptions
+      // over what they compose to as well. Without this the topological form
+      // silently replaced a stronger whole-expression reduction -- a diode
+      // load stayed 1/g_m2 || r_o1 || r_o2 where g_m r_o >> 1 says 1/g_m2.
+      const reduced = applyApproximations(composed, approximationOptions);
+      const selected = reduced.selected;
+      const assumptions = unique([...stageAssumptions, ...reduced.assumptions]);
+      const comparisonOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
+      const changed = !comparisonOps.isZero(compactRational(comparisonOps.sub(selected, exact[name].expression), comparisonOps));
+      approximations[name] = { ...approximations[name], selected, changed, assumptions: changed ? assumptions : [] };
+    }
+    topology.selectedIdentities = topologicalApproximation.identities;
+  }
+  for (const [key, proof] of equivalenceTable(buildTopologyProofs(topology, queries, approximations, approximationOptions))) {
+    equivalences.set(key, proof);
+  }
+  for (const [key, proof] of equivalenceTable(buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions))) {
+    equivalences.set(key, proof);
+  }
+  const displayed = {
+    transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions)), approximationOptions),
+    input: displayResponse('Zin', exact.Zin.expression, approximations.Zin, withEquivalences({
+      ...responseOptions(analysisOptions),
+      ...(queries.inputImpedance.equivalence ? { equivalence: queries.inputImpedance.equivalence } : {}),
+    }), approximationOptions),
+    output: displayResponse('Zout', exact.Zout.expression, approximations.Zout, withEquivalences({
+      ...responseOptions(analysisOptions),
+      ...(queries.outputImpedance.equivalence ? { equivalence: queries.outputImpedance.equivalence } : {}),
+    }), approximationOptions),
+  };
+  if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
+  const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
+  const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
+  // One global statement when the option is global: the model dropped every
+  // device's body-effect branch, and four identical per-device lines say
+  // nothing the single rule does not.
+  const omittedBody = pipeline.omittedBodyEffect || [];
+  const bodyEffectAssumptions = omittedBody.length
+    ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
+    : [];
+  const assumptions = unique([
+    ...millerAssumptions,
+    ...bodyEffectAssumptions,
+    ...outputResistanceAssumptions,
+    ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
+    ...Object.values(displayed).flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
+      .flatMap((root) => root.assumptions || []),
+  ]);
+  const transfer = displayed.transfer.response;
+  const roots = rootRows(transfer, responseOptions(analysisOptions));
+  if (ops.budget?.exceeded) return budgetFailureReport('pole and zero extraction', ops.budget, analysisOptions);
+  const netlist = describeSmallSignalNetlist(pipeline.selected, {
+    ...normalized,
+    equivalences,
+    acGroundIds: pipeline.context.acGroundIds,
+    nodeAliases: pipeline.context.nodeAliases,
+    nodeNames: nodeNames(circuit),
+  });
+  const diagnostics = presentDiagnostics({
+    context: pipeline.context,
+    conversion: pipeline.conversion,
+    graph: pipeline.coupled,
+    queries,
+  });
+  const names = nodeNames(circuit);
+  const portName = (variable) => {
+    const node = variable.slice(2, -1);
+    return names.get(node) || node;
+  };
+  const topologyLog = topology.stages.map((stage, index) => (
+    `Stage ${index + 1}: ${portName(stage.from)} -> ${portName(stage.to)}; gain = signed transadmittance times loaded output impedance.`
+  ));
+  return {
+    ok: true,
+    version: 2,
+    context: pipeline.context,
+    input: displayed.input,
+    output: displayed.output,
+    transfer: displayed.transfer,
+    exact,
+    approximate: approximations,
+    dc: {
+      input: displayed.input.dcLimit,
+      output: displayed.output.dcLimit,
+      transfer: displayed.transfer.dcLimit,
+    },
+    dcLimits: {
+      input: displayed.input.dcLimit,
+      output: displayed.output.dcLimit,
+      transfer: displayed.transfer.dcLimit,
+    },
+    poles: transfer.poles,
+    zeros: transfer.zeros,
+    roots,
+    assumptions,
+    portDefinitions: portDefinitions(pipeline.context),
+    equations: [
+      ...displayed.input.equations,
+      ...displayed.output.equations,
+      ...displayed.transfer.equations,
+      ...roots.map(({ equation }) => equation),
+    ],
+    details: {
+      topology,
+      pipeline,
+      queries,
+      exact,
+      approximations,
+      system: pipeline.system,
+      solution: pipeline.solution,
+    },
+    netlist,
+    smallSignalNetlist: netlist.text,
+    // Where each symbol in the equations above came from. The solved primitive
+    // set describes the model that produced them, and the conversion set fills
+    // in symbols whose own primitive left the model but whose name survived
+    // into an equation — a Miller-absorbed feedback capacitor, or an r_o the
+    // engine had to keep. See `provenance.js`.
+    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives),
+    diagnostics,
+    log: [
+      diagnostics.logText,
+      ...(retainedOutputResistance
+        ? ['r_o -> infinity: removing r_o leaves a node with no conducting path (for example an output driven only by current sources), so r_o was kept and only its large-r_o limit applied.']
+        : []),
+      ...topologyLog,
+    ].filter(Boolean).join('\n'),
+  };
+}
+
+__exports.portDefinitions = portDefinitions;
+__exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
+};
+
+__modules["src/core/line-style.js"] = function (__require, __exports) {
+/** The one filled triangular arrowhead offered by the shared style menu. */
+const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
+
+function normalizeArrowhead(value, fallback = 'none') {
+  return ARROWHEAD_VALUES.includes(value) ? value : fallback;
+}
+
+function defaultArrowhead(kind) {
+  return kind === 'arrow' || kind === 'connector' ? 'end' : 'none';
+}
+
+function arrowheadEnds(value, fallback = 'none') {
+  const normalized = normalizeArrowhead(typeof value === 'object' ? value?.arrowhead : value, fallback);
+  return {
+    start: normalized === 'start' || normalized === 'both',
+    end: normalized === 'end' || normalized === 'both',
+  };
+}
+
+/**
+ * Map one shared arrowhead choice onto the individual segments of a
+ * polyline.  A bent route is still one drawable wire, so its heads belong at
+ * the route endpoints rather than at its corner vertices.  On a single
+ * segment both heads can share that segment; otherwise the two heads occupy
+ * the first and last segments independently.
+ */
+function polylineArrowheadValues(points = [], value = 'none') {
+  const route = [];
+  for (const point of points || []) {
+    const next = { x: point.x, y: point.y };
+    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
+  }
+  if (route.length < 2) return [];
+  const ends = arrowheadEnds(value);
+  let first = -1;
+  let last = -1;
+  for (let i = 1; i < route.length; i++) {
+    if (samePoint(route[i - 1], route[i])) continue;
+    if (first < 0) first = i;
+    last = i;
+  }
+  if (first < 0) return route.slice(1).map(() => 'none');
+  const values = route.slice(1).map(() => 'none');
+  if (ends.start) values[first - 1] = first === last && ends.end ? 'both' : 'start';
+  if (ends.end) values[last - 1] = ['start', 'both'].includes(values[last - 1]) ? 'both' : 'end';
+  return values;
+}
+
+/** Resolve segment-local arrowhead styles to the logical endpoints of a
+ * polyline. This also repairs older documents where an end head was left on
+ * an interior segment after a route gained a bend. */
+function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
+  const values = [];
+  for (let index = 1; index < points.length; index++) {
+    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
+    if (value !== undefined) values.push(normalizeArrowhead(value));
+  }
+  if (!values.length) return normalizeArrowhead(inherited);
+  const start = values.some((value) => arrowheadEnds(value).start);
+  const end = values.some((value) => arrowheadEnds(value).end);
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
+}
+
+/** Return wireStyles with one shared arrowhead choice distributed across a
+ * path's endpoint segments. Existing per-segment appearance is preserved. */
+function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {
+  const next = { ...wireStyles };
+  for (const [index, arrowhead] of polylineArrowheadValues(points, value).entries()) {
+    const key = `${branch}:${index + 1}`;
+    next[key] = { ...(next[key] || {}), arrowhead };
+  }
+  return next;
+}
+
+const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
+
+/** Filled arrowhead geometry for a segment whose tip is `b`. */
+function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const distance = Math.hypot(dx, dy);
+  if (!distance) return null;
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
+  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
+  const normal = { x: uy, y: -ux };
+  return {
+    shaft: base,
+    tip,
+    left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
+    right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
+  };
+}
+
+/**
+ * Return a polyline shortened at the decorated endpoints plus the filled
+ * heads. The input is never mutated. Endpoint decoration works for straight,
+ * diagonal, and orthogonal multi-point paths.
+ */
+function polylineArrowheads(points = [], value = 'none', options = {}) {
+  const route = [];
+  for (const point of points || []) {
+    const next = { x: point.x, y: point.y };
+    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
+  }
+  if (route.length < 2) return { shaftPoints: route, heads: [] };
+  const ends = arrowheadEnds(value, options.fallback || 'none');
+  let first = -1;
+  let last = -1;
+  for (let i = 1; i < route.length; i++) {
+    if (samePoint(route[i - 1], route[i])) continue;
+    if (first < 0) first = i;
+    last = i;
+  }
+  if (first < 0) return { shaftPoints: route, heads: [] };
+  const sameSegment = first === last;
+  const fullLength = options.length ?? 32;
+  const halfWidth = options.halfWidth ?? 18;
+  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
+  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
+  const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
+  const length = sameSegment && ends.start && ends.end
+    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
+    : fullLength;
+  const heads = [];
+  const shaftPoints = route.map((point) => ({ ...point }));
+  if (ends.start) {
+    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
+    if (head) {
+      heads.push({ ...head, placement: 'start' });
+      shaftPoints[0] = head.shaft;
+    }
+  }
+  if (ends.end) {
+    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
+    if (head) {
+      heads.push({ ...head, placement: 'end' });
+      shaftPoints[shaftPoints.length - 1] = head.shaft;
+    }
+  }
+  return { shaftPoints, heads };
+}
+
+__exports.normalizeArrowhead = normalizeArrowhead;
+__exports.defaultArrowhead = defaultArrowhead;
+__exports.arrowheadEnds = arrowheadEnds;
+__exports.polylineArrowheadValues = polylineArrowheadValues;
+__exports.polylineArrowheadValue = polylineArrowheadValue;
+__exports.polylineArrowheadStyles = polylineArrowheadStyles;
+__exports.arrowheadGeometry = arrowheadGeometry;
+__exports.polylineArrowheads = polylineArrowheads;
+__exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 };
 
 __modules["src/core/render.js"] = function (__require, __exports) {
@@ -23288,6 +23539,40 @@ function labelShapeSvg(label) {
 }
 
 /**
+ * The view-dependent parts of a viewport render: the root sizing attributes,
+ * the background rectangle, and the grid lines. Everything else in the drawing
+ * is in world coordinates, so the editor re-applies only this frame on pan and
+ * zoom instead of re-rendering the whole schematic.
+ */
+function viewportFrame(vp) {
+  const x1 = vp.x + vp.w;
+  const y1 = vp.y + vp.h;
+  const W = x1 - vp.x;
+  const H = y1 - vp.y;
+  return {
+    width: `${W}`,
+    height: `${H}`,
+    viewBox: `${fmt(vp.x)} ${fmt(vp.y)} ${fmt(W)} ${fmt(H)}`,
+    background: { x: fmt(vp.x), y: fmt(vp.y), width: fmt(W), height: fmt(H) },
+  };
+}
+
+/** Grid lines covering a viewport, as one path: panning then rewrites a
+ * single attribute instead of replacing hundreds of elements. */
+function viewportGridPath(vp) {
+  const x1 = vp.x + vp.w;
+  const y1 = vp.y + vp.h;
+  const d = [];
+  for (let x = ceilGrid(vp.x); x <= ceilGrid(x1); x += GRID) d.push(`M ${fmt(x)} ${fmt(vp.y)} V ${fmt(y1)}`);
+  for (let y = ceilGrid(vp.y); y <= ceilGrid(y1); y += GRID) d.push(`M ${fmt(vp.x)} ${fmt(y)} H ${fmt(x1)}`);
+  return d.join(' ');
+}
+
+function viewportGridSvg(vp) {
+  return `<path class="grid-line" d="${viewportGridPath(vp)}" fill="none" stroke="#e9e9e9" stroke-width="1"/>`;
+}
+
+/**
  * Render a Circuit to an SVG string.
  * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
  * draw terminal dots / net junction dots. opts.background: white rect.
@@ -23341,12 +23626,7 @@ function svgString(circuit, opts = {}) {
 
   if (o.grid) {
     if (vp) {
-      for (let x = ceilGrid(vp.x); x <= ceilGrid(vp.x + vp.w); x += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-      for (let y = ceilGrid(vp.y); y <= ceilGrid(vp.y + vp.h); y += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
+      parts.push(viewportGridSvg(vp));
     } else {
       for (let x = x0; x <= x1; x += GRID) {
         parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
@@ -24028,164 +24308,11 @@ __exports.svgPixelSize = svgPixelSize;
 __exports.texToMathML = texToMathML;
 __exports.componentShapeSvg = componentShapeSvg;
 __exports.labelShapeSvg = labelShapeSvg;
+__exports.viewportFrame = viewportFrame;
+__exports.viewportGridPath = viewportGridPath;
+__exports.viewportGridSvg = viewportGridSvg;
 __exports.svgString = svgString;
 __exports.editorOverlay = editorOverlay;
-};
-
-__modules["src/core/line-style.js"] = function (__require, __exports) {
-/** The one filled triangular arrowhead offered by the shared style menu. */
-const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
-
-function normalizeArrowhead(value, fallback = 'none') {
-  return ARROWHEAD_VALUES.includes(value) ? value : fallback;
-}
-
-function defaultArrowhead(kind) {
-  return kind === 'arrow' || kind === 'connector' ? 'end' : 'none';
-}
-
-function arrowheadEnds(value, fallback = 'none') {
-  const normalized = normalizeArrowhead(typeof value === 'object' ? value?.arrowhead : value, fallback);
-  return {
-    start: normalized === 'start' || normalized === 'both',
-    end: normalized === 'end' || normalized === 'both',
-  };
-}
-
-/**
- * Map one shared arrowhead choice onto the individual segments of a
- * polyline.  A bent route is still one drawable wire, so its heads belong at
- * the route endpoints rather than at its corner vertices.  On a single
- * segment both heads can share that segment; otherwise the two heads occupy
- * the first and last segments independently.
- */
-function polylineArrowheadValues(points = [], value = 'none') {
-  const route = [];
-  for (const point of points || []) {
-    const next = { x: point.x, y: point.y };
-    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
-  }
-  if (route.length < 2) return [];
-  const ends = arrowheadEnds(value);
-  let first = -1;
-  let last = -1;
-  for (let i = 1; i < route.length; i++) {
-    if (samePoint(route[i - 1], route[i])) continue;
-    if (first < 0) first = i;
-    last = i;
-  }
-  if (first < 0) return route.slice(1).map(() => 'none');
-  const values = route.slice(1).map(() => 'none');
-  if (ends.start) values[first - 1] = first === last && ends.end ? 'both' : 'start';
-  if (ends.end) values[last - 1] = ['start', 'both'].includes(values[last - 1]) ? 'both' : 'end';
-  return values;
-}
-
-/** Resolve segment-local arrowhead styles to the logical endpoints of a
- * polyline. This also repairs older documents where an end head was left on
- * an interior segment after a route gained a bend. */
-function polylineArrowheadValue(wireStyles = {}, branch = 0, points = [], inherited = 'none') {
-  const values = [];
-  for (let index = 1; index < points.length; index++) {
-    const value = wireStyles?.[`${branch}:${index}`]?.arrowhead;
-    if (value !== undefined) values.push(normalizeArrowhead(value));
-  }
-  if (!values.length) return normalizeArrowhead(inherited);
-  const start = values.some((value) => arrowheadEnds(value).start);
-  const end = values.some((value) => arrowheadEnds(value).end);
-  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
-}
-
-/** Return wireStyles with one shared arrowhead choice distributed across a
- * path's endpoint segments. Existing per-segment appearance is preserved. */
-function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = [], value = 'none') {
-  const next = { ...wireStyles };
-  for (const [index, arrowhead] of polylineArrowheadValues(points, value).entries()) {
-    const key = `${branch}:${index + 1}`;
-    next[key] = { ...(next[key] || {}), arrowhead };
-  }
-  return next;
-}
-
-const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
-
-/** Filled arrowhead geometry for a segment whose tip is `b`. */
-function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const distance = Math.hypot(dx, dy);
-  if (!distance) return null;
-  const ux = dx / distance;
-  const uy = dy / distance;
-  const tip = { x: b.x - Math.max(0, tipInset) * ux, y: b.y - Math.max(0, tipInset) * uy };
-  const base = { x: tip.x - length * ux, y: tip.y - length * uy };
-  const normal = { x: uy, y: -ux };
-  return {
-    shaft: base,
-    tip,
-    left: { x: base.x + halfWidth * normal.x, y: base.y + halfWidth * normal.y },
-    right: { x: base.x - halfWidth * normal.x, y: base.y - halfWidth * normal.y },
-  };
-}
-
-/**
- * Return a polyline shortened at the decorated endpoints plus the filled
- * heads. The input is never mutated. Endpoint decoration works for straight,
- * diagonal, and orthogonal multi-point paths.
- */
-function polylineArrowheads(points = [], value = 'none', options = {}) {
-  const route = [];
-  for (const point of points || []) {
-    const next = { x: point.x, y: point.y };
-    if (!route.length || !samePoint(route.at(-1), next)) route.push(next);
-  }
-  if (route.length < 2) return { shaftPoints: route, heads: [] };
-  const ends = arrowheadEnds(value, options.fallback || 'none');
-  let first = -1;
-  let last = -1;
-  for (let i = 1; i < route.length; i++) {
-    if (samePoint(route[i - 1], route[i])) continue;
-    if (first < 0) first = i;
-    last = i;
-  }
-  if (first < 0) return { shaftPoints: route, heads: [] };
-  const sameSegment = first === last;
-  const fullLength = options.length ?? 32;
-  const halfWidth = options.halfWidth ?? 18;
-  const startInset = Math.max(0, options.startInset ?? options.tipInset ?? 0);
-  const endInset = Math.max(0, options.endInset ?? options.tipInset ?? 0);
-  const segmentLength = Math.hypot(route[last].x - route[last - 1].x, route[last].y - route[last - 1].y);
-  const length = sameSegment && ends.start && ends.end
-    ? Math.min(fullLength, Math.max(0, segmentLength - startInset - endInset) / 2)
-    : fullLength;
-  const heads = [];
-  const shaftPoints = route.map((point) => ({ ...point }));
-  if (ends.start) {
-    const head = arrowheadGeometry(route[first], route[first - 1], length, halfWidth, startInset);
-    if (head) {
-      heads.push({ ...head, placement: 'start' });
-      shaftPoints[0] = head.shaft;
-    }
-  }
-  if (ends.end) {
-    const head = arrowheadGeometry(route[last - 1], route[last], length, halfWidth, endInset);
-    if (head) {
-      heads.push({ ...head, placement: 'end' });
-      shaftPoints[shaftPoints.length - 1] = head.shaft;
-    }
-  }
-  return { shaftPoints, heads };
-}
-
-__exports.normalizeArrowhead = normalizeArrowhead;
-__exports.defaultArrowhead = defaultArrowhead;
-__exports.arrowheadEnds = arrowheadEnds;
-__exports.polylineArrowheadValues = polylineArrowheadValues;
-__exports.polylineArrowheadValue = polylineArrowheadValue;
-__exports.polylineArrowheadStyles = polylineArrowheadStyles;
-__exports.arrowheadGeometry = arrowheadGeometry;
-__exports.polylineArrowheads = polylineArrowheads;
-__exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 };
 
 __modules["src/core/document.js"] = function (__require, __exports) {
@@ -24701,312 +24828,6 @@ __exports.distanceToSegment = distanceToSegment;
 __exports.fmt = fmt;
 __exports.pt = pt;
 __exports.midSnap = midSnap;
-};
-
-__modules["src/core/wireedit.js"] = function (__require, __exports) {
-const { GRID, snap } = __require("src/core/grid.js");
-
-
-/**
- * Interactive re-routing of an explicit wire polyline by dragging a segment.
- * A route is an ordered list of grid points. By default a "run" is a maximal
- * run of consecutive collinear segments; callers may provide topology breaks
- * to treat aligned segments on either side of a terminal or junction
- * independently. Dragging a segment moves its bounded run perpendicularly.
- * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
- * omitted metadata uses terminal-endpoint behavior. `allowPastNeighbors` is
- * for reversible editor previews: it lets a run pass adjacent bends so a
- * later legal drop is reachable; the caller must validate before committing.
- *
- * Key behaviors:
- *  - By default the run may slide as far as an adjacent run; reaching it
- *    collapses the shared corner, and the now-invisible collinear vertex is
- *    removed.
- *  - By default the run never slides past a neighbour (no inverted folds);
- *    reversible previews may opt out until their final geometry is validated.
- *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
- *    wire with an added connector segment so the pin stays connected.
- *  - A standalone two-point bridge between two junctions moves both junction
- *    endpoints together; a standalone pin-to-pin run remains immovable.
- */
-
-/** Collinear run containing segment `seg`, stopping at optional topology
- * points. Topology breaks let adjacent aligned branch segments move
- * independently when a junction sits between them. */
-function wireRunAt(pts, seg, breaks = null) {
-  const n = pts.length;
-  const i = Math.max(1, Math.min(seg, n - 1));
-  const orient = pts[i - 1].y === pts[i].y ? 'h' : 'v';
-  const val = orient === 'h' ? pts[i].y : pts[i].x;
-  const same = (p) => (orient === 'h' ? p.y === val : p.x === val);
-  const isBreak = (p) => breaks?.has(`${p.x},${p.y}`);
-  let lo = i - 1;
-  let hi = i;
-  while (lo > 0 && same(pts[lo - 1]) && !isBreak(pts[lo])) lo--;
-  while (hi < n - 1 && same(pts[hi + 1]) && !isBreak(pts[hi])) hi++;
-  return { lo, hi, orient, val };
-}
-
-/** Drop consecutive duplicates and any middle point collinear with its
- * neighbours, in place. Endpoints (terminal pins) are always preserved.
- * Returns the new length.
- */
-function collapseCollinear(pts) {
-  let i = pts.length - 2;
-  while (i >= 1) {
-    const a = pts[i - 1];
-    const b = pts[i];
-    const c = pts[i + 1];
-    if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y) || (a.x === b.x && a.y === b.y)) {
-      pts.splice(i, 1);
-    }
-    i--;
-  }
-  return pts.length;
-}
-
-/** Index of a segment lying on the collinear run at perpendicular line `line`
- *  (a y for horizontal runs, an x for vertical runs), or -1 if none. */
-function findRunLine(pts, orient, line) {
-  for (let i = 1; i < pts.length; i++) {
-    const onLine = orient === 'h' ? pts[i].y === line : pts[i].x === line;
-    if (!onLine) continue;
-    const aligned = orient === 'h' ? pts[i - 1].y === pts[i].y : pts[i - 1].x === pts[i].x;
-    if (aligned) return i;
-  }
-  return -1;
-}
-
-/** Move one junction in a managed branch set and rebuild each incident branch
- * endpoint with a local orthogonal elbow when the old and new locations are not
- * collinear with its neighbour. The caller owns the net object; this pure
- * helper mutates `paths` and returns the replacement junction list. */
-function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpointInfo = null) {
-  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return junctions;
-  for (const path of paths || []) {
-    for (let i = 0; i < path.length; i++) {
-      const p = path[i];
-      if (p.x !== oldPoint.x || p.y !== oldPoint.y) continue;
-      const neighbor = i === 0 ? path[1] : path[i - 1];
-      const oldHorizontal = neighbor && neighbor.y === oldPoint.y;
-      const oldVertical = neighbor && neighbor.x === oldPoint.x;
-      const otherIndex = i === 0 ? 1 : i === path.length - 1 ? path.length - 2 : -1;
-      const otherMeta = otherIndex >= 0 && endpointInfo ? endpointInfo(path, otherIndex) : null;
-      p.x = newPoint.x;
-      p.y = newPoint.y;
-      if (neighbor && p.x !== neighbor.x && p.y !== neighbor.y) {
-        const candidates = oldHorizontal
-          ? [{ x: neighbor.x, y: newPoint.y }, { x: newPoint.x, y: neighbor.y }]
-          : oldVertical
-            ? [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }]
-            : [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }];
-        const same = (a, b) => a.x === b.x && a.y === b.y;
-        const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
-        const incoming = (q) => i === 0 ? step(q, neighbor) : step(neighbor, q);
-        const desired = otherMeta?.type === 'terminal' && otherMeta.dir
-          ? { x: -otherMeta.dir.x, y: -otherMeta.dir.y } : null;
-        const valid = candidates.filter((q) =>
-          !same(q, oldPoint) && !same(q, newPoint) && !same(q, neighbor)
-        );
-        const elbow = valid.find((q) =>
-          (!desired || (incoming(q).x === desired.x && incoming(q).y === desired.y))
-        );
-        if (elbow) {
-          path.splice(i === 0 ? 1 : i, 0, elbow);
-        } else if (desired) {
-          // Detour one extra grid cell outward from the terminal to preserve
-          // pin conformity without retaining the junction coordinate.
-          const sign = otherMeta.dir;
-          const distance = same({ x: neighbor.x + sign.x * GRID, y: neighbor.y + sign.y * GRID }, oldPoint) ? 2 : 1;
-          const pinLead = { x: neighbor.x + sign.x * GRID * distance, y: neighbor.y + sign.y * GRID * distance };
-          const detours = newPoint.x === pinLead.x || newPoint.y === pinLead.y ? [] : [
-            { x: newPoint.x, y: pinLead.y },
-            { x: pinLead.x, y: newPoint.y },
-          ];
-          const detour = detours.find((q) => !same(q, oldPoint) && !same(q, newPoint) && !same(q, pinLead));
-          const inserts = i === 0 ? [ ...(detour ? [detour] : []), pinLead ] : [ pinLead, ...(detour ? [detour] : []) ];
-          path.splice(i === 0 ? 1 : i, 0, ...inserts);
-        }
-      }
-    }
-  }
-  return (junctions || []).map((p) => (
-    p.x === oldPoint.x && p.y === oldPoint.y ? { ...newPoint } : p
-  ));
-}
-
-/**
- * Move the collinear run of orientation `orient` presently at perpendicular
- * line `line` to `target` (grid-snapped along the perpendicular axis).
- * `endpointMeta.runBounds` and `endpointMeta.breaks` may bound the run at
- * electrical topology points; otherwise the maximal run is used. The run may
- * slide as far as an adjacent run (reaching it collapses the shared corner)
- * but, by default, never past it (no inverted folds). Reversible previews may
- * set `allowPastNeighbors` and validate the resulting geometry on drop. Runs touching a terminal endpoint
- * keep that pin fixed and extend the wire with a connector segment.
- * `preserveDiagonalNeighbors` keeps a diagonal segment immediately before or
- * after an interior run fixed, adding a perpendicular connector at the old
- * corner instead of stretching the diagonal while the run moves.
- * `endpointMeta` is optional for compatibility with callers whose paths are
- * known to be terminal-ended: `{ start: { type }, end: { type } }`.
- * Returns the perpendicular line value the run actually ended on (== `line`
- * when nothing could move).
- */
-function moveWireRun(pts, orient, line, target, endpointMeta = null) {
-  const si = Number.isInteger(endpointMeta?.segment)
-    ? Math.max(1, Math.min(endpointMeta.segment, pts.length - 1))
-    : findRunLine(pts, orient, line);
-  if (si < 0) return line;
-  const run = wireRunAt(pts, si, endpointMeta?.breaks);
-  const forcedInterior = endpointMeta?.interiorRun === true;
-  const lo = endpointMeta?.runBounds?.lo ?? (forcedInterior ? 1 : run.lo);
-  const hi = endpointMeta?.runBounds?.hi ?? (forcedInterior ? pts.length - 2 : run.hi);
-  const n = pts.length;
-  const loEnd = lo === 0;
-  const hiEnd = hi === n - 1;
-  const startType = endpointMeta?.start?.type || 'terminal';
-  const endType = endpointMeta?.end?.type || 'terminal';
-  const startTerminal = startType === 'terminal';
-  const endTerminal = endType === 'terminal';
-  const val = line;
-  const nv = (idx) => (orient === 'h' ? pts[idx].y : pts[idx].x);
-  let lower = -Infinity;
-  let upper = Infinity;
-  if (!loEnd) {
-    const v = nv(lo - 1);
-    if (v < val) lower = Math.max(lower, v);
-    else upper = Math.min(upper, v);
-  }
-  if (!hiEnd) {
-    const v = nv(hi + 1);
-    if (v < val) lower = Math.max(lower, v);
-    else upper = Math.min(upper, v);
-  }
-  let t = snap(target);
-  if (!endpointMeta?.allowPastNeighbors) {
-    if (t < val) t = Math.max(t, lower);
-    else if (t > val) t = Math.min(t, upper);
-  }
-  if (t === val) return val;
-
-  if (!loEnd && !hiEnd) {
-    // Interior run: slide freely (possibly up to a neighbour to collapse).
-    const preserveDiagonals = endpointMeta?.preserveDiagonalNeighbors === true;
-    const diagonalStart = preserveDiagonals && pts[lo - 1] && pts[lo] &&
-      pts[lo - 1].x !== pts[lo].x && pts[lo - 1].y !== pts[lo].y
-      ? { ...pts[lo] } : null;
-    const diagonalEnd = preserveDiagonals && pts[hi] && pts[hi + 1] &&
-      pts[hi].x !== pts[hi + 1].x && pts[hi].y !== pts[hi + 1].y
-      ? { ...pts[hi] } : null;
-    for (let i = lo; i <= hi; i++) {
-      if (orient === 'h') pts[i].y = t;
-      else pts[i].x = t;
-    }
-    // Keep a mixed route's diagonal geometry literal. The inserted old corner
-    // is connected to the moved run by the perpendicular lead that a normal
-    // orthogonal bend would have stretched into the diagonal otherwise.
-    if (diagonalStart) pts.splice(lo, 0, diagonalStart);
-    if (diagonalEnd) pts.splice(hi + (diagonalStart ? 2 : 1), 0, diagonalEnd);
-    collapseCollinear(pts);
-    return t;
-  }
-
-  const boundedRun = !!endpointMeta?.runBounds;
-  const anchoredStart = boundedRun && loEnd && (startTerminal || startType === 'junction');
-  const anchoredEnd = boundedRun && hiEnd && (endTerminal || endType === 'junction');
-  if (anchoredStart || anchoredEnd) {
-    // A topology-bounded run moves without moving its electrical anchors.
-    // Keep each terminal/junction fixed and add connector legs at the ends;
-    // incident branches therefore remain stationary unless explicitly selected.
-    if (anchoredStart && anchoredEnd) {
-      const a = { ...pts[0] };
-      const b = { ...pts[n - 1] };
-      if (orient === 'h') {
-        for (let i = 1; i < n - 1; i++) pts[i].y = t;
-        pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
-      } else {
-        for (let i = 1; i < n - 1; i++) pts[i].x = t;
-        pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
-      }
-      return t;
-    }
-    if (anchoredStart) {
-      const p = { ...pts[0] };
-      if (orient === 'h') {
-        for (let i = 1; i <= hi; i++) pts[i].y = t;
-        pts.splice(1, 0, { x: p.x, y: t });
-      } else {
-        for (let i = 1; i <= hi; i++) pts[i].x = t;
-        pts.splice(1, 0, { x: t, y: p.y });
-      }
-      return t;
-    }
-    const p = { ...pts[n - 1] };
-    if (orient === 'h') {
-      for (let i = lo; i < n - 1; i++) pts[i].y = t;
-      pts.splice(n - 1, 0, { x: p.x, y: t });
-    } else {
-      for (let i = lo; i < n - 1; i++) pts[i].x = t;
-      pts.splice(n - 1, 0, { x: t, y: p.y });
-    }
-    return t;
-  }
-
-  // A standalone bridge is bounded by two real junctions rather than pins.
-  // Without run bounds, move the whole bridge.
-  if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
-    for (const p of pts) {
-      if (orient === 'h') p.y = t;
-      else p.x = t;
-    }
-    return t;
-  }
-
-  if (loEnd && hiEnd && startTerminal && endTerminal) {
-    if (!boundedRun) return val;
-    const a = { ...pts[0] };
-    const b = { ...pts[n - 1] };
-    if (orient === 'h') {
-      pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
-    } else {
-      pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
-    }
-    return t;
-  }
-  if (orient === 'h') {
-    if (loEnd && (!hiEnd || startTerminal)) {
-      const px = pts[0].x;
-      for (let i = 1; i <= hi; i++) pts[i].y = t;
-      if (startTerminal) pts.splice(1, 0, { x: px, y: t });
-      else pts[0].y = t;
-    } else if (hiEnd) {
-      const px = pts[n - 1].x;
-      for (let i = lo; i <= n - 2; i++) pts[i].y = t;
-      if (endTerminal) pts.splice(n - 1, 0, { x: px, y: t });
-      else pts[n - 1].y = t;
-    }
-  } else {
-    if (loEnd && (!hiEnd || startTerminal)) {
-      const py = pts[0].y;
-      for (let i = 1; i <= hi; i++) pts[i].x = t;
-      if (startTerminal) pts.splice(1, 0, { x: t, y: py });
-      else pts[0].x = t;
-    } else if (hiEnd) {
-      const py = pts[n - 1].y;
-      for (let i = lo; i <= n - 2; i++) pts[i].x = t;
-      if (endTerminal) pts.splice(n - 1, 0, { x: t, y: py });
-      else pts[n - 1].x = t;
-    }
-  }
-  collapseCollinear(pts);
-  return t;
-}
-
-__exports.wireRunAt = wireRunAt;
-__exports.collapseCollinear = collapseCollinear;
-__exports.findRunLine = findRunLine;
-__exports.moveJunctionEndpoint = moveJunctionEndpoint;
-__exports.moveWireRun = moveWireRun;
 };
 
 __modules["src/core/router.js"] = function (__require, __exports) {
@@ -25764,17 +25585,11 @@ function segThroughInterior(a, b, r) {
 // collinear overlaps, most clearance (>= 1 grid cell from every body, barring
 // the pin legs), best straight-on pin access, fewest bends, shortest route,
 // optionally bends closest to the route midpoint, then fewest legal crossings
-// of other wires. If no enumerated candidate is hard-safe, A* is used as a
-// bounded fallback; failure to find a hard-safe route is reported as null
-// rather than returning an unsafe candidate.
+// of other wires. If no enumerated candidate is hard-safe the answer is null
+// rather than an unsafe candidate.
 // ---------------------------------------------------------------------------
 
 const STEP = 40;
-const wireOccupancyCache = new WeakMap();
-
-function strictlyInside(p, r) {
-  return p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
-}
 
 function bboxCrossings(pts, env) {
   let n = 0;
@@ -25805,39 +25620,6 @@ function overlapSpan(a, b, c, d) {
     return hi - lo > 0;
   }
   return false;
-}
-
-function wireOccupancy(env) {
-  let index = wireOccupancyCache.get(env);
-  if (index) return index;
-  index = new Map();
-  const key = (x, y) => `${Math.floor(x / STEP)},${Math.floor(y / STEP)}`;
-  let order = 0;
-  for (const wire of env.wires || []) for (let i = 1; i < wire.length; i++) {
-    const a = wire[i - 1], b = wire[i];
-    const record = { a, b, order: order++ };
-    for (let x = Math.floor(Math.min(a.x, b.x) / STEP); x <= Math.floor(Math.max(a.x, b.x) / STEP); x++) {
-      for (let y = Math.floor(Math.min(a.y, b.y) / STEP); y <= Math.floor(Math.max(a.y, b.y) / STEP); y++) {
-        const bucket = key(x * STEP, y * STEP);
-        if (!index.has(bucket)) index.set(bucket, []);
-        index.get(bucket).push(record);
-      }
-    }
-  }
-  wireOccupancyCache.set(env, index);
-  return index;
-}
-
-function occupiedWire(a, b, env) {
-  const index = wireOccupancy(env);
-  const key = (x, y) => `${Math.floor(x / STEP)},${Math.floor(y / STEP)}`;
-  const records = new Set();
-  for (let x = Math.floor(Math.min(a.x, b.x) / STEP); x <= Math.floor(Math.max(a.x, b.x) / STEP); x++) {
-    for (let y = Math.floor(Math.min(a.y, b.y) / STEP); y <= Math.floor(Math.max(a.y, b.y) / STEP); y++) {
-      for (const record of index.get(key(x * STEP, y * STEP)) || []) records.add(record);
-    }
-  }
-  return [...records].sort((a, b) => a.order - b.order).some(record => overlapSpan(a, b, record.a, record.b));
 }
 
 function wireConflicts(pts, env) {
@@ -26091,158 +25873,14 @@ function routeCandidates(from, to) {
   return out;
 }
 
-/** A* on the coarse grid avoiding strict rect interiors, turn-averse. */
-function astar(from, to, env) {
-  const sx = Math.round(from.x / STEP);
-  const sy = Math.round(from.y / STEP);
-  const tx = Math.round(to.x / STEP);
-  const ty = Math.round(to.y / STEP);
-  if (sx === tx && sy === ty) return [{ ...from }];
-  for (const margin of [20, 40]) {
-    const x0 = Math.min(sx, tx) - margin;
-    const x1 = Math.max(sx, tx) + margin;
-    const y0 = Math.min(sy, ty) - margin;
-    const y1 = Math.max(sy, ty) + margin;
-    const blocked = (cx, cy) => {
-      if ((cx === sx && cy === sy) || (cx === tx && cy === ty)) return false;
-      const w = { x: cx * STEP, y: cy * STEP };
-      for (const r of env.rects || []) {
-        const clear = { x: r.x - STEP, y: r.y - STEP, w: r.w + 2 * STEP, h: r.h + 2 * STEP };
-        const gateRow = (env.gatePassages || []).some((passage) => {
-          if (passage.rect.x !== r.x || passage.rect.y !== r.y ||
-              passage.rect.w !== r.w || passage.rect.h !== r.h) return false;
-          return passage.dir.x !== 0 ? w.y === passage.point.y : w.x === passage.point.x;
-        });
-        if (strictlyInside(w, clear) && !gateRow) return true;
-      }
-      return false;
-    };
-    const occupied = (a, b) => occupiedWire(a, b, env);
-    const LENGTH_WEIGHT = 1;
-    const BEND_WEIGHT = 20;
-    const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-    const g = new Map();
-    const back = new Map();
-    // Binary heap keeps A* from degenerating to O(n²) selection as the
-    // bounded search window grows around large obstacles.
-    const open = [];
-    let sequence = 0;
-    // The sequence tie-break preserves the old linear scan's insertion order
-    // for equal f/g scores, keeping route choice deterministic.
-    const less = (a, b) => a[0] !== b[0] ? a[0] < b[0] :
-      a[1] !== b[1] ? a[1] < b[1] : a[5] < b[5];
-    const pushOpen = (item) => {
-      let i = open.length;
-      open.push(item);
-      while (i > 0) {
-        const p = (i - 1) >> 1;
-        if (!less(item, open[p])) break;
-        open[i] = open[p]; i = p;
-      }
-      open[i] = item;
-    };
-    const popOpen = () => {
-      const first = open[0];
-      const last = open.pop();
-      if (open.length && last) {
-        let i = 0;
-        while (true) {
-          let child = i * 2 + 1;
-          if (child >= open.length) break;
-          if (child + 1 < open.length && less(open[child + 1], open[child])) child++;
-          if (!less(open[child], last)) break;
-          open[i] = open[child]; i = child;
-        }
-        open[i] = last;
-      }
-      return first;
-    };
-    const addOpen = (cost, cx0, cy0, d) => {
-      pushOpen([cost + (Math.abs(cx0 - tx) + Math.abs(cy0 - ty)) * LENGTH_WEIGHT, cost, cx0, cy0, d, sequence++]);
-    };
-    for (let d = 0; d < 4; d++) {
-      const nx = sx + D[d][0];
-      const ny = sy + D[d][1];
-      if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
-      if (!terminalEdgeValid({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
-      if (occupied({ x: sx * STEP, y: sy * STEP }, { x: nx * STEP, y: ny * STEP })) continue;
-      g.set(`${nx},${ny},${d}`, LENGTH_WEIGHT);
-      back.set(`${nx},${ny},${d}`, `${sx},${sy},-1`);
-      addOpen(LENGTH_WEIGHT, nx, ny, d);
-    }
-    let best = null;
-    while (open.length) {
-      const [, cost, cx0, cy0, d] = popOpen();
-      const key = `${cx0},${cy0},${d}`;
-      if (cost > (g.get(key) ?? Infinity)) continue;
-      if (cx0 === tx && cy0 === ty) {
-        best = { cx: cx0, cy: cy0 };
-        break;
-      }
-      for (let nd = 0; nd < 4; nd++) {
-        const nx = cx0 + D[nd][0];
-        const ny = cy0 + D[nd][1];
-        if (nx < x0 || nx > x1 || ny < y0 || ny > y1 || blocked(nx, ny)) continue;
-        if (!terminalEdgeValid({ x: cx0 * STEP, y: cy0 * STEP }, { x: nx * STEP, y: ny * STEP }, env)) continue;
-        const nc = cost + LENGTH_WEIGHT + (nd === d ? 0 : BEND_WEIGHT);
-        const nk = `${nx},${ny},${nd}`;
-        if (nc < (g.get(nk) ?? Infinity)) {
-          g.set(nk, nc);
-          back.set(nk, key);
-          addOpen(nc, nx, ny, nd);
-        }
-      }
-    }
-    if (!best) continue;
-    const path = [{ x: best.cx * STEP, y: best.cy * STEP }];
-    let cur = `${best.cx},${best.cy},${0}`;
-    // recover the direction of the goal from an open node with that cell
-    let dirSeen = null;
-    for (const [k] of g) {
-      const m = k.split(',');
-      if (Number(m[0]) === best.cx && Number(m[1]) === best.cy) {
-        dirSeen = Number(m[2]);
-        break;
-      }
-    }
-    // re-derive direction: goal cell has a back entry per direction; use any whose g is the min
-    let minG = Infinity;
-    let dirKey = null;
-    for (let d = 0; d < 4; d++) {
-      const k = `${best.cx},${best.cy},${d}`;
-      const gg = g.get(k);
-      if (gg !== undefined && gg <= minG) {
-        minG = gg;
-        dirKey = k;
-      }
-    }
-    if (dirKey) cur = dirKey;
-    const ordered = [cur];
-    let node = back.get(cur);
-    const guard = new Set(ordered);
-    while (node && !guard.has(node)) {
-      ordered.unshift(node);
-      guard.add(node);
-      node = back.get(node);
-    }
-    for (const k of ordered) {
-      const [x, y] = k.split(',').map(Number);
-      path.unshift({ x: x * STEP, y: y * STEP });
-    }
-    return compressElbow(path);
-  }
-  return null;
-}
-
 /**
  * Pick the best orthogonal route from -> to given the routing environment.
  * When an endpoint is a component pin, candidates that first extend one grid
  * cell OUTWARD in the pin's direction (a clean outside bend, never drilling
  * the body) are generated alongside the plain straight/L/Z ones; the conform
  * score prefers them, except when a constrained shared MOS gate passage makes
- * the direct gate bus intentional. The A* fallback only kicks in when every
- * enumerated candidate is rejected by the hard-safety checks. It is accepted
- * only after the same checks pass.
+ * the direct gate bus intentional. When every candidate fails the hard-safety
+ * checks the answer is null — no safe route — and the caller decides what to do.
  */
 function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   const f = snapP(from);
@@ -26272,10 +25910,7 @@ function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   if (f2 && !t2) for (const c of routeCandidates(f2, t)) cands.push(wrap(c));
   if (!f2 && t2) for (const c of routeCandidates(f, t2)) cands.push(wrap(c));
   const viable = cands.filter((candidate) => hardSafe(candidate, env));
-  if (!viable.length) {
-    const ast = astar(f, t, env);
-    return ast && hardSafe(ast, env) ? ast : null;
-  }
+  if (!viable.length) return null;
   const pool = viable;
   let best = pool[0];
   let bestScore = scoreCandidate(best, env);
@@ -26404,603 +26039,6 @@ __exports.completeSelectedNetIds = completeSelectedNetIds;
 __exports.chooseWireHitCandidate = chooseWireHitCandidate;
 };
 
-__modules["src/core/wiring.js"] = function (__require, __exports) {
-const { snap, GRID } = __require("src/core/grid.js");
-
-
-const pointKey = (p) => `${snap(p.x)},${snap(p.y)}`;
-
-function orthogonalizePath(path = []) {
-  const out = [];
-  for (let i = 0; i < path.length; i++) {
-    const a = path[i];
-    const p = { x: snap(a.x), y: snap(a.y) };
-    const last = out[out.length - 1];
-    if (last && last.x !== p.x && last.y !== p.y) out.push({ x: p.x, y: last.y });
-    out.push(p);
-  }
-  return out;
-}
-
-function clonePath(path = [], allowDiagonal = false) {
-  return allowDiagonal ? normalizePath(path, true) : normalizePath(orthogonalizePath(path));
-}
-
-/** Clone a protected direct-wire path without changing its shape. Direct wires
- * are still grid-snapped, but unlike managed paths their diagonal segments and
- * intentional intermediate collinear points are part of the saved geometry. */
-function cloneFixedPath(path = []) {
-  const out = [];
-  for (const raw of path || []) {
-    const p = { x: snap(raw.x), y: snap(raw.y) };
-    const last = out[out.length - 1];
-    if (!last || last.x !== p.x || last.y !== p.y) out.push(p);
-  }
-  return out;
-}
-
-/** Return path segments without imposing managed-wire orthogonality. */
-function pathSegments(path = []) {
-  const out = [];
-  for (let i = 1; i < path.length; i++) {
-    const a = path[i - 1];
-    const b = path[i];
-    if (a.x !== b.x || a.y !== b.y) out.push({ index: i, a, b });
-  }
-  return out;
-}
-
-/** Compact without snapping; arrowhead graphics also use off-grid coordinates.
- * Preserve reversals: an out-and-back can visit a real terminal or junction. */
-function compactPath(path = [], allowDiagonal = false) {
-  const out = [];
-  for (const raw of path) {
-    const p = { x: raw.x, y: raw.y };
-    const last = out[out.length - 1];
-    if (last && last.x === p.x && last.y === p.y) continue;
-    if (last && out.length > 1) {
-      const prev = out[out.length - 2];
-      const cross = (last.x - prev.x) * (p.y - last.y) - (last.y - prev.y) * (p.x - last.x);
-      const horiz = prev.y === last.y && last.y === p.y;
-      const vert = prev.x === last.x && last.x === p.x;
-      const collinear = allowDiagonal && cross === 0;
-      if ((horiz || collinear) && (p.x - last.x) * (last.x - prev.x) +
-          (p.y - last.y) * (last.y - prev.y) >= 0) {
-        out[out.length - 1] = p;
-        continue;
-      }
-      if (vert && (p.y - last.y) * (last.y - prev.y) >= 0) {
-        out[out.length - 1] = p;
-        continue;
-      }
-    }
-    out.push(p);
-  }
-  return out;
-}
-
-function normalizePath(path = [], allowDiagonal = false) {
-  return compactPath(path.map((raw) => ({ x: snap(raw.x), y: snap(raw.y) })), allowDiagonal);
-}
-
-function wireSegments(path = [], allowDiagonal = false) {
-  const out = [];
-  for (let i = 1; i < path.length; i++) {
-    const a = path[i - 1];
-    const b = path[i];
-    if (!allowDiagonal && a.x !== b.x && a.y !== b.y) throw new Error('wire path must be orthogonal');
-    if (a.x !== b.x || a.y !== b.y) out.push({ index: i, a, b });
-  }
-  return out;
-}
-
-function between(n, a, b) {
-  return n >= Math.min(a, b) && n <= Math.max(a, b);
-}
-
-/** True if grid point `p` lies on any segment of `path` (interior or vertex). */
-function pointOnPath(p, path = []) {
-  const P = { x: snap(p.x), y: snap(p.y) };
-  for (let i = 1; i < path.length; i++) {
-    const a = path[i - 1];
-    const b = path[i];
-    const cross = (P.x - a.x) * (b.y - a.y) - (P.y - a.y) * (b.x - a.x);
-    if (cross === 0 && between(P.x, a.x, b.x) && between(P.y, a.y, b.y)) return true;
-  }
-  return false;
-}
-
-/** Split a normalized orthogonal polyline at grid point `p`, which must lie in
- *  the STRICT INTERIOR of one of its segments. Returns [left, right], where left
- *  ends at `p` and right starts at `p`. Returns null when `p` is a vertex (or
- *  off the path), in which case no split is needed. */
-function splitBranchAt(path = [], p, allowDiagonal = false) {
-  const P = { x: snap(p.x), y: snap(p.y) };
-  for (let i = 1; i < path.length; i++) {
-    const a = path[i - 1];
-    const b = path[i];
-    const cross = (P.x - a.x) * (b.y - a.y) - (P.y - a.y) * (b.x - a.x);
-    const interior = cross === 0 && between(P.x, a.x, b.x) && between(P.y, a.y, b.y) &&
-      !(P.x === a.x && P.y === a.y) && !(P.x === b.x && P.y === b.y);
-    if (interior) {
-      return [
-        normalizePath([...path.slice(0, i), P], allowDiagonal),
-        normalizePath([P, ...path.slice(i)], allowDiagonal),
-      ];
-    }
-  }
-  return null;
-}
-
-/** Normalize a set of branches so no branch passes through a point shared with
- *  another branch or a terminal: every such point is split into a vertex, and
- *  duplicate branches are removed. Used to repair stale/overlapping geometry. */
-function normalizeBranches(paths = [], terminalPoints = [], allowDiagonal = false) {
-  const cut = new Map();
-  for (const path of paths) for (const p of path) cut.set(pointKey(p), { x: snap(p.x), y: snap(p.y) });
-  for (const p of terminalPoints) cut.set(pointKey(p), { x: snap(p.x), y: snap(p.y) });
-
-  const splitAtCut = (path) => {
-    for (let i = 1; i < path.length; i++) {
-      const a = path[i - 1];
-      const b = path[i];
-      for (const p of cut.values()) {
-        const cross = (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);
-        const interior = cross === 0 && between(p.x, a.x, b.x) && between(p.y, a.y, b.y) &&
-          !(p.x === a.x && p.y === a.y) && !(p.x === b.x && p.y === b.y);
-        if (interior) {
-          return [normalizePath([...path.slice(0, i), p], allowDiagonal), normalizePath([p, ...path.slice(i)], allowDiagonal)]
-            .filter((h) => h.length >= 2);
-        }
-      }
-    }
-    return null;
-  };
-
-  let work = paths.map((p) => normalizePath(p, allowDiagonal)).filter((p) => p.length >= 2);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    const next = [];
-    for (const path of work) {
-      const split = splitAtCut(path);
-      if (split) { next.push(...split); changed = true; }
-      else next.push(path);
-    }
-    work = next;
-  }
-
-  const seen = new Set();
-  const out = [];
-  for (const p of work) {
-    const key = JSON.stringify(p);
-    if (!seen.has(key)) { seen.add(key); out.push(p); }
-  }
-  return out;
-}
-
-/** Return all same-net junction points, including T and cross intersections.
- *  A junction is a grid point where three or more electrical arms meet, where
- *  each arm is a distinct wire direction leaving the point or a terminal. */
-function junctionPoints(paths = [], terminalPoints = [], allowDiagonal = false) {
-  const junctions = new Set();
-  const strict = (n, a, b) => n > Math.min(a, b) && n < Math.max(a, b);
-
-  // 1. Strict-interior perpendicular crossings (an unsplit wire passing through
-  //    the endpoint of another branch, or two interiors crossing).
-  for (let i = 0; i < paths.length; i++) {
-    for (let j = i + 1; j < paths.length; j++) {
-      const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
-      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
-      for (const sa of segmentsA) for (const sb of segmentsB) {
-        if (sa.a.x === sa.b.x && sb.a.y === sb.b.y &&
-            between(sa.a.x, sb.a.x, sb.b.x) && between(sb.a.y, sa.a.y, sa.b.y) &&
-            (strict(sa.a.x, sb.a.x, sb.b.x) || strict(sb.a.y, sa.a.y, sa.b.y))) junctions.add(`${sa.a.x},${sb.a.y}`);
-        if (sa.a.y === sa.b.y && sb.a.x === sb.b.x &&
-            between(sb.a.x, sa.a.x, sa.b.x) && between(sa.a.y, sb.a.y, sb.b.y) &&
-            (strict(sb.a.x, sa.a.x, sa.b.x) || strict(sa.a.y, sb.a.y, sb.b.y))) junctions.add(`${sb.a.x},${sa.a.y}`);
-      }
-    }
-  }
-
-  // 2. Branch vertices and terminals with three or more distinct arms.
-  const arms = new Map();
-  const add = (p, dir) => {
-    const k = pointKey(p);
-    if (!arms.has(k)) arms.set(k, new Set());
-    arms.get(k).add(dir);
-  };
-  const gcd = (a, b) => {
-    while (b) [a, b] = [b, a % b];
-    return a || 1;
-  };
-  for (const path of paths) for (const s of (allowDiagonal ? pathSegments(path) : wireSegments(path))) {
-    const rawDx = s.b.x - s.a.x;
-    const rawDy = s.b.y - s.a.y;
-    const divisor = gcd(Math.abs(rawDx), Math.abs(rawDy));
-    const dx = rawDx / divisor;
-    const dy = rawDy / divisor;
-    add(s.a, `${dx},${dy}`);
-    add(s.b, `${-dx},${-dy}`);
-  }
-  for (const p of terminalPoints) add(p, 'term');
-  for (const [key, dirs] of arms) if (dirs.size >= 3) junctions.add(key);
-
-  return [...junctions].map((key) => {
-    const [x, y] = key.split(',').map(Number);
-    return { x, y };
-  });
-}
-
-/** Return the positive-length collinear overlap of two arbitrary segments. */
-function collinearOverlap(a, b, c, d) {
-  const vx = b.x - a.x;
-  const vy = b.y - a.y;
-  const wx = d.x - c.x;
-  const wy = d.y - c.y;
-  if ((c.x - a.x) * vy - (c.y - a.y) * vx !== 0 || vx * wy - vy * wx !== 0) return null;
-  const useX = Math.abs(vx) >= Math.abs(vy);
-  const value = (p) => useX ? p.x : p.y;
-  const lo = Math.max(Math.min(value(a), value(b)), Math.min(value(c), value(d)));
-  const hi = Math.min(Math.max(value(a), value(b)), Math.max(value(c), value(d)));
-  if (hi <= lo) return null;
-  const at = (s) => useX
-    ? { x: s, y: a.y + (s - a.x) * vy / vx }
-    : { x: a.x + (s - a.y) * vx / vy, y: s };
-  const p0 = at(lo);
-  const p1 = at(hi);
-  return { x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
-}
-
-/** Collinear overlapping segments between DIFFERENT nets.
- *  nets: [{ id, paths: [[{x,y},...]] }]. Returns [{ key, otherKey, x0, y0, x1, y1 }]
- *  where key = `${netId}:${branch}:${seg}` and (x0,y0)-(x1,y1) is the shared span. */
-function crossNetOverlaps(nets) {
-  const segs = [];
-  for (const net of nets || []) {
-    const paths = net.paths || [];
-    for (let bi = 0; bi < paths.length; bi++) {
-      const path = paths[bi];
-      for (const s of pathSegments(path)) {
-        segs.push({ key: `${net.id}:${bi}:${s.index}`, netId: net.id, a: s.a, b: s.b });
-      }
-    }
-  }
-  const out = [];
-  for (let i = 0; i < segs.length; i++) {
-    for (let j = i + 1; j < segs.length; j++) {
-      const sa = segs[i];
-      const sb = segs[j];
-      if (sa.netId === sb.netId) continue;
-      const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
-      if (overlap) out.push({ key: sa.key, otherKey: sb.key, ...overlap });
-    }
-  }
-  return out;
-}
-
-/** True when two branch lists are point-identical (same order, same points). */
-function samePolylineSet(a = [], b = []) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const pa = a[i];
-    const pb = b[i];
-    if (!pa || !pb || pa.length !== pb.length) return false;
-    for (let k = 0; k < pa.length; k++) {
-      if (pa[k].x !== pb[k].x || pa[k].y !== pb[k].y) return false;
-    }
-  }
-  return true;
-}
-
-/** Endpoints of every strictly-positive collinear overlap between two segments
- *  of DIFFERENT branches. Splitting both branches at these points turns an
- *  overlapped span into a parallel edge the MST can drop, so a wire dragged on
- *  top of a same-net wire merges into it instead of hiding beneath it. */
-function overlapEndpoints(paths = [], allowDiagonal = false) {
-  const out = [];
-  for (let i = 0; i < paths.length; i++) {
-    for (let j = i + 1; j < paths.length; j++) {
-      const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
-      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
-      for (const sa of segmentsA) for (const sb of segmentsB) {
-        const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
-        if (overlap) out.push({ x: overlap.x0, y: overlap.y0 }, { x: overlap.x1, y: overlap.y1 });
-      }
-    }
-  }
-  return out;
-}
-
-/** True when different branches contain a positive-length collinear overlap. */
-function hasPositiveBranchOverlap(paths = [], allowDiagonal = false) {
-  for (let i = 0; i < paths.length; i++) {
-    const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
-    for (let j = i + 1; j < paths.length; j++) {
-      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
-      for (const sa of segmentsA) for (const sb of segmentsB) {
-        if (collinearOverlap(sa.a, sa.b, sb.a, sb.b)) return true;
-      }
-    }
-  }
-  return false;
-}
-
-/**
- * Reduce a set of wire branches to the minimum spanning tree of their
- * connectivity graph — the conventional ratsnest-style reduction (Kruskal;
- * KiCad's RN_NET::kruskalMST, EAGLE RATSNEST). Terminals and junctions
- * (T/cross points) become graph vertices; each polyline run between two
- * vertices is an edge weighted by its Manhattan length. Parallel edges (the
- * same two points wired more than once, or two runs lying on top of each
- * other along a shared span) and cycle edges (loops) are removed, keeping
- * only the cheapest connected structure; ties are broken by insertion order
- * (older branches win), so the result is deterministic and idempotent: an
- * already-minimal net is returned unchanged. Bridges (the only path between
- * two points) are never removed; terminals are never moved or dropped, and
- * always stay branch endpoints (never collapsed into a run).
- */
-function reduceBranches(paths = [], terminalPoints = [], allowDiagonal = false) {
-  const terminals = terminalPoints.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
-  const overlapPoints = overlapEndpoints(paths, allowDiagonal);
-  // Split every branch at every shared vertex, terminal, junction, and
-  // collinear-overlap boundary so all intersections become real vertices
-  // before the graph is built.
-  const split = normalizeBranches(
-    paths,
-    [...terminals, ...junctionPoints(paths, terminalPoints, allowDiagonal), ...overlapPoints],
-    allowDiagonal,
-  ).filter((p) => p.length >= 2);
-  if (split.length === 0) return [];
-
-  const key = (p) => `${snap(p.x)},${snap(p.y)}`;
-  const terminalKeys = new Set(terminals.map(key));
-  // A polyline that closes on itself (first point == last point) is a loop in
-  // a single branch; open it by dropping the duplicated closing point so the
-  // MST reduces it like any other path instead of a degenerate self-loop.
-  const open = split.map((p) =>
-    p.length > 1 && p[0].x === p[p.length - 1].x && p[0].y === p[p.length - 1].y ? p.slice(0, -1) : p
-  ).filter((p) => p.length >= 2);
-  if (open.length === 0) return [];
-
-  // Branch points: terminals, overlap boundaries, plus junctions of the split
-  // geometry (3+ electrical arms). Overlap boundaries are graph vertices but
-  // are intentionally not junctions merely because two branches overlap.
-  const branchPoints = new Set([
-    ...terminalKeys,
-    ...overlapPoints.map(key),
-    ...junctionPoints(open, terminalPoints, allowDiagonal).map(key),
-  ]);
-
-  // Runs: maximal spans of each branch between branch points (or the branch's
-  // own dangling ends). Each run is one graph edge carrying its polyline.
-  const edges = [];
-  for (let bi = 0; bi < open.length; bi++) {
-    const path = open[bi];
-    let runStart = 0;
-    let runCost = 0;
-    for (let i = 1; i < path.length; i++) {
-      const prev = path[i - 1];
-      const p = path[i];
-      runCost += allowDiagonal
-        ? Math.hypot(p.x - prev.x, p.y - prev.y)
-        : Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y);
-      if (branchPoints.has(key(p)) || i === path.length - 1) {
-        if (i > runStart) {
-          edges.push({
-            a: key(path[runStart]), b: key(p), cost: runCost, bi, si: runStart + 1,
-            pts: path.slice(runStart, i + 1),
-          });
-        }
-        runStart = i;
-        runCost = 0;
-      }
-    }
-  }
-  if (edges.length === 0) return [];
-
-  // Kruskal: keep the cheapest edge joining two previously separate components;
-  // parallel edges (2-cycles) and loop edges (cycle property) are dropped.
-  const parent = new Map();
-  const find = (k) => {
-    let p = parent.get(k);
-    if (p === undefined) { parent.set(k, k); return k; }
-    while (p !== parent.get(p)) p = parent.get(p);
-    let q = k;
-    while (parent.get(q) !== q) { const n = parent.get(q); parent.set(q, p); q = n; }
-    return p;
-  };
-  const union = (a, b) => {
-    a = find(a);
-    b = find(b);
-    if (a === b) return false;
-    parent.set(a, b);
-    return true;
-  };
-  const sorted = [...edges].sort((e1, e2) => e1.cost - e2.cost || e1.bi - e2.bi || e1.si - e2.si);
-  const kept = [];
-  for (const e of sorted) if (union(e.a, e.b)) kept.push(e);
-
-  // Reassemble the kept forest — even when nothing was dropped: runs meeting
-  // at a non-terminal degree-2 vertex (a point that ceased to branch, a stale
-  // branch end, or an overlap boundary) merge into one polyline, so no phantom
-  // junctions, stub pieces, or redundant vertices survive. Terminal vertices stay branch
-  // boundaries so wire legs re-anchor correctly when their component moves.
-  const adj = new Map();
-  const add = (v) => { if (!adj.has(v)) adj.set(v, []); };
-  for (const e of kept) {
-    add(e.a);
-    add(e.b);
-    adj.get(e.a).push({ to: e.b, e });
-    adj.get(e.b).push({ to: e.a, e });
-  }
-  const seen = new Set();
-  const out = [];
-  const tag = (e) => `${e.bi}:${e.si}`;
-  // Orient an edge's polyline to start at `fromV` (a tree walk crosses edges
-  // in either direction; runs are always stored start-to-end).
-  const orient = (e, fromV) => {
-    const pts = e.pts;
-    if (key(pts[0]) === fromV) return pts;
-    return pts.slice().reverse();
-  };
-  for (const [v, list] of adj) {
-    if (list.length === 2 && !terminalKeys.has(v)) continue; // interior of a run
-    for (const first of list) {
-      if (seen.has(tag(first.e))) continue;
-      const poly = [...orient(first.e, v)]; // starts at v, carries every bend
-      let prev = v;
-      let cur = first.to;
-      seen.add(tag(first.e));
-      while (adj.get(cur).length === 2 && !terminalKeys.has(cur)) {
-        const next = adj.get(cur).find((n) => n.to !== prev);
-        if (!next) break;
-        seen.add(tag(next.e));
-        const shared = cur; // orient must start at the vertex the walk is AT
-        prev = cur;
-        cur = next.to;
-        poly.push(...orient(next.e, shared).slice(1)); // next.pts starts at `shared`
-      }
-      // Keep the stored direction of the run's first edge, so an unmerged
-      // branch comes back exactly as authored (e.g. pin-first escape legs).
-      const reversed = key(first.e.pts[0]) !== v;
-      out.push({ poly: normalizePath(reversed ? poly.reverse() : poly, allowDiagonal), bi: first.e.bi, si: first.e.si });
-    }
-  }
-  out.sort((a, b) => a.bi - b.bi || a.si - b.si);
-  return out.map((o) => o.poly);
-}
-
-/** Join branches whose ends meet at a plain point: exactly two branch ends,
- *  no anchor (terminal, junction, styled-segment boundary), and no other wire
- *  vertex or segment through it. Geometry is unchanged; only the split between
- *  branches goes away, so a run grown piecewise becomes one polyline. The
- *  earlier branch keeps its index and direction. */
-function joinBranchEnds(paths = [], anchorPoints = [], allowDiagonal = false) {
-  const anchors = new Set(anchorPoints.map(pointKey));
-  let work = paths.map((p) => p.map((q) => ({ ...q })));
-  for (;;) {
-    const ends = new Map();
-    const blocked = new Set(anchors);
-    work.forEach((path, bi) => {
-      if (path.length < 2) return;
-      [0, path.length - 1].forEach((pi) => {
-        const k = pointKey(path[pi]);
-        if (!ends.has(k)) ends.set(k, []);
-        ends.get(k).push({ bi, head: pi === 0 });
-      });
-      for (let i = 1; i < path.length - 1; i++) blocked.add(pointKey(path[i]));
-    });
-    let join = null;
-    for (const [k, list] of ends) {
-      if (list.length !== 2 || blocked.has(k) || list[0].bi === list[1].bi) continue;
-      const [x, y] = k.split(',').map(Number);
-      const through = work.some((path) => path.some((a, i) => {
-        const b = path[i + 1];
-        if (!b) return false;
-        const cross = (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
-        return cross === 0 && between(x, a.x, b.x) && between(y, a.y, b.y) &&
-          !(x === a.x && y === a.y) && !(x === b.x && y === b.y);
-      }));
-      if (!through) { join = list; break; }
-    }
-    if (!join) return work;
-    const [first, second] = join[0].bi < join[1].bi ? join : [join[1], join[0]];
-    const a = work[first.bi];
-    const b = work[second.bi];
-    const bFromJoin = second.head ? b : b.slice().reverse();
-    const merged = first.head
-      ? [...bFromJoin.slice().reverse(), ...a.slice(1)]
-      : [...a, ...bFromJoin.slice(1)];
-    work = work.map((path, bi) => (bi === first.bi ? normalizePath(merged, allowDiagonal) : path))
-      .filter((_, bi) => bi !== second.bi);
-  }
-}
-
-/** Remove one editable segment and return normalized remaining paths. */
-function deleteWireSegment(paths, branch, segment) {
-  if (!paths[branch]) return paths;
-  const path = paths[branch];
-  if (segment <= 0 || segment >= path.length) return paths;
-  const left = normalizePath(path.slice(0, segment));
-  const right = normalizePath(path.slice(segment));
-  const next = paths.slice();
-  next.splice(branch, 1, ...(left.length > 1 ? [left] : []), ...(right.length > 1 ? [right] : []));
-  return next;
-}
-
-/** Partition terminals and branches into connected components. A branch whose
- *  points do not touch any terminal is dropped. Returns
- *  [{ terminals: [{comp,term,point}], paths: [[...]] }]. */
-function splitByComponent(paths, terminals) {
-  const parent = new Map();
-  const find = (k) => { let p = parent.get(k); while (p !== parent.get(p)) p = parent.get(p); let q = k; while (parent.get(q) !== q) { const n = parent.get(q); parent.set(q, p); q = n; } return p; };
-  const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent.set(a, b); };
-  const addPoint = (p) => { const k = pointKey(p); if (!parent.has(k)) parent.set(k, k); return k; };
-  for (const path of paths) {
-    let prev = null;
-    for (const p of path) {
-      const k = addPoint(p);
-      if (prev) union(prev, k);
-      prev = k;
-    }
-  }
-  const groups = new Map();
-  for (const t of terminals) {
-    if (!t.point) continue;
-    const k = pointKey(t.point);
-    const root = parent.has(k) ? find(k) : `terminal:${t.comp}.${t.term}`;
-    if (!groups.has(root)) groups.set(root, { terminals: [], paths: [] });
-    groups.get(root).terminals.push(t);
-  }
-  for (const path of paths) {
-    if (!path.length) continue;
-    const root = find(pointKey(path[0]));
-    if (groups.has(root)) groups.get(root).paths.push(path);
-  }
-  return [...groups.values()];
-}
-
-function pathLength(path = []) {
-  return pathSegments(path).reduce((n, s) => n + Math.hypot(s.a.x - s.b.x, s.a.y - s.b.y), 0);
-}
-
-function validateWiring(net) {
-  const errors = [];
-  for (const [bi, path] of net.paths().entries()) {
-    for (const p of path) {
-      if (p.x % GRID || p.y % GRID) errors.push(`branch ${bi} has off-grid point (${p.x},${p.y})`);
-    }
-    if (net.routingMode !== 'fixed') {
-      try { wireSegments(path, net.allowDiagonal === true); } catch (err) { errors.push(`branch ${bi}: ${err.message}`); }
-    }
-  }
-  return errors;
-}
-
-__exports.orthogonalizePath = orthogonalizePath;
-__exports.clonePath = clonePath;
-__exports.cloneFixedPath = cloneFixedPath;
-__exports.pathSegments = pathSegments;
-__exports.compactPath = compactPath;
-__exports.normalizePath = normalizePath;
-__exports.wireSegments = wireSegments;
-__exports.pointOnPath = pointOnPath;
-__exports.splitBranchAt = splitBranchAt;
-__exports.normalizeBranches = normalizeBranches;
-__exports.junctionPoints = junctionPoints;
-__exports.crossNetOverlaps = crossNetOverlaps;
-__exports.samePolylineSet = samePolylineSet;
-__exports.hasPositiveBranchOverlap = hasPositiveBranchOverlap;
-__exports.reduceBranches = reduceBranches;
-__exports.joinBranchEnds = joinBranchEnds;
-__exports.deleteWireSegment = deleteWireSegment;
-__exports.splitByComponent = splitByComponent;
-__exports.pathLength = pathLength;
-__exports.validateWiring = validateWiring;
-__exports.pointKey = pointKey;
-};
-
 __modules["src/web/wire-index.js"] = function (__require, __exports) {
 const { distanceToSegment } = __require("src/core/geometry.js");
 
@@ -27075,6 +26113,312 @@ function queryWireHitIndex(index, raw, snapped, tolerance) {
 
 __exports.buildWireHitIndex = buildWireHitIndex;
 __exports.queryWireHitIndex = queryWireHitIndex;
+};
+
+__modules["src/core/wireedit.js"] = function (__require, __exports) {
+const { GRID, snap } = __require("src/core/grid.js");
+
+
+/**
+ * Interactive re-routing of an explicit wire polyline by dragging a segment.
+ * A route is an ordered list of grid points. By default a "run" is a maximal
+ * run of consecutive collinear segments; callers may provide topology breaks
+ * to treat aligned segments on either side of a terminal or junction
+ * independently. Dragging a segment moves its bounded run perpendicularly.
+ * `endpointMeta` identifies path endpoints as `{ type: 'terminal'|'junction' }`;
+ * omitted metadata uses terminal-endpoint behavior. `allowPastNeighbors` is
+ * for reversible editor previews: it lets a run pass adjacent bends so a
+ * later legal drop is reachable; the caller must validate before committing.
+ *
+ * Key behaviors:
+ *  - By default the run may slide as far as an adjacent run; reaching it
+ *    collapses the shared corner, and the now-invisible collinear vertex is
+ *    removed.
+ *  - By default the run never slides past a neighbour (no inverted folds);
+ *    reversible previews may opt out until their final geometry is validated.
+ *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
+ *    wire with an added connector segment so the pin stays connected.
+ *  - A standalone two-point bridge between two junctions moves both junction
+ *    endpoints together; a standalone pin-to-pin run remains immovable.
+ */
+
+/** Collinear run containing segment `seg`, stopping at optional topology
+ * points. Topology breaks let adjacent aligned branch segments move
+ * independently when a junction sits between them. */
+function wireRunAt(pts, seg, breaks = null) {
+  const n = pts.length;
+  const i = Math.max(1, Math.min(seg, n - 1));
+  const orient = pts[i - 1].y === pts[i].y ? 'h' : 'v';
+  const val = orient === 'h' ? pts[i].y : pts[i].x;
+  const same = (p) => (orient === 'h' ? p.y === val : p.x === val);
+  const isBreak = (p) => breaks?.has(`${p.x},${p.y}`);
+  let lo = i - 1;
+  let hi = i;
+  while (lo > 0 && same(pts[lo - 1]) && !isBreak(pts[lo])) lo--;
+  while (hi < n - 1 && same(pts[hi + 1]) && !isBreak(pts[hi])) hi++;
+  return { lo, hi, orient, val };
+}
+
+/** Drop consecutive duplicates and any middle point collinear with its
+ * neighbours, in place. Endpoints (terminal pins) are always preserved.
+ * Returns the new length.
+ */
+function collapseCollinear(pts) {
+  let i = pts.length - 2;
+  while (i >= 1) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const c = pts[i + 1];
+    if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y) || (a.x === b.x && a.y === b.y)) {
+      pts.splice(i, 1);
+    }
+    i--;
+  }
+  return pts.length;
+}
+
+/** Index of a segment lying on the collinear run at perpendicular line `line`
+ *  (a y for horizontal runs, an x for vertical runs), or -1 if none. */
+function findRunLine(pts, orient, line) {
+  for (let i = 1; i < pts.length; i++) {
+    const onLine = orient === 'h' ? pts[i].y === line : pts[i].x === line;
+    if (!onLine) continue;
+    const aligned = orient === 'h' ? pts[i - 1].y === pts[i].y : pts[i - 1].x === pts[i].x;
+    if (aligned) return i;
+  }
+  return -1;
+}
+
+/** Move one junction in a managed branch set and rebuild each incident branch
+ * endpoint with a local orthogonal elbow when the old and new locations are not
+ * collinear with its neighbour. The caller owns the net object; this pure
+ * helper mutates `paths` and returns the replacement junction list. */
+function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpointInfo = null) {
+  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return junctions;
+  for (const path of paths || []) {
+    for (let i = 0; i < path.length; i++) {
+      const p = path[i];
+      if (p.x !== oldPoint.x || p.y !== oldPoint.y) continue;
+      const neighbor = i === 0 ? path[1] : path[i - 1];
+      const oldHorizontal = neighbor && neighbor.y === oldPoint.y;
+      const oldVertical = neighbor && neighbor.x === oldPoint.x;
+      const otherIndex = i === 0 ? 1 : i === path.length - 1 ? path.length - 2 : -1;
+      const otherMeta = otherIndex >= 0 && endpointInfo ? endpointInfo(path, otherIndex) : null;
+      p.x = newPoint.x;
+      p.y = newPoint.y;
+      if (neighbor && p.x !== neighbor.x && p.y !== neighbor.y) {
+        const candidates = oldHorizontal
+          ? [{ x: neighbor.x, y: newPoint.y }, { x: newPoint.x, y: neighbor.y }]
+          : oldVertical
+            ? [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }]
+            : [{ x: newPoint.x, y: neighbor.y }, { x: neighbor.x, y: newPoint.y }];
+        const same = (a, b) => a.x === b.x && a.y === b.y;
+        const step = (a, b) => ({ x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) });
+        const incoming = (q) => i === 0 ? step(q, neighbor) : step(neighbor, q);
+        const desired = otherMeta?.type === 'terminal' && otherMeta.dir
+          ? { x: -otherMeta.dir.x, y: -otherMeta.dir.y } : null;
+        const valid = candidates.filter((q) =>
+          !same(q, oldPoint) && !same(q, newPoint) && !same(q, neighbor)
+        );
+        const elbow = valid.find((q) =>
+          (!desired || (incoming(q).x === desired.x && incoming(q).y === desired.y))
+        );
+        if (elbow) {
+          path.splice(i === 0 ? 1 : i, 0, elbow);
+        } else if (desired) {
+          // Detour one extra grid cell outward from the terminal to preserve
+          // pin conformity without retaining the junction coordinate.
+          const sign = otherMeta.dir;
+          const distance = same({ x: neighbor.x + sign.x * GRID, y: neighbor.y + sign.y * GRID }, oldPoint) ? 2 : 1;
+          const pinLead = { x: neighbor.x + sign.x * GRID * distance, y: neighbor.y + sign.y * GRID * distance };
+          const detours = newPoint.x === pinLead.x || newPoint.y === pinLead.y ? [] : [
+            { x: newPoint.x, y: pinLead.y },
+            { x: pinLead.x, y: newPoint.y },
+          ];
+          const detour = detours.find((q) => !same(q, oldPoint) && !same(q, newPoint) && !same(q, pinLead));
+          const inserts = i === 0 ? [ ...(detour ? [detour] : []), pinLead ] : [ pinLead, ...(detour ? [detour] : []) ];
+          path.splice(i === 0 ? 1 : i, 0, ...inserts);
+        }
+      }
+    }
+  }
+  return (junctions || []).map((p) => (
+    p.x === oldPoint.x && p.y === oldPoint.y ? { ...newPoint } : p
+  ));
+}
+
+/**
+ * Move the collinear run of orientation `orient` presently at perpendicular
+ * line `line` to `target` (grid-snapped along the perpendicular axis).
+ * `endpointMeta.runBounds` and `endpointMeta.breaks` may bound the run at
+ * electrical topology points; otherwise the maximal run is used. The run may
+ * slide as far as an adjacent run (reaching it collapses the shared corner)
+ * but, by default, never past it (no inverted folds). Reversible previews may
+ * set `allowPastNeighbors` and validate the resulting geometry on drop. Runs touching a terminal endpoint
+ * keep that pin fixed and extend the wire with a connector segment.
+ * `preserveDiagonalNeighbors` keeps a diagonal segment immediately before or
+ * after an interior run fixed, adding a perpendicular connector at the old
+ * corner instead of stretching the diagonal while the run moves.
+ * `endpointMeta` is optional for compatibility with callers whose paths are
+ * known to be terminal-ended: `{ start: { type }, end: { type } }`.
+ * Returns the perpendicular line value the run actually ended on (== `line`
+ * when nothing could move).
+ */
+function moveWireRun(pts, orient, line, target, endpointMeta = null) {
+  const si = Number.isInteger(endpointMeta?.segment)
+    ? Math.max(1, Math.min(endpointMeta.segment, pts.length - 1))
+    : findRunLine(pts, orient, line);
+  if (si < 0) return line;
+  const run = wireRunAt(pts, si, endpointMeta?.breaks);
+  const forcedInterior = endpointMeta?.interiorRun === true;
+  const lo = endpointMeta?.runBounds?.lo ?? (forcedInterior ? 1 : run.lo);
+  const hi = endpointMeta?.runBounds?.hi ?? (forcedInterior ? pts.length - 2 : run.hi);
+  const n = pts.length;
+  const loEnd = lo === 0;
+  const hiEnd = hi === n - 1;
+  const startType = endpointMeta?.start?.type || 'terminal';
+  const endType = endpointMeta?.end?.type || 'terminal';
+  const startTerminal = startType === 'terminal';
+  const endTerminal = endType === 'terminal';
+  const val = line;
+  const nv = (idx) => (orient === 'h' ? pts[idx].y : pts[idx].x);
+  let lower = -Infinity;
+  let upper = Infinity;
+  if (!loEnd) {
+    const v = nv(lo - 1);
+    if (v < val) lower = Math.max(lower, v);
+    else upper = Math.min(upper, v);
+  }
+  if (!hiEnd) {
+    const v = nv(hi + 1);
+    if (v < val) lower = Math.max(lower, v);
+    else upper = Math.min(upper, v);
+  }
+  let t = snap(target);
+  if (!endpointMeta?.allowPastNeighbors) {
+    if (t < val) t = Math.max(t, lower);
+    else if (t > val) t = Math.min(t, upper);
+  }
+  if (t === val) return val;
+
+  if (!loEnd && !hiEnd) {
+    // Interior run: slide freely (possibly up to a neighbour to collapse).
+    const preserveDiagonals = endpointMeta?.preserveDiagonalNeighbors === true;
+    const diagonalStart = preserveDiagonals && pts[lo - 1] && pts[lo] &&
+      pts[lo - 1].x !== pts[lo].x && pts[lo - 1].y !== pts[lo].y
+      ? { ...pts[lo] } : null;
+    const diagonalEnd = preserveDiagonals && pts[hi] && pts[hi + 1] &&
+      pts[hi].x !== pts[hi + 1].x && pts[hi].y !== pts[hi + 1].y
+      ? { ...pts[hi] } : null;
+    for (let i = lo; i <= hi; i++) {
+      if (orient === 'h') pts[i].y = t;
+      else pts[i].x = t;
+    }
+    // Keep a mixed route's diagonal geometry literal. The inserted old corner
+    // is connected to the moved run by the perpendicular lead that a normal
+    // orthogonal bend would have stretched into the diagonal otherwise.
+    if (diagonalStart) pts.splice(lo, 0, diagonalStart);
+    if (diagonalEnd) pts.splice(hi + (diagonalStart ? 2 : 1), 0, diagonalEnd);
+    collapseCollinear(pts);
+    return t;
+  }
+
+  const boundedRun = !!endpointMeta?.runBounds;
+  const anchoredStart = boundedRun && loEnd && (startTerminal || startType === 'junction');
+  const anchoredEnd = boundedRun && hiEnd && (endTerminal || endType === 'junction');
+  if (anchoredStart || anchoredEnd) {
+    // A topology-bounded run moves without moving its electrical anchors.
+    // Keep each terminal/junction fixed and add connector legs at the ends;
+    // incident branches therefore remain stationary unless explicitly selected.
+    if (anchoredStart && anchoredEnd) {
+      const a = { ...pts[0] };
+      const b = { ...pts[n - 1] };
+      if (orient === 'h') {
+        for (let i = 1; i < n - 1; i++) pts[i].y = t;
+        pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
+      } else {
+        for (let i = 1; i < n - 1; i++) pts[i].x = t;
+        pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
+      }
+      return t;
+    }
+    if (anchoredStart) {
+      const p = { ...pts[0] };
+      if (orient === 'h') {
+        for (let i = 1; i <= hi; i++) pts[i].y = t;
+        pts.splice(1, 0, { x: p.x, y: t });
+      } else {
+        for (let i = 1; i <= hi; i++) pts[i].x = t;
+        pts.splice(1, 0, { x: t, y: p.y });
+      }
+      return t;
+    }
+    const p = { ...pts[n - 1] };
+    if (orient === 'h') {
+      for (let i = lo; i < n - 1; i++) pts[i].y = t;
+      pts.splice(n - 1, 0, { x: p.x, y: t });
+    } else {
+      for (let i = lo; i < n - 1; i++) pts[i].x = t;
+      pts.splice(n - 1, 0, { x: t, y: p.y });
+    }
+    return t;
+  }
+
+  // A standalone bridge is bounded by two real junctions rather than pins.
+  // Without run bounds, move the whole bridge.
+  if (loEnd && hiEnd && startType === 'junction' && endType === 'junction') {
+    for (const p of pts) {
+      if (orient === 'h') p.y = t;
+      else p.x = t;
+    }
+    return t;
+  }
+
+  if (loEnd && hiEnd && startTerminal && endTerminal) {
+    if (!boundedRun) return val;
+    const a = { ...pts[0] };
+    const b = { ...pts[n - 1] };
+    if (orient === 'h') {
+      pts.splice(1, 0, { x: a.x, y: t }, { x: b.x, y: t });
+    } else {
+      pts.splice(1, 0, { x: t, y: a.y }, { x: t, y: b.y });
+    }
+    return t;
+  }
+  if (orient === 'h') {
+    if (loEnd && (!hiEnd || startTerminal)) {
+      const px = pts[0].x;
+      for (let i = 1; i <= hi; i++) pts[i].y = t;
+      if (startTerminal) pts.splice(1, 0, { x: px, y: t });
+      else pts[0].y = t;
+    } else if (hiEnd) {
+      const px = pts[n - 1].x;
+      for (let i = lo; i <= n - 2; i++) pts[i].y = t;
+      if (endTerminal) pts.splice(n - 1, 0, { x: px, y: t });
+      else pts[n - 1].y = t;
+    }
+  } else {
+    if (loEnd && (!hiEnd || startTerminal)) {
+      const py = pts[0].y;
+      for (let i = 1; i <= hi; i++) pts[i].x = t;
+      if (startTerminal) pts.splice(1, 0, { x: t, y: py });
+      else pts[0].x = t;
+    } else if (hiEnd) {
+      const py = pts[n - 1].y;
+      for (let i = lo; i <= n - 2; i++) pts[i].x = t;
+      if (endTerminal) pts.splice(n - 1, 0, { x: t, y: py });
+      else pts[n - 1].x = t;
+    }
+  }
+  collapseCollinear(pts);
+  return t;
+}
+
+__exports.wireRunAt = wireRunAt;
+__exports.collapseCollinear = collapseCollinear;
+__exports.findRunLine = findRunLine;
+__exports.moveJunctionEndpoint = moveJunctionEndpoint;
+__exports.moveWireRun = moveWireRun;
 };
 
 __modules["src/web/commit-feedback.js"] = function (__require, __exports) {
@@ -27960,6 +27304,603 @@ __exports.createBrowserPersistenceAdapter = createBrowserPersistenceAdapter;
 __exports.createPersistenceAdapter = createPersistenceAdapter;
 };
 
+__modules["src/core/wiring.js"] = function (__require, __exports) {
+const { snap, GRID } = __require("src/core/grid.js");
+
+
+const pointKey = (p) => `${snap(p.x)},${snap(p.y)}`;
+
+function orthogonalizePath(path = []) {
+  const out = [];
+  for (let i = 0; i < path.length; i++) {
+    const a = path[i];
+    const p = { x: snap(a.x), y: snap(a.y) };
+    const last = out[out.length - 1];
+    if (last && last.x !== p.x && last.y !== p.y) out.push({ x: p.x, y: last.y });
+    out.push(p);
+  }
+  return out;
+}
+
+function clonePath(path = [], allowDiagonal = false) {
+  return allowDiagonal ? normalizePath(path, true) : normalizePath(orthogonalizePath(path));
+}
+
+/** Clone a protected direct-wire path without changing its shape. Direct wires
+ * are still grid-snapped, but unlike managed paths their diagonal segments and
+ * intentional intermediate collinear points are part of the saved geometry. */
+function cloneFixedPath(path = []) {
+  const out = [];
+  for (const raw of path || []) {
+    const p = { x: snap(raw.x), y: snap(raw.y) };
+    const last = out[out.length - 1];
+    if (!last || last.x !== p.x || last.y !== p.y) out.push(p);
+  }
+  return out;
+}
+
+/** Return path segments without imposing managed-wire orthogonality. */
+function pathSegments(path = []) {
+  const out = [];
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    if (a.x !== b.x || a.y !== b.y) out.push({ index: i, a, b });
+  }
+  return out;
+}
+
+/** Compact without snapping; arrowhead graphics also use off-grid coordinates.
+ * Preserve reversals: an out-and-back can visit a real terminal or junction. */
+function compactPath(path = [], allowDiagonal = false) {
+  const out = [];
+  for (const raw of path) {
+    const p = { x: raw.x, y: raw.y };
+    const last = out[out.length - 1];
+    if (last && last.x === p.x && last.y === p.y) continue;
+    if (last && out.length > 1) {
+      const prev = out[out.length - 2];
+      const cross = (last.x - prev.x) * (p.y - last.y) - (last.y - prev.y) * (p.x - last.x);
+      const horiz = prev.y === last.y && last.y === p.y;
+      const vert = prev.x === last.x && last.x === p.x;
+      const collinear = allowDiagonal && cross === 0;
+      if ((horiz || collinear) && (p.x - last.x) * (last.x - prev.x) +
+          (p.y - last.y) * (last.y - prev.y) >= 0) {
+        out[out.length - 1] = p;
+        continue;
+      }
+      if (vert && (p.y - last.y) * (last.y - prev.y) >= 0) {
+        out[out.length - 1] = p;
+        continue;
+      }
+    }
+    out.push(p);
+  }
+  return out;
+}
+
+function normalizePath(path = [], allowDiagonal = false) {
+  return compactPath(path.map((raw) => ({ x: snap(raw.x), y: snap(raw.y) })), allowDiagonal);
+}
+
+function wireSegments(path = [], allowDiagonal = false) {
+  const out = [];
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    if (!allowDiagonal && a.x !== b.x && a.y !== b.y) throw new Error('wire path must be orthogonal');
+    if (a.x !== b.x || a.y !== b.y) out.push({ index: i, a, b });
+  }
+  return out;
+}
+
+function between(n, a, b) {
+  return n >= Math.min(a, b) && n <= Math.max(a, b);
+}
+
+/** True if grid point `p` lies on any segment of `path` (interior or vertex). */
+function pointOnPath(p, path = []) {
+  const P = { x: snap(p.x), y: snap(p.y) };
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    const cross = (P.x - a.x) * (b.y - a.y) - (P.y - a.y) * (b.x - a.x);
+    if (cross === 0 && between(P.x, a.x, b.x) && between(P.y, a.y, b.y)) return true;
+  }
+  return false;
+}
+
+/** Split a normalized orthogonal polyline at grid point `p`, which must lie in
+ *  the STRICT INTERIOR of one of its segments. Returns [left, right], where left
+ *  ends at `p` and right starts at `p`. Returns null when `p` is a vertex (or
+ *  off the path), in which case no split is needed. */
+function splitBranchAt(path = [], p, allowDiagonal = false) {
+  const P = { x: snap(p.x), y: snap(p.y) };
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    const cross = (P.x - a.x) * (b.y - a.y) - (P.y - a.y) * (b.x - a.x);
+    const interior = cross === 0 && between(P.x, a.x, b.x) && between(P.y, a.y, b.y) &&
+      !(P.x === a.x && P.y === a.y) && !(P.x === b.x && P.y === b.y);
+    if (interior) {
+      return [
+        normalizePath([...path.slice(0, i), P], allowDiagonal),
+        normalizePath([P, ...path.slice(i)], allowDiagonal),
+      ];
+    }
+  }
+  return null;
+}
+
+/** Normalize a set of branches so no branch passes through a point shared with
+ *  another branch or a terminal: every such point is split into a vertex, and
+ *  duplicate branches are removed. Used to repair stale/overlapping geometry. */
+function normalizeBranches(paths = [], terminalPoints = [], allowDiagonal = false) {
+  const cut = new Map();
+  for (const path of paths) for (const p of path) cut.set(pointKey(p), { x: snap(p.x), y: snap(p.y) });
+  for (const p of terminalPoints) cut.set(pointKey(p), { x: snap(p.x), y: snap(p.y) });
+
+  const splitAtCut = (path) => {
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      for (const p of cut.values()) {
+        const cross = (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);
+        const interior = cross === 0 && between(p.x, a.x, b.x) && between(p.y, a.y, b.y) &&
+          !(p.x === a.x && p.y === a.y) && !(p.x === b.x && p.y === b.y);
+        if (interior) {
+          return [normalizePath([...path.slice(0, i), p], allowDiagonal), normalizePath([p, ...path.slice(i)], allowDiagonal)]
+            .filter((h) => h.length >= 2);
+        }
+      }
+    }
+    return null;
+  };
+
+  let work = paths.map((p) => normalizePath(p, allowDiagonal)).filter((p) => p.length >= 2);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const next = [];
+    for (const path of work) {
+      const split = splitAtCut(path);
+      if (split) { next.push(...split); changed = true; }
+      else next.push(path);
+    }
+    work = next;
+  }
+
+  const seen = new Set();
+  const out = [];
+  for (const p of work) {
+    const key = JSON.stringify(p);
+    if (!seen.has(key)) { seen.add(key); out.push(p); }
+  }
+  return out;
+}
+
+/** Return all same-net junction points, including T and cross intersections.
+ *  A junction is a grid point where three or more electrical arms meet, where
+ *  each arm is a distinct wire direction leaving the point or a terminal. */
+function junctionPoints(paths = [], terminalPoints = [], allowDiagonal = false) {
+  const junctions = new Set();
+  const strict = (n, a, b) => n > Math.min(a, b) && n < Math.max(a, b);
+
+  // 1. Strict-interior perpendicular crossings (an unsplit wire passing through
+  //    the endpoint of another branch, or two interiors crossing).
+  for (let i = 0; i < paths.length; i++) {
+    for (let j = i + 1; j < paths.length; j++) {
+      const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
+      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
+      for (const sa of segmentsA) for (const sb of segmentsB) {
+        if (sa.a.x === sa.b.x && sb.a.y === sb.b.y &&
+            between(sa.a.x, sb.a.x, sb.b.x) && between(sb.a.y, sa.a.y, sa.b.y) &&
+            (strict(sa.a.x, sb.a.x, sb.b.x) || strict(sb.a.y, sa.a.y, sa.b.y))) junctions.add(`${sa.a.x},${sb.a.y}`);
+        if (sa.a.y === sa.b.y && sb.a.x === sb.b.x &&
+            between(sb.a.x, sa.a.x, sa.b.x) && between(sa.a.y, sb.a.y, sb.b.y) &&
+            (strict(sb.a.x, sa.a.x, sa.b.x) || strict(sa.a.y, sb.a.y, sb.b.y))) junctions.add(`${sb.a.x},${sa.a.y}`);
+      }
+    }
+  }
+
+  // 2. Branch vertices and terminals with three or more distinct arms.
+  const arms = new Map();
+  const add = (p, dir) => {
+    const k = pointKey(p);
+    if (!arms.has(k)) arms.set(k, new Set());
+    arms.get(k).add(dir);
+  };
+  const gcd = (a, b) => {
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
+  };
+  for (const path of paths) for (const s of (allowDiagonal ? pathSegments(path) : wireSegments(path))) {
+    const rawDx = s.b.x - s.a.x;
+    const rawDy = s.b.y - s.a.y;
+    const divisor = gcd(Math.abs(rawDx), Math.abs(rawDy));
+    const dx = rawDx / divisor;
+    const dy = rawDy / divisor;
+    add(s.a, `${dx},${dy}`);
+    add(s.b, `${-dx},${-dy}`);
+  }
+  for (const p of terminalPoints) add(p, 'term');
+  for (const [key, dirs] of arms) if (dirs.size >= 3) junctions.add(key);
+
+  return [...junctions].map((key) => {
+    const [x, y] = key.split(',').map(Number);
+    return { x, y };
+  });
+}
+
+/** Return the positive-length collinear overlap of two arbitrary segments. */
+function collinearOverlap(a, b, c, d) {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const wx = d.x - c.x;
+  const wy = d.y - c.y;
+  if ((c.x - a.x) * vy - (c.y - a.y) * vx !== 0 || vx * wy - vy * wx !== 0) return null;
+  const useX = Math.abs(vx) >= Math.abs(vy);
+  const value = (p) => useX ? p.x : p.y;
+  const lo = Math.max(Math.min(value(a), value(b)), Math.min(value(c), value(d)));
+  const hi = Math.min(Math.max(value(a), value(b)), Math.max(value(c), value(d)));
+  if (hi <= lo) return null;
+  const at = (s) => useX
+    ? { x: s, y: a.y + (s - a.x) * vy / vx }
+    : { x: a.x + (s - a.y) * vx / vy, y: s };
+  const p0 = at(lo);
+  const p1 = at(hi);
+  return { x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
+}
+
+/** Collinear overlapping segments between DIFFERENT nets.
+ *  nets: [{ id, paths: [[{x,y},...]] }]. Returns [{ key, otherKey, x0, y0, x1, y1 }]
+ *  where key = `${netId}:${branch}:${seg}` and (x0,y0)-(x1,y1) is the shared span. */
+function crossNetOverlaps(nets) {
+  const segs = [];
+  for (const net of nets || []) {
+    const paths = net.paths || [];
+    for (let bi = 0; bi < paths.length; bi++) {
+      const path = paths[bi];
+      for (const s of pathSegments(path)) {
+        segs.push({ key: `${net.id}:${bi}:${s.index}`, netId: net.id, a: s.a, b: s.b });
+      }
+    }
+  }
+  const out = [];
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const sa = segs[i];
+      const sb = segs[j];
+      if (sa.netId === sb.netId) continue;
+      const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
+      if (overlap) out.push({ key: sa.key, otherKey: sb.key, ...overlap });
+    }
+  }
+  return out;
+}
+
+/** True when two branch lists are point-identical (same order, same points). */
+function samePolylineSet(a = [], b = []) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const pa = a[i];
+    const pb = b[i];
+    if (!pa || !pb || pa.length !== pb.length) return false;
+    for (let k = 0; k < pa.length; k++) {
+      if (pa[k].x !== pb[k].x || pa[k].y !== pb[k].y) return false;
+    }
+  }
+  return true;
+}
+
+/** Endpoints of every strictly-positive collinear overlap between two segments
+ *  of DIFFERENT branches. Splitting both branches at these points turns an
+ *  overlapped span into a parallel edge the MST can drop, so a wire dragged on
+ *  top of a same-net wire merges into it instead of hiding beneath it. */
+function overlapEndpoints(paths = [], allowDiagonal = false) {
+  const out = [];
+  for (let i = 0; i < paths.length; i++) {
+    for (let j = i + 1; j < paths.length; j++) {
+      const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
+      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
+      for (const sa of segmentsA) for (const sb of segmentsB) {
+        const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
+        if (overlap) out.push({ x: overlap.x0, y: overlap.y0 }, { x: overlap.x1, y: overlap.y1 });
+      }
+    }
+  }
+  return out;
+}
+
+/** True when different branches contain a positive-length collinear overlap. */
+function hasPositiveBranchOverlap(paths = [], allowDiagonal = false) {
+  for (let i = 0; i < paths.length; i++) {
+    const segmentsA = allowDiagonal ? pathSegments(paths[i]) : wireSegments(paths[i]);
+    for (let j = i + 1; j < paths.length; j++) {
+      const segmentsB = allowDiagonal ? pathSegments(paths[j]) : wireSegments(paths[j]);
+      for (const sa of segmentsA) for (const sb of segmentsB) {
+        if (collinearOverlap(sa.a, sa.b, sb.a, sb.b)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Reduce a set of wire branches to the minimum spanning tree of their
+ * connectivity graph — the conventional ratsnest-style reduction (Kruskal;
+ * KiCad's RN_NET::kruskalMST, EAGLE RATSNEST). Terminals and junctions
+ * (T/cross points) become graph vertices; each polyline run between two
+ * vertices is an edge weighted by its Manhattan length. Parallel edges (the
+ * same two points wired more than once, or two runs lying on top of each
+ * other along a shared span) and cycle edges (loops) are removed, keeping
+ * only the cheapest connected structure; ties are broken by insertion order
+ * (older branches win), so the result is deterministic and idempotent: an
+ * already-minimal net is returned unchanged. Bridges (the only path between
+ * two points) are never removed; terminals are never moved or dropped, and
+ * always stay branch endpoints (never collapsed into a run).
+ */
+function reduceBranches(paths = [], terminalPoints = [], allowDiagonal = false) {
+  const terminals = terminalPoints.map((p) => ({ x: snap(p.x), y: snap(p.y) }));
+  const overlapPoints = overlapEndpoints(paths, allowDiagonal);
+  // Split every branch at every shared vertex, terminal, junction, and
+  // collinear-overlap boundary so all intersections become real vertices
+  // before the graph is built.
+  const split = normalizeBranches(
+    paths,
+    [...terminals, ...junctionPoints(paths, terminalPoints, allowDiagonal), ...overlapPoints],
+    allowDiagonal,
+  ).filter((p) => p.length >= 2);
+  if (split.length === 0) return [];
+
+  const key = (p) => `${snap(p.x)},${snap(p.y)}`;
+  const terminalKeys = new Set(terminals.map(key));
+  // A polyline that closes on itself (first point == last point) is a loop in
+  // a single branch; open it by dropping the duplicated closing point so the
+  // MST reduces it like any other path instead of a degenerate self-loop.
+  const open = split.map((p) =>
+    p.length > 1 && p[0].x === p[p.length - 1].x && p[0].y === p[p.length - 1].y ? p.slice(0, -1) : p
+  ).filter((p) => p.length >= 2);
+  if (open.length === 0) return [];
+
+  // Branch points: terminals, overlap boundaries, plus junctions of the split
+  // geometry (3+ electrical arms). Overlap boundaries are graph vertices but
+  // are intentionally not junctions merely because two branches overlap.
+  const branchPoints = new Set([
+    ...terminalKeys,
+    ...overlapPoints.map(key),
+    ...junctionPoints(open, terminalPoints, allowDiagonal).map(key),
+  ]);
+
+  // Runs: maximal spans of each branch between branch points (or the branch's
+  // own dangling ends). Each run is one graph edge carrying its polyline.
+  const edges = [];
+  for (let bi = 0; bi < open.length; bi++) {
+    const path = open[bi];
+    let runStart = 0;
+    let runCost = 0;
+    for (let i = 1; i < path.length; i++) {
+      const prev = path[i - 1];
+      const p = path[i];
+      runCost += allowDiagonal
+        ? Math.hypot(p.x - prev.x, p.y - prev.y)
+        : Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y);
+      if (branchPoints.has(key(p)) || i === path.length - 1) {
+        if (i > runStart) {
+          edges.push({
+            a: key(path[runStart]), b: key(p), cost: runCost, bi, si: runStart + 1,
+            pts: path.slice(runStart, i + 1),
+          });
+        }
+        runStart = i;
+        runCost = 0;
+      }
+    }
+  }
+  if (edges.length === 0) return [];
+
+  // Kruskal: keep the cheapest edge joining two previously separate components;
+  // parallel edges (2-cycles) and loop edges (cycle property) are dropped.
+  const parent = new Map();
+  const find = (k) => {
+    let p = parent.get(k);
+    if (p === undefined) { parent.set(k, k); return k; }
+    while (p !== parent.get(p)) p = parent.get(p);
+    let q = k;
+    while (parent.get(q) !== q) { const n = parent.get(q); parent.set(q, p); q = n; }
+    return p;
+  };
+  const union = (a, b) => {
+    a = find(a);
+    b = find(b);
+    if (a === b) return false;
+    parent.set(a, b);
+    return true;
+  };
+  const sorted = [...edges].sort((e1, e2) => e1.cost - e2.cost || e1.bi - e2.bi || e1.si - e2.si);
+  const kept = [];
+  for (const e of sorted) if (union(e.a, e.b)) kept.push(e);
+
+  // Reassemble the kept forest — even when nothing was dropped: runs meeting
+  // at a non-terminal degree-2 vertex (a point that ceased to branch, a stale
+  // branch end, or an overlap boundary) merge into one polyline, so no phantom
+  // junctions, stub pieces, or redundant vertices survive. Terminal vertices stay branch
+  // boundaries so wire legs re-anchor correctly when their component moves.
+  const adj = new Map();
+  const add = (v) => { if (!adj.has(v)) adj.set(v, []); };
+  for (const e of kept) {
+    add(e.a);
+    add(e.b);
+    adj.get(e.a).push({ to: e.b, e });
+    adj.get(e.b).push({ to: e.a, e });
+  }
+  const seen = new Set();
+  const out = [];
+  const tag = (e) => `${e.bi}:${e.si}`;
+  // Orient an edge's polyline to start at `fromV` (a tree walk crosses edges
+  // in either direction; runs are always stored start-to-end).
+  const orient = (e, fromV) => {
+    const pts = e.pts;
+    if (key(pts[0]) === fromV) return pts;
+    return pts.slice().reverse();
+  };
+  for (const [v, list] of adj) {
+    if (list.length === 2 && !terminalKeys.has(v)) continue; // interior of a run
+    for (const first of list) {
+      if (seen.has(tag(first.e))) continue;
+      const poly = [...orient(first.e, v)]; // starts at v, carries every bend
+      let prev = v;
+      let cur = first.to;
+      seen.add(tag(first.e));
+      while (adj.get(cur).length === 2 && !terminalKeys.has(cur)) {
+        const next = adj.get(cur).find((n) => n.to !== prev);
+        if (!next) break;
+        seen.add(tag(next.e));
+        const shared = cur; // orient must start at the vertex the walk is AT
+        prev = cur;
+        cur = next.to;
+        poly.push(...orient(next.e, shared).slice(1)); // next.pts starts at `shared`
+      }
+      // Keep the stored direction of the run's first edge, so an unmerged
+      // branch comes back exactly as authored (e.g. pin-first escape legs).
+      const reversed = key(first.e.pts[0]) !== v;
+      out.push({ poly: normalizePath(reversed ? poly.reverse() : poly, allowDiagonal), bi: first.e.bi, si: first.e.si });
+    }
+  }
+  out.sort((a, b) => a.bi - b.bi || a.si - b.si);
+  return out.map((o) => o.poly);
+}
+
+/** Join branches whose ends meet at a plain point: exactly two branch ends,
+ *  no anchor (terminal, junction, styled-segment boundary), and no other wire
+ *  vertex or segment through it. Geometry is unchanged; only the split between
+ *  branches goes away, so a run grown piecewise becomes one polyline. The
+ *  earlier branch keeps its index and direction. */
+function joinBranchEnds(paths = [], anchorPoints = [], allowDiagonal = false) {
+  const anchors = new Set(anchorPoints.map(pointKey));
+  let work = paths.map((p) => p.map((q) => ({ ...q })));
+  for (;;) {
+    const ends = new Map();
+    const blocked = new Set(anchors);
+    work.forEach((path, bi) => {
+      if (path.length < 2) return;
+      [0, path.length - 1].forEach((pi) => {
+        const k = pointKey(path[pi]);
+        if (!ends.has(k)) ends.set(k, []);
+        ends.get(k).push({ bi, head: pi === 0 });
+      });
+      for (let i = 1; i < path.length - 1; i++) blocked.add(pointKey(path[i]));
+    });
+    let join = null;
+    for (const [k, list] of ends) {
+      if (list.length !== 2 || blocked.has(k) || list[0].bi === list[1].bi) continue;
+      const [x, y] = k.split(',').map(Number);
+      const through = work.some((path) => path.some((a, i) => {
+        const b = path[i + 1];
+        if (!b) return false;
+        const cross = (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
+        return cross === 0 && between(x, a.x, b.x) && between(y, a.y, b.y) &&
+          !(x === a.x && y === a.y) && !(x === b.x && y === b.y);
+      }));
+      if (!through) { join = list; break; }
+    }
+    if (!join) return work;
+    const [first, second] = join[0].bi < join[1].bi ? join : [join[1], join[0]];
+    const a = work[first.bi];
+    const b = work[second.bi];
+    const bFromJoin = second.head ? b : b.slice().reverse();
+    const merged = first.head
+      ? [...bFromJoin.slice().reverse(), ...a.slice(1)]
+      : [...a, ...bFromJoin.slice(1)];
+    work = work.map((path, bi) => (bi === first.bi ? normalizePath(merged, allowDiagonal) : path))
+      .filter((_, bi) => bi !== second.bi);
+  }
+}
+
+/** Remove one editable segment and return normalized remaining paths. */
+function deleteWireSegment(paths, branch, segment) {
+  if (!paths[branch]) return paths;
+  const path = paths[branch];
+  if (segment <= 0 || segment >= path.length) return paths;
+  const left = normalizePath(path.slice(0, segment));
+  const right = normalizePath(path.slice(segment));
+  const next = paths.slice();
+  next.splice(branch, 1, ...(left.length > 1 ? [left] : []), ...(right.length > 1 ? [right] : []));
+  return next;
+}
+
+/** Partition terminals and branches into connected components. A branch whose
+ *  points do not touch any terminal is dropped. Returns
+ *  [{ terminals: [{comp,term,point}], paths: [[...]] }]. */
+function splitByComponent(paths, terminals) {
+  const parent = new Map();
+  const find = (k) => { let p = parent.get(k); while (p !== parent.get(p)) p = parent.get(p); let q = k; while (parent.get(q) !== q) { const n = parent.get(q); parent.set(q, p); q = n; } return p; };
+  const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent.set(a, b); };
+  const addPoint = (p) => { const k = pointKey(p); if (!parent.has(k)) parent.set(k, k); return k; };
+  for (const path of paths) {
+    let prev = null;
+    for (const p of path) {
+      const k = addPoint(p);
+      if (prev) union(prev, k);
+      prev = k;
+    }
+  }
+  const groups = new Map();
+  for (const t of terminals) {
+    if (!t.point) continue;
+    const k = pointKey(t.point);
+    const root = parent.has(k) ? find(k) : `terminal:${t.comp}.${t.term}`;
+    if (!groups.has(root)) groups.set(root, { terminals: [], paths: [] });
+    groups.get(root).terminals.push(t);
+  }
+  for (const path of paths) {
+    if (!path.length) continue;
+    const root = find(pointKey(path[0]));
+    if (groups.has(root)) groups.get(root).paths.push(path);
+  }
+  return [...groups.values()];
+}
+
+function pathLength(path = []) {
+  return pathSegments(path).reduce((n, s) => n + Math.hypot(s.a.x - s.b.x, s.a.y - s.b.y), 0);
+}
+
+function validateWiring(net) {
+  const errors = [];
+  for (const [bi, path] of net.paths().entries()) {
+    for (const p of path) {
+      if (p.x % GRID || p.y % GRID) errors.push(`branch ${bi} has off-grid point (${p.x},${p.y})`);
+    }
+    if (net.routingMode !== 'fixed') {
+      try { wireSegments(path, net.allowDiagonal === true); } catch (err) { errors.push(`branch ${bi}: ${err.message}`); }
+    }
+  }
+  return errors;
+}
+
+__exports.orthogonalizePath = orthogonalizePath;
+__exports.clonePath = clonePath;
+__exports.cloneFixedPath = cloneFixedPath;
+__exports.pathSegments = pathSegments;
+__exports.compactPath = compactPath;
+__exports.normalizePath = normalizePath;
+__exports.wireSegments = wireSegments;
+__exports.pointOnPath = pointOnPath;
+__exports.splitBranchAt = splitBranchAt;
+__exports.normalizeBranches = normalizeBranches;
+__exports.junctionPoints = junctionPoints;
+__exports.crossNetOverlaps = crossNetOverlaps;
+__exports.samePolylineSet = samePolylineSet;
+__exports.hasPositiveBranchOverlap = hasPositiveBranchOverlap;
+__exports.reduceBranches = reduceBranches;
+__exports.joinBranchEnds = joinBranchEnds;
+__exports.deleteWireSegment = deleteWireSegment;
+__exports.splitByComponent = splitByComponent;
+__exports.pathLength = pathLength;
+__exports.validateWiring = validateWiring;
+__exports.pointKey = pointKey;
+};
+
 __modules["src/web/file-dialog.js"] = function (__require, __exports) {
 /**
  * In-app file browser for Open, Save as, and choosing the workspace folder.
@@ -28571,51 +28512,6 @@ __exports.analysisFormDefaults = analysisFormDefaults;
 __exports.ANALYSIS_FORM_KEY = ANALYSIS_FORM_KEY;
 };
 
-__modules["src/web/toolbar-fit.js"] = function (__require, __exports) {
-/**
- * The top toolbar is one row that gives way in stages as its space runs out,
- * least useful text first. Each stage adds one token to the toolbar's
- * `data-compact` list, and style.css keys its rules on the tokens:
- *
- *   export, new         those file actions become icons
- *   analyze             Analyze becomes an icon
- *   fold                New, Export, and the view toggles move into More
- *   save                Save becomes an icon
- *
- * The editor picks the first stage count at which the row fits and the
- * document title still shows a comfortable amount of its name.
- */
-const TOOLBAR_STAGES = ['export', 'new', 'analyze', 'fold', 'save'];
-
-/** How much of the title (px) must stay visible before buttons drop text. */
-const TITLE_COMFORT_PX = 224;
-
-/** First stage count for which `fits(count)` holds; all stages when none do. */
-function chooseToolbarStage(fits, count = TOOLBAR_STAGES.length) {
-  for (let n = 0; n < count; n++) {
-    if (fits(n)) return n;
-  }
-  return count;
-}
-
-/** The `data-compact` value for a stage count. */
-function toolbarStageTokens(count) {
-  return TOOLBAR_STAGES.slice(0, Math.max(0, count)).join(' ');
-}
-
-/** The row fits when nothing overflows and the title is shown to at least
- *  the smaller of its full text and the comfort width. */
-function toolbarFits({ scrollWidth, clientWidth, titleWidth, titleTextWidth }) {
-  return scrollWidth <= clientWidth + 1 && titleWidth + 1 >= Math.min(titleTextWidth, TITLE_COMFORT_PX);
-}
-
-__exports.chooseToolbarStage = chooseToolbarStage;
-__exports.toolbarStageTokens = toolbarStageTokens;
-__exports.toolbarFits = toolbarFits;
-__exports.TOOLBAR_STAGES = TOOLBAR_STAGES;
-__exports.TITLE_COMFORT_PX = TITLE_COMFORT_PX;
-};
-
 __modules["src/web/interaction.js"] = function (__require, __exports) {
 const { snap, GRID } = __require("src/core/grid.js");
 
@@ -28717,6 +28613,24 @@ function shouldForwardCanvasMove(target, canvasElement) {
   return !target?.closest?.('#insert-menu');
 }
 
+/** Browsers follow each mouse `pointermove` with a compatibility `mousemove`
+ * for the same motion. Both are listened to (automation may send either), so
+ * the returned predicate flags the second of such a pair — same position and
+ * buttons right after a pointermove — letting one motion do one update. */
+function compatibilityMoveFilter() {
+  let pending = null;
+  return (ev) => {
+    if (ev.type === 'pointermove') {
+      pending = ev.pointerType === 'mouse' ? { x: ev.clientX, y: ev.clientY, buttons: ev.buttons } : null;
+      return false;
+    }
+    const duplicate = ev.type === 'mousemove' && !!pending &&
+      pending.x === ev.clientX && pending.y === ev.clientY && pending.buttons === ev.buttons;
+    pending = null;
+    return duplicate;
+  };
+}
+
 /** A blank touch press pans the canvas; a press on an object remains an edit
  * gesture.  Keeping this policy pure makes touch behavior testable without a
  * browser surface. */
@@ -28784,12 +28698,58 @@ __exports.viewFollowingCursor = viewFollowingCursor;
 __exports.isSelectionModifier = isSelectionModifier;
 __exports.isPrimaryPointerEvent = isPrimaryPointerEvent;
 __exports.shouldForwardCanvasMove = shouldForwardCanvasMove;
+__exports.compatibilityMoveFilter = compatibilityMoveFilter;
 __exports.shouldPanTouch = shouldPanTouch;
 __exports.isKeyboardSurfaceTarget = isKeyboardSurfaceTarget;
 __exports.worldAndCursorFromClient = worldAndCursorFromClient;
 __exports.nearestPoint = nearestPoint;
 __exports.symmetryOperation = symmetryOperation;
 __exports.constrainAxis = constrainAxis;
+};
+
+__modules["src/web/toolbar-fit.js"] = function (__require, __exports) {
+/**
+ * The top toolbar is one row that gives way in stages as its space runs out,
+ * least useful text first. Each stage adds one token to the toolbar's
+ * `data-compact` list, and style.css keys its rules on the tokens:
+ *
+ *   export, new         those file actions become icons
+ *   analyze             Analyze becomes an icon
+ *   fold                New, Export, and the view toggles move into More
+ *   save                Save becomes an icon
+ *
+ * The editor picks the first stage count at which the row fits and the
+ * document title still shows a comfortable amount of its name.
+ */
+const TOOLBAR_STAGES = ['export', 'new', 'analyze', 'fold', 'save'];
+
+/** How much of the title (px) must stay visible before buttons drop text. */
+const TITLE_COMFORT_PX = 224;
+
+/** First stage count for which `fits(count)` holds; all stages when none do. */
+function chooseToolbarStage(fits, count = TOOLBAR_STAGES.length) {
+  for (let n = 0; n < count; n++) {
+    if (fits(n)) return n;
+  }
+  return count;
+}
+
+/** The `data-compact` value for a stage count. */
+function toolbarStageTokens(count) {
+  return TOOLBAR_STAGES.slice(0, Math.max(0, count)).join(' ');
+}
+
+/** The row fits when nothing overflows and the title is shown to at least
+ *  the smaller of its full text and the comfort width. */
+function toolbarFits({ scrollWidth, clientWidth, titleWidth, titleTextWidth }) {
+  return scrollWidth <= clientWidth + 1 && titleWidth + 1 >= Math.min(titleTextWidth, TITLE_COMFORT_PX);
+}
+
+__exports.chooseToolbarStage = chooseToolbarStage;
+__exports.toolbarStageTokens = toolbarStageTokens;
+__exports.toolbarFits = toolbarFits;
+__exports.TOOLBAR_STAGES = TOOLBAR_STAGES;
+__exports.TITLE_COMFORT_PX = TITLE_COMFORT_PX;
 };
 
 __modules["src/web/gestures.js"] = function (__require, __exports) {
@@ -32452,6 +32412,240 @@ __exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
 __exports.INFINITY_NAMES = INFINITY_NAMES;
 };
 
+__modules["src/core/analysis/index.js"] = function (__require, __exports) {
+const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
+const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
+
+
+
+const PASSTHROUGH_OPTIONS = Object.freeze([
+  'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
+  'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
+  'budget', 'valueOf', 'resolveValue',
+  'topologicalSolve', 'topologicalPresentation',
+]);
+
+function engineOptions(options) {
+  const supported = {};
+  for (const key of PASSTHROUGH_OPTIONS) {
+    if (options[key] !== undefined) supported[key] = options[key];
+  }
+  return {
+    ...supported,
+    ...(options.neglectBodyEffect === undefined ? {} : { ignoreBodyEffect: options.neglectBodyEffect }),
+    ...(options.highIntrinsicGain === undefined ? {} : { gmroLarge: options.highIntrinsicGain }),
+    ...(options.neglectChannelLengthModulation === undefined
+      ? {}
+      : { ignoreChannelLengthModulation: options.neglectChannelLengthModulation }),
+    ...(options.dominantPole === undefined ? {} : { dominantPoleApproximation: options.dominantPole }),
+  };
+}
+
+function triodeRegions(value) {
+  const entries = value instanceof Map ? [...value.entries()]
+    : Array.isArray(value) ? value.map((entry) => String(entry).split('='))
+      : value && typeof value === 'object' ? Object.entries(value) : [];
+  return Object.fromEntries(entries.flatMap(([refdes, model]) => {
+    const region = typeof model === 'object' ? model.region ?? model.model : model;
+    return String(region).toLowerCase() === 'triode' ? [[refdes, { region: 'triode' }]] : [];
+  }));
+}
+
+function compatibilityOptions(options) {
+  return {
+    ...options,
+    deviceRegions: options.deviceRegions ?? triodeRegions(options.models),
+    neglectBodyEffect: options.neglectBodyEffect ?? options.ignoreBodyEffect,
+    highIntrinsicGain: options.highIntrinsicGain ?? options.gmroLarge,
+    neglectChannelLengthModulation: options.neglectChannelLengthModulation
+      ?? options.ignoreChannelLengthModulation,
+    dominantPole: options.dominantPole ?? options.dominantPoleApproximation,
+  };
+}
+
+/** Run one exact symbolic solve and expose the stable combined report shape. */
+function analyzeSmallSignal(circuit, options = {}) {
+  return adaptCombinedReport(analyzeSmallSignalV2(circuit, engineOptions(options)));
+}
+
+function quantityReport(combined, key) {
+  const report = combined.reports[key];
+  return {
+    ...report,
+    dcGain: combined.dcGain,
+    dcInputImpedance: combined.dcInputImpedance,
+    dcOutputImpedance: combined.dcOutputImpedance,
+  };
+}
+
+/** Compatibility wrapper for callers that display only input impedance. */
+function analyzeInputImpedance(circuit, input, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, input })), 'input');
+}
+
+/** Compatibility wrapper for callers that display only output impedance. */
+function analyzeOutputImpedance(circuit, output, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'output');
+}
+
+/** Compatibility wrapper for callers that display only voltage transfer. */
+function analyzeTransferFunction(circuit, output, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'transfer');
+}
+
+/** Return true when an expression retains the Laplace variable. */
+function expressionHasFrequency(value, seen = new Set()) {
+  if (value == null || typeof value !== 'object') {
+    return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+  }
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (value.kind === 'symbol') return value.name === 's';
+  return [
+    value.expression,
+    value.numerator,
+    value.denominator,
+    value.base,
+    ...(value.terms || []),
+    ...(value.factors || []),
+  ].some((child) => expressionHasFrequency(child, seen));
+}
+
+__exports.analyzeSmallSignal = analyzeSmallSignal;
+__exports.analyzeInputImpedance = analyzeInputImpedance;
+__exports.analyzeOutputImpedance = analyzeOutputImpedance;
+__exports.analyzeTransferFunction = analyzeTransferFunction;
+__exports.expressionHasFrequency = expressionHasFrequency;
+};
+
+__modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
+const { integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js");
+/**
+ * Adapt rational.js to the small algebra contract used by MNA and solve.
+ *
+ * MNA values are always rational-function nodes. Keeping quotients inside the
+ * adapter avoids mixing raw expression nodes with rational nodes during a
+ * solve, while rational.js remains responsible for canonicalization.
+ */
+
+
+
+function isRational(value) {
+  return value?.kind === 'rational';
+}
+
+function expressionIsZero(value) {
+  if (typeof value === 'number') return value === 0;
+  if (typeof value === 'bigint') return value === 0n;
+  return value?.kind === 'number' && value.numerator === 0n;
+}
+
+function rationalIsZero(value) {
+  return isRational(value) && value.budgetExceeded !== true && expressionIsZero(value.numerator);
+}
+
+function withBudgetFlag(value) {
+  if (!isRational(value) || value.budgetExceeded === true) return value;
+  return Object.freeze({ ...value, budgetExceeded: true });
+}
+
+function normalize(value, variable, budget = null) {
+  if (isInfinite(value)) return value;
+  if (isRational(value)) {
+    if (value.variable !== variable) {
+      throw new RangeError(`rational variable must be ${variable}`);
+    }
+    return value;
+  }
+  return rationalFunction(value, integer(1), { variable, ...(budget ? { budget } : {}) });
+}
+
+/**
+ * Build an exact rational algebra implementation for MNA and solve.
+ *
+ * `maxOperations` is a shared dispatch budget. Each adapter operation passes
+ * the same budget to rational.js. Exhaustion is terminal for the analysis.
+ */
+function createRationalOps(options = {}) {
+  const variable = String(options.variable || 's');
+  if (!variable) throw new TypeError('rational variable must not be empty');
+  const budget = options.budget || createOperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  if (!Number.isFinite(budget.limit) || !Number.isSafeInteger(budget.limit) || budget.limit < 0) {
+    throw new RangeError('budget.limit must be a finite non-negative integer');
+  }
+
+  const zero = normalize(integer(0), variable);
+  const one = normalize(integer(1), variable);
+
+  function operation(run, inputs = []) {
+    const values = inputs.map((value) => normalize(value, variable, budget));
+    if (budget.exceeded || values.some((value) => value?.budgetExceeded === true)) {
+      budget.exceeded = true;
+      return withBudgetFlag(zero);
+    }
+    let result;
+    try {
+      budget.step();
+      result = run(values, { budget });
+    } catch (error) {
+      if (!budget.exceeded) throw error;
+      return withBudgetFlag(zero);
+    }
+    if (!isRational(result)) result = normalize(result, variable);
+    if (budget.exceeded || values.some((value) => value.budgetExceeded === true) || result.budgetExceeded === true) {
+      budget.exceeded = true;
+      return withBudgetFlag(result);
+    }
+    return result;
+  }
+
+  const ops = {
+    zero,
+    one,
+    add: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalAdd(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    sub: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalAdd(a, rationalMultiply(b, normalize(integer(-1), variable, shared), {
+        variable,
+        budget: shared,
+      }), { variable, budget: shared }),
+      [left, right],
+    ),
+    mul: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalMultiply(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    div: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalDivide(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    neg: (value) => operation(
+      ([a], { budget: shared }) => rationalMultiply(a, normalize(integer(-1), variable, shared), {
+        variable,
+        budget: shared,
+      }),
+      [value],
+    ),
+    isZero: (value) => isRational(value) ? rationalIsZero(value) : expressionIsZero(value),
+    infinity: (sign = 1) => infinity(sign),
+    symbol: (name) => INFINITY_NAMES.has(String(name).trim().toLowerCase())
+      ? infinity()
+      : normalize(makeSymbol(name), variable, budget),
+    s: () => normalize(makeSymbol(variable), variable, budget),
+  };
+
+  Object.defineProperties(ops, {
+    variable: { value: variable, enumerable: true },
+    budget: { value: budget, enumerable: true },
+  });
+  return Object.freeze(ops);
+}
+
+__exports.createRationalOps = createRationalOps;
+};
+
 __modules["src/core/analysis/approximation.js"] = function (__require, __exports) {
 const { OWN } = __require("src/core/analysis/shared.js");
 const { cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js");
@@ -33348,134 +33542,6 @@ function cancelCommonPolynomialFactor(value, options = {}) {
 }
 
 __exports.cancelCommonPolynomialFactor = cancelCommonPolynomialFactor;
-};
-
-__modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
-const { integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js");
-/**
- * Adapt rational.js to the small algebra contract used by MNA and solve.
- *
- * MNA values are always rational-function nodes. Keeping quotients inside the
- * adapter avoids mixing raw expression nodes with rational nodes during a
- * solve, while rational.js remains responsible for canonicalization.
- */
-
-
-
-function isRational(value) {
-  return value?.kind === 'rational';
-}
-
-function expressionIsZero(value) {
-  if (typeof value === 'number') return value === 0;
-  if (typeof value === 'bigint') return value === 0n;
-  return value?.kind === 'number' && value.numerator === 0n;
-}
-
-function rationalIsZero(value) {
-  return isRational(value) && value.budgetExceeded !== true && expressionIsZero(value.numerator);
-}
-
-function withBudgetFlag(value) {
-  if (!isRational(value) || value.budgetExceeded === true) return value;
-  return Object.freeze({ ...value, budgetExceeded: true });
-}
-
-function normalize(value, variable, budget = null) {
-  if (isInfinite(value)) return value;
-  if (isRational(value)) {
-    if (value.variable !== variable) {
-      throw new RangeError(`rational variable must be ${variable}`);
-    }
-    return value;
-  }
-  return rationalFunction(value, integer(1), { variable, ...(budget ? { budget } : {}) });
-}
-
-/**
- * Build an exact rational algebra implementation for MNA and solve.
- *
- * `maxOperations` is a shared dispatch budget. Each adapter operation passes
- * the same budget to rational.js. Exhaustion is terminal for the analysis.
- */
-function createRationalOps(options = {}) {
-  const variable = String(options.variable || 's');
-  if (!variable) throw new TypeError('rational variable must not be empty');
-  const budget = options.budget || createOperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  if (!Number.isFinite(budget.limit) || !Number.isSafeInteger(budget.limit) || budget.limit < 0) {
-    throw new RangeError('budget.limit must be a finite non-negative integer');
-  }
-
-  const zero = normalize(integer(0), variable);
-  const one = normalize(integer(1), variable);
-
-  function operation(run, inputs = []) {
-    const values = inputs.map((value) => normalize(value, variable, budget));
-    if (budget.exceeded || values.some((value) => value?.budgetExceeded === true)) {
-      budget.exceeded = true;
-      return withBudgetFlag(zero);
-    }
-    let result;
-    try {
-      budget.step();
-      result = run(values, { budget });
-    } catch (error) {
-      if (!budget.exceeded) throw error;
-      return withBudgetFlag(zero);
-    }
-    if (!isRational(result)) result = normalize(result, variable);
-    if (budget.exceeded || values.some((value) => value.budgetExceeded === true) || result.budgetExceeded === true) {
-      budget.exceeded = true;
-      return withBudgetFlag(result);
-    }
-    return result;
-  }
-
-  const ops = {
-    zero,
-    one,
-    add: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalAdd(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    sub: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalAdd(a, rationalMultiply(b, normalize(integer(-1), variable, shared), {
-        variable,
-        budget: shared,
-      }), { variable, budget: shared }),
-      [left, right],
-    ),
-    mul: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalMultiply(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    div: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalDivide(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    neg: (value) => operation(
-      ([a], { budget: shared }) => rationalMultiply(a, normalize(integer(-1), variable, shared), {
-        variable,
-        budget: shared,
-      }),
-      [value],
-    ),
-    isZero: (value) => isRational(value) ? rationalIsZero(value) : expressionIsZero(value),
-    infinity: (sign = 1) => infinity(sign),
-    symbol: (name) => INFINITY_NAMES.has(String(name).trim().toLowerCase())
-      ? infinity()
-      : normalize(makeSymbol(name), variable, budget),
-    s: () => normalize(makeSymbol(variable), variable, budget),
-  };
-
-  Object.defineProperties(ops, {
-    variable: { value: variable, enumerable: true },
-    budget: { value: budget, enumerable: true },
-  });
-  return Object.freeze(ops);
-}
-
-__exports.createRationalOps = createRationalOps;
 };
 
 __modules["src/core/analysis/pipeline.js"] = function (__require, __exports) {
@@ -34785,6 +34851,144 @@ __exports.formatSmallSignalNetlist = formatSmallSignalNetlist;
 __exports.describeSmallSignalNetlist = describeSmallSignalNetlist;
 };
 
+__modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
+const { GRID } = __require("src/core/grid.js");
+
+
+/**
+ * Symbol definition factory. Enforces the contract:
+ *  - every terminal position is on the GRID (multiple of 40)
+ *  - the bounding box corners/extents are on the GRID (unless the symbol has
+ *    no terminals — pure annotations like solder may use a dot-sized bbox)
+ *  - terminal names are unique
+ * The terminal list may be empty for pure annotations (e.g. solder dots).
+ * Symbol body graphics may use arbitrary coordinates.
+ */
+function defineSymbol(def) {
+  validateSymbol(def);
+  return Object.freeze({
+    ...def,
+    terminals: Object.freeze(def.terminals.map(Object.freeze)),
+    graphics: markTerminalLeads(def.graphics || [], def.terminals),
+  });
+}
+
+/**
+ * An open absolute path that starts or ends on a terminal is a pin lead. The
+ * renderer draws leads in the same single ink path as wires, so a lead and
+ * the wire meeting it at the terminal are rasterized once, without a seam or
+ * doubled anti-aliased edges.
+ */
+function markTerminalLeads(graphics, terminals) {
+  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
+  return graphics.map((g) => {
+    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
+    const d = String(g.d || '').trim();
+    // Only absolute move/line/cubic paths: their first and last numbers are points.
+    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
+    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+    if (numbers.length < 4) return g;
+    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
+    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
+  });
+}
+
+function validateSymbol(def) {
+  const terms = def.terminals;
+  if (!Array.isArray(terms)) {
+    throw new Error(`symbol "${def.type}" must define a terminals array`);
+  }
+  const names = new Set();
+  for (const t of terms) {
+    if (!t.name || names.has(t.name)) {
+      throw new Error(`symbol "${def.type}": terminal names must be unique, got "${t.name}"`);
+    }
+    names.add(t.name);
+    if (!Number.isInteger(t.x / GRID) || !Number.isInteger(t.y / GRID)) {
+      throw new Error(
+        `symbol "${def.type}": terminal "${t.name}" at (${t.x},${t.y}) is NOT on the ${GRID}-unit grid`
+      );
+    }
+  }
+  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
+  // grid point and never routed through, so their bbox may be the drawn size
+  // rather than an aligned grid cell.
+  if (terms.length > 0) {
+    const r = def.bbox;
+    for (const [k, v] of Object.entries(r)) {
+      if (!Number.isInteger(v / GRID)) {
+        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
+      }
+    }
+  }
+}
+
+__exports.defineSymbol = defineSymbol;
+__exports.markTerminalLeads = markTerminalLeads;
+__exports.validateSymbol = validateSymbol;
+};
+
+__modules["src/core/components/mos.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+const TERMINALS = [
+  { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
+  { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
+  { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
+];
+const BULK = { name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } };
+const BBOX = { x: -120, y: -80, w: 120, h: 160 };
+
+function mosGraphics(sourceArrow, bulk) {
+  const graphics = [
+    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
+    { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
+    { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
+    { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
+    // Channel-side stubs start inside the channel bar (like the drain), so the
+    // butt end never meets the bar edge and leaves an anti-aliased seam.
+    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
+    sourceArrow,
+  ];
+  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
+  return graphics;
+}
+
+/** Build one of the four MOS symbols without sharing mutable definition data. */
+function createMos(type, { pmos = false, bulk = false } = {}) {
+  return defineSymbol({
+    type,
+    description: bulk ? `${pmos ? 'PMOS' : 'NMOS'} transistor with bulk` : `${pmos ? 'PMOS' : 'NMOS'} Transistor`,
+    refPrefix: 'M',
+    terminals: [...TERMINALS, ...(bulk ? [BULK] : [])].map((terminal) => ({
+      ...terminal,
+      dir: { ...terminal.dir },
+    })),
+    // The reusable layout guide measures the conduction column, not the
+    // asymmetric bbox that extends toward the gate. This is symbol metadata,
+    // not a MOS-specific branch in the editor's guide/distribute tools.
+    layoutAnchorTerminals: ['d', 's'],
+    // Drain and source can be spliced in series into a straight wire (a cascode).
+    seriesTerminals: ['d', 's'],
+    bbox: { ...BBOX },
+    graphics: mosGraphics(
+      pmos
+        ? { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' }
+        : { kind: 'polygon', points: [{ x: 0, y: 27.91 }, { x: -34.88, y: 11.63 }, { x: -34.88, y: 44.19 }], fill: 'foreground' },
+      bulk,
+    ),
+    textPos: { x: -26, y: -30, anchor: 'middle' },
+    refPos: null,
+    labelOffset: bulk ? { x: 40, y: -40 } : { x: 40, y: 0 },
+    ...(pmos ? { defaultMirrorY: true } : {}),
+    defaultValue: '',
+  });
+}
+
+__exports.createMos = createMos;
+};
+
 __modules["src/core/analysis/topology.js"] = function (__require, __exports) {
 const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
 const { solveMNA } = __require("src/core/analysis/solve.js");
@@ -35052,144 +35256,6 @@ function compactRational(value, ops) {
 }
 
 __exports.compactRational = compactRational;
-};
-
-__modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-
-
-/**
- * Symbol definition factory. Enforces the contract:
- *  - every terminal position is on the GRID (multiple of 40)
- *  - the bounding box corners/extents are on the GRID (unless the symbol has
- *    no terminals — pure annotations like solder may use a dot-sized bbox)
- *  - terminal names are unique
- * The terminal list may be empty for pure annotations (e.g. solder dots).
- * Symbol body graphics may use arbitrary coordinates.
- */
-function defineSymbol(def) {
-  validateSymbol(def);
-  return Object.freeze({
-    ...def,
-    terminals: Object.freeze(def.terminals.map(Object.freeze)),
-    graphics: markTerminalLeads(def.graphics || [], def.terminals),
-  });
-}
-
-/**
- * An open absolute path that starts or ends on a terminal is a pin lead. The
- * renderer draws leads in the same single ink path as wires, so a lead and
- * the wire meeting it at the terminal are rasterized once, without a seam or
- * doubled anti-aliased edges.
- */
-function markTerminalLeads(graphics, terminals) {
-  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
-  return graphics.map((g) => {
-    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
-    const d = String(g.d || '').trim();
-    // Only absolute move/line/cubic paths: their first and last numbers are points.
-    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
-    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
-    if (numbers.length < 4) return g;
-    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
-    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
-  });
-}
-
-function validateSymbol(def) {
-  const terms = def.terminals;
-  if (!Array.isArray(terms)) {
-    throw new Error(`symbol "${def.type}" must define a terminals array`);
-  }
-  const names = new Set();
-  for (const t of terms) {
-    if (!t.name || names.has(t.name)) {
-      throw new Error(`symbol "${def.type}": terminal names must be unique, got "${t.name}"`);
-    }
-    names.add(t.name);
-    if (!Number.isInteger(t.x / GRID) || !Number.isInteger(t.y / GRID)) {
-      throw new Error(
-        `symbol "${def.type}": terminal "${t.name}" at (${t.x},${t.y}) is NOT on the ${GRID}-unit grid`
-      );
-    }
-  }
-  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
-  // grid point and never routed through, so their bbox may be the drawn size
-  // rather than an aligned grid cell.
-  if (terms.length > 0) {
-    const r = def.bbox;
-    for (const [k, v] of Object.entries(r)) {
-      if (!Number.isInteger(v / GRID)) {
-        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
-      }
-    }
-  }
-}
-
-__exports.defineSymbol = defineSymbol;
-__exports.markTerminalLeads = markTerminalLeads;
-__exports.validateSymbol = validateSymbol;
-};
-
-__modules["src/core/components/mos.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-const TERMINALS = [
-  { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
-  { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
-  { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
-];
-const BULK = { name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } };
-const BBOX = { x: -120, y: -80, w: 120, h: 160 };
-
-function mosGraphics(sourceArrow, bulk) {
-  const graphics = [
-    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
-    { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
-    { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
-    { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
-    // Channel-side stubs start inside the channel bar (like the drain), so the
-    // butt end never meets the bar edge and leaves an anti-aliased seam.
-    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
-    sourceArrow,
-  ];
-  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
-  return graphics;
-}
-
-/** Build one of the four MOS symbols without sharing mutable definition data. */
-function createMos(type, { pmos = false, bulk = false } = {}) {
-  return defineSymbol({
-    type,
-    description: bulk ? `${pmos ? 'PMOS' : 'NMOS'} transistor with bulk` : `${pmos ? 'PMOS' : 'NMOS'} Transistor`,
-    refPrefix: 'M',
-    terminals: [...TERMINALS, ...(bulk ? [BULK] : [])].map((terminal) => ({
-      ...terminal,
-      dir: { ...terminal.dir },
-    })),
-    // The reusable layout guide measures the conduction column, not the
-    // asymmetric bbox that extends toward the gate. This is symbol metadata,
-    // not a MOS-specific branch in the editor's guide/distribute tools.
-    layoutAnchorTerminals: ['d', 's'],
-    // Drain and source can be spliced in series into a straight wire (a cascode).
-    seriesTerminals: ['d', 's'],
-    bbox: { ...BBOX },
-    graphics: mosGraphics(
-      pmos
-        ? { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' }
-        : { kind: 'polygon', points: [{ x: 0, y: 27.91 }, { x: -34.88, y: 11.63 }, { x: -34.88, y: 44.19 }], fill: 'foreground' },
-      bulk,
-    ),
-    textPos: { x: -26, y: -30, anchor: 'middle' },
-    refPos: null,
-    labelOffset: bulk ? { x: 40, y: -40 } : { x: 40, y: 0 },
-    ...(pmos ? { defaultMirrorY: true } : {}),
-    defaultValue: '',
-  });
-}
-
-__exports.createMos = createMos;
 };
 
 __modules["src/core/analysis/context.js"] = function (__require, __exports) {
@@ -37384,112 +37450,6 @@ function solveByTopology(system, excitations, context, ops, options = {}) {
 }
 
 __exports.solveByTopology = solveByTopology;
-};
-
-__modules["src/core/analysis/index.js"] = function (__require, __exports) {
-const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
-const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
-
-
-
-const PASSTHROUGH_OPTIONS = Object.freeze([
-  'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
-  'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
-  'budget', 'valueOf', 'resolveValue',
-  'topologicalSolve', 'topologicalPresentation',
-]);
-
-function engineOptions(options) {
-  const supported = {};
-  for (const key of PASSTHROUGH_OPTIONS) {
-    if (options[key] !== undefined) supported[key] = options[key];
-  }
-  return {
-    ...supported,
-    ...(options.neglectBodyEffect === undefined ? {} : { ignoreBodyEffect: options.neglectBodyEffect }),
-    ...(options.highIntrinsicGain === undefined ? {} : { gmroLarge: options.highIntrinsicGain }),
-    ...(options.neglectChannelLengthModulation === undefined
-      ? {}
-      : { ignoreChannelLengthModulation: options.neglectChannelLengthModulation }),
-    ...(options.dominantPole === undefined ? {} : { dominantPoleApproximation: options.dominantPole }),
-  };
-}
-
-function triodeRegions(value) {
-  const entries = value instanceof Map ? [...value.entries()]
-    : Array.isArray(value) ? value.map((entry) => String(entry).split('='))
-      : value && typeof value === 'object' ? Object.entries(value) : [];
-  return Object.fromEntries(entries.flatMap(([refdes, model]) => {
-    const region = typeof model === 'object' ? model.region ?? model.model : model;
-    return String(region).toLowerCase() === 'triode' ? [[refdes, { region: 'triode' }]] : [];
-  }));
-}
-
-function compatibilityOptions(options) {
-  return {
-    ...options,
-    deviceRegions: options.deviceRegions ?? triodeRegions(options.models),
-    neglectBodyEffect: options.neglectBodyEffect ?? options.ignoreBodyEffect,
-    highIntrinsicGain: options.highIntrinsicGain ?? options.gmroLarge,
-    neglectChannelLengthModulation: options.neglectChannelLengthModulation
-      ?? options.ignoreChannelLengthModulation,
-    dominantPole: options.dominantPole ?? options.dominantPoleApproximation,
-  };
-}
-
-/** Run one exact symbolic solve and expose the stable combined report shape. */
-function analyzeSmallSignal(circuit, options = {}) {
-  return adaptCombinedReport(analyzeSmallSignalV2(circuit, engineOptions(options)));
-}
-
-function quantityReport(combined, key) {
-  const report = combined.reports[key];
-  return {
-    ...report,
-    dcGain: combined.dcGain,
-    dcInputImpedance: combined.dcInputImpedance,
-    dcOutputImpedance: combined.dcOutputImpedance,
-  };
-}
-
-/** Compatibility wrapper for callers that display only input impedance. */
-function analyzeInputImpedance(circuit, input, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, input })), 'input');
-}
-
-/** Compatibility wrapper for callers that display only output impedance. */
-function analyzeOutputImpedance(circuit, output, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'output');
-}
-
-/** Compatibility wrapper for callers that display only voltage transfer. */
-function analyzeTransferFunction(circuit, output, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'transfer');
-}
-
-/** Return true when an expression retains the Laplace variable. */
-function expressionHasFrequency(value, seen = new Set()) {
-  if (value == null || typeof value !== 'object') {
-    return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
-  }
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (value.kind === 'symbol') return value.name === 's';
-  return [
-    value.expression,
-    value.numerator,
-    value.denominator,
-    value.base,
-    ...(value.terms || []),
-    ...(value.factors || []),
-  ].some((child) => expressionHasFrequency(child, seen));
-}
-
-__exports.analyzeSmallSignal = analyzeSmallSignal;
-__exports.analyzeInputImpedance = analyzeInputImpedance;
-__exports.analyzeOutputImpedance = analyzeOutputImpedance;
-__exports.analyzeTransferFunction = analyzeTransferFunction;
-__exports.expressionHasFrequency = expressionHasFrequency;
 };
   __require("src/web/main.js");
 }());
