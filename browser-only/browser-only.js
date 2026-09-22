@@ -35,14 +35,14 @@ const { crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js");
 const { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate } = __require("src/web/selection.js");
 const { buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js");
 const { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js");
-const { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js");
+const { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js");
 const { createPersistenceAdapter, defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js");
 const { confirmChoice, showFileDialog } = __require("src/web/file-dialog.js");
 const { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js");
 const { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js");
 const { alignedAnchorShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js");
 const { chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js");
-const { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js");
+const { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js");
 const { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js");
 const { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js");
 /**
@@ -2519,7 +2519,9 @@ function selectedComps() {
 function layoutSelection() {
   const components = selectedComps();
   const labels = selectedLabels().filter((label) => !label.owner || !multi.has(label.owner));
-  const eligibleLabels = labels.filter((label) => !label.owner && !label.netId && !label.parent);
+  // Free annotations and a box/arrow's own child labels line up like any
+  // object; applyLayoutPlan keeps a child independent of its moving parent.
+  const eligibleLabels = labels.filter((label) => !label.owner && !label.netId);
   const items = [
     ...components.map(componentLayoutItem),
     ...eligibleLabels.map(labelLayoutItem),
@@ -2534,8 +2536,8 @@ function layoutPlan(action, measure = 'gaps') {
   const selection = layoutSelection();
   if (selection.blocked) return { ok: false, reason: 'Select only components or free annotations; wires and net labels cannot be aligned this way.' };
   return action === 'x' || action === 'y'
-    ? distributionPlan(selection.items, action, measure)
-    : alignmentPlan(selection.items, action);
+    ? { ...distributionPlan(selection.items, action, measure), kind: 'distribute' }
+    : { ...alignmentPlan(selection.items, action), kind: 'align' };
 }
 
 function updateAlignControls() {
@@ -2553,8 +2555,9 @@ function updateAlignControls() {
       : 'Outer objects stay fixed when distributing.';
   for (const button of panel.querySelectorAll('[data-layout-align], [data-layout-distribute]')) {
     const plan = layoutPlan(button.dataset.layoutAlign || button.dataset.layoutDistribute, measure);
+    button.dataset.title ??= button.title;
     button.disabled = !plan.ok;
-    if (!plan.ok) button.title = plan.reason;
+    button.title = plan.ok ? button.dataset.title : plan.reason;
   }
 }
 
@@ -2568,17 +2571,22 @@ function applyLayoutPlan(plan) {
   try {
     const refs = moves.filter(({ id }) => circuit.components.has(id)).map(({ id }) => id);
     const touched = netsTouching(refs);
-    for (const { id, dx, dy } of moves) {
+    // Every target is relative to where the object started. Moving a box or
+    // arrow carries its child labels along, so place selected children after
+    // their parents, from their original anchors -- including children that
+    // should not move at all -- or a child would follow its parent.
+    const isChild = ({ id }) => !!circuit.labels.get(id)?.parent;
+    const children = plan.deltas.filter(isChild);
+    const origins = new Map([...moves, ...children].map(({ id }) => [id, circuit.labels.get(id)?.anchorWorld()]));
+    for (const { id, dx, dy } of [...moves.filter((move) => !isChild(move)), ...children]) {
       const component = circuit.components.get(id);
       if (component) {
         component.transform.x += dx;
         component.transform.y += dy;
       } else {
         const label = circuit.labels.get(id);
-        if (label) {
-          const anchor = label.anchorWorld();
-          label.moveTo(anchor.x + dx, anchor.y + dy);
-        }
+        const origin = origins.get(id);
+        if (label && origin) label.moveTo(origin.x + dx, origin.y + dy);
       }
     }
     if (refs.length) {
@@ -2596,7 +2604,9 @@ function applyLayoutPlan(plan) {
     recordHistoryEntry(before);
     markModelChanged();
     layoutPreviewRects = [];
-    logLine(plan.exact === false ? 'distributed on grid; adjacent intervals differ by at most one cell' : 'aligned selection');
+    logLine(plan.exact !== false ? 'aligned selection'
+      : plan.kind === 'distribute' ? 'distributed on grid; adjacent intervals differ by at most one cell'
+        : 'aligned to the nearest grid point; exact alignment falls between grid points');
     render();
     return true;
   } catch (err) {
@@ -2606,6 +2616,18 @@ function applyLayoutPlan(plan) {
     render();
     return false;
   }
+}
+
+/** Ctrl/Cmd+Shift+arrow: align the selected set's edges. Once the set is
+ * already aligned that way, the same key centres it on that axis instead. */
+function alignSelectionByKey({ align, repeat }) {
+  if (layoutSelection().count < 2) {
+    hintLine('select two or more objects to align them');
+    return;
+  }
+  let plan = layoutPlan(align);
+  if (plan.ok && plan.deltas.every(({ dx, dy }) => !dx && !dy)) plan = layoutPlan(repeat);
+  applyLayoutPlan(plan);
 }
 
 function previewLayoutPlan(plan) {
@@ -5899,7 +5921,10 @@ function radialMove(radial, at, kind) {
   cursor = { x: snap(at.world.x), y: snap(at.world.y) };
   armModalMove({ refdes: radial.refdes }, at.world, at.client);
 }
-const RADIAL_RADIUS = 72;
+// Round tiles of one size at equal angles, on a ring sized so every pair of
+// neighbours has the same gap.
+const RADIAL_TILE = 64;
+const RADIAL_RADIUS = radialRingRadius(RADIAL_ITEMS.length, RADIAL_TILE, 10);
 let radialMenuEl = null;
 
 function openRadialMenu(radial) {
@@ -5914,17 +5939,20 @@ function openRadialMenu(radial) {
   radialMenuEl.setAttribute('role', 'menu');
   radialMenuEl.style.left = `${radial.startClient.x}px`;
   radialMenuEl.style.top = `${radial.startClient.y}px`;
+  radialMenuEl.style.setProperty('--radial-radius', `${RADIAL_RADIUS}px`);
+  radialMenuEl.style.setProperty('--radial-tile', `${RADIAL_TILE}px`);
   const hub = document.createElement('div');
   hub.className = 'radial-hub glass';
   hub.textContent = radial.refdes;
   radialMenuEl.appendChild(hub);
   RADIAL_ITEMS.forEach((item, index) => {
-    const angle = (index / RADIAL_ITEMS.length) * Math.PI * 2;
     const el = document.createElement('div');
     el.className = `radial-item glass${item.danger ? ' danger' : ''}`;
     el.setAttribute('role', 'menuitem');
-    el.style.left = `${Math.sin(angle) * RADIAL_RADIUS}px`;
-    el.style.top = `${-Math.cos(angle) * RADIAL_RADIUS}px`;
+    // Placed by CSS from its angle, so the opening animation can sweep it
+    // around the hub and out to the ring.
+    el.style.setProperty('--radial-angle', `${(index / RADIAL_ITEMS.length) * 360}deg`);
+    el.style.setProperty('--radial-delay', `${index * 14}ms`);
     el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
     el.title = item.label;
     const text = document.createElement('span');
@@ -13632,6 +13660,19 @@ window.addEventListener('keydown', (ev) => {
     }
     return;
   }
+  // Ctrl/Cmd+Shift+arrows align the selected set, in the idle normal editor
+  // only. Checked before the Ctrl/Cmd shortcuts below, which claim every
+  // Ctrl/Cmd key.
+  const alignKey = layoutAlignKey({
+    key: ev.key, shiftKey: ev.shiftKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, altKey: ev.altKey,
+    mode, wire: !!wire, directWire: !!directWire, visual: !!visual, drag: !!drag,
+    moveMode, copyMode, deleteMode, labelMode,
+  });
+  if (alignKey) {
+    ev.preventDefault();
+    alignSelectionByKey(alignKey);
+    return;
+  }
   if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {
     const k = ev.key.toLowerCase();
     if (k === 'c' && ev.shiftKey) {
@@ -14100,1797 +14141,6 @@ __exports.getSymbol = getSymbol;
 __exports.seriesTerminalNames = seriesTerminalNames;
 __exports.symbolTypes = symbolTypes;
 __exports.symbolTypeNames = symbolTypeNames;
-};
-
-__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
-const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
-const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
-const { infinity } = __require("src/core/analysis/rational.js");
-
-
-
-
-
-const QUANTITIES = Object.freeze([
-  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
-  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
-  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
-]);
-
-const SOURCE_NAMES = Object.freeze({
-  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
-  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
-  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
-});
-
-function asArray(value) {
-  if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-function unique(values) {
-  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
-}
-
-function lookup(source, names) {
-  if (!source || typeof source !== 'object') return undefined;
-  for (const name of names) {
-    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
-  }
-  return undefined;
-}
-
-function isExpression(value) {
-  return value && typeof value === 'object' && typeof value.kind === 'string';
-}
-
-function expressionOf(value) {
-  if (value === undefined || value === null) return undefined;
-  if (value.kind === 'rational') return value;
-  if (isExpression(value)) return value;
-  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
-  return value;
-}
-
-function hasFrequency(value) {
-  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
-  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
-  if (value?.kind === 'power') return hasFrequency(value.base);
-  if (value?.kind === 'add' || value?.kind === 'multiply') {
-    const values = value.kind === 'add' ? value.terms : value.factors;
-    return values.some(hasFrequency);
-  }
-  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
-}
-
-function responseRecord(value) {
-  if (value === undefined || value === null) return null;
-  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
-  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
-    return value;
-  }
-  const expression = expressionOf(value);
-  if (expression === undefined || expression === null) return null;
-  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
-  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
-}
-
-function pairFor(source) {
-  if (!source) return { selected: null, exact: null, source: null };
-  const selectedRaw = firstDefined(
-    source.selectedResponse,
-    source.selectedResult,
-    source.selected,
-    source.display,
-    source.approximate,
-    source.expression !== undefined ? source : undefined,
-    isExpression(source) ? source : undefined,
-  );
-  const exactRaw = firstDefined(
-    source.exactResponse,
-    source.exactResult,
-    source.exact,
-    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
-    selectedRaw,
-  );
-  return {
-    selected: responseRecord(selectedRaw),
-    exact: responseRecord(exactRaw),
-    source,
-  };
-}
-
-function valueKey(value) {
-  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
-  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
-  if (value?.kind === 'symbol') return `s:${value.name}`;
-  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
-  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
-  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
-  return JSON.stringify(value);
-}
-
-function sameValue(left, right) {
-  if (left === right) return true;
-  if (left === undefined || right === undefined || left === null || right === null) return false;
-  try {
-    return valueKey(left) === valueKey(right);
-  } catch {
-    return false;
-  }
-}
-
-function render(value, options) {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return value;
-  if (value.kind === 'infinity') return renderExpression(value, options);
-  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
-  return String(value);
-}
-
-function responseExpression(response) {
-  return expressionOf(response);
-}
-
-function equation(label, expression, approximate = false, options) {
-  const body = render(expression, options);
-  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
-}
-
-/**
- * The same equation rendered with provenance markers, so the GUI can map a
- * clicked sub-expression back to the devices it came from.
- *
- * This is built here, beside the string it mirrors, for the reason AGENTS.md
- * gives about `equivalenceOptions`: a row rendered anywhere else would have to
- * reproduce this function's label, approximation flag, and equivalence options,
- * and getting any of them wrong fails silently on that row alone.
- */
-function equationProvenance(label, expression, approximate = false, options) {
-  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
-  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
-  // Mirrors `equation()` above exactly, including its relation symbol.
-  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
-  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
-}
-
-function dcValue(limit) {
-  if (!limit) return undefined;
-  if (limit.value !== undefined && limit.value !== null) return limit.value;
-  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
-  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
-    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
-    return infinity(sign);
-  }
-  return undefined;
-}
-
-function equivalenceOptions(source) {
-  return {
-    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
-    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
-  };
-}
-
-function dcResult(label, selected, exact, source) {
-  const selectedLimit = selected?.dc || source?.dc;
-  const exactLimit = exact?.dc || selectedLimit;
-  const selectedValue = dcValue(selectedLimit);
-  const exactValue = dcValue(exactLimit);
-  if (selectedValue === undefined) {
-    return {
-      ok: false,
-      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
-    };
-  }
-  const changed = !sameValue(selectedValue, exactValue);
-  const options = equivalenceOptions(source);
-  return {
-    ok: true,
-    equation: equation(label, selectedValue, changed, options),
-    exactEquation: equation(label, exactValue, false, options),
-    equationProvenance: equationProvenance(label, selectedValue, changed, options),
-    expression: selectedValue,
-    exactExpression: exactValue,
-  };
-}
-
-function rootValue(root) {
-  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
-}
-
-/**
- * The provenance render of one pole or zero. It must mirror the
- * `renderRootEquation` call beside it exactly, options included — a pole row
- * rendered under different options would highlight terms the displayed row
- * does not contain.
- */
-function rootProvenance(kind, index, value) {
-  if (value === undefined || value === null || typeof value === 'string') return undefined;
-  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
-  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
-}
-
-function rootsOf(response, kind) {
-  const roots = response?.[kind] || [];
-  return roots.map((root, index) => {
-    const value = rootValue(root);
-    return {
-      ...root,
-      index,
-      ...(value !== undefined
-        ? {
-          root: value,
-          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
-          equationProvenance: rootProvenance(kind, index, value),
-        }
-        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
-    };
-  });
-}
-
-function frequencyResponse(selected, exact, source) {
-  const has = Boolean(firstDefined(
-    selected?.hasFrequency,
-    exact?.hasFrequency,
-    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
-  ));
-  if (!has) return null;
-  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
-  return {
-    ...base,
-    hasFrequency: true,
-    expression: responseExpression(selected),
-    exactExpression: responseExpression(exact),
-    numerator: selected?.numerator,
-    denominator: selected?.denominator,
-    poles: rootsOf(selected || exact, 'poles'),
-    zeros: rootsOf(selected || exact, 'zeros'),
-  };
-}
-
-function detailsFor(combined, source) {
-  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
-  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
-  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
-  const solution = get('solution');
-  const log = get('log', 'logDetails');
-  return {
-    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
-    ...(solution !== undefined ? { solution } : {}),
-    ...(log !== undefined ? { log } : {}),
-    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
-    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
-    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
-  };
-}
-
-function childSource(combined, key, quantity) {
-  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
-  const names = SOURCE_NAMES[quantity];
-  for (const container of containers) {
-    const found = lookup(container, [key, ...names]);
-    if (found !== undefined) return found;
-  }
-  return null;
-}
-
-function childMetadata(combined, source, key) {
-  const context = combined?.context || {};
-  const metadata = {
-    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
-    input: firstDefined(source?.input, context.input, combined?.input),
-    reference: firstDefined(source?.reference, context.reference, combined?.reference),
-  };
-  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
-}
-
-function childPairs(combined) {
-  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
-    const source = childSource(combined, key, quantity);
-    return [key, pairFor(source)];
-  }));
-}
-
-function adaptChild(combined, key, quantity) {
-  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
-  const raw = childSource(combined, key, quantity);
-  const pair = pairFor(raw);
-  const source = pair.source || {};
-  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
-  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
-  const selected = pair.selected || responseRecord(selectedExpression);
-  const exact = pair.exact || responseRecord(exactExpression);
-  const details = detailsFor(combined, source);
-  const failed = source?.ok === false || (!selectedExpression && source?.error);
-  const reactive = Boolean(frequencyResponse(selected, exact, source));
-  const label = reactive ? `${labelBase}(s)` : labelBase;
-  const changed = !sameValue(selectedExpression, exactExpression);
-  const renderOptions = equivalenceOptions(source);
-  const result = {
-    ...source,
-    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
-    query,
-    ...childMetadata(combined, source, key),
-    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
-    ...(exactExpression !== undefined ? { exactExpression } : {}),
-    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
-    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
-    ...(selectedExpression !== undefined
-      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
-      : {}),
-    ...details,
-    assumptions: unique([combined?.assumptions, source?.assumptions]),
-    approximations: unique([combined?.approximations, source?.approximations]),
-    dependencies: unique([combined?.dependencies, source?.dependencies]),
-    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
-  };
-  if (reactive && key !== 'transfer') delete result.acTransfer;
-  if (!reactive) {
-    delete result.frequencyResponse;
-    delete result.acTransfer;
-  }
-  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
-    result.smallSignalNetlist = combined.smallSignalNetlist;
-  }
-  if (key === 'transfer' && reactive && result.expression !== undefined) {
-    result.acTransfer = {
-      ok: result.ok,
-      equation: result.equation,
-      exactEquation: result.exactEquation,
-      equationProvenance: result.equationProvenance,
-      expression: result.expression,
-      exactExpression: result.exactExpression,
-    };
-  }
-  if (!result.ok) {
-    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
-    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
-    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
-  }
-  return result;
-}
-
-function transferCompanions(combined, children) {
-  const transfer = children.transfer;
-  const input = children.input;
-  const output = children.output;
-  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
-  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
-  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
-  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
-    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
-  }
-  transfer.dcGain = dcGain;
-  transfer.dcInputImpedance = dcInput;
-  transfer.dcOutputImpedance = dcOutput;
-  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
-}
-
-function cleanChild(child) {
-  const result = { ...child };
-  delete result._selected;
-  delete result._exact;
-  delete result._source;
-  return result;
-}
-
-const ROOT_SEPARATOR = ',\\quad ';
-
-/**
- * One Poles or Zeros row: the roots' own equations shown together. The joined
- * provenance render is kept only when every root has one, so the row's markers
- * can never describe a different string than the one displayed.
- */
-function rootRow(roots) {
-  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
-  const parts = roots.map((root) => root.equationProvenance);
-  return {
-    ok: true,
-    equation,
-    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
-  };
-}
-
-/** What the quantities are ratios of, named by the nodes they were taken at. */
-function portEntry(report) {
-  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
-  if (!definitions.length) return null;
-  // A definition, not a derived expression: it names nodes rather than device
-  // parameters, so there is nothing to trace back to the canvas.
-  const lines = definitions.map(({ tex }) => tex);
-  return {
-    title: 'Ports',
-    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
-  };
-}
-
-function equationEntries(reports, report) {
-  const entries = [];
-  const ports = portEntry(report);
-  if (ports) entries.push(ports);
-  const add = (title, result) => {
-    if (result?.ok && result.equation) entries.push({ title, result });
-  };
-  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
-  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
-  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
-  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
-  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
-  add('DC gain', reports.transfer.dcGain);
-  const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
-  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
-  return entries;
-}
-
-/** Convert one exact/selected v2 response set into the legacy child reports. */
-function adaptCombinedReport(report) {
-  if (!report || typeof report !== 'object') {
-    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
-  }
-  const pairs = childPairs(report);
-  const children = {};
-  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
-    const child = adaptChild(report, key, quantity);
-    children[key] = child;
-  }
-  for (const key of Object.keys(children)) {
-    children[key]._selected = pairs[key].selected;
-    children[key]._exact = pairs[key].exact;
-    children[key]._source = pairs[key].source;
-  }
-  const companions = transferCompanions(report, children);
-  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
-  const details = detailsFor(report, report);
-  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
-  const entries = equationEntries(reports, report);
-  const successful = Object.values(reports).filter((child) => child.ok);
-  const context = report.context || {};
-  const inputPort = firstDefined(context.input);
-  const outputPort = firstDefined(context.output);
-  const referencePort = firstDefined(context.reference);
-  const base = {
-    ...report,
-    query: 'combined',
-    ok: successful.length > 0,
-    complete: successful.length === 3,
-    reports,
-    // Port metadata is distinct from the solved impedance and transfer rows.
-    input: inputPort,
-    output: outputPort,
-    reference: referencePort,
-    inputPort,
-    outputPort,
-    referencePort,
-    inputImpedance: reports.input,
-    outputImpedance: reports.output,
-    voltageTransfer: reports.transfer,
-    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
-    ...companions,
-    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
-    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
-    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
-    ...details,
-    equationEntries: entries,
-    equationOrder: entries.map(({ title }) => title),
-    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
-  };
-  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
-  else delete base.frequencyResponse;
-  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
-    base.acTransfer = {
-      ok: reports.transfer.ok,
-      equation: reports.transfer.equation,
-      exactEquation: reports.transfer.exactEquation,
-      expression: reports.transfer.expression,
-      exactExpression: reports.transfer.exactExpression,
-    };
-  } else delete base.acTransfer;
-  return base;
-}
-
-__exports.adaptCombinedReport = adaptCombinedReport;
-};
-
-__modules["src/core/analysis/engine.js"] = function (__require, __exports) {
-const { MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js");
-const { applyApproximations } = __require("src/core/analysis/approximation.js");
-const { cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js");
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { symbolProvenance } = __require("src/core/analysis/provenance.js");
-const { buildExactAnalysisPipeline } = __require("src/core/analysis/pipeline.js");
-const { presentDiagnostics } = __require("src/core/analysis/diagnostics.js");
-const { describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js");
-const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { approximateTopology, buildTopologyIdentities } = __require("src/core/analysis/topology.js");
-const { compactRational } = __require("src/core/analysis/compact.js");
-const { infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js");
-const { equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js");
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const DEFAULTS = Object.freeze({
-  ignoreBodyEffect: true,
-  gmroLarge: true,
-  ignoreChannelLengthModulation: false,
-  dominantPoleApproximation: false,
-});
-
-function lookup(values, key) {
-  if (!values || key == null) return undefined;
-  if (typeof values.get === 'function') return values.get(key);
-  return Object.hasOwn(values, key) ? values[key] : undefined;
-}
-
-function decimalValue(value) {
-  if (typeof value === 'bigint') return integer(value);
-  if (typeof value === 'number' && Number.isSafeInteger(value)) return integer(value);
-  const text = String(value).trim();
-  if (/^[+-]?\d+$/.test(text)) return integer(BigInt(text));
-  const match = text.match(/^([+-]?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
-  if (!match) return null;
-  const sign = match[1] === '-' ? -1n : 1n;
-  const whole = match[2];
-  const fraction = match[3] || '';
-  const exponent = Number(match[4] || 0);
-  let numerator = BigInt(`${whole}${fraction}`) * sign;
-  const scale = fraction.length - exponent;
-  if (scale <= 0) return integer(numerator * 10n ** BigInt(-scale));
-  return rational(numerator, 10n ** BigInt(scale));
-}
-
-function mapObject(values) {
-  if (!values) return {};
-  if (values instanceof Map) return Object.fromEntries(values);
-  return { ...values };
-}
-
-function modelRegions(options) {
-  const explicit = firstDefined(
-    options.deviceRegions,
-    options.modelOverrides,
-    options.models,
-  );
-  if (explicit !== undefined) return explicit;
-  const source = firstDefined(options.devices, options.deviceOverrides);
-  if (!source || typeof source === 'string') return source;
-  const entries = (source instanceof Map ? [...source.entries()] : Object.entries(source))
-    .filter(([, value]) => typeof value === 'string'
-      || (value && typeof value === 'object' && (value.model !== undefined || value.region !== undefined)));
-  return entries.length ? Object.fromEntries(entries) : undefined;
-}
-
-function symbolicValue(value, primitive, options, ops) {
-  if (value?.kind) return value;
-  const supplied = lookup(options.values || options.parameters || options.params, primitive?.parameter || value);
-  const resolved = supplied === undefined ? value : supplied;
-  if (resolved === undefined || resolved === null || resolved === '') return ops.zero;
-  if (typeof resolved === 'string') {
-    const exact = decimalValue(resolved);
-    return exact || ops.symbol(resolved);
-  }
-  const exact = decimalValue(resolved);
-  if (exact) return exact;
-  return ops.symbol(String(resolved));
-}
-
-function normaliseOptions(options, circuit, symbolic, ops) {
-  const assumptions = options.assumptions && typeof options.assumptions === 'object'
-    ? options.assumptions
-    : {};
-  const body = firstDefined(
-    options.ignoreBodyEffect,
-    options.neglectBodyEffect,
-    options.gmb0,
-    assumptions.ignoreBodyEffect,
-    assumptions.neglectBodyEffect,
-    assumptions.gmb0,
-    DEFAULTS.ignoreBodyEffect,
-  );
-  const intrinsic = firstDefined(
-    options.gmroLarge,
-    options.highIntrinsicGain,
-    assumptions.gmroLarge,
-    assumptions.highIntrinsicGain,
-    DEFAULTS.gmroLarge,
-  );
-  const output = firstDefined(
-    options.ignoreChannelLengthModulation,
-    options.neglectChannelLengthModulation,
-    options.roInfinity,
-    assumptions.ignoreChannelLengthModulation,
-    assumptions.neglectChannelLengthModulation,
-    assumptions.roInfinity,
-    DEFAULTS.ignoreChannelLengthModulation,
-  );
-  const dominantPole = firstDefined(
-    options.dominantPoleApproximation,
-    options.dominantPole,
-    assumptions.dominantPoleApproximation,
-    assumptions.dominantPole,
-    DEFAULTS.dominantPoleApproximation,
-  );
-
-  const devices = mapObject(options.devices || options.deviceOptions || options.deviceOverrides);
-  for (const component of circuit.components.values()) {
-    if (!MOS_TYPES.has(component.type)) continue;
-    const suffix = String(component.refdes).replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
-    // Per-device overrides may use the canonical request names
-    // (neglectBodyEffect, highIntrinsicGain, neglectChannelLengthModulation);
-    // resolve them here so the engine's own flags never shadow them.
-    const override = devices[component.refdes] || {};
-    devices[component.refdes] = {
-      id: component.refdes,
-      gm: `gm${suffix}`,
-      gmb: `gmb${suffix}`,
-      ro: `ro${suffix}`,
-      highIntrinsicGain: Boolean(firstDefined(override.highIntrinsicGain, override.gmroLarge, intrinsic)),
-      gmb0: Boolean(firstDefined(override.gmb0, override.ignoreBodyEffect, override.neglectBodyEffect, body)),
-      roInfinity: Boolean(firstDefined(override.roInfinity, override.ignoreChannelLengthModulation, override.neglectChannelLengthModulation, output)),
-      // A large gm*ro product does not license gm*RS >> 1 or an active
-      // branch's impedance >> RD. Preserve those independent dependencies.
-      intrinsicProduct: true,
-      ...(devices[component.refdes] || {}),
-    };
-  }
-  return {
-    ...options,
-    ...(!Object.hasOwn(options, 'ignoreBodyEffect') ? { ignoreBodyEffect: Boolean(body) } : {}),
-    ...(!Object.hasOwn(options, 'gmroLarge') ? { gmroLarge: Boolean(intrinsic) } : {}),
-    ...(!Object.hasOwn(options, 'ignoreChannelLengthModulation') ? { ignoreChannelLengthModulation: Boolean(output) } : {}),
-    ...(!Object.hasOwn(options, 'dominantPoleApproximation') ? { dominantPoleApproximation: Boolean(dominantPole) } : {}),
-    assumptions: { ...assumptions, gmb0: Boolean(body), gmroLarge: Boolean(intrinsic), dominantPole: Boolean(dominantPole) },
-    devices,
-    ...(symbolic ? { valueOf: (value, primitive) => symbolicValue(value, primitive, options, ops) } : {}),
-  };
-}
-
-function makeEngineOps(options) {
-  const base = options.ops || createRationalOps({
-      variable: options.variable || 's',
-      maxOperations: options.maxOperations,
-    });
-  const ops = {
-    ...base,
-    div: (left, right) => {
-      try {
-        return base.div(left, right);
-      } catch (error) {
-        if (base.isZero(right)) return infinity();
-        throw error;
-      }
-    },
-  };
-  return { ops, symbolic: !options.ops };
-}
-
-function responseOptions(options) {
-  return {
-    variable: options.variable || 's',
-    maxOperations: options.maxOperations,
-    ...(options.budget ? { budget: options.budget } : {}),
-  };
-}
-
-function renderRoot(root, kind, index, options) {
-  if (!root.root?.kind) return `${kind}_{${index}}: roots of the reported polynomial`;
-  return renderRootEquation(kind, index, root.root, options);
-}
-
-function combineParallel(values, ops) {
-  return values.reduce((left, right) => (
-    left === null ? right : ops.div(ops.mul(left, right), ops.add(left, right))
-  ), null);
-}
-
-function dcLimitOf(value, variable) {
-  try {
-    const limit = substituteRational(value, new Map([[variable, integer(0)]]), { variable });
-    return limit.kind === 'infinity' ? null : limit;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Turn each `reduce.js` parallel-merge proof into `present.js` equivalences
- * for every form that might actually get displayed: the exact AC value (as
- * solved), the same branches reduced under whichever assumptions are
- * selected (e.g. `g_m r_o >> 1`) and recombined — the textbook default `A_v`/
- * `Z_in`/`Z_out` equation comes from one leading-term reduction of the
- * *whole* expression, which generally does not preserve this factored
- * structure, so without this the `\|` only ever showed up on the exact row
- * — and each of those at `s=0` for the DC-limit row, dropping any branch
- * that's an open circuit at DC (a capacitor) rather than trying to combine
- * an infinite impedance in parallel with the rest.
- */
-function buildParallelEquivalenceProofs(networkReductionProofs, approximationOptions, ops) {
-  const variable = ops.variable || 's';
-  return (networkReductionProofs || []).flatMap(({ impedance, operands }) => {
-    const proofs = [provenParallel(impedance, ...operands)];
-    const dcOperands = operands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
-    if (dcOperands.length >= 2) {
-      const dcCombined = combineParallel(dcOperands, ops);
-      if (dcCombined) proofs.push(provenParallel(dcCombined, ...dcOperands));
-    }
-    try {
-      const reducedOperands = operands.map((operand) => applyApproximations(operand, approximationOptions).selected);
-      const combined = combineParallel(reducedOperands, ops);
-      if (combined) proofs.push(provenParallel(combined, ...reducedOperands));
-      const reducedDcOperands = reducedOperands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
-      if (reducedDcOperands.length >= 2) {
-        const reducedDcCombined = combineParallel(reducedDcOperands, ops);
-        if (reducedDcCombined) proofs.push(provenParallel(reducedDcCombined, ...reducedDcOperands));
-      }
-    } catch {
-      // Leave whichever proofs already built if the reduced form fails.
-    }
-    return proofs;
-  });
-}
-
-function buildTopologyProofs(topology, queries, approximations, approximationOptions) {
-  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
-  const proofs = [];
-  const identities = [
-    ...['inputImpedance', 'outputImpedance'].flatMap((key) => queries[key].equivalence ? [queries[key].equivalence] : []),
-    ...topology.identities, ...(topology.selectedIdentities || []),
-  ];
-  const multiply = (operands) => operands.reduce((a, b) => ops.mul(a, b), ops.one);
-  const addProof = (identity, equivalent, operands) => {
-    if (!equivalent || operands.some((value) => !value || value.kind === 'infinity')) return;
-    const product = identity.kind === 'product';
-    if (product) operands = operands.filter((value) => !ops.isZero(ops.sub(value, ops.one)));
-    if (operands.length < 2) return;
-    // A product is worth showing factored only while the factors are the
-    // shorter read: once a load has collapsed to 1/g_m, `g_m (1/g_m)` says
-    // less than the 1 it multiplies out to.
-    if (product && !operands.some(carriesSum)) return;
-    const combined = product ? multiply(operands) : combineParallel(operands, ops);
-    if (!ops.isZero(compactRational(ops.sub(combined, equivalent), ops)) || ops.budget.exceeded) return;
-    const response = canonicalResponseValue(equivalent, { variable: ops.variable });
-    const prove = product ? provenProduct : provenParallel;
-    proofs.push(prove(response.expression, ...operands));
-    const dcOperands = operands.map((value) => dcLimitOf(value, ops.variable));
-    // An infinite branch drops out of a parallel DC limit. In a product,
-    // zero times infinity needs a limit of the complete expression instead.
-    const finite = product ? dcOperands : dcOperands.filter(Boolean);
-    if (response.dc.kind === 'finite' && finite.length >= 2 && finite.every(Boolean)) {
-      const dcCombined = product ? multiply(finite) : combineParallel(finite, ops);
-      if (ops.isZero(ops.sub(dcCombined, response.dc.value))) proofs.push(prove(response.dc.value, ...finite));
-    }
-  };
-  try {
-    for (const identity of identities) {
-      addProof(identity, identity.equivalent, identity.operands);
-      const localOptions = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
-      const selected = applyApproximations(identity.equivalent, localOptions).selected;
-      const operands = identity.operands.map((value) => applyApproximations(value, localOptions).selected);
-      addProof(identity, selected, operands);
-    }
-    // Bind the top-level proof to the actual selected query (including a
-    // dominant-pole reduction), rather than assuming local reductions commute.
-    if (topology.stages.length === 1 && !topology.selectedIdentities?.length) {
-      const impedance = approximations.Zout.selected;
-      if (!ops.isZero(impedance) && impedance.kind !== 'infinity') addProof(
-        { kind: 'product' }, approximations.Av.selected,
-        [compactRational(ops.div(approximations.Av.selected, impedance), ops), impedance],
-      );
-    }
-  } catch {
-    return [];
-  }
-  return ops.budget.exceeded ? [] : proofs;
-}
-
-function buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions) {
-  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
-  const options = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
-  const proofs = [];
-  const addProof = (proof, combined) => {
-    if (!ops.isZero(compactRational(ops.sub(proof.equivalent, combined), ops))) return;
-    proofs.push(proof);
-    const response = canonicalResponseValue(compactRational(proof.equivalent, ops), { variable: ops.variable });
-    proofs.push({ ...proof, equivalent: response.expression });
-    const operands = proof.operands.map((value) => dcLimitOf(value, ops.variable));
-    if (response.dc.value && operands.every(Boolean)) proofs.push({ ...proof, equivalent: response.dc.value, operands });
-  };
-  try {
-    for (const stage of [...(pipeline.millerSubstitutions || []), ...(pipeline.retainedFeedbackNetworks || [])]) {
-      const { gain, outputImpedance: load, transadmittance: gm, loadOperands, feedbackImpedance: feedback } = stage;
-      if (loadOperands.length >= 2) addProof(provenParallel(load, ...loadOperands), combineParallel(loadOperands, ops));
-      addProof(provenProduct(gain, gm, load), ops.mul(gm, load));
-      const positiveGain = ops.neg(gain);
-      addProof(provenProduct(positiveGain, ops.neg(gm), load), ops.mul(ops.neg(gm), load));
-      const inverse = ops.div(ops.one, positiveGain);
-      addProof(provenQuotient(inverse, ops.one, positiveGain), ops.div(ops.one, positiveGain));
-      for (const term of [positiveGain, inverse]) {
-        const factor = ops.add(ops.one, term);
-        addProof(provenSum(factor, ops.one, term), ops.add(ops.one, term));
-        const admittance = ops.div(factor, feedback);
-        addProof(provenQuotient(admittance, factor, feedback), ops.div(factor, feedback));
-        const impedance = ops.div(feedback, factor);
-        addProof(provenQuotient(impedance, feedback, factor), ops.div(feedback, factor));
-        const selected = applyApproximations(impedance, options).selected;
-        const selectedFeedback = applyApproximations(feedback, options).selected;
-        const selectedFactor = applyApproximations(factor, options).selected;
-        if (!ops.isZero(ops.sub(selectedFactor, ops.one))) {
-          addProof(provenQuotient(selected, selectedFeedback, selectedFactor), ops.div(selectedFeedback, selectedFactor));
-        }
-      }
-      if (pipeline.retainedFeedbackNetworks?.includes(stage)
-        && stage.gate === pipeline.context.input.node && stage.drain === pipeline.context.output.node) {
-        // Resistive feedback: Zin = (Zfb + Ro)/(1 - Aopen), provided
-        // the actual input query proves this identity (additional gate
-        // loading or another feedback path may invalidate it).
-        const numerator = ops.add(feedback, load);
-        const denominator = ops.add(ops.one, positiveGain);
-        const zin = pipeline.queries.inputImpedance.value;
-        addProof(provenSum(numerator, feedback, load), ops.add(feedback, load));
-        addProof(provenQuotient(zin, numerator, denominator), ops.div(numerator, denominator));
-        const selectedZin = approximations.Zin.selected;
-        const selectedNumerator = applyApproximations(numerator, options).selected;
-        const selectedDenominator = applyApproximations(denominator, options).selected;
-        addProof(provenQuotient(selectedZin, selectedNumerator, selectedDenominator), ops.div(selectedNumerator, selectedDenominator));
-        const shortGm = topology.stages.length === 1 ? topology.stages[0].transadmittance : null;
-        if (shortGm) addProof(provenSum(shortGm, gm, ops.div(ops.one, feedback)), ops.add(gm, ops.div(ops.one, feedback)));
-      }
-    }
-  } catch { /* retain the exact identities already checked within budget */ }
-  return proofs;
-}
-
-/**
- * A first-order root location with the selected post-solve assumptions
- * (for example `g_m r_o >> 1`) applied to it as a quantity of its own: the
- * root of an approximated response still carries every subdominant term.
- */
-function approximatedRoot(root, approximationOptions) {
-  if (!approximationOptions || root.kind !== 'root' || !root.root?.kind || root.root.kind === 'number') return root;
-  try {
-    const approximated = applyApproximations(root.root, { ...approximationOptions, dominantPoleApproximation: false, dominantPole: false });
-    const { selected, changed } = approximated;
-    if (!changed || selected.budgetExceeded) return root;
-    const value = selected.denominator.kind === 'number' && selected.denominator.numerator === selected.denominator.denominator
-      ? selected.numerator
-      : { kind: 'rational', variable: selected.variable, numerator: selected.numerator, denominator: selected.denominator };
-    return { ...root, root: value, exactRoot: root.root, assumptions: approximated.assumptions };
-  } catch {
-    return root;
-  }
-}
-
-/** Poles, zeros, and degrees from the response with common factors cancelled. */
-function withCancelledRoots(response, value, options, approximationOptions) {
-  const cancelled = value?.kind === 'rational'
-    ? cancelCommonPolynomialFactor(value, { variable: options.variable || 's' })
-    : value;
-  const reduced = cancelled === value ? response : analyzeResponse(cancelled, options);
-  return {
-    ...response,
-    numeratorDegree: reduced.numeratorDegree,
-    denominatorDegree: reduced.denominatorDegree,
-    degrees: reduced.degrees,
-    poles: reduced.poles.map((root) => approximatedRoot(root, approximationOptions)),
-    zeros: reduced.zeros.map((root) => approximatedRoot(root, approximationOptions)),
-  };
-}
-
-function displayResponse(name, exact, approximation, options, approximationOptions = null) {
-  const selected = withCancelledRoots(canonicalResponseValue(approximation.selected, options), approximation.selected, options, approximationOptions);
-  const exactResponse = canonicalResponseValue(exact, options);
-  const argument = selected.hasFrequency ? 's' : null;
-  const ac = selected.hasFrequency
-    ? {
-      expression: selected.expression,
-      equation: renderQuantityEquation(name, argument, selected.expression, options),
-      exactEquation: renderQuantityEquation(name, argument, exactResponse.expression, options),
-    }
-    : null;
-  const dc = selected.dc.value
-    ? {
-      ...selected.dc,
-      equation: renderQuantityEquation(name, 0, selected.dc.value, options),
-    }
-    : { ...selected.dc, equation: null };
-  return {
-    exact: exactResponse,
-    approximation,
-    response: selected,
-    expression: selected.expression,
-    ac,
-    dc,
-    dcLimit: selected.dc,
-    poles: selected.poles,
-    zeros: selected.zeros,
-    equations: [ac?.equation, dc.equation].filter(Boolean),
-    ...(options.equivalence ? { equivalence: options.equivalence } : {}),
-    ...(options.equivalences ? { equivalences: options.equivalences } : {}),
-  };
-}
-
-function canonicalResponseValue(value, options) {
-  const canonical = value === Infinity || value === -Infinity
-    ? infinity(value < 0 ? -1 : 1)
-    : value?.kind ? value : decimalValue(value);
-  if (canonical?.kind === 'infinity') {
-    return {
-      expression: canonical,
-      numerator: canonical,
-      denominator: null,
-      numeratorCoefficients: null,
-      denominatorCoefficients: null,
-      numeratorDegree: null,
-      denominatorDegree: null,
-      numeratorValuation: null,
-      denominatorValuation: null,
-      degrees: { numerator: null, denominator: null },
-      dc: { kind: 'infinite', value: canonical, order: null, coefficient: canonical },
-      infinity: { kind: 'infinite', value: canonical, order: null, coefficient: canonical },
-      hasFrequency: false,
-      poles: [],
-      zeros: [],
-    };
-  }
-  const response = analyzeResponse(canonical ?? value, options);
-  if (response.dc.kind !== 'finite' || !response.numeratorCoefficients || !response.denominatorCoefficients) return response;
-  const numerator = response.numeratorCoefficients.find(({ power }) => power === 0)?.coefficient;
-  const denominator = response.denominatorCoefficients.find(({ power }) => power === 0)?.coefficient;
-  if (numerator === undefined || denominator === undefined) return response;
-  const valueAtZero = rationalFunction(numerator, denominator, { variable: options.variable || 's' });
-  return {
-    ...response,
-    dc: { ...response.dc, value: valueAtZero, coefficient: valueAtZero },
-  };
-}
-
-function rootRows(transfer, options) {
-  return [
-    ...transfer.poles.map((root) => ({ ...root, equation: renderRoot(root, 'p', root.index, options) })),
-    ...transfer.zeros.map((root) => ({ ...root, equation: renderRoot(root, 'z', root.index, options) })),
-  ];
-}
-
-/**
- * Whether an expression carries a sum. A product is worth showing factored
- * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
- * better than the ratio it expands to -- but two monomials multiplied are
- * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`.
- */
-function carriesSum(value) {
-  if (!value || typeof value !== 'object') return false;
-  if (value.kind === 'add') return true;
-  if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);
-  if (value.kind === 'multiply') return value.factors.some(carriesSum);
-  if (value.kind === 'power') return carriesSum(value.base);
-  return false;
-}
-
-function unique(values) {
-  return [...new Set(values.filter(Boolean))];
-}
-
-function nodeNames(circuit) {
-  return new Map([...circuit.nets.values()].map((net) => [net.id, net.name || net.id]));
-}
-
-function solveFailureSource(pipeline) {
-  const failure = pipeline?.solution || pipeline;
-  const code = String(failure?.code || '').toLowerCase();
-  const text = `${failure?.error || ''} ${pipeline?.error || ''}`.toLowerCase();
-  const singular = code === 'singular'
-    || code === 'inconsistent'
-    || code === 'singular-system'
-    || code === 'inconsistent-system'
-    || text.includes('singular system')
-    || text.includes('no pivot');
-  if (!singular) return failure;
-  return {
-    code: 'singular-system',
-    severity: 'error',
-    stage: 'solve',
-    error: failure?.error || pipeline?.error || 'small-signal solve has no unique solution',
-    metadata: {
-      cause: 'no-pivot',
-      ...(failure?.pivotColumn === undefined ? {} : { pivotColumn: failure.pivotColumn }),
-      ...(failure?.pivotRow === undefined ? {} : { pivotRow: failure.pivotRow }),
-      ...(code && code !== 'singular-system' ? { originalCode: code } : {}),
-    },
-  };
-}
-
-function failureReport(pipeline, options, error = null) {
-  const source = pipeline?.stage === 'solve'
-    ? { solve: [solveFailureSource(pipeline)] }
-    : pipeline
-      ? { ...pipeline }
-      : { error: error?.message || error || 'analysis failed' };
-  const diagnostics = presentDiagnostics(source);
-  return {
-    ok: false,
-    version: 2,
-    stage: pipeline?.stage || 'analysis',
-    error: pipeline?.error || error?.message || String(error || 'analysis failed'),
-    context: pipeline?.context || null,
-    exact: null,
-    approximate: null,
-    input: null,
-    output: null,
-    transfer: null,
-    dc: null,
-    poles: [],
-    zeros: [],
-    assumptions: [],
-    details: pipeline || null,
-    netlist: describeSmallSignalNetlist([], options),
-    smallSignalNetlist: '',
-    diagnostics,
-    log: diagnostics.logText,
-  };
-}
-
-/**
- * The budget is a real size limit, not a timeout: an exact symbolic solve of a
- * large reactive model grows faster than any budget worth waiting for. Say
- * what can be made smaller, because the form has no budget control.
- */
-/**
- * What the three quantities are a ratio of, in the drawing's own node names.
- * The quantity symbols stay canonical -- `A_v`, `Z_{in}`, `Z_{out}` -- and this
- * says which nodes they were taken between, which is the whole answer for a
- * query like "what does the supply do to the output": nothing about a rail is
- * special, it is simply the node the input was taken at.
- */
-function portSymbols(name) {
-  const raw = String(name || '');
-  const flat = raw.replace(/[_^]\{([^}]*)\}/g, '$1');
-  // A node already named as a voltage lends its subscript to the current, so
-  // the pair reads as one: V_{DD} with I_{DD}. A name written without markup
-  // is given the same textbook spelling rather than one of each.
-  if (/^V.+/.test(flat)) {
-    const subscript = flat.slice(1);
-    return { voltage: /[_^]\{/.test(raw) ? raw : `V_{${subscript}}`, current: `I_{${subscript}}` };
-  }
-  return { voltage: `v_{${flat}}`, current: `i_{${flat}}` };
-}
-
-function portDefinitions(context) {
-  const input = context?.input;
-  const output = context?.output;
-  if (!input || !output) return [];
-  const from = portSymbols(input.name || input.netId);
-  const to = portSymbols(output.name || output.netId);
-  // Each impedance states the condition it was measured under, the way a
-  // textbook writes it: the output port carries no external current while the
-  // input drives, and the input is zeroed while the output port is driven.
-  return [
-    { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
-    { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}` },
-    { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}} \\Big\\vert_{${from.voltage} = 0}` },
-  ];
-}
-
-function budgetFailureReport(stage, budget, options) {
-  return failureReport({
-    ok: false,
-    stage: 'budget',
-    code: 'operation-budget',
-    error: `symbolic operation budget exhausted during ${stage}: this model is too large to solve exactly. `
-      + 'Simplify it — fewer device capacitances, r_o → ∞ on bias devices, or analyze one stage at a time.',
-    budget: { used: budget.used, limit: budget.limit },
-  }, options);
-}
-
-/**
- * Run the topology-independent symbolic small-signal analysis pipeline.
- * Exact canonical responses are retained beside any selected approximation.
- */
-function analyzeSmallSignalV2(circuit, options = {}) {
-  if (!circuit) throw new TypeError('circuit is required');
-  const { ops, symbolic } = makeEngineOps(options);
-  const normalized = normaliseOptions(options, circuit, symbolic, ops);
-  const analysisOptions = { ...normalized, ...(ops.budget ? { budget: ops.budget } : {}) };
-  const regions = modelRegions(options);
-  const pipelineOptions = {
-    ...normalized,
-    ops,
-    devices: regions,
-    deviceRegions: regions,
-    deviceAssumptions: normalized.devices,
-    s: options.s === undefined
-      ? (symbolic ? ops.s() : (typeof ops.s === 'function' ? ops.s() : ops.one))
-      : (symbolic ? symbolicValue(options.s, {}, options, ops) : options.s),
-  };
-  let pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);
-  let retainedOutputResistance = false;
-  // Leaving r_o out can float a node driven only by current sources (an
-  // inverter's output). Then fall back to the exact model and take the
-  // post-solve r_o -> infinity limit, which shows how the result grows.
-  if (!pipeline.ok && pipeline.stage === 'solve' && Object.values(normalized.devices || {}).some((device) => device.roInfinity)) {
-    const retained = buildExactAnalysisPipeline(circuit, { ...pipelineOptions, deviceAssumptions: null });
-    if (retained.ok) {
-      pipeline = retained;
-      retainedOutputResistance = true;
-    }
-  }
-  if (!pipeline.ok) return failureReport(pipeline, normalized);
-  if (ops.budget?.exceeded) return budgetFailureReport('exact solve', ops.budget, analysisOptions);
-
-  const queries = pipeline.queries;
-  if (ops.budget?.exceeded) return budgetFailureReport('query extraction', ops.budget, analysisOptions);
-  const values = {
-    Av: queries?.transfer?.value,
-    Zin: queries?.inputImpedance?.value,
-    Zout: queries?.outputImpedance?.value,
-  };
-  if (Object.values(values).some((value) => value === undefined)) return failureReport({
-    ...pipeline,
-    stage: 'queries',
-    error: 'pipeline query results are incomplete',
-    queries,
-  }, normalized);
-
-  const approximationOptions = {
-    ...analysisOptions,
-    parameters: analysisOptions.parameters || {},
-    rational: {
-      maxOperations: options.maxOperations,
-      ...(ops.budget ? { budget: ops.budget } : {}),
-    },
-  };
-
-  const equivalences = equivalenceTable(buildParallelEquivalenceProofs(pipeline.networkReductionProofs, approximationOptions, ops));
-  const withEquivalences = (options) => ({ ...options, equivalences });
-
-  const exact = {};
-  for (const [name, value] of Object.entries(values)) {
-    const cleanupOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
-    const compact = compactRational(value, cleanupOps);
-    exact[name] = canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, withEquivalences(responseOptions(analysisOptions)));
-    if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
-  }
-  if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
-  const approximations = {};
-  for (const [name, response] of Object.entries(exact)) {
-    approximations[name] = response.expression?.kind === 'infinity'
-      ? { exact: response.expression, selected: response.expression, changed: false, assumptions: [] }
-      : applyApproximations(response.expression, approximationOptions);
-    if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
-  }
-  const topology = buildTopologyIdentities(pipeline, analysisOptions);
-  // A dominant-pole reduction acts on the whole transfer function; stage
-  // factoring must not silently replace that explicitly selected reduction.
-  const topologicalApproximation = analysisOptions.dominantPoleApproximation ? null
-    : approximateTopology(topology, queries, approximationOptions);
-  if (topologicalApproximation) {
-    for (const [name, composed, stageAssumptions] of [
-      ['Av', topologicalApproximation.selected, topologicalApproximation.assumptions],
-      ['Zout', topologicalApproximation.output.selected, topologicalApproximation.output.assumptions],
-    ]) {
-      // The stages were reduced one at a time; run the selected assumptions
-      // over what they compose to as well. Without this the topological form
-      // silently replaced a stronger whole-expression reduction -- a diode
-      // load stayed 1/g_m2 || r_o1 || r_o2 where g_m r_o >> 1 says 1/g_m2.
-      const reduced = applyApproximations(composed, approximationOptions);
-      const selected = reduced.selected;
-      const assumptions = unique([...stageAssumptions, ...reduced.assumptions]);
-      const comparisonOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
-      const changed = !comparisonOps.isZero(compactRational(comparisonOps.sub(selected, exact[name].expression), comparisonOps));
-      approximations[name] = { ...approximations[name], selected, changed, assumptions: changed ? assumptions : [] };
-    }
-    topology.selectedIdentities = topologicalApproximation.identities;
-  }
-  for (const [key, proof] of equivalenceTable(buildTopologyProofs(topology, queries, approximations, approximationOptions))) {
-    equivalences.set(key, proof);
-  }
-  for (const [key, proof] of equivalenceTable(buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions))) {
-    equivalences.set(key, proof);
-  }
-  const displayed = {
-    transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions)), approximationOptions),
-    input: displayResponse('Zin', exact.Zin.expression, approximations.Zin, withEquivalences({
-      ...responseOptions(analysisOptions),
-      ...(queries.inputImpedance.equivalence ? { equivalence: queries.inputImpedance.equivalence } : {}),
-    }), approximationOptions),
-    output: displayResponse('Zout', exact.Zout.expression, approximations.Zout, withEquivalences({
-      ...responseOptions(analysisOptions),
-      ...(queries.outputImpedance.equivalence ? { equivalence: queries.outputImpedance.equivalence } : {}),
-    }), approximationOptions),
-  };
-  if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
-  const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
-  const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
-  // One global statement when the option is global: the model dropped every
-  // device's body-effect branch, and four identical per-device lines say
-  // nothing the single rule does not.
-  const omittedBody = pipeline.omittedBodyEffect || [];
-  const bodyEffectAssumptions = omittedBody.length
-    ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
-    : [];
-  const assumptions = unique([
-    ...millerAssumptions,
-    ...bodyEffectAssumptions,
-    ...outputResistanceAssumptions,
-    ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
-    ...Object.values(displayed).flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
-      .flatMap((root) => root.assumptions || []),
-  ]);
-  const transfer = displayed.transfer.response;
-  const roots = rootRows(transfer, responseOptions(analysisOptions));
-  if (ops.budget?.exceeded) return budgetFailureReport('pole and zero extraction', ops.budget, analysisOptions);
-  const netlist = describeSmallSignalNetlist(pipeline.selected, {
-    ...normalized,
-    equivalences,
-    acGroundIds: pipeline.context.acGroundIds,
-    nodeAliases: pipeline.context.nodeAliases,
-    nodeNames: nodeNames(circuit),
-  });
-  const diagnostics = presentDiagnostics({
-    context: pipeline.context,
-    conversion: pipeline.conversion,
-    graph: pipeline.coupled,
-    queries,
-  });
-  const names = nodeNames(circuit);
-  const portName = (variable) => {
-    const node = variable.slice(2, -1);
-    return names.get(node) || node;
-  };
-  const topologyLog = topology.stages.map((stage, index) => (
-    `Stage ${index + 1}: ${portName(stage.from)} -> ${portName(stage.to)}; gain = signed transadmittance times loaded output impedance.`
-  ));
-  return {
-    ok: true,
-    version: 2,
-    context: pipeline.context,
-    input: displayed.input,
-    output: displayed.output,
-    transfer: displayed.transfer,
-    exact,
-    approximate: approximations,
-    dc: {
-      input: displayed.input.dcLimit,
-      output: displayed.output.dcLimit,
-      transfer: displayed.transfer.dcLimit,
-    },
-    dcLimits: {
-      input: displayed.input.dcLimit,
-      output: displayed.output.dcLimit,
-      transfer: displayed.transfer.dcLimit,
-    },
-    poles: transfer.poles,
-    zeros: transfer.zeros,
-    roots,
-    assumptions,
-    portDefinitions: portDefinitions(pipeline.context),
-    equations: [
-      ...displayed.input.equations,
-      ...displayed.output.equations,
-      ...displayed.transfer.equations,
-      ...roots.map(({ equation }) => equation),
-    ],
-    details: {
-      topology,
-      pipeline,
-      queries,
-      exact,
-      approximations,
-      system: pipeline.system,
-      solution: pipeline.solution,
-    },
-    netlist,
-    smallSignalNetlist: netlist.text,
-    // Where each symbol in the equations above came from. The solved primitive
-    // set describes the model that produced them, and the conversion set fills
-    // in symbols whose own primitive left the model but whose name survived
-    // into an equation — a Miller-absorbed feedback capacitor, or an r_o the
-    // engine had to keep. See `provenance.js`.
-    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives),
-    diagnostics,
-    log: [
-      diagnostics.logText,
-      ...(retainedOutputResistance
-        ? ['r_o -> infinity: removing r_o leaves a node with no conducting path (for example an output driven only by current sources), so r_o was kept and only its large-r_o limit applied.']
-        : []),
-      ...topologyLog,
-    ].filter(Boolean).join('\n'),
-  };
-}
-
-__exports.portDefinitions = portDefinitions;
-__exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
-};
-
-__modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
-const { Circuit } = __require("src/core/model.js");
-const { rectsOverlap } = __require("src/core/geometry.js");
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { renderExpression } = __require("src/core/analysis/present.js");
-/**
- * Draw the small-signal model the solve actually used as an ordinary
- * schematic: one column per node, shunt branches hanging from each node down
- * to a single AC-ground rail, and series branches stacked in rows above the
- * node line. The primitives come from the pipeline *after* its pre-solve
- * transforms (Miller decoupling, `r_o -> infinity`, triode overrides), so the
- * drawing shows the circuit the displayed equations describe, not the
- * schematic they came from.
- *
- * The result is an ordinary `Circuit`: it renders, exports, and analyzes like
- * any other document, which is what makes it checkable -- analyzing the model
- * must reproduce the source schematic's equations.
- */
-
-
-
-
-
-const AC_GROUND_NODE = '@AC_GROUND';
-
-const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
-const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source']);
-const MIN_PITCH = 240;
-const SLOT_PADDING = 240;
-const BUS_Y = 0;
-const SHUNT_Y = 240;
-const RAIL_Y = 480;
-const ROW_H = 240;
-const PORT_GAP = 240;
-
-/** Elements whose branch is drawn with each symbol. */
-const ELEMENT_TYPES = new Map([
-  ['resistor', 'resistor'],
-  ['conductance', 'resistor'],
-  ['triode-resistance', 'resistor'],
-  ['capacitor', 'capacitor'],
-  ['inductor', 'inductor'],
-  ['vccs', 'vccs'],
-  ['current-source', 'current_source'],
-  ['voltage-source', 'voltage_source'],
-]);
-
-function isGround(node) {
-  return node === undefined || node === null || AC_GROUND_NAMES.has(String(node));
-}
-
-/** Accept every primitive shape the pipeline hands out: branches carry `a`/`b`
- * or `terminals`, controlled sources carry `outPlus`/`outMinus`. */
-function normalize(primitive) {
-  if (!primitive || typeof primitive !== 'object') return null;
-  const a = primitive.a ?? primitive.terminals?.a ?? primitive.outPlus;
-  const b = primitive.b ?? primitive.terminals?.b ?? primitive.outMinus;
-  if (a === undefined && b === undefined) return null;
-  const controlA = primitive.control?.a ?? primitive.controlPlus;
-  const controlB = primitive.control?.b ?? primitive.controlMinus;
-  return {
-    id: String(primitive.id || primitive.kind || 'primitive'),
-    kind: String(primitive.kind || '').toLowerCase(),
-    a: isGround(a) ? AC_GROUND_NODE : String(a),
-    b: isGround(b) ? AC_GROUND_NODE : String(b),
-    control: controlA === undefined && controlB === undefined ? null : {
-      a: isGround(controlA) ? AC_GROUND_NODE : String(controlA),
-      b: isGround(controlB) ? AC_GROUND_NODE : String(controlB),
-    },
-    parameter: primitive.parameter ? String(primitive.parameter) : '',
-    value: primitive.value,
-    metadata: primitive.metadata || {},
-    source: primitive,
-  };
-}
-
-/** `ro1` -> `r_{o1}`, `CGD` -> `C_{GD}`, `gmb2` -> `g_{mb2}`: the same textbook
- * spelling the netlist and the equations use. */
-function textbookSymbol(raw) {
-  const name = String(raw || '');
-  if (!name) return '';
-  if (/^gmb[A-Za-z0-9_]*$/.test(name)) return `g_{mb${name.slice(3)}}`;
-  if (/^gm[A-Za-z0-9_]*$/.test(name)) return `g_{m${name.slice(2)}}`;
-  if (/^go[A-Za-z0-9_]*$/.test(name)) return `g_{o${name.slice(2)}}`;
-  if (/^rds[A-Za-z0-9_]*$/.test(name)) return `r_{ds${name.slice(3)}}`;
-  if (/^ro[A-Za-z0-9_]*$/.test(name)) return `r_{o${name.slice(2)}}`;
-  if (/^[RCL][A-Za-z0-9_]+$/.test(name)) return `${name[0]}_{${name.slice(1)}}`;
-  return name;
-}
-
-/**
- * A controlled source is labelled with its own transconductance times the
- * controlling voltage, the way a hybrid-pi figure is drawn: the control pair
- * is text, never a second pair of wires across the drawing. The pair names the
- * drawing's own nodes -- `g_{m1}(V_{IN} - 0)`, not `g_{m1} v_{gs1}` -- so the
- * reader can follow the control back to a node without decoding a subscript.
- */
-function controlledSourceLabel(element, nodeName) {
-  const gain = textbookSymbol(element.parameter) || 'g_m';
-  if (!element.control) return gain;
-  const plus = nodeName(element.control.a) || '0';
-  const minus = nodeName(element.control.b) || '0';
-  return `${gain}(${plus} - ${minus})`;
-}
-
-/**
- * A Miller shunt has no parameter symbol of its own, and its admittance is a
- * whole fraction -- far too wide to sit beside a symbol. Name it the way a
- * textbook does and state the value in the legend below the drawing.
- */
-function millerSymbol(element, symbol) {
-  const device = String(element.metadata?.component || '').replace(/\W/g, '') || 'M';
-  const side = element.metadata?.millerSide === 'output' ? 'out' : 'in';
-  return `${symbol === 'capacitor' ? 'C' : 'Y'}_{${device},${side}}`;
-}
-
-/** An admittance divided by `s`, when that leaves no frequency behind: the
- * capacitance a capacitive shunt is drawn as. */
-function perFrequency(value, options) {
-  try {
-    const ops = createRationalOps({ variable: 's', maxOperations: 4000 });
-    const capacitance = ops.div(value, ops.s());
-    if (ops.budget?.exceeded) return null;
-    const rendered = renderExpression(capacitance, options.renderOptions || {});
-    return /(^|[^A-Za-z])s([^A-Za-z]|$)/.test(rendered) ? null : rendered;
-  } catch { return null; }
-}
-
-function elementLabel(element, symbol, options, nodeName) {
-  if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
-  if (element.parameter) return { text: textbookSymbol(element.parameter) };
-  let rendered = '';
-  try { rendered = renderExpression(element.value, options.renderOptions || {}); }
-  catch { rendered = ''; }
-  if (element.kind === 'admittance') {
-    const name = millerSymbol(element, symbol);
-    // A shunt drawn as a capacitor is named as one, so state a capacitance:
-    // the primitive carries the admittance Y = sC, and C = Y/s is the
-    // textbook Miller value.
-    if (symbol === 'capacitor') {
-      const capacitance = perFrequency(element.value, options);
-      if (capacitance) return { text: name, legend: { symbol: name, value: capacitance } };
-    }
-    return { text: name, legend: rendered ? { symbol: `Y_{${name.slice(name.indexOf('{') + 1, -1)}}`, value: rendered } : null };
-  }
-  return { text: rendered || element.id };
-}
-
-/**
- * A label's rendered width is only known in a browser, and the drawing has to
- * be laid out before that. Estimate it from the text the way `textWidth` does
- * -- the tight per-glyph model at the label font size -- so columns are spaced
- * for their own contents instead of a fixed guess.
- */
-function estimateLabelWidth(tex) {
-  const plain = String(tex)
-    .replace(/\\left|\\right|\\,|\\;|\\!/g, '')
-    .replace(/\\frac/g, '')
-    .replace(/[{}$]/g, '');
-  return Math.max(120, plain.length * 24);
-}
-
-/** Local offset that renders at a given world offset for a placed symbol. */
-function localOffset(dx, dy, rotation) {
-  const turn = ((rotation % 360) + 360) % 360;
-  if (turn === 90) return { x: dy, y: -dx };
-  if (turn === 180) return { x: -dx, y: -dy };
-  if (turn === 270) return { x: -dy, y: dx };
-  return { x: dx, y: dy };
-}
-
-/** A Miller shunt made only of capacitors is a capacitor in the drawing --
- * that is exactly the textbook Miller capacitance. */
-function elementSymbol(element) {
-  const mapped = ELEMENT_TYPES.get(element.kind);
-  if (mapped) return mapped;
-  if (element.kind === 'admittance') {
-    const kinds = element.metadata?.feedbackKinds || [];
-    if (kinds.length && kinds.every((kind) => kind === 'capacitor')) return 'capacitor';
-  }
-  return 'resistor';
-}
-
-function uniqueRefdes(base, used) {
-  const clean = String(base || 'X').replace(/[^A-Za-z0-9_]/g, '') || 'X';
-  let candidate = /^[A-Za-z]/.test(clean) ? clean : `X${clean}`;
-  let index = 2;
-  while (used.has(candidate)) candidate = `${clean}_${index++}`;
-  used.add(candidate);
-  return candidate;
-}
-
-/** Node display names, preferring the source circuit's own net names. */
-function nodeNames(report, options) {
-  const names = new Map();
-  const circuit = options.circuit;
-  if (circuit) {
-    for (const net of circuit.nets.values()) names.set(net.id, net.name || net.id);
-  }
-  for (const [key, value] of options.nodeNames instanceof Map ? options.nodeNames : []) names.set(key, value);
-  return names;
-}
-
-/**
- * Node order across the drawing. The source schematic's own left-to-right
- * order is the one the reader already knows, so use it when the circuit is
- * available; otherwise fall back to first appearance with the analysis input
- * first and its output last.
- */
-function orderNodes(elements, report, options) {
-  const seen = [];
-  for (const element of elements) {
-    for (const node of [element.a, element.b, element.control?.a, element.control?.b]) {
-      if (node && node !== AC_GROUND_NODE && !seen.includes(node)) seen.push(node);
-    }
-  }
-  const circuit = options.circuit;
-  const centre = new Map();
-  if (circuit) {
-    for (const node of seen) {
-      const net = circuit.nets.get(node);
-      const points = (net?.terminals || []).map((terminal) => {
-        try { return circuit.getComponent(terminal.comp).terminalWorld(terminal.term).x; }
-        catch { return null; }
-      }).filter((value) => value !== null);
-      if (points.length) centre.set(node, points.reduce((sum, value) => sum + value, 0) / points.length);
-    }
-  }
-  const inputNode = portNode(report, 'input');
-  const outputNode = portNode(report, 'output');
-  const rank = (node) => node === inputNode ? -Infinity : node === outputNode ? Infinity : 0;
-  return [...seen].sort((left, right) => {
-    const ranked = rank(left) - rank(right);
-    if (Number.isFinite(ranked) && ranked !== 0) return ranked;
-    if (!Number.isFinite(ranked)) return ranked < 0 ? -1 : 1;
-    const a = centre.get(left);
-    const b = centre.get(right);
-    if (a !== undefined && b !== undefined && a !== b) return a - b;
-    return seen.indexOf(left) - seen.indexOf(right);
-  });
-}
-
-/** The analysis node a port role resolved to, as the context recorded it. */
-function portNode(report, role) {
-  const context = report?.context || report?.details?.pipeline?.context;
-  return context?.[role]?.node || null;
-}
-
-/**
- * Where to hang a node's name: the middle of its longest run, preferring a
- * horizontal one, and only where a label-sized box above the wire clears every
- * symbol. A node whose wires are all crowded keeps its name in the net list
- * rather than printing it over a component.
- */
-function netLabelAnchor(net, width, boxes) {
-  const segments = [];
-  for (const path of (net.paths ? net.paths() : [])) {
-    for (let index = 1; index < path.length; index += 1) segments.push([path[index - 1], path[index]]);
-  }
-  const span = ([a, b]) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-  const horizontal = segments.filter(([a, b]) => a.y === b.y);
-  const ordered = (horizontal.length ? horizontal : segments).sort((left, right) => span(right) - span(left));
-  for (const [a, b] of ordered) {
-    const point = { x: snapTo((a.x + b.x) / 2), y: snapTo((a.y + b.y) / 2) };
-    const box = { x: point.x - width / 2, y: point.y - 120, w: width, h: 120 };
-    if (!boxes.some((other) => rectsOverlap(box, other))) return point;
-  }
-  return null;
-}
-
-function snapTo(value) {
-  return Math.round(value / 40) * 40;
-}
-
-/**
- * Build the drawn model.
- *
- * @param {object} report a successful `analyzeSmallSignalV2` report
- * @param {{circuit?: import('../model.js').Circuit, nodeNames?: Map}} options
- * @returns {{ok: boolean, circuit?: Circuit, correspondence?: Map, notes: string[], error?: string}}
- */
-function smallSignalSchematic(report, options = {}) {
-  const primitives = report?.details?.pipeline?.selected;
-  if (!Array.isArray(primitives) || !primitives.length) {
-    return { ok: false, notes: [], error: 'this analysis produced no small-signal primitives to draw' };
-  }
-  const elements = primitives.map(normalize).filter(Boolean);
-  const names = nodeNames(report, options);
-  // The node's own name, markup included: label text renders `_{...}`.
-  const nodeName = (node) => (!node || node === AC_GROUND_NODE ? '' : String(names.get(node) || node));
-  const plainName = (node) => nodeName(node).replace(/[_^]\{([^}]*)\}/g, '$1');
-  const nodes = orderNodes(elements, report, options);
-  const shunts = new Map(nodes.map((node) => [node, []]));
-  const series = [];
-  for (const element of elements) {
-    const aGround = element.a === AC_GROUND_NODE;
-    const bGround = element.b === AC_GROUND_NODE;
-    if (aGround && bGround) continue;
-    // A controlled source across one node carries no current -- the body
-    // effect of a device whose source is the AC reference. Drawing it says
-    // nothing and costs a column.
-    if (element.control && element.control.a === element.control.b) continue;
-    if (aGround || bGround) shunts.get(bGround ? element.a : element.b).push(element);
-    else series.push(element);
-  }
-
-  // Every element is drawn with its label above it, so a node's slot is as
-  // wide as its own branches need -- a Miller shunt beside a bare r_o should
-  // not push every other column apart.
-  const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
-  const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
-  // A shunt wears its label on its left, so its neighbour must clear it.
-  const widthOf = (element) => Math.max(MIN_PITCH, snapTo(estimateLabelWidth(labels.get(element).text) + 160));
-  const pitches = new Map(nodes.map((node) => [node, Math.max(MIN_PITCH, ...shunts.get(node).map(widthOf))]));
-
-  const columns = new Map();
-  let x = 0;
-  for (const node of nodes) {
-    const count = Math.max(1, shunts.get(node).length);
-    const width = count * pitches.get(node) + 2 * SLOT_PADDING;
-    columns.set(node, snapTo(x + width / 2));
-    x += width;
-  }
-
-  const circuit = new Circuit();
-  const used = new Set();
-  const correspondence = new Map();
-  const notes = [];
-  const legend = [];
-  const attachments = new Map(nodes.map((node) => [node, []]));
-  const groundRefs = [];
-
-  const addElement = (element, placement, upright = true) => {
-    const type = symbols.get(element);
-    const refdes = uniqueRefdes(element.parameter || element.id.replace(/\W/g, ''), used);
-    const component = circuit.addComponent(type, { ...placement, refdes, noLabel: true });
-    const label = labels.get(element);
-    // Plain `_{...}` markup, not a math label: every symbol in the drawing is
-    // a name with a subscript, and a markup label needs no browser
-    // measurement, so the figure lays out the same in a test, an export, and
-    // the dock. The one thing that needs real math -- a Miller admittance --
-    // is named here and stated in the legend instead.
-    //
-    // An upright branch wears its label on the left, where a textbook puts it;
-    // a branch lying along a row wears it above, clear of its own wires. The
-    // offset comes from the label's own measured box rather than the estimate
-    // the columns are spaced by, so the text sits against its symbol instead
-    // of drifting into the gap towards the next one.
-    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
-    const box = owned.bbox();
-    const reach = (extent) => 40 * Math.ceil((40 + extent / 2) / 40);
-    const world = upright ? { x: -reach(box.w), y: 0 } : { x: 0, y: -reach(box.h) };
-    owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
-    owned.clearRenderedTextBounds();
-    if (label.legend) legend.push(label.legend);
-    correspondence.set(refdes, { primitive: element.id, component: element.metadata?.component || null, role: element.kind });
-    return component;
-  };
-
-  // Shunt branches: node bus -> element -> ground rail.
-  for (const node of nodes) {
-    const list = shunts.get(node);
-    const centreX = columns.get(node);
-    const pitch = pitches.get(node);
-    list.forEach((element, index) => {
-      const shuntX = snapTo(centreX + (index - (list.length - 1) / 2) * pitch);
-      const vertical = SOURCE_KINDS.has(element.kind);
-      // A source symbol is already vertical; a passive is turned upright. The
-      // current of a controlled source flows from `a` into `b`, so a source
-      // whose ground end is `a` is turned around rather than redrawn.
-      const flipped = element.a === AC_GROUND_NODE;
-      const rotation = vertical ? (flipped ? 180 : 0) : (flipped ? 270 : 90);
-      const component = addElement(element, { x: shuntX, y: SHUNT_Y, rotation }, true);
-      const [top, bottom] = flipped ? ['b', 'a'] : ['a', 'b'];
-      attachments.get(node).push(`${component.refdes}.${top}`);
-      groundRefs.push(`${component.refdes}.${bottom}`);
-    });
-  }
-
-  // Series branches stack in rows above the node line, lowest row first.
-  const rows = [];
-  for (const element of series) {
-    const left = Math.min(columns.get(element.a), columns.get(element.b));
-    const right = Math.max(columns.get(element.a), columns.get(element.b));
-    let row = rows.findIndex((spans) => spans.every(([from, to]) => right <= from || left >= to));
-    if (row < 0) row = rows.push([]) - 1;
-    rows[row].push([left, right]);
-    const y = BUS_Y - (row + 1) * ROW_H;
-    const rotation = SOURCE_KINDS.has(element.kind) ? 270 : 0;
-    const component = addElement(element, { x: snapTo((left + right) / 2), y, rotation }, false);
-    const aLeft = columns.get(element.a) <= columns.get(element.b);
-    attachments.get(element.a).push(`${component.refdes}.${aLeft ? 'a' : 'b'}`);
-    attachments.get(element.b).push(`${component.refdes}.${aLeft ? 'b' : 'a'}`);
-  }
-
-  // The interface ports read left to right on the node line itself, outside
-  // every column: the input node sorts first and the output node last, so
-  // neither stub crosses another node's bus.
-  const portNodes = new Set();
-  // Outside everything drawn, and outside every column: a node that only
-  // controls a source has a column but nothing standing in it.
-  const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
-  const spans = [...columns.values()];
-  const leftEdge = snapTo(Math.min(...drawn.map((box) => box.x), ...spans) - PORT_GAP);
-  const rightEdge = snapTo(Math.max(...drawn.map((box) => box.x + box.w), ...spans) + PORT_GAP);
-  const portFor = (node, type, side) => {
-    if (!node || !columns.has(node)) return;
-    const refdes = uniqueRefdes(plainName(node), used);
-    const port = circuit.addComponent(type, {
-      refdes, x: side === 'left' ? leftEdge : rightEdge, y: BUS_Y, noLabel: true,
-    });
-    // Above the port, not beside it: an outward-facing port box already
-    // occupies the side its own label offset points at.
-    circuit.addLabel({ owner: refdes, text: nodeName(node), align: 'center', offset: { x: 0, y: -120 } });
-    attachments.get(node).push(`${port.refdes}.p`);
-    portNodes.add(node);
-  };
-  portFor(portNode(report, 'input'), 'input', 'left');
-  portFor(portNode(report, 'output'), 'output', 'right');
-
-  // One AC-ground rail under the whole drawing.
-  const railX = snapTo(Math.min(...columns.values()) - SLOT_PADDING);
-  const ground = circuit.addComponent('ground', { refdes: 'GND', x: railX, y: RAIL_Y, noLabel: true });
-  groundRefs.push(`${ground.refdes}.gnd`);
-
-  const failures = [];
-  const wire = (refs, name, stub = null) => {
-    try {
-      // A node that only controls a source -- a bare gate -- has no branch of
-      // its own. Draw its port down to the node line anyway: the controlling
-      // voltage needs somewhere to be read.
-      if (refs.length === 1 && stub) {
-        circuit.wireTo(refs[0], stub);
-        return null;
-      }
-      if (refs.length < 2) return null;
-      const net = circuit.connect(...refs);
-      if (name && net) circuit.renameNet(net, name);
-      return net;
-    } catch (error) { failures.push(`${name || 'net'}: ${error.message}`); }
-    return null;
-  };
-  const wired = new Map();
-  for (const node of nodes) {
-    wired.set(node, wire(attachments.get(node), nodeName(node) || node, { x: columns.get(node), y: BUS_Y }));
-  }
-  wire(groundRefs, 'VSS');
-
-  // Name the nodes on the drawing. A node with a port already reads its name
-  // off that port, and the AC-ground rail is what the ground symbol says.
-  // Clear of every symbol *and* every label already placed: a node name that
-  // lands on a branch's own label is as unreadable as one over a symbol.
-  const boxes = [
-    ...[...circuit.components.values()].map((component) => component.bboxWorld()),
-    ...[...circuit.labels.values()].map((label) => label.bbox()),
-  ];
-  for (const node of nodes) {
-    const net = wired.get(node);
-    if (!net || portNodes.has(node) || !net.name) continue;
-    const anchor = netLabelAnchor(net, estimateLabelWidth(net.name), boxes);
-    if (!anchor) continue;
-    try { circuit.addNetLabel(net, { anchor, netSide: 'above' }); }
-    catch { /* a node whose wire the router shaped differently keeps its name in the net list */ }
-  }
-  if (failures.length) notes.push(`${failures.length} connection${failures.length === 1 ? '' : 's'} could not be routed automatically`);
-
-  const miller = (report?.details?.pipeline?.millerSubstitutions || []).map(({ device }) => device).filter(Boolean);
-  if (miller.length) notes.push(`Miller approximation applied to ${miller.join(', ')}`);
-  const omitted = report?.details?.pipeline?.omittedOutputResistances || [];
-  if (omitted.length) notes.push(`r_o omitted for ${omitted.join(', ')}`);
-
-  return { ok: true, circuit, correspondence, notes, legend, failures };
-}
-
-__exports.textbookSymbol = textbookSymbol;
-__exports.smallSignalSchematic = smallSignalSchematic;
-__exports.AC_GROUND_NODE = AC_GROUND_NODE;
 };
 
 __modules["src/core/model.js"] = function (__require, __exports) {
@@ -21630,88 +19880,6 @@ __exports.Net = Net;
 __exports.Circuit = Circuit;
 };
 
-__modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
-/**
- * Where each symbol in a displayed equation came from.
- *
- * `devices.js` mints every symbolic parameter name through one chokepoint,
- * `parameterName(prefix, refdes)`, and tags every primitive it emits with
- * `metadata.component` and an `id` of the form `<refdes>.<role>`. That makes
- * the inversion below exact: it reads the table devices.js already built
- * rather than guessing at the spelling of a rendered name. Nothing here parses
- * TeX, and nothing here knows about the DOM.
- *
- * Keys are the raw expression symbol names (`gm1`, `ro1`, `RD`) as they appear
- * in `{kind:'symbol', name}` nodes — not their rendered forms (`g_{m1}`).
- * `present.js` owns that spelling and the two must not be confused.
- */
-
-function roleOf(primitive) {
-  const id = String(primitive?.id || '');
-  const dot = id.lastIndexOf('.');
-  const role = dot >= 0 ? id.slice(dot + 1) : '';
-  return role || String(primitive?.kind || '');
-}
-
-/**
- * Invert one or more primitive lists into
- * `{ [symbolName]: {component, role, kind, primitives} }`. Earlier lists win,
- * so pass the solved model first and earlier modeling stages after it.
- *
- * Several lists are needed because a symbol can survive into a displayed
- * equation after its own primitive has left the solved set:
- *
- *  - A Miller shunt carries an expression, not a parameter name, so it mints no
- *    symbol of its own — but that expression still contains the feedback
- *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
- *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
- *    the engine puts `r_o` back when removing it would make the solve singular.
- *
- * A symbol the table cannot resolve simply does not highlight, which is why
- * these gaps are invisible until someone points at the term and nothing
- * happens. Only primitives whose `value` is a symbolic name contribute, and a
- * symbol reached by more than one primitive keeps the first component and
- * accumulates the primitive ids.
- */
-function symbolProvenance(...primitiveLists) {
-  const table = Object.create(null);
-  for (const primitives of primitiveLists) {
-    for (const primitive of primitives || []) {
-      const name = primitive?.value;
-      if (typeof name !== 'string' || !name) continue;
-      const component = primitive?.metadata?.component;
-      if (!component) continue;
-      const existing = table[name];
-      if (existing) {
-        if (!existing.primitives.includes(primitive.id)) existing.primitives.push(primitive.id);
-        continue;
-      }
-      table[name] = {
-        component,
-        role: roleOf(primitive),
-        kind: primitive.kind,
-        primitives: [primitive.id],
-      };
-    }
-  }
-  return table;
-}
-
-/** The distinct components a set of symbol names resolves to, in first-seen
- *  order. Used to label a rendered subexpression with everything it touches. */
-function componentsOfSymbols(names, table) {
-  const seen = [];
-  for (const name of names || []) {
-    const component = table?.[name]?.component;
-    if (component && !seen.includes(component)) seen.push(component);
-  }
-  return seen;
-}
-
-__exports.symbolProvenance = symbolProvenance;
-__exports.componentsOfSymbols = componentsOfSymbols;
-};
-
 __modules["src/core/commands.js"] = function (__require, __exports) {
 const { Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld } = __require("src/core/model.js");
 const { getSymbol, symbolTypeNames } = __require("src/core/components/index.js");
@@ -22780,6 +20948,1879 @@ __exports.parseArgs = parseArgs;
 __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
+};
+
+__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
+const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
+const { analyzeResponse } = __require("src/core/analysis/response.js");
+const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
+const { infinity } = __require("src/core/analysis/rational.js");
+
+
+
+
+
+const QUANTITIES = Object.freeze([
+  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
+  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
+  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
+]);
+
+const SOURCE_NAMES = Object.freeze({
+  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
+  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
+  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
+});
+
+function asArray(value) {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function unique(values) {
+  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
+}
+
+function lookup(source, names) {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const name of names) {
+    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
+  }
+  return undefined;
+}
+
+function isExpression(value) {
+  return value && typeof value === 'object' && typeof value.kind === 'string';
+}
+
+function expressionOf(value) {
+  if (value === undefined || value === null) return undefined;
+  if (value.kind === 'rational') return value;
+  if (isExpression(value)) return value;
+  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
+  return value;
+}
+
+function hasFrequency(value) {
+  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
+  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
+  if (value?.kind === 'power') return hasFrequency(value.base);
+  if (value?.kind === 'add' || value?.kind === 'multiply') {
+    const values = value.kind === 'add' ? value.terms : value.factors;
+    return values.some(hasFrequency);
+  }
+  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+}
+
+function responseRecord(value) {
+  if (value === undefined || value === null) return null;
+  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
+  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
+    return value;
+  }
+  const expression = expressionOf(value);
+  if (expression === undefined || expression === null) return null;
+  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
+  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
+}
+
+function pairFor(source) {
+  if (!source) return { selected: null, exact: null, source: null };
+  const selectedRaw = firstDefined(
+    source.selectedResponse,
+    source.selectedResult,
+    source.selected,
+    source.display,
+    source.approximate,
+    source.expression !== undefined ? source : undefined,
+    isExpression(source) ? source : undefined,
+  );
+  const exactRaw = firstDefined(
+    source.exactResponse,
+    source.exactResult,
+    source.exact,
+    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
+    selectedRaw,
+  );
+  return {
+    selected: responseRecord(selectedRaw),
+    exact: responseRecord(exactRaw),
+    source,
+  };
+}
+
+function valueKey(value) {
+  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
+  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
+  if (value?.kind === 'symbol') return `s:${value.name}`;
+  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
+  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
+  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
+  return JSON.stringify(value);
+}
+
+function sameValue(left, right) {
+  if (left === right) return true;
+  if (left === undefined || right === undefined || left === null || right === null) return false;
+  try {
+    return valueKey(left) === valueKey(right);
+  } catch {
+    return false;
+  }
+}
+
+function render(value, options) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value;
+  if (value.kind === 'infinity') return renderExpression(value, options);
+  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
+  return String(value);
+}
+
+function responseExpression(response) {
+  return expressionOf(response);
+}
+
+function equation(label, expression, approximate = false, options) {
+  const body = render(expression, options);
+  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
+}
+
+/**
+ * The same equation rendered with provenance markers, so the GUI can map a
+ * clicked sub-expression back to the devices it came from.
+ *
+ * This is built here, beside the string it mirrors, for the reason AGENTS.md
+ * gives about `equivalenceOptions`: a row rendered anywhere else would have to
+ * reproduce this function's label, approximation flag, and equivalence options,
+ * and getting any of them wrong fails silently on that row alone.
+ */
+function equationProvenance(label, expression, approximate = false, options) {
+  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
+  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
+  // Mirrors `equation()` above exactly, including its relation symbol.
+  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
+  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
+}
+
+function dcValue(limit) {
+  if (!limit) return undefined;
+  if (limit.value !== undefined && limit.value !== null) return limit.value;
+  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
+  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
+    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
+    return infinity(sign);
+  }
+  return undefined;
+}
+
+function equivalenceOptions(source) {
+  return {
+    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
+    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
+  };
+}
+
+function dcResult(label, selected, exact, source) {
+  const selectedLimit = selected?.dc || source?.dc;
+  const exactLimit = exact?.dc || selectedLimit;
+  const selectedValue = dcValue(selectedLimit);
+  const exactValue = dcValue(exactLimit);
+  if (selectedValue === undefined) {
+    return {
+      ok: false,
+      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
+    };
+  }
+  const changed = !sameValue(selectedValue, exactValue);
+  const options = equivalenceOptions(source);
+  return {
+    ok: true,
+    equation: equation(label, selectedValue, changed, options),
+    exactEquation: equation(label, exactValue, false, options),
+    equationProvenance: equationProvenance(label, selectedValue, changed, options),
+    expression: selectedValue,
+    exactExpression: exactValue,
+  };
+}
+
+function rootValue(root) {
+  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
+}
+
+/**
+ * The provenance render of one pole or zero. It must mirror the
+ * `renderRootEquation` call beside it exactly, options included — a pole row
+ * rendered under different options would highlight terms the displayed row
+ * does not contain.
+ */
+function rootProvenance(kind, index, value) {
+  if (value === undefined || value === null || typeof value === 'string') return undefined;
+  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
+  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
+}
+
+function rootsOf(response, kind) {
+  const roots = response?.[kind] || [];
+  return roots.map((root, index) => {
+    const value = rootValue(root);
+    return {
+      ...root,
+      index,
+      ...(value !== undefined
+        ? {
+          root: value,
+          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
+          equationProvenance: rootProvenance(kind, index, value),
+        }
+        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
+    };
+  });
+}
+
+function frequencyResponse(selected, exact, source) {
+  const has = Boolean(firstDefined(
+    selected?.hasFrequency,
+    exact?.hasFrequency,
+    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
+  ));
+  if (!has) return null;
+  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
+  return {
+    ...base,
+    hasFrequency: true,
+    expression: responseExpression(selected),
+    exactExpression: responseExpression(exact),
+    numerator: selected?.numerator,
+    denominator: selected?.denominator,
+    poles: rootsOf(selected || exact, 'poles'),
+    zeros: rootsOf(selected || exact, 'zeros'),
+  };
+}
+
+function detailsFor(combined, source) {
+  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
+  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
+  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
+  const solution = get('solution');
+  const log = get('log', 'logDetails');
+  return {
+    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
+    ...(solution !== undefined ? { solution } : {}),
+    ...(log !== undefined ? { log } : {}),
+    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
+    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
+    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
+  };
+}
+
+function childSource(combined, key, quantity) {
+  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
+  const names = SOURCE_NAMES[quantity];
+  for (const container of containers) {
+    const found = lookup(container, [key, ...names]);
+    if (found !== undefined) return found;
+  }
+  return null;
+}
+
+function childMetadata(combined, source, key) {
+  const context = combined?.context || {};
+  const metadata = {
+    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
+    input: firstDefined(source?.input, context.input, combined?.input),
+    reference: firstDefined(source?.reference, context.reference, combined?.reference),
+  };
+  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
+}
+
+function childPairs(combined) {
+  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
+    const source = childSource(combined, key, quantity);
+    return [key, pairFor(source)];
+  }));
+}
+
+function adaptChild(combined, key, quantity) {
+  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
+  const raw = childSource(combined, key, quantity);
+  const pair = pairFor(raw);
+  const source = pair.source || {};
+  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
+  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
+  const selected = pair.selected || responseRecord(selectedExpression);
+  const exact = pair.exact || responseRecord(exactExpression);
+  const details = detailsFor(combined, source);
+  const failed = source?.ok === false || (!selectedExpression && source?.error);
+  const reactive = Boolean(frequencyResponse(selected, exact, source));
+  const label = reactive ? `${labelBase}(s)` : labelBase;
+  const changed = !sameValue(selectedExpression, exactExpression);
+  const renderOptions = equivalenceOptions(source);
+  const result = {
+    ...source,
+    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
+    query,
+    ...childMetadata(combined, source, key),
+    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
+    ...(exactExpression !== undefined ? { exactExpression } : {}),
+    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
+    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
+    ...(selectedExpression !== undefined
+      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
+      : {}),
+    ...details,
+    assumptions: unique([combined?.assumptions, source?.assumptions]),
+    approximations: unique([combined?.approximations, source?.approximations]),
+    dependencies: unique([combined?.dependencies, source?.dependencies]),
+    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
+  };
+  if (reactive && key !== 'transfer') delete result.acTransfer;
+  if (!reactive) {
+    delete result.frequencyResponse;
+    delete result.acTransfer;
+  }
+  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
+    result.smallSignalNetlist = combined.smallSignalNetlist;
+  }
+  if (key === 'transfer' && reactive && result.expression !== undefined) {
+    result.acTransfer = {
+      ok: result.ok,
+      equation: result.equation,
+      exactEquation: result.exactEquation,
+      equationProvenance: result.equationProvenance,
+      expression: result.expression,
+      exactExpression: result.exactExpression,
+    };
+  }
+  if (!result.ok) {
+    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
+    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
+    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
+  }
+  return result;
+}
+
+function transferCompanions(combined, children) {
+  const transfer = children.transfer;
+  const input = children.input;
+  const output = children.output;
+  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
+  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
+  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
+  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
+    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
+  }
+  transfer.dcGain = dcGain;
+  transfer.dcInputImpedance = dcInput;
+  transfer.dcOutputImpedance = dcOutput;
+  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
+}
+
+function cleanChild(child) {
+  const result = { ...child };
+  delete result._selected;
+  delete result._exact;
+  delete result._source;
+  return result;
+}
+
+const ROOT_SEPARATOR = ',\\quad ';
+
+/**
+ * One Poles or Zeros row: the roots' own equations shown together. The joined
+ * provenance render is kept only when every root has one, so the row's markers
+ * can never describe a different string than the one displayed.
+ */
+function rootRow(roots) {
+  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
+  const parts = roots.map((root) => root.equationProvenance);
+  return {
+    ok: true,
+    equation,
+    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
+  };
+}
+
+/** What the quantities are ratios of, named by the nodes they were taken at. */
+function portEntry(report) {
+  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
+  if (!definitions.length) return null;
+  // A definition, not a derived expression: it names nodes rather than device
+  // parameters, so there is nothing to trace back to the canvas.
+  const lines = definitions.map(({ tex }) => tex);
+  return {
+    title: 'Ports',
+    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
+  };
+}
+
+function equationEntries(reports, report) {
+  const entries = [];
+  const ports = portEntry(report);
+  if (ports) entries.push(ports);
+  const add = (title, result) => {
+    if (result?.ok && result.equation) entries.push({ title, result });
+  };
+  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
+  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
+  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
+  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
+  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
+  add('DC gain', reports.transfer.dcGain);
+  const frequency = reports.transfer.frequencyResponse;
+  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
+  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
+  return entries;
+}
+
+/** Convert one exact/selected v2 response set into the legacy child reports. */
+function adaptCombinedReport(report) {
+  if (!report || typeof report !== 'object') {
+    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
+  }
+  const pairs = childPairs(report);
+  const children = {};
+  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
+    const child = adaptChild(report, key, quantity);
+    children[key] = child;
+  }
+  for (const key of Object.keys(children)) {
+    children[key]._selected = pairs[key].selected;
+    children[key]._exact = pairs[key].exact;
+    children[key]._source = pairs[key].source;
+  }
+  const companions = transferCompanions(report, children);
+  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
+  const details = detailsFor(report, report);
+  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
+  const entries = equationEntries(reports, report);
+  const successful = Object.values(reports).filter((child) => child.ok);
+  const context = report.context || {};
+  const inputPort = firstDefined(context.input);
+  const outputPort = firstDefined(context.output);
+  const referencePort = firstDefined(context.reference);
+  const base = {
+    ...report,
+    query: 'combined',
+    ok: successful.length > 0,
+    complete: successful.length === 3,
+    reports,
+    // Port metadata is distinct from the solved impedance and transfer rows.
+    input: inputPort,
+    output: outputPort,
+    reference: referencePort,
+    inputPort,
+    outputPort,
+    referencePort,
+    inputImpedance: reports.input,
+    outputImpedance: reports.output,
+    voltageTransfer: reports.transfer,
+    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
+    ...companions,
+    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
+    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
+    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
+    ...details,
+    equationEntries: entries,
+    equationOrder: entries.map(({ title }) => title),
+    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
+  };
+  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
+  else delete base.frequencyResponse;
+  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
+    base.acTransfer = {
+      ok: reports.transfer.ok,
+      equation: reports.transfer.equation,
+      exactEquation: reports.transfer.exactEquation,
+      expression: reports.transfer.expression,
+      exactExpression: reports.transfer.exactExpression,
+    };
+  } else delete base.acTransfer;
+  return base;
+}
+
+__exports.adaptCombinedReport = adaptCombinedReport;
+};
+
+__modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
+const { Circuit } = __require("src/core/model.js");
+const { rectsOverlap } = __require("src/core/geometry.js");
+const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
+const { renderExpression } = __require("src/core/analysis/present.js");
+/**
+ * Draw the small-signal model the solve actually used as an ordinary
+ * schematic: one column per node, shunt branches hanging from each node down
+ * to a single AC-ground rail, and series branches stacked in rows above the
+ * node line. The primitives come from the pipeline *after* its pre-solve
+ * transforms (Miller decoupling, `r_o -> infinity`, triode overrides), so the
+ * drawing shows the circuit the displayed equations describe, not the
+ * schematic they came from.
+ *
+ * The result is an ordinary `Circuit`: it renders, exports, and analyzes like
+ * any other document, which is what makes it checkable -- analyzing the model
+ * must reproduce the source schematic's equations.
+ */
+
+
+
+
+
+const AC_GROUND_NODE = '@AC_GROUND';
+
+const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
+const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source']);
+const MIN_PITCH = 240;
+const SLOT_PADDING = 240;
+const BUS_Y = 0;
+const SHUNT_Y = 240;
+const RAIL_Y = 480;
+const ROW_H = 240;
+const PORT_GAP = 240;
+
+/** Elements whose branch is drawn with each symbol. */
+const ELEMENT_TYPES = new Map([
+  ['resistor', 'resistor'],
+  ['conductance', 'resistor'],
+  ['triode-resistance', 'resistor'],
+  ['capacitor', 'capacitor'],
+  ['inductor', 'inductor'],
+  ['vccs', 'vccs'],
+  ['current-source', 'current_source'],
+  ['voltage-source', 'voltage_source'],
+]);
+
+function isGround(node) {
+  return node === undefined || node === null || AC_GROUND_NAMES.has(String(node));
+}
+
+/** Accept every primitive shape the pipeline hands out: branches carry `a`/`b`
+ * or `terminals`, controlled sources carry `outPlus`/`outMinus`. */
+function normalize(primitive) {
+  if (!primitive || typeof primitive !== 'object') return null;
+  const a = primitive.a ?? primitive.terminals?.a ?? primitive.outPlus;
+  const b = primitive.b ?? primitive.terminals?.b ?? primitive.outMinus;
+  if (a === undefined && b === undefined) return null;
+  const controlA = primitive.control?.a ?? primitive.controlPlus;
+  const controlB = primitive.control?.b ?? primitive.controlMinus;
+  return {
+    id: String(primitive.id || primitive.kind || 'primitive'),
+    kind: String(primitive.kind || '').toLowerCase(),
+    a: isGround(a) ? AC_GROUND_NODE : String(a),
+    b: isGround(b) ? AC_GROUND_NODE : String(b),
+    control: controlA === undefined && controlB === undefined ? null : {
+      a: isGround(controlA) ? AC_GROUND_NODE : String(controlA),
+      b: isGround(controlB) ? AC_GROUND_NODE : String(controlB),
+    },
+    parameter: primitive.parameter ? String(primitive.parameter) : '',
+    value: primitive.value,
+    metadata: primitive.metadata || {},
+    source: primitive,
+  };
+}
+
+/** `ro1` -> `r_{o1}`, `CGD` -> `C_{GD}`, `gmb2` -> `g_{mb2}`: the same textbook
+ * spelling the netlist and the equations use. */
+function textbookSymbol(raw) {
+  const name = String(raw || '');
+  if (!name) return '';
+  if (/^gmb[A-Za-z0-9_]*$/.test(name)) return `g_{mb${name.slice(3)}}`;
+  if (/^gm[A-Za-z0-9_]*$/.test(name)) return `g_{m${name.slice(2)}}`;
+  if (/^go[A-Za-z0-9_]*$/.test(name)) return `g_{o${name.slice(2)}}`;
+  if (/^rds[A-Za-z0-9_]*$/.test(name)) return `r_{ds${name.slice(3)}}`;
+  if (/^ro[A-Za-z0-9_]*$/.test(name)) return `r_{o${name.slice(2)}}`;
+  if (/^[RCL][A-Za-z0-9_]+$/.test(name)) return `${name[0]}_{${name.slice(1)}}`;
+  return name;
+}
+
+/**
+ * A controlled source is labelled with its own transconductance times the
+ * controlling voltage, the way a hybrid-pi figure is drawn: the control pair
+ * is text, never a second pair of wires across the drawing. The pair names the
+ * drawing's own nodes -- `g_{m1}(V_{IN} - 0)`, not `g_{m1} v_{gs1}` -- so the
+ * reader can follow the control back to a node without decoding a subscript.
+ */
+function controlledSourceLabel(element, nodeName) {
+  const gain = textbookSymbol(element.parameter) || 'g_m';
+  if (!element.control) return gain;
+  const plus = nodeName(element.control.a) || '0';
+  const minus = nodeName(element.control.b) || '0';
+  return `${gain}(${plus} - ${minus})`;
+}
+
+/**
+ * A Miller shunt has no parameter symbol of its own, and its admittance is a
+ * whole fraction -- far too wide to sit beside a symbol. Name it the way a
+ * textbook does and state the value in the legend below the drawing.
+ */
+function millerSymbol(element, symbol) {
+  const device = String(element.metadata?.component || '').replace(/\W/g, '') || 'M';
+  const side = element.metadata?.millerSide === 'output' ? 'out' : 'in';
+  return `${symbol === 'capacitor' ? 'C' : 'Y'}_{${device},${side}}`;
+}
+
+/** An admittance divided by `s`, when that leaves no frequency behind: the
+ * capacitance a capacitive shunt is drawn as. */
+function perFrequency(value, options) {
+  try {
+    const ops = createRationalOps({ variable: 's', maxOperations: 4000 });
+    const capacitance = ops.div(value, ops.s());
+    if (ops.budget?.exceeded) return null;
+    const rendered = renderExpression(capacitance, options.renderOptions || {});
+    return /(^|[^A-Za-z])s([^A-Za-z]|$)/.test(rendered) ? null : rendered;
+  } catch { return null; }
+}
+
+function elementLabel(element, symbol, options, nodeName) {
+  if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
+  if (element.parameter) return { text: textbookSymbol(element.parameter) };
+  let rendered = '';
+  try { rendered = renderExpression(element.value, options.renderOptions || {}); }
+  catch { rendered = ''; }
+  if (element.kind === 'admittance') {
+    const name = millerSymbol(element, symbol);
+    // A shunt drawn as a capacitor is named as one, so state a capacitance:
+    // the primitive carries the admittance Y = sC, and C = Y/s is the
+    // textbook Miller value.
+    if (symbol === 'capacitor') {
+      const capacitance = perFrequency(element.value, options);
+      if (capacitance) return { text: name, legend: { symbol: name, value: capacitance } };
+    }
+    return { text: name, legend: rendered ? { symbol: `Y_{${name.slice(name.indexOf('{') + 1, -1)}}`, value: rendered } : null };
+  }
+  return { text: rendered || element.id };
+}
+
+/**
+ * A label's rendered width is only known in a browser, and the drawing has to
+ * be laid out before that. Estimate it from the text the way `textWidth` does
+ * -- the tight per-glyph model at the label font size -- so columns are spaced
+ * for their own contents instead of a fixed guess.
+ */
+function estimateLabelWidth(tex) {
+  const plain = String(tex)
+    .replace(/\\left|\\right|\\,|\\;|\\!/g, '')
+    .replace(/\\frac/g, '')
+    .replace(/[{}$]/g, '');
+  return Math.max(120, plain.length * 24);
+}
+
+/** Local offset that renders at a given world offset for a placed symbol. */
+function localOffset(dx, dy, rotation) {
+  const turn = ((rotation % 360) + 360) % 360;
+  if (turn === 90) return { x: dy, y: -dx };
+  if (turn === 180) return { x: -dx, y: -dy };
+  if (turn === 270) return { x: -dy, y: dx };
+  return { x: dx, y: dy };
+}
+
+/** A Miller shunt made only of capacitors is a capacitor in the drawing --
+ * that is exactly the textbook Miller capacitance. */
+function elementSymbol(element) {
+  const mapped = ELEMENT_TYPES.get(element.kind);
+  if (mapped) return mapped;
+  if (element.kind === 'admittance') {
+    const kinds = element.metadata?.feedbackKinds || [];
+    if (kinds.length && kinds.every((kind) => kind === 'capacitor')) return 'capacitor';
+  }
+  return 'resistor';
+}
+
+function uniqueRefdes(base, used) {
+  const clean = String(base || 'X').replace(/[^A-Za-z0-9_]/g, '') || 'X';
+  let candidate = /^[A-Za-z]/.test(clean) ? clean : `X${clean}`;
+  let index = 2;
+  while (used.has(candidate)) candidate = `${clean}_${index++}`;
+  used.add(candidate);
+  return candidate;
+}
+
+/** Node display names, preferring the source circuit's own net names. */
+function nodeNames(report, options) {
+  const names = new Map();
+  const circuit = options.circuit;
+  if (circuit) {
+    for (const net of circuit.nets.values()) names.set(net.id, net.name || net.id);
+  }
+  for (const [key, value] of options.nodeNames instanceof Map ? options.nodeNames : []) names.set(key, value);
+  return names;
+}
+
+/**
+ * Node order across the drawing. The source schematic's own left-to-right
+ * order is the one the reader already knows, so use it when the circuit is
+ * available; otherwise fall back to first appearance with the analysis input
+ * first and its output last.
+ */
+function orderNodes(elements, report, options) {
+  const seen = [];
+  for (const element of elements) {
+    for (const node of [element.a, element.b, element.control?.a, element.control?.b]) {
+      if (node && node !== AC_GROUND_NODE && !seen.includes(node)) seen.push(node);
+    }
+  }
+  const circuit = options.circuit;
+  const centre = new Map();
+  if (circuit) {
+    for (const node of seen) {
+      const net = circuit.nets.get(node);
+      const points = (net?.terminals || []).map((terminal) => {
+        try { return circuit.getComponent(terminal.comp).terminalWorld(terminal.term).x; }
+        catch { return null; }
+      }).filter((value) => value !== null);
+      if (points.length) centre.set(node, points.reduce((sum, value) => sum + value, 0) / points.length);
+    }
+  }
+  const inputNode = portNode(report, 'input');
+  const outputNode = portNode(report, 'output');
+  const rank = (node) => node === inputNode ? -Infinity : node === outputNode ? Infinity : 0;
+  return [...seen].sort((left, right) => {
+    const ranked = rank(left) - rank(right);
+    if (Number.isFinite(ranked) && ranked !== 0) return ranked;
+    if (!Number.isFinite(ranked)) return ranked < 0 ? -1 : 1;
+    const a = centre.get(left);
+    const b = centre.get(right);
+    if (a !== undefined && b !== undefined && a !== b) return a - b;
+    return seen.indexOf(left) - seen.indexOf(right);
+  });
+}
+
+/** The analysis node a port role resolved to, as the context recorded it. */
+function portNode(report, role) {
+  const context = report?.context || report?.details?.pipeline?.context;
+  return context?.[role]?.node || null;
+}
+
+/**
+ * Where to hang a node's name: the middle of its longest run, preferring a
+ * horizontal one, and only where a label-sized box above the wire clears every
+ * symbol. A node whose wires are all crowded keeps its name in the net list
+ * rather than printing it over a component.
+ */
+function netLabelAnchor(net, width, boxes) {
+  const segments = [];
+  for (const path of (net.paths ? net.paths() : [])) {
+    for (let index = 1; index < path.length; index += 1) segments.push([path[index - 1], path[index]]);
+  }
+  const span = ([a, b]) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  const horizontal = segments.filter(([a, b]) => a.y === b.y);
+  const ordered = (horizontal.length ? horizontal : segments).sort((left, right) => span(right) - span(left));
+  for (const [a, b] of ordered) {
+    const point = { x: snapTo((a.x + b.x) / 2), y: snapTo((a.y + b.y) / 2) };
+    const box = { x: point.x - width / 2, y: point.y - 120, w: width, h: 120 };
+    if (!boxes.some((other) => rectsOverlap(box, other))) return point;
+  }
+  return null;
+}
+
+function snapTo(value) {
+  return Math.round(value / 40) * 40;
+}
+
+/**
+ * Build the drawn model.
+ *
+ * @param {object} report a successful `analyzeSmallSignalV2` report
+ * @param {{circuit?: import('../model.js').Circuit, nodeNames?: Map}} options
+ * @returns {{ok: boolean, circuit?: Circuit, correspondence?: Map, notes: string[], error?: string}}
+ */
+function smallSignalSchematic(report, options = {}) {
+  const primitives = report?.details?.pipeline?.selected;
+  if (!Array.isArray(primitives) || !primitives.length) {
+    return { ok: false, notes: [], error: 'this analysis produced no small-signal primitives to draw' };
+  }
+  const elements = primitives.map(normalize).filter(Boolean);
+  const names = nodeNames(report, options);
+  // The node's own name, markup included: label text renders `_{...}`.
+  const nodeName = (node) => (!node || node === AC_GROUND_NODE ? '' : String(names.get(node) || node));
+  const plainName = (node) => nodeName(node).replace(/[_^]\{([^}]*)\}/g, '$1');
+  const nodes = orderNodes(elements, report, options);
+  const shunts = new Map(nodes.map((node) => [node, []]));
+  const series = [];
+  for (const element of elements) {
+    const aGround = element.a === AC_GROUND_NODE;
+    const bGround = element.b === AC_GROUND_NODE;
+    if (aGround && bGround) continue;
+    // A controlled source across one node carries no current -- the body
+    // effect of a device whose source is the AC reference. Drawing it says
+    // nothing and costs a column.
+    if (element.control && element.control.a === element.control.b) continue;
+    if (aGround || bGround) shunts.get(bGround ? element.a : element.b).push(element);
+    else series.push(element);
+  }
+
+  // Every element is drawn with its label above it, so a node's slot is as
+  // wide as its own branches need -- a Miller shunt beside a bare r_o should
+  // not push every other column apart.
+  const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
+  const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
+  // A shunt wears its label on its left, so its neighbour must clear it.
+  const widthOf = (element) => Math.max(MIN_PITCH, snapTo(estimateLabelWidth(labels.get(element).text) + 160));
+  const pitches = new Map(nodes.map((node) => [node, Math.max(MIN_PITCH, ...shunts.get(node).map(widthOf))]));
+
+  const columns = new Map();
+  let x = 0;
+  for (const node of nodes) {
+    const count = Math.max(1, shunts.get(node).length);
+    const width = count * pitches.get(node) + 2 * SLOT_PADDING;
+    columns.set(node, snapTo(x + width / 2));
+    x += width;
+  }
+
+  const circuit = new Circuit();
+  const used = new Set();
+  const correspondence = new Map();
+  const notes = [];
+  const legend = [];
+  const attachments = new Map(nodes.map((node) => [node, []]));
+  const groundRefs = [];
+
+  const addElement = (element, placement, upright = true) => {
+    const type = symbols.get(element);
+    const refdes = uniqueRefdes(element.parameter || element.id.replace(/\W/g, ''), used);
+    const component = circuit.addComponent(type, { ...placement, refdes, noLabel: true });
+    const label = labels.get(element);
+    // Plain `_{...}` markup, not a math label: every symbol in the drawing is
+    // a name with a subscript, and a markup label needs no browser
+    // measurement, so the figure lays out the same in a test, an export, and
+    // the dock. The one thing that needs real math -- a Miller admittance --
+    // is named here and stated in the legend instead.
+    //
+    // An upright branch wears its label on the left, where a textbook puts it;
+    // a branch lying along a row wears it above, clear of its own wires. The
+    // offset comes from the label's own measured box rather than the estimate
+    // the columns are spaced by, so the text sits against its symbol instead
+    // of drifting into the gap towards the next one.
+    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
+    const box = owned.bbox();
+    const reach = (extent) => 40 * Math.ceil((40 + extent / 2) / 40);
+    const world = upright ? { x: -reach(box.w), y: 0 } : { x: 0, y: -reach(box.h) };
+    owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
+    owned.clearRenderedTextBounds();
+    if (label.legend) legend.push(label.legend);
+    correspondence.set(refdes, { primitive: element.id, component: element.metadata?.component || null, role: element.kind });
+    return component;
+  };
+
+  // Shunt branches: node bus -> element -> ground rail.
+  for (const node of nodes) {
+    const list = shunts.get(node);
+    const centreX = columns.get(node);
+    const pitch = pitches.get(node);
+    list.forEach((element, index) => {
+      const shuntX = snapTo(centreX + (index - (list.length - 1) / 2) * pitch);
+      const vertical = SOURCE_KINDS.has(element.kind);
+      // A source symbol is already vertical; a passive is turned upright. The
+      // current of a controlled source flows from `a` into `b`, so a source
+      // whose ground end is `a` is turned around rather than redrawn.
+      const flipped = element.a === AC_GROUND_NODE;
+      const rotation = vertical ? (flipped ? 180 : 0) : (flipped ? 270 : 90);
+      const component = addElement(element, { x: shuntX, y: SHUNT_Y, rotation }, true);
+      const [top, bottom] = flipped ? ['b', 'a'] : ['a', 'b'];
+      attachments.get(node).push(`${component.refdes}.${top}`);
+      groundRefs.push(`${component.refdes}.${bottom}`);
+    });
+  }
+
+  // Series branches stack in rows above the node line, lowest row first.
+  const rows = [];
+  for (const element of series) {
+    const left = Math.min(columns.get(element.a), columns.get(element.b));
+    const right = Math.max(columns.get(element.a), columns.get(element.b));
+    let row = rows.findIndex((spans) => spans.every(([from, to]) => right <= from || left >= to));
+    if (row < 0) row = rows.push([]) - 1;
+    rows[row].push([left, right]);
+    const y = BUS_Y - (row + 1) * ROW_H;
+    const rotation = SOURCE_KINDS.has(element.kind) ? 270 : 0;
+    const component = addElement(element, { x: snapTo((left + right) / 2), y, rotation }, false);
+    const aLeft = columns.get(element.a) <= columns.get(element.b);
+    attachments.get(element.a).push(`${component.refdes}.${aLeft ? 'a' : 'b'}`);
+    attachments.get(element.b).push(`${component.refdes}.${aLeft ? 'b' : 'a'}`);
+  }
+
+  // The interface ports read left to right on the node line itself, outside
+  // every column: the input node sorts first and the output node last, so
+  // neither stub crosses another node's bus.
+  const portNodes = new Set();
+  // Outside everything drawn, and outside every column: a node that only
+  // controls a source has a column but nothing standing in it.
+  const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
+  const spans = [...columns.values()];
+  const leftEdge = snapTo(Math.min(...drawn.map((box) => box.x), ...spans) - PORT_GAP);
+  const rightEdge = snapTo(Math.max(...drawn.map((box) => box.x + box.w), ...spans) + PORT_GAP);
+  const portFor = (node, type, side) => {
+    if (!node || !columns.has(node)) return;
+    const refdes = uniqueRefdes(plainName(node), used);
+    const port = circuit.addComponent(type, {
+      refdes, x: side === 'left' ? leftEdge : rightEdge, y: BUS_Y, noLabel: true,
+    });
+    // Above the port, not beside it: an outward-facing port box already
+    // occupies the side its own label offset points at.
+    circuit.addLabel({ owner: refdes, text: nodeName(node), align: 'center', offset: { x: 0, y: -120 } });
+    attachments.get(node).push(`${port.refdes}.p`);
+    portNodes.add(node);
+  };
+  portFor(portNode(report, 'input'), 'input', 'left');
+  portFor(portNode(report, 'output'), 'output', 'right');
+
+  // One AC-ground rail under the whole drawing.
+  const railX = snapTo(Math.min(...columns.values()) - SLOT_PADDING);
+  const ground = circuit.addComponent('ground', { refdes: 'GND', x: railX, y: RAIL_Y, noLabel: true });
+  groundRefs.push(`${ground.refdes}.gnd`);
+
+  const failures = [];
+  const wire = (refs, name, stub = null) => {
+    try {
+      // A node that only controls a source -- a bare gate -- has no branch of
+      // its own. Draw its port down to the node line anyway: the controlling
+      // voltage needs somewhere to be read.
+      if (refs.length === 1 && stub) {
+        circuit.wireTo(refs[0], stub);
+        return null;
+      }
+      if (refs.length < 2) return null;
+      const net = circuit.connect(...refs);
+      if (name && net) circuit.renameNet(net, name);
+      return net;
+    } catch (error) { failures.push(`${name || 'net'}: ${error.message}`); }
+    return null;
+  };
+  const wired = new Map();
+  for (const node of nodes) {
+    wired.set(node, wire(attachments.get(node), nodeName(node) || node, { x: columns.get(node), y: BUS_Y }));
+  }
+  wire(groundRefs, 'VSS');
+
+  // Name the nodes on the drawing. A node with a port already reads its name
+  // off that port, and the AC-ground rail is what the ground symbol says.
+  // Clear of every symbol *and* every label already placed: a node name that
+  // lands on a branch's own label is as unreadable as one over a symbol.
+  const boxes = [
+    ...[...circuit.components.values()].map((component) => component.bboxWorld()),
+    ...[...circuit.labels.values()].map((label) => label.bbox()),
+  ];
+  for (const node of nodes) {
+    const net = wired.get(node);
+    if (!net || portNodes.has(node) || !net.name) continue;
+    const anchor = netLabelAnchor(net, estimateLabelWidth(net.name), boxes);
+    if (!anchor) continue;
+    try { circuit.addNetLabel(net, { anchor, netSide: 'above' }); }
+    catch { /* a node whose wire the router shaped differently keeps its name in the net list */ }
+  }
+  if (failures.length) notes.push(`${failures.length} connection${failures.length === 1 ? '' : 's'} could not be routed automatically`);
+
+  const miller = (report?.details?.pipeline?.millerSubstitutions || []).map(({ device }) => device).filter(Boolean);
+  if (miller.length) notes.push(`Miller approximation applied to ${miller.join(', ')}`);
+  const omitted = report?.details?.pipeline?.omittedOutputResistances || [];
+  if (omitted.length) notes.push(`r_o omitted for ${omitted.join(', ')}`);
+
+  return { ok: true, circuit, correspondence, notes, legend, failures };
+}
+
+__exports.textbookSymbol = textbookSymbol;
+__exports.smallSignalSchematic = smallSignalSchematic;
+__exports.AC_GROUND_NODE = AC_GROUND_NODE;
+};
+
+__modules["src/core/analysis/engine.js"] = function (__require, __exports) {
+const { MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js");
+const { applyApproximations } = __require("src/core/analysis/approximation.js");
+const { cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js");
+const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
+const { symbolProvenance } = __require("src/core/analysis/provenance.js");
+const { buildExactAnalysisPipeline } = __require("src/core/analysis/pipeline.js");
+const { presentDiagnostics } = __require("src/core/analysis/diagnostics.js");
+const { describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js");
+const { analyzeResponse } = __require("src/core/analysis/response.js");
+const { approximateTopology, buildTopologyIdentities } = __require("src/core/analysis/topology.js");
+const { compactRational } = __require("src/core/analysis/compact.js");
+const { infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js");
+const { equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const DEFAULTS = Object.freeze({
+  ignoreBodyEffect: true,
+  gmroLarge: true,
+  ignoreChannelLengthModulation: false,
+  dominantPoleApproximation: false,
+});
+
+function lookup(values, key) {
+  if (!values || key == null) return undefined;
+  if (typeof values.get === 'function') return values.get(key);
+  return Object.hasOwn(values, key) ? values[key] : undefined;
+}
+
+function decimalValue(value) {
+  if (typeof value === 'bigint') return integer(value);
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return integer(value);
+  const text = String(value).trim();
+  if (/^[+-]?\d+$/.test(text)) return integer(BigInt(text));
+  const match = text.match(/^([+-]?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
+  if (!match) return null;
+  const sign = match[1] === '-' ? -1n : 1n;
+  const whole = match[2];
+  const fraction = match[3] || '';
+  const exponent = Number(match[4] || 0);
+  let numerator = BigInt(`${whole}${fraction}`) * sign;
+  const scale = fraction.length - exponent;
+  if (scale <= 0) return integer(numerator * 10n ** BigInt(-scale));
+  return rational(numerator, 10n ** BigInt(scale));
+}
+
+function mapObject(values) {
+  if (!values) return {};
+  if (values instanceof Map) return Object.fromEntries(values);
+  return { ...values };
+}
+
+function modelRegions(options) {
+  const explicit = firstDefined(
+    options.deviceRegions,
+    options.modelOverrides,
+    options.models,
+  );
+  if (explicit !== undefined) return explicit;
+  const source = firstDefined(options.devices, options.deviceOverrides);
+  if (!source || typeof source === 'string') return source;
+  const entries = (source instanceof Map ? [...source.entries()] : Object.entries(source))
+    .filter(([, value]) => typeof value === 'string'
+      || (value && typeof value === 'object' && (value.model !== undefined || value.region !== undefined)));
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function symbolicValue(value, primitive, options, ops) {
+  if (value?.kind) return value;
+  const supplied = lookup(options.values || options.parameters || options.params, primitive?.parameter || value);
+  const resolved = supplied === undefined ? value : supplied;
+  if (resolved === undefined || resolved === null || resolved === '') return ops.zero;
+  if (typeof resolved === 'string') {
+    const exact = decimalValue(resolved);
+    return exact || ops.symbol(resolved);
+  }
+  const exact = decimalValue(resolved);
+  if (exact) return exact;
+  return ops.symbol(String(resolved));
+}
+
+function normaliseOptions(options, circuit, symbolic, ops) {
+  const assumptions = options.assumptions && typeof options.assumptions === 'object'
+    ? options.assumptions
+    : {};
+  const body = firstDefined(
+    options.ignoreBodyEffect,
+    options.neglectBodyEffect,
+    options.gmb0,
+    assumptions.ignoreBodyEffect,
+    assumptions.neglectBodyEffect,
+    assumptions.gmb0,
+    DEFAULTS.ignoreBodyEffect,
+  );
+  const intrinsic = firstDefined(
+    options.gmroLarge,
+    options.highIntrinsicGain,
+    assumptions.gmroLarge,
+    assumptions.highIntrinsicGain,
+    DEFAULTS.gmroLarge,
+  );
+  const output = firstDefined(
+    options.ignoreChannelLengthModulation,
+    options.neglectChannelLengthModulation,
+    options.roInfinity,
+    assumptions.ignoreChannelLengthModulation,
+    assumptions.neglectChannelLengthModulation,
+    assumptions.roInfinity,
+    DEFAULTS.ignoreChannelLengthModulation,
+  );
+  const dominantPole = firstDefined(
+    options.dominantPoleApproximation,
+    options.dominantPole,
+    assumptions.dominantPoleApproximation,
+    assumptions.dominantPole,
+    DEFAULTS.dominantPoleApproximation,
+  );
+
+  const devices = mapObject(options.devices || options.deviceOptions || options.deviceOverrides);
+  for (const component of circuit.components.values()) {
+    if (!MOS_TYPES.has(component.type)) continue;
+    const suffix = String(component.refdes).replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
+    // Per-device overrides may use the canonical request names
+    // (neglectBodyEffect, highIntrinsicGain, neglectChannelLengthModulation);
+    // resolve them here so the engine's own flags never shadow them.
+    const override = devices[component.refdes] || {};
+    devices[component.refdes] = {
+      id: component.refdes,
+      gm: `gm${suffix}`,
+      gmb: `gmb${suffix}`,
+      ro: `ro${suffix}`,
+      highIntrinsicGain: Boolean(firstDefined(override.highIntrinsicGain, override.gmroLarge, intrinsic)),
+      gmb0: Boolean(firstDefined(override.gmb0, override.ignoreBodyEffect, override.neglectBodyEffect, body)),
+      roInfinity: Boolean(firstDefined(override.roInfinity, override.ignoreChannelLengthModulation, override.neglectChannelLengthModulation, output)),
+      // A large gm*ro product does not license gm*RS >> 1 or an active
+      // branch's impedance >> RD. Preserve those independent dependencies.
+      intrinsicProduct: true,
+      ...(devices[component.refdes] || {}),
+    };
+  }
+  return {
+    ...options,
+    ...(!Object.hasOwn(options, 'ignoreBodyEffect') ? { ignoreBodyEffect: Boolean(body) } : {}),
+    ...(!Object.hasOwn(options, 'gmroLarge') ? { gmroLarge: Boolean(intrinsic) } : {}),
+    ...(!Object.hasOwn(options, 'ignoreChannelLengthModulation') ? { ignoreChannelLengthModulation: Boolean(output) } : {}),
+    ...(!Object.hasOwn(options, 'dominantPoleApproximation') ? { dominantPoleApproximation: Boolean(dominantPole) } : {}),
+    assumptions: { ...assumptions, gmb0: Boolean(body), gmroLarge: Boolean(intrinsic), dominantPole: Boolean(dominantPole) },
+    devices,
+    ...(symbolic ? { valueOf: (value, primitive) => symbolicValue(value, primitive, options, ops) } : {}),
+  };
+}
+
+function makeEngineOps(options) {
+  const base = options.ops || createRationalOps({
+      variable: options.variable || 's',
+      maxOperations: options.maxOperations,
+    });
+  const ops = {
+    ...base,
+    div: (left, right) => {
+      try {
+        return base.div(left, right);
+      } catch (error) {
+        if (base.isZero(right)) return infinity();
+        throw error;
+      }
+    },
+  };
+  return { ops, symbolic: !options.ops };
+}
+
+function responseOptions(options) {
+  return {
+    variable: options.variable || 's',
+    maxOperations: options.maxOperations,
+    ...(options.budget ? { budget: options.budget } : {}),
+  };
+}
+
+function renderRoot(root, kind, index, options) {
+  if (!root.root?.kind) return `${kind}_{${index}}: roots of the reported polynomial`;
+  return renderRootEquation(kind, index, root.root, options);
+}
+
+function combineParallel(values, ops) {
+  return values.reduce((left, right) => (
+    left === null ? right : ops.div(ops.mul(left, right), ops.add(left, right))
+  ), null);
+}
+
+function dcLimitOf(value, variable) {
+  try {
+    const limit = substituteRational(value, new Map([[variable, integer(0)]]), { variable });
+    return limit.kind === 'infinity' ? null : limit;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Turn each `reduce.js` parallel-merge proof into `present.js` equivalences
+ * for every form that might actually get displayed: the exact AC value (as
+ * solved), the same branches reduced under whichever assumptions are
+ * selected (e.g. `g_m r_o >> 1`) and recombined — the textbook default `A_v`/
+ * `Z_in`/`Z_out` equation comes from one leading-term reduction of the
+ * *whole* expression, which generally does not preserve this factored
+ * structure, so without this the `\|` only ever showed up on the exact row
+ * — and each of those at `s=0` for the DC-limit row, dropping any branch
+ * that's an open circuit at DC (a capacitor) rather than trying to combine
+ * an infinite impedance in parallel with the rest.
+ */
+function buildParallelEquivalenceProofs(networkReductionProofs, approximationOptions, ops) {
+  const variable = ops.variable || 's';
+  return (networkReductionProofs || []).flatMap(({ impedance, operands }) => {
+    const proofs = [provenParallel(impedance, ...operands)];
+    const dcOperands = operands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
+    if (dcOperands.length >= 2) {
+      const dcCombined = combineParallel(dcOperands, ops);
+      if (dcCombined) proofs.push(provenParallel(dcCombined, ...dcOperands));
+    }
+    try {
+      const reducedOperands = operands.map((operand) => applyApproximations(operand, approximationOptions).selected);
+      const combined = combineParallel(reducedOperands, ops);
+      if (combined) proofs.push(provenParallel(combined, ...reducedOperands));
+      const reducedDcOperands = reducedOperands.map((operand) => dcLimitOf(operand, variable)).filter(Boolean);
+      if (reducedDcOperands.length >= 2) {
+        const reducedDcCombined = combineParallel(reducedDcOperands, ops);
+        if (reducedDcCombined) proofs.push(provenParallel(reducedDcCombined, ...reducedDcOperands));
+      }
+    } catch {
+      // Leave whichever proofs already built if the reduced form fails.
+    }
+    return proofs;
+  });
+}
+
+function buildTopologyProofs(topology, queries, approximations, approximationOptions) {
+  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
+  const proofs = [];
+  const identities = [
+    ...['inputImpedance', 'outputImpedance'].flatMap((key) => queries[key].equivalence ? [queries[key].equivalence] : []),
+    ...topology.identities, ...(topology.selectedIdentities || []),
+  ];
+  const multiply = (operands) => operands.reduce((a, b) => ops.mul(a, b), ops.one);
+  const addProof = (identity, equivalent, operands) => {
+    if (!equivalent || operands.some((value) => !value || value.kind === 'infinity')) return;
+    const product = identity.kind === 'product';
+    if (product) operands = operands.filter((value) => !ops.isZero(ops.sub(value, ops.one)));
+    if (operands.length < 2) return;
+    // A product is worth showing factored only while the factors are the
+    // shorter read: once a load has collapsed to 1/g_m, `g_m (1/g_m)` says
+    // less than the 1 it multiplies out to.
+    if (product && !operands.some(carriesSum)) return;
+    const combined = product ? multiply(operands) : combineParallel(operands, ops);
+    if (!ops.isZero(compactRational(ops.sub(combined, equivalent), ops)) || ops.budget.exceeded) return;
+    const response = canonicalResponseValue(equivalent, { variable: ops.variable });
+    const prove = product ? provenProduct : provenParallel;
+    proofs.push(prove(response.expression, ...operands));
+    const dcOperands = operands.map((value) => dcLimitOf(value, ops.variable));
+    // An infinite branch drops out of a parallel DC limit. In a product,
+    // zero times infinity needs a limit of the complete expression instead.
+    const finite = product ? dcOperands : dcOperands.filter(Boolean);
+    if (response.dc.kind === 'finite' && finite.length >= 2 && finite.every(Boolean)) {
+      const dcCombined = product ? multiply(finite) : combineParallel(finite, ops);
+      if (ops.isZero(ops.sub(dcCombined, response.dc.value))) proofs.push(prove(response.dc.value, ...finite));
+    }
+  };
+  try {
+    for (const identity of identities) {
+      addProof(identity, identity.equivalent, identity.operands);
+      const localOptions = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
+      const selected = applyApproximations(identity.equivalent, localOptions).selected;
+      const operands = identity.operands.map((value) => applyApproximations(value, localOptions).selected);
+      addProof(identity, selected, operands);
+    }
+    // Bind the top-level proof to the actual selected query (including a
+    // dominant-pole reduction), rather than assuming local reductions commute.
+    if (topology.stages.length === 1 && !topology.selectedIdentities?.length) {
+      const impedance = approximations.Zout.selected;
+      if (!ops.isZero(impedance) && impedance.kind !== 'infinity') addProof(
+        { kind: 'product' }, approximations.Av.selected,
+        [compactRational(ops.div(approximations.Av.selected, impedance), ops), impedance],
+      );
+    }
+  } catch {
+    return [];
+  }
+  return ops.budget.exceeded ? [] : proofs;
+}
+
+function buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions) {
+  const ops = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
+  const options = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
+  const proofs = [];
+  const addProof = (proof, combined) => {
+    if (!ops.isZero(compactRational(ops.sub(proof.equivalent, combined), ops))) return;
+    proofs.push(proof);
+    const response = canonicalResponseValue(compactRational(proof.equivalent, ops), { variable: ops.variable });
+    proofs.push({ ...proof, equivalent: response.expression });
+    const operands = proof.operands.map((value) => dcLimitOf(value, ops.variable));
+    if (response.dc.value && operands.every(Boolean)) proofs.push({ ...proof, equivalent: response.dc.value, operands });
+  };
+  try {
+    for (const stage of [...(pipeline.millerSubstitutions || []), ...(pipeline.retainedFeedbackNetworks || [])]) {
+      const { gain, outputImpedance: load, transadmittance: gm, loadOperands, feedbackImpedance: feedback } = stage;
+      if (loadOperands.length >= 2) addProof(provenParallel(load, ...loadOperands), combineParallel(loadOperands, ops));
+      addProof(provenProduct(gain, gm, load), ops.mul(gm, load));
+      const positiveGain = ops.neg(gain);
+      addProof(provenProduct(positiveGain, ops.neg(gm), load), ops.mul(ops.neg(gm), load));
+      const inverse = ops.div(ops.one, positiveGain);
+      addProof(provenQuotient(inverse, ops.one, positiveGain), ops.div(ops.one, positiveGain));
+      for (const term of [positiveGain, inverse]) {
+        const factor = ops.add(ops.one, term);
+        addProof(provenSum(factor, ops.one, term), ops.add(ops.one, term));
+        const admittance = ops.div(factor, feedback);
+        addProof(provenQuotient(admittance, factor, feedback), ops.div(factor, feedback));
+        const impedance = ops.div(feedback, factor);
+        addProof(provenQuotient(impedance, feedback, factor), ops.div(feedback, factor));
+        const selected = applyApproximations(impedance, options).selected;
+        const selectedFeedback = applyApproximations(feedback, options).selected;
+        const selectedFactor = applyApproximations(factor, options).selected;
+        if (!ops.isZero(ops.sub(selectedFactor, ops.one))) {
+          addProof(provenQuotient(selected, selectedFeedback, selectedFactor), ops.div(selectedFeedback, selectedFactor));
+        }
+      }
+      if (pipeline.retainedFeedbackNetworks?.includes(stage)
+        && stage.gate === pipeline.context.input.node && stage.drain === pipeline.context.output.node) {
+        // Resistive feedback: Zin = (Zfb + Ro)/(1 - Aopen), provided
+        // the actual input query proves this identity (additional gate
+        // loading or another feedback path may invalidate it).
+        const numerator = ops.add(feedback, load);
+        const denominator = ops.add(ops.one, positiveGain);
+        const zin = pipeline.queries.inputImpedance.value;
+        addProof(provenSum(numerator, feedback, load), ops.add(feedback, load));
+        addProof(provenQuotient(zin, numerator, denominator), ops.div(numerator, denominator));
+        const selectedZin = approximations.Zin.selected;
+        const selectedNumerator = applyApproximations(numerator, options).selected;
+        const selectedDenominator = applyApproximations(denominator, options).selected;
+        addProof(provenQuotient(selectedZin, selectedNumerator, selectedDenominator), ops.div(selectedNumerator, selectedDenominator));
+        const shortGm = topology.stages.length === 1 ? topology.stages[0].transadmittance : null;
+        if (shortGm) addProof(provenSum(shortGm, gm, ops.div(ops.one, feedback)), ops.add(gm, ops.div(ops.one, feedback)));
+      }
+    }
+  } catch { /* retain the exact identities already checked within budget */ }
+  return proofs;
+}
+
+/**
+ * A first-order root location with the selected post-solve assumptions
+ * (for example `g_m r_o >> 1`) applied to it as a quantity of its own: the
+ * root of an approximated response still carries every subdominant term.
+ */
+function approximatedRoot(root, approximationOptions) {
+  if (!approximationOptions || root.kind !== 'root' || !root.root?.kind || root.root.kind === 'number') return root;
+  try {
+    const approximated = applyApproximations(root.root, { ...approximationOptions, dominantPoleApproximation: false, dominantPole: false });
+    const { selected, changed } = approximated;
+    if (!changed || selected.budgetExceeded) return root;
+    const value = selected.denominator.kind === 'number' && selected.denominator.numerator === selected.denominator.denominator
+      ? selected.numerator
+      : { kind: 'rational', variable: selected.variable, numerator: selected.numerator, denominator: selected.denominator };
+    return { ...root, root: value, exactRoot: root.root, assumptions: approximated.assumptions };
+  } catch {
+    return root;
+  }
+}
+
+/** Poles, zeros, and degrees from the response with common factors cancelled. */
+function withCancelledRoots(response, value, options, approximationOptions) {
+  const cancelled = value?.kind === 'rational'
+    ? cancelCommonPolynomialFactor(value, { variable: options.variable || 's' })
+    : value;
+  const reduced = cancelled === value ? response : analyzeResponse(cancelled, options);
+  return {
+    ...response,
+    numeratorDegree: reduced.numeratorDegree,
+    denominatorDegree: reduced.denominatorDegree,
+    degrees: reduced.degrees,
+    poles: reduced.poles.map((root) => approximatedRoot(root, approximationOptions)),
+    zeros: reduced.zeros.map((root) => approximatedRoot(root, approximationOptions)),
+  };
+}
+
+function displayResponse(name, exact, approximation, options, approximationOptions = null) {
+  const selected = withCancelledRoots(canonicalResponseValue(approximation.selected, options), approximation.selected, options, approximationOptions);
+  const exactResponse = canonicalResponseValue(exact, options);
+  const argument = selected.hasFrequency ? 's' : null;
+  const ac = selected.hasFrequency
+    ? {
+      expression: selected.expression,
+      equation: renderQuantityEquation(name, argument, selected.expression, options),
+      exactEquation: renderQuantityEquation(name, argument, exactResponse.expression, options),
+    }
+    : null;
+  const dc = selected.dc.value
+    ? {
+      ...selected.dc,
+      equation: renderQuantityEquation(name, 0, selected.dc.value, options),
+    }
+    : { ...selected.dc, equation: null };
+  return {
+    exact: exactResponse,
+    approximation,
+    response: selected,
+    expression: selected.expression,
+    ac,
+    dc,
+    dcLimit: selected.dc,
+    poles: selected.poles,
+    zeros: selected.zeros,
+    equations: [ac?.equation, dc.equation].filter(Boolean),
+    ...(options.equivalence ? { equivalence: options.equivalence } : {}),
+    ...(options.equivalences ? { equivalences: options.equivalences } : {}),
+  };
+}
+
+function canonicalResponseValue(value, options) {
+  const canonical = value === Infinity || value === -Infinity
+    ? infinity(value < 0 ? -1 : 1)
+    : value?.kind ? value : decimalValue(value);
+  if (canonical?.kind === 'infinity') {
+    return {
+      expression: canonical,
+      numerator: canonical,
+      denominator: null,
+      numeratorCoefficients: null,
+      denominatorCoefficients: null,
+      numeratorDegree: null,
+      denominatorDegree: null,
+      numeratorValuation: null,
+      denominatorValuation: null,
+      degrees: { numerator: null, denominator: null },
+      dc: { kind: 'infinite', value: canonical, order: null, coefficient: canonical },
+      infinity: { kind: 'infinite', value: canonical, order: null, coefficient: canonical },
+      hasFrequency: false,
+      poles: [],
+      zeros: [],
+    };
+  }
+  const response = analyzeResponse(canonical ?? value, options);
+  if (response.dc.kind !== 'finite' || !response.numeratorCoefficients || !response.denominatorCoefficients) return response;
+  const numerator = response.numeratorCoefficients.find(({ power }) => power === 0)?.coefficient;
+  const denominator = response.denominatorCoefficients.find(({ power }) => power === 0)?.coefficient;
+  if (numerator === undefined || denominator === undefined) return response;
+  const valueAtZero = rationalFunction(numerator, denominator, { variable: options.variable || 's' });
+  return {
+    ...response,
+    dc: { ...response.dc, value: valueAtZero, coefficient: valueAtZero },
+  };
+}
+
+function rootRows(transfer, options) {
+  return [
+    ...transfer.poles.map((root) => ({ ...root, equation: renderRoot(root, 'p', root.index, options) })),
+    ...transfer.zeros.map((root) => ({ ...root, equation: renderRoot(root, 'z', root.index, options) })),
+  ];
+}
+
+/**
+ * Whether an expression carries a sum. A product is worth showing factored
+ * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
+ * better than the ratio it expands to -- but two monomials multiplied are
+ * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`.
+ */
+function carriesSum(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (value.kind === 'add') return true;
+  if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);
+  if (value.kind === 'multiply') return value.factors.some(carriesSum);
+  if (value.kind === 'power') return carriesSum(value.base);
+  return false;
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function nodeNames(circuit) {
+  return new Map([...circuit.nets.values()].map((net) => [net.id, net.name || net.id]));
+}
+
+function solveFailureSource(pipeline) {
+  const failure = pipeline?.solution || pipeline;
+  const code = String(failure?.code || '').toLowerCase();
+  const text = `${failure?.error || ''} ${pipeline?.error || ''}`.toLowerCase();
+  const singular = code === 'singular'
+    || code === 'inconsistent'
+    || code === 'singular-system'
+    || code === 'inconsistent-system'
+    || text.includes('singular system')
+    || text.includes('no pivot');
+  if (!singular) return failure;
+  return {
+    code: 'singular-system',
+    severity: 'error',
+    stage: 'solve',
+    error: failure?.error || pipeline?.error || 'small-signal solve has no unique solution',
+    metadata: {
+      cause: 'no-pivot',
+      ...(failure?.pivotColumn === undefined ? {} : { pivotColumn: failure.pivotColumn }),
+      ...(failure?.pivotRow === undefined ? {} : { pivotRow: failure.pivotRow }),
+      ...(code && code !== 'singular-system' ? { originalCode: code } : {}),
+    },
+  };
+}
+
+function failureReport(pipeline, options, error = null) {
+  const source = pipeline?.stage === 'solve'
+    ? { solve: [solveFailureSource(pipeline)] }
+    : pipeline
+      ? { ...pipeline }
+      : { error: error?.message || error || 'analysis failed' };
+  const diagnostics = presentDiagnostics(source);
+  return {
+    ok: false,
+    version: 2,
+    stage: pipeline?.stage || 'analysis',
+    error: pipeline?.error || error?.message || String(error || 'analysis failed'),
+    context: pipeline?.context || null,
+    exact: null,
+    approximate: null,
+    input: null,
+    output: null,
+    transfer: null,
+    dc: null,
+    poles: [],
+    zeros: [],
+    assumptions: [],
+    details: pipeline || null,
+    netlist: describeSmallSignalNetlist([], options),
+    smallSignalNetlist: '',
+    diagnostics,
+    log: diagnostics.logText,
+  };
+}
+
+/**
+ * The budget is a real size limit, not a timeout: an exact symbolic solve of a
+ * large reactive model grows faster than any budget worth waiting for. Say
+ * what can be made smaller, because the form has no budget control.
+ */
+/**
+ * What the three quantities are a ratio of, in the drawing's own node names.
+ * The quantity symbols stay canonical -- `A_v`, `Z_{in}`, `Z_{out}` -- and this
+ * says which nodes they were taken between, which is the whole answer for a
+ * query like "what does the supply do to the output": nothing about a rail is
+ * special, it is simply the node the input was taken at.
+ */
+function portSymbols(name) {
+  const raw = String(name || '');
+  const flat = raw.replace(/[_^]\{([^}]*)\}/g, '$1');
+  // A node already named as a voltage lends its subscript to the current, so
+  // the pair reads as one: V_{DD} with I_{DD}. A name written without markup
+  // is given the same textbook spelling rather than one of each.
+  if (/^V.+/.test(flat)) {
+    const subscript = flat.slice(1);
+    return { voltage: /[_^]\{/.test(raw) ? raw : `V_{${subscript}}`, current: `I_{${subscript}}` };
+  }
+  return { voltage: `v_{${flat}}`, current: `i_{${flat}}` };
+}
+
+function portDefinitions(context) {
+  const input = context?.input;
+  const output = context?.output;
+  if (!input || !output) return [];
+  const from = portSymbols(input.name || input.netId);
+  const to = portSymbols(output.name || output.netId);
+  // Each impedance states the condition it was measured under, the way a
+  // textbook writes it: the output port carries no external current while the
+  // input drives, and the input is zeroed while the output port is driven.
+  return [
+    { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
+    { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}` },
+    { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}} \\Big\\vert_{${from.voltage} = 0}` },
+  ];
+}
+
+function budgetFailureReport(stage, budget, options) {
+  return failureReport({
+    ok: false,
+    stage: 'budget',
+    code: 'operation-budget',
+    error: `symbolic operation budget exhausted during ${stage}: this model is too large to solve exactly. `
+      + 'Simplify it — fewer device capacitances, r_o → ∞ on bias devices, or analyze one stage at a time.',
+    budget: { used: budget.used, limit: budget.limit },
+  }, options);
+}
+
+/**
+ * Run the topology-independent symbolic small-signal analysis pipeline.
+ * Exact canonical responses are retained beside any selected approximation.
+ */
+function analyzeSmallSignalV2(circuit, options = {}) {
+  if (!circuit) throw new TypeError('circuit is required');
+  const { ops, symbolic } = makeEngineOps(options);
+  const normalized = normaliseOptions(options, circuit, symbolic, ops);
+  const analysisOptions = { ...normalized, ...(ops.budget ? { budget: ops.budget } : {}) };
+  const regions = modelRegions(options);
+  const pipelineOptions = {
+    ...normalized,
+    ops,
+    devices: regions,
+    deviceRegions: regions,
+    deviceAssumptions: normalized.devices,
+    s: options.s === undefined
+      ? (symbolic ? ops.s() : (typeof ops.s === 'function' ? ops.s() : ops.one))
+      : (symbolic ? symbolicValue(options.s, {}, options, ops) : options.s),
+  };
+  let pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);
+  let retainedOutputResistance = false;
+  // Leaving r_o out can float a node driven only by current sources (an
+  // inverter's output). Then fall back to the exact model and take the
+  // post-solve r_o -> infinity limit, which shows how the result grows.
+  if (!pipeline.ok && pipeline.stage === 'solve' && Object.values(normalized.devices || {}).some((device) => device.roInfinity)) {
+    const retained = buildExactAnalysisPipeline(circuit, { ...pipelineOptions, deviceAssumptions: null });
+    if (retained.ok) {
+      pipeline = retained;
+      retainedOutputResistance = true;
+    }
+  }
+  if (!pipeline.ok) return failureReport(pipeline, normalized);
+  if (ops.budget?.exceeded) return budgetFailureReport('exact solve', ops.budget, analysisOptions);
+
+  const queries = pipeline.queries;
+  if (ops.budget?.exceeded) return budgetFailureReport('query extraction', ops.budget, analysisOptions);
+  const values = {
+    Av: queries?.transfer?.value,
+    Zin: queries?.inputImpedance?.value,
+    Zout: queries?.outputImpedance?.value,
+  };
+  if (Object.values(values).some((value) => value === undefined)) return failureReport({
+    ...pipeline,
+    stage: 'queries',
+    error: 'pipeline query results are incomplete',
+    queries,
+  }, normalized);
+
+  const approximationOptions = {
+    ...analysisOptions,
+    parameters: analysisOptions.parameters || {},
+    rational: {
+      maxOperations: options.maxOperations,
+      ...(ops.budget ? { budget: ops.budget } : {}),
+    },
+  };
+
+  const equivalences = equivalenceTable(buildParallelEquivalenceProofs(pipeline.networkReductionProofs, approximationOptions, ops));
+  const withEquivalences = (options) => ({ ...options, equivalences });
+
+  const exact = {};
+  for (const [name, value] of Object.entries(values)) {
+    const cleanupOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
+    const compact = compactRational(value, cleanupOps);
+    exact[name] = canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, withEquivalences(responseOptions(analysisOptions)));
+    if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
+  }
+  if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
+  const approximations = {};
+  for (const [name, response] of Object.entries(exact)) {
+    approximations[name] = response.expression?.kind === 'infinity'
+      ? { exact: response.expression, selected: response.expression, changed: false, assumptions: [] }
+      : applyApproximations(response.expression, approximationOptions);
+    if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
+  }
+  const topology = buildTopologyIdentities(pipeline, analysisOptions);
+  // A dominant-pole reduction acts on the whole transfer function; stage
+  // factoring must not silently replace that explicitly selected reduction.
+  const topologicalApproximation = analysisOptions.dominantPoleApproximation ? null
+    : approximateTopology(topology, queries, approximationOptions);
+  if (topologicalApproximation) {
+    for (const [name, composed, stageAssumptions] of [
+      ['Av', topologicalApproximation.selected, topologicalApproximation.assumptions],
+      ['Zout', topologicalApproximation.output.selected, topologicalApproximation.output.assumptions],
+    ]) {
+      // The stages were reduced one at a time; run the selected assumptions
+      // over what they compose to as well. Without this the topological form
+      // silently replaced a stronger whole-expression reduction -- a diode
+      // load stayed 1/g_m2 || r_o1 || r_o2 where g_m r_o >> 1 says 1/g_m2.
+      const reduced = applyApproximations(composed, approximationOptions);
+      const selected = reduced.selected;
+      const assumptions = unique([...stageAssumptions, ...reduced.assumptions]);
+      const comparisonOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
+      const changed = !comparisonOps.isZero(compactRational(comparisonOps.sub(selected, exact[name].expression), comparisonOps));
+      approximations[name] = { ...approximations[name], selected, changed, assumptions: changed ? assumptions : [] };
+    }
+    topology.selectedIdentities = topologicalApproximation.identities;
+  }
+  for (const [key, proof] of equivalenceTable(buildTopologyProofs(topology, queries, approximations, approximationOptions))) {
+    equivalences.set(key, proof);
+  }
+  for (const [key, proof] of equivalenceTable(buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions))) {
+    equivalences.set(key, proof);
+  }
+  const displayed = {
+    transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions)), approximationOptions),
+    input: displayResponse('Zin', exact.Zin.expression, approximations.Zin, withEquivalences({
+      ...responseOptions(analysisOptions),
+      ...(queries.inputImpedance.equivalence ? { equivalence: queries.inputImpedance.equivalence } : {}),
+    }), approximationOptions),
+    output: displayResponse('Zout', exact.Zout.expression, approximations.Zout, withEquivalences({
+      ...responseOptions(analysisOptions),
+      ...(queries.outputImpedance.equivalence ? { equivalence: queries.outputImpedance.equivalence } : {}),
+    }), approximationOptions),
+  };
+  if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
+  const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
+  const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
+  // One global statement when the option is global: the model dropped every
+  // device's body-effect branch, and four identical per-device lines say
+  // nothing the single rule does not.
+  const omittedBody = pipeline.omittedBodyEffect || [];
+  const bodyEffectAssumptions = omittedBody.length
+    ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
+    : [];
+  const assumptions = unique([
+    ...millerAssumptions,
+    ...bodyEffectAssumptions,
+    ...outputResistanceAssumptions,
+    ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
+    ...Object.values(displayed).flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
+      .flatMap((root) => root.assumptions || []),
+  ]);
+  const transfer = displayed.transfer.response;
+  const roots = rootRows(transfer, responseOptions(analysisOptions));
+  if (ops.budget?.exceeded) return budgetFailureReport('pole and zero extraction', ops.budget, analysisOptions);
+  const netlist = describeSmallSignalNetlist(pipeline.selected, {
+    ...normalized,
+    equivalences,
+    acGroundIds: pipeline.context.acGroundIds,
+    nodeAliases: pipeline.context.nodeAliases,
+    nodeNames: nodeNames(circuit),
+  });
+  const diagnostics = presentDiagnostics({
+    context: pipeline.context,
+    conversion: pipeline.conversion,
+    graph: pipeline.coupled,
+    queries,
+  });
+  const names = nodeNames(circuit);
+  const portName = (variable) => {
+    const node = variable.slice(2, -1);
+    return names.get(node) || node;
+  };
+  const topologyLog = topology.stages.map((stage, index) => (
+    `Stage ${index + 1}: ${portName(stage.from)} -> ${portName(stage.to)}; gain = signed transadmittance times loaded output impedance.`
+  ));
+  return {
+    ok: true,
+    version: 2,
+    context: pipeline.context,
+    input: displayed.input,
+    output: displayed.output,
+    transfer: displayed.transfer,
+    exact,
+    approximate: approximations,
+    dc: {
+      input: displayed.input.dcLimit,
+      output: displayed.output.dcLimit,
+      transfer: displayed.transfer.dcLimit,
+    },
+    dcLimits: {
+      input: displayed.input.dcLimit,
+      output: displayed.output.dcLimit,
+      transfer: displayed.transfer.dcLimit,
+    },
+    poles: transfer.poles,
+    zeros: transfer.zeros,
+    roots,
+    assumptions,
+    portDefinitions: portDefinitions(pipeline.context),
+    equations: [
+      ...displayed.input.equations,
+      ...displayed.output.equations,
+      ...displayed.transfer.equations,
+      ...roots.map(({ equation }) => equation),
+    ],
+    details: {
+      topology,
+      pipeline,
+      queries,
+      exact,
+      approximations,
+      system: pipeline.system,
+      solution: pipeline.solution,
+    },
+    netlist,
+    smallSignalNetlist: netlist.text,
+    // Where each symbol in the equations above came from. The solved primitive
+    // set describes the model that produced them, and the conversion set fills
+    // in symbols whose own primitive left the model but whose name survived
+    // into an equation — a Miller-absorbed feedback capacitor, or an r_o the
+    // engine had to keep. See `provenance.js`.
+    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives),
+    diagnostics,
+    log: [
+      diagnostics.logText,
+      ...(retainedOutputResistance
+        ? ['r_o -> infinity: removing r_o leaves a node with no conducting path (for example an output driven only by current sources), so r_o was kept and only its large-r_o limit applied.']
+        : []),
+      ...topologyLog,
+    ].filter(Boolean).join('\n'),
+  };
+}
+
+__exports.portDefinitions = portDefinitions;
+__exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
+};
+
+__modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
+/**
+ * Where each symbol in a displayed equation came from.
+ *
+ * `devices.js` mints every symbolic parameter name through one chokepoint,
+ * `parameterName(prefix, refdes)`, and tags every primitive it emits with
+ * `metadata.component` and an `id` of the form `<refdes>.<role>`. That makes
+ * the inversion below exact: it reads the table devices.js already built
+ * rather than guessing at the spelling of a rendered name. Nothing here parses
+ * TeX, and nothing here knows about the DOM.
+ *
+ * Keys are the raw expression symbol names (`gm1`, `ro1`, `RD`) as they appear
+ * in `{kind:'symbol', name}` nodes — not their rendered forms (`g_{m1}`).
+ * `present.js` owns that spelling and the two must not be confused.
+ */
+
+function roleOf(primitive) {
+  const id = String(primitive?.id || '');
+  const dot = id.lastIndexOf('.');
+  const role = dot >= 0 ? id.slice(dot + 1) : '';
+  return role || String(primitive?.kind || '');
+}
+
+/**
+ * Invert one or more primitive lists into
+ * `{ [symbolName]: {component, role, kind, primitives} }`. Earlier lists win,
+ * so pass the solved model first and earlier modeling stages after it.
+ *
+ * Several lists are needed because a symbol can survive into a displayed
+ * equation after its own primitive has left the solved set:
+ *
+ *  - A Miller shunt carries an expression, not a parameter name, so it mints no
+ *    symbol of its own — but that expression still contains the feedback
+ *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
+ *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
+ *    the engine puts `r_o` back when removing it would make the solve singular.
+ *
+ * A symbol the table cannot resolve simply does not highlight, which is why
+ * these gaps are invisible until someone points at the term and nothing
+ * happens. Only primitives whose `value` is a symbolic name contribute, and a
+ * symbol reached by more than one primitive keeps the first component and
+ * accumulates the primitive ids.
+ */
+function symbolProvenance(...primitiveLists) {
+  const table = Object.create(null);
+  for (const primitives of primitiveLists) {
+    for (const primitive of primitives || []) {
+      const name = primitive?.value;
+      if (typeof name !== 'string' || !name) continue;
+      const component = primitive?.metadata?.component;
+      if (!component) continue;
+      const existing = table[name];
+      if (existing) {
+        if (!existing.primitives.includes(primitive.id)) existing.primitives.push(primitive.id);
+        continue;
+      }
+      table[name] = {
+        component,
+        role: roleOf(primitive),
+        kind: primitive.kind,
+        primitives: [primitive.id],
+      };
+    }
+  }
+  return table;
+}
+
+/** The distinct components a set of symbol names resolves to, in first-seen
+ *  order. Used to label a rendered subexpression with everything it touches. */
+function componentsOfSymbols(names, table) {
+  const seen = [];
+  for (const name of names || []) {
+    const component = table?.[name]?.component;
+    if (component && !seen.includes(component)) seen.push(component);
+  }
+  return seen;
+}
+
+__exports.symbolProvenance = symbolProvenance;
+__exports.componentsOfSymbols = componentsOfSymbols;
 };
 
 __modules["src/core/style.js"] = function (__require, __exports) {
@@ -24722,177 +24763,6 @@ __exports.pngDataUrlBlob = pngDataUrlBlob;
 __exports.writeDrawingToClipboard = writeDrawingToClipboard;
 };
 
-__modules["src/core/geometry.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-
-
-/**
- * Component/wire transforming. A transform is:
- *   translate(x, y) . rotate(rotation deg, multiples of 90) . scale(mirrorX, mirrorY)
- *
- * Order of application to a local point (matches SVG group transform string):
- *   1. mirror  (flip x if mirrorX, flip y if mirrorY)
- *   2. rotate  (about origin; +deg rotates +x toward +y = visually clockwise,
- *               y pointing down — matches SVG rotate())
- *   3. translate by (x, y)
- */
-
-function applyTransform(t, x, y) {
-  let px = t.mirrorX ? -x : x;
-  let py = t.mirrorY ? -y : y;
-  const r = ((t.rotation % 360) + 360) % 360;
-  if (r === 90) {
-    [px, py] = [-py, px];
-  } else if (r === 180) {
-    [px, py] = [-px, -py];
-  } else if (r === 270) {
-    [px, py] = [py, -px];
-  }
-  return { x: t.x + px, y: t.y + py };
-}
-
-/** Transform a unit DIRECTION vector (not a point) under a component transform:
- *  mirror (flip the affected axis) then rotate, same order as applyTransform.
- *  Translations do not affect a direction. */
-function applyDir(t, dx, dy) {
-  let px = t.mirrorX ? -dx : dx;
-  let py = t.mirrorY ? -dy : dy;
-  const r = ((t.rotation % 360) + 360) % 360;
-  if (r === 90) {
-    [px, py] = [-py, px];
-  } else if (r === 180) {
-    [px, py] = [-px, -py];
-  } else if (r === 270) {
-    [px, py] = [py, -px];
-  }
-  return { x: px, y: py };
-}
-
-/** SVG transform attribute for a group wrapping symbol-local geometry. */
-function transformToSvg(t) {
-  const s = `${t.mirrorX ? -1 : 1} ${t.mirrorY ? -1 : 1}`;
-  const r = ((t.rotation % 360) + 360) % 360;
-  return `translate(${t.x} ${t.y}) rotate(${r}) scale(${s})`;
-}
-
-/** Transform a local rect {x,y,w,h} into an axis-aligned world rect. */
-function transformRect(t, r) {
-  const pts = [
-    [r.x, r.y],
-    [r.x + r.w, r.y],
-    [r.x, r.y + r.h],
-    [r.x + r.w, r.y + r.h],
-  ].map(([x, y]) => applyTransform(t, x, y));
-  return rectFromPoints(pts);
-}
-
-/** Inverse of applyTransform: the local point for a world point under t. */
-function inverseTransform(t, x, y) {
-  let px = x - t.x;
-  let py = y - t.y;
-  const r = ((t.rotation % 360) + 360) % 360;
-  if (r === 90) {
-    [px, py] = [py, -px];
-  } else if (r === 180) {
-    [px, py] = [-px, -py];
-  } else if (r === 270) {
-    [px, py] = [-py, px];
-  }
-  if (t.mirrorX) px = -px;
-  if (t.mirrorY) py = -py;
-  return { x: px, y: py };
-}
-
-/** Bounding rect of a list of {x,y} points. */
-function rectFromPoints(pts) {
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const p of pts) {
-    x0 = Math.min(x0, p.x);
-    y0 = Math.min(y0, p.y);
-    x1 = Math.max(x1, p.x);
-    y1 = Math.max(y1, p.y);
-  }
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-}
-
-/** Union of several {x,y,w,h} rects. */
-function rectUnion(rects) {
-  const pts = [];
-  for (const r of rects) {
-    pts.push({ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x, y: r.y + r.h }, { x: r.x + r.w, y: r.y + r.h });
-  }
-  return rectFromPoints(pts);
-}
-
-/** True if two rects share strictly-positive area (touching edges are NOT an overlap). */
-function rectsOverlap(a, b) {
-  return !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
-}
-
-/**
- * True if the axis-aligned segment a->b passes through the STRICT INTERIOR of
- * rect r (crossing a boundary line or ending on the boundary does not count).
- * Used to detect wires that visually run through a component's footprint.
- */
-function segmentCrossesRect(a, b, r) {
-  const x0 = Math.min(a.x, b.x);
-  const x1 = Math.max(a.x, b.x);
-  const y0 = Math.min(a.y, b.y);
-  const y1 = Math.max(a.y, b.y);
-  if (a.x === b.x) {
-    return x0 > r.x && x0 < r.x + r.w && y0 < r.y + r.h && y1 > r.y;
-  }
-  if (a.y === b.y) {
-    return y0 > r.y && y0 < r.y + r.h && x0 < r.x + r.w && x1 > r.x;
-  }
-  return false; // route is always orthogonal
-}
-
-/** Shortest distance from point `p` to segment a-b (clamped to the segment). */
-function distanceToSegment(p, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
-  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
-}
-
-/** Format a coordinate for SVG: integers stay exact, others get two decimals. */
-function fmt(n) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(2);
-}
-
-/** Point-free helper: format a point for SVG. */
-function pt(p) {
-  return `${p.x} ${p.y}`;
-}
-
-/**
- * Midpoint of two grid points snapped to grid, useful for wire bends.
- * (Two grid multiples average to a multiple of GRID/2; snap pulls it back
- * onto the full grid.)
- */
-function midSnap(a, b) {
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-}
-
-__exports.applyTransform = applyTransform;
-__exports.applyDir = applyDir;
-__exports.transformToSvg = transformToSvg;
-__exports.transformRect = transformRect;
-__exports.inverseTransform = inverseTransform;
-__exports.rectFromPoints = rectFromPoints;
-__exports.rectUnion = rectUnion;
-__exports.rectsOverlap = rectsOverlap;
-__exports.segmentCrossesRect = segmentCrossesRect;
-__exports.distanceToSegment = distanceToSegment;
-__exports.fmt = fmt;
-__exports.pt = pt;
-__exports.midSnap = midSnap;
-};
-
 __modules["src/core/router.js"] = function (__require, __exports) {
 const { GRID, snap } = __require("src/core/grid.js");
 const { junctionPoints, normalizeBranches, pointKey, reduceBranches } = __require("src/core/wiring.js");
@@ -26001,6 +25871,177 @@ __exports.bodyClearanceSafe = bodyClearanceSafe;
 __exports.smartRoute = smartRoute;
 };
 
+__modules["src/core/geometry.js"] = function (__require, __exports) {
+const { GRID } = __require("src/core/grid.js");
+
+
+/**
+ * Component/wire transforming. A transform is:
+ *   translate(x, y) . rotate(rotation deg, multiples of 90) . scale(mirrorX, mirrorY)
+ *
+ * Order of application to a local point (matches SVG group transform string):
+ *   1. mirror  (flip x if mirrorX, flip y if mirrorY)
+ *   2. rotate  (about origin; +deg rotates +x toward +y = visually clockwise,
+ *               y pointing down — matches SVG rotate())
+ *   3. translate by (x, y)
+ */
+
+function applyTransform(t, x, y) {
+  let px = t.mirrorX ? -x : x;
+  let py = t.mirrorY ? -y : y;
+  const r = ((t.rotation % 360) + 360) % 360;
+  if (r === 90) {
+    [px, py] = [-py, px];
+  } else if (r === 180) {
+    [px, py] = [-px, -py];
+  } else if (r === 270) {
+    [px, py] = [py, -px];
+  }
+  return { x: t.x + px, y: t.y + py };
+}
+
+/** Transform a unit DIRECTION vector (not a point) under a component transform:
+ *  mirror (flip the affected axis) then rotate, same order as applyTransform.
+ *  Translations do not affect a direction. */
+function applyDir(t, dx, dy) {
+  let px = t.mirrorX ? -dx : dx;
+  let py = t.mirrorY ? -dy : dy;
+  const r = ((t.rotation % 360) + 360) % 360;
+  if (r === 90) {
+    [px, py] = [-py, px];
+  } else if (r === 180) {
+    [px, py] = [-px, -py];
+  } else if (r === 270) {
+    [px, py] = [py, -px];
+  }
+  return { x: px, y: py };
+}
+
+/** SVG transform attribute for a group wrapping symbol-local geometry. */
+function transformToSvg(t) {
+  const s = `${t.mirrorX ? -1 : 1} ${t.mirrorY ? -1 : 1}`;
+  const r = ((t.rotation % 360) + 360) % 360;
+  return `translate(${t.x} ${t.y}) rotate(${r}) scale(${s})`;
+}
+
+/** Transform a local rect {x,y,w,h} into an axis-aligned world rect. */
+function transformRect(t, r) {
+  const pts = [
+    [r.x, r.y],
+    [r.x + r.w, r.y],
+    [r.x, r.y + r.h],
+    [r.x + r.w, r.y + r.h],
+  ].map(([x, y]) => applyTransform(t, x, y));
+  return rectFromPoints(pts);
+}
+
+/** Inverse of applyTransform: the local point for a world point under t. */
+function inverseTransform(t, x, y) {
+  let px = x - t.x;
+  let py = y - t.y;
+  const r = ((t.rotation % 360) + 360) % 360;
+  if (r === 90) {
+    [px, py] = [py, -px];
+  } else if (r === 180) {
+    [px, py] = [-px, -py];
+  } else if (r === 270) {
+    [px, py] = [-py, px];
+  }
+  if (t.mirrorX) px = -px;
+  if (t.mirrorY) py = -py;
+  return { x: px, y: py };
+}
+
+/** Bounding rect of a list of {x,y} points. */
+function rectFromPoints(pts) {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const p of pts) {
+    x0 = Math.min(x0, p.x);
+    y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x);
+    y1 = Math.max(y1, p.y);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** Union of several {x,y,w,h} rects. */
+function rectUnion(rects) {
+  const pts = [];
+  for (const r of rects) {
+    pts.push({ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x, y: r.y + r.h }, { x: r.x + r.w, y: r.y + r.h });
+  }
+  return rectFromPoints(pts);
+}
+
+/** True if two rects share strictly-positive area (touching edges are NOT an overlap). */
+function rectsOverlap(a, b) {
+  return !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+}
+
+/**
+ * True if the axis-aligned segment a->b passes through the STRICT INTERIOR of
+ * rect r (crossing a boundary line or ending on the boundary does not count).
+ * Used to detect wires that visually run through a component's footprint.
+ */
+function segmentCrossesRect(a, b, r) {
+  const x0 = Math.min(a.x, b.x);
+  const x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const y1 = Math.max(a.y, b.y);
+  if (a.x === b.x) {
+    return x0 > r.x && x0 < r.x + r.w && y0 < r.y + r.h && y1 > r.y;
+  }
+  if (a.y === b.y) {
+    return y0 > r.y && y0 < r.y + r.h && x0 < r.x + r.w && x1 > r.x;
+  }
+  return false; // route is always orthogonal
+}
+
+/** Shortest distance from point `p` to segment a-b (clamped to the segment). */
+function distanceToSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+}
+
+/** Format a coordinate for SVG: integers stay exact, others get two decimals. */
+function fmt(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+/** Point-free helper: format a point for SVG. */
+function pt(p) {
+  return `${p.x} ${p.y}`;
+}
+
+/**
+ * Midpoint of two grid points snapped to grid, useful for wire bends.
+ * (Two grid multiples average to a multiple of GRID/2; snap pulls it back
+ * onto the full grid.)
+ */
+function midSnap(a, b) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+__exports.applyTransform = applyTransform;
+__exports.applyDir = applyDir;
+__exports.transformToSvg = transformToSvg;
+__exports.transformRect = transformRect;
+__exports.inverseTransform = inverseTransform;
+__exports.rectFromPoints = rectFromPoints;
+__exports.rectUnion = rectUnion;
+__exports.rectsOverlap = rectsOverlap;
+__exports.segmentCrossesRect = segmentCrossesRect;
+__exports.distanceToSegment = distanceToSegment;
+__exports.fmt = fmt;
+__exports.pt = pt;
+__exports.midSnap = midSnap;
+};
+
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
 const { GRID, snap } = __require("src/core/grid.js");
 
@@ -27081,6 +27122,560 @@ __exports.buildWireHitIndex = buildWireHitIndex;
 __exports.queryWireHitIndex = queryWireHitIndex;
 };
 
+__modules["src/web/commit-feedback.js"] = function (__require, __exports) {
+const { GRID } = __require("src/core/grid.js");
+const { componentShapeSvg, labelShapeSvg } = __require("src/core/render.js");
+/**
+ * Commit feedback: what visibly "landed" between two committed documents.
+ *
+ * The editor flashes these regions briefly after an undoable edit. The diff is
+ * geometric rather than per-tool, so placement, wiring, moves, copies, pastes,
+ * label edits, and console commands all get the same feedback without each
+ * tool describing its own result. Undo/redo never call this.
+ */
+
+
+
+
+// A huge edit (select-all move, loading a template through a command) should
+// still acknowledge the commit without building thousands of SVG nodes.
+const MAX_RECTS = 80;
+const MAX_PIECES = 1500;
+const MAX_POINTS = 60;
+
+const pointKey = (p) => `${Math.round(p.x)},${Math.round(p.y)}`;
+
+function componentKey(json) {
+  return JSON.stringify(json);
+}
+
+/** Split a drawable path into grid-length pieces so re-segmented but
+ * geometrically unchanged wires (a junction split, collinear merge) compare
+ * equal. Diagonal segments stay whole. */
+function wirePieces(paths) {
+  const pieces = new Map();
+  for (const { netId, pts } of paths) {
+    if (!pts || pts.length < 2) continue;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const steps = (dx === 0 || dy === 0) ? Math.max(1, Math.round(Math.abs(dx + dy) / GRID)) : 1;
+      for (let s = 0; s < steps; s++) {
+        const p = { x: a.x + (dx * s) / steps, y: a.y + (dy * s) / steps };
+        const q = { x: a.x + (dx * (s + 1)) / steps, y: a.y + (dy * (s + 1)) / steps };
+        const [lo, hi] = pointKey(p) < pointKey(q) ? [p, q] : [q, p];
+        // Keyed per net: a wire moved onto another net's wire is still new.
+        pieces.set(`${netId}|${pointKey(lo)}|${pointKey(hi)}`, { a: lo, b: hi });
+      }
+    }
+  }
+  return pieces;
+}
+
+function circuitWirePieces(circuit) {
+  const paths = [];
+  for (const net of circuit.nets.values()) {
+    try { paths.push(...net.paths().map((pts) => ({ netId: net.id, pts }))); } catch { /* unroutable net: nothing drawn */ }
+  }
+  return wirePieces(paths);
+}
+
+function connectedTerminalKeys(circuit) {
+  const keys = new Set();
+  for (const net of circuit.nets.values()) {
+    if ((net.terminals?.length || 0) < 2 && !(net.junctions?.length)) continue;
+    for (const t of net.terminals || []) keys.add(`${t.comp}.${t.term}`);
+  }
+  return keys;
+}
+
+function labelKey(label) {
+  let box = null;
+  try { box = label.bbox(); } catch { /* no drawable box */ }
+  // Owned labels store a local offset, so compare the world box as well.
+  return JSON.stringify([label.toJSON ? label.toJSON() : label, box]);
+}
+
+/**
+ * Compare the committed `before` circuit with `after`. Returns world geometry:
+ * - components/labels: added or changed objects (from `after`);
+ * - pieces: added wire pieces ({a,b});
+ * - points: new connections (new solder junctions, newly connected pins,
+ *   and pins touched by a new wire piece) — where the edit "clicked" in;
+ * - removedComponents/removedLabels/removedPieces: what a deletion removed
+ *   (from `before`). A deletion that reroutes the remaining wires is still a
+ *   deletion: its reroute is not flashed as an addition.
+ */
+function commitFeedbackDiff(before, after) {
+  const components = [];
+  const labels = [];
+  const removedComponents = [];
+  const removedLabels = [];
+  const points = new Map();
+
+  const beforeComps = new Map([...before.components.values()].map((c) => [c.refdes, c]));
+  for (const c of after.components.values()) {
+    const old = beforeComps.get(c.refdes);
+    beforeComps.delete(c.refdes);
+    if (c.type === 'solder') {
+      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y });
+      continue;
+    }
+    if (old && componentKey(old.toJSON()) === componentKey(c.toJSON())) continue;
+    components.push(c);
+  }
+  for (const c of beforeComps.values()) {
+    if (c.type !== 'solder') removedComponents.push(c);
+  }
+
+  const beforeLabels = new Map(before.labels);
+  for (const label of after.labels.values()) {
+    const old = beforeLabels.get(label.id);
+    beforeLabels.delete(label.id);
+    if (old && labelKey(old) === labelKey(label)) continue;
+    labels.push(label);
+  }
+  removedLabels.push(...beforeLabels.values());
+
+  const oldPieces = circuitWirePieces(before);
+  const newPieces = circuitWirePieces(after);
+  const pieces = [];
+  for (const [key, piece] of newPieces) if (!oldPieces.has(key)) pieces.push(piece);
+  const removedPieces = [];
+  for (const [key, piece] of oldPieces) if (!newPieces.has(key)) removedPieces.push(piece);
+
+  // A deletion removed objects, or removed wire without drawing any. Moving or
+  // shortening a wire removes more pieces than it adds, but is not a deletion.
+  const deletion = !components.length && !labels.length
+    && (removedComponents.length || removedLabels.length || (removedPieces.length && !pieces.length));
+  if (deletion) {
+    return {
+      components: [], labels: [], pieces: [], points: [],
+      removedComponents: removedComponents.slice(0, MAX_RECTS),
+      removedLabels: removedLabels.slice(0, MAX_RECTS),
+      removedPieces: removedPieces.slice(0, MAX_PIECES),
+    };
+  }
+
+  // Pins that gained a connection, or sit at an end of a freshly drawn wire.
+  const pieceEnds = new Map();
+  for (const { a, b } of pieces) {
+    for (const p of [a, b]) {
+      const key = pointKey(p);
+      pieceEnds.set(key, (pieceEnds.get(key) || 0) + 1);
+    }
+  }
+  const wasConnected = connectedTerminalKeys(before);
+  const isConnected = connectedTerminalKeys(after);
+  for (const c of after.components.values()) {
+    if (c.type === 'solder') continue;
+    for (const t of c.worldTerminals()) {
+      const id = `${c.refdes}.${t.name}`;
+      if (!isConnected.has(id)) continue;
+      const key = pointKey(t);
+      if (!wasConnected.has(id) || pieceEnds.get(key) === 1) points.set(key, { x: t.x, y: t.y });
+    }
+  }
+
+  return {
+    components: components.slice(0, MAX_RECTS),
+    labels: labels.slice(0, MAX_RECTS),
+    pieces: pieces.slice(0, MAX_PIECES),
+    points: [...points.values()].slice(0, MAX_POINTS),
+    removedComponents: [],
+    removedLabels: [],
+    removedPieces: [],
+  };
+}
+
+function isEmptyFeedback(diff) {
+  return !diff || Object.values(diff).every((list) => !list.length);
+}
+
+const f = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
+
+/** One label's traced shape; a math label (HTML) falls back to a soft box. */
+function labelTrace(label, boxClass) {
+  const shape = labelShapeSvg(label);
+  if (shape) return shape;
+  try {
+    const r = label.bbox();
+    return `<rect class="${boxClass}" x="${f(r.x)}" y="${f(r.y)}" width="${f(r.w)}" height="${f(r.h)}" rx="6"/>`;
+  } catch {
+    return '';
+  }
+}
+
+/** SVG markup for one feedback burst: `under` glows behind the drawing (the
+ * objects' own shapes, restyled by CSS), `over` sits on top (connection
+ * ripples, and the trailing red halo of deleted objects). */
+function commitFeedbackSvg(diff) {
+  const piecePath = (list) => list.map(({ a, b }) => `M ${f(a.x)} ${f(a.y)} L ${f(b.x)} ${f(b.y)}`).join(' ');
+  const under = [];
+  const over = [];
+  const glow = [
+    ...diff.components.map((c) => componentShapeSvg(c)),
+    ...diff.labels.map((label) => labelTrace(label, 'landing-box')),
+  ].join('');
+  if (glow) under.push(`<g class="landing-glow">${glow}</g>`);
+  if (diff.pieces.length) under.push(`<path class="landing-wire" d="${piecePath(diff.pieces)}"/>`);
+  for (const p of diff.points) {
+    over.push(`<circle class="landing-ripple" cx="${f(p.x)}" cy="${f(p.y)}" r="18"/>`);
+    over.push(`<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
+  }
+  const removed = [
+    ...diff.removedComponents.map((c) => componentShapeSvg(c)),
+    ...diff.removedLabels.map((label) => labelTrace(label, 'landing-box')),
+    diff.removedPieces.length ? `<path d="${piecePath(diff.removedPieces)}" fill="none"/>` : '',
+  ].join('');
+  if (removed) over.push(`<g class="landing-removed">${removed}</g>`);
+  return { under: under.join(''), over: over.join('') };
+}
+
+__exports.commitFeedbackDiff = commitFeedbackDiff;
+__exports.isEmptyFeedback = isEmptyFeedback;
+__exports.commitFeedbackSvg = commitFeedbackSvg;
+};
+
+__modules["src/web/toolbar.js"] = function (__require, __exports) {
+/** Display names and extra search words for the insert menu, keyed by symbol type. */
+const PLACEMENT_LABELS = {
+  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode',
+  nmos: 'NMOS transistor', pmos: 'PMOS transistor',
+  nmosb: 'NMOS transistor with bulk', pmosb: 'PMOS transistor with bulk',
+  npn: 'NPN transistor', pnp: 'PNP transistor',
+  ground: 'Ground', vcm: 'VCM (Common potential)', supply: 'Supply (VDD/VCC)',
+  input: 'Input port', output: 'Output port', inputoutput: 'Input/output port',
+  port: 'Port',
+  current_source: 'Current source', voltage_source: 'Voltage source',
+  vccs: 'VCCS (voltage-controlled current source)',
+  opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', inverter: 'Inverter', buffer: 'Buffer',
+  tristate_inverter: 'Tri-state inverter', tristate_buffer: 'Tri-state buffer',
+  mux2: '2:1 multiplexer',
+  adc: 'ADC', dac: 'DAC',
+  dff: 'D flip-flop (CLK, Q)', dff_qb: 'D flip-flop (CLK, Q, QB)',
+  dff_clkb: 'D flip-flop (CLKB, Q)', dff_clkb_qb: 'D flip-flop (CLKB, Q, QB)',
+  dff_rst: 'D flip-flop (CLK, RST)', dff_rst_qb: 'D flip-flop (CLK, RST, Q, QB)',
+  dff_clkb_rst: 'D flip-flop (CLKB, RST)', dff_clkb_rst_qb: 'D flip-flop (CLKB, RST, Q, QB)',
+  dff_rstb: 'D flip-flop (CLK, RSTB)', dff_rstb_qb: 'D flip-flop (CLK, RSTB, Q, QB)',
+  dff_clkb_rstb: 'D flip-flop (CLKB, RSTB)', dff_clkb_rstb_qb: 'D flip-flop (CLKB, RSTB, Q, QB)',
+  latch: 'L latch (EN, Q)', latch_qb: 'L latch (EN, Q, QB)',
+  latch_enb: 'L latch (ENB, Q)', latch_enb_qb: 'L latch (ENB, Q, QB)',
+  latch_rst: 'L latch (EN, RST)', latch_rst_qb: 'L latch (EN, RST, Q, QB)',
+  latch_enb_rst: 'L latch (ENB, RST)', latch_enb_rst_qb: 'L latch (ENB, RST, Q, QB)',
+  latch_rstb: 'L latch (EN, RSTB)', latch_rstb_qb: 'L latch (EN, RSTB, Q, QB)',
+  latch_enb_rstb: 'L latch (ENB, RSTB)', latch_enb_rstb_qb: 'L latch (ENB, RSTB, Q, QB)',
+  and2_gate: '2-input AND gate', nand2_gate: '2-input NAND gate', or2_gate: '2-input OR gate', nor2_gate: '2-input NOR gate',
+  xor2_gate: '2-input XOR gate', xnor2_gate: '2-input XNOR gate',
+  and3_gate: '3-input AND gate', nand3_gate: '3-input NAND gate', or3_gate: '3-input OR gate', nor3_gate: '3-input NOR gate',
+  xor3_gate: '3-input XOR gate', xnor3_gate: '3-input XNOR gate',
+  variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
+  solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
+  signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
+};
+
+const PLACEMENT_ALIASES = {
+  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'],
+  nmos: ['mos', 'n-channel', 'fet'], pmos: ['mos', 'p-channel', 'fet'],
+  nmosb: ['mos', 'body', 'bulk', 'n-channel', 'fet'], pmosb: ['mos', 'body', 'bulk', 'p-channel', 'fet'],
+  npn: ['bjt'], pnp: ['bjt'],
+  supply: ['vdd', 'vcc', 'power'], vcm: ['common', 'potential', 'vcm'], input: ['in'], output: ['out'], inputoutput: ['io'],
+  ground: ['gnd', 'vss'],
+  current_source: ['idc', 'current'], voltage_source: ['vdc', 'voltage'],
+  vccs: ['transconductance', 'controlled current', 'gm'],
+  opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
+  tristate_inverter: ['tri-state', 'tristate', 'three-state', 'enable'],
+  tristate_buffer: ['tri-state', 'tristate', 'three-state', 'enable'],
+  mux2: ['mux', 'multiplexer', 'select', 'two input'],
+  dff: ['flip flop', 'flip-flop', 'sequential', 'clocked'],
+  dff_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'complementary'],
+  dff_clkb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock'],
+  dff_clkb_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock', 'complementary'],
+  dff_rst: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'reset'],
+  dff_rst_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'reset', 'complementary'],
+  dff_clkb_rst: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock', 'reset'],
+  dff_clkb_rst_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock', 'reset', 'complementary'],
+  dff_rstb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low reset'],
+  dff_rstb_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low reset', 'complementary'],
+  dff_clkb_rstb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low'],
+  dff_clkb_rstb_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low', 'complementary'],
+  and2_gate: ['and', 'logic', 'two input', '2 input'],
+  nand2_gate: ['nand', 'logic', 'two input', '2 input'],
+  or2_gate: ['or', 'logic', 'two input', '2 input'],
+  nor2_gate: ['nor', 'logic', 'two input', '2 input'],
+  xor2_gate: ['xor', 'logic', 'two input', '2 input'],
+  xnor2_gate: ['xnor', 'logic', 'two input', '2 input'],
+  and3_gate: ['and', 'logic', 'three input', '3 input'],
+  nand3_gate: ['nand', 'logic', 'three input', '3 input'],
+  or3_gate: ['or', 'logic', 'three input', '3 input'],
+  nor3_gate: ['nor', 'logic', 'three input', '3 input'],
+  xor3_gate: ['xor', 'logic', 'three input', '3 input'],
+  xnor3_gate: ['xnor', 'logic', 'three input', '3 input'],
+  latch: ['latch', 'level sensitive', 'sequential', 'enable'],
+  latch_qb: ['latch', 'level sensitive', 'sequential', 'enable', 'complementary'],
+  latch_enb: ['latch', 'level sensitive', 'sequential', 'active low enable'],
+  latch_enb_qb: ['latch', 'level sensitive', 'sequential', 'active low enable', 'complementary'],
+  latch_rst: ['latch', 'level sensitive', 'sequential', 'enable', 'reset'],
+  latch_rst_qb: ['latch', 'level sensitive', 'sequential', 'enable', 'reset', 'complementary'],
+  latch_enb_rst: ['latch', 'level sensitive', 'sequential', 'active low enable', 'reset'],
+  latch_enb_rst_qb: ['latch', 'level sensitive', 'sequential', 'active low enable', 'reset', 'complementary'],
+  latch_rstb: ['latch', 'level sensitive', 'sequential', 'active low reset'],
+  latch_rstb_qb: ['latch', 'level sensitive', 'sequential', 'active low reset', 'complementary'],
+  latch_enb_rstb: ['latch', 'level sensitive', 'sequential', 'active low'],
+  latch_enb_rstb_qb: ['latch', 'level sensitive', 'sequential', 'active low', 'complementary'],
+  variable_resistor: ['potentiometer', 'pot', 'var res', 'tunable'], variable_capacitor: ['var cap', 'tunable'], variable_inductor: ['var coil', 'tunable'],
+  switch_open: ['switch', 'open'], switch_closed: ['switch', 'closed'], solder: ['junction', 'dot'],
+  label: ['annotation', 'text'], block: ['block', 'rectangle', 'node'],
+  signal_sum: ['sum', 'summer', 'signal flow', 'junction'],
+  signal_multiply: ['multiply', 'multiplier', 'signal flow', 'junction'],
+};
+
+/** Rank a name against a query: prefix beats substring beats subsequence, and
+ *  a shorter match wins within a tier. -1 means no match. */
+function fuzzyScore(q, name) {
+  const s = String(name).toLowerCase();
+  const query = String(q).toLowerCase();
+  if (!query) return 0;
+  if (s.startsWith(query)) return 100 - s.length;
+  if (s.includes(query)) return 80 - s.length;
+  let i = 0;
+  for (const ch of s) {
+    if (ch === query[i]) i++;
+    if (i === query.length) return 60 - s.length;
+  }
+  return -1;
+}
+
+/** Best rank of a symbol type across its id, display name, and aliases. */
+function placementSearchScore(query, type) {
+  return Math.max(
+    fuzzyScore(query, type),
+    fuzzyScore(query, PLACEMENT_LABELS[type] || type),
+    ...(PLACEMENT_ALIASES[type] || []).map((alias) => fuzzyScore(query, alias)),
+  );
+}
+
+// How many placements the insert menu's Recent group offers.
+const INSERT_RECENT_LIMIT = 5;
+
+/** Most-recently-used ordering: `type` moves to the front of `list`, appearing
+ *  once, and the list is trimmed to `limit`. */
+function withRecentType(list, type, limit = INSERT_RECENT_LIMIT) {
+  if (!type) return [...list];
+  return [type, ...list.filter((entry) => entry !== type)].slice(0, limit);
+}
+
+/** Return the smallest clamped scroll offset that fully reveals a target. */
+function minimalRevealScroll(viewStart, viewEnd, targetStart, targetEnd, scroll = 0, maxScroll = 0) {
+  const delta = targetStart < viewStart
+    ? targetStart - viewStart
+    : targetEnd > viewEnd
+      ? targetEnd - viewEnd
+      : 0;
+  return Math.max(0, Math.min(maxScroll, scroll + delta));
+}
+
+/** Keep generated junction markers out of the user-facing component list. */
+function componentPaletteItems(components) {
+  return [...components].filter((component) => component.type !== 'solder');
+}
+
+// Human ordering: S1, S2, S10 rather than lexicographic S1, S10, S2.
+const naturalCompare = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare;
+
+// The editor's keyboard reference is data, not a second hand-written list in
+// the dialog. Keep this registry alongside the keyboard-facing toolbar.
+const EDITOR_KEYMAP = Object.freeze([
+  ['draw', [
+    ['i / I / A', 'insert mode (fuzzy-search component and label placement)'],
+    ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal; Enter commits'],
+    ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
+    ['/ (wire)', 'flip which way the corner under the cursor turns'],
+    ['drag from a pin', 'draw a wire without Wire mode; drop on a pin or wire, or in space to add a part'],
+    ['terminal letters', 'pick or complete a terminal connection while wiring'],
+    ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
+    ['L', 'persistent electrical net-label placement'],
+    ['Shift+N', 'place one free annotation, then return to selection'],
+    ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
+    ['a', 'place a multi-point arrow; click vertices and press Enter'],
+    ['b', 'place one two-point box, then return to selection'],
+    ['l', 'persistent multi-point line annotation placement'],
+  ]],
+  ['edit', [
+    ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
+    ['U / Ctrl/Cmd+Y', 'redo'],
+    ['Arrow keys', 'nudge selected objects or move the cursor (counts apply)'],
+    ['r', 'rotate selected objects 90° clockwise'],
+    ['Shift+r', 'mirror selected horizontally'],
+    ['Ctrl/Cmd+r', 'mirror selected vertically'],
+    ['r / Shift+r / Ctrl+r (dragging)', 'rotate or mirror a part while it is being dragged'],
+    ['m', 'move selected objects with connectivity; stays armed'],
+    ['Shift+m', 'move selected objects without connected nets; stays armed'],
+    ['c', 'copy a selected object or set; stays armed'],
+    ['y / Ctrl/Cmd+C', 'copy the selected objects'],
+    ['Ctrl/Cmd+Shift+C', 'copy selection (or whole drawing) as an image for other apps'],
+    ['p / Ctrl/Cmd+V', 'paste the copied set at the cursor'],
+    ['Ctrl/Cmd+Shift+V', 'paste style from one copied object'],
+    ['Delete', 'persistent delete; click objects while armed'],
+    ['dd', 'delete the selected object set'],
+    ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
+    ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
+    ['t', 'edit the primary selected label (no-op otherwise)'],
+    ['Ctrl/Cmd+i', 'toggle italic on selected labels'],
+    ['Ctrl/Cmd+b', 'toggle bold on selected labels'],
+  ]],
+  ['select', [
+    ['Enter', 'select the label or component under the cursor'],
+    ['Ctrl/Cmd+A', 'select all components, labels, and non-empty nets'],
+    ['v', 'visual mode: arrow keys grow a box; Enter selects; Esc cancels'],
+    ['Tab / Shift+Tab (selection)', 'cycle a selected component or label forward / backward'],
+    ['Tab / Shift+Tab (focus)', 'focus semantic canvas objects; Enter/Space selects one'],
+    ['Esc', 'cancel the active interaction'],
+  ]],
+  ['view', [
+    ['F / f', 'fit view to contents'],
+    ['#', 'toggle the placement grid'],
+    ['C', 'toggle crosshair visibility'],
+    ['G', 'toggle the spacing and alignment guides'],
+    ['D', 'toggle dark mode'],
+    ['P', 'show or hide the components, nets, and selection panel'],
+    ['Space+drag', 'pan the view'],
+    ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
+  ]],
+  ['file and console', [
+    ['Ctrl/Cmd+S', 'save'],
+    ['Ctrl/Cmd+Shift+S', 'save as: choose a folder and name'],
+    ['Ctrl/Cmd+O', 'open a document file from any folder'],
+    ['Ctrl/Cmd+E', 'open the export dialog'],
+    ['drop a file', 'drop a .json file on the window to open a copy'],
+    ['x / Shift+x', 'check / save without checking'],
+    ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],
+    [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
+    ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
+    ['explain eval', 'group design-check issues with repair hints'],
+    ['explain connect A.t B.t', 'dry-run a route and report path/bends/pin escapes'],
+    ['F5', 'reload the application'],
+    ['?', 'show this help'],
+  ]],
+  ['insert', [
+    ['type', 'fuzzy-search names and aliases'],
+    ['Enter / Tab', 'pick the highlighted match as a placement ghost'],
+    ['Up / Down', 'browse matches; Left / Right jump between categories'],
+    ['Enter / click', 'place the ghost at the cursor'],
+    ['Arrow keys (ghost)', 'move the cursor and placement ghost'],
+    ['Shift while moving', 'lock a drag or ghost to the dominant horizontal or vertical direction'],
+    ['r / Shift+r', 'rotate / mirror the component ghost'],
+    ['Ctrl/Cmd+r', 'mirror the component ghost vertically'],
+    ['hold Alt', 'symmetric placement/copy: pin a mirror axis, move off it, and place both halves'],
+    ['hold Alt (wire)', 'snap the cursor to the nearest terminal while wiring'],
+    ['Backspace', 'edit the search string or drop the ghost'],
+    ['Esc', 'drop the ghost or exit insert mode'],
+  ]],
+  ['labels', [
+    ['L', 'click an unambiguous wire to place a net label; Esc exits'],
+    ['Shift+N', 'click anywhere to place one annotation; returns to selection'],
+    ['t', 'edit the primary selected label'],
+    ['Shift+Left / Shift+Right', 'align left / right (centre default)'],
+    ['dd / Delete', 'delete the selected label'],
+    ['double-click', 'edit the label text inline'],
+    ['Tab / S-Tab', 'commit label edit, then select next / previous label'],
+    ['Ctrl/Cmd+, / Ctrl/Cmd+.', 'in the label editor, subscript / superscript the selection'],
+    ['Enter / blur', 'commit label edits; Esc cancels'],
+  ]],
+  ['mouse', [
+    ['left', 'click to select; drag empty space for a marquee; drag an object to move'],
+    ['wire', 'w, then click a terminal or point; Enter commits'],
+    ['wire join', 'click an existing wire to branch; Enter on it joins the net'],
+    ['wire select', 'click a run; Shift-click toggles runs; drag reroutes selected runs'],
+    ['wire delete', 'dd removes selected runs'],
+    ['shift-click / shift-drag', 'add or toggle selection; Shift constrains an active drag'],
+    ['Ctrl/Cmd+drag a part', 'drag a copy; a Ctrl/Cmd-click still toggles selection'],
+    ['Ctrl/Cmd+drag a wire', 'grow a new branch from that point'],
+    ['drop a part on a wire', 'a free two-pin part lying along one straight wire is spliced in'],
+    ['Shift+drag (Delete)', 'knife: cut every wire segment the stroke crosses'],
+    ['double-click paper', 'open the insert menu at that point'],
+    ['middle', 'drag to pan'],
+    ['right on a part', 'tap for the context menu; hold or drag for the radial menu (release on an action)'],
+    ['right on paper', 'drag to zoom box; click without dragging does nothing'],
+    ['wheel', 'zoom about the pointer (with Trackpad scrolling: scroll pans, pinch zooms)'],
+  ]],
+]);
+
+function editorKeymap() {
+  return EDITOR_KEYMAP;
+}
+
+function editorKeymapText() {
+  const keymap = editorKeymap();
+  return keymap.flatMap(([section, entries]) => [
+    `-- ${section} --`,
+    ...entries.map(([key, description]) => `${key.padEnd(24)}${description}`),
+  ]).join('\n');
+}
+
+/** Return a layer command for an unmodified normal-mode arrow shortcut. */
+function layerActionForKey({
+  key,
+  shiftKey = false,
+  ctrlKey = false,
+  metaKey = false,
+  altKey = false,
+  mode = 'normal',
+  wire = false,
+  directWire = false,
+  visual = false,
+  drag = false,
+  moveMode = null,
+  copyMode = false,
+  deleteMode = false,
+  labelMode = null,
+  textEntry = false,
+} = {}) {
+  if (textEntry || !shiftKey || ctrlKey || metaKey || altKey || mode !== 'normal'
+      || wire || directWire || visual || drag || moveMode || copyMode || deleteMode || labelMode) return null;
+  if (key === 'ArrowUp') return 'bring-front';
+  if (key === 'ArrowDown') return 'send-back';
+  return null;
+}
+
+const LAYOUT_ALIGN_KEYS = {
+  ArrowLeft: { align: 'left', repeat: 'center-x' },
+  ArrowRight: { align: 'right', repeat: 'center-x' },
+  ArrowUp: { align: 'top', repeat: 'center-y' },
+  ArrowDown: { align: 'bottom', repeat: 'center-y' },
+};
+
+/** Ctrl/Cmd+Shift+arrow aligns the selected set's edges, like the Align
+ * buttons. Like Shift+Left/Right for text, repeating the key on an already
+ * aligned set centres that axis (`repeat`). Idle normal editor only. */
+function layoutAlignKey({
+  key, shiftKey = false, ctrlKey = false, metaKey = false, altKey = false,
+  mode = 'normal', wire = false, directWire = false, visual = false, drag = false,
+  moveMode = null, copyMode = false, deleteMode = false, labelMode = null, textEntry = false,
+} = {}) {
+  if (textEntry || !shiftKey || !(ctrlKey || metaKey) || altKey || mode !== 'normal'
+      || wire || directWire || visual || drag || moveMode || copyMode || deleteMode || labelMode) return null;
+  return LAYOUT_ALIGN_KEYS[key] || null;
+}
+
+__exports.fuzzyScore = fuzzyScore;
+__exports.placementSearchScore = placementSearchScore;
+__exports.withRecentType = withRecentType;
+__exports.minimalRevealScroll = minimalRevealScroll;
+__exports.componentPaletteItems = componentPaletteItems;
+__exports.editorKeymap = editorKeymap;
+__exports.editorKeymapText = editorKeymapText;
+__exports.layerActionForKey = layerActionForKey;
+__exports.layoutAlignKey = layoutAlignKey;
+__exports.PLACEMENT_LABELS = PLACEMENT_LABELS;
+__exports.PLACEMENT_ALIASES = PLACEMENT_ALIASES;
+__exports.INSERT_RECENT_LIMIT = INSERT_RECENT_LIMIT;
+__exports.naturalCompare = naturalCompare;
+__exports.EDITOR_KEYMAP = EDITOR_KEYMAP;
+};
+
 __modules["src/web/persistence.js"] = function (__require, __exports) {
 const { validDocumentName } = __require("src/core/document.js");
 /**
@@ -27430,538 +28025,6 @@ __exports.validDocumentName = validDocumentName;
 __exports.defaultExportDirectory = defaultExportDirectory;
 __exports.createBrowserPersistenceAdapter = createBrowserPersistenceAdapter;
 __exports.createPersistenceAdapter = createPersistenceAdapter;
-};
-
-__modules["src/web/toolbar.js"] = function (__require, __exports) {
-/** Display names and extra search words for the insert menu, keyed by symbol type. */
-const PLACEMENT_LABELS = {
-  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode',
-  nmos: 'NMOS transistor', pmos: 'PMOS transistor',
-  nmosb: 'NMOS transistor with bulk', pmosb: 'PMOS transistor with bulk',
-  npn: 'NPN transistor', pnp: 'PNP transistor',
-  ground: 'Ground', vcm: 'VCM (Common potential)', supply: 'Supply (VDD/VCC)',
-  input: 'Input port', output: 'Output port', inputoutput: 'Input/output port',
-  port: 'Port',
-  current_source: 'Current source', voltage_source: 'Voltage source',
-  vccs: 'VCCS (voltage-controlled current source)',
-  opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', inverter: 'Inverter', buffer: 'Buffer',
-  tristate_inverter: 'Tri-state inverter', tristate_buffer: 'Tri-state buffer',
-  mux2: '2:1 multiplexer',
-  adc: 'ADC', dac: 'DAC',
-  dff: 'D flip-flop (CLK, Q)', dff_qb: 'D flip-flop (CLK, Q, QB)',
-  dff_clkb: 'D flip-flop (CLKB, Q)', dff_clkb_qb: 'D flip-flop (CLKB, Q, QB)',
-  dff_rst: 'D flip-flop (CLK, RST)', dff_rst_qb: 'D flip-flop (CLK, RST, Q, QB)',
-  dff_clkb_rst: 'D flip-flop (CLKB, RST)', dff_clkb_rst_qb: 'D flip-flop (CLKB, RST, Q, QB)',
-  dff_rstb: 'D flip-flop (CLK, RSTB)', dff_rstb_qb: 'D flip-flop (CLK, RSTB, Q, QB)',
-  dff_clkb_rstb: 'D flip-flop (CLKB, RSTB)', dff_clkb_rstb_qb: 'D flip-flop (CLKB, RSTB, Q, QB)',
-  latch: 'L latch (EN, Q)', latch_qb: 'L latch (EN, Q, QB)',
-  latch_enb: 'L latch (ENB, Q)', latch_enb_qb: 'L latch (ENB, Q, QB)',
-  latch_rst: 'L latch (EN, RST)', latch_rst_qb: 'L latch (EN, RST, Q, QB)',
-  latch_enb_rst: 'L latch (ENB, RST)', latch_enb_rst_qb: 'L latch (ENB, RST, Q, QB)',
-  latch_rstb: 'L latch (EN, RSTB)', latch_rstb_qb: 'L latch (EN, RSTB, Q, QB)',
-  latch_enb_rstb: 'L latch (ENB, RSTB)', latch_enb_rstb_qb: 'L latch (ENB, RSTB, Q, QB)',
-  and2_gate: '2-input AND gate', nand2_gate: '2-input NAND gate', or2_gate: '2-input OR gate', nor2_gate: '2-input NOR gate',
-  xor2_gate: '2-input XOR gate', xnor2_gate: '2-input XNOR gate',
-  and3_gate: '3-input AND gate', nand3_gate: '3-input NAND gate', or3_gate: '3-input OR gate', nor3_gate: '3-input NOR gate',
-  xor3_gate: '3-input XOR gate', xnor3_gate: '3-input XNOR gate',
-  variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
-  solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
-  signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
-};
-
-const PLACEMENT_ALIASES = {
-  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'],
-  nmos: ['mos', 'n-channel', 'fet'], pmos: ['mos', 'p-channel', 'fet'],
-  nmosb: ['mos', 'body', 'bulk', 'n-channel', 'fet'], pmosb: ['mos', 'body', 'bulk', 'p-channel', 'fet'],
-  npn: ['bjt'], pnp: ['bjt'],
-  supply: ['vdd', 'vcc', 'power'], vcm: ['common', 'potential', 'vcm'], input: ['in'], output: ['out'], inputoutput: ['io'],
-  ground: ['gnd', 'vss'],
-  current_source: ['idc', 'current'], voltage_source: ['vdc', 'voltage'],
-  vccs: ['transconductance', 'controlled current', 'gm'],
-  opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
-  tristate_inverter: ['tri-state', 'tristate', 'three-state', 'enable'],
-  tristate_buffer: ['tri-state', 'tristate', 'three-state', 'enable'],
-  mux2: ['mux', 'multiplexer', 'select', 'two input'],
-  dff: ['flip flop', 'flip-flop', 'sequential', 'clocked'],
-  dff_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'complementary'],
-  dff_clkb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock'],
-  dff_clkb_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock', 'complementary'],
-  dff_rst: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'reset'],
-  dff_rst_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'reset', 'complementary'],
-  dff_clkb_rst: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock', 'reset'],
-  dff_clkb_rst_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock', 'reset', 'complementary'],
-  dff_rstb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low reset'],
-  dff_rstb_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low reset', 'complementary'],
-  dff_clkb_rstb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low'],
-  dff_clkb_rstb_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low', 'complementary'],
-  and2_gate: ['and', 'logic', 'two input', '2 input'],
-  nand2_gate: ['nand', 'logic', 'two input', '2 input'],
-  or2_gate: ['or', 'logic', 'two input', '2 input'],
-  nor2_gate: ['nor', 'logic', 'two input', '2 input'],
-  xor2_gate: ['xor', 'logic', 'two input', '2 input'],
-  xnor2_gate: ['xnor', 'logic', 'two input', '2 input'],
-  and3_gate: ['and', 'logic', 'three input', '3 input'],
-  nand3_gate: ['nand', 'logic', 'three input', '3 input'],
-  or3_gate: ['or', 'logic', 'three input', '3 input'],
-  nor3_gate: ['nor', 'logic', 'three input', '3 input'],
-  xor3_gate: ['xor', 'logic', 'three input', '3 input'],
-  xnor3_gate: ['xnor', 'logic', 'three input', '3 input'],
-  latch: ['latch', 'level sensitive', 'sequential', 'enable'],
-  latch_qb: ['latch', 'level sensitive', 'sequential', 'enable', 'complementary'],
-  latch_enb: ['latch', 'level sensitive', 'sequential', 'active low enable'],
-  latch_enb_qb: ['latch', 'level sensitive', 'sequential', 'active low enable', 'complementary'],
-  latch_rst: ['latch', 'level sensitive', 'sequential', 'enable', 'reset'],
-  latch_rst_qb: ['latch', 'level sensitive', 'sequential', 'enable', 'reset', 'complementary'],
-  latch_enb_rst: ['latch', 'level sensitive', 'sequential', 'active low enable', 'reset'],
-  latch_enb_rst_qb: ['latch', 'level sensitive', 'sequential', 'active low enable', 'reset', 'complementary'],
-  latch_rstb: ['latch', 'level sensitive', 'sequential', 'active low reset'],
-  latch_rstb_qb: ['latch', 'level sensitive', 'sequential', 'active low reset', 'complementary'],
-  latch_enb_rstb: ['latch', 'level sensitive', 'sequential', 'active low'],
-  latch_enb_rstb_qb: ['latch', 'level sensitive', 'sequential', 'active low', 'complementary'],
-  variable_resistor: ['potentiometer', 'pot', 'var res', 'tunable'], variable_capacitor: ['var cap', 'tunable'], variable_inductor: ['var coil', 'tunable'],
-  switch_open: ['switch', 'open'], switch_closed: ['switch', 'closed'], solder: ['junction', 'dot'],
-  label: ['annotation', 'text'], block: ['block', 'rectangle', 'node'],
-  signal_sum: ['sum', 'summer', 'signal flow', 'junction'],
-  signal_multiply: ['multiply', 'multiplier', 'signal flow', 'junction'],
-};
-
-/** Rank a name against a query: prefix beats substring beats subsequence, and
- *  a shorter match wins within a tier. -1 means no match. */
-function fuzzyScore(q, name) {
-  const s = String(name).toLowerCase();
-  const query = String(q).toLowerCase();
-  if (!query) return 0;
-  if (s.startsWith(query)) return 100 - s.length;
-  if (s.includes(query)) return 80 - s.length;
-  let i = 0;
-  for (const ch of s) {
-    if (ch === query[i]) i++;
-    if (i === query.length) return 60 - s.length;
-  }
-  return -1;
-}
-
-/** Best rank of a symbol type across its id, display name, and aliases. */
-function placementSearchScore(query, type) {
-  return Math.max(
-    fuzzyScore(query, type),
-    fuzzyScore(query, PLACEMENT_LABELS[type] || type),
-    ...(PLACEMENT_ALIASES[type] || []).map((alias) => fuzzyScore(query, alias)),
-  );
-}
-
-// How many placements the insert menu's Recent group offers.
-const INSERT_RECENT_LIMIT = 5;
-
-/** Most-recently-used ordering: `type` moves to the front of `list`, appearing
- *  once, and the list is trimmed to `limit`. */
-function withRecentType(list, type, limit = INSERT_RECENT_LIMIT) {
-  if (!type) return [...list];
-  return [type, ...list.filter((entry) => entry !== type)].slice(0, limit);
-}
-
-/** Return the smallest clamped scroll offset that fully reveals a target. */
-function minimalRevealScroll(viewStart, viewEnd, targetStart, targetEnd, scroll = 0, maxScroll = 0) {
-  const delta = targetStart < viewStart
-    ? targetStart - viewStart
-    : targetEnd > viewEnd
-      ? targetEnd - viewEnd
-      : 0;
-  return Math.max(0, Math.min(maxScroll, scroll + delta));
-}
-
-/** Keep generated junction markers out of the user-facing component list. */
-function componentPaletteItems(components) {
-  return [...components].filter((component) => component.type !== 'solder');
-}
-
-// Human ordering: S1, S2, S10 rather than lexicographic S1, S10, S2.
-const naturalCompare = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare;
-
-// The editor's keyboard reference is data, not a second hand-written list in
-// the dialog. Keep this registry alongside the keyboard-facing toolbar.
-const EDITOR_KEYMAP = Object.freeze([
-  ['draw', [
-    ['i / I / A', 'insert mode (fuzzy-search component and label placement)'],
-    ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal; Enter commits'],
-    ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
-    ['/ (wire)', 'flip which way the corner under the cursor turns'],
-    ['drag from a pin', 'draw a wire without Wire mode; drop on a pin or wire, or in space to add a part'],
-    ['terminal letters', 'pick or complete a terminal connection while wiring'],
-    ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
-    ['L', 'persistent electrical net-label placement'],
-    ['Shift+N', 'place one free annotation, then return to selection'],
-    ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
-    ['a', 'place a multi-point arrow; click vertices and press Enter'],
-    ['b', 'place one two-point box, then return to selection'],
-    ['l', 'persistent multi-point line annotation placement'],
-  ]],
-  ['edit', [
-    ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
-    ['U / Ctrl/Cmd+Y', 'redo'],
-    ['Arrow keys', 'nudge selected objects or move the cursor (counts apply)'],
-    ['r', 'rotate selected objects 90° clockwise'],
-    ['Shift+r', 'mirror selected horizontally'],
-    ['Ctrl/Cmd+r', 'mirror selected vertically'],
-    ['r / Shift+r / Ctrl+r (dragging)', 'rotate or mirror a part while it is being dragged'],
-    ['m', 'move selected objects with connectivity; stays armed'],
-    ['Shift+m', 'move selected objects without connected nets; stays armed'],
-    ['c', 'copy a selected object or set; stays armed'],
-    ['y / Ctrl/Cmd+C', 'copy the selected objects'],
-    ['Ctrl/Cmd+Shift+C', 'copy selection (or whole drawing) as an image for other apps'],
-    ['p / Ctrl/Cmd+V', 'paste the copied set at the cursor'],
-    ['Ctrl/Cmd+Shift+V', 'paste style from one copied object'],
-    ['Delete', 'persistent delete; click objects while armed'],
-    ['dd', 'delete the selected object set'],
-    ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
-    ['t', 'edit the primary selected label (no-op otherwise)'],
-    ['Ctrl/Cmd+i', 'toggle italic on selected labels'],
-    ['Ctrl/Cmd+b', 'toggle bold on selected labels'],
-  ]],
-  ['select', [
-    ['Enter', 'select the label or component under the cursor'],
-    ['Ctrl/Cmd+A', 'select all components, labels, and non-empty nets'],
-    ['v', 'visual mode: arrow keys grow a box; Enter selects; Esc cancels'],
-    ['Tab / Shift+Tab (selection)', 'cycle a selected component or label forward / backward'],
-    ['Tab / Shift+Tab (focus)', 'focus semantic canvas objects; Enter/Space selects one'],
-    ['Esc', 'cancel the active interaction'],
-  ]],
-  ['view', [
-    ['F / f', 'fit view to contents'],
-    ['#', 'toggle the placement grid'],
-    ['C', 'toggle crosshair visibility'],
-    ['G', 'toggle the spacing and alignment guides'],
-    ['D', 'toggle dark mode'],
-    ['P', 'show or hide the components, nets, and selection panel'],
-    ['Space+drag', 'pan the view'],
-    ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
-  ]],
-  ['file and console', [
-    ['Ctrl/Cmd+S', 'save'],
-    ['Ctrl/Cmd+Shift+S', 'save as: choose a folder and name'],
-    ['Ctrl/Cmd+O', 'open a document file from any folder'],
-    ['Ctrl/Cmd+E', 'open the export dialog'],
-    ['drop a file', 'drop a .json file on the window to open a copy'],
-    ['x / Shift+x', 'check / save without checking'],
-    ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],
-    [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
-    ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
-    ['explain eval', 'group design-check issues with repair hints'],
-    ['explain connect A.t B.t', 'dry-run a route and report path/bends/pin escapes'],
-    ['F5', 'reload the application'],
-    ['?', 'show this help'],
-  ]],
-  ['insert', [
-    ['type', 'fuzzy-search names and aliases'],
-    ['Enter / Tab', 'pick the highlighted match as a placement ghost'],
-    ['Up / Down', 'browse matches; Left / Right jump between categories'],
-    ['Enter / click', 'place the ghost at the cursor'],
-    ['Arrow keys (ghost)', 'move the cursor and placement ghost'],
-    ['Shift while moving', 'lock a drag or ghost to the dominant horizontal or vertical direction'],
-    ['r / Shift+r', 'rotate / mirror the component ghost'],
-    ['Ctrl/Cmd+r', 'mirror the component ghost vertically'],
-    ['hold Alt', 'symmetric placement/copy: pin a mirror axis, move off it, and place both halves'],
-    ['hold Alt (wire)', 'snap the cursor to the nearest terminal while wiring'],
-    ['Backspace', 'edit the search string or drop the ghost'],
-    ['Esc', 'drop the ghost or exit insert mode'],
-  ]],
-  ['labels', [
-    ['L', 'click an unambiguous wire to place a net label; Esc exits'],
-    ['Shift+N', 'click anywhere to place one annotation; returns to selection'],
-    ['t', 'edit the primary selected label'],
-    ['Shift+Left / Shift+Right', 'align left / right (centre default)'],
-    ['dd / Delete', 'delete the selected label'],
-    ['double-click', 'edit the label text inline'],
-    ['Tab / S-Tab', 'commit label edit, then select next / previous label'],
-    ['Ctrl/Cmd+, / Ctrl/Cmd+.', 'in the label editor, subscript / superscript the selection'],
-    ['Enter / blur', 'commit label edits; Esc cancels'],
-  ]],
-  ['mouse', [
-    ['left', 'click to select; drag empty space for a marquee; drag an object to move'],
-    ['wire', 'w, then click a terminal or point; Enter commits'],
-    ['wire join', 'click an existing wire to branch; Enter on it joins the net'],
-    ['wire select', 'click a run; Shift-click toggles runs; drag reroutes selected runs'],
-    ['wire delete', 'dd removes selected runs'],
-    ['shift-click / shift-drag', 'add or toggle selection; Shift constrains an active drag'],
-    ['Ctrl/Cmd+drag a part', 'drag a copy; a Ctrl/Cmd-click still toggles selection'],
-    ['Ctrl/Cmd+drag a wire', 'grow a new branch from that point'],
-    ['drop a part on a wire', 'a free two-pin part lying along one straight wire is spliced in'],
-    ['Shift+drag (Delete)', 'knife: cut every wire segment the stroke crosses'],
-    ['double-click paper', 'open the insert menu at that point'],
-    ['middle', 'drag to pan'],
-    ['right on a part', 'tap for the context menu; hold or drag for the radial menu (release on an action)'],
-    ['right on paper', 'drag to zoom box; click without dragging does nothing'],
-    ['wheel', 'zoom about the pointer (with Trackpad scrolling: scroll pans, pinch zooms)'],
-  ]],
-]);
-
-function editorKeymap() {
-  return EDITOR_KEYMAP;
-}
-
-function editorKeymapText() {
-  const keymap = editorKeymap();
-  return keymap.flatMap(([section, entries]) => [
-    `-- ${section} --`,
-    ...entries.map(([key, description]) => `${key.padEnd(24)}${description}`),
-  ]).join('\n');
-}
-
-/** Return a layer command for an unmodified normal-mode arrow shortcut. */
-function layerActionForKey({
-  key,
-  shiftKey = false,
-  ctrlKey = false,
-  metaKey = false,
-  altKey = false,
-  mode = 'normal',
-  wire = false,
-  directWire = false,
-  visual = false,
-  drag = false,
-  moveMode = null,
-  copyMode = false,
-  deleteMode = false,
-  labelMode = null,
-  textEntry = false,
-} = {}) {
-  if (textEntry || !shiftKey || ctrlKey || metaKey || altKey || mode !== 'normal'
-      || wire || directWire || visual || drag || moveMode || copyMode || deleteMode || labelMode) return null;
-  if (key === 'ArrowUp') return 'bring-front';
-  if (key === 'ArrowDown') return 'send-back';
-  return null;
-}
-
-__exports.fuzzyScore = fuzzyScore;
-__exports.placementSearchScore = placementSearchScore;
-__exports.withRecentType = withRecentType;
-__exports.minimalRevealScroll = minimalRevealScroll;
-__exports.componentPaletteItems = componentPaletteItems;
-__exports.editorKeymap = editorKeymap;
-__exports.editorKeymapText = editorKeymapText;
-__exports.layerActionForKey = layerActionForKey;
-__exports.PLACEMENT_LABELS = PLACEMENT_LABELS;
-__exports.PLACEMENT_ALIASES = PLACEMENT_ALIASES;
-__exports.INSERT_RECENT_LIMIT = INSERT_RECENT_LIMIT;
-__exports.naturalCompare = naturalCompare;
-__exports.EDITOR_KEYMAP = EDITOR_KEYMAP;
-};
-
-__modules["src/web/commit-feedback.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-const { componentShapeSvg, labelShapeSvg } = __require("src/core/render.js");
-/**
- * Commit feedback: what visibly "landed" between two committed documents.
- *
- * The editor flashes these regions briefly after an undoable edit. The diff is
- * geometric rather than per-tool, so placement, wiring, moves, copies, pastes,
- * label edits, and console commands all get the same feedback without each
- * tool describing its own result. Undo/redo never call this.
- */
-
-
-
-
-// A huge edit (select-all move, loading a template through a command) should
-// still acknowledge the commit without building thousands of SVG nodes.
-const MAX_RECTS = 80;
-const MAX_PIECES = 1500;
-const MAX_POINTS = 60;
-
-const pointKey = (p) => `${Math.round(p.x)},${Math.round(p.y)}`;
-
-function componentKey(json) {
-  return JSON.stringify(json);
-}
-
-/** Split a drawable path into grid-length pieces so re-segmented but
- * geometrically unchanged wires (a junction split, collinear merge) compare
- * equal. Diagonal segments stay whole. */
-function wirePieces(paths) {
-  const pieces = new Map();
-  for (const { netId, pts } of paths) {
-    if (!pts || pts.length < 2) continue;
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1];
-      const b = pts[i];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const steps = (dx === 0 || dy === 0) ? Math.max(1, Math.round(Math.abs(dx + dy) / GRID)) : 1;
-      for (let s = 0; s < steps; s++) {
-        const p = { x: a.x + (dx * s) / steps, y: a.y + (dy * s) / steps };
-        const q = { x: a.x + (dx * (s + 1)) / steps, y: a.y + (dy * (s + 1)) / steps };
-        const [lo, hi] = pointKey(p) < pointKey(q) ? [p, q] : [q, p];
-        // Keyed per net: a wire moved onto another net's wire is still new.
-        pieces.set(`${netId}|${pointKey(lo)}|${pointKey(hi)}`, { a: lo, b: hi });
-      }
-    }
-  }
-  return pieces;
-}
-
-function circuitWirePieces(circuit) {
-  const paths = [];
-  for (const net of circuit.nets.values()) {
-    try { paths.push(...net.paths().map((pts) => ({ netId: net.id, pts }))); } catch { /* unroutable net: nothing drawn */ }
-  }
-  return wirePieces(paths);
-}
-
-function connectedTerminalKeys(circuit) {
-  const keys = new Set();
-  for (const net of circuit.nets.values()) {
-    if ((net.terminals?.length || 0) < 2 && !(net.junctions?.length)) continue;
-    for (const t of net.terminals || []) keys.add(`${t.comp}.${t.term}`);
-  }
-  return keys;
-}
-
-function labelKey(label) {
-  let box = null;
-  try { box = label.bbox(); } catch { /* no drawable box */ }
-  // Owned labels store a local offset, so compare the world box as well.
-  return JSON.stringify([label.toJSON ? label.toJSON() : label, box]);
-}
-
-/**
- * Compare the committed `before` circuit with `after`. Returns world geometry:
- * - components/labels: added or changed objects (from `after`);
- * - pieces: added wire pieces ({a,b});
- * - points: new connections (new solder junctions, newly connected pins,
- *   and pins touched by a new wire piece) — where the edit "clicked" in;
- * - removedComponents/removedLabels/removedPieces: what a deletion removed
- *   (from `before`). A deletion that reroutes the remaining wires is still a
- *   deletion: its reroute is not flashed as an addition.
- */
-function commitFeedbackDiff(before, after) {
-  const components = [];
-  const labels = [];
-  const removedComponents = [];
-  const removedLabels = [];
-  const points = new Map();
-
-  const beforeComps = new Map([...before.components.values()].map((c) => [c.refdes, c]));
-  for (const c of after.components.values()) {
-    const old = beforeComps.get(c.refdes);
-    beforeComps.delete(c.refdes);
-    if (c.type === 'solder') {
-      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y });
-      continue;
-    }
-    if (old && componentKey(old.toJSON()) === componentKey(c.toJSON())) continue;
-    components.push(c);
-  }
-  for (const c of beforeComps.values()) {
-    if (c.type !== 'solder') removedComponents.push(c);
-  }
-
-  const beforeLabels = new Map(before.labels);
-  for (const label of after.labels.values()) {
-    const old = beforeLabels.get(label.id);
-    beforeLabels.delete(label.id);
-    if (old && labelKey(old) === labelKey(label)) continue;
-    labels.push(label);
-  }
-  removedLabels.push(...beforeLabels.values());
-
-  const oldPieces = circuitWirePieces(before);
-  const newPieces = circuitWirePieces(after);
-  const pieces = [];
-  for (const [key, piece] of newPieces) if (!oldPieces.has(key)) pieces.push(piece);
-  const removedPieces = [];
-  for (const [key, piece] of oldPieces) if (!newPieces.has(key)) removedPieces.push(piece);
-
-  // A deletion removed objects, or removed wire without drawing any. Moving or
-  // shortening a wire removes more pieces than it adds, but is not a deletion.
-  const deletion = !components.length && !labels.length
-    && (removedComponents.length || removedLabels.length || (removedPieces.length && !pieces.length));
-  if (deletion) {
-    return {
-      components: [], labels: [], pieces: [], points: [],
-      removedComponents: removedComponents.slice(0, MAX_RECTS),
-      removedLabels: removedLabels.slice(0, MAX_RECTS),
-      removedPieces: removedPieces.slice(0, MAX_PIECES),
-    };
-  }
-
-  // Pins that gained a connection, or sit at an end of a freshly drawn wire.
-  const pieceEnds = new Map();
-  for (const { a, b } of pieces) {
-    for (const p of [a, b]) {
-      const key = pointKey(p);
-      pieceEnds.set(key, (pieceEnds.get(key) || 0) + 1);
-    }
-  }
-  const wasConnected = connectedTerminalKeys(before);
-  const isConnected = connectedTerminalKeys(after);
-  for (const c of after.components.values()) {
-    if (c.type === 'solder') continue;
-    for (const t of c.worldTerminals()) {
-      const id = `${c.refdes}.${t.name}`;
-      if (!isConnected.has(id)) continue;
-      const key = pointKey(t);
-      if (!wasConnected.has(id) || pieceEnds.get(key) === 1) points.set(key, { x: t.x, y: t.y });
-    }
-  }
-
-  return {
-    components: components.slice(0, MAX_RECTS),
-    labels: labels.slice(0, MAX_RECTS),
-    pieces: pieces.slice(0, MAX_PIECES),
-    points: [...points.values()].slice(0, MAX_POINTS),
-    removedComponents: [],
-    removedLabels: [],
-    removedPieces: [],
-  };
-}
-
-function isEmptyFeedback(diff) {
-  return !diff || Object.values(diff).every((list) => !list.length);
-}
-
-const f = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
-
-/** One label's traced shape; a math label (HTML) falls back to a soft box. */
-function labelTrace(label, boxClass) {
-  const shape = labelShapeSvg(label);
-  if (shape) return shape;
-  try {
-    const r = label.bbox();
-    return `<rect class="${boxClass}" x="${f(r.x)}" y="${f(r.y)}" width="${f(r.w)}" height="${f(r.h)}" rx="6"/>`;
-  } catch {
-    return '';
-  }
-}
-
-/** SVG markup for one feedback burst: `under` glows behind the drawing (the
- * objects' own shapes, restyled by CSS), `over` sits on top (connection
- * ripples, and the trailing red halo of deleted objects). */
-function commitFeedbackSvg(diff) {
-  const piecePath = (list) => list.map(({ a, b }) => `M ${f(a.x)} ${f(a.y)} L ${f(b.x)} ${f(b.y)}`).join(' ');
-  const under = [];
-  const over = [];
-  const glow = [
-    ...diff.components.map((c) => componentShapeSvg(c)),
-    ...diff.labels.map((label) => labelTrace(label, 'landing-box')),
-  ].join('');
-  if (glow) under.push(`<g class="landing-glow">${glow}</g>`);
-  if (diff.pieces.length) under.push(`<path class="landing-wire" d="${piecePath(diff.pieces)}"/>`);
-  for (const p of diff.points) {
-    over.push(`<circle class="landing-ripple" cx="${f(p.x)}" cy="${f(p.y)}" r="18"/>`);
-    over.push(`<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
-  }
-  const removed = [
-    ...diff.removedComponents.map((c) => componentShapeSvg(c)),
-    ...diff.removedLabels.map((label) => labelTrace(label, 'landing-box')),
-    diff.removedPieces.length ? `<path d="${piecePath(diff.removedPieces)}" fill="none"/>` : '',
-  ].join('');
-  if (removed) over.push(`<g class="landing-removed">${removed}</g>`);
-  return { under: under.join(''), over: over.join('') };
-}
-
-__exports.commitFeedbackDiff = commitFeedbackDiff;
-__exports.isEmptyFeedback = isEmptyFeedback;
-__exports.commitFeedbackSvg = commitFeedbackSvg;
 };
 
 __modules["src/web/file-dialog.js"] = function (__require, __exports) {
@@ -28815,6 +28878,80 @@ __exports.TOOLBAR_STAGES = TOOLBAR_STAGES;
 __exports.TITLE_COMFORT_PX = TITLE_COMFORT_PX;
 };
 
+__modules["src/web/status-bar.js"] = function (__require, __exports) {
+/**
+ * Status bar and log drawer state.
+ *
+ * The footer is one slim line: a mode pill, the current hint, and fixed chips.
+ * The log and command line live in a drawer that overlays the canvas instead
+ * of taking permanent layout space. Its open/close rules are a pure reducer so
+ * hover peeks, error peeks, click-open, command entry, and pinning compose
+ * without timers or DOM state leaking into each other.
+ */
+
+const LOG_DRAWER_CLOSED = Object.freeze({ open: false, pinned: false, reason: null });
+
+// Reasons that close by themselves when the pointer leaves the footer.
+const TRANSIENT = new Set(['hover', 'peek']);
+
+/** Next drawer state for one event. Events:
+ *  toggle (message chip click), hover (pointer rests on the chip), leave
+ *  (pointer leaves footer+drawer), error (an error was logged), peek-timeout
+ *  ({ inside } says whether the pointer is over the footer), command (`:`),
+ *  command-done (the command input lost focus), dismiss (Esc / outside
+ *  click), pin (toggle pinning). */
+function logDrawerTransition(state, event) {
+  const s = state || LOG_DRAWER_CLOSED;
+  const close = () => (s.pinned ? s : LOG_DRAWER_CLOSED);
+  switch (event?.type) {
+    case 'toggle':
+      if (s.open && !TRANSIENT.has(s.reason)) return LOG_DRAWER_CLOSED;
+      return { open: true, pinned: s.pinned, reason: 'click' };
+    case 'hover':
+      return s.open ? s : { open: true, pinned: s.pinned, reason: 'hover' };
+    case 'leave':
+      return s.open && TRANSIENT.has(s.reason) ? close() : s;
+    case 'error':
+      return s.open ? s : { open: true, pinned: s.pinned, reason: 'peek' };
+    case 'peek-timeout':
+      if (!s.open || s.reason !== 'peek') return s;
+      return event.inside ? { ...s, reason: 'hover' } : close();
+    case 'command':
+      return { open: true, pinned: s.pinned, reason: 'command' };
+    case 'command-done':
+      return s.open && s.reason === 'command' ? close() : s;
+    case 'dismiss':
+      return s.open ? close() : s;
+    case 'pin':
+      return s.pinned ? { ...s, pinned: false } : { open: true, pinned: true, reason: s.reason || 'click' };
+    default:
+      return s;
+  }
+}
+
+/** Zoom as a percentage of the editor's default scale (`basePxPerUnit`). */
+function zoomPercent(view, paneWidth, basePxPerUnit) {
+  if (!view?.w || !paneWidth || !basePxPerUnit) return 100;
+  return Math.round(((paneWidth / view.w) / basePxPerUnit) * 100);
+}
+
+/** Split the legacy status parts into the pill, hint, and chip fields. Empty
+ *  selection shows no chip rather than a placeholder dash. */
+function statusFields({ mode, selection, cursor, hints = [] }) {
+  return {
+    mode: String(mode || 'NORMAL'),
+    selection: selection || '',
+    cursor: cursor ? `${cursor.x}, ${cursor.y}` : '',
+    hint: hints.filter(Boolean).join('  ·  '),
+  };
+}
+
+__exports.logDrawerTransition = logDrawerTransition;
+__exports.zoomPercent = zoomPercent;
+__exports.statusFields = statusFields;
+__exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
+};
+
 __modules["src/web/gestures.js"] = function (__require, __exports) {
 const { applyTransform } = __require("src/core/geometry.js");
 /**
@@ -28919,6 +29056,13 @@ function betterQuickAdd(a, b) {
     if (a.keep[i] !== b.keep[i]) return a.keep[i] < b.keep[i];
   }
   return false;
+}
+
+/** Ring radius that leaves `gap` pixels between neighbouring round tiles of
+ * diameter `tile` when `count` of them sit at equal angles. */
+function radialRingRadius(count, tile, gap) {
+  if (count < 2) return 0;
+  return Math.ceil((tile + gap) / (2 * Math.sin(Math.PI / count)));
 }
 
 /** Radial (marking) menu sector for a pointer offset. Sector 0 is straight up
@@ -29043,6 +29187,7 @@ function lerpView(from, to, t) {
 __exports.isPinDragCandidate = isPinDragCandidate;
 __exports.arrivalDirection = arrivalDirection;
 __exports.quickAddPlacement = quickAddPlacement;
+__exports.radialRingRadius = radialRingRadius;
 __exports.radialSector = radialSector;
 __exports.segmentsIntersect = segmentsIntersect;
 __exports.knifeCrossings = knifeCrossings;
@@ -29053,80 +29198,6 @@ __exports.pinHandleRadius = pinHandleRadius;
 __exports.wheelIntent = wheelIntent;
 __exports.easeOutCubic = easeOutCubic;
 __exports.lerpView = lerpView;
-};
-
-__modules["src/web/status-bar.js"] = function (__require, __exports) {
-/**
- * Status bar and log drawer state.
- *
- * The footer is one slim line: a mode pill, the current hint, and fixed chips.
- * The log and command line live in a drawer that overlays the canvas instead
- * of taking permanent layout space. Its open/close rules are a pure reducer so
- * hover peeks, error peeks, click-open, command entry, and pinning compose
- * without timers or DOM state leaking into each other.
- */
-
-const LOG_DRAWER_CLOSED = Object.freeze({ open: false, pinned: false, reason: null });
-
-// Reasons that close by themselves when the pointer leaves the footer.
-const TRANSIENT = new Set(['hover', 'peek']);
-
-/** Next drawer state for one event. Events:
- *  toggle (message chip click), hover (pointer rests on the chip), leave
- *  (pointer leaves footer+drawer), error (an error was logged), peek-timeout
- *  ({ inside } says whether the pointer is over the footer), command (`:`),
- *  command-done (the command input lost focus), dismiss (Esc / outside
- *  click), pin (toggle pinning). */
-function logDrawerTransition(state, event) {
-  const s = state || LOG_DRAWER_CLOSED;
-  const close = () => (s.pinned ? s : LOG_DRAWER_CLOSED);
-  switch (event?.type) {
-    case 'toggle':
-      if (s.open && !TRANSIENT.has(s.reason)) return LOG_DRAWER_CLOSED;
-      return { open: true, pinned: s.pinned, reason: 'click' };
-    case 'hover':
-      return s.open ? s : { open: true, pinned: s.pinned, reason: 'hover' };
-    case 'leave':
-      return s.open && TRANSIENT.has(s.reason) ? close() : s;
-    case 'error':
-      return s.open ? s : { open: true, pinned: s.pinned, reason: 'peek' };
-    case 'peek-timeout':
-      if (!s.open || s.reason !== 'peek') return s;
-      return event.inside ? { ...s, reason: 'hover' } : close();
-    case 'command':
-      return { open: true, pinned: s.pinned, reason: 'command' };
-    case 'command-done':
-      return s.open && s.reason === 'command' ? close() : s;
-    case 'dismiss':
-      return s.open ? close() : s;
-    case 'pin':
-      return s.pinned ? { ...s, pinned: false } : { open: true, pinned: true, reason: s.reason || 'click' };
-    default:
-      return s;
-  }
-}
-
-/** Zoom as a percentage of the editor's default scale (`basePxPerUnit`). */
-function zoomPercent(view, paneWidth, basePxPerUnit) {
-  if (!view?.w || !paneWidth || !basePxPerUnit) return 100;
-  return Math.round(((paneWidth / view.w) / basePxPerUnit) * 100);
-}
-
-/** Split the legacy status parts into the pill, hint, and chip fields. Empty
- *  selection shows no chip rather than a placeholder dash. */
-function statusFields({ mode, selection, cursor, hints = [] }) {
-  return {
-    mode: String(mode || 'NORMAL'),
-    selection: selection || '',
-    cursor: cursor ? `${cursor.x}, ${cursor.y}` : '',
-    hint: hints.filter(Boolean).join('  ·  '),
-  };
-}
-
-__exports.logDrawerTransition = logDrawerTransition;
-__exports.zoomPercent = zoomPercent;
-__exports.statusFields = statusFields;
-__exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
 };
 
 __modules["src/web/layout.js"] = function (__require, __exports) {
@@ -29183,8 +29254,9 @@ function labelLayoutItem(label) {
 }
 
 /** Align each bbox to the outer edge or center of the selected-set bbox.
- * A target requiring a fractional grid move is unavailable rather than
- * silently claiming that an almost-aligned result is exact. */
+ * Objects only move by whole cells, so a target between grid points (e.g. the
+ * center of an odd-width box) rounds to the nearest one and the plan reports
+ * `exact: false` instead of claiming a perfect alignment. */
 function alignmentPlan(items, direction, grid = GRID) {
   if (items.length < 2) return { ok: false, reason: 'Select at least two movable objects.' };
   const axis = ['left', 'right', 'center-x'].includes(direction) ? 'x' : 'y';
@@ -29196,12 +29268,12 @@ function alignmentPlan(items, direction, grid = GRID) {
     const current = direction === 'left' || direction === 'top' ? item.bbox[axis]
       : direction === 'right' || direction === 'bottom' ? end(item.bbox, axis)
         : center(item.bbox, axis);
-    return { id: item.id, dx: axis === 'x' ? target - current : 0, dy: axis === 'y' ? target - current : 0 };
+    const raw = target - current;
+    const shift = (nearGrid(raw, grid) ? raw : Math.round(raw / grid) * grid) || 0;
+    return { id: item.id, dx: axis === 'x' ? shift : 0, dy: axis === 'y' ? shift : 0, exact: nearGrid(raw, grid) };
   });
-  if (deltas.some(({ dx, dy }) => !nearGrid(dx || dy, grid))) {
-    return { ok: false, reason: 'Exact alignment would move an object off the grid.' };
-  }
-  return { ok: true, deltas };
+  const exact = deltas.every((delta) => delta.exact);
+  return { ok: true, deltas: deltas.map(({ id, dx, dy }) => ({ id, dx, dy })), exact };
 }
 
 /** Keep the outer two objects fixed and spread the interior on the grid.
@@ -30259,61 +30331,6 @@ __exports.xor3_gate = xor3_gate;
 __exports.xnor3_gate = xnor3_gate;
 };
 
-__modules["src/core/components/converter.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
-const DAC_BODY = 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z';
-
-function converter(type, description, text, terminals, body, signalMark) {
-  return defineSymbol({
-    type,
-    description,
-    refPrefix: 'U',
-    terminals,
-    bbox: { x: -200, y: -120, w: 400, h: 240 },
-    graphics: [
-      ...terminals.map(({ x, y }) => ({
-        kind: 'path',
-        d: `M ${x} ${y} L ${x < 0 ? -120 : 120} ${y}`,
-        style: 'symbol',
-      })),
-      { kind: 'path', d: body, style: 'emph' },
-      { kind: 'path', d: signalMark, style: 'symbol' },
-      { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
-    ],
-    textPos: null,
-    refPos: null,
-    labelOffset: { x: 0, y: -160 },
-    defaultValue: '',
-  });
-}
-
-const adc = converter(
-  'adc',
-  'Analog-to-Digital Converter',
-  'ADC',
-  [{ name: 'ain', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'd', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
-  ADC_BODY,
-  'M 154 -8 L 166 8',
-);
-
-const dac = converter(
-  'dac',
-  'Digital-to-Analog Converter',
-  'DAC',
-  [{ name: 'd', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'aout', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
-  DAC_BODY,
-  'M -166 8 L -154 -8',
-);
-
-__exports.adc = adc;
-__exports.dac = dac;
-};
-
 __modules["src/core/components/flipflop.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -30423,6 +30440,61 @@ __exports.latch_enb_rstb = latch_enb_rstb;
 __exports.latch_enb_rstb_qb = latch_enb_rstb_qb;
 };
 
+__modules["src/core/components/converter.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
+const DAC_BODY = 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z';
+
+function converter(type, description, text, terminals, body, signalMark) {
+  return defineSymbol({
+    type,
+    description,
+    refPrefix: 'U',
+    terminals,
+    bbox: { x: -200, y: -120, w: 400, h: 240 },
+    graphics: [
+      ...terminals.map(({ x, y }) => ({
+        kind: 'path',
+        d: `M ${x} ${y} L ${x < 0 ? -120 : 120} ${y}`,
+        style: 'symbol',
+      })),
+      { kind: 'path', d: body, style: 'emph' },
+      { kind: 'path', d: signalMark, style: 'symbol' },
+      { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: { x: 0, y: -160 },
+    defaultValue: '',
+  });
+}
+
+const adc = converter(
+  'adc',
+  'Analog-to-Digital Converter',
+  'ADC',
+  [{ name: 'ain', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'd', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
+  ADC_BODY,
+  'M 154 -8 L 166 8',
+);
+
+const dac = converter(
+  'dac',
+  'Digital-to-Analog Converter',
+  'DAC',
+  [{ name: 'd', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'aout', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
+  DAC_BODY,
+  'M -166 8 L -154 -8',
+);
+
+__exports.adc = adc;
+__exports.dac = dac;
+};
+
 __modules["src/core/components/variable.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 const { resistor } = __require("src/core/components/resistor.js");
@@ -30499,49 +30571,6 @@ __exports.SOLDER_DOT_RADIUS = SOLDER_DOT_RADIUS;
 __exports.solder = solder;
 };
 
-__modules["src/core/components/switch.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-/**
- * SPST switch (textbook style). Two terminals a (left) / b (right), 4 grid
- * squares wide (same footprint as the resistor). The origin is at the symbol
- * midpoint. Open blade angles up clear of the contact; closed blade rests on
- * the contact.
- */
-function makeSwitch(type, description, bladeD, contact1X, contact2X) {
-  return defineSymbol({
-    type,
-    description,
-    refPrefix: 'S',
-    terminals: [
-      { name: 'a', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
-      { name: 'b', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
-    ],
-    bbox: { x: -80, y: -40, w: 160, h: 80 },
-    graphics: [
-      { kind: 'path', d: 'M -80 0 L -36.17 0', style: 'symbol' },
-      { kind: 'circle', cx: contact1X - 80, cy: 0, r: 8.53, style: 'symbol' },
-      { kind: 'path', d: bladeD, style: 'symbol' },
-      { kind: 'circle', cx: contact2X - 80, cy: 0, r: 8.53, style: 'symbol' },
-      { kind: 'path', d: 'M 36.18 0 L 80 0', style: 'symbol' },
-    ],
-    textPos: { x: -20, y: -30, anchor: 'middle' },
-    refPos: null,
-    // Keep the label above the horizontal body without overlapping its bbox.
-    labelOffset: { x: 0, y: -80 },
-    defaultValue: '',
-  });
-}
-
-const switch_open = makeSwitch('switch_open', 'Switch (open)', 'M -18.54 -6.45 L 17.08 -34.15', 52.36, 107.64);
-
-const switch_closed = makeSwitch('switch_closed', 'Switch (closed)', 'M -19.16 -3.99 L 36.29 -12.52', 52.36, 107.64);
-
-__exports.switch_open = switch_open;
-__exports.switch_closed = switch_closed;
-};
-
 __modules["src/core/components/block.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -30583,6 +30612,49 @@ const block = defineSymbol({
 });
 
 __exports.block = block;
+};
+
+__modules["src/core/components/switch.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+/**
+ * SPST switch (textbook style). Two terminals a (left) / b (right), 4 grid
+ * squares wide (same footprint as the resistor). The origin is at the symbol
+ * midpoint. Open blade angles up clear of the contact; closed blade rests on
+ * the contact.
+ */
+function makeSwitch(type, description, bladeD, contact1X, contact2X) {
+  return defineSymbol({
+    type,
+    description,
+    refPrefix: 'S',
+    terminals: [
+      { name: 'a', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
+      { name: 'b', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
+    ],
+    bbox: { x: -80, y: -40, w: 160, h: 80 },
+    graphics: [
+      { kind: 'path', d: 'M -80 0 L -36.17 0', style: 'symbol' },
+      { kind: 'circle', cx: contact1X - 80, cy: 0, r: 8.53, style: 'symbol' },
+      { kind: 'path', d: bladeD, style: 'symbol' },
+      { kind: 'circle', cx: contact2X - 80, cy: 0, r: 8.53, style: 'symbol' },
+      { kind: 'path', d: 'M 36.18 0 L 80 0', style: 'symbol' },
+    ],
+    textPos: { x: -20, y: -30, anchor: 'middle' },
+    refPos: null,
+    // Keep the label above the horizontal body without overlapping its bbox.
+    labelOffset: { x: 0, y: -80 },
+    defaultValue: '',
+  });
+}
+
+const switch_open = makeSwitch('switch_open', 'Switch (open)', 'M -18.54 -6.45 L 17.08 -34.15', 52.36, 107.64);
+
+const switch_closed = makeSwitch('switch_closed', 'Switch (closed)', 'M -19.16 -3.99 L 36.29 -12.52', 52.36, 107.64);
+
+__exports.switch_open = switch_open;
+__exports.switch_closed = switch_closed;
 };
 
 __modules["src/core/components/mux.js"] = function (__require, __exports) {
@@ -30669,6 +30741,112 @@ const signal_multiply = signalOperator('signal_multiply', 'Signal-flow multiply'
 
 __exports.signal_sum = signal_sum;
 __exports.signal_multiply = signal_multiply;
+};
+
+__modules["src/core/analysis/index.js"] = function (__require, __exports) {
+const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
+const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
+
+
+
+const PASSTHROUGH_OPTIONS = Object.freeze([
+  'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
+  'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
+  'budget', 'valueOf', 'resolveValue',
+  'topologicalSolve', 'topologicalPresentation',
+]);
+
+function engineOptions(options) {
+  const supported = {};
+  for (const key of PASSTHROUGH_OPTIONS) {
+    if (options[key] !== undefined) supported[key] = options[key];
+  }
+  return {
+    ...supported,
+    ...(options.neglectBodyEffect === undefined ? {} : { ignoreBodyEffect: options.neglectBodyEffect }),
+    ...(options.highIntrinsicGain === undefined ? {} : { gmroLarge: options.highIntrinsicGain }),
+    ...(options.neglectChannelLengthModulation === undefined
+      ? {}
+      : { ignoreChannelLengthModulation: options.neglectChannelLengthModulation }),
+    ...(options.dominantPole === undefined ? {} : { dominantPoleApproximation: options.dominantPole }),
+  };
+}
+
+function triodeRegions(value) {
+  const entries = value instanceof Map ? [...value.entries()]
+    : Array.isArray(value) ? value.map((entry) => String(entry).split('='))
+      : value && typeof value === 'object' ? Object.entries(value) : [];
+  return Object.fromEntries(entries.flatMap(([refdes, model]) => {
+    const region = typeof model === 'object' ? model.region ?? model.model : model;
+    return String(region).toLowerCase() === 'triode' ? [[refdes, { region: 'triode' }]] : [];
+  }));
+}
+
+function compatibilityOptions(options) {
+  return {
+    ...options,
+    deviceRegions: options.deviceRegions ?? triodeRegions(options.models),
+    neglectBodyEffect: options.neglectBodyEffect ?? options.ignoreBodyEffect,
+    highIntrinsicGain: options.highIntrinsicGain ?? options.gmroLarge,
+    neglectChannelLengthModulation: options.neglectChannelLengthModulation
+      ?? options.ignoreChannelLengthModulation,
+    dominantPole: options.dominantPole ?? options.dominantPoleApproximation,
+  };
+}
+
+/** Run one exact symbolic solve and expose the stable combined report shape. */
+function analyzeSmallSignal(circuit, options = {}) {
+  return adaptCombinedReport(analyzeSmallSignalV2(circuit, engineOptions(options)));
+}
+
+function quantityReport(combined, key) {
+  const report = combined.reports[key];
+  return {
+    ...report,
+    dcGain: combined.dcGain,
+    dcInputImpedance: combined.dcInputImpedance,
+    dcOutputImpedance: combined.dcOutputImpedance,
+  };
+}
+
+/** Compatibility wrapper for callers that display only input impedance. */
+function analyzeInputImpedance(circuit, input, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, input })), 'input');
+}
+
+/** Compatibility wrapper for callers that display only output impedance. */
+function analyzeOutputImpedance(circuit, output, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'output');
+}
+
+/** Compatibility wrapper for callers that display only voltage transfer. */
+function analyzeTransferFunction(circuit, output, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'transfer');
+}
+
+/** Return true when an expression retains the Laplace variable. */
+function expressionHasFrequency(value, seen = new Set()) {
+  if (value == null || typeof value !== 'object') {
+    return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+  }
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (value.kind === 'symbol') return value.name === 's';
+  return [
+    value.expression,
+    value.numerator,
+    value.denominator,
+    value.base,
+    ...(value.terms || []),
+    ...(value.factors || []),
+  ].some((child) => expressionHasFrequency(child, seen));
+}
+
+__exports.analyzeSmallSignal = analyzeSmallSignal;
+__exports.analyzeInputImpedance = analyzeInputImpedance;
+__exports.analyzeOutputImpedance = analyzeOutputImpedance;
+__exports.analyzeTransferFunction = analyzeTransferFunction;
+__exports.expressionHasFrequency = expressionHasFrequency;
 };
 
 __modules["src/core/analysis/shared.js"] = function (__require, __exports) {
@@ -32475,6 +32653,134 @@ __exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
 __exports.INFINITY_NAMES = INFINITY_NAMES;
 };
 
+__modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
+const { integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js");
+/**
+ * Adapt rational.js to the small algebra contract used by MNA and solve.
+ *
+ * MNA values are always rational-function nodes. Keeping quotients inside the
+ * adapter avoids mixing raw expression nodes with rational nodes during a
+ * solve, while rational.js remains responsible for canonicalization.
+ */
+
+
+
+function isRational(value) {
+  return value?.kind === 'rational';
+}
+
+function expressionIsZero(value) {
+  if (typeof value === 'number') return value === 0;
+  if (typeof value === 'bigint') return value === 0n;
+  return value?.kind === 'number' && value.numerator === 0n;
+}
+
+function rationalIsZero(value) {
+  return isRational(value) && value.budgetExceeded !== true && expressionIsZero(value.numerator);
+}
+
+function withBudgetFlag(value) {
+  if (!isRational(value) || value.budgetExceeded === true) return value;
+  return Object.freeze({ ...value, budgetExceeded: true });
+}
+
+function normalize(value, variable, budget = null) {
+  if (isInfinite(value)) return value;
+  if (isRational(value)) {
+    if (value.variable !== variable) {
+      throw new RangeError(`rational variable must be ${variable}`);
+    }
+    return value;
+  }
+  return rationalFunction(value, integer(1), { variable, ...(budget ? { budget } : {}) });
+}
+
+/**
+ * Build an exact rational algebra implementation for MNA and solve.
+ *
+ * `maxOperations` is a shared dispatch budget. Each adapter operation passes
+ * the same budget to rational.js. Exhaustion is terminal for the analysis.
+ */
+function createRationalOps(options = {}) {
+  const variable = String(options.variable || 's');
+  if (!variable) throw new TypeError('rational variable must not be empty');
+  const budget = options.budget || createOperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
+  if (!Number.isFinite(budget.limit) || !Number.isSafeInteger(budget.limit) || budget.limit < 0) {
+    throw new RangeError('budget.limit must be a finite non-negative integer');
+  }
+
+  const zero = normalize(integer(0), variable);
+  const one = normalize(integer(1), variable);
+
+  function operation(run, inputs = []) {
+    const values = inputs.map((value) => normalize(value, variable, budget));
+    if (budget.exceeded || values.some((value) => value?.budgetExceeded === true)) {
+      budget.exceeded = true;
+      return withBudgetFlag(zero);
+    }
+    let result;
+    try {
+      budget.step();
+      result = run(values, { budget });
+    } catch (error) {
+      if (!budget.exceeded) throw error;
+      return withBudgetFlag(zero);
+    }
+    if (!isRational(result)) result = normalize(result, variable);
+    if (budget.exceeded || values.some((value) => value.budgetExceeded === true) || result.budgetExceeded === true) {
+      budget.exceeded = true;
+      return withBudgetFlag(result);
+    }
+    return result;
+  }
+
+  const ops = {
+    zero,
+    one,
+    add: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalAdd(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    sub: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalAdd(a, rationalMultiply(b, normalize(integer(-1), variable, shared), {
+        variable,
+        budget: shared,
+      }), { variable, budget: shared }),
+      [left, right],
+    ),
+    mul: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalMultiply(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    div: (left, right) => operation(
+      ([a, b], { budget: shared }) => rationalDivide(a, b, { variable, budget: shared }),
+      [left, right],
+    ),
+    neg: (value) => operation(
+      ([a], { budget: shared }) => rationalMultiply(a, normalize(integer(-1), variable, shared), {
+        variable,
+        budget: shared,
+      }),
+      [value],
+    ),
+    isZero: (value) => isRational(value) ? rationalIsZero(value) : expressionIsZero(value),
+    infinity: (sign = 1) => infinity(sign),
+    symbol: (name) => INFINITY_NAMES.has(String(name).trim().toLowerCase())
+      ? infinity()
+      : normalize(makeSymbol(name), variable, budget),
+    s: () => normalize(makeSymbol(variable), variable, budget),
+  };
+
+  Object.defineProperties(ops, {
+    variable: { value: variable, enumerable: true },
+    budget: { value: budget, enumerable: true },
+  });
+  return Object.freeze(ops);
+}
+
+__exports.createRationalOps = createRationalOps;
+};
+
 __modules["src/core/analysis/approximation.js"] = function (__require, __exports) {
 const { OWN } = __require("src/core/analysis/shared.js");
 const { cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js");
@@ -33371,134 +33677,6 @@ function cancelCommonPolynomialFactor(value, options = {}) {
 }
 
 __exports.cancelCommonPolynomialFactor = cancelCommonPolynomialFactor;
-};
-
-__modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
-const { integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js");
-/**
- * Adapt rational.js to the small algebra contract used by MNA and solve.
- *
- * MNA values are always rational-function nodes. Keeping quotients inside the
- * adapter avoids mixing raw expression nodes with rational nodes during a
- * solve, while rational.js remains responsible for canonicalization.
- */
-
-
-
-function isRational(value) {
-  return value?.kind === 'rational';
-}
-
-function expressionIsZero(value) {
-  if (typeof value === 'number') return value === 0;
-  if (typeof value === 'bigint') return value === 0n;
-  return value?.kind === 'number' && value.numerator === 0n;
-}
-
-function rationalIsZero(value) {
-  return isRational(value) && value.budgetExceeded !== true && expressionIsZero(value.numerator);
-}
-
-function withBudgetFlag(value) {
-  if (!isRational(value) || value.budgetExceeded === true) return value;
-  return Object.freeze({ ...value, budgetExceeded: true });
-}
-
-function normalize(value, variable, budget = null) {
-  if (isInfinite(value)) return value;
-  if (isRational(value)) {
-    if (value.variable !== variable) {
-      throw new RangeError(`rational variable must be ${variable}`);
-    }
-    return value;
-  }
-  return rationalFunction(value, integer(1), { variable, ...(budget ? { budget } : {}) });
-}
-
-/**
- * Build an exact rational algebra implementation for MNA and solve.
- *
- * `maxOperations` is a shared dispatch budget. Each adapter operation passes
- * the same budget to rational.js. Exhaustion is terminal for the analysis.
- */
-function createRationalOps(options = {}) {
-  const variable = String(options.variable || 's');
-  if (!variable) throw new TypeError('rational variable must not be empty');
-  const budget = options.budget || createOperationBudget(options.maxOperations ?? DEFAULT_MAX_OPERATIONS);
-  if (!Number.isFinite(budget.limit) || !Number.isSafeInteger(budget.limit) || budget.limit < 0) {
-    throw new RangeError('budget.limit must be a finite non-negative integer');
-  }
-
-  const zero = normalize(integer(0), variable);
-  const one = normalize(integer(1), variable);
-
-  function operation(run, inputs = []) {
-    const values = inputs.map((value) => normalize(value, variable, budget));
-    if (budget.exceeded || values.some((value) => value?.budgetExceeded === true)) {
-      budget.exceeded = true;
-      return withBudgetFlag(zero);
-    }
-    let result;
-    try {
-      budget.step();
-      result = run(values, { budget });
-    } catch (error) {
-      if (!budget.exceeded) throw error;
-      return withBudgetFlag(zero);
-    }
-    if (!isRational(result)) result = normalize(result, variable);
-    if (budget.exceeded || values.some((value) => value.budgetExceeded === true) || result.budgetExceeded === true) {
-      budget.exceeded = true;
-      return withBudgetFlag(result);
-    }
-    return result;
-  }
-
-  const ops = {
-    zero,
-    one,
-    add: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalAdd(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    sub: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalAdd(a, rationalMultiply(b, normalize(integer(-1), variable, shared), {
-        variable,
-        budget: shared,
-      }), { variable, budget: shared }),
-      [left, right],
-    ),
-    mul: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalMultiply(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    div: (left, right) => operation(
-      ([a, b], { budget: shared }) => rationalDivide(a, b, { variable, budget: shared }),
-      [left, right],
-    ),
-    neg: (value) => operation(
-      ([a], { budget: shared }) => rationalMultiply(a, normalize(integer(-1), variable, shared), {
-        variable,
-        budget: shared,
-      }),
-      [value],
-    ),
-    isZero: (value) => isRational(value) ? rationalIsZero(value) : expressionIsZero(value),
-    infinity: (sign = 1) => infinity(sign),
-    symbol: (name) => INFINITY_NAMES.has(String(name).trim().toLowerCase())
-      ? infinity()
-      : normalize(makeSymbol(name), variable, budget),
-    s: () => normalize(makeSymbol(variable), variable, budget),
-  };
-
-  Object.defineProperties(ops, {
-    variable: { value: variable, enumerable: true },
-    budget: { value: budget, enumerable: true },
-  });
-  return Object.freeze(ops);
-}
-
-__exports.createRationalOps = createRationalOps;
 };
 
 __modules["src/core/analysis/pipeline.js"] = function (__require, __exports) {
@@ -34808,6 +34986,144 @@ __exports.formatSmallSignalNetlist = formatSmallSignalNetlist;
 __exports.describeSmallSignalNetlist = describeSmallSignalNetlist;
 };
 
+__modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
+const { GRID } = __require("src/core/grid.js");
+
+
+/**
+ * Symbol definition factory. Enforces the contract:
+ *  - every terminal position is on the GRID (multiple of 40)
+ *  - the bounding box corners/extents are on the GRID (unless the symbol has
+ *    no terminals — pure annotations like solder may use a dot-sized bbox)
+ *  - terminal names are unique
+ * The terminal list may be empty for pure annotations (e.g. solder dots).
+ * Symbol body graphics may use arbitrary coordinates.
+ */
+function defineSymbol(def) {
+  validateSymbol(def);
+  return Object.freeze({
+    ...def,
+    terminals: Object.freeze(def.terminals.map(Object.freeze)),
+    graphics: markTerminalLeads(def.graphics || [], def.terminals),
+  });
+}
+
+/**
+ * An open absolute path that starts or ends on a terminal is a pin lead. The
+ * renderer draws leads in the same single ink path as wires, so a lead and
+ * the wire meeting it at the terminal are rasterized once, without a seam or
+ * doubled anti-aliased edges.
+ */
+function markTerminalLeads(graphics, terminals) {
+  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
+  return graphics.map((g) => {
+    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
+    const d = String(g.d || '').trim();
+    // Only absolute move/line/cubic paths: their first and last numbers are points.
+    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
+    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+    if (numbers.length < 4) return g;
+    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
+    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
+  });
+}
+
+function validateSymbol(def) {
+  const terms = def.terminals;
+  if (!Array.isArray(terms)) {
+    throw new Error(`symbol "${def.type}" must define a terminals array`);
+  }
+  const names = new Set();
+  for (const t of terms) {
+    if (!t.name || names.has(t.name)) {
+      throw new Error(`symbol "${def.type}": terminal names must be unique, got "${t.name}"`);
+    }
+    names.add(t.name);
+    if (!Number.isInteger(t.x / GRID) || !Number.isInteger(t.y / GRID)) {
+      throw new Error(
+        `symbol "${def.type}": terminal "${t.name}" at (${t.x},${t.y}) is NOT on the ${GRID}-unit grid`
+      );
+    }
+  }
+  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
+  // grid point and never routed through, so their bbox may be the drawn size
+  // rather than an aligned grid cell.
+  if (terms.length > 0) {
+    const r = def.bbox;
+    for (const [k, v] of Object.entries(r)) {
+      if (!Number.isInteger(v / GRID)) {
+        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
+      }
+    }
+  }
+}
+
+__exports.defineSymbol = defineSymbol;
+__exports.markTerminalLeads = markTerminalLeads;
+__exports.validateSymbol = validateSymbol;
+};
+
+__modules["src/core/components/mos.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+const TERMINALS = [
+  { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
+  { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
+  { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
+];
+const BULK = { name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } };
+const BBOX = { x: -120, y: -80, w: 120, h: 160 };
+
+function mosGraphics(sourceArrow, bulk) {
+  const graphics = [
+    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
+    { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
+    { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
+    { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
+    // Channel-side stubs start inside the channel bar (like the drain), so the
+    // butt end never meets the bar edge and leaves an anti-aliased seam.
+    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
+    sourceArrow,
+  ];
+  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
+  return graphics;
+}
+
+/** Build one of the four MOS symbols without sharing mutable definition data. */
+function createMos(type, { pmos = false, bulk = false } = {}) {
+  return defineSymbol({
+    type,
+    description: bulk ? `${pmos ? 'PMOS' : 'NMOS'} transistor with bulk` : `${pmos ? 'PMOS' : 'NMOS'} Transistor`,
+    refPrefix: 'M',
+    terminals: [...TERMINALS, ...(bulk ? [BULK] : [])].map((terminal) => ({
+      ...terminal,
+      dir: { ...terminal.dir },
+    })),
+    // The reusable layout guide measures the conduction column, not the
+    // asymmetric bbox that extends toward the gate. This is symbol metadata,
+    // not a MOS-specific branch in the editor's guide/distribute tools.
+    layoutAnchorTerminals: ['d', 's'],
+    // Drain and source can be spliced in series into a straight wire (a cascode).
+    seriesTerminals: ['d', 's'],
+    bbox: { ...BBOX },
+    graphics: mosGraphics(
+      pmos
+        ? { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' }
+        : { kind: 'polygon', points: [{ x: 0, y: 27.91 }, { x: -34.88, y: 11.63 }, { x: -34.88, y: 44.19 }], fill: 'foreground' },
+      bulk,
+    ),
+    textPos: { x: -26, y: -30, anchor: 'middle' },
+    refPos: null,
+    labelOffset: bulk ? { x: 40, y: -40 } : { x: 40, y: 0 },
+    ...(pmos ? { defaultMirrorY: true } : {}),
+    defaultValue: '',
+  });
+}
+
+__exports.createMos = createMos;
+};
+
 __modules["src/core/analysis/topology.js"] = function (__require, __exports) {
 const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
 const { solveMNA } = __require("src/core/analysis/solve.js");
@@ -35075,250 +35391,6 @@ function compactRational(value, ops) {
 }
 
 __exports.compactRational = compactRational;
-};
-
-__modules["src/core/analysis/index.js"] = function (__require, __exports) {
-const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
-const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
-
-
-
-const PASSTHROUGH_OPTIONS = Object.freeze([
-  'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
-  'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
-  'budget', 'valueOf', 'resolveValue',
-  'topologicalSolve', 'topologicalPresentation',
-]);
-
-function engineOptions(options) {
-  const supported = {};
-  for (const key of PASSTHROUGH_OPTIONS) {
-    if (options[key] !== undefined) supported[key] = options[key];
-  }
-  return {
-    ...supported,
-    ...(options.neglectBodyEffect === undefined ? {} : { ignoreBodyEffect: options.neglectBodyEffect }),
-    ...(options.highIntrinsicGain === undefined ? {} : { gmroLarge: options.highIntrinsicGain }),
-    ...(options.neglectChannelLengthModulation === undefined
-      ? {}
-      : { ignoreChannelLengthModulation: options.neglectChannelLengthModulation }),
-    ...(options.dominantPole === undefined ? {} : { dominantPoleApproximation: options.dominantPole }),
-  };
-}
-
-function triodeRegions(value) {
-  const entries = value instanceof Map ? [...value.entries()]
-    : Array.isArray(value) ? value.map((entry) => String(entry).split('='))
-      : value && typeof value === 'object' ? Object.entries(value) : [];
-  return Object.fromEntries(entries.flatMap(([refdes, model]) => {
-    const region = typeof model === 'object' ? model.region ?? model.model : model;
-    return String(region).toLowerCase() === 'triode' ? [[refdes, { region: 'triode' }]] : [];
-  }));
-}
-
-function compatibilityOptions(options) {
-  return {
-    ...options,
-    deviceRegions: options.deviceRegions ?? triodeRegions(options.models),
-    neglectBodyEffect: options.neglectBodyEffect ?? options.ignoreBodyEffect,
-    highIntrinsicGain: options.highIntrinsicGain ?? options.gmroLarge,
-    neglectChannelLengthModulation: options.neglectChannelLengthModulation
-      ?? options.ignoreChannelLengthModulation,
-    dominantPole: options.dominantPole ?? options.dominantPoleApproximation,
-  };
-}
-
-/** Run one exact symbolic solve and expose the stable combined report shape. */
-function analyzeSmallSignal(circuit, options = {}) {
-  return adaptCombinedReport(analyzeSmallSignalV2(circuit, engineOptions(options)));
-}
-
-function quantityReport(combined, key) {
-  const report = combined.reports[key];
-  return {
-    ...report,
-    dcGain: combined.dcGain,
-    dcInputImpedance: combined.dcInputImpedance,
-    dcOutputImpedance: combined.dcOutputImpedance,
-  };
-}
-
-/** Compatibility wrapper for callers that display only input impedance. */
-function analyzeInputImpedance(circuit, input, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, input })), 'input');
-}
-
-/** Compatibility wrapper for callers that display only output impedance. */
-function analyzeOutputImpedance(circuit, output, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'output');
-}
-
-/** Compatibility wrapper for callers that display only voltage transfer. */
-function analyzeTransferFunction(circuit, output, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'transfer');
-}
-
-/** Return true when an expression retains the Laplace variable. */
-function expressionHasFrequency(value, seen = new Set()) {
-  if (value == null || typeof value !== 'object') {
-    return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
-  }
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (value.kind === 'symbol') return value.name === 's';
-  return [
-    value.expression,
-    value.numerator,
-    value.denominator,
-    value.base,
-    ...(value.terms || []),
-    ...(value.factors || []),
-  ].some((child) => expressionHasFrequency(child, seen));
-}
-
-__exports.analyzeSmallSignal = analyzeSmallSignal;
-__exports.analyzeInputImpedance = analyzeInputImpedance;
-__exports.analyzeOutputImpedance = analyzeOutputImpedance;
-__exports.analyzeTransferFunction = analyzeTransferFunction;
-__exports.expressionHasFrequency = expressionHasFrequency;
-};
-
-__modules["src/core/components/mos.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-const TERMINALS = [
-  { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
-  { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
-  { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
-];
-const BULK = { name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } };
-const BBOX = { x: -120, y: -80, w: 120, h: 160 };
-
-function mosGraphics(sourceArrow, bulk) {
-  const graphics = [
-    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
-    { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
-    { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
-    { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
-    // Channel-side stubs start inside the channel bar (like the drain), so the
-    // butt end never meets the bar edge and leaves an anti-aliased seam.
-    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
-    sourceArrow,
-  ];
-  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
-  return graphics;
-}
-
-/** Build one of the four MOS symbols without sharing mutable definition data. */
-function createMos(type, { pmos = false, bulk = false } = {}) {
-  return defineSymbol({
-    type,
-    description: bulk ? `${pmos ? 'PMOS' : 'NMOS'} transistor with bulk` : `${pmos ? 'PMOS' : 'NMOS'} Transistor`,
-    refPrefix: 'M',
-    terminals: [...TERMINALS, ...(bulk ? [BULK] : [])].map((terminal) => ({
-      ...terminal,
-      dir: { ...terminal.dir },
-    })),
-    // The reusable layout guide measures the conduction column, not the
-    // asymmetric bbox that extends toward the gate. This is symbol metadata,
-    // not a MOS-specific branch in the editor's guide/distribute tools.
-    layoutAnchorTerminals: ['d', 's'],
-    // Drain and source can be spliced in series into a straight wire (a cascode).
-    seriesTerminals: ['d', 's'],
-    bbox: { ...BBOX },
-    graphics: mosGraphics(
-      pmos
-        ? { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' }
-        : { kind: 'polygon', points: [{ x: 0, y: 27.91 }, { x: -34.88, y: 11.63 }, { x: -34.88, y: 44.19 }], fill: 'foreground' },
-      bulk,
-    ),
-    textPos: { x: -26, y: -30, anchor: 'middle' },
-    refPos: null,
-    labelOffset: bulk ? { x: 40, y: -40 } : { x: 40, y: 0 },
-    ...(pmos ? { defaultMirrorY: true } : {}),
-    defaultValue: '',
-  });
-}
-
-__exports.createMos = createMos;
-};
-
-__modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-
-
-/**
- * Symbol definition factory. Enforces the contract:
- *  - every terminal position is on the GRID (multiple of 40)
- *  - the bounding box corners/extents are on the GRID (unless the symbol has
- *    no terminals — pure annotations like solder may use a dot-sized bbox)
- *  - terminal names are unique
- * The terminal list may be empty for pure annotations (e.g. solder dots).
- * Symbol body graphics may use arbitrary coordinates.
- */
-function defineSymbol(def) {
-  validateSymbol(def);
-  return Object.freeze({
-    ...def,
-    terminals: Object.freeze(def.terminals.map(Object.freeze)),
-    graphics: markTerminalLeads(def.graphics || [], def.terminals),
-  });
-}
-
-/**
- * An open absolute path that starts or ends on a terminal is a pin lead. The
- * renderer draws leads in the same single ink path as wires, so a lead and
- * the wire meeting it at the terminal are rasterized once, without a seam or
- * doubled anti-aliased edges.
- */
-function markTerminalLeads(graphics, terminals) {
-  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
-  return graphics.map((g) => {
-    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
-    const d = String(g.d || '').trim();
-    // Only absolute move/line/cubic paths: their first and last numbers are points.
-    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
-    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
-    if (numbers.length < 4) return g;
-    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
-    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
-  });
-}
-
-function validateSymbol(def) {
-  const terms = def.terminals;
-  if (!Array.isArray(terms)) {
-    throw new Error(`symbol "${def.type}" must define a terminals array`);
-  }
-  const names = new Set();
-  for (const t of terms) {
-    if (!t.name || names.has(t.name)) {
-      throw new Error(`symbol "${def.type}": terminal names must be unique, got "${t.name}"`);
-    }
-    names.add(t.name);
-    if (!Number.isInteger(t.x / GRID) || !Number.isInteger(t.y / GRID)) {
-      throw new Error(
-        `symbol "${def.type}": terminal "${t.name}" at (${t.x},${t.y}) is NOT on the ${GRID}-unit grid`
-      );
-    }
-  }
-  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
-  // grid point and never routed through, so their bbox may be the drawn size
-  // rather than an aligned grid cell.
-  if (terms.length > 0) {
-    const r = def.bbox;
-    for (const [k, v] of Object.entries(r)) {
-      if (!Number.isInteger(v / GRID)) {
-        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
-      }
-    }
-  }
-}
-
-__exports.defineSymbol = defineSymbol;
-__exports.markTerminalLeads = markTerminalLeads;
-__exports.validateSymbol = validateSymbol;
 };
 
 __modules["src/core/analysis/context.js"] = function (__require, __exports) {
@@ -35716,6 +35788,637 @@ __exports.virtualNetAliases = virtualNetAliases;
 __exports.resolveMosBulk = resolveMosBulk;
 __exports.resolveAnalysisContext = resolveAnalysisContext;
 __exports.AC_GROUND = AC_GROUND;
+};
+
+__modules["src/core/analysis/devices.js"] = function (__require, __exports) {
+const { MOS_TYPES } = __require("src/core/analysis/shared.js");
+
+// Primitive contract: terminals.a -> terminals.b is the branch direction;
+// VCCS control.a -> control.b is its voltage-control direction.
+const PASSIVE_TYPES = new Map([
+  ['resistor', 'resistor'],
+  ['variable_resistor', 'resistor'],
+  ['capacitor', 'capacitor'],
+  ['variable_capacitor', 'capacitor'],
+  ['inductor', 'inductor'],
+  ['variable_inductor', 'inductor'],
+]);
+
+const MOS_CURRENT_SOURCE_MODELS = new Set([
+  'current-source',
+  'current_source',
+  'ideal-current-source',
+  'open',
+]);
+const TRIODE_MODELS = new Set(['triode', 'rds', 'r-ds', 'resistor']);
+const IGNORED_TYPES = new Set([
+  'ground', 'supply', 'vcm', 'port',
+  'input', 'output', 'inputoutput', 'solder',
+]);
+
+function diagnostic(code, message, component = null, severity = 'error', migration = null) {
+  return {
+    code,
+    severity,
+    ...(component ? { component: component.refdes, type: component.type } : {}),
+    message,
+    ...(migration ? { migration } : {}),
+  };
+}
+
+function asNode(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value !== 'object') return String(value);
+  if (value.node !== undefined) return asNode(value.node);
+  if (value.nodeId !== undefined) return asNode(value.nodeId);
+  if (value.netId !== undefined) return asNode(value.netId);
+  if (value.id !== undefined) return asNode(value.id);
+  if (value.name !== undefined) return asNode(value.name);
+  return null;
+}
+
+function lookupMap(map, key) {
+  if (!map) return null;
+  if (typeof map.get === 'function') return asNode(map.get(key));
+  if (Object.hasOwn(map, key)) return asNode(map[key]);
+  return null;
+}
+
+function terminalKey(refdes, terminal) {
+  return `${refdes}.${terminal}`;
+}
+
+function terminalNet(circuit, component, terminal) {
+  return circuit.netOfTerminal({ comp: component.refdes, term: terminal });
+}
+
+function contextTerminalNode(circuit, component, terminal, context) {
+  const ref = { comp: component.refdes, term: terminal };
+  const key = terminalKey(component.refdes, terminal);
+  const resolver = context.nodeOfTerminal || context.resolveNode || context.nodeForTerminal;
+  if (typeof resolver === 'function') {
+    const resolved = resolver(ref, component);
+    const node = asNode(resolved);
+    if (node) return node;
+  }
+  for (const map of [context.terminalNodes, context.nodes, context.nodeByTerminal]) {
+    const node = lookupMap(map, key) || lookupMap(map, ref);
+    if (node) return node;
+  }
+  const net = terminalNet(circuit, component, terminal);
+  if (!net) return null;
+  return lookupMap(context.nodeAliases, net.id) || asNode(net.id);
+}
+
+function referenceNode(context, rail) {
+  for (const map of [context.referenceNodes, context.referenceNets, context.rails]) {
+    const node = lookupMap(map, rail);
+    if (node) return node;
+  }
+  const references = context.references;
+  if (references && typeof references === 'object' && !(references instanceof Set)) {
+    const node = lookupMap(references, rail);
+    if (node) return node;
+  }
+  if (context.acGroundNode !== undefined) return asNode(context.acGroundNode);
+  if (context.groundNode !== undefined) return asNode(context.groundNode);
+  return rail;
+}
+
+function nodeFor(circuit, component, terminal, context, { required = true } = {}) {
+  const node = contextTerminalNode(circuit, component, terminal, context);
+  if (!node && required) {
+    return {
+      node: null,
+      error: diagnostic(
+        'missing-terminal-node',
+        `${component.refdes}.${terminal} has no resolved physical net`,
+        component,
+      ),
+    };
+  }
+  return { node, error: null };
+}
+
+function modelOverride(component, context) {
+  const fromContext = lookupDeviceRegion(context.deviceRegions, component.refdes);
+  if (fromContext) return normalizeModel(modelName(fromContext));
+  return normalizeModel(component.analysis?.model);
+}
+
+function modelName(value) {
+  if (!value || typeof value !== 'object') return value;
+  if (value.region !== undefined) return value.region;
+  if (value.model !== undefined) return value.model;
+  return value.triode === true ? 'triode' : value.triode;
+}
+
+function lookupDeviceRegion(models, refdes) {
+  if (!models) return null;
+  if (typeof models.get === 'function') return models.get(refdes) ?? null;
+  if (Object.hasOwn(models, refdes)) {
+    return models[refdes];
+  }
+  return null;
+}
+
+function modelMetadata(component, context, model) {
+  const region = lookupDeviceRegion(context.deviceRegions, component.refdes);
+  return {
+    model,
+    ...(region && typeof region === 'object' ? { deviceRegion: { ...region } } : {}),
+  };
+}
+
+function primitiveMetadata(component, context, model, extra = {}) {
+  return {
+    component: component.refdes,
+    ...modelMetadata(component, context, model),
+    ...extra,
+  };
+}
+
+function normalizeModel(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return String(value).trim().toLowerCase().replace(/_/g, '-');
+}
+
+/** Convert legacy context options once at the device boundary. */
+function normalizeDeviceContext(context = {}) {
+  if (context.deviceRegions) return context;
+  const legacy = context.modelOverrides || context.models || context.overrides;
+  return legacy ? { ...context, deviceRegions: legacy } : context;
+}
+
+function parameterName(prefix, refdes) {
+  const raw = String(refdes);
+  if (['R', 'C', 'L'].includes(prefix) && raw.startsWith(prefix)) return raw;
+  const suffix = raw.replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
+  return `${prefix}${suffix}`;
+}
+
+function twoTerminalPrimitive(component, kind, a, b) {
+  const parameter = parameterName(kind === 'resistor' ? 'R' : kind === 'capacitor' ? 'C' : 'L', component.refdes);
+  return {
+    kind,
+    id: `${component.refdes}.${kind}`,
+    terminals: { a, b },
+    value: parameter,
+    metadata: { component: component.refdes },
+  };
+}
+
+function sourcePrimitive(component, kind, positive, negative) {
+  return {
+    kind,
+    id: `${component.refdes}.${kind}`,
+    terminals: { a: positive, b: negative },
+    value: 0,
+    metadata: { component: component.refdes, dcValue: component.value },
+  };
+}
+
+function mosOrientation(type) {
+  const pmos = type.startsWith('pmos');
+  return {
+    channel: pmos ? 'p' : 'n',
+    currentDirection: 'drain-to-source',
+    polarity: 1,
+    convention: 'i_ds = gm(v_g-v_s) + gmb(v_b-v_s) + (v_d-v_s)/ro',
+  };
+}
+
+/**
+ * Whether this device contributes its own gate capacitances. They are part of
+ * the device's small-signal model exactly as `g_m` and `r_o` are -- nobody
+ * draws those either -- so they are opt-in per device, or globally from the
+ * analysis form, rather than symbols the user has to wire up by hand. A
+ * capacitor drawn in the schematic remains the user's own component and is
+ * modelled separately.
+ */
+function includesParasitics(component, context) {
+  const own = component.analysis?.parasitics;
+  if (own === 'include') return true;
+  if (own === 'omit') return false;
+  return context?.parasitics === true;
+}
+
+/** `C_gs` and `C_gd`: the two that set a stage's input pole and drive Miller. */
+function parasiticPrimitives(component, nodes, metadata) {
+  return [
+    {
+      kind: 'capacitor',
+      id: `${component.refdes}.cgs`,
+      terminals: { a: nodes.g, b: nodes.s },
+      value: parameterName('Cgs', component.refdes),
+      metadata: { ...metadata, parasitic: 'cgs' },
+    },
+    {
+      kind: 'capacitor',
+      id: `${component.refdes}.cgd`,
+      terminals: { a: nodes.g, b: nodes.d },
+      value: parameterName('Cgd', component.refdes),
+      metadata: { ...metadata, parasitic: 'cgd' },
+    },
+  ];
+}
+
+function mosPrimitives(component, nodes, model, metadata) {
+  const names = {
+    gm: parameterName('gm', component.refdes),
+    gmb: parameterName('gmb', component.refdes),
+    ro: parameterName('ro', component.refdes),
+  };
+  const orientation = mosOrientation(component.type);
+  const explicitBulk = component.def.terminals.some((terminal) => terminal.name === 'b');
+  const deviceMetadata = {
+    ...metadata,
+    device: 'mos',
+    channel: orientation.channel,
+    bulk: {
+      node: nodes.b,
+      implicit: !explicitBulk,
+      ...(!explicitBulk ? { reference: orientation.channel === 'p' ? 'VDD' : 'VSS' } : {}),
+    },
+  };
+  return [
+    {
+      kind: 'resistor',
+      id: `${component.refdes}.ro`,
+      terminals: { a: nodes.d, b: nodes.s },
+      value: names.ro,
+      metadata: deviceMetadata,
+    },
+    {
+      kind: 'vccs',
+      id: `${component.refdes}.gm`,
+      terminals: { a: nodes.d, b: nodes.s },
+      value: names.gm,
+      control: { a: nodes.g, b: nodes.s },
+      metadata: { ...deviceMetadata, controlExpression: `${names.gm}(v_g-v_s)` },
+    },
+    {
+      kind: 'vccs',
+      id: `${component.refdes}.gmb`,
+      terminals: { a: nodes.d, b: nodes.s },
+      value: names.gmb,
+      control: { a: nodes.b, b: nodes.s },
+      metadata: { ...deviceMetadata, controlExpression: `${names.gmb}(v_b-v_s)` },
+    },
+  ];
+}
+
+function triodePrimitive(component, nodes, metadata) {
+  const parameter = parameterName('rds', component.refdes);
+  return {
+    kind: 'resistor',
+    id: `${component.refdes}.rds`,
+    terminals: { a: nodes.d, b: nodes.s },
+    value: parameter,
+    metadata: { ...metadata, device: 'mos', model: 'triode' },
+  };
+}
+
+function convertMos(circuit, component, context) {
+  const diagnostics = [];
+  const override = lookupDeviceRegion(context.deviceRegions, component.refdes);
+  const model = modelOverride(component, context);
+  if (MOS_CURRENT_SOURCE_MODELS.has(model)) {
+    diagnostics.push(diagnostic(
+      'legacy-mos-current-source',
+      `${component.refdes} uses the removed MOS current-source override`,
+      component,
+      'error',
+      'Remove the override. Use the exact MOS model; a zero-controlled device naturally contributes no gm/gmb current, while r_o -> infinity is the channel-length-modulation approximation.',
+    ));
+    return { primitives: [], diagnostics, nodes: [] };
+  }
+  if (model && !TRIODE_MODELS.has(model) && !['ro', 'r-o', 'output-resistance', 'small-signal'].includes(model)) {
+    diagnostics.push(diagnostic(`unknown-mos-model`, `unknown MOS small-signal model override "${model}"`, component));
+    return { primitives: [], diagnostics, nodes: [] };
+  }
+
+  const nodeResults = ['d', 's', 'g'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
+  const nodes = Object.fromEntries(nodeResults.map(([terminal, result]) => [terminal, result.node]));
+  diagnostics.push(...nodeResults.map(([, result]) => result.error).filter(Boolean));
+  const hasBulk = component.def.terminals.some((terminal) => terminal.name === 'b');
+  if (hasBulk) {
+    const bulk = nodeFor(circuit, component, 'b', context);
+    nodes.b = bulk.node;
+    if (bulk.error) diagnostics.push(bulk.error);
+  } else {
+    const rail = component.type.startsWith('pmos') ? 'VDD' : 'VSS';
+    nodes.b = referenceNode(context, rail);
+  }
+  if (diagnostics.length) return { primitives: [], diagnostics, nodes: Object.values(nodes).filter(Boolean) };
+  const metadata = primitiveMetadata(component, context, model, override && typeof override === 'object'
+    ? { deviceRegion: { ...override } }
+    : {});
+  // A device's own capacitances belong to whichever region it is in.
+  const parasitics = includesParasitics(component, context)
+    ? parasiticPrimitives(component, nodes, { ...metadata, device: 'mos' })
+    : [];
+  if (model && TRIODE_MODELS.has(model)) {
+    return {
+      primitives: [triodePrimitive(component, nodes, metadata), ...parasitics],
+      diagnostics,
+      nodes: Object.values(nodes),
+    };
+  }
+  return {
+    primitives: [...mosPrimitives(component, nodes, 'saturation', metadata), ...parasitics],
+    diagnostics,
+    nodes: Object.values(nodes),
+  };
+}
+
+function convertOneComponent(circuit, component, context) {
+  if (IGNORED_TYPES.has(component.type)) return { primitives: [], diagnostics: [], nodes: [] };
+  if (MOS_TYPES.has(component.type)) return convertMos(circuit, component, context);
+  if (component.type === 'voltage_source' || component.type === 'current_source') {
+    const terminals = ['a', 'b'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
+    const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);
+    if (diagnostics.length) return { primitives: [], diagnostics, nodes: terminals.map(([, result]) => result.node).filter(Boolean) };
+    const nodes = Object.fromEntries(terminals.map(([terminal, result]) => [terminal, result.node]));
+    return {
+      primitives: [sourcePrimitive(component, component.type === 'voltage_source' ? 'voltage-source' : 'current-source', nodes.a, nodes.b)],
+      diagnostics: [],
+      nodes: [nodes.a, nodes.b],
+    };
+  }
+  const kind = PASSIVE_TYPES.get(component.type);
+  if (kind) {
+    const terminals = ['a', 'b'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
+    const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);
+    if (diagnostics.length) return { primitives: [], diagnostics, nodes: terminals.map(([, result]) => result.node).filter(Boolean) };
+    const nodes = Object.fromEntries(terminals.map(([terminal, result]) => [terminal, result.node]));
+    // "Treat as R = infinity" (model.js `setComponentAnalysis`, a per-component
+    // small-signal attribute, mirroring the MOS triode `analysis.model`
+    // override) removes the branch entirely — an open circuit is exactly "no
+    // primitive here", not a primitive carrying an infinite value.
+    if (kind === 'resistor' && component.analysis?.resistance === 'infinite') {
+      return { primitives: [], diagnostics: [], nodes: [nodes.a, nodes.b] };
+    }
+    return { primitives: [twoTerminalPrimitive(component, kind, nodes.a, nodes.b)], diagnostics: [], nodes: [nodes.a, nodes.b] };
+  }
+  const terminals = component.def?.terminals
+    ?.map((terminal) => nodeFor(circuit, component, terminal.name, context, { required: false }).node)
+    .filter(Boolean) || [];
+  if (terminals.length) {
+    return {
+      primitives: [],
+      diagnostics: [diagnostic('unsupported-component', `${component.type} has no exact small-signal primitive conversion`, component, 'warning')],
+      nodes: terminals,
+    };
+  }
+  return { primitives: [], diagnostics: [], nodes: [] };
+}
+
+/** Convert one circuit component into flat, exact MNA-ready primitive descriptors. */
+function componentToPrimitives(circuit, component, context = {}) {
+  if (!circuit || !component) throw new TypeError('component conversion requires a Circuit and component');
+  return convertOneComponent(circuit, component, normalizeDeviceContext(context || {}));
+}
+
+/** Convert every supported electrical component in a Circuit. */
+function convertCircuitToPrimitives(circuit, context = {}) {
+  if (!circuit?.components?.values) throw new TypeError('primitive conversion requires a Circuit');
+  context = normalizeDeviceContext(context || {});
+  const primitives = [];
+  const diagnostics = [];
+  const nodes = new Set();
+  for (const component of circuit.components.values()) {
+    const converted = convertOneComponent(circuit, component, context);
+    primitives.push(...converted.primitives);
+    diagnostics.push(...converted.diagnostics);
+    converted.nodes.forEach((node) => nodes.add(node));
+  }
+  return {
+    ok: !diagnostics.some((entry) => entry.severity === 'error'),
+    primitives,
+    diagnostics,
+    nodes: [...nodes].sort(),
+  };
+}
+
+__exports.componentToPrimitives = componentToPrimitives;
+__exports.convertCircuitToPrimitives = convertCircuitToPrimitives;
+};
+
+__modules["src/core/analysis/graph.js"] = function (__require, __exports) {
+const { asList, PASSIVE_KINDS } = __require("src/core/analysis/shared.js");
+const { AC_GROUND } = __require("src/core/analysis/context.js");
+
+
+
+const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs']);
+
+function asNode(value) {
+  if (value == null) return null;
+  return String(value);
+}
+
+function addNode(nodes, node) {
+  if (node && node !== AC_GROUND) nodes.add(node);
+}
+
+function primitiveNodes(primitive, canonicalNode) {
+  const nodes = [];
+  const add = (value) => {
+    const node = canonicalNode(asNode(value));
+    if (node && node !== AC_GROUND && !nodes.includes(node)) nodes.push(node);
+  };
+  add(primitive.terminals?.a);
+  add(primitive.terminals?.b);
+  add(primitive.control?.a);
+  add(primitive.control?.b);
+  return nodes;
+}
+
+function controlledNodes(primitive, canonicalNode) {
+  return [primitive.terminals.a, primitive.terminals.b, primitive.control?.a, primitive.control?.b]
+    .map((value) => canonicalNode(asNode(value)))
+    .filter((node, index, all) => node && node !== AC_GROUND && all.indexOf(node) === index);
+}
+
+function isZero(value) {
+  if (typeof value === 'number') return value === 0;
+  if (typeof value === 'bigint') return value === 0n;
+  if (value?.kind === 'number') return value.numerator === 0n;
+  if (value?.kind === 'rational') {
+    return value.budgetExceeded !== true && isZero(value.numerator);
+  }
+  return false;
+}
+
+function connects(primitive) {
+  if (primitive.couples === false) return false;
+  if (primitive.kind === 'current-source') return false;
+  if (['capacitor', 'conductance', 'admittance'].includes(primitive.kind)) {
+    return !isZero(primitive.value ?? primitive.admittance);
+  }
+  return SUPPORTED_KINDS.has(primitive.kind);
+}
+
+function canonicalizer(options = {}) {
+  const ground = new Set(options.acGroundIds || options.referenceIds || []);
+  const aliases = options.nodeAliases instanceof Map ? options.nodeAliases : new Map(Object.entries(options.nodeAliases || {}));
+  return (node) => {
+    if (!node || node === AC_GROUND || ground.has(node)) return node === AC_GROUND || ground.has(node) ? AC_GROUND : null;
+    return aliases.get(node) || node;
+  };
+}
+
+function rootsFrom(value, canonicalNode) {
+  return [...new Set(asList(value).map((root) => canonicalNode(asNode(root))).filter((root) => root && root !== AC_GROUND))];
+}
+
+/**
+ * Split a coupled primitive set at `node`, treating it (like ground) as a
+ * non-traversable boundary. Each returned component is a maximal set of
+ * primitives whose non-ground, non-`node` nodes are mutually reachable
+ * without passing through `node`; a VCCS's control nodes count toward its
+ * reach exactly as they do for the relevance walk above, so a primitive
+ * that couples two would-be components (directly, or through a control
+ * terminal) forces them into one component instead of a false split.
+ * Returns `null` when `node` is not an articulation point (fewer than two
+ * components result), so the caller's single combined solve remains the
+ * only correct option. `shunts` lists primitives touching only `node` and
+ * ground (a direct node-to-ground branch, no other real node); callers
+ * that cannot fold those in separately should treat their presence as a
+ * reason not to split.
+ */
+function splitAtNode(primitives = [], node, options = {}) {
+  const canonicalNode = canonicalizer(options);
+  const target = canonicalNode(asNode(node));
+  if (!target || target === AC_GROUND) return null;
+
+  const parent = new Map();
+  const find = (value) => {
+    if (!parent.has(value)) parent.set(value, value);
+    let root = value;
+    while (parent.get(root) !== root) root = parent.get(root);
+    parent.set(value, root);
+    return root;
+  };
+  const union = (a, b) => {
+    const rootA = find(a);
+    const rootB = find(b);
+    if (rootA !== rootB) parent.set(rootA, rootB);
+  };
+
+  const entries = primitives.map((primitive, index) => {
+    if (!connects(primitive)) return { index, realNodes: [], touchesTarget: false };
+    const nodes = primitive.kind === 'vccs'
+      ? controlledNodes(primitive, canonicalNode)
+      : primitiveNodes(primitive, canonicalNode);
+    const touchesTarget = nodes.includes(target);
+    const realNodes = nodes.filter((candidate) => candidate !== target);
+    return { index, realNodes, touchesTarget };
+  });
+
+  for (const { realNodes } of entries) {
+    for (let i = 1; i < realNodes.length; i++) union(realNodes[0], realNodes[i]);
+  }
+
+  const groups = new Map();
+  const shunts = [];
+  for (const entry of entries) {
+    if (entry.realNodes.length === 0) {
+      if (entry.touchesTarget) shunts.push(entry.index);
+      continue;
+    }
+    const root = find(entry.realNodes[0]);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(entry.index);
+  }
+
+  if (groups.size + (options.includeShunts ? shunts.length : 0) < 2) return null;
+  return {
+    target,
+    components: [...groups.entries()].map(([root, primitiveIndices]) => ({ root, primitiveIndices })),
+    shunts,
+    componentOf(rawNode) {
+      const canonical = canonicalNode(asNode(rawNode));
+      if (!canonical || canonical === AC_GROUND || canonical === target) return null;
+      return find(canonical);
+    },
+  };
+}
+
+/**
+ * Return the primitive subgraph coupled to the supplied analysis ports.
+ * Ground is a terminal boundary, never a traversable bridge between islands.
+ */
+function coupledSubgraph(primitives = [], roots = [], options = {}) {
+  const canonicalNode = canonicalizer(options);
+  const normalizedPrimitives = primitives.map((primitive, index) => ({
+    ...primitive,
+    index,
+    nodes: primitiveNodes(primitive, canonicalNode),
+  }));
+  const adjacency = new Map();
+  const connectNodes = (nodes, primitiveIndex) => {
+    for (const node of nodes) {
+      if (node === AC_GROUND) continue;
+      if (!adjacency.has(node)) adjacency.set(node, []);
+      adjacency.get(node).push(primitiveIndex);
+    }
+  };
+  normalizedPrimitives.forEach((primitive) => {
+    if (!connects(primitive)) return;
+    const nodes = primitive.kind === 'vccs'
+      ? controlledNodes(primitive, canonicalNode)
+      : primitive.nodes;
+    connectNodes(nodes, primitive.index);
+  });
+
+  const rootNodes = rootsFrom(roots, canonicalNode);
+  const visited = new Set(rootNodes);
+  const included = new Set();
+  const queue = [...rootNodes];
+  for (let head = 0; head < queue.length; head++) {
+    const node = queue[head];
+    for (const primitiveIndex of adjacency.get(node) || []) {
+      included.add(primitiveIndex);
+      for (const next of normalizedPrimitives[primitiveIndex].nodes) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push(next);
+        }
+      }
+    }
+  }
+
+  const selectedEntries = normalizedPrimitives
+    .filter(({ index }) => included.has(index))
+    .map((primitive) => ({ ...primitive }));
+  const selected = selectedEntries.map(({ index, nodes, ...primitive }) => primitive);
+  const nodeOrder = [];
+  const nodeSet = new Set();
+  for (const root of rootNodes) {
+    addNode(nodeSet, root);
+    if (!nodeOrder.includes(root)) nodeOrder.push(root);
+  }
+  for (const primitive of selectedEntries) {
+    for (const node of primitive.nodes) {
+      addNode(nodeSet, node);
+      if (!nodeOrder.includes(node)) nodeOrder.push(node);
+    }
+  }
+  return {
+    roots: rootNodes,
+    nodes: nodeSet,
+    nodeOrder,
+    primitives: selected,
+    primitiveIndices: selectedEntries.map(({ index }) => index),
+    diagnostics: rootNodes.length ? [] : [{ code: 'missing-roots', message: 'at least one non-ground analysis root is required' }],
+  };
+}
+
+__exports.splitAtNode = splitAtNode;
+__exports.coupledSubgraph = coupledSubgraph;
 };
 
 __modules["src/core/analysis/mna.js"] = function (__require, __exports) {
@@ -36729,422 +37432,6 @@ __exports.solveLinearSystem = solveLinearSystem;
 __exports.solveMNA = solveMNA;
 };
 
-__modules["src/core/analysis/devices.js"] = function (__require, __exports) {
-const { MOS_TYPES } = __require("src/core/analysis/shared.js");
-
-// Primitive contract: terminals.a -> terminals.b is the branch direction;
-// VCCS control.a -> control.b is its voltage-control direction.
-const PASSIVE_TYPES = new Map([
-  ['resistor', 'resistor'],
-  ['variable_resistor', 'resistor'],
-  ['capacitor', 'capacitor'],
-  ['variable_capacitor', 'capacitor'],
-  ['inductor', 'inductor'],
-  ['variable_inductor', 'inductor'],
-]);
-
-const MOS_CURRENT_SOURCE_MODELS = new Set([
-  'current-source',
-  'current_source',
-  'ideal-current-source',
-  'open',
-]);
-const TRIODE_MODELS = new Set(['triode', 'rds', 'r-ds', 'resistor']);
-const IGNORED_TYPES = new Set([
-  'ground', 'supply', 'vcm', 'port',
-  'input', 'output', 'inputoutput', 'solder',
-]);
-
-function diagnostic(code, message, component = null, severity = 'error', migration = null) {
-  return {
-    code,
-    severity,
-    ...(component ? { component: component.refdes, type: component.type } : {}),
-    message,
-    ...(migration ? { migration } : {}),
-  };
-}
-
-function asNode(value) {
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (typeof value !== 'object') return String(value);
-  if (value.node !== undefined) return asNode(value.node);
-  if (value.nodeId !== undefined) return asNode(value.nodeId);
-  if (value.netId !== undefined) return asNode(value.netId);
-  if (value.id !== undefined) return asNode(value.id);
-  if (value.name !== undefined) return asNode(value.name);
-  return null;
-}
-
-function lookupMap(map, key) {
-  if (!map) return null;
-  if (typeof map.get === 'function') return asNode(map.get(key));
-  if (Object.hasOwn(map, key)) return asNode(map[key]);
-  return null;
-}
-
-function terminalKey(refdes, terminal) {
-  return `${refdes}.${terminal}`;
-}
-
-function terminalNet(circuit, component, terminal) {
-  return circuit.netOfTerminal({ comp: component.refdes, term: terminal });
-}
-
-function contextTerminalNode(circuit, component, terminal, context) {
-  const ref = { comp: component.refdes, term: terminal };
-  const key = terminalKey(component.refdes, terminal);
-  const resolver = context.nodeOfTerminal || context.resolveNode || context.nodeForTerminal;
-  if (typeof resolver === 'function') {
-    const resolved = resolver(ref, component);
-    const node = asNode(resolved);
-    if (node) return node;
-  }
-  for (const map of [context.terminalNodes, context.nodes, context.nodeByTerminal]) {
-    const node = lookupMap(map, key) || lookupMap(map, ref);
-    if (node) return node;
-  }
-  const net = terminalNet(circuit, component, terminal);
-  if (!net) return null;
-  return lookupMap(context.nodeAliases, net.id) || asNode(net.id);
-}
-
-function referenceNode(context, rail) {
-  for (const map of [context.referenceNodes, context.referenceNets, context.rails]) {
-    const node = lookupMap(map, rail);
-    if (node) return node;
-  }
-  const references = context.references;
-  if (references && typeof references === 'object' && !(references instanceof Set)) {
-    const node = lookupMap(references, rail);
-    if (node) return node;
-  }
-  if (context.acGroundNode !== undefined) return asNode(context.acGroundNode);
-  if (context.groundNode !== undefined) return asNode(context.groundNode);
-  return rail;
-}
-
-function nodeFor(circuit, component, terminal, context, { required = true } = {}) {
-  const node = contextTerminalNode(circuit, component, terminal, context);
-  if (!node && required) {
-    return {
-      node: null,
-      error: diagnostic(
-        'missing-terminal-node',
-        `${component.refdes}.${terminal} has no resolved physical net`,
-        component,
-      ),
-    };
-  }
-  return { node, error: null };
-}
-
-function modelOverride(component, context) {
-  const fromContext = lookupDeviceRegion(context.deviceRegions, component.refdes);
-  if (fromContext) return normalizeModel(modelName(fromContext));
-  return normalizeModel(component.analysis?.model);
-}
-
-function modelName(value) {
-  if (!value || typeof value !== 'object') return value;
-  if (value.region !== undefined) return value.region;
-  if (value.model !== undefined) return value.model;
-  return value.triode === true ? 'triode' : value.triode;
-}
-
-function lookupDeviceRegion(models, refdes) {
-  if (!models) return null;
-  if (typeof models.get === 'function') return models.get(refdes) ?? null;
-  if (Object.hasOwn(models, refdes)) {
-    return models[refdes];
-  }
-  return null;
-}
-
-function modelMetadata(component, context, model) {
-  const region = lookupDeviceRegion(context.deviceRegions, component.refdes);
-  return {
-    model,
-    ...(region && typeof region === 'object' ? { deviceRegion: { ...region } } : {}),
-  };
-}
-
-function primitiveMetadata(component, context, model, extra = {}) {
-  return {
-    component: component.refdes,
-    ...modelMetadata(component, context, model),
-    ...extra,
-  };
-}
-
-function normalizeModel(value) {
-  if (value === undefined || value === null || value === '') return null;
-  return String(value).trim().toLowerCase().replace(/_/g, '-');
-}
-
-/** Convert legacy context options once at the device boundary. */
-function normalizeDeviceContext(context = {}) {
-  if (context.deviceRegions) return context;
-  const legacy = context.modelOverrides || context.models || context.overrides;
-  return legacy ? { ...context, deviceRegions: legacy } : context;
-}
-
-function parameterName(prefix, refdes) {
-  const raw = String(refdes);
-  if (['R', 'C', 'L'].includes(prefix) && raw.startsWith(prefix)) return raw;
-  const suffix = raw.replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
-  return `${prefix}${suffix}`;
-}
-
-function twoTerminalPrimitive(component, kind, a, b) {
-  const parameter = parameterName(kind === 'resistor' ? 'R' : kind === 'capacitor' ? 'C' : 'L', component.refdes);
-  return {
-    kind,
-    id: `${component.refdes}.${kind}`,
-    terminals: { a, b },
-    value: parameter,
-    metadata: { component: component.refdes },
-  };
-}
-
-function sourcePrimitive(component, kind, positive, negative) {
-  return {
-    kind,
-    id: `${component.refdes}.${kind}`,
-    terminals: { a: positive, b: negative },
-    value: 0,
-    metadata: { component: component.refdes, dcValue: component.value },
-  };
-}
-
-function mosOrientation(type) {
-  const pmos = type.startsWith('pmos');
-  return {
-    channel: pmos ? 'p' : 'n',
-    currentDirection: 'drain-to-source',
-    polarity: 1,
-    convention: 'i_ds = gm(v_g-v_s) + gmb(v_b-v_s) + (v_d-v_s)/ro',
-  };
-}
-
-/**
- * Whether this device contributes its own gate capacitances. They are part of
- * the device's small-signal model exactly as `g_m` and `r_o` are -- nobody
- * draws those either -- so they are opt-in per device, or globally from the
- * analysis form, rather than symbols the user has to wire up by hand. A
- * capacitor drawn in the schematic remains the user's own component and is
- * modelled separately.
- */
-function includesParasitics(component, context) {
-  const own = component.analysis?.parasitics;
-  if (own === 'include') return true;
-  if (own === 'omit') return false;
-  return context?.parasitics === true;
-}
-
-/** `C_gs` and `C_gd`: the two that set a stage's input pole and drive Miller. */
-function parasiticPrimitives(component, nodes, metadata) {
-  return [
-    {
-      kind: 'capacitor',
-      id: `${component.refdes}.cgs`,
-      terminals: { a: nodes.g, b: nodes.s },
-      value: parameterName('Cgs', component.refdes),
-      metadata: { ...metadata, parasitic: 'cgs' },
-    },
-    {
-      kind: 'capacitor',
-      id: `${component.refdes}.cgd`,
-      terminals: { a: nodes.g, b: nodes.d },
-      value: parameterName('Cgd', component.refdes),
-      metadata: { ...metadata, parasitic: 'cgd' },
-    },
-  ];
-}
-
-function mosPrimitives(component, nodes, model, metadata) {
-  const names = {
-    gm: parameterName('gm', component.refdes),
-    gmb: parameterName('gmb', component.refdes),
-    ro: parameterName('ro', component.refdes),
-  };
-  const orientation = mosOrientation(component.type);
-  const explicitBulk = component.def.terminals.some((terminal) => terminal.name === 'b');
-  const deviceMetadata = {
-    ...metadata,
-    device: 'mos',
-    channel: orientation.channel,
-    bulk: {
-      node: nodes.b,
-      implicit: !explicitBulk,
-      ...(!explicitBulk ? { reference: orientation.channel === 'p' ? 'VDD' : 'VSS' } : {}),
-    },
-  };
-  return [
-    {
-      kind: 'resistor',
-      id: `${component.refdes}.ro`,
-      terminals: { a: nodes.d, b: nodes.s },
-      value: names.ro,
-      metadata: deviceMetadata,
-    },
-    {
-      kind: 'vccs',
-      id: `${component.refdes}.gm`,
-      terminals: { a: nodes.d, b: nodes.s },
-      value: names.gm,
-      control: { a: nodes.g, b: nodes.s },
-      metadata: { ...deviceMetadata, controlExpression: `${names.gm}(v_g-v_s)` },
-    },
-    {
-      kind: 'vccs',
-      id: `${component.refdes}.gmb`,
-      terminals: { a: nodes.d, b: nodes.s },
-      value: names.gmb,
-      control: { a: nodes.b, b: nodes.s },
-      metadata: { ...deviceMetadata, controlExpression: `${names.gmb}(v_b-v_s)` },
-    },
-  ];
-}
-
-function triodePrimitive(component, nodes, metadata) {
-  const parameter = parameterName('rds', component.refdes);
-  return {
-    kind: 'resistor',
-    id: `${component.refdes}.rds`,
-    terminals: { a: nodes.d, b: nodes.s },
-    value: parameter,
-    metadata: { ...metadata, device: 'mos', model: 'triode' },
-  };
-}
-
-function convertMos(circuit, component, context) {
-  const diagnostics = [];
-  const override = lookupDeviceRegion(context.deviceRegions, component.refdes);
-  const model = modelOverride(component, context);
-  if (MOS_CURRENT_SOURCE_MODELS.has(model)) {
-    diagnostics.push(diagnostic(
-      'legacy-mos-current-source',
-      `${component.refdes} uses the removed MOS current-source override`,
-      component,
-      'error',
-      'Remove the override. Use the exact MOS model; a zero-controlled device naturally contributes no gm/gmb current, while r_o -> infinity is the channel-length-modulation approximation.',
-    ));
-    return { primitives: [], diagnostics, nodes: [] };
-  }
-  if (model && !TRIODE_MODELS.has(model) && !['ro', 'r-o', 'output-resistance', 'small-signal'].includes(model)) {
-    diagnostics.push(diagnostic(`unknown-mos-model`, `unknown MOS small-signal model override "${model}"`, component));
-    return { primitives: [], diagnostics, nodes: [] };
-  }
-
-  const nodeResults = ['d', 's', 'g'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
-  const nodes = Object.fromEntries(nodeResults.map(([terminal, result]) => [terminal, result.node]));
-  diagnostics.push(...nodeResults.map(([, result]) => result.error).filter(Boolean));
-  const hasBulk = component.def.terminals.some((terminal) => terminal.name === 'b');
-  if (hasBulk) {
-    const bulk = nodeFor(circuit, component, 'b', context);
-    nodes.b = bulk.node;
-    if (bulk.error) diagnostics.push(bulk.error);
-  } else {
-    const rail = component.type.startsWith('pmos') ? 'VDD' : 'VSS';
-    nodes.b = referenceNode(context, rail);
-  }
-  if (diagnostics.length) return { primitives: [], diagnostics, nodes: Object.values(nodes).filter(Boolean) };
-  const metadata = primitiveMetadata(component, context, model, override && typeof override === 'object'
-    ? { deviceRegion: { ...override } }
-    : {});
-  // A device's own capacitances belong to whichever region it is in.
-  const parasitics = includesParasitics(component, context)
-    ? parasiticPrimitives(component, nodes, { ...metadata, device: 'mos' })
-    : [];
-  if (model && TRIODE_MODELS.has(model)) {
-    return {
-      primitives: [triodePrimitive(component, nodes, metadata), ...parasitics],
-      diagnostics,
-      nodes: Object.values(nodes),
-    };
-  }
-  return {
-    primitives: [...mosPrimitives(component, nodes, 'saturation', metadata), ...parasitics],
-    diagnostics,
-    nodes: Object.values(nodes),
-  };
-}
-
-function convertOneComponent(circuit, component, context) {
-  if (IGNORED_TYPES.has(component.type)) return { primitives: [], diagnostics: [], nodes: [] };
-  if (MOS_TYPES.has(component.type)) return convertMos(circuit, component, context);
-  if (component.type === 'voltage_source' || component.type === 'current_source') {
-    const terminals = ['a', 'b'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
-    const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);
-    if (diagnostics.length) return { primitives: [], diagnostics, nodes: terminals.map(([, result]) => result.node).filter(Boolean) };
-    const nodes = Object.fromEntries(terminals.map(([terminal, result]) => [terminal, result.node]));
-    return {
-      primitives: [sourcePrimitive(component, component.type === 'voltage_source' ? 'voltage-source' : 'current-source', nodes.a, nodes.b)],
-      diagnostics: [],
-      nodes: [nodes.a, nodes.b],
-    };
-  }
-  const kind = PASSIVE_TYPES.get(component.type);
-  if (kind) {
-    const terminals = ['a', 'b'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
-    const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);
-    if (diagnostics.length) return { primitives: [], diagnostics, nodes: terminals.map(([, result]) => result.node).filter(Boolean) };
-    const nodes = Object.fromEntries(terminals.map(([terminal, result]) => [terminal, result.node]));
-    // "Treat as R = infinity" (model.js `setComponentAnalysis`, a per-component
-    // small-signal attribute, mirroring the MOS triode `analysis.model`
-    // override) removes the branch entirely — an open circuit is exactly "no
-    // primitive here", not a primitive carrying an infinite value.
-    if (kind === 'resistor' && component.analysis?.resistance === 'infinite') {
-      return { primitives: [], diagnostics: [], nodes: [nodes.a, nodes.b] };
-    }
-    return { primitives: [twoTerminalPrimitive(component, kind, nodes.a, nodes.b)], diagnostics: [], nodes: [nodes.a, nodes.b] };
-  }
-  const terminals = component.def?.terminals
-    ?.map((terminal) => nodeFor(circuit, component, terminal.name, context, { required: false }).node)
-    .filter(Boolean) || [];
-  if (terminals.length) {
-    return {
-      primitives: [],
-      diagnostics: [diagnostic('unsupported-component', `${component.type} has no exact small-signal primitive conversion`, component, 'warning')],
-      nodes: terminals,
-    };
-  }
-  return { primitives: [], diagnostics: [], nodes: [] };
-}
-
-/** Convert one circuit component into flat, exact MNA-ready primitive descriptors. */
-function componentToPrimitives(circuit, component, context = {}) {
-  if (!circuit || !component) throw new TypeError('component conversion requires a Circuit and component');
-  return convertOneComponent(circuit, component, normalizeDeviceContext(context || {}));
-}
-
-/** Convert every supported electrical component in a Circuit. */
-function convertCircuitToPrimitives(circuit, context = {}) {
-  if (!circuit?.components?.values) throw new TypeError('primitive conversion requires a Circuit');
-  context = normalizeDeviceContext(context || {});
-  const primitives = [];
-  const diagnostics = [];
-  const nodes = new Set();
-  for (const component of circuit.components.values()) {
-    const converted = convertOneComponent(circuit, component, context);
-    primitives.push(...converted.primitives);
-    diagnostics.push(...converted.diagnostics);
-    converted.nodes.forEach((node) => nodes.add(node));
-  }
-  return {
-    ok: !diagnostics.some((entry) => entry.severity === 'error'),
-    primitives,
-    diagnostics,
-    nodes: [...nodes].sort(),
-  };
-}
-
-__exports.componentToPrimitives = componentToPrimitives;
-__exports.convertCircuitToPrimitives = convertCircuitToPrimitives;
-};
-
 __modules["src/core/analysis/topological-solve.js"] = function (__require, __exports) {
 const { solveMNA } = __require("src/core/analysis/solve.js");
 const { compactRational } = __require("src/core/analysis/compact.js");
@@ -37298,221 +37585,6 @@ function solveByTopology(system, excitations, context, ops, options = {}) {
 }
 
 __exports.solveByTopology = solveByTopology;
-};
-
-__modules["src/core/analysis/graph.js"] = function (__require, __exports) {
-const { asList, PASSIVE_KINDS } = __require("src/core/analysis/shared.js");
-const { AC_GROUND } = __require("src/core/analysis/context.js");
-
-
-
-const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs']);
-
-function asNode(value) {
-  if (value == null) return null;
-  return String(value);
-}
-
-function addNode(nodes, node) {
-  if (node && node !== AC_GROUND) nodes.add(node);
-}
-
-function primitiveNodes(primitive, canonicalNode) {
-  const nodes = [];
-  const add = (value) => {
-    const node = canonicalNode(asNode(value));
-    if (node && node !== AC_GROUND && !nodes.includes(node)) nodes.push(node);
-  };
-  add(primitive.terminals?.a);
-  add(primitive.terminals?.b);
-  add(primitive.control?.a);
-  add(primitive.control?.b);
-  return nodes;
-}
-
-function controlledNodes(primitive, canonicalNode) {
-  return [primitive.terminals.a, primitive.terminals.b, primitive.control?.a, primitive.control?.b]
-    .map((value) => canonicalNode(asNode(value)))
-    .filter((node, index, all) => node && node !== AC_GROUND && all.indexOf(node) === index);
-}
-
-function isZero(value) {
-  if (typeof value === 'number') return value === 0;
-  if (typeof value === 'bigint') return value === 0n;
-  if (value?.kind === 'number') return value.numerator === 0n;
-  if (value?.kind === 'rational') {
-    return value.budgetExceeded !== true && isZero(value.numerator);
-  }
-  return false;
-}
-
-function connects(primitive) {
-  if (primitive.couples === false) return false;
-  if (primitive.kind === 'current-source') return false;
-  if (['capacitor', 'conductance', 'admittance'].includes(primitive.kind)) {
-    return !isZero(primitive.value ?? primitive.admittance);
-  }
-  return SUPPORTED_KINDS.has(primitive.kind);
-}
-
-function canonicalizer(options = {}) {
-  const ground = new Set(options.acGroundIds || options.referenceIds || []);
-  const aliases = options.nodeAliases instanceof Map ? options.nodeAliases : new Map(Object.entries(options.nodeAliases || {}));
-  return (node) => {
-    if (!node || node === AC_GROUND || ground.has(node)) return node === AC_GROUND || ground.has(node) ? AC_GROUND : null;
-    return aliases.get(node) || node;
-  };
-}
-
-function rootsFrom(value, canonicalNode) {
-  return [...new Set(asList(value).map((root) => canonicalNode(asNode(root))).filter((root) => root && root !== AC_GROUND))];
-}
-
-/**
- * Split a coupled primitive set at `node`, treating it (like ground) as a
- * non-traversable boundary. Each returned component is a maximal set of
- * primitives whose non-ground, non-`node` nodes are mutually reachable
- * without passing through `node`; a VCCS's control nodes count toward its
- * reach exactly as they do for the relevance walk above, so a primitive
- * that couples two would-be components (directly, or through a control
- * terminal) forces them into one component instead of a false split.
- * Returns `null` when `node` is not an articulation point (fewer than two
- * components result), so the caller's single combined solve remains the
- * only correct option. `shunts` lists primitives touching only `node` and
- * ground (a direct node-to-ground branch, no other real node); callers
- * that cannot fold those in separately should treat their presence as a
- * reason not to split.
- */
-function splitAtNode(primitives = [], node, options = {}) {
-  const canonicalNode = canonicalizer(options);
-  const target = canonicalNode(asNode(node));
-  if (!target || target === AC_GROUND) return null;
-
-  const parent = new Map();
-  const find = (value) => {
-    if (!parent.has(value)) parent.set(value, value);
-    let root = value;
-    while (parent.get(root) !== root) root = parent.get(root);
-    parent.set(value, root);
-    return root;
-  };
-  const union = (a, b) => {
-    const rootA = find(a);
-    const rootB = find(b);
-    if (rootA !== rootB) parent.set(rootA, rootB);
-  };
-
-  const entries = primitives.map((primitive, index) => {
-    if (!connects(primitive)) return { index, realNodes: [], touchesTarget: false };
-    const nodes = primitive.kind === 'vccs'
-      ? controlledNodes(primitive, canonicalNode)
-      : primitiveNodes(primitive, canonicalNode);
-    const touchesTarget = nodes.includes(target);
-    const realNodes = nodes.filter((candidate) => candidate !== target);
-    return { index, realNodes, touchesTarget };
-  });
-
-  for (const { realNodes } of entries) {
-    for (let i = 1; i < realNodes.length; i++) union(realNodes[0], realNodes[i]);
-  }
-
-  const groups = new Map();
-  const shunts = [];
-  for (const entry of entries) {
-    if (entry.realNodes.length === 0) {
-      if (entry.touchesTarget) shunts.push(entry.index);
-      continue;
-    }
-    const root = find(entry.realNodes[0]);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root).push(entry.index);
-  }
-
-  if (groups.size + (options.includeShunts ? shunts.length : 0) < 2) return null;
-  return {
-    target,
-    components: [...groups.entries()].map(([root, primitiveIndices]) => ({ root, primitiveIndices })),
-    shunts,
-    componentOf(rawNode) {
-      const canonical = canonicalNode(asNode(rawNode));
-      if (!canonical || canonical === AC_GROUND || canonical === target) return null;
-      return find(canonical);
-    },
-  };
-}
-
-/**
- * Return the primitive subgraph coupled to the supplied analysis ports.
- * Ground is a terminal boundary, never a traversable bridge between islands.
- */
-function coupledSubgraph(primitives = [], roots = [], options = {}) {
-  const canonicalNode = canonicalizer(options);
-  const normalizedPrimitives = primitives.map((primitive, index) => ({
-    ...primitive,
-    index,
-    nodes: primitiveNodes(primitive, canonicalNode),
-  }));
-  const adjacency = new Map();
-  const connectNodes = (nodes, primitiveIndex) => {
-    for (const node of nodes) {
-      if (node === AC_GROUND) continue;
-      if (!adjacency.has(node)) adjacency.set(node, []);
-      adjacency.get(node).push(primitiveIndex);
-    }
-  };
-  normalizedPrimitives.forEach((primitive) => {
-    if (!connects(primitive)) return;
-    const nodes = primitive.kind === 'vccs'
-      ? controlledNodes(primitive, canonicalNode)
-      : primitive.nodes;
-    connectNodes(nodes, primitive.index);
-  });
-
-  const rootNodes = rootsFrom(roots, canonicalNode);
-  const visited = new Set(rootNodes);
-  const included = new Set();
-  const queue = [...rootNodes];
-  for (let head = 0; head < queue.length; head++) {
-    const node = queue[head];
-    for (const primitiveIndex of adjacency.get(node) || []) {
-      included.add(primitiveIndex);
-      for (const next of normalizedPrimitives[primitiveIndex].nodes) {
-        if (!visited.has(next)) {
-          visited.add(next);
-          queue.push(next);
-        }
-      }
-    }
-  }
-
-  const selectedEntries = normalizedPrimitives
-    .filter(({ index }) => included.has(index))
-    .map((primitive) => ({ ...primitive }));
-  const selected = selectedEntries.map(({ index, nodes, ...primitive }) => primitive);
-  const nodeOrder = [];
-  const nodeSet = new Set();
-  for (const root of rootNodes) {
-    addNode(nodeSet, root);
-    if (!nodeOrder.includes(root)) nodeOrder.push(root);
-  }
-  for (const primitive of selectedEntries) {
-    for (const node of primitive.nodes) {
-      addNode(nodeSet, node);
-      if (!nodeOrder.includes(node)) nodeOrder.push(node);
-    }
-  }
-  return {
-    roots: rootNodes,
-    nodes: nodeSet,
-    nodeOrder,
-    primitives: selected,
-    primitiveIndices: selectedEntries.map(({ index }) => index),
-    diagnostics: rootNodes.length ? [] : [{ code: 'missing-roots', message: 'at least one non-ground analysis root is required' }],
-  };
-}
-
-__exports.splitAtNode = splitAtNode;
-__exports.coupledSubgraph = coupledSubgraph;
 };
   __require("src/web/main.js");
 }());
