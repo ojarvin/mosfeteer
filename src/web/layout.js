@@ -49,8 +49,9 @@ export function labelLayoutItem(label) {
 }
 
 /** Align each bbox to the outer edge or center of the selected-set bbox.
- * A target requiring a fractional grid move is unavailable rather than
- * silently claiming that an almost-aligned result is exact. */
+ * Objects only move by whole cells, so a target between grid points (e.g. the
+ * center of an odd-width box) rounds to the nearest one and the plan reports
+ * `exact: false` instead of claiming a perfect alignment. */
 export function alignmentPlan(items, direction, grid = GRID) {
   if (items.length < 2) return { ok: false, reason: 'Select at least two movable objects.' };
   const axis = ['left', 'right', 'center-x'].includes(direction) ? 'x' : 'y';
@@ -62,12 +63,12 @@ export function alignmentPlan(items, direction, grid = GRID) {
     const current = direction === 'left' || direction === 'top' ? item.bbox[axis]
       : direction === 'right' || direction === 'bottom' ? end(item.bbox, axis)
         : center(item.bbox, axis);
-    return { id: item.id, dx: axis === 'x' ? target - current : 0, dy: axis === 'y' ? target - current : 0 };
+    const raw = target - current;
+    const shift = (nearGrid(raw, grid) ? raw : Math.round(raw / grid) * grid) || 0;
+    return { id: item.id, dx: axis === 'x' ? shift : 0, dy: axis === 'y' ? shift : 0, exact: nearGrid(raw, grid) };
   });
-  if (deltas.some(({ dx, dy }) => !nearGrid(dx || dy, grid))) {
-    return { ok: false, reason: 'Exact alignment would move an object off the grid.' };
-  }
-  return { ok: true, deltas };
+  const exact = deltas.every((delta) => delta.exact);
+  return { ok: true, deltas: deltas.map(({ id, dx, dy }) => ({ id, dx, dy })), exact };
 }
 
 /** Keep the outer two objects fixed and spread the interior on the grid.

@@ -21,7 +21,7 @@ test('a generic symbol anchor uses declared terminals and survives mirroring', (
   assert.notEqual(ghost.bbox.x + ghost.bbox.w / 2, ghost.anchor.x, 'asymmetric bbox center is not the spacing anchor');
 });
 
-test('align uses the outer bbox of the whole selection and refuses off-grid claims', () => {
+test('align uses the outer bbox of the whole selection and rounds off-grid targets', () => {
   const a = item('A', 0, 0);
   const b = item('B', 200, 80);
   const left = alignmentPlan([a, b], 'left');
@@ -32,8 +32,17 @@ test('align uses the outer bbox of the whole selection and refuses off-grid clai
   ]);
   const top = alignmentPlan([a, b], 'top');
   assert.deepEqual(top.deltas[1], { id: 'B', dx: 0, dy: -80 });
-  const odd = item('C', 200, 0, 104);
-  assert.equal(alignmentPlan([a, odd], 'left').ok, false);
+  assert.equal(left.exact, true);
+  // A box five cells wide has its center between grid points. Centering a
+  // label on it lands on the nearest grid point and says it is not exact.
+  const box = { id: 'BOX', kind: 'label', type: 'box', rotation: 0, anchor: { x: 0, y: 0 }, bbox: { x: 0, y: 0, w: 200, h: 120 } };
+  const caption = item('CAP', 120, 200, 80, 40, 'label');
+  const centered = alignmentPlan([box, caption], 'center-x');
+  assert.equal(centered.ok, true);
+  assert.equal(centered.exact, false);
+  assert.deepEqual(centered.deltas, [{ id: 'BOX', dx: 0, dy: 0 }, { id: 'CAP', dx: 0, dy: 0 }]);
+  const pulled = alignmentPlan([box, item('CAP', 200, 200, 80, 40, 'label')], 'center-x');
+  assert.deepEqual(pulled.deltas[1], { id: 'CAP', dx: -80, dy: 0 });
 });
 
 test('distribution distinguishes outline gaps from anchor intervals and holds outer objects', () => {
@@ -330,4 +339,20 @@ test('placement guides omit drawn-space references while keeping anchor spacing'
   const guides = placementGuides(stack, item('__ghost__', 0, 200, 80, 80, 'port'));
   assert.equal(guides.some((guide) => guide.basis === 'space'), false);
   assert.ok(guides.some((guide) => guide.kind === 'spacing'));
+});
+
+test('align lives in the Selection inspector and lines up box child labels', async () => {
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const selection = html.slice(html.indexOf('data-panel="terminals"'), html.indexOf('</section>', html.indexOf('data-panel="terminals"')));
+  assert.ok(selection.indexOf('id="style-panel"') < selection.indexOf('id="align-panel"'), 'Align follows Style inside Selection');
+  assert.equal((html.match(/id="align-panel"/g) || []).length, 1);
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  // A box's child label is eligible; only owned and net labels are excluded.
+  assert.match(main, /const eligibleLabels = labels\.filter\(\(label\) => !label\.owner && !label\.netId\);/);
+  // Children move from their original anchors after their parents.
+  // Selected children, even unmoved ones, are placed after their parents.
+  assert.match(main, /const children = plan\.deltas\.filter\(isChild\);/);
+  assert.match(main, /\[\.\.\.moves\.filter\(\(move\) => !isChild\(move\)\), \.\.\.children\]/);
+  assert.match(main, /label\.moveTo\(origin\.x \+ dx, origin\.y \+ dy\)/);
 });

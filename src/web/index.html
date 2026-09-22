@@ -359,6 +359,29 @@
             </div>
           </div>
         </div>
+        <div class="style-panel align-panel" id="align-panel" role="group" aria-labelledby="align-heading" hidden>
+          <div class="style-heading" id="align-heading">Align <span class="align-count" id="align-count"></span></div>
+          <div class="align-controls">
+            <div class="align-button-grid" role="group" aria-label="Align selected object bounding boxes">
+              <button type="button" data-layout-align="left" title="Align left edges to the selected set's leftmost edge">Left</button>
+              <button type="button" data-layout-align="center-x" title="Align horizontal centers to the selected set's center">Center X</button>
+              <button type="button" data-layout-align="right" title="Align right edges to the selected set's rightmost edge">Right</button>
+              <button type="button" data-layout-align="top" title="Align top edges to the selected set's topmost edge">Top</button>
+              <button type="button" data-layout-align="center-y" title="Align vertical centers to the selected set's center">Center Y</button>
+              <button type="button" data-layout-align="bottom" title="Align bottom edges to the selected set's bottommost edge">Bottom</button>
+            </div>
+            <label class="align-measure-label" for="align-measure">Space by</label>
+            <select id="align-measure" title="Outline gaps measure space between shapes; connection anchors measure spacing between their useful placement points">
+              <option value="gaps">Outline gaps</option>
+              <option value="anchors">Connection anchors</option>
+            </select>
+            <div class="align-distribute-grid" role="group" aria-label="Distribute selected objects">
+              <button type="button" data-layout-distribute="x" title="Distribute horizontally, keeping the outer objects fixed">Even horizontal</button>
+              <button type="button" data-layout-distribute="y" title="Distribute vertically, keeping the outer objects fixed">Even vertical</button>
+            </div>
+            <div class="align-note" id="align-note" aria-live="polite"></div>
+          </div>
+        </div>
       </section>
 
       <section class="panel-group check-summary" id="check-summary" data-panel="check-summary" data-doc-kind="schematic" aria-labelledby="check-summary-heading">
@@ -372,29 +395,6 @@
         </div>
       </section>
 
-      <section class="panel-group align-panel" id="align-panel" data-doc-kind="schematic" aria-labelledby="align-heading" hidden>
-        <h2 class="panel-heading" id="align-heading">Align <span class="panel-count" id="align-count"></span></h2>
-        <div class="align-controls">
-          <div class="align-button-grid" role="group" aria-label="Align selected object bounding boxes">
-            <button type="button" data-layout-align="left" title="Align left edges to the selected set's leftmost edge">Left</button>
-            <button type="button" data-layout-align="center-x" title="Align horizontal centers to the selected set's center">Center X</button>
-            <button type="button" data-layout-align="right" title="Align right edges to the selected set's rightmost edge">Right</button>
-            <button type="button" data-layout-align="top" title="Align top edges to the selected set's topmost edge">Top</button>
-            <button type="button" data-layout-align="center-y" title="Align vertical centers to the selected set's center">Center Y</button>
-            <button type="button" data-layout-align="bottom" title="Align bottom edges to the selected set's bottommost edge">Bottom</button>
-          </div>
-          <label class="align-measure-label" for="align-measure">Space by</label>
-          <select id="align-measure" title="Outline gaps measure space between shapes; connection anchors measure spacing between their useful placement points">
-            <option value="gaps">Outline gaps</option>
-            <option value="anchors">Connection anchors</option>
-          </select>
-          <div class="align-distribute-grid" role="group" aria-label="Distribute selected objects">
-            <button type="button" data-layout-distribute="x" title="Distribute horizontally, keeping the outer objects fixed">Even horizontal</button>
-            <button type="button" data-layout-distribute="y" title="Distribute vertically, keeping the outer objects fixed">Even vertical</button>
-          </div>
-          <div class="align-note" id="align-note" aria-live="polite"></div>
-        </div>
-      </section>
     </aside>
   </main>
 

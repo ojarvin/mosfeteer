@@ -2472,7 +2472,9 @@ function selectedComps() {
 function layoutSelection() {
   const components = selectedComps();
   const labels = selectedLabels().filter((label) => !label.owner || !multi.has(label.owner));
-  const eligibleLabels = labels.filter((label) => !label.owner && !label.netId && !label.parent);
+  // Free annotations and a box/arrow's own child labels line up like any
+  // object; applyLayoutPlan keeps a child independent of its moving parent.
+  const eligibleLabels = labels.filter((label) => !label.owner && !label.netId);
   const items = [
     ...components.map(componentLayoutItem),
     ...eligibleLabels.map(labelLayoutItem),
@@ -2487,8 +2489,8 @@ function layoutPlan(action, measure = 'gaps') {
   const selection = layoutSelection();
   if (selection.blocked) return { ok: false, reason: 'Select only components or free annotations; wires and net labels cannot be aligned this way.' };
   return action === 'x' || action === 'y'
-    ? distributionPlan(selection.items, action, measure)
-    : alignmentPlan(selection.items, action);
+    ? { ...distributionPlan(selection.items, action, measure), kind: 'distribute' }
+    : { ...alignmentPlan(selection.items, action), kind: 'align' };
 }
 
 function updateAlignControls() {
@@ -2506,8 +2508,9 @@ function updateAlignControls() {
       : 'Outer objects stay fixed when distributing.';
   for (const button of panel.querySelectorAll('[data-layout-align], [data-layout-distribute]')) {
     const plan = layoutPlan(button.dataset.layoutAlign || button.dataset.layoutDistribute, measure);
+    button.dataset.title ??= button.title;
     button.disabled = !plan.ok;
-    if (!plan.ok) button.title = plan.reason;
+    button.title = plan.ok ? button.dataset.title : plan.reason;
   }
 }
 
@@ -2521,17 +2524,22 @@ function applyLayoutPlan(plan) {
   try {
     const refs = moves.filter(({ id }) => circuit.components.has(id)).map(({ id }) => id);
     const touched = netsTouching(refs);
-    for (const { id, dx, dy } of moves) {
+    // Every target is relative to where the object started. Moving a box or
+    // arrow carries its child labels along, so place selected children after
+    // their parents, from their original anchors -- including children that
+    // should not move at all -- or a child would follow its parent.
+    const isChild = ({ id }) => !!circuit.labels.get(id)?.parent;
+    const children = plan.deltas.filter(isChild);
+    const origins = new Map([...moves, ...children].map(({ id }) => [id, circuit.labels.get(id)?.anchorWorld()]));
+    for (const { id, dx, dy } of [...moves.filter((move) => !isChild(move)), ...children]) {
       const component = circuit.components.get(id);
       if (component) {
         component.transform.x += dx;
         component.transform.y += dy;
       } else {
         const label = circuit.labels.get(id);
-        if (label) {
-          const anchor = label.anchorWorld();
-          label.moveTo(anchor.x + dx, anchor.y + dy);
-        }
+        const origin = origins.get(id);
+        if (label && origin) label.moveTo(origin.x + dx, origin.y + dy);
       }
     }
     if (refs.length) {
@@ -2549,7 +2557,9 @@ function applyLayoutPlan(plan) {
     recordHistoryEntry(before);
     markModelChanged();
     layoutPreviewRects = [];
-    logLine(plan.exact === false ? 'distributed on grid; adjacent intervals differ by at most one cell' : 'aligned selection');
+    logLine(plan.exact !== false ? 'aligned selection'
+      : plan.kind === 'distribute' ? 'distributed on grid; adjacent intervals differ by at most one cell'
+        : 'aligned to the nearest grid point; exact alignment falls between grid points');
     render();
     return true;
   } catch (err) {

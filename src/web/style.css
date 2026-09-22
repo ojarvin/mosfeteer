@@ -1680,14 +1680,14 @@ button:disabled {
 
 /* ----- side panel ---------------------------------------------- */
 
-.align-panel {
-  flex: none;
-  margin-top: auto;
-  padding: 8px 12px 10px;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
+/* Align sits in the Selection inspector under Style; it shares the Style
+   block's separator and heading. */
+.align-count {
+  margin-left: 4px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
-
 
 .align-controls { display: grid; gap: 7px; }
 .align-button-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
