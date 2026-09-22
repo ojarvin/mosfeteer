@@ -19,7 +19,7 @@ const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")
 const { smallSignalSchematic } = __require("src/core/analysis/model-schematic.js");
 const { componentShapeSvg, editorOverlay, svgString, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js");
 const { componentsOfSymbols } = __require("src/core/analysis/provenance.js");
-const { themeInkSvg } = __require("src/core/style.js");
+const { resolveColor, themeInkSvg } = __require("src/core/style.js");
 const { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js");
 const { createDocument, loadDocument, renderDocument } = __require("src/core/document.js");
 const { snap, GRID } = __require("src/core/grid.js");
@@ -244,6 +244,7 @@ const ICON_PATHS = {
   detach: '<rect x="8" y="6.5" width="8" height="11" rx="1.8" fill="currentColor" fill-opacity=".16"/><path d="M2.5 12H5M19 12h2.5"/><path d="m5.5 9-1 6M19.5 9l-1 6"/>',
   copy: '<rect x="3.5" y="3.5" width="11" height="11" rx="2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".16"/>',
   tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
+  highlight: '<path d="M14.5 4.5l5 5-8 8H6.5v-5z" fill="currentColor" fill-opacity=".16"/><path d="M12 7l5 5"/><path d="M3.5 20.5h8"/>',
   text: '<path d="M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6"/>',
   arrow: '<path d="M5 19 16 8"/><path d="M20 4l-1.6 9-7.4-7.4z" fill="currentColor" stroke="none"/>',
   rectangle: '<rect x="3.5" y="5.5" width="17" height="13" rx="2" fill="currentColor" fill-opacity=".16"/>',
@@ -279,6 +280,7 @@ const TOOL_CURSOR_ICONS = {
   copy: 'copy',
   delete: 'trash',
   'net-label': 'tag',
+  highlight: 'highlight',
   annotation: 'text',
   equation: 'text',
   arrow: 'arrow',
@@ -561,6 +563,7 @@ function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null
   };
   if (visual) return { key: 'visual', canvasClass: 'mode-visual', toolbar: 'visual', label: 'VISUAL' };
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL' };
+  if (labelMode === 'highlight') return { key: 'highlight', canvasClass: 'mode-highlight', toolbar: 'highlight', label: 'HIGHLIGHT' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION' };
   if (labelMode === 'equation') return { key: 'equation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'EQUATION' };
   if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE' };
@@ -1764,14 +1767,7 @@ function isTransientCopyGhostNet(id) {
 }
 
 function unnamedReferenceInfoForNet(net) {
-  if (!net) return null;
-  for (const terminal of net.terminals || []) {
-    const component = circuit.components.get(terminal.comp);
-    if (!isReferenceMarker(component) || referenceMarkerIsLocal(component)) continue;
-    const info = referenceMarkerInfo(component.type);
-    if (info?.terminal === terminal.term && isReferenceMarkerGlobalName(info, net.name)) return info;
-  }
-  return null;
+  return net ? circuit.unnamedReferenceInfo(net) : null;
 }
 
 function referenceGroupNets(netOrInfo) {
@@ -1781,9 +1777,7 @@ function referenceGroupNets(netOrInfo) {
 }
 
 function namedNetGroupKey(net) {
-  if (!net?.id) return '';
-  const info = unnamedReferenceInfoForNet(net);
-  return `name:${info?.globalName || net.name || net.id}`;
+  return circuit.netGroupKey(net);
 }
 
 function namedGroupNets(net) {
@@ -3653,6 +3647,79 @@ function placeShapeAnnotation(world, endOverride = null) {
   return true;
 }
 
+/** The net under a highlight click: a pin, a wire, a net label, or a
+ * ground/supply/VCM marker, in that order. */
+function highlightTargetAt(world) {
+  const terminal = nearestTerminal(world);
+  if (terminal) {
+    const net = circuit.netOfTerminal({ comp: terminal.refdes, term: terminal.term });
+    if (net) return net;
+  }
+  const wireNet = pickWire(world)?.net;
+  if (wireNet) return wireNet;
+  const label = pickLabel(world);
+  if (label?.netId) return circuit.nets.get(label.netId) || null;
+  const hit = pickAt(world);
+  const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
+  if (isReferenceMarker(component)) {
+    const info = referenceMarkerInfo(component.type);
+    return circuit.netOfTerminal({ comp: component.refdes, term: info.terminal });
+  }
+  return null;
+}
+
+/** Cycle the clicked net's electrical group to its next free highlight color. */
+function highlightNetAt(world) {
+  const net = highlightTargetAt(world);
+  if (!net) {
+    hintLine('HIGHLIGHT: click a wire, pin, net label, or rail marker');
+    return false;
+  }
+  let color = null;
+  try {
+    commit(() => { color = circuit.cycleNetHighlight(net); });
+  } catch (err) {
+    logLine(`HIGHLIGHT: ${err.message}`, 'error');
+    return false;
+  }
+  const name = net.name || net.id;
+  logLine(color ? `net ${name} highlighted ${color}` : `net ${name} highlight removed`);
+  render();
+  return true;
+}
+
+function removeAllNetHighlights() {
+  let count = 0;
+  commit(() => { count = circuit.clearNetHighlights(); });
+  logLine(count ? `removed ${count} net highlight${count === 1 ? '' : 's'}` : 'no net highlights to remove');
+  render();
+}
+
+/** Right-click on the highlight tool: its one bulk action. */
+function openHighlightToolMenu(x, y) {
+  if (!componentContextMenuEl) return;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  heading.textContent = 'Net highlight';
+  menu.appendChild(heading);
+  const highlighted = circuit.toJSON().netHighlights;
+  appendContextItem(menu, 'Remove all highlights', removeAllNetHighlights, { disabled: !highlighted, shortcut: '8', danger: true });
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+document.getElementById('btn-mode-highlight')?.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  ev.stopPropagation();
+  openHighlightToolMenu(ev.clientX, ev.clientY);
+});
+
 function placeNetLabelAt(world) {
   const target = netLabelTargetAt(world);
   if (!target) {
@@ -4635,7 +4702,7 @@ function bindHoverPreview(row, target) {
 
 function updateCanvasHover(w) {
   if (hoverFromPanel) return;
-  const quiet = mode === 'insert' || labelMode || visual || quickAdd;
+  const quiet = mode === 'insert' || (labelMode && labelMode !== 'highlight') || visual || quickAdd;
   const selecting = !quiet && !wire && !directWire && !moveMode && !copyMode && !deleteMode;
   const hit = selecting ? pickAt(w) : null;
   const pinsRef = hit?.refdes && isPinDragCandidate(circuit.components.get(hit.refdes)?.def) ? hit.refdes : null;
@@ -7987,6 +8054,7 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'labelplace') {
     if (!movedOut) {
       if (labelMode === 'net') placeNetLabelAt(w);
+      else if (labelMode === 'highlight') highlightNetAt(w);
       else if (labelMode === 'annotation') placeAnnotationAt(w);
       else if (labelMode === 'equation') placeEquationAt(w);
     }
@@ -10000,6 +10068,14 @@ function renderNets() {
 
     const ref = document.createElement('span');
     ref.className = 'ref';
+    const highlight = circuit.netHighlight(net);
+    if (highlight) {
+      const dot = document.createElement('span');
+      dot.className = 'net-highlight-dot';
+      dot.style.setProperty('--net-highlight', resolveColor(highlight));
+      dot.title = `Highlighted ${highlight}`;
+      ref.appendChild(dot);
+    }
     appendMarkupText(ref, net.name || net.id);
     ref.title = 'Double-click to rename';
 
@@ -10612,6 +10688,16 @@ function onNormalKey(key, shiftKey = false) {
   if (movePending && key === 'Enter') {
     if (drag) drag.shift = shiftKey;
     commitModalMove();
+    return;
+  }
+  // 9 arms net highlighting and 8 removes every highlight, unless they
+  // continue a count already being typed (e.g. 18 then an arrow).
+  if (key === '9' && !counts) {
+    activateHighlight();
+    return;
+  }
+  if (key === '8' && !counts) {
+    removeAllNetHighlights();
     return;
   }
   if (/^[0-9]$/.test(key)) {
@@ -11400,6 +11486,7 @@ const TOOLBAR_IDS = {
   'send-back': ['btn-send-back'],
   'bring-front': ['btn-bring-front'],
   'net-label': ['btn-net-label', 'btn-mode-net-label', 'tool-net-label', 'mode-net-label'],
+  highlight: ['btn-mode-highlight'],
   annotation: ['btn-annotation', 'btn-mode-annotation', 'tool-annotation', 'mode-annotation'],
   arrow: ['btn-arrow', 'btn-mode-arrow', 'tool-arrow', 'mode-arrow'],
   box: ['btn-box', 'btn-mode-box', 'tool-box', 'mode-box'],
@@ -11775,7 +11862,7 @@ function syncInteractionUI() {
   }
   // Toggle only real changes: rewriting the canvas class invalidates style
   // for the whole drawing, and this runs on every repaint.
-  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-annotation']) {
+  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-highlight', 'mode-annotation']) {
     canvasEl.classList.toggle(name, name === state.canvasClass);
   }
   canvasEl.classList.toggle(state.canvasClass, true);
@@ -11811,6 +11898,7 @@ function renderStatus() {
   }
   if (activePlacementGuides.length) parts.push(describeGuides(activePlacementGuides));
   if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
+  if (labelMode === 'highlight') parts.push('click a wire, pin, net label, or rail marker to cycle its net color · 8 removes all · Esc exits');
   if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
   if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
   if (wire) {
@@ -12221,6 +12309,8 @@ function activateLabelPlacement(kind) {
   annotationPoints = [];
   hintLine(kind === 'net'
     ? 'NET LABEL: click a physical wire; stays active until Esc'
+    : kind === 'highlight'
+      ? 'HIGHLIGHT: click a net to cycle its color; 8 removes all; Esc exits'
     : kind === 'annotation'
       ? 'ANNOTATION: click anywhere to place free text; Esc cancels'
       : `${kind.toUpperCase()}: click start and end points; stays active until Esc`);
@@ -12229,6 +12319,10 @@ function activateLabelPlacement(kind) {
 
 function activateNetLabel() {
   activateLabelPlacement('net');
+}
+
+function activateHighlight() {
+  activateLabelPlacement('highlight');
 }
 
 function activateAnnotation() {
@@ -12735,6 +12829,7 @@ function bindInteractionControls() {
     'send-back': () => restackSelected('back'),
     'bring-front': () => restackSelected('front'),
     'net-label': activateNetLabel,
+    highlight: activateHighlight,
     annotation: activateAnnotation,
     arrow: () => activateShapeAnnotation('arrow'),
     box: () => activateShapeAnnotation('box'),
@@ -14260,6 +14355,10 @@ function referenceMarkerName(component) {
   return canonicalNetName(label?._text || '');
 }
 
+/** Persistent net highlight colors, in cycling order. Palette tokens, so a
+ * highlight follows the theme like any other colored object. */
+const NET_HIGHLIGHT_COLORS = Object.freeze(['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
+
 /** Unnamed (global) reference markers attached to a net that carries a
  * different given name, e.g. a ground on `OUT`. The net keeps its name, but
  * the marker still ties it into the shared rail, so the join shorts two names.
@@ -15674,6 +15773,8 @@ class Circuit {
     this.suppressedJunctions = new Set();
     /** Pending warnings from merging separately named physical nets. */
     this.netNameWarnings = [];
+    /** Persistent highlight color per electrical group (see netGroupKey). */
+    this.netHighlights = new Map();
     this._routingEnvCache = new Map();
   }
 
@@ -16386,6 +16487,7 @@ class Circuit {
   renameNet(netOrId, name) {
     this.invalidateRoutingCache();
     const net = this._resolveNet(netOrId);
+    const previousGroup = this.netGroupKey(net);
     const canonical = canonicalNetName(name);
     if (!canonical && this.netLabels(net).length > 0) throw new Error(`cannot clear name of net ${net.id} while net labels are attached`);
     net.name = canonical;
@@ -16415,7 +16517,72 @@ class Circuit {
     this._syncInterfacePinLabels(net);
     this._syncReferenceMarkerLabels(net);
     this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
+    this._carryNetHighlight(previousGroup, this.netGroupKey(net));
     return net;
+  }
+
+  // ----- persistent net highlights -------------------------------------
+
+  /** Unnamed global reference marker (ground, supply, VCM) that names this
+   * net with its rail name, or null. */
+  unnamedReferenceInfo(net) {
+    for (const terminal of net?.terminals || []) {
+      const component = this.components.get(terminal.comp);
+      if (!isReferenceMarker(component) || referenceMarkerIsLocal(component)) continue;
+      const info = referenceMarkerInfo(component.type);
+      if (info?.terminal === terminal.term && isReferenceMarkerGlobalName(info, net.name)) return info;
+    }
+    return null;
+  }
+
+  /** The electrical group a physical net belongs to: nets on one unnamed
+   * rail share the rail name, equally named nets are virtually connected,
+   * and any other net stands alone under its id. */
+  netGroupKey(net) {
+    if (!net?.id) return '';
+    return `name:${this.unnamedReferenceInfo(net)?.globalName || net.name || net.id}`;
+  }
+
+  /** Highlight color token of a net's electrical group, or null. */
+  netHighlight(net) {
+    return this.netHighlights.get(this.netGroupKey(net)) || null;
+  }
+
+  /** Advance a group's highlight to the next color no other highlighted
+   * group uses; past the last color it clears. Returns the new color. */
+  cycleNetHighlight(netOrId) {
+    const key = this.netGroupKey(this._resolveNet(netOrId));
+    const live = this._liveNetGroups();
+    const taken = new Set([...this.netHighlights]
+      .filter(([other]) => other !== key && live.has(other))
+      .map(([, color]) => color));
+    const current = this.netHighlights.get(key);
+    const from = current ? NET_HIGHLIGHT_COLORS.indexOf(current) + 1 : 0;
+    const next = NET_HIGHLIGHT_COLORS.slice(from).find((color) => !taken.has(color)) || null;
+    if (!current && !next) throw new Error('every highlight color is already in use');
+    if (next) this.netHighlights.set(key, next);
+    else this.netHighlights.delete(key);
+    return next;
+  }
+
+  /** Remove every net highlight. Returns how many groups were highlighted. */
+  clearNetHighlights() {
+    const count = [...this.netHighlights.keys()].filter((key) => this._liveNetGroups().has(key)).length;
+    this.netHighlights.clear();
+    return count;
+  }
+
+  _liveNetGroups() {
+    return new Set([...this.nets.values()].map((net) => this.netGroupKey(net)));
+  }
+
+  /** A rename that moves a whole group to a new key keeps its highlight. A
+   * net leaving a group that still has other members leaves it uncolored. */
+  _carryNetHighlight(from, to) {
+    if (!from || from === to || !this.netHighlights.has(from) || this.netHighlights.has(to)) return;
+    if (this._liveNetGroups().has(from)) return;
+    this.netHighlights.set(to, this.netHighlights.get(from));
+    this.netHighlights.delete(from);
   }
 
   /** A port's owned label is its identity, exactly like every other
@@ -19687,13 +19854,23 @@ class Circuit {
         message: warning.message,
       })),
       suppressedJunctions: [...this.suppressedJunctions],
+      ...this._netHighlightsJSON(),
     };
+  }
+
+  _netHighlightsJSON() {
+    const live = this._liveNetGroups();
+    const entries = [...this.netHighlights].filter(([key]) => live.has(key));
+    return entries.length ? { netHighlights: Object.fromEntries(entries) } : {};
   }
 
   static fromJSON(data) {
     if (!data || ![1, 2].includes(data.version)) throw new Error('unsupported state version');
     const circuit = new Circuit();
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
+    for (const [key, color] of Object.entries(data.netHighlights || {})) {
+      if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
+    }
     circuit._loading = true;
     for (const c of data.components) {
       // The filled terminal marker was folded into the one labelled port.
@@ -19868,6 +20045,7 @@ __exports.componentLabelText = componentLabelText;
 __exports.pathHasDiagonal = pathHasDiagonal;
 __exports.diagonalDraftPath = diagonalDraftPath;
 __exports.REFERENCE_MARKER_TYPES = REFERENCE_MARKER_TYPES;
+__exports.NET_HIGHLIGHT_COLORS = NET_HIGHLIGHT_COLORS;
 __exports.LABEL_CHAR_W = LABEL_CHAR_W;
 __exports.LABEL_FONT_SIZE = LABEL_FONT_SIZE;
 __exports.LABEL_CAP_H = LABEL_CAP_H;
@@ -19878,6 +20056,498 @@ __exports.LabelInstance = LabelInstance;
 __exports.ComponentInstance = ComponentInstance;
 __exports.Net = Net;
 __exports.Circuit = Circuit;
+};
+
+__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
+const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
+const { analyzeResponse } = __require("src/core/analysis/response.js");
+const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
+const { infinity } = __require("src/core/analysis/rational.js");
+
+
+
+
+
+const QUANTITIES = Object.freeze([
+  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
+  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
+  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
+]);
+
+const SOURCE_NAMES = Object.freeze({
+  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
+  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
+  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
+});
+
+function asArray(value) {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function unique(values) {
+  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
+}
+
+function lookup(source, names) {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const name of names) {
+    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
+  }
+  return undefined;
+}
+
+function isExpression(value) {
+  return value && typeof value === 'object' && typeof value.kind === 'string';
+}
+
+function expressionOf(value) {
+  if (value === undefined || value === null) return undefined;
+  if (value.kind === 'rational') return value;
+  if (isExpression(value)) return value;
+  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
+  return value;
+}
+
+function hasFrequency(value) {
+  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
+  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
+  if (value?.kind === 'power') return hasFrequency(value.base);
+  if (value?.kind === 'add' || value?.kind === 'multiply') {
+    const values = value.kind === 'add' ? value.terms : value.factors;
+    return values.some(hasFrequency);
+  }
+  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+}
+
+function responseRecord(value) {
+  if (value === undefined || value === null) return null;
+  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
+  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
+    return value;
+  }
+  const expression = expressionOf(value);
+  if (expression === undefined || expression === null) return null;
+  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
+  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
+}
+
+function pairFor(source) {
+  if (!source) return { selected: null, exact: null, source: null };
+  const selectedRaw = firstDefined(
+    source.selectedResponse,
+    source.selectedResult,
+    source.selected,
+    source.display,
+    source.approximate,
+    source.expression !== undefined ? source : undefined,
+    isExpression(source) ? source : undefined,
+  );
+  const exactRaw = firstDefined(
+    source.exactResponse,
+    source.exactResult,
+    source.exact,
+    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
+    selectedRaw,
+  );
+  return {
+    selected: responseRecord(selectedRaw),
+    exact: responseRecord(exactRaw),
+    source,
+  };
+}
+
+function valueKey(value) {
+  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
+  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
+  if (value?.kind === 'symbol') return `s:${value.name}`;
+  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
+  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
+  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
+  return JSON.stringify(value);
+}
+
+function sameValue(left, right) {
+  if (left === right) return true;
+  if (left === undefined || right === undefined || left === null || right === null) return false;
+  try {
+    return valueKey(left) === valueKey(right);
+  } catch {
+    return false;
+  }
+}
+
+function render(value, options) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value;
+  if (value.kind === 'infinity') return renderExpression(value, options);
+  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
+  return String(value);
+}
+
+function responseExpression(response) {
+  return expressionOf(response);
+}
+
+function equation(label, expression, approximate = false, options) {
+  const body = render(expression, options);
+  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
+}
+
+/**
+ * The same equation rendered with provenance markers, so the GUI can map a
+ * clicked sub-expression back to the devices it came from.
+ *
+ * This is built here, beside the string it mirrors, for the reason AGENTS.md
+ * gives about `equivalenceOptions`: a row rendered anywhere else would have to
+ * reproduce this function's label, approximation flag, and equivalence options,
+ * and getting any of them wrong fails silently on that row alone.
+ */
+function equationProvenance(label, expression, approximate = false, options) {
+  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
+  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
+  // Mirrors `equation()` above exactly, including its relation symbol.
+  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
+  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
+}
+
+function dcValue(limit) {
+  if (!limit) return undefined;
+  if (limit.value !== undefined && limit.value !== null) return limit.value;
+  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
+  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
+    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
+    return infinity(sign);
+  }
+  return undefined;
+}
+
+function equivalenceOptions(source) {
+  return {
+    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
+    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
+  };
+}
+
+function dcResult(label, selected, exact, source) {
+  const selectedLimit = selected?.dc || source?.dc;
+  const exactLimit = exact?.dc || selectedLimit;
+  const selectedValue = dcValue(selectedLimit);
+  const exactValue = dcValue(exactLimit);
+  if (selectedValue === undefined) {
+    return {
+      ok: false,
+      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
+    };
+  }
+  const changed = !sameValue(selectedValue, exactValue);
+  const options = equivalenceOptions(source);
+  return {
+    ok: true,
+    equation: equation(label, selectedValue, changed, options),
+    exactEquation: equation(label, exactValue, false, options),
+    equationProvenance: equationProvenance(label, selectedValue, changed, options),
+    expression: selectedValue,
+    exactExpression: exactValue,
+  };
+}
+
+function rootValue(root) {
+  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
+}
+
+/**
+ * The provenance render of one pole or zero. It must mirror the
+ * `renderRootEquation` call beside it exactly, options included — a pole row
+ * rendered under different options would highlight terms the displayed row
+ * does not contain.
+ */
+function rootProvenance(kind, index, value) {
+  if (value === undefined || value === null || typeof value === 'string') return undefined;
+  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
+  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
+}
+
+function rootsOf(response, kind) {
+  const roots = response?.[kind] || [];
+  return roots.map((root, index) => {
+    const value = rootValue(root);
+    return {
+      ...root,
+      index,
+      ...(value !== undefined
+        ? {
+          root: value,
+          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
+          equationProvenance: rootProvenance(kind, index, value),
+        }
+        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
+    };
+  });
+}
+
+function frequencyResponse(selected, exact, source) {
+  const has = Boolean(firstDefined(
+    selected?.hasFrequency,
+    exact?.hasFrequency,
+    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
+  ));
+  if (!has) return null;
+  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
+  return {
+    ...base,
+    hasFrequency: true,
+    expression: responseExpression(selected),
+    exactExpression: responseExpression(exact),
+    numerator: selected?.numerator,
+    denominator: selected?.denominator,
+    poles: rootsOf(selected || exact, 'poles'),
+    zeros: rootsOf(selected || exact, 'zeros'),
+  };
+}
+
+function detailsFor(combined, source) {
+  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
+  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
+  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
+  const solution = get('solution');
+  const log = get('log', 'logDetails');
+  return {
+    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
+    ...(solution !== undefined ? { solution } : {}),
+    ...(log !== undefined ? { log } : {}),
+    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
+    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
+    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
+  };
+}
+
+function childSource(combined, key, quantity) {
+  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
+  const names = SOURCE_NAMES[quantity];
+  for (const container of containers) {
+    const found = lookup(container, [key, ...names]);
+    if (found !== undefined) return found;
+  }
+  return null;
+}
+
+function childMetadata(combined, source, key) {
+  const context = combined?.context || {};
+  const metadata = {
+    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
+    input: firstDefined(source?.input, context.input, combined?.input),
+    reference: firstDefined(source?.reference, context.reference, combined?.reference),
+  };
+  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
+}
+
+function childPairs(combined) {
+  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
+    const source = childSource(combined, key, quantity);
+    return [key, pairFor(source)];
+  }));
+}
+
+function adaptChild(combined, key, quantity) {
+  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
+  const raw = childSource(combined, key, quantity);
+  const pair = pairFor(raw);
+  const source = pair.source || {};
+  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
+  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
+  const selected = pair.selected || responseRecord(selectedExpression);
+  const exact = pair.exact || responseRecord(exactExpression);
+  const details = detailsFor(combined, source);
+  const failed = source?.ok === false || (!selectedExpression && source?.error);
+  const reactive = Boolean(frequencyResponse(selected, exact, source));
+  const label = reactive ? `${labelBase}(s)` : labelBase;
+  const changed = !sameValue(selectedExpression, exactExpression);
+  const renderOptions = equivalenceOptions(source);
+  const result = {
+    ...source,
+    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
+    query,
+    ...childMetadata(combined, source, key),
+    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
+    ...(exactExpression !== undefined ? { exactExpression } : {}),
+    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
+    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
+    ...(selectedExpression !== undefined
+      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
+      : {}),
+    ...details,
+    assumptions: unique([combined?.assumptions, source?.assumptions]),
+    approximations: unique([combined?.approximations, source?.approximations]),
+    dependencies: unique([combined?.dependencies, source?.dependencies]),
+    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
+  };
+  if (reactive && key !== 'transfer') delete result.acTransfer;
+  if (!reactive) {
+    delete result.frequencyResponse;
+    delete result.acTransfer;
+  }
+  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
+    result.smallSignalNetlist = combined.smallSignalNetlist;
+  }
+  if (key === 'transfer' && reactive && result.expression !== undefined) {
+    result.acTransfer = {
+      ok: result.ok,
+      equation: result.equation,
+      exactEquation: result.exactEquation,
+      equationProvenance: result.equationProvenance,
+      expression: result.expression,
+      exactExpression: result.exactExpression,
+    };
+  }
+  if (!result.ok) {
+    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
+    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
+    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
+  }
+  return result;
+}
+
+function transferCompanions(combined, children) {
+  const transfer = children.transfer;
+  const input = children.input;
+  const output = children.output;
+  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
+  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
+  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
+  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
+    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
+  }
+  transfer.dcGain = dcGain;
+  transfer.dcInputImpedance = dcInput;
+  transfer.dcOutputImpedance = dcOutput;
+  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
+}
+
+function cleanChild(child) {
+  const result = { ...child };
+  delete result._selected;
+  delete result._exact;
+  delete result._source;
+  return result;
+}
+
+const ROOT_SEPARATOR = ',\\quad ';
+
+/**
+ * One Poles or Zeros row: the roots' own equations shown together. The joined
+ * provenance render is kept only when every root has one, so the row's markers
+ * can never describe a different string than the one displayed.
+ */
+function rootRow(roots) {
+  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
+  const parts = roots.map((root) => root.equationProvenance);
+  return {
+    ok: true,
+    equation,
+    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
+  };
+}
+
+/** What the quantities are ratios of, named by the nodes they were taken at. */
+function portEntry(report) {
+  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
+  if (!definitions.length) return null;
+  // A definition, not a derived expression: it names nodes rather than device
+  // parameters, so there is nothing to trace back to the canvas.
+  const lines = definitions.map(({ tex }) => tex);
+  return {
+    title: 'Ports',
+    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
+  };
+}
+
+function equationEntries(reports, report) {
+  const entries = [];
+  const ports = portEntry(report);
+  if (ports) entries.push(ports);
+  const add = (title, result) => {
+    if (result?.ok && result.equation) entries.push({ title, result });
+  };
+  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
+  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
+  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
+  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
+  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
+  add('DC gain', reports.transfer.dcGain);
+  const frequency = reports.transfer.frequencyResponse;
+  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
+  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
+  return entries;
+}
+
+/** Convert one exact/selected v2 response set into the legacy child reports. */
+function adaptCombinedReport(report) {
+  if (!report || typeof report !== 'object') {
+    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
+  }
+  const pairs = childPairs(report);
+  const children = {};
+  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
+    const child = adaptChild(report, key, quantity);
+    children[key] = child;
+  }
+  for (const key of Object.keys(children)) {
+    children[key]._selected = pairs[key].selected;
+    children[key]._exact = pairs[key].exact;
+    children[key]._source = pairs[key].source;
+  }
+  const companions = transferCompanions(report, children);
+  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
+  const details = detailsFor(report, report);
+  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
+  const entries = equationEntries(reports, report);
+  const successful = Object.values(reports).filter((child) => child.ok);
+  const context = report.context || {};
+  const inputPort = firstDefined(context.input);
+  const outputPort = firstDefined(context.output);
+  const referencePort = firstDefined(context.reference);
+  const base = {
+    ...report,
+    query: 'combined',
+    ok: successful.length > 0,
+    complete: successful.length === 3,
+    reports,
+    // Port metadata is distinct from the solved impedance and transfer rows.
+    input: inputPort,
+    output: outputPort,
+    reference: referencePort,
+    inputPort,
+    outputPort,
+    referencePort,
+    inputImpedance: reports.input,
+    outputImpedance: reports.output,
+    voltageTransfer: reports.transfer,
+    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
+    ...companions,
+    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
+    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
+    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
+    ...details,
+    equationEntries: entries,
+    equationOrder: entries.map(({ title }) => title),
+    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
+  };
+  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
+  else delete base.frequencyResponse;
+  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
+    base.acTransfer = {
+      ok: reports.transfer.ok,
+      equation: reports.transfer.equation,
+      exactEquation: reports.transfer.exactEquation,
+      expression: reports.transfer.expression,
+      exactExpression: reports.transfer.exactExpression,
+    };
+  } else delete base.acTransfer;
+  return base;
+}
+
+__exports.adaptCombinedReport = adaptCombinedReport;
 };
 
 __modules["src/core/commands.js"] = function (__require, __exports) {
@@ -20950,498 +21620,6 @@ __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 };
 
-__modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
-const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
-const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
-const { infinity } = __require("src/core/analysis/rational.js");
-
-
-
-
-
-const QUANTITIES = Object.freeze([
-  ['input', 'Zin', 'input-impedance', 'Z_{in}'],
-  ['output', 'Zout', 'output-impedance', 'Z_{out}'],
-  ['transfer', 'Av', 'voltage-transfer', 'A_v'],
-]);
-
-const SOURCE_NAMES = Object.freeze({
-  Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
-  Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
-  Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
-});
-
-function asArray(value) {
-  if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-function unique(values) {
-  return [...new Set(values.flatMap(asArray).filter((value) => value !== undefined && value !== null && value !== ''))];
-}
-
-function lookup(source, names) {
-  if (!source || typeof source !== 'object') return undefined;
-  for (const name of names) {
-    if (OWN.call(source, name) && source[name] !== undefined && source[name] !== null) return source[name];
-  }
-  return undefined;
-}
-
-function isExpression(value) {
-  return value && typeof value === 'object' && typeof value.kind === 'string';
-}
-
-function expressionOf(value) {
-  if (value === undefined || value === null) return undefined;
-  if (value.kind === 'rational') return value;
-  if (isExpression(value)) return value;
-  if (typeof value === 'object' && OWN.call(value, 'expression')) return value.expression;
-  return value;
-}
-
-function hasFrequency(value) {
-  if (value?.kind === 'rational') return hasFrequency(value.numerator) || hasFrequency(value.denominator);
-  if (value?.kind === 'symbol') return value.name === 's' || /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(String(value.name || ''));
-  if (value?.kind === 'power') return hasFrequency(value.base);
-  if (value?.kind === 'add' || value?.kind === 'multiply') {
-    const values = value.kind === 'add' ? value.terms : value.factors;
-    return values.some(hasFrequency);
-  }
-  return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
-}
-
-function responseRecord(value) {
-  if (value === undefined || value === null) return null;
-  if (value.response && typeof value.response === 'object') return responseRecord(value.response);
-  if (value.expression && typeof value === 'object' && (value.hasFrequency !== undefined || value.dc || value.poles || value.zeros)) {
-    return value;
-  }
-  const expression = expressionOf(value);
-  if (expression === undefined || expression === null) return null;
-  if (expression?.kind === 'rational' || isExpression(expression)) return analyzeResponse(expression);
-  return { expression, hasFrequency: hasFrequency(expression), poles: [], zeros: [] };
-}
-
-function pairFor(source) {
-  if (!source) return { selected: null, exact: null, source: null };
-  const selectedRaw = firstDefined(
-    source.selectedResponse,
-    source.selectedResult,
-    source.selected,
-    source.display,
-    source.approximate,
-    source.expression !== undefined ? source : undefined,
-    isExpression(source) ? source : undefined,
-  );
-  const exactRaw = firstDefined(
-    source.exactResponse,
-    source.exactResult,
-    source.exact,
-    source.exactExpression !== undefined ? { expression: source.exactExpression } : undefined,
-    selectedRaw,
-  );
-  return {
-    selected: responseRecord(selectedRaw),
-    exact: responseRecord(exactRaw),
-    source,
-  };
-}
-
-function valueKey(value) {
-  if (value?.kind === 'rational') return `${value.variable}:${valueKey(value.numerator)}/${valueKey(value.denominator)}`;
-  if (value?.kind === 'number') return `n:${value.numerator}/${value.denominator}`;
-  if (value?.kind === 'symbol') return `s:${value.name}`;
-  if (value?.kind === 'power') return `p:${valueKey(value.base)}^${value.exponent}`;
-  if (value?.kind === 'add') return `a:${value.terms.map(valueKey).join(',')}`;
-  if (value?.kind === 'multiply') return `m:${value.factors.map(valueKey).join(',')}`;
-  return JSON.stringify(value);
-}
-
-function sameValue(left, right) {
-  if (left === right) return true;
-  if (left === undefined || right === undefined || left === null || right === null) return false;
-  try {
-    return valueKey(left) === valueKey(right);
-  } catch {
-    return false;
-  }
-}
-
-function render(value, options) {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return value;
-  if (value.kind === 'infinity') return renderExpression(value, options);
-  if (value.kind === 'rational' || isExpression(value)) return renderExpression(value, options);
-  return String(value);
-}
-
-function responseExpression(response) {
-  return expressionOf(response);
-}
-
-function equation(label, expression, approximate = false, options) {
-  const body = render(expression, options);
-  return body === null ? null : `${label} ${approximate ? '\\approx' : '='} ${body}`;
-}
-
-/**
- * The same equation rendered with provenance markers, so the GUI can map a
- * clicked sub-expression back to the devices it came from.
- *
- * This is built here, beside the string it mirrors, for the reason AGENTS.md
- * gives about `equivalenceOptions`: a row rendered anywhere else would have to
- * reproduce this function's label, approximation flag, and equivalence options,
- * and getting any of them wrong fails silently on that row alone.
- */
-function equationProvenance(label, expression, approximate = false, options) {
-  if (expression === undefined || expression === null || typeof expression === 'string') return undefined;
-  if (!(expression.kind === 'infinity' || expression.kind === 'rational' || isExpression(expression))) return undefined;
-  // Mirrors `equation()` above exactly, including its relation symbol.
-  const { tex, nodes } = renderExpressionWithProvenance(expression, options);
-  return { tex: `${label} ${approximate ? '\\approx' : '='} ${tex}`, nodes };
-}
-
-function dcValue(limit) {
-  if (!limit) return undefined;
-  if (limit.value !== undefined && limit.value !== null) return limit.value;
-  if (limit.kind === 'zero') return { kind: 'number', numerator: 0n, denominator: 1n };
-  if (limit.kind === 'pole' || limit.kind === 'infinite' || limit.kind === 'infinity') {
-    const sign = limit.sign ?? limit.coefficient?.sign ?? 1;
-    return infinity(sign);
-  }
-  return undefined;
-}
-
-function equivalenceOptions(source) {
-  return {
-    ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
-    ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
-  };
-}
-
-function dcResult(label, selected, exact, source) {
-  const selectedLimit = selected?.dc || source?.dc;
-  const exactLimit = exact?.dc || selectedLimit;
-  const selectedValue = dcValue(selectedLimit);
-  const exactValue = dcValue(exactLimit);
-  if (selectedValue === undefined) {
-    return {
-      ok: false,
-      error: selectedLimit?.kind === 'unknown' ? 'DC limit is unavailable' : 'DC analysis could not be solved',
-    };
-  }
-  const changed = !sameValue(selectedValue, exactValue);
-  const options = equivalenceOptions(source);
-  return {
-    ok: true,
-    equation: equation(label, selectedValue, changed, options),
-    exactEquation: equation(label, exactValue, false, options),
-    equationProvenance: equationProvenance(label, selectedValue, changed, options),
-    expression: selectedValue,
-    exactExpression: exactValue,
-  };
-}
-
-function rootValue(root) {
-  return firstDefined(root?.root, root?.value, root?.expression, root?.location);
-}
-
-/**
- * The provenance render of one pole or zero. It must mirror the
- * `renderRootEquation` call beside it exactly, options included — a pole row
- * rendered under different options would highlight terms the displayed row
- * does not contain.
- */
-function rootProvenance(kind, index, value) {
-  if (value === undefined || value === null || typeof value === 'string') return undefined;
-  if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
-  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
-}
-
-function rootsOf(response, kind) {
-  const roots = response?.[kind] || [];
-  return roots.map((root, index) => {
-    const value = rootValue(root);
-    return {
-      ...root,
-      index,
-      ...(value !== undefined
-        ? {
-          root: value,
-          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
-          equationProvenance: rootProvenance(kind, index, value),
-        }
-        : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
-    };
-  });
-}
-
-function frequencyResponse(selected, exact, source) {
-  const has = Boolean(firstDefined(
-    selected?.hasFrequency,
-    exact?.hasFrequency,
-    hasFrequency(responseExpression(selected)) || hasFrequency(responseExpression(exact)),
-  ));
-  if (!has) return null;
-  const base = source?.frequencyResponse && typeof source.frequencyResponse === 'object' ? source.frequencyResponse : {};
-  return {
-    ...base,
-    hasFrequency: true,
-    expression: responseExpression(selected),
-    exactExpression: responseExpression(exact),
-    numerator: selected?.numerator,
-    denominator: selected?.denominator,
-    poles: rootsOf(selected || exact, 'poles'),
-    zeros: rootsOf(selected || exact, 'zeros'),
-  };
-}
-
-function detailsFor(combined, source) {
-  const details = [combined?.details, source?.details].filter((value) => value && typeof value === 'object');
-  const get = (...names) => firstDefined(...details.map((item) => lookup(item, names)), ...names.map((name) => lookup(source, [name])), ...names.map((name) => lookup(combined, [name])));
-  const equations = firstDefined(get('nodeEquations', 'equations'), source?.nodeEquations, combined?.nodeEquations, combined?.equations);
-  const solution = get('solution');
-  const log = get('log', 'logDetails');
-  return {
-    ...(equations !== undefined ? { equations, nodeEquations: equations } : {}),
-    ...(solution !== undefined ? { solution } : {}),
-    ...(log !== undefined ? { log } : {}),
-    ...(get('equationCount') !== undefined ? { equationCount: get('equationCount') } : {}),
-    ...(get('unknowns', 'nodeUnknowns') !== undefined ? { unknowns: get('unknowns', 'nodeUnknowns'), nodeUnknowns: get('unknowns', 'nodeUnknowns') } : {}),
-    ...(get('unknownCount') !== undefined ? { unknownCount: get('unknownCount') } : {}),
-  };
-}
-
-function childSource(combined, key, quantity) {
-  const containers = [combined?.results, combined?.responses, combined?.quantities, combined?.reports, combined];
-  const names = SOURCE_NAMES[quantity];
-  for (const container of containers) {
-    const found = lookup(container, [key, ...names]);
-    if (found !== undefined) return found;
-  }
-  return null;
-}
-
-function childMetadata(combined, source, key) {
-  const context = combined?.context || {};
-  const metadata = {
-    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
-    input: firstDefined(source?.input, context.input, combined?.input),
-    reference: firstDefined(source?.reference, context.reference, combined?.reference),
-  };
-  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null));
-}
-
-function childPairs(combined) {
-  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
-    const source = childSource(combined, key, quantity);
-    return [key, pairFor(source)];
-  }));
-}
-
-function adaptChild(combined, key, quantity) {
-  const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
-  const raw = childSource(combined, key, quantity);
-  const pair = pairFor(raw);
-  const source = pair.source || {};
-  const selectedExpression = firstDefined(responseExpression(pair.selected), source.expression);
-  const exactExpression = firstDefined(responseExpression(pair.exact), source.exactExpression, selectedExpression);
-  const selected = pair.selected || responseRecord(selectedExpression);
-  const exact = pair.exact || responseRecord(exactExpression);
-  const details = detailsFor(combined, source);
-  const failed = source?.ok === false || (!selectedExpression && source?.error);
-  const reactive = Boolean(frequencyResponse(selected, exact, source));
-  const label = reactive ? `${labelBase}(s)` : labelBase;
-  const changed = !sameValue(selectedExpression, exactExpression);
-  const renderOptions = equivalenceOptions(source);
-  const result = {
-    ...source,
-    ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
-    query,
-    ...childMetadata(combined, source, key),
-    ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
-    ...(exactExpression !== undefined ? { exactExpression } : {}),
-    ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
-    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
-    ...(selectedExpression !== undefined
-      ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
-      : {}),
-    ...details,
-    assumptions: unique([combined?.assumptions, source?.assumptions]),
-    approximations: unique([combined?.approximations, source?.approximations]),
-    dependencies: unique([combined?.dependencies, source?.dependencies]),
-    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
-  };
-  if (reactive && key !== 'transfer') delete result.acTransfer;
-  if (!reactive) {
-    delete result.frequencyResponse;
-    delete result.acTransfer;
-  }
-  if (result.smallSignalNetlist === undefined && combined?.smallSignalNetlist !== undefined) {
-    result.smallSignalNetlist = combined.smallSignalNetlist;
-  }
-  if (key === 'transfer' && reactive && result.expression !== undefined) {
-    result.acTransfer = {
-      ok: result.ok,
-      equation: result.equation,
-      exactEquation: result.exactEquation,
-      equationProvenance: result.equationProvenance,
-      expression: result.expression,
-      exactExpression: result.exactExpression,
-    };
-  }
-  if (!result.ok) {
-    if (!result.error) result.error = source?.error || combined?.error || `${query} is unavailable`;
-    if (result.stage === undefined && combined?.stage !== undefined) result.stage = combined.stage;
-    if (result.diagnostics === undefined && combined?.diagnostics !== undefined) result.diagnostics = combined.diagnostics;
-  }
-  return result;
-}
-
-function transferCompanions(combined, children) {
-  const transfer = children.transfer;
-  const input = children.input;
-  const output = children.output;
-  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
-  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
-  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
-  for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
-    child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
-  }
-  transfer.dcGain = dcGain;
-  transfer.dcInputImpedance = dcInput;
-  transfer.dcOutputImpedance = dcOutput;
-  return { dcGain, dcInputImpedance: dcInput, dcOutputImpedance: dcOutput };
-}
-
-function cleanChild(child) {
-  const result = { ...child };
-  delete result._selected;
-  delete result._exact;
-  delete result._source;
-  return result;
-}
-
-const ROOT_SEPARATOR = ',\\quad ';
-
-/**
- * One Poles or Zeros row: the roots' own equations shown together. The joined
- * provenance render is kept only when every root has one, so the row's markers
- * can never describe a different string than the one displayed.
- */
-function rootRow(roots) {
-  const equation = roots.map((root) => root.equation).join(ROOT_SEPARATOR);
-  const parts = roots.map((root) => root.equationProvenance);
-  return {
-    ok: true,
-    equation,
-    ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
-  };
-}
-
-/** What the quantities are ratios of, named by the nodes they were taken at. */
-function portEntry(report) {
-  const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
-  if (!definitions.length) return null;
-  // A definition, not a derived expression: it names nodes rather than device
-  // parameters, so there is nothing to trace back to the canvas.
-  const lines = definitions.map(({ tex }) => tex);
-  return {
-    title: 'Ports',
-    result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
-  };
-}
-
-function equationEntries(reports, report) {
-  const entries = [];
-  const ports = portEntry(report);
-  if (ports) entries.push(ports);
-  const add = (title, result) => {
-    if (result?.ok && result.equation) entries.push({ title, result });
-  };
-  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
-  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
-  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
-  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
-  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
-  add('DC gain', reports.transfer.dcGain);
-  const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
-  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
-  return entries;
-}
-
-/** Convert one exact/selected v2 response set into the legacy child reports. */
-function adaptCombinedReport(report) {
-  if (!report || typeof report !== 'object') {
-    return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
-  }
-  const pairs = childPairs(report);
-  const children = {};
-  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
-    const child = adaptChild(report, key, quantity);
-    children[key] = child;
-  }
-  for (const key of Object.keys(children)) {
-    children[key]._selected = pairs[key].selected;
-    children[key]._exact = pairs[key].exact;
-    children[key]._source = pairs[key].source;
-  }
-  const companions = transferCompanions(report, children);
-  const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
-  const details = detailsFor(report, report);
-  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
-  const entries = equationEntries(reports, report);
-  const successful = Object.values(reports).filter((child) => child.ok);
-  const context = report.context || {};
-  const inputPort = firstDefined(context.input);
-  const outputPort = firstDefined(context.output);
-  const referencePort = firstDefined(context.reference);
-  const base = {
-    ...report,
-    query: 'combined',
-    ok: successful.length > 0,
-    complete: successful.length === 3,
-    reports,
-    // Port metadata is distinct from the solved impedance and transfer rows.
-    input: inputPort,
-    output: outputPort,
-    reference: referencePort,
-    inputPort,
-    outputPort,
-    referencePort,
-    inputImpedance: reports.input,
-    outputImpedance: reports.output,
-    voltageTransfer: reports.transfer,
-    target: firstDefined(report.target, outputPort, reports.output.target, reports.transfer.target),
-    ...companions,
-    assumptions: unique([report.assumptions, ...Object.values(reports).map((child) => child.assumptions)]),
-    approximations: unique([report.approximations, ...Object.values(reports).map((child) => child.approximations)]),
-    dependencies: unique([report.dependencies, ...Object.values(reports).map((child) => child.dependencies)]),
-    ...details,
-    equationEntries: entries,
-    equationOrder: entries.map(({ title }) => title),
-    smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
-  };
-  if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
-  else delete base.frequencyResponse;
-  if (reports.transfer.frequencyResponse?.hasFrequency && reports.transfer.expression) {
-    base.acTransfer = {
-      ok: reports.transfer.ok,
-      equation: reports.transfer.equation,
-      exactEquation: reports.transfer.exactEquation,
-      expression: reports.transfer.expression,
-      exactExpression: reports.transfer.exactExpression,
-    };
-  } else delete base.acTransfer;
-  return base;
-}
-
-__exports.adaptCombinedReport = adaptCombinedReport;
-};
-
 __modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
 const { Circuit } = __require("src/core/model.js");
 const { rectsOverlap } = __require("src/core/geometry.js");
@@ -21919,6 +22097,88 @@ function smallSignalSchematic(report, options = {}) {
 __exports.textbookSymbol = textbookSymbol;
 __exports.smallSignalSchematic = smallSignalSchematic;
 __exports.AC_GROUND_NODE = AC_GROUND_NODE;
+};
+
+__modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
+/**
+ * Where each symbol in a displayed equation came from.
+ *
+ * `devices.js` mints every symbolic parameter name through one chokepoint,
+ * `parameterName(prefix, refdes)`, and tags every primitive it emits with
+ * `metadata.component` and an `id` of the form `<refdes>.<role>`. That makes
+ * the inversion below exact: it reads the table devices.js already built
+ * rather than guessing at the spelling of a rendered name. Nothing here parses
+ * TeX, and nothing here knows about the DOM.
+ *
+ * Keys are the raw expression symbol names (`gm1`, `ro1`, `RD`) as they appear
+ * in `{kind:'symbol', name}` nodes — not their rendered forms (`g_{m1}`).
+ * `present.js` owns that spelling and the two must not be confused.
+ */
+
+function roleOf(primitive) {
+  const id = String(primitive?.id || '');
+  const dot = id.lastIndexOf('.');
+  const role = dot >= 0 ? id.slice(dot + 1) : '';
+  return role || String(primitive?.kind || '');
+}
+
+/**
+ * Invert one or more primitive lists into
+ * `{ [symbolName]: {component, role, kind, primitives} }`. Earlier lists win,
+ * so pass the solved model first and earlier modeling stages after it.
+ *
+ * Several lists are needed because a symbol can survive into a displayed
+ * equation after its own primitive has left the solved set:
+ *
+ *  - A Miller shunt carries an expression, not a parameter name, so it mints no
+ *    symbol of its own — but that expression still contains the feedback
+ *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
+ *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
+ *    the engine puts `r_o` back when removing it would make the solve singular.
+ *
+ * A symbol the table cannot resolve simply does not highlight, which is why
+ * these gaps are invisible until someone points at the term and nothing
+ * happens. Only primitives whose `value` is a symbolic name contribute, and a
+ * symbol reached by more than one primitive keeps the first component and
+ * accumulates the primitive ids.
+ */
+function symbolProvenance(...primitiveLists) {
+  const table = Object.create(null);
+  for (const primitives of primitiveLists) {
+    for (const primitive of primitives || []) {
+      const name = primitive?.value;
+      if (typeof name !== 'string' || !name) continue;
+      const component = primitive?.metadata?.component;
+      if (!component) continue;
+      const existing = table[name];
+      if (existing) {
+        if (!existing.primitives.includes(primitive.id)) existing.primitives.push(primitive.id);
+        continue;
+      }
+      table[name] = {
+        component,
+        role: roleOf(primitive),
+        kind: primitive.kind,
+        primitives: [primitive.id],
+      };
+    }
+  }
+  return table;
+}
+
+/** The distinct components a set of symbol names resolves to, in first-seen
+ *  order. Used to label a rendered subexpression with everything it touches. */
+function componentsOfSymbols(names, table) {
+  const seen = [];
+  for (const name of names || []) {
+    const component = table?.[name]?.component;
+    if (component && !seen.includes(component)) seen.push(component);
+  }
+  return seen;
+}
+
+__exports.symbolProvenance = symbolProvenance;
+__exports.componentsOfSymbols = componentsOfSymbols;
 };
 
 __modules["src/core/analysis/engine.js"] = function (__require, __exports) {
@@ -22741,88 +23001,6 @@ __exports.portDefinitions = portDefinitions;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 };
 
-__modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
-/**
- * Where each symbol in a displayed equation came from.
- *
- * `devices.js` mints every symbolic parameter name through one chokepoint,
- * `parameterName(prefix, refdes)`, and tags every primitive it emits with
- * `metadata.component` and an `id` of the form `<refdes>.<role>`. That makes
- * the inversion below exact: it reads the table devices.js already built
- * rather than guessing at the spelling of a rendered name. Nothing here parses
- * TeX, and nothing here knows about the DOM.
- *
- * Keys are the raw expression symbol names (`gm1`, `ro1`, `RD`) as they appear
- * in `{kind:'symbol', name}` nodes — not their rendered forms (`g_{m1}`).
- * `present.js` owns that spelling and the two must not be confused.
- */
-
-function roleOf(primitive) {
-  const id = String(primitive?.id || '');
-  const dot = id.lastIndexOf('.');
-  const role = dot >= 0 ? id.slice(dot + 1) : '';
-  return role || String(primitive?.kind || '');
-}
-
-/**
- * Invert one or more primitive lists into
- * `{ [symbolName]: {component, role, kind, primitives} }`. Earlier lists win,
- * so pass the solved model first and earlier modeling stages after it.
- *
- * Several lists are needed because a symbol can survive into a displayed
- * equation after its own primitive has left the solved set:
- *
- *  - A Miller shunt carries an expression, not a parameter name, so it mints no
- *    symbol of its own — but that expression still contains the feedback
- *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
- *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
- *    the engine puts `r_o` back when removing it would make the solve singular.
- *
- * A symbol the table cannot resolve simply does not highlight, which is why
- * these gaps are invisible until someone points at the term and nothing
- * happens. Only primitives whose `value` is a symbolic name contribute, and a
- * symbol reached by more than one primitive keeps the first component and
- * accumulates the primitive ids.
- */
-function symbolProvenance(...primitiveLists) {
-  const table = Object.create(null);
-  for (const primitives of primitiveLists) {
-    for (const primitive of primitives || []) {
-      const name = primitive?.value;
-      if (typeof name !== 'string' || !name) continue;
-      const component = primitive?.metadata?.component;
-      if (!component) continue;
-      const existing = table[name];
-      if (existing) {
-        if (!existing.primitives.includes(primitive.id)) existing.primitives.push(primitive.id);
-        continue;
-      }
-      table[name] = {
-        component,
-        role: roleOf(primitive),
-        kind: primitive.kind,
-        primitives: [primitive.id],
-      };
-    }
-  }
-  return table;
-}
-
-/** The distinct components a set of symbol names resolves to, in first-seen
- *  order. Used to label a rendered subexpression with everything it touches. */
-function componentsOfSymbols(names, table) {
-  const seen = [];
-  for (const name of names || []) {
-    const component = table?.[name]?.component;
-    if (component && !seen.includes(component)) seen.push(component);
-  }
-  return seen;
-}
-
-__exports.symbolProvenance = symbolProvenance;
-__exports.componentsOfSymbols = componentsOfSymbols;
-};
-
 __modules["src/core/style.js"] = function (__require, __exports) {
 /**
  * Centralized schematic line styles.
@@ -23103,6 +23281,46 @@ __exports.polylineArrowheadStyles = polylineArrowheadStyles;
 __exports.arrowheadGeometry = arrowheadGeometry;
 __exports.polylineArrowheads = polylineArrowheads;
 __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
+};
+
+__modules["src/core/document.js"] = function (__require, __exports) {
+const { Circuit } = __require("src/core/model.js");
+const { svgString } = __require("src/core/render.js");
+
+
+
+const FORBIDDEN_NAME_CHARS = /[/\\:*?"<>|\u0000-\u001f\u007f]/;
+
+/** Validate a portable document name shared by the server and browser adapters. */
+function validDocumentName(value) {
+  const name = String(value ?? '').trim();
+  if (!name || name.length > 120 || name.startsWith('.') || FORBIDDEN_NAME_CHARS.test(name)) return null;
+  return name;
+}
+
+function documentKind(data) {
+  if (data?.kind === 'block') throw new Error('block diagram documents are no longer supported');
+  return 'circuit';
+}
+function createDocument(kind = 'circuit') {
+  if (kind === 'circuit' || kind === 'schematic') return new Circuit();
+  throw new Error(`unknown document kind "${kind}"`);
+}
+/** Load a saved document. Schematics are normalized to the app's single wire
+ * model: legacy fixed nets become managed nets with protected diagonals. */
+function loadDocument(data) {
+  documentKind(data);
+  const circuit = Circuit.fromJSON(data);
+  circuit.convertFixedNets();
+  return circuit;
+}
+function renderDocument(document, options = {}) { return svgString(document, options); }
+
+__exports.validDocumentName = validDocumentName;
+__exports.documentKind = documentKind;
+__exports.createDocument = createDocument;
+__exports.loadDocument = loadDocument;
+__exports.renderDocument = renderDocument;
 };
 
 __modules["src/core/render.js"] = function (__require, __exports) {
@@ -23754,6 +23972,31 @@ function svgString(circuit, opts = {}) {
   const labels = [...circuit.labels.values()];
   const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
 
+  // Persistent net highlights recolor a highlighted group's wires, its net
+  // labels, its junction dots, and the ground/supply/VCM markers on it, over
+  // their own styles.
+  const withHighlight = (style, color) => (color ? { ...(style || {}), color } : style);
+  const markerHighlights = new Map();
+  const solderAt = new Map([...circuit.components.values()]
+    .filter((c) => c.type === 'solder')
+    .map((c) => [`${c.transform.x},${c.transform.y}`, c.refdes]));
+  for (const net of circuit.nets.values()) {
+    const color = circuit.netHighlight?.(net);
+    if (!color) continue;
+    for (const { comp } of net.terminals) {
+      if (isReferenceMarker(circuit.components.get(comp))) markerHighlights.set(comp, color);
+    }
+    // Solder dots on the net's wires belong to it too: every dot sits on a
+    // junction or a branch vertex of the net it joins.
+    for (const point of [...(net.junctions || []), ...net.paths().flat()]) {
+      const solder = solderAt.get(`${point.x},${point.y}`);
+      if (solder) markerHighlights.set(solder, color);
+    }
+  }
+  const compStyle = (c) => withHighlight(c.style, markerHighlights.get(c.refdes));
+  const labelHighlight = (label) => (label.netId ? circuit.netHighlight?.(circuit.nets.get(label.netId)) : null)
+    || (label.owner ? markerHighlights.get(label.owner) : null) || null;
+
   // Bottom layer: visual shape annotations and their child labels. Keeping
   // these together prevents annotation text from floating above the other
   // default layers when a box or arrow has a caption.
@@ -23793,11 +24036,11 @@ function svgString(circuit, opts = {}) {
     if (!ink.has(attrs)) ink.set(attrs, []);
     ink.get(attrs).push(d);
   };
-  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(c.style);
+  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(compStyle(c));
   for (const c of comps) {
     if (!inkLeads(c)) continue;
     for (const g of c.def.graphics) {
-      if (g.terminalLead) addInk(inkAttrs(c.style), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
+      if (g.terminalLead) addInk(inkAttrs(compStyle(c)), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
     }
   }
   const UNPAINTED = ' stroke-opacity="0"';
@@ -23813,6 +24056,8 @@ function svgString(circuit, opts = {}) {
           ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
           : [net.points()];
     const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
+    const highlight = circuit.netHighlight?.(net) || null;
+    const netStyle = withHighlight(net.style, highlight);
     for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
@@ -23822,17 +24067,17 @@ function svgString(circuit, opts = {}) {
       const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        const inked = !opacity && solidStyle(net.style);
-        const geometry = polylineArrowheads(pts, net.style?.arrowhead, wireArrowheadOptions(circuit, pts));
-        if (inked) addInk(inkAttrs(net.style), polylineD(geometry.shaftPoints));
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
-        parts.push(arrowheadsSvg(geometry.heads, net.style?.color, opacity));
+        const inked = !opacity && solidStyle(netStyle);
+        const geometry = polylineArrowheads(pts, netStyle?.arrowhead, wireArrowheadOptions(circuit, pts));
+        if (inked) addInk(inkAttrs(netStyle), polylineD(geometry.shaftPoints));
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(netStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(arrowheadsSvg(geometry.heads, netStyle?.color, opacity));
         continue;
       }
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]; const b = pts[i];
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
-        const segmentStyle = { ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) };
+        const segmentStyle = withHighlight({ ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) }, highlight);
         const inked = !opacity && solidStyle(segmentStyle);
         const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
         // Solid wires are painted by the shared ink path below, but dashed
@@ -23859,13 +24104,13 @@ function svgString(circuit, opts = {}) {
     parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     if (c.type === 'block') {
       const r = c.blockSize;
-      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`);
+      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(compStyle(c), 'emph')}/>`);
     } else {
       const leadsInked = inkLeads(c);
-      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', c.style));
+      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', compStyle(c)));
     }
     parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
+    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
     if (o.includeBBox) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
@@ -23940,7 +24185,7 @@ function svgString(circuit, opts = {}) {
     const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
     const labelVisual = label.math
       ? mathLabelSvg(label)
-      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
+      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(labelHighlight(label) || label.style?.color || '#111'), label.style?.width, label.style);
     if (label.selectable === false) {
       parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
     } else {
@@ -24419,46 +24664,6 @@ __exports.svgString = svgString;
 __exports.editorOverlay = editorOverlay;
 };
 
-__modules["src/core/document.js"] = function (__require, __exports) {
-const { Circuit } = __require("src/core/model.js");
-const { svgString } = __require("src/core/render.js");
-
-
-
-const FORBIDDEN_NAME_CHARS = /[/\\:*?"<>|\u0000-\u001f\u007f]/;
-
-/** Validate a portable document name shared by the server and browser adapters. */
-function validDocumentName(value) {
-  const name = String(value ?? '').trim();
-  if (!name || name.length > 120 || name.startsWith('.') || FORBIDDEN_NAME_CHARS.test(name)) return null;
-  return name;
-}
-
-function documentKind(data) {
-  if (data?.kind === 'block') throw new Error('block diagram documents are no longer supported');
-  return 'circuit';
-}
-function createDocument(kind = 'circuit') {
-  if (kind === 'circuit' || kind === 'schematic') return new Circuit();
-  throw new Error(`unknown document kind "${kind}"`);
-}
-/** Load a saved document. Schematics are normalized to the app's single wire
- * model: legacy fixed nets become managed nets with protected diagonals. */
-function loadDocument(data) {
-  documentKind(data);
-  const circuit = Circuit.fromJSON(data);
-  circuit.convertFixedNets();
-  return circuit;
-}
-function renderDocument(document, options = {}) { return svgString(document, options); }
-
-__exports.validDocumentName = validDocumentName;
-__exports.documentKind = documentKind;
-__exports.createDocument = createDocument;
-__exports.loadDocument = loadDocument;
-__exports.renderDocument = renderDocument;
-};
-
 __modules["src/core/grid.js"] = function (__require, __exports) {
 /**
  * Coarse placement grid. Every world coordinate of a terminal, a component
@@ -24726,6 +24931,177 @@ async function withEmbeddedMathFont(svg) {
 __exports.svgToPngDataUrl = svgToPngDataUrl;
 __exports.applyExportDarkTheme = applyExportDarkTheme;
 __exports.withEmbeddedMathFont = withEmbeddedMathFont;
+};
+
+__modules["src/core/geometry.js"] = function (__require, __exports) {
+const { GRID } = __require("src/core/grid.js");
+
+
+/**
+ * Component/wire transforming. A transform is:
+ *   translate(x, y) . rotate(rotation deg, multiples of 90) . scale(mirrorX, mirrorY)
+ *
+ * Order of application to a local point (matches SVG group transform string):
+ *   1. mirror  (flip x if mirrorX, flip y if mirrorY)
+ *   2. rotate  (about origin; +deg rotates +x toward +y = visually clockwise,
+ *               y pointing down — matches SVG rotate())
+ *   3. translate by (x, y)
+ */
+
+function applyTransform(t, x, y) {
+  let px = t.mirrorX ? -x : x;
+  let py = t.mirrorY ? -y : y;
+  const r = ((t.rotation % 360) + 360) % 360;
+  if (r === 90) {
+    [px, py] = [-py, px];
+  } else if (r === 180) {
+    [px, py] = [-px, -py];
+  } else if (r === 270) {
+    [px, py] = [py, -px];
+  }
+  return { x: t.x + px, y: t.y + py };
+}
+
+/** Transform a unit DIRECTION vector (not a point) under a component transform:
+ *  mirror (flip the affected axis) then rotate, same order as applyTransform.
+ *  Translations do not affect a direction. */
+function applyDir(t, dx, dy) {
+  let px = t.mirrorX ? -dx : dx;
+  let py = t.mirrorY ? -dy : dy;
+  const r = ((t.rotation % 360) + 360) % 360;
+  if (r === 90) {
+    [px, py] = [-py, px];
+  } else if (r === 180) {
+    [px, py] = [-px, -py];
+  } else if (r === 270) {
+    [px, py] = [py, -px];
+  }
+  return { x: px, y: py };
+}
+
+/** SVG transform attribute for a group wrapping symbol-local geometry. */
+function transformToSvg(t) {
+  const s = `${t.mirrorX ? -1 : 1} ${t.mirrorY ? -1 : 1}`;
+  const r = ((t.rotation % 360) + 360) % 360;
+  return `translate(${t.x} ${t.y}) rotate(${r}) scale(${s})`;
+}
+
+/** Transform a local rect {x,y,w,h} into an axis-aligned world rect. */
+function transformRect(t, r) {
+  const pts = [
+    [r.x, r.y],
+    [r.x + r.w, r.y],
+    [r.x, r.y + r.h],
+    [r.x + r.w, r.y + r.h],
+  ].map(([x, y]) => applyTransform(t, x, y));
+  return rectFromPoints(pts);
+}
+
+/** Inverse of applyTransform: the local point for a world point under t. */
+function inverseTransform(t, x, y) {
+  let px = x - t.x;
+  let py = y - t.y;
+  const r = ((t.rotation % 360) + 360) % 360;
+  if (r === 90) {
+    [px, py] = [py, -px];
+  } else if (r === 180) {
+    [px, py] = [-px, -py];
+  } else if (r === 270) {
+    [px, py] = [-py, px];
+  }
+  if (t.mirrorX) px = -px;
+  if (t.mirrorY) py = -py;
+  return { x: px, y: py };
+}
+
+/** Bounding rect of a list of {x,y} points. */
+function rectFromPoints(pts) {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const p of pts) {
+    x0 = Math.min(x0, p.x);
+    y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x);
+    y1 = Math.max(y1, p.y);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** Union of several {x,y,w,h} rects. */
+function rectUnion(rects) {
+  const pts = [];
+  for (const r of rects) {
+    pts.push({ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x, y: r.y + r.h }, { x: r.x + r.w, y: r.y + r.h });
+  }
+  return rectFromPoints(pts);
+}
+
+/** True if two rects share strictly-positive area (touching edges are NOT an overlap). */
+function rectsOverlap(a, b) {
+  return !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+}
+
+/**
+ * True if the axis-aligned segment a->b passes through the STRICT INTERIOR of
+ * rect r (crossing a boundary line or ending on the boundary does not count).
+ * Used to detect wires that visually run through a component's footprint.
+ */
+function segmentCrossesRect(a, b, r) {
+  const x0 = Math.min(a.x, b.x);
+  const x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const y1 = Math.max(a.y, b.y);
+  if (a.x === b.x) {
+    return x0 > r.x && x0 < r.x + r.w && y0 < r.y + r.h && y1 > r.y;
+  }
+  if (a.y === b.y) {
+    return y0 > r.y && y0 < r.y + r.h && x0 < r.x + r.w && x1 > r.x;
+  }
+  return false; // route is always orthogonal
+}
+
+/** Shortest distance from point `p` to segment a-b (clamped to the segment). */
+function distanceToSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+}
+
+/** Format a coordinate for SVG: integers stay exact, others get two decimals. */
+function fmt(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+/** Point-free helper: format a point for SVG. */
+function pt(p) {
+  return `${p.x} ${p.y}`;
+}
+
+/**
+ * Midpoint of two grid points snapped to grid, useful for wire bends.
+ * (Two grid multiples average to a multiple of GRID/2; snap pulls it back
+ * onto the full grid.)
+ */
+function midSnap(a, b) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+__exports.applyTransform = applyTransform;
+__exports.applyDir = applyDir;
+__exports.transformToSvg = transformToSvg;
+__exports.transformRect = transformRect;
+__exports.inverseTransform = inverseTransform;
+__exports.rectFromPoints = rectFromPoints;
+__exports.rectUnion = rectUnion;
+__exports.rectsOverlap = rectsOverlap;
+__exports.segmentCrossesRect = segmentCrossesRect;
+__exports.distanceToSegment = distanceToSegment;
+__exports.fmt = fmt;
+__exports.pt = pt;
+__exports.midSnap = midSnap;
 };
 
 __modules["src/web/clipboard.js"] = function (__require, __exports) {
@@ -25869,177 +26245,6 @@ __exports.segmentsCross = segmentsCross;
 __exports.segThroughInterior = segThroughInterior;
 __exports.bodyClearanceSafe = bodyClearanceSafe;
 __exports.smartRoute = smartRoute;
-};
-
-__modules["src/core/geometry.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-
-
-/**
- * Component/wire transforming. A transform is:
- *   translate(x, y) . rotate(rotation deg, multiples of 90) . scale(mirrorX, mirrorY)
- *
- * Order of application to a local point (matches SVG group transform string):
- *   1. mirror  (flip x if mirrorX, flip y if mirrorY)
- *   2. rotate  (about origin; +deg rotates +x toward +y = visually clockwise,
- *               y pointing down — matches SVG rotate())
- *   3. translate by (x, y)
- */
-
-function applyTransform(t, x, y) {
-  let px = t.mirrorX ? -x : x;
-  let py = t.mirrorY ? -y : y;
-  const r = ((t.rotation % 360) + 360) % 360;
-  if (r === 90) {
-    [px, py] = [-py, px];
-  } else if (r === 180) {
-    [px, py] = [-px, -py];
-  } else if (r === 270) {
-    [px, py] = [py, -px];
-  }
-  return { x: t.x + px, y: t.y + py };
-}
-
-/** Transform a unit DIRECTION vector (not a point) under a component transform:
- *  mirror (flip the affected axis) then rotate, same order as applyTransform.
- *  Translations do not affect a direction. */
-function applyDir(t, dx, dy) {
-  let px = t.mirrorX ? -dx : dx;
-  let py = t.mirrorY ? -dy : dy;
-  const r = ((t.rotation % 360) + 360) % 360;
-  if (r === 90) {
-    [px, py] = [-py, px];
-  } else if (r === 180) {
-    [px, py] = [-px, -py];
-  } else if (r === 270) {
-    [px, py] = [py, -px];
-  }
-  return { x: px, y: py };
-}
-
-/** SVG transform attribute for a group wrapping symbol-local geometry. */
-function transformToSvg(t) {
-  const s = `${t.mirrorX ? -1 : 1} ${t.mirrorY ? -1 : 1}`;
-  const r = ((t.rotation % 360) + 360) % 360;
-  return `translate(${t.x} ${t.y}) rotate(${r}) scale(${s})`;
-}
-
-/** Transform a local rect {x,y,w,h} into an axis-aligned world rect. */
-function transformRect(t, r) {
-  const pts = [
-    [r.x, r.y],
-    [r.x + r.w, r.y],
-    [r.x, r.y + r.h],
-    [r.x + r.w, r.y + r.h],
-  ].map(([x, y]) => applyTransform(t, x, y));
-  return rectFromPoints(pts);
-}
-
-/** Inverse of applyTransform: the local point for a world point under t. */
-function inverseTransform(t, x, y) {
-  let px = x - t.x;
-  let py = y - t.y;
-  const r = ((t.rotation % 360) + 360) % 360;
-  if (r === 90) {
-    [px, py] = [py, -px];
-  } else if (r === 180) {
-    [px, py] = [-px, -py];
-  } else if (r === 270) {
-    [px, py] = [-py, px];
-  }
-  if (t.mirrorX) px = -px;
-  if (t.mirrorY) py = -py;
-  return { x: px, y: py };
-}
-
-/** Bounding rect of a list of {x,y} points. */
-function rectFromPoints(pts) {
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const p of pts) {
-    x0 = Math.min(x0, p.x);
-    y0 = Math.min(y0, p.y);
-    x1 = Math.max(x1, p.x);
-    y1 = Math.max(y1, p.y);
-  }
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-}
-
-/** Union of several {x,y,w,h} rects. */
-function rectUnion(rects) {
-  const pts = [];
-  for (const r of rects) {
-    pts.push({ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x, y: r.y + r.h }, { x: r.x + r.w, y: r.y + r.h });
-  }
-  return rectFromPoints(pts);
-}
-
-/** True if two rects share strictly-positive area (touching edges are NOT an overlap). */
-function rectsOverlap(a, b) {
-  return !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
-}
-
-/**
- * True if the axis-aligned segment a->b passes through the STRICT INTERIOR of
- * rect r (crossing a boundary line or ending on the boundary does not count).
- * Used to detect wires that visually run through a component's footprint.
- */
-function segmentCrossesRect(a, b, r) {
-  const x0 = Math.min(a.x, b.x);
-  const x1 = Math.max(a.x, b.x);
-  const y0 = Math.min(a.y, b.y);
-  const y1 = Math.max(a.y, b.y);
-  if (a.x === b.x) {
-    return x0 > r.x && x0 < r.x + r.w && y0 < r.y + r.h && y1 > r.y;
-  }
-  if (a.y === b.y) {
-    return y0 > r.y && y0 < r.y + r.h && x0 < r.x + r.w && x1 > r.x;
-  }
-  return false; // route is always orthogonal
-}
-
-/** Shortest distance from point `p` to segment a-b (clamped to the segment). */
-function distanceToSegment(p, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
-  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
-}
-
-/** Format a coordinate for SVG: integers stay exact, others get two decimals. */
-function fmt(n) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(2);
-}
-
-/** Point-free helper: format a point for SVG. */
-function pt(p) {
-  return `${p.x} ${p.y}`;
-}
-
-/**
- * Midpoint of two grid points snapped to grid, useful for wire bends.
- * (Two grid multiples average to a multiple of GRID/2; snap pulls it back
- * onto the full grid.)
- */
-function midSnap(a, b) {
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-}
-
-__exports.applyTransform = applyTransform;
-__exports.applyDir = applyDir;
-__exports.transformToSvg = transformToSvg;
-__exports.transformRect = transformRect;
-__exports.inverseTransform = inverseTransform;
-__exports.rectFromPoints = rectFromPoints;
-__exports.rectUnion = rectUnion;
-__exports.rectsOverlap = rectsOverlap;
-__exports.segmentCrossesRect = segmentCrossesRect;
-__exports.distanceToSegment = distanceToSegment;
-__exports.fmt = fmt;
-__exports.pt = pt;
-__exports.midSnap = midSnap;
 };
 
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
@@ -27522,6 +27727,8 @@ const EDITOR_KEYMAP = Object.freeze([
     ['dd', 'delete the selected object set'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
+    ['9', 'highlight nets: each click cycles a net group\'s color'],
+    ['8', 'remove every net highlight'],
     ['t', 'edit the primary selected label (no-op otherwise)'],
     ['Ctrl/Cmd+i', 'toggle italic on selected labels'],
     ['Ctrl/Cmd+b', 'toggle bold on selected labels'],
@@ -28638,6 +28845,51 @@ __exports.analysisFormDefaults = analysisFormDefaults;
 __exports.ANALYSIS_FORM_KEY = ANALYSIS_FORM_KEY;
 };
 
+__modules["src/web/toolbar-fit.js"] = function (__require, __exports) {
+/**
+ * The top toolbar is one row that gives way in stages as its space runs out,
+ * least useful text first. Each stage adds one token to the toolbar's
+ * `data-compact` list, and style.css keys its rules on the tokens:
+ *
+ *   export, new         those file actions become icons
+ *   analyze             Analyze becomes an icon
+ *   fold                New, Export, and the view toggles move into More
+ *   save                Save becomes an icon
+ *
+ * The editor picks the first stage count at which the row fits and the
+ * document title still shows a comfortable amount of its name.
+ */
+const TOOLBAR_STAGES = ['export', 'new', 'analyze', 'fold', 'save'];
+
+/** How much of the title (px) must stay visible before buttons drop text. */
+const TITLE_COMFORT_PX = 224;
+
+/** First stage count for which `fits(count)` holds; all stages when none do. */
+function chooseToolbarStage(fits, count = TOOLBAR_STAGES.length) {
+  for (let n = 0; n < count; n++) {
+    if (fits(n)) return n;
+  }
+  return count;
+}
+
+/** The `data-compact` value for a stage count. */
+function toolbarStageTokens(count) {
+  return TOOLBAR_STAGES.slice(0, Math.max(0, count)).join(' ');
+}
+
+/** The row fits when nothing overflows and the title is shown to at least
+ *  the smaller of its full text and the comfort width. */
+function toolbarFits({ scrollWidth, clientWidth, titleWidth, titleTextWidth }) {
+  return scrollWidth <= clientWidth + 1 && titleWidth + 1 >= Math.min(titleTextWidth, TITLE_COMFORT_PX);
+}
+
+__exports.chooseToolbarStage = chooseToolbarStage;
+__exports.toolbarStageTokens = toolbarStageTokens;
+__exports.toolbarFits = toolbarFits;
+__exports.TOOLBAR_STAGES = TOOLBAR_STAGES;
+__exports.TITLE_COMFORT_PX = TITLE_COMFORT_PX;
+};
+
 __modules["src/web/interaction.js"] = function (__require, __exports) {
 const { snap, GRID } = __require("src/core/grid.js");
 
@@ -28831,125 +29083,6 @@ __exports.worldAndCursorFromClient = worldAndCursorFromClient;
 __exports.nearestPoint = nearestPoint;
 __exports.symmetryOperation = symmetryOperation;
 __exports.constrainAxis = constrainAxis;
-};
-
-__modules["src/web/toolbar-fit.js"] = function (__require, __exports) {
-/**
- * The top toolbar is one row that gives way in stages as its space runs out,
- * least useful text first. Each stage adds one token to the toolbar's
- * `data-compact` list, and style.css keys its rules on the tokens:
- *
- *   export, new         those file actions become icons
- *   analyze             Analyze becomes an icon
- *   fold                New, Export, and the view toggles move into More
- *   save                Save becomes an icon
- *
- * The editor picks the first stage count at which the row fits and the
- * document title still shows a comfortable amount of its name.
- */
-const TOOLBAR_STAGES = ['export', 'new', 'analyze', 'fold', 'save'];
-
-/** How much of the title (px) must stay visible before buttons drop text. */
-const TITLE_COMFORT_PX = 224;
-
-/** First stage count for which `fits(count)` holds; all stages when none do. */
-function chooseToolbarStage(fits, count = TOOLBAR_STAGES.length) {
-  for (let n = 0; n < count; n++) {
-    if (fits(n)) return n;
-  }
-  return count;
-}
-
-/** The `data-compact` value for a stage count. */
-function toolbarStageTokens(count) {
-  return TOOLBAR_STAGES.slice(0, Math.max(0, count)).join(' ');
-}
-
-/** The row fits when nothing overflows and the title is shown to at least
- *  the smaller of its full text and the comfort width. */
-function toolbarFits({ scrollWidth, clientWidth, titleWidth, titleTextWidth }) {
-  return scrollWidth <= clientWidth + 1 && titleWidth + 1 >= Math.min(titleTextWidth, TITLE_COMFORT_PX);
-}
-
-__exports.chooseToolbarStage = chooseToolbarStage;
-__exports.toolbarStageTokens = toolbarStageTokens;
-__exports.toolbarFits = toolbarFits;
-__exports.TOOLBAR_STAGES = TOOLBAR_STAGES;
-__exports.TITLE_COMFORT_PX = TITLE_COMFORT_PX;
-};
-
-__modules["src/web/status-bar.js"] = function (__require, __exports) {
-/**
- * Status bar and log drawer state.
- *
- * The footer is one slim line: a mode pill, the current hint, and fixed chips.
- * The log and command line live in a drawer that overlays the canvas instead
- * of taking permanent layout space. Its open/close rules are a pure reducer so
- * hover peeks, error peeks, click-open, command entry, and pinning compose
- * without timers or DOM state leaking into each other.
- */
-
-const LOG_DRAWER_CLOSED = Object.freeze({ open: false, pinned: false, reason: null });
-
-// Reasons that close by themselves when the pointer leaves the footer.
-const TRANSIENT = new Set(['hover', 'peek']);
-
-/** Next drawer state for one event. Events:
- *  toggle (message chip click), hover (pointer rests on the chip), leave
- *  (pointer leaves footer+drawer), error (an error was logged), peek-timeout
- *  ({ inside } says whether the pointer is over the footer), command (`:`),
- *  command-done (the command input lost focus), dismiss (Esc / outside
- *  click), pin (toggle pinning). */
-function logDrawerTransition(state, event) {
-  const s = state || LOG_DRAWER_CLOSED;
-  const close = () => (s.pinned ? s : LOG_DRAWER_CLOSED);
-  switch (event?.type) {
-    case 'toggle':
-      if (s.open && !TRANSIENT.has(s.reason)) return LOG_DRAWER_CLOSED;
-      return { open: true, pinned: s.pinned, reason: 'click' };
-    case 'hover':
-      return s.open ? s : { open: true, pinned: s.pinned, reason: 'hover' };
-    case 'leave':
-      return s.open && TRANSIENT.has(s.reason) ? close() : s;
-    case 'error':
-      return s.open ? s : { open: true, pinned: s.pinned, reason: 'peek' };
-    case 'peek-timeout':
-      if (!s.open || s.reason !== 'peek') return s;
-      return event.inside ? { ...s, reason: 'hover' } : close();
-    case 'command':
-      return { open: true, pinned: s.pinned, reason: 'command' };
-    case 'command-done':
-      return s.open && s.reason === 'command' ? close() : s;
-    case 'dismiss':
-      return s.open ? close() : s;
-    case 'pin':
-      return s.pinned ? { ...s, pinned: false } : { open: true, pinned: true, reason: s.reason || 'click' };
-    default:
-      return s;
-  }
-}
-
-/** Zoom as a percentage of the editor's default scale (`basePxPerUnit`). */
-function zoomPercent(view, paneWidth, basePxPerUnit) {
-  if (!view?.w || !paneWidth || !basePxPerUnit) return 100;
-  return Math.round(((paneWidth / view.w) / basePxPerUnit) * 100);
-}
-
-/** Split the legacy status parts into the pill, hint, and chip fields. Empty
- *  selection shows no chip rather than a placeholder dash. */
-function statusFields({ mode, selection, cursor, hints = [] }) {
-  return {
-    mode: String(mode || 'NORMAL'),
-    selection: selection || '',
-    cursor: cursor ? `${cursor.x}, ${cursor.y}` : '',
-    hint: hints.filter(Boolean).join('  ·  '),
-  };
-}
-
-__exports.logDrawerTransition = logDrawerTransition;
-__exports.zoomPercent = zoomPercent;
-__exports.statusFields = statusFields;
-__exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
 };
 
 __modules["src/web/gestures.js"] = function (__require, __exports) {
@@ -29198,6 +29331,80 @@ __exports.pinHandleRadius = pinHandleRadius;
 __exports.wheelIntent = wheelIntent;
 __exports.easeOutCubic = easeOutCubic;
 __exports.lerpView = lerpView;
+};
+
+__modules["src/web/status-bar.js"] = function (__require, __exports) {
+/**
+ * Status bar and log drawer state.
+ *
+ * The footer is one slim line: a mode pill, the current hint, and fixed chips.
+ * The log and command line live in a drawer that overlays the canvas instead
+ * of taking permanent layout space. Its open/close rules are a pure reducer so
+ * hover peeks, error peeks, click-open, command entry, and pinning compose
+ * without timers or DOM state leaking into each other.
+ */
+
+const LOG_DRAWER_CLOSED = Object.freeze({ open: false, pinned: false, reason: null });
+
+// Reasons that close by themselves when the pointer leaves the footer.
+const TRANSIENT = new Set(['hover', 'peek']);
+
+/** Next drawer state for one event. Events:
+ *  toggle (message chip click), hover (pointer rests on the chip), leave
+ *  (pointer leaves footer+drawer), error (an error was logged), peek-timeout
+ *  ({ inside } says whether the pointer is over the footer), command (`:`),
+ *  command-done (the command input lost focus), dismiss (Esc / outside
+ *  click), pin (toggle pinning). */
+function logDrawerTransition(state, event) {
+  const s = state || LOG_DRAWER_CLOSED;
+  const close = () => (s.pinned ? s : LOG_DRAWER_CLOSED);
+  switch (event?.type) {
+    case 'toggle':
+      if (s.open && !TRANSIENT.has(s.reason)) return LOG_DRAWER_CLOSED;
+      return { open: true, pinned: s.pinned, reason: 'click' };
+    case 'hover':
+      return s.open ? s : { open: true, pinned: s.pinned, reason: 'hover' };
+    case 'leave':
+      return s.open && TRANSIENT.has(s.reason) ? close() : s;
+    case 'error':
+      return s.open ? s : { open: true, pinned: s.pinned, reason: 'peek' };
+    case 'peek-timeout':
+      if (!s.open || s.reason !== 'peek') return s;
+      return event.inside ? { ...s, reason: 'hover' } : close();
+    case 'command':
+      return { open: true, pinned: s.pinned, reason: 'command' };
+    case 'command-done':
+      return s.open && s.reason === 'command' ? close() : s;
+    case 'dismiss':
+      return s.open ? close() : s;
+    case 'pin':
+      return s.pinned ? { ...s, pinned: false } : { open: true, pinned: true, reason: s.reason || 'click' };
+    default:
+      return s;
+  }
+}
+
+/** Zoom as a percentage of the editor's default scale (`basePxPerUnit`). */
+function zoomPercent(view, paneWidth, basePxPerUnit) {
+  if (!view?.w || !paneWidth || !basePxPerUnit) return 100;
+  return Math.round(((paneWidth / view.w) / basePxPerUnit) * 100);
+}
+
+/** Split the legacy status parts into the pill, hint, and chip fields. Empty
+ *  selection shows no chip rather than a placeholder dash. */
+function statusFields({ mode, selection, cursor, hints = [] }) {
+  return {
+    mode: String(mode || 'NORMAL'),
+    selection: selection || '',
+    cursor: cursor ? `${cursor.x}, ${cursor.y}` : '',
+    hint: hints.filter(Boolean).join('  ·  '),
+  };
+}
+
+__exports.logDrawerTransition = logDrawerTransition;
+__exports.zoomPercent = zoomPercent;
+__exports.statusFields = statusFields;
+__exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
 };
 
 __modules["src/web/layout.js"] = function (__require, __exports) {
@@ -29632,37 +29839,6 @@ __exports.describeGuides = describeGuides;
 __exports.layoutSuggestions = layoutSuggestions;
 };
 
-__modules["src/core/components/resistor.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-/**
- * Resistor (textbook style): a centered horizontal zigzag between a (left) and
- * b (right). The component origin is at the electrical midpoint so transforms
- * and placement keep the symbol centered.
- */
-const resistor = defineSymbol({
-  type: 'resistor',
-  description: 'Resistor',
-  refPrefix: 'R',
-  terminals: [
-    { name: 'a', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
-    { name: 'b', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
-  ],
-  bbox: { x: -80, y: -40, w: 160, h: 80 },
-  graphics: [
-    { kind: 'path', d: 'M -80 0 L -30 0 L -25 20 L -15 -20 L -5 20 L 5 -20 L 15 20 L 25 -20 L 30 0 L 80 0', style: 'symbol', miterLimit: 5 },
-  ],
-  textPos: { x: 0, y: -30, anchor: 'middle' },
-  refPos: null,
-  // Instance label sits above the body by default.
-  labelOffset: { x: 0, y: -80 },
-  defaultValue: '',
-});
-
-__exports.resistor = resistor;
-};
-
 __modules["src/core/components/capacitor.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -29756,13 +29932,35 @@ const diode = defineSymbol({
 __exports.diode = diode;
 };
 
-__modules["src/core/components/nmos.js"] = function (__require, __exports) {
-const { createMos } = __require("src/core/components/mos.js");
+__modules["src/core/components/resistor.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
 
-const nmos = createMos('nmos');
+/**
+ * Resistor (textbook style): a centered horizontal zigzag between a (left) and
+ * b (right). The component origin is at the electrical midpoint so transforms
+ * and placement keep the symbol centered.
+ */
+const resistor = defineSymbol({
+  type: 'resistor',
+  description: 'Resistor',
+  refPrefix: 'R',
+  terminals: [
+    { name: 'a', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
+    { name: 'b', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -40, w: 160, h: 80 },
+  graphics: [
+    { kind: 'path', d: 'M -80 0 L -30 0 L -25 20 L -15 -20 L -5 20 L 5 -20 L 15 20 L 25 -20 L 30 0 L 80 0', style: 'symbol', miterLimit: 5 },
+  ],
+  textPos: { x: 0, y: -30, anchor: 'middle' },
+  refPos: null,
+  // Instance label sits above the body by default.
+  labelOffset: { x: 0, y: -80 },
+  defaultValue: '',
+});
 
-__exports.nmos = nmos;
+__exports.resistor = resistor;
 };
 
 __modules["src/core/components/pmos.js"] = function (__require, __exports) {
@@ -29772,6 +29970,15 @@ const { createMos } = __require("src/core/components/mos.js");
 const pmos = createMos('pmos', { pmos: true });
 
 __exports.pmos = pmos;
+};
+
+__modules["src/core/components/nmos.js"] = function (__require, __exports) {
+const { createMos } = __require("src/core/components/mos.js");
+
+
+const nmos = createMos('nmos');
+
+__exports.nmos = nmos;
 };
 
 __modules["src/core/components/nmosb.js"] = function (__require, __exports) {
@@ -30331,6 +30538,61 @@ __exports.xor3_gate = xor3_gate;
 __exports.xnor3_gate = xnor3_gate;
 };
 
+__modules["src/core/components/converter.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
+const DAC_BODY = 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z';
+
+function converter(type, description, text, terminals, body, signalMark) {
+  return defineSymbol({
+    type,
+    description,
+    refPrefix: 'U',
+    terminals,
+    bbox: { x: -200, y: -120, w: 400, h: 240 },
+    graphics: [
+      ...terminals.map(({ x, y }) => ({
+        kind: 'path',
+        d: `M ${x} ${y} L ${x < 0 ? -120 : 120} ${y}`,
+        style: 'symbol',
+      })),
+      { kind: 'path', d: body, style: 'emph' },
+      { kind: 'path', d: signalMark, style: 'symbol' },
+      { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: { x: 0, y: -160 },
+    defaultValue: '',
+  });
+}
+
+const adc = converter(
+  'adc',
+  'Analog-to-Digital Converter',
+  'ADC',
+  [{ name: 'ain', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'd', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
+  ADC_BODY,
+  'M 154 -8 L 166 8',
+);
+
+const dac = converter(
+  'dac',
+  'Digital-to-Analog Converter',
+  'DAC',
+  [{ name: 'd', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'aout', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
+  DAC_BODY,
+  'M -166 8 L -154 -8',
+);
+
+__exports.adc = adc;
+__exports.dac = dac;
+};
+
 __modules["src/core/components/flipflop.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -30440,61 +30702,6 @@ __exports.latch_enb_rstb = latch_enb_rstb;
 __exports.latch_enb_rstb_qb = latch_enb_rstb_qb;
 };
 
-__modules["src/core/components/converter.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
-const DAC_BODY = 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z';
-
-function converter(type, description, text, terminals, body, signalMark) {
-  return defineSymbol({
-    type,
-    description,
-    refPrefix: 'U',
-    terminals,
-    bbox: { x: -200, y: -120, w: 400, h: 240 },
-    graphics: [
-      ...terminals.map(({ x, y }) => ({
-        kind: 'path',
-        d: `M ${x} ${y} L ${x < 0 ? -120 : 120} ${y}`,
-        style: 'symbol',
-      })),
-      { kind: 'path', d: body, style: 'emph' },
-      { kind: 'path', d: signalMark, style: 'symbol' },
-      { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
-    ],
-    textPos: null,
-    refPos: null,
-    labelOffset: { x: 0, y: -160 },
-    defaultValue: '',
-  });
-}
-
-const adc = converter(
-  'adc',
-  'Analog-to-Digital Converter',
-  'ADC',
-  [{ name: 'ain', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'd', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
-  ADC_BODY,
-  'M 154 -8 L 166 8',
-);
-
-const dac = converter(
-  'dac',
-  'Digital-to-Analog Converter',
-  'DAC',
-  [{ name: 'd', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'aout', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
-  DAC_BODY,
-  'M -166 8 L -154 -8',
-);
-
-__exports.adc = adc;
-__exports.dac = dac;
-};
-
 __modules["src/core/components/variable.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 const { resistor } = __require("src/core/components/resistor.js");
@@ -30571,49 +30778,6 @@ __exports.SOLDER_DOT_RADIUS = SOLDER_DOT_RADIUS;
 __exports.solder = solder;
 };
 
-__modules["src/core/components/block.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-// A schematic block is the default footprint for a resizable abstraction node.
-// Its generic terminals sit on every non-corner grid slot of the perimeter so
-// ordinary schematic wires can enter from any side (including each edge
-// midpoint); per-instance size is managed by ComponentInstance, while the
-// shared symbol supplies the initial geometry and caption style.
-const block = defineSymbol({
-  type: 'block',
-  description: 'Schematic block',
-  refPrefix: 'B',
-  allowFloatingTerminals: true,
-  terminals: [
-    { name: 'T1', x: -40, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
-    { name: 'T2', x: 40, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
-    { name: 'T3', x: 80, y: -40, direction: 'passive', dir: { x: 1, y: 0 } },
-    { name: 'T4', x: 80, y: 40, direction: 'passive', dir: { x: 1, y: 0 } },
-    { name: 'T5', x: 40, y: 80, direction: 'passive', dir: { x: 0, y: 1 } },
-    { name: 'T6', x: -40, y: 80, direction: 'passive', dir: { x: 0, y: 1 } },
-    { name: 'T7', x: -80, y: 40, direction: 'passive', dir: { x: -1, y: 0 } },
-    { name: 'T8', x: -80, y: -40, direction: 'passive', dir: { x: -1, y: 0 } },
-    { name: 'T9', x: 0, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
-    { name: 'T10', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
-    { name: 'T11', x: 0, y: 80, direction: 'passive', dir: { x: 0, y: 1 } },
-    { name: 'T12', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
-  ],
-  bbox: { x: -80, y: -80, w: 160, h: 160 },
-  graphics: [
-    { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
-  ],
-  // The label is the block's editable value, centered inside the body, like a
-  // block-diagram node rather than an external component reference designator.
-  textPos: { x: 0, y: 0, anchor: 'middle', font: 'label' },
-  refPos: null,
-  labelOffset: null,
-  defaultValue: 'Block',
-});
-
-__exports.block = block;
-};
-
 __modules["src/core/components/switch.js"] = function (__require, __exports) {
 const { defineSymbol } = __require("src/core/components/defineSymbol.js");
 
@@ -30655,6 +30819,49 @@ const switch_closed = makeSwitch('switch_closed', 'Switch (closed)', 'M -19.16 -
 
 __exports.switch_open = switch_open;
 __exports.switch_closed = switch_closed;
+};
+
+__modules["src/core/components/block.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+// A schematic block is the default footprint for a resizable abstraction node.
+// Its generic terminals sit on every non-corner grid slot of the perimeter so
+// ordinary schematic wires can enter from any side (including each edge
+// midpoint); per-instance size is managed by ComponentInstance, while the
+// shared symbol supplies the initial geometry and caption style.
+const block = defineSymbol({
+  type: 'block',
+  description: 'Schematic block',
+  refPrefix: 'B',
+  allowFloatingTerminals: true,
+  terminals: [
+    { name: 'T1', x: -40, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
+    { name: 'T2', x: 40, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
+    { name: 'T3', x: 80, y: -40, direction: 'passive', dir: { x: 1, y: 0 } },
+    { name: 'T4', x: 80, y: 40, direction: 'passive', dir: { x: 1, y: 0 } },
+    { name: 'T5', x: 40, y: 80, direction: 'passive', dir: { x: 0, y: 1 } },
+    { name: 'T6', x: -40, y: 80, direction: 'passive', dir: { x: 0, y: 1 } },
+    { name: 'T7', x: -80, y: 40, direction: 'passive', dir: { x: -1, y: 0 } },
+    { name: 'T8', x: -80, y: -40, direction: 'passive', dir: { x: -1, y: 0 } },
+    { name: 'T9', x: 0, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
+    { name: 'T10', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
+    { name: 'T11', x: 0, y: 80, direction: 'passive', dir: { x: 0, y: 1 } },
+    { name: 'T12', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -80, w: 160, h: 160 },
+  graphics: [
+    { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
+  ],
+  // The label is the block's editable value, centered inside the body, like a
+  // block-diagram node rather than an external component reference designator.
+  textPos: { x: 0, y: 0, anchor: 'middle', font: 'label' },
+  refPos: null,
+  labelOffset: null,
+  defaultValue: 'Block',
+});
+
+__exports.block = block;
 };
 
 __modules["src/core/components/mux.js"] = function (__require, __exports) {
@@ -30741,112 +30948,6 @@ const signal_multiply = signalOperator('signal_multiply', 'Signal-flow multiply'
 
 __exports.signal_sum = signal_sum;
 __exports.signal_multiply = signal_multiply;
-};
-
-__modules["src/core/analysis/index.js"] = function (__require, __exports) {
-const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
-const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
-
-
-
-const PASSTHROUGH_OPTIONS = Object.freeze([
-  'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
-  'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
-  'budget', 'valueOf', 'resolveValue',
-  'topologicalSolve', 'topologicalPresentation',
-]);
-
-function engineOptions(options) {
-  const supported = {};
-  for (const key of PASSTHROUGH_OPTIONS) {
-    if (options[key] !== undefined) supported[key] = options[key];
-  }
-  return {
-    ...supported,
-    ...(options.neglectBodyEffect === undefined ? {} : { ignoreBodyEffect: options.neglectBodyEffect }),
-    ...(options.highIntrinsicGain === undefined ? {} : { gmroLarge: options.highIntrinsicGain }),
-    ...(options.neglectChannelLengthModulation === undefined
-      ? {}
-      : { ignoreChannelLengthModulation: options.neglectChannelLengthModulation }),
-    ...(options.dominantPole === undefined ? {} : { dominantPoleApproximation: options.dominantPole }),
-  };
-}
-
-function triodeRegions(value) {
-  const entries = value instanceof Map ? [...value.entries()]
-    : Array.isArray(value) ? value.map((entry) => String(entry).split('='))
-      : value && typeof value === 'object' ? Object.entries(value) : [];
-  return Object.fromEntries(entries.flatMap(([refdes, model]) => {
-    const region = typeof model === 'object' ? model.region ?? model.model : model;
-    return String(region).toLowerCase() === 'triode' ? [[refdes, { region: 'triode' }]] : [];
-  }));
-}
-
-function compatibilityOptions(options) {
-  return {
-    ...options,
-    deviceRegions: options.deviceRegions ?? triodeRegions(options.models),
-    neglectBodyEffect: options.neglectBodyEffect ?? options.ignoreBodyEffect,
-    highIntrinsicGain: options.highIntrinsicGain ?? options.gmroLarge,
-    neglectChannelLengthModulation: options.neglectChannelLengthModulation
-      ?? options.ignoreChannelLengthModulation,
-    dominantPole: options.dominantPole ?? options.dominantPoleApproximation,
-  };
-}
-
-/** Run one exact symbolic solve and expose the stable combined report shape. */
-function analyzeSmallSignal(circuit, options = {}) {
-  return adaptCombinedReport(analyzeSmallSignalV2(circuit, engineOptions(options)));
-}
-
-function quantityReport(combined, key) {
-  const report = combined.reports[key];
-  return {
-    ...report,
-    dcGain: combined.dcGain,
-    dcInputImpedance: combined.dcInputImpedance,
-    dcOutputImpedance: combined.dcOutputImpedance,
-  };
-}
-
-/** Compatibility wrapper for callers that display only input impedance. */
-function analyzeInputImpedance(circuit, input, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, input })), 'input');
-}
-
-/** Compatibility wrapper for callers that display only output impedance. */
-function analyzeOutputImpedance(circuit, output, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'output');
-}
-
-/** Compatibility wrapper for callers that display only voltage transfer. */
-function analyzeTransferFunction(circuit, output, options = {}) {
-  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'transfer');
-}
-
-/** Return true when an expression retains the Laplace variable. */
-function expressionHasFrequency(value, seen = new Set()) {
-  if (value == null || typeof value !== 'object') {
-    return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
-  }
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (value.kind === 'symbol') return value.name === 's';
-  return [
-    value.expression,
-    value.numerator,
-    value.denominator,
-    value.base,
-    ...(value.terms || []),
-    ...(value.factors || []),
-  ].some((child) => expressionHasFrequency(child, seen));
-}
-
-__exports.analyzeSmallSignal = analyzeSmallSignal;
-__exports.analyzeInputImpedance = analyzeInputImpedance;
-__exports.analyzeOutputImpedance = analyzeOutputImpedance;
-__exports.analyzeTransferFunction = analyzeTransferFunction;
-__exports.expressionHasFrequency = expressionHasFrequency;
 };
 
 __modules["src/core/analysis/shared.js"] = function (__require, __exports) {
@@ -32653,6 +32754,112 @@ __exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
 __exports.INFINITY_NAMES = INFINITY_NAMES;
 };
 
+__modules["src/core/analysis/index.js"] = function (__require, __exports) {
+const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
+const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
+
+
+
+const PASSTHROUGH_OPTIONS = Object.freeze([
+  'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
+  'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
+  'budget', 'valueOf', 'resolveValue',
+  'topologicalSolve', 'topologicalPresentation',
+]);
+
+function engineOptions(options) {
+  const supported = {};
+  for (const key of PASSTHROUGH_OPTIONS) {
+    if (options[key] !== undefined) supported[key] = options[key];
+  }
+  return {
+    ...supported,
+    ...(options.neglectBodyEffect === undefined ? {} : { ignoreBodyEffect: options.neglectBodyEffect }),
+    ...(options.highIntrinsicGain === undefined ? {} : { gmroLarge: options.highIntrinsicGain }),
+    ...(options.neglectChannelLengthModulation === undefined
+      ? {}
+      : { ignoreChannelLengthModulation: options.neglectChannelLengthModulation }),
+    ...(options.dominantPole === undefined ? {} : { dominantPoleApproximation: options.dominantPole }),
+  };
+}
+
+function triodeRegions(value) {
+  const entries = value instanceof Map ? [...value.entries()]
+    : Array.isArray(value) ? value.map((entry) => String(entry).split('='))
+      : value && typeof value === 'object' ? Object.entries(value) : [];
+  return Object.fromEntries(entries.flatMap(([refdes, model]) => {
+    const region = typeof model === 'object' ? model.region ?? model.model : model;
+    return String(region).toLowerCase() === 'triode' ? [[refdes, { region: 'triode' }]] : [];
+  }));
+}
+
+function compatibilityOptions(options) {
+  return {
+    ...options,
+    deviceRegions: options.deviceRegions ?? triodeRegions(options.models),
+    neglectBodyEffect: options.neglectBodyEffect ?? options.ignoreBodyEffect,
+    highIntrinsicGain: options.highIntrinsicGain ?? options.gmroLarge,
+    neglectChannelLengthModulation: options.neglectChannelLengthModulation
+      ?? options.ignoreChannelLengthModulation,
+    dominantPole: options.dominantPole ?? options.dominantPoleApproximation,
+  };
+}
+
+/** Run one exact symbolic solve and expose the stable combined report shape. */
+function analyzeSmallSignal(circuit, options = {}) {
+  return adaptCombinedReport(analyzeSmallSignalV2(circuit, engineOptions(options)));
+}
+
+function quantityReport(combined, key) {
+  const report = combined.reports[key];
+  return {
+    ...report,
+    dcGain: combined.dcGain,
+    dcInputImpedance: combined.dcInputImpedance,
+    dcOutputImpedance: combined.dcOutputImpedance,
+  };
+}
+
+/** Compatibility wrapper for callers that display only input impedance. */
+function analyzeInputImpedance(circuit, input, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, input })), 'input');
+}
+
+/** Compatibility wrapper for callers that display only output impedance. */
+function analyzeOutputImpedance(circuit, output, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'output');
+}
+
+/** Compatibility wrapper for callers that display only voltage transfer. */
+function analyzeTransferFunction(circuit, output, options = {}) {
+  return quantityReport(analyzeSmallSignal(circuit, compatibilityOptions({ ...options, output })), 'transfer');
+}
+
+/** Return true when an expression retains the Laplace variable. */
+function expressionHasFrequency(value, seen = new Set()) {
+  if (value == null || typeof value !== 'object') {
+    return typeof value === 'string' && /(?:^|[^A-Za-z])s(?:[^A-Za-z]|$)/.test(value);
+  }
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (value.kind === 'symbol') return value.name === 's';
+  return [
+    value.expression,
+    value.numerator,
+    value.denominator,
+    value.base,
+    ...(value.terms || []),
+    ...(value.factors || []),
+  ].some((child) => expressionHasFrequency(child, seen));
+}
+
+__exports.analyzeSmallSignal = analyzeSmallSignal;
+__exports.analyzeInputImpedance = analyzeInputImpedance;
+__exports.analyzeOutputImpedance = analyzeOutputImpedance;
+__exports.analyzeTransferFunction = analyzeTransferFunction;
+__exports.expressionHasFrequency = expressionHasFrequency;
+};
+
 __modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
 const { integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js");
 /**
@@ -33679,6 +33886,356 @@ function cancelCommonPolynomialFactor(value, options = {}) {
 __exports.cancelCommonPolynomialFactor = cancelCommonPolynomialFactor;
 };
 
+__modules["src/core/analysis/diagnostics.js"] = function (__require, __exports) {
+const { asList, firstDefined } = __require("src/core/analysis/shared.js");
+
+const STAGES = Object.freeze([
+  'context', 'primitive', 'primitives', 'conversion', 'devices', 'graph', 'mna', 'solver', 'solve',
+]);
+
+const CODE_ORDER = Object.freeze([
+  'missing-port',
+  'ambiguous-port',
+  'unconnected-port',
+  'same-port',
+  'reference-port',
+  'unconnected-bulk',
+  'legacy-mos-current-source',
+  'unknown-mos-model',
+  'unsupported-component',
+  'missing-analysis-roots',
+  'missing-reference',
+  'floating-coupled-node',
+  'contradictory-voltage-constraints',
+  'inconsistent-system',
+  'singular-system',
+  'mna-error',
+  'analysis-error',
+]);
+
+const CODE_ALIASES = new Map([
+  ['ambiguous', 'ambiguous-port'],
+  ['missing-roots', 'missing-analysis-roots'],
+  ['singular', 'singular-system'],
+  ['inconsistent', 'inconsistent-system'],
+  ['contradictory-voltage-source', 'contradictory-voltage-constraints'],
+  ['contradictory-voltage-sources', 'contradictory-voltage-constraints'],
+  ['floating-node', 'floating-coupled-node'],
+  ['floating-nodes', 'floating-coupled-node'],
+  ['missing-ground', 'missing-reference'],
+  ['missing-reference-node', 'missing-reference'],
+  ['legacy-current-source', 'legacy-mos-current-source'],
+  ['legacy-mos-current-source-override', 'legacy-mos-current-source'],
+]);
+
+const SEVERITY_ORDER = Object.freeze({ error: 0, warning: 1, info: 2 });
+
+function asText(value) {
+  if (value === undefined || value === null) return '';
+  return String(value).trim();
+}
+
+function cleanCode(value) {
+  const raw = asText(value).toLowerCase()
+    .replace(/([a-z])([A-Z])/g, '$1-$2')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return CODE_ALIASES.get(raw) || raw || 'analysis-error';
+}
+
+function severityOf(value, fallback = 'error') {
+  const severity = asText(value).toLowerCase();
+  return Object.hasOwn(SEVERITY_ORDER, severity) ? severity : fallback;
+}
+
+function stableValue(value) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value) || value instanceof Set) {
+    return asList(value).map(stableValue).sort().join(',');
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value).sort().map((key) => `${key}:${stableValue(value[key])}`).join('|');
+  }
+  return String(value);
+}
+
+function stageName(value) {
+  const stage = asText(value).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  return stage || 'analysis';
+}
+
+function roleName(value) {
+  const role = asText(value).toLowerCase();
+  return role === 'input' || role === 'output' ? role : '';
+}
+
+function metadataOf(item, source) {
+  const values = [
+    item?.metadata,
+    item?.metadata?.singularity,
+    item?.details,
+    item?.details?.singularity,
+    item?.cause,
+    item?.causes,
+    source?.metadata,
+    source?.metadata?.singularity,
+    source?.singularity,
+    source?.causes,
+  ];
+  return values.filter((value) => value && typeof value === 'object')
+    .reduce((result, value) => ({ ...result, ...value }), {});
+}
+
+function singularCauseEntries(source, stage) {
+  const metadata = metadataOf(source, source);
+  const entries = [];
+  const add = (code, values, extra = {}) => {
+    for (const value of asList(values)) {
+      const detail = typeof value === 'object' ? value : { value };
+      const supplied = Object.entries(detail)
+        .filter(([key]) => !['message', 'detail', 'code', 'severity'].includes(key))
+        .map(([key, item]) => `${key}=${stableValue(item)}`)
+        .join(', ');
+      entries.push({
+        code,
+        severity: 'error',
+        stage,
+        ...detail,
+        ...extra,
+        ...(supplied ? { detail: supplied } : {}),
+        metadata: { cause: code },
+      });
+    }
+  };
+
+  const missing = firstDefined(
+    metadata.missingReference,
+    metadata.missingReferences,
+    metadata.referenceMissing,
+    metadata.missingReferenceNode,
+    metadata.referenceRequired,
+  );
+  if (missing === true) add('missing-reference', [{ reference: metadata.reference }]);
+  else if (missing) add('missing-reference', missing);
+
+  const floating = firstDefined(
+    metadata.floatingNode,
+    metadata.floatingNodes,
+    metadata.floatingCoupledNode,
+    metadata.floatingCoupledNodes,
+  );
+  if (floating) add('floating-coupled-node', floating);
+
+  const contradictory = firstDefined(
+    metadata.contradictoryVoltageSource,
+    metadata.contradictoryVoltageSources,
+    metadata.contradictoryVoltageConstraints,
+    metadata.voltageConstraintConflict,
+    metadata.contradictorySources,
+    metadata.voltageConflicts,
+    metadata.idealVoltageConflicts,
+  );
+  if (contradictory) add('contradictory-voltage-constraints', contradictory);
+  return entries;
+}
+
+function sourceItems(source, stage = 'analysis') {
+  if (!source) return [];
+  if (Array.isArray(source)) return source.flatMap((item) => sourceItems(item, stage));
+  if (source instanceof Error) return [{ stage, error: source }];
+  if (typeof source !== 'object') return [];
+
+  const items = [];
+  const add = (value, severity, itemStage = stage) => {
+    for (const item of asList(value)) {
+      if (!item) continue;
+      items.push({
+        ...(typeof item === 'object' ? item : { message: item }),
+        severity: item?.severity || severity,
+        stage: item?.stage || itemStage,
+      });
+    }
+  };
+
+  const isDiagnostic = source.code
+    || source.error instanceof Error
+    || (source.message && !source.diagnostics && !source.errors && !source.warnings && source.ok === undefined && !source.log);
+  if (isDiagnostic) {
+    add(source, source.severity || 'error', stage);
+    const singular = ['singular', 'singular-system', 'inconsistent', 'inconsistent-system']
+      .includes(cleanCode(source.code));
+    if (stage === 'solve' || stage === 'solver' || stage === 'mna' || source.singularity || singular) {
+      items.push(...singularCauseEntries(source, stage));
+    }
+    return items;
+  }
+
+  if (source.diagnostics && typeof source.diagnostics === 'object' && !Array.isArray(source.diagnostics)) {
+    add(source.diagnostics.errors, 'error', stage);
+    add(source.diagnostics.warnings, 'warning', stage);
+    add(source.diagnostics.info, 'info', stage);
+    add(source.diagnostics.items, 'error', stage);
+  } else {
+    add(source.diagnostics, 'error', stage);
+  }
+  add(source.errors, 'error', stage);
+  add(source.warnings, 'warning', stage);
+
+  const failed = source.ok === false || source.error instanceof Error || (source.error && !source.diagnostics);
+  if (failed) add({
+    code: source.code,
+    error: source.error,
+    message: source.message || (source.error instanceof Error ? source.error.message : source.error),
+    ...source,
+  }, 'error', stage);
+
+  const causeSource = source.solve || source.mna || source.singularity
+    || stage === 'solve' || stage === 'solver' || stage === 'mna'
+    ? source
+    : null;
+  if (causeSource) items.push(...singularCauseEntries(causeSource, stage));
+  return items;
+}
+
+function stageEntries(source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return sourceItems(source);
+  const hasStages = STAGES.some((stage) => Object.hasOwn(source, stage));
+  if (!hasStages) return sourceItems(source);
+  const entries = [];
+  for (const stage of STAGES) {
+    if (Object.hasOwn(source, stage)) entries.push(...sourceItems(source[stage], stage));
+  }
+  if (Object.hasOwn(source, 'diagnostics') || Object.hasOwn(source, 'error')) {
+    entries.push(...sourceItems(source, 'analysis'));
+  }
+  return entries;
+}
+
+function defaultMessage(item, code, detail) {
+  const role = roleName(item.role || item.port);
+  const name = asText(item.name || item.value || item.net);
+  const component = asText(item.component || item.refdes);
+  const node = asText(item.node || item.nodeId || item.reference || item.value);
+  switch (code) {
+    case 'missing-port': return `${role ? `${role[0].toUpperCase()}${role.slice(1)} ` : ''}net is required.`;
+    case 'ambiguous-port': return `${role ? `${role[0].toUpperCase()}${role.slice(1)} ` : ''}port${name ? ` "${name}"` : ''} matches multiple physical nets; choose one.`;
+    case 'unconnected-port': return `${role ? `${role[0].toUpperCase()} ` : 'Selected '}port is not connected to a net.`;
+    case 'same-port': return 'Input and output must be different physical nets.';
+    case 'reference-port': return 'Input and output must not be AC-reference rails.';
+    case 'unconnected-bulk': return `${component || 'MOS device'} has an unconnected bulk terminal.`;
+    case 'legacy-mos-current-source': return `${component || 'MOS device'} uses the removed current-source override; remove it and use the exact MOS model.`;
+    case 'unknown-mos-model': return `${component || 'MOS device'} has an unknown small-signal model override.`;
+    case 'unsupported-component': return `${component || item.type || 'Component'} has no small-signal model.`;
+    case 'missing-analysis-roots': return 'An input or output analysis node is required.';
+    case 'missing-reference': return `Analysis needs an AC reference${node ? ` (${node})` : ''}.`;
+    case 'floating-coupled-node': return `Coupled node${node ? ` ${node}` : ''} is floating; add a reference or return path.`;
+    case 'contradictory-voltage-constraints': return 'Ideal voltage sources impose contradictory voltages.';
+    case 'inconsistent-system': return 'The small-signal equations are inconsistent.';
+    case 'singular-system': return 'The small-signal equations are singular.';
+    case 'mna-error': return 'The small-signal matrix could not be built.';
+    case 'analysis-error': return 'Small-signal analysis could not be completed.';
+    default: return asText(item.message || item.error) || 'Small-signal analysis reported an error.';
+  }
+}
+
+function normalizeEntry(item, index) {
+  const rawCode = item.code || (item.error?.code) || (item.error?.name === 'RangeError' ? 'mna-error' : '');
+  const code = cleanCode(rawCode || (asText(item.error || item.message).toLowerCase().includes('singular') ? 'singular-system' : 'analysis-error'));
+  const severity = severityOf(item.severity, code === 'unsupported-component' ? 'warning' : 'error');
+  const details = {
+    ...(item && typeof item === 'object' ? item : {}),
+    code,
+    severity,
+    stage: stageName(item.stage),
+  };
+  const message = defaultMessage(details, code, details);
+  const detailParts = [asText(details.detail || details.error?.message || details.error || details.originalMessage || details.message)];
+  if (details.migration) detailParts.push(`Migration: ${asText(details.migration)}`);
+  const detail = detailParts.filter(Boolean).join(' ');
+  const key = [
+    code,
+    details.component || details.refdes || '',
+    details.node || details.nodeId || '',
+    details.role || details.port || '',
+    details.name || details.value || '',
+    stableValue(details.candidates),
+    stableValue(details.sources || details.constraints),
+  ].join('|');
+  return {
+    code,
+    severity,
+    message,
+    detail: detail && detail !== message ? detail : message,
+    ...(details.stage !== 'analysis' ? { stage: details.stage } : {}),
+    ...(['component', 'refdes', 'type', 'node', 'nodeId', 'role', 'port', 'name', 'candidates', 'migration', 'metadata'].reduce((result, keyName) => {
+      if (details[keyName] !== undefined) result[keyName] = details[keyName];
+      return result;
+    }, {})),
+    _key: key,
+    _index: index,
+  };
+}
+
+function orderOf(code) {
+  const index = CODE_ORDER.indexOf(code);
+  return index < 0 ? CODE_ORDER.length : index;
+}
+
+function sortDiagnostics(a, b) {
+  return (SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
+    || (orderOf(a.code) - orderOf(b.code))
+    || a.code.localeCompare(b.code)
+    || String(a.component || a.refdes || a.node || '').localeCompare(String(b.component || b.refdes || b.node || ''))
+    || a._index - b._index;
+}
+
+/** Convert producer results into stable, deduplicated diagnostics. */
+function normalizeDiagnostics(source) {
+  const normalized = stageEntries(source).map(normalizeEntry);
+  const unique = new Map();
+  for (const item of normalized) {
+    if (!unique.has(item._key)) unique.set(item._key, item);
+  }
+  const diagnostics = [...unique.values()].sort(sortDiagnostics)
+    .map(({ _key, _index, ...item }) => item);
+  const errors = diagnostics.filter((item) => item.severity === 'error');
+  const warnings = diagnostics.filter((item) => item.severity === 'warning');
+  const log = diagnostics.map((item) => {
+    const prefix = [item.severity.toUpperCase(), item.code, item.stage].filter(Boolean).join(' ');
+    return `${prefix}: ${item.detail || item.message}`;
+  });
+  return {
+    ok: errors.length === 0,
+    diagnostics,
+    errors,
+    warnings,
+    message: errors.concat(warnings).map((item) => item.message).join(' '),
+    log,
+    logText: log.join('\n'),
+  };
+}
+
+/** Return concise display messages and a stage/source-oriented diagnostic log. */
+function presentDiagnostics(source) {
+  const result = normalizeDiagnostics(source);
+  const log = result.log;
+  return {
+    ...result,
+    messages: result.diagnostics.map((item) => item.message),
+    log,
+    logText: log.join('\n'),
+  };
+}
+
+function formatDiagnosticLog(source) {
+  return presentDiagnostics(source).logText;
+}
+
+__exports.normalizeDiagnostics = normalizeDiagnostics;
+__exports.presentDiagnostics = presentDiagnostics;
+__exports.formatDiagnosticLog = formatDiagnosticLog;
+};
+
 __modules["src/core/analysis/pipeline.js"] = function (__require, __exports) {
 const { firstDefined } = __require("src/core/analysis/shared.js");
 const { AC_GROUND, resolveAnalysisContext } = __require("src/core/analysis/context.js");
@@ -34323,356 +34880,6 @@ __exports.createTestExcitations = createTestExcitations;
 __exports.buildExactAnalysisPipeline = buildExactAnalysisPipeline;
 };
 
-__modules["src/core/analysis/diagnostics.js"] = function (__require, __exports) {
-const { asList, firstDefined } = __require("src/core/analysis/shared.js");
-
-const STAGES = Object.freeze([
-  'context', 'primitive', 'primitives', 'conversion', 'devices', 'graph', 'mna', 'solver', 'solve',
-]);
-
-const CODE_ORDER = Object.freeze([
-  'missing-port',
-  'ambiguous-port',
-  'unconnected-port',
-  'same-port',
-  'reference-port',
-  'unconnected-bulk',
-  'legacy-mos-current-source',
-  'unknown-mos-model',
-  'unsupported-component',
-  'missing-analysis-roots',
-  'missing-reference',
-  'floating-coupled-node',
-  'contradictory-voltage-constraints',
-  'inconsistent-system',
-  'singular-system',
-  'mna-error',
-  'analysis-error',
-]);
-
-const CODE_ALIASES = new Map([
-  ['ambiguous', 'ambiguous-port'],
-  ['missing-roots', 'missing-analysis-roots'],
-  ['singular', 'singular-system'],
-  ['inconsistent', 'inconsistent-system'],
-  ['contradictory-voltage-source', 'contradictory-voltage-constraints'],
-  ['contradictory-voltage-sources', 'contradictory-voltage-constraints'],
-  ['floating-node', 'floating-coupled-node'],
-  ['floating-nodes', 'floating-coupled-node'],
-  ['missing-ground', 'missing-reference'],
-  ['missing-reference-node', 'missing-reference'],
-  ['legacy-current-source', 'legacy-mos-current-source'],
-  ['legacy-mos-current-source-override', 'legacy-mos-current-source'],
-]);
-
-const SEVERITY_ORDER = Object.freeze({ error: 0, warning: 1, info: 2 });
-
-function asText(value) {
-  if (value === undefined || value === null) return '';
-  return String(value).trim();
-}
-
-function cleanCode(value) {
-  const raw = asText(value).toLowerCase()
-    .replace(/([a-z])([A-Z])/g, '$1-$2')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-  return CODE_ALIASES.get(raw) || raw || 'analysis-error';
-}
-
-function severityOf(value, fallback = 'error') {
-  const severity = asText(value).toLowerCase();
-  return Object.hasOwn(SEVERITY_ORDER, severity) ? severity : fallback;
-}
-
-function stableValue(value) {
-  if (value === undefined || value === null) return '';
-  if (Array.isArray(value) || value instanceof Set) {
-    return asList(value).map(stableValue).sort().join(',');
-  }
-  if (typeof value === 'object') {
-    return Object.keys(value).sort().map((key) => `${key}:${stableValue(value[key])}`).join('|');
-  }
-  return String(value);
-}
-
-function stageName(value) {
-  const stage = asText(value).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  return stage || 'analysis';
-}
-
-function roleName(value) {
-  const role = asText(value).toLowerCase();
-  return role === 'input' || role === 'output' ? role : '';
-}
-
-function metadataOf(item, source) {
-  const values = [
-    item?.metadata,
-    item?.metadata?.singularity,
-    item?.details,
-    item?.details?.singularity,
-    item?.cause,
-    item?.causes,
-    source?.metadata,
-    source?.metadata?.singularity,
-    source?.singularity,
-    source?.causes,
-  ];
-  return values.filter((value) => value && typeof value === 'object')
-    .reduce((result, value) => ({ ...result, ...value }), {});
-}
-
-function singularCauseEntries(source, stage) {
-  const metadata = metadataOf(source, source);
-  const entries = [];
-  const add = (code, values, extra = {}) => {
-    for (const value of asList(values)) {
-      const detail = typeof value === 'object' ? value : { value };
-      const supplied = Object.entries(detail)
-        .filter(([key]) => !['message', 'detail', 'code', 'severity'].includes(key))
-        .map(([key, item]) => `${key}=${stableValue(item)}`)
-        .join(', ');
-      entries.push({
-        code,
-        severity: 'error',
-        stage,
-        ...detail,
-        ...extra,
-        ...(supplied ? { detail: supplied } : {}),
-        metadata: { cause: code },
-      });
-    }
-  };
-
-  const missing = firstDefined(
-    metadata.missingReference,
-    metadata.missingReferences,
-    metadata.referenceMissing,
-    metadata.missingReferenceNode,
-    metadata.referenceRequired,
-  );
-  if (missing === true) add('missing-reference', [{ reference: metadata.reference }]);
-  else if (missing) add('missing-reference', missing);
-
-  const floating = firstDefined(
-    metadata.floatingNode,
-    metadata.floatingNodes,
-    metadata.floatingCoupledNode,
-    metadata.floatingCoupledNodes,
-  );
-  if (floating) add('floating-coupled-node', floating);
-
-  const contradictory = firstDefined(
-    metadata.contradictoryVoltageSource,
-    metadata.contradictoryVoltageSources,
-    metadata.contradictoryVoltageConstraints,
-    metadata.voltageConstraintConflict,
-    metadata.contradictorySources,
-    metadata.voltageConflicts,
-    metadata.idealVoltageConflicts,
-  );
-  if (contradictory) add('contradictory-voltage-constraints', contradictory);
-  return entries;
-}
-
-function sourceItems(source, stage = 'analysis') {
-  if (!source) return [];
-  if (Array.isArray(source)) return source.flatMap((item) => sourceItems(item, stage));
-  if (source instanceof Error) return [{ stage, error: source }];
-  if (typeof source !== 'object') return [];
-
-  const items = [];
-  const add = (value, severity, itemStage = stage) => {
-    for (const item of asList(value)) {
-      if (!item) continue;
-      items.push({
-        ...(typeof item === 'object' ? item : { message: item }),
-        severity: item?.severity || severity,
-        stage: item?.stage || itemStage,
-      });
-    }
-  };
-
-  const isDiagnostic = source.code
-    || source.error instanceof Error
-    || (source.message && !source.diagnostics && !source.errors && !source.warnings && source.ok === undefined && !source.log);
-  if (isDiagnostic) {
-    add(source, source.severity || 'error', stage);
-    const singular = ['singular', 'singular-system', 'inconsistent', 'inconsistent-system']
-      .includes(cleanCode(source.code));
-    if (stage === 'solve' || stage === 'solver' || stage === 'mna' || source.singularity || singular) {
-      items.push(...singularCauseEntries(source, stage));
-    }
-    return items;
-  }
-
-  if (source.diagnostics && typeof source.diagnostics === 'object' && !Array.isArray(source.diagnostics)) {
-    add(source.diagnostics.errors, 'error', stage);
-    add(source.diagnostics.warnings, 'warning', stage);
-    add(source.diagnostics.info, 'info', stage);
-    add(source.diagnostics.items, 'error', stage);
-  } else {
-    add(source.diagnostics, 'error', stage);
-  }
-  add(source.errors, 'error', stage);
-  add(source.warnings, 'warning', stage);
-
-  const failed = source.ok === false || source.error instanceof Error || (source.error && !source.diagnostics);
-  if (failed) add({
-    code: source.code,
-    error: source.error,
-    message: source.message || (source.error instanceof Error ? source.error.message : source.error),
-    ...source,
-  }, 'error', stage);
-
-  const causeSource = source.solve || source.mna || source.singularity
-    || stage === 'solve' || stage === 'solver' || stage === 'mna'
-    ? source
-    : null;
-  if (causeSource) items.push(...singularCauseEntries(causeSource, stage));
-  return items;
-}
-
-function stageEntries(source) {
-  if (!source || typeof source !== 'object' || Array.isArray(source)) return sourceItems(source);
-  const hasStages = STAGES.some((stage) => Object.hasOwn(source, stage));
-  if (!hasStages) return sourceItems(source);
-  const entries = [];
-  for (const stage of STAGES) {
-    if (Object.hasOwn(source, stage)) entries.push(...sourceItems(source[stage], stage));
-  }
-  if (Object.hasOwn(source, 'diagnostics') || Object.hasOwn(source, 'error')) {
-    entries.push(...sourceItems(source, 'analysis'));
-  }
-  return entries;
-}
-
-function defaultMessage(item, code, detail) {
-  const role = roleName(item.role || item.port);
-  const name = asText(item.name || item.value || item.net);
-  const component = asText(item.component || item.refdes);
-  const node = asText(item.node || item.nodeId || item.reference || item.value);
-  switch (code) {
-    case 'missing-port': return `${role ? `${role[0].toUpperCase()}${role.slice(1)} ` : ''}net is required.`;
-    case 'ambiguous-port': return `${role ? `${role[0].toUpperCase()}${role.slice(1)} ` : ''}port${name ? ` "${name}"` : ''} matches multiple physical nets; choose one.`;
-    case 'unconnected-port': return `${role ? `${role[0].toUpperCase()} ` : 'Selected '}port is not connected to a net.`;
-    case 'same-port': return 'Input and output must be different physical nets.';
-    case 'reference-port': return 'Input and output must not be AC-reference rails.';
-    case 'unconnected-bulk': return `${component || 'MOS device'} has an unconnected bulk terminal.`;
-    case 'legacy-mos-current-source': return `${component || 'MOS device'} uses the removed current-source override; remove it and use the exact MOS model.`;
-    case 'unknown-mos-model': return `${component || 'MOS device'} has an unknown small-signal model override.`;
-    case 'unsupported-component': return `${component || item.type || 'Component'} has no small-signal model.`;
-    case 'missing-analysis-roots': return 'An input or output analysis node is required.';
-    case 'missing-reference': return `Analysis needs an AC reference${node ? ` (${node})` : ''}.`;
-    case 'floating-coupled-node': return `Coupled node${node ? ` ${node}` : ''} is floating; add a reference or return path.`;
-    case 'contradictory-voltage-constraints': return 'Ideal voltage sources impose contradictory voltages.';
-    case 'inconsistent-system': return 'The small-signal equations are inconsistent.';
-    case 'singular-system': return 'The small-signal equations are singular.';
-    case 'mna-error': return 'The small-signal matrix could not be built.';
-    case 'analysis-error': return 'Small-signal analysis could not be completed.';
-    default: return asText(item.message || item.error) || 'Small-signal analysis reported an error.';
-  }
-}
-
-function normalizeEntry(item, index) {
-  const rawCode = item.code || (item.error?.code) || (item.error?.name === 'RangeError' ? 'mna-error' : '');
-  const code = cleanCode(rawCode || (asText(item.error || item.message).toLowerCase().includes('singular') ? 'singular-system' : 'analysis-error'));
-  const severity = severityOf(item.severity, code === 'unsupported-component' ? 'warning' : 'error');
-  const details = {
-    ...(item && typeof item === 'object' ? item : {}),
-    code,
-    severity,
-    stage: stageName(item.stage),
-  };
-  const message = defaultMessage(details, code, details);
-  const detailParts = [asText(details.detail || details.error?.message || details.error || details.originalMessage || details.message)];
-  if (details.migration) detailParts.push(`Migration: ${asText(details.migration)}`);
-  const detail = detailParts.filter(Boolean).join(' ');
-  const key = [
-    code,
-    details.component || details.refdes || '',
-    details.node || details.nodeId || '',
-    details.role || details.port || '',
-    details.name || details.value || '',
-    stableValue(details.candidates),
-    stableValue(details.sources || details.constraints),
-  ].join('|');
-  return {
-    code,
-    severity,
-    message,
-    detail: detail && detail !== message ? detail : message,
-    ...(details.stage !== 'analysis' ? { stage: details.stage } : {}),
-    ...(['component', 'refdes', 'type', 'node', 'nodeId', 'role', 'port', 'name', 'candidates', 'migration', 'metadata'].reduce((result, keyName) => {
-      if (details[keyName] !== undefined) result[keyName] = details[keyName];
-      return result;
-    }, {})),
-    _key: key,
-    _index: index,
-  };
-}
-
-function orderOf(code) {
-  const index = CODE_ORDER.indexOf(code);
-  return index < 0 ? CODE_ORDER.length : index;
-}
-
-function sortDiagnostics(a, b) {
-  return (SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
-    || (orderOf(a.code) - orderOf(b.code))
-    || a.code.localeCompare(b.code)
-    || String(a.component || a.refdes || a.node || '').localeCompare(String(b.component || b.refdes || b.node || ''))
-    || a._index - b._index;
-}
-
-/** Convert producer results into stable, deduplicated diagnostics. */
-function normalizeDiagnostics(source) {
-  const normalized = stageEntries(source).map(normalizeEntry);
-  const unique = new Map();
-  for (const item of normalized) {
-    if (!unique.has(item._key)) unique.set(item._key, item);
-  }
-  const diagnostics = [...unique.values()].sort(sortDiagnostics)
-    .map(({ _key, _index, ...item }) => item);
-  const errors = diagnostics.filter((item) => item.severity === 'error');
-  const warnings = diagnostics.filter((item) => item.severity === 'warning');
-  const log = diagnostics.map((item) => {
-    const prefix = [item.severity.toUpperCase(), item.code, item.stage].filter(Boolean).join(' ');
-    return `${prefix}: ${item.detail || item.message}`;
-  });
-  return {
-    ok: errors.length === 0,
-    diagnostics,
-    errors,
-    warnings,
-    message: errors.concat(warnings).map((item) => item.message).join(' '),
-    log,
-    logText: log.join('\n'),
-  };
-}
-
-/** Return concise display messages and a stage/source-oriented diagnostic log. */
-function presentDiagnostics(source) {
-  const result = normalizeDiagnostics(source);
-  const log = result.log;
-  return {
-    ...result,
-    messages: result.diagnostics.map((item) => item.message),
-    log,
-    logText: log.join('\n'),
-  };
-}
-
-function formatDiagnosticLog(source) {
-  return presentDiagnostics(source).logText;
-}
-
-__exports.normalizeDiagnostics = normalizeDiagnostics;
-__exports.presentDiagnostics = presentDiagnostics;
-__exports.formatDiagnosticLog = formatDiagnosticLog;
-};
-
 __modules["src/core/analysis/netlist.js"] = function (__require, __exports) {
 const { firstDefined } = __require("src/core/analysis/shared.js");
 const { formatExpression } = __require("src/core/analysis/rational.js");
@@ -34986,144 +35193,6 @@ __exports.formatSmallSignalNetlist = formatSmallSignalNetlist;
 __exports.describeSmallSignalNetlist = describeSmallSignalNetlist;
 };
 
-__modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-
-
-/**
- * Symbol definition factory. Enforces the contract:
- *  - every terminal position is on the GRID (multiple of 40)
- *  - the bounding box corners/extents are on the GRID (unless the symbol has
- *    no terminals — pure annotations like solder may use a dot-sized bbox)
- *  - terminal names are unique
- * The terminal list may be empty for pure annotations (e.g. solder dots).
- * Symbol body graphics may use arbitrary coordinates.
- */
-function defineSymbol(def) {
-  validateSymbol(def);
-  return Object.freeze({
-    ...def,
-    terminals: Object.freeze(def.terminals.map(Object.freeze)),
-    graphics: markTerminalLeads(def.graphics || [], def.terminals),
-  });
-}
-
-/**
- * An open absolute path that starts or ends on a terminal is a pin lead. The
- * renderer draws leads in the same single ink path as wires, so a lead and
- * the wire meeting it at the terminal are rasterized once, without a seam or
- * doubled anti-aliased edges.
- */
-function markTerminalLeads(graphics, terminals) {
-  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
-  return graphics.map((g) => {
-    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
-    const d = String(g.d || '').trim();
-    // Only absolute move/line/cubic paths: their first and last numbers are points.
-    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
-    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
-    if (numbers.length < 4) return g;
-    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
-    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
-  });
-}
-
-function validateSymbol(def) {
-  const terms = def.terminals;
-  if (!Array.isArray(terms)) {
-    throw new Error(`symbol "${def.type}" must define a terminals array`);
-  }
-  const names = new Set();
-  for (const t of terms) {
-    if (!t.name || names.has(t.name)) {
-      throw new Error(`symbol "${def.type}": terminal names must be unique, got "${t.name}"`);
-    }
-    names.add(t.name);
-    if (!Number.isInteger(t.x / GRID) || !Number.isInteger(t.y / GRID)) {
-      throw new Error(
-        `symbol "${def.type}": terminal "${t.name}" at (${t.x},${t.y}) is NOT on the ${GRID}-unit grid`
-      );
-    }
-  }
-  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
-  // grid point and never routed through, so their bbox may be the drawn size
-  // rather than an aligned grid cell.
-  if (terms.length > 0) {
-    const r = def.bbox;
-    for (const [k, v] of Object.entries(r)) {
-      if (!Number.isInteger(v / GRID)) {
-        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
-      }
-    }
-  }
-}
-
-__exports.defineSymbol = defineSymbol;
-__exports.markTerminalLeads = markTerminalLeads;
-__exports.validateSymbol = validateSymbol;
-};
-
-__modules["src/core/components/mos.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-
-
-const TERMINALS = [
-  { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
-  { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
-  { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
-];
-const BULK = { name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } };
-const BBOX = { x: -120, y: -80, w: 120, h: 160 };
-
-function mosGraphics(sourceArrow, bulk) {
-  const graphics = [
-    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
-    { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
-    { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
-    { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
-    // Channel-side stubs start inside the channel bar (like the drain), so the
-    // butt end never meets the bar edge and leaves an anti-aliased seam.
-    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
-    sourceArrow,
-  ];
-  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
-  return graphics;
-}
-
-/** Build one of the four MOS symbols without sharing mutable definition data. */
-function createMos(type, { pmos = false, bulk = false } = {}) {
-  return defineSymbol({
-    type,
-    description: bulk ? `${pmos ? 'PMOS' : 'NMOS'} transistor with bulk` : `${pmos ? 'PMOS' : 'NMOS'} Transistor`,
-    refPrefix: 'M',
-    terminals: [...TERMINALS, ...(bulk ? [BULK] : [])].map((terminal) => ({
-      ...terminal,
-      dir: { ...terminal.dir },
-    })),
-    // The reusable layout guide measures the conduction column, not the
-    // asymmetric bbox that extends toward the gate. This is symbol metadata,
-    // not a MOS-specific branch in the editor's guide/distribute tools.
-    layoutAnchorTerminals: ['d', 's'],
-    // Drain and source can be spliced in series into a straight wire (a cascode).
-    seriesTerminals: ['d', 's'],
-    bbox: { ...BBOX },
-    graphics: mosGraphics(
-      pmos
-        ? { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' }
-        : { kind: 'polygon', points: [{ x: 0, y: 27.91 }, { x: -34.88, y: 11.63 }, { x: -34.88, y: 44.19 }], fill: 'foreground' },
-      bulk,
-    ),
-    textPos: { x: -26, y: -30, anchor: 'middle' },
-    refPos: null,
-    labelOffset: bulk ? { x: 40, y: -40 } : { x: 40, y: 0 },
-    ...(pmos ? { defaultMirrorY: true } : {}),
-    defaultValue: '',
-  });
-}
-
-__exports.createMos = createMos;
-};
-
 __modules["src/core/analysis/topology.js"] = function (__require, __exports) {
 const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
 const { solveMNA } = __require("src/core/analysis/solve.js");
@@ -35348,6 +35417,67 @@ __exports.approximateTopology = approximateTopology;
 __exports.buildTopologyIdentities = buildTopologyIdentities;
 };
 
+__modules["src/core/components/mos.js"] = function (__require, __exports) {
+const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+
+
+const TERMINALS = [
+  { name: 'g', x: -120, y: 0, direction: 'gate', dir: { x: -1, y: 0 } },
+  { name: 'd', x: 0, y: -80, direction: 'drain', dir: { x: 0, y: -1 } },
+  { name: 's', x: 0, y: 80, direction: 'source', dir: { x: 0, y: 1 } },
+];
+const BULK = { name: 'b', x: 0, y: 0, direction: 'bulk', dir: { x: 1, y: 0 } };
+const BBOX = { x: -120, y: -80, w: 120, h: 160 };
+
+function mosGraphics(sourceArrow, bulk) {
+  const graphics = [
+    { kind: 'path', d: 'M -120 0 L -76.88 0', style: 'symbol' },
+    { kind: 'polygon', points: [{ x: -87.21, y: -38.37 }, { x: -75.58, y: -38.37 }, { x: -75.58, y: 38.37 }, { x: -87.21, y: 38.37 }], fill: 'foreground' },
+    { kind: 'polygon', points: [{ x: -66.28, y: -50 }, { x: -54.64, y: -50 }, { x: -54.64, y: 50 }, { x: -66.28, y: 50 }], fill: 'foreground' },
+    { kind: 'path', d: 'M -56.98 -27.91 L 0 -27.91 L 0 -80', style: 'symbol' },
+    // Channel-side stubs start inside the channel bar (like the drain), so the
+    // butt end never meets the bar edge and leaves an anti-aliased seam.
+    { kind: 'path', d: 'M -56.98 27.91 L 0 27.91 L 0 80', style: 'symbol' },
+    sourceArrow,
+  ];
+  if (bulk) graphics.push({ kind: 'path', d: 'M -56.98 0 L 0 0', style: 'symbol' });
+  return graphics;
+}
+
+/** Build one of the four MOS symbols without sharing mutable definition data. */
+function createMos(type, { pmos = false, bulk = false } = {}) {
+  return defineSymbol({
+    type,
+    description: bulk ? `${pmos ? 'PMOS' : 'NMOS'} transistor with bulk` : `${pmos ? 'PMOS' : 'NMOS'} Transistor`,
+    refPrefix: 'M',
+    terminals: [...TERMINALS, ...(bulk ? [BULK] : [])].map((terminal) => ({
+      ...terminal,
+      dir: { ...terminal.dir },
+    })),
+    // The reusable layout guide measures the conduction column, not the
+    // asymmetric bbox that extends toward the gate. This is symbol metadata,
+    // not a MOS-specific branch in the editor's guide/distribute tools.
+    layoutAnchorTerminals: ['d', 's'],
+    // Drain and source can be spliced in series into a straight wire (a cascode).
+    seriesTerminals: ['d', 's'],
+    bbox: { ...BBOX },
+    graphics: mosGraphics(
+      pmos
+        ? { kind: 'polygon', points: [{ x: -54.65, y: 27.91 }, { x: -17.44, y: 11.63 }, { x: -17.44, y: 44.19 }], fill: 'foreground' }
+        : { kind: 'polygon', points: [{ x: 0, y: 27.91 }, { x: -34.88, y: 11.63 }, { x: -34.88, y: 44.19 }], fill: 'foreground' },
+      bulk,
+    ),
+    textPos: { x: -26, y: -30, anchor: 'middle' },
+    refPos: null,
+    labelOffset: bulk ? { x: 40, y: -40 } : { x: 40, y: 0 },
+    ...(pmos ? { defaultMirrorY: true } : {}),
+    defaultValue: '',
+  });
+}
+
+__exports.createMos = createMos;
+};
+
 __modules["src/core/analysis/compact.js"] = function (__require, __exports) {
 const { add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js");
 
@@ -35391,6 +35521,83 @@ function compactRational(value, ops) {
 }
 
 __exports.compactRational = compactRational;
+};
+
+__modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
+const { GRID } = __require("src/core/grid.js");
+
+
+/**
+ * Symbol definition factory. Enforces the contract:
+ *  - every terminal position is on the GRID (multiple of 40)
+ *  - the bounding box corners/extents are on the GRID (unless the symbol has
+ *    no terminals — pure annotations like solder may use a dot-sized bbox)
+ *  - terminal names are unique
+ * The terminal list may be empty for pure annotations (e.g. solder dots).
+ * Symbol body graphics may use arbitrary coordinates.
+ */
+function defineSymbol(def) {
+  validateSymbol(def);
+  return Object.freeze({
+    ...def,
+    terminals: Object.freeze(def.terminals.map(Object.freeze)),
+    graphics: markTerminalLeads(def.graphics || [], def.terminals),
+  });
+}
+
+/**
+ * An open absolute path that starts or ends on a terminal is a pin lead. The
+ * renderer draws leads in the same single ink path as wires, so a lead and
+ * the wire meeting it at the terminal are rasterized once, without a seam or
+ * doubled anti-aliased edges.
+ */
+function markTerminalLeads(graphics, terminals) {
+  const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
+  return graphics.map((g) => {
+    if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;
+    const d = String(g.d || '').trim();
+    // Only absolute move/line/cubic paths: their first and last numbers are points.
+    if (!/^M[-\d\s.,eELC]*$/.test(d)) return g;
+    const numbers = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+    if (numbers.length < 4) return g;
+    const ends = [`${numbers[0]},${numbers[1]}`, `${numbers[numbers.length - 2]},${numbers[numbers.length - 1]}`];
+    return ends.some((key) => points.has(key)) ? { ...g, terminalLead: true } : g;
+  });
+}
+
+function validateSymbol(def) {
+  const terms = def.terminals;
+  if (!Array.isArray(terms)) {
+    throw new Error(`symbol "${def.type}" must define a terminals array`);
+  }
+  const names = new Set();
+  for (const t of terms) {
+    if (!t.name || names.has(t.name)) {
+      throw new Error(`symbol "${def.type}": terminal names must be unique, got "${t.name}"`);
+    }
+    names.add(t.name);
+    if (!Number.isInteger(t.x / GRID) || !Number.isInteger(t.y / GRID)) {
+      throw new Error(
+        `symbol "${def.type}": terminal "${t.name}" at (${t.x},${t.y}) is NOT on the ${GRID}-unit grid`
+      );
+    }
+  }
+  // Pure annotations (no terminals, e.g. solder dots) are placed directly on a
+  // grid point and never routed through, so their bbox may be the drawn size
+  // rather than an aligned grid cell.
+  if (terms.length > 0) {
+    const r = def.bbox;
+    for (const [k, v] of Object.entries(r)) {
+      if (!Number.isInteger(v / GRID)) {
+        throw new Error(`symbol "${def.type}": bounding box ${k}=${v} is NOT on the ${GRID}-unit grid`);
+      }
+    }
+  }
+}
+
+__exports.defineSymbol = defineSymbol;
+__exports.markTerminalLeads = markTerminalLeads;
+__exports.validateSymbol = validateSymbol;
 };
 
 __modules["src/core/analysis/context.js"] = function (__require, __exports) {
@@ -36738,6 +36945,214 @@ __exports.buildMNA = buildMNA;
 __exports.MNA_OPS = MNA_OPS;
 };
 
+__modules["src/core/analysis/reduce.js"] = function (__require, __exports) {
+const { PASSIVE_KINDS } = __require("src/core/analysis/shared.js");
+/**
+ * Textbook series/parallel reduction of a network of passive primitives
+ * (resistor/capacitor/inductor/conductance/admittance). A human reduces a
+ * feedback or load network this way before ever writing KCL; this is the
+ * same operation. Used both to collapse an isolated Miller bridge to one
+ * equivalent impedance (`miller.js`, via `reduceTwoTerminalNetwork`) and,
+ * more generally, to simplify series/parallel branches anywhere in the
+ * coupled graph before the exact MNA solve (`pipeline.js`, via
+ * `reduceNetwork`), recording each parallel merge so the result can render
+ * as `Z1 \| Z2` instead of the expanded fraction.
+ *
+ * Deliberately narrow: only series-merge (a private degree-2 node untouched
+ * by anything else, including a VCCS control or terminal) and parallel-merge
+ * (multiple edges between the same node pair) are attempted. A network that
+ * needs a star-mesh/Y-Δ transform to reduce further (a bridge/lattice
+ * topology) is left as-is rather than guessed at.
+ */
+
+
+/** Whether a primitive is a plain two-terminal passive this module understands. */
+function isReduciblePassive(primitive) {
+  return PASSIVE_KINDS.has(primitive?.kind);
+}
+
+/** Exact impedance of one passive primitive, given a resolved (non-string) `.value`. */
+function primitiveImpedance(primitive, ops) {
+  const s = ops.s();
+  switch (primitive.kind) {
+    case 'resistor': return primitive.value;
+    case 'conductance':
+    case 'admittance': return ops.div(ops.one, primitive.value);
+    case 'capacitor': return ops.div(ops.one, ops.mul(s, primitive.value));
+    case 'inductor': return ops.mul(s, primitive.value);
+    default: return null;
+  }
+}
+
+function nodeKey(a, b) {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Merge every group of 2+ edges sharing a node pair into one, via `Z1*Z2/(Z1+Z2)`. */
+function mergeParallel(edges, ops, proofs) {
+  const groups = new Map();
+  for (const edge of edges) {
+    const key = nodeKey(edge.a, edge.b);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(edge);
+  }
+  const merged = [];
+  let changed = false;
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      merged.push(group[0]);
+      continue;
+    }
+    changed = true;
+    let impedance = group[0].impedance;
+    for (let index = 1; index < group.length; index += 1) {
+      const next = group[index].impedance;
+      impedance = ops.div(ops.mul(impedance, next), ops.add(impedance, next));
+    }
+    const sources = group.flatMap((edge) => edge.sources);
+    proofs?.push({ impedance, operands: group.map((edge) => edge.impedance) });
+    merged.push({ a: group[0].a, b: group[0].b, impedance, sources });
+  }
+  return { edges: merged, changed };
+}
+
+/** Eliminate one private (boundary-excluded, degree-2) node via `Z1+Z2`. */
+function mergeOneSeriesNode(edges, boundary, ops) {
+  const degree = new Map();
+  for (const edge of edges) {
+    degree.set(edge.a, (degree.get(edge.a) || 0) + 1);
+    degree.set(edge.b, (degree.get(edge.b) || 0) + 1);
+  }
+  for (const [node, count] of degree) {
+    if (count !== 2 || boundary.has(node)) continue;
+    const touching = edges.filter((edge) => edge.a === node || edge.b === node);
+    if (touching.length !== 2) continue;
+    const [first, second] = touching;
+    if (first === second) continue;
+    const other1 = first.a === node ? first.b : first.a;
+    const other2 = second.a === node ? second.b : second.a;
+    const impedance = ops.add(first.impedance, second.impedance);
+    const remaining = edges.filter((edge) => edge !== first && edge !== second);
+    remaining.push({ a: other1, b: other2, impedance, sources: [...first.sources, ...second.sources] });
+    return remaining;
+  }
+  return null;
+}
+
+// Series-merging a reactive element (L or C) hands Bareiss elimination a
+// pre-divided, `s`-dependent admittance instead of the simple denominator-1
+// entries it expects, defeating its fraction-free efficiency for more solver
+// budget than the smaller matrix saves. Enable series-merge only where the
+// result feeds a small isolated sub-solve (Miller's bridge collapse), never
+// in the general network pre-reduction.
+function reduceToFixedPoint(edges, boundary, ops, proofs, { seriesMerge = true } = {}) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const parallel = mergeParallel(edges, ops, proofs);
+    edges = parallel.edges;
+    if (parallel.changed) changed = true;
+    if (!seriesMerge) continue;
+    const afterSeries = mergeOneSeriesNode(edges, boundary, ops);
+    if (afterSeries) {
+      edges = afterSeries;
+      changed = true;
+    }
+  }
+  return edges;
+}
+
+/**
+ * Reduce a primitive set that is electrically isolated except at its two
+ * named terminals to one equivalent impedance between them. `primitives`
+ * must already have resolved (non-string) `.value`s. Returns
+ * `{ ok: true, impedance }` or `{ ok: false }` — never throws for a network
+ * this module simply can't finish reducing.
+ */
+function reduceTwoTerminalNetwork(primitives, nodeA, nodeB, ops) {
+  if (!primitives.length || nodeA === nodeB) return { ok: false };
+  let edges = [];
+  for (const primitive of primitives) {
+    const impedance = primitiveImpedance(primitive, ops);
+    if (impedance === null) return { ok: false };
+    edges.push({ a: primitive.terminals.a, b: primitive.terminals.b, impedance, sources: [primitive] });
+  }
+
+  const boundary = new Set([nodeA, nodeB]);
+  try {
+    edges = reduceToFixedPoint(edges, boundary, ops, null);
+  } catch {
+    return { ok: false };
+  }
+
+  if (edges.length !== 1) return { ok: false };
+  const [edge] = edges;
+  const matchesBoundary = (edge.a === nodeA && edge.b === nodeB) || (edge.a === nodeB && edge.b === nodeA);
+  if (!matchesBoundary) return { ok: false };
+  return { ok: true, impedance: edge.impedance };
+}
+
+/**
+ * Reduce as much of `primitives` as textbook series/parallel merging allows,
+ * never eliminating a node in `boundaryNodes` (the caller must include every
+ * node any non-passive primitive — e.g. a VCCS terminal or control — touches,
+ * plus whichever query/excitation nodes must stay addressable). Non-passive
+ * or otherwise unreducible primitives pass through untouched; merged edges
+ * become `admittance`-kind primitives. Returns the (possibly smaller)
+ * primitive list plus one `{ impedance, operands }` record per parallel
+ * merge performed, for the caller to turn into `provenParallel` display
+ * metadata. Never throws.
+ */
+function reduceNetwork(primitives, boundaryNodes, ops) {
+  const fixed = [];
+  let edges = [];
+  for (const primitive of primitives) {
+    const impedance = isReduciblePassive(primitive) ? primitiveImpedance(primitive, ops) : null;
+    if (impedance === null) {
+      fixed.push(primitive);
+      continue;
+    }
+    edges.push({ a: primitive.terminals.a, b: primitive.terminals.b, impedance, sources: [primitive] });
+  }
+  if (!edges.length) return { primitives, proofs: [] };
+
+  const boundary = new Set(boundaryNodes);
+  for (const primitive of fixed) {
+    for (const node of [primitive.terminals?.a, primitive.terminals?.b, primitive.control?.a, primitive.control?.b]) {
+      if (node !== undefined && node !== null) boundary.add(node);
+    }
+  }
+
+  const proofs = [];
+  try {
+    edges = reduceToFixedPoint(edges, boundary, ops, proofs, { seriesMerge: false });
+  } catch {
+    return { primitives, proofs: [] };
+  }
+
+  // An edge that traces back to exactly one original primitive and was never
+  // touched by a merge is returned exactly as it came in — preserving its
+  // kind, id, and metadata (e.g. a triode `resistor`'s model, or a plain
+  // `R1` for netlist/report labeling) matters to callers, and rebuilding it
+  // as a generic `admittance` would silently lose that.
+  const reducedPrimitives = edges.map((edge, index) => (
+    edge.sources.length === 1 ? edge.sources[0] : {
+      kind: 'admittance',
+      id: `@reduced-${index}`,
+      terminals: { a: edge.a, b: edge.b },
+      value: ops.div(ops.one, edge.impedance),
+      metadata: { reduced: true, sources: edge.sources.map((source) => source.id) },
+    }
+  ));
+  return { primitives: [...fixed, ...reducedPrimitives], proofs };
+}
+
+__exports.isReduciblePassive = isReduciblePassive;
+__exports.primitiveImpedance = primitiveImpedance;
+__exports.reduceTwoTerminalNetwork = reduceTwoTerminalNetwork;
+__exports.reduceNetwork = reduceNetwork;
+};
+
 __modules["src/core/analysis/miller.js"] = function (__require, __exports) {
 const { AC_GROUND } = __require("src/core/analysis/context.js");
 const { isReduciblePassive, reduceTwoTerminalNetwork } = __require("src/core/analysis/reduce.js");
@@ -36949,214 +37364,6 @@ function applyMillerApproximation(primitives, context, options, ops) {
 }
 
 __exports.applyMillerApproximation = applyMillerApproximation;
-};
-
-__modules["src/core/analysis/reduce.js"] = function (__require, __exports) {
-const { PASSIVE_KINDS } = __require("src/core/analysis/shared.js");
-/**
- * Textbook series/parallel reduction of a network of passive primitives
- * (resistor/capacitor/inductor/conductance/admittance). A human reduces a
- * feedback or load network this way before ever writing KCL; this is the
- * same operation. Used both to collapse an isolated Miller bridge to one
- * equivalent impedance (`miller.js`, via `reduceTwoTerminalNetwork`) and,
- * more generally, to simplify series/parallel branches anywhere in the
- * coupled graph before the exact MNA solve (`pipeline.js`, via
- * `reduceNetwork`), recording each parallel merge so the result can render
- * as `Z1 \| Z2` instead of the expanded fraction.
- *
- * Deliberately narrow: only series-merge (a private degree-2 node untouched
- * by anything else, including a VCCS control or terminal) and parallel-merge
- * (multiple edges between the same node pair) are attempted. A network that
- * needs a star-mesh/Y-Δ transform to reduce further (a bridge/lattice
- * topology) is left as-is rather than guessed at.
- */
-
-
-/** Whether a primitive is a plain two-terminal passive this module understands. */
-function isReduciblePassive(primitive) {
-  return PASSIVE_KINDS.has(primitive?.kind);
-}
-
-/** Exact impedance of one passive primitive, given a resolved (non-string) `.value`. */
-function primitiveImpedance(primitive, ops) {
-  const s = ops.s();
-  switch (primitive.kind) {
-    case 'resistor': return primitive.value;
-    case 'conductance':
-    case 'admittance': return ops.div(ops.one, primitive.value);
-    case 'capacitor': return ops.div(ops.one, ops.mul(s, primitive.value));
-    case 'inductor': return ops.mul(s, primitive.value);
-    default: return null;
-  }
-}
-
-function nodeKey(a, b) {
-  return a < b ? `${a}|${b}` : `${b}|${a}`;
-}
-
-/** Merge every group of 2+ edges sharing a node pair into one, via `Z1*Z2/(Z1+Z2)`. */
-function mergeParallel(edges, ops, proofs) {
-  const groups = new Map();
-  for (const edge of edges) {
-    const key = nodeKey(edge.a, edge.b);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(edge);
-  }
-  const merged = [];
-  let changed = false;
-  for (const group of groups.values()) {
-    if (group.length === 1) {
-      merged.push(group[0]);
-      continue;
-    }
-    changed = true;
-    let impedance = group[0].impedance;
-    for (let index = 1; index < group.length; index += 1) {
-      const next = group[index].impedance;
-      impedance = ops.div(ops.mul(impedance, next), ops.add(impedance, next));
-    }
-    const sources = group.flatMap((edge) => edge.sources);
-    proofs?.push({ impedance, operands: group.map((edge) => edge.impedance) });
-    merged.push({ a: group[0].a, b: group[0].b, impedance, sources });
-  }
-  return { edges: merged, changed };
-}
-
-/** Eliminate one private (boundary-excluded, degree-2) node via `Z1+Z2`. */
-function mergeOneSeriesNode(edges, boundary, ops) {
-  const degree = new Map();
-  for (const edge of edges) {
-    degree.set(edge.a, (degree.get(edge.a) || 0) + 1);
-    degree.set(edge.b, (degree.get(edge.b) || 0) + 1);
-  }
-  for (const [node, count] of degree) {
-    if (count !== 2 || boundary.has(node)) continue;
-    const touching = edges.filter((edge) => edge.a === node || edge.b === node);
-    if (touching.length !== 2) continue;
-    const [first, second] = touching;
-    if (first === second) continue;
-    const other1 = first.a === node ? first.b : first.a;
-    const other2 = second.a === node ? second.b : second.a;
-    const impedance = ops.add(first.impedance, second.impedance);
-    const remaining = edges.filter((edge) => edge !== first && edge !== second);
-    remaining.push({ a: other1, b: other2, impedance, sources: [...first.sources, ...second.sources] });
-    return remaining;
-  }
-  return null;
-}
-
-// Series-merging a reactive element (L or C) hands Bareiss elimination a
-// pre-divided, `s`-dependent admittance instead of the simple denominator-1
-// entries it expects, defeating its fraction-free efficiency for more solver
-// budget than the smaller matrix saves. Enable series-merge only where the
-// result feeds a small isolated sub-solve (Miller's bridge collapse), never
-// in the general network pre-reduction.
-function reduceToFixedPoint(edges, boundary, ops, proofs, { seriesMerge = true } = {}) {
-  let changed = true;
-  while (changed) {
-    changed = false;
-    const parallel = mergeParallel(edges, ops, proofs);
-    edges = parallel.edges;
-    if (parallel.changed) changed = true;
-    if (!seriesMerge) continue;
-    const afterSeries = mergeOneSeriesNode(edges, boundary, ops);
-    if (afterSeries) {
-      edges = afterSeries;
-      changed = true;
-    }
-  }
-  return edges;
-}
-
-/**
- * Reduce a primitive set that is electrically isolated except at its two
- * named terminals to one equivalent impedance between them. `primitives`
- * must already have resolved (non-string) `.value`s. Returns
- * `{ ok: true, impedance }` or `{ ok: false }` — never throws for a network
- * this module simply can't finish reducing.
- */
-function reduceTwoTerminalNetwork(primitives, nodeA, nodeB, ops) {
-  if (!primitives.length || nodeA === nodeB) return { ok: false };
-  let edges = [];
-  for (const primitive of primitives) {
-    const impedance = primitiveImpedance(primitive, ops);
-    if (impedance === null) return { ok: false };
-    edges.push({ a: primitive.terminals.a, b: primitive.terminals.b, impedance, sources: [primitive] });
-  }
-
-  const boundary = new Set([nodeA, nodeB]);
-  try {
-    edges = reduceToFixedPoint(edges, boundary, ops, null);
-  } catch {
-    return { ok: false };
-  }
-
-  if (edges.length !== 1) return { ok: false };
-  const [edge] = edges;
-  const matchesBoundary = (edge.a === nodeA && edge.b === nodeB) || (edge.a === nodeB && edge.b === nodeA);
-  if (!matchesBoundary) return { ok: false };
-  return { ok: true, impedance: edge.impedance };
-}
-
-/**
- * Reduce as much of `primitives` as textbook series/parallel merging allows,
- * never eliminating a node in `boundaryNodes` (the caller must include every
- * node any non-passive primitive — e.g. a VCCS terminal or control — touches,
- * plus whichever query/excitation nodes must stay addressable). Non-passive
- * or otherwise unreducible primitives pass through untouched; merged edges
- * become `admittance`-kind primitives. Returns the (possibly smaller)
- * primitive list plus one `{ impedance, operands }` record per parallel
- * merge performed, for the caller to turn into `provenParallel` display
- * metadata. Never throws.
- */
-function reduceNetwork(primitives, boundaryNodes, ops) {
-  const fixed = [];
-  let edges = [];
-  for (const primitive of primitives) {
-    const impedance = isReduciblePassive(primitive) ? primitiveImpedance(primitive, ops) : null;
-    if (impedance === null) {
-      fixed.push(primitive);
-      continue;
-    }
-    edges.push({ a: primitive.terminals.a, b: primitive.terminals.b, impedance, sources: [primitive] });
-  }
-  if (!edges.length) return { primitives, proofs: [] };
-
-  const boundary = new Set(boundaryNodes);
-  for (const primitive of fixed) {
-    for (const node of [primitive.terminals?.a, primitive.terminals?.b, primitive.control?.a, primitive.control?.b]) {
-      if (node !== undefined && node !== null) boundary.add(node);
-    }
-  }
-
-  const proofs = [];
-  try {
-    edges = reduceToFixedPoint(edges, boundary, ops, proofs, { seriesMerge: false });
-  } catch {
-    return { primitives, proofs: [] };
-  }
-
-  // An edge that traces back to exactly one original primitive and was never
-  // touched by a merge is returned exactly as it came in — preserving its
-  // kind, id, and metadata (e.g. a triode `resistor`'s model, or a plain
-  // `R1` for netlist/report labeling) matters to callers, and rebuilding it
-  // as a generic `admittance` would silently lose that.
-  const reducedPrimitives = edges.map((edge, index) => (
-    edge.sources.length === 1 ? edge.sources[0] : {
-      kind: 'admittance',
-      id: `@reduced-${index}`,
-      terminals: { a: edge.a, b: edge.b },
-      value: ops.div(ops.one, edge.impedance),
-      metadata: { reduced: true, sources: edge.sources.map((source) => source.id) },
-    }
-  ));
-  return { primitives: [...fixed, ...reducedPrimitives], proofs };
-}
-
-__exports.isReduciblePassive = isReduciblePassive;
-__exports.primitiveImpedance = primitiveImpedance;
-__exports.reduceTwoTerminalNetwork = reduceTwoTerminalNetwork;
-__exports.reduceNetwork = reduceNetwork;
 };
 
 __modules["src/core/analysis/solve.js"] = function (__require, __exports) {
