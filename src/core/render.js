@@ -2,7 +2,7 @@ import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.j
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute, steinerBranches } from './router.js';
 import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
-import { LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
+import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 
 function pt(x, y) {
@@ -641,8 +641,9 @@ export function svgString(circuit, opts = {}) {
   const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
 
   // Persistent net highlights recolor a highlighted group's wires, its net
-  // labels, its junction dots, and the ground/supply/VCM markers on it, over
-  // their own styles.
+  // labels, its junction dots, and the parts that stand for the net itself --
+  // ground/supply/VCM markers and interface ports, with their labels -- over
+  // their own styles. The same parts glow with a hovered net in the editor.
   const withHighlight = (style, color) => (color ? { ...(style || {}), color } : style);
   const markerHighlights = new Map();
   const solderAt = new Map([...circuit.components.values()]
@@ -652,7 +653,8 @@ export function svgString(circuit, opts = {}) {
     const color = circuit.netHighlight?.(net);
     if (!color) continue;
     for (const { comp } of net.terminals) {
-      if (isReferenceMarker(circuit.components.get(comp))) markerHighlights.set(comp, color);
+      const component = circuit.components.get(comp);
+      if (isReferenceMarker(component) || INTERFACE_PIN_TYPES.has(component?.type)) markerHighlights.set(comp, color);
     }
     // Solder dots on the net's wires belong to it too: every dot sits on a
     // junction or a branch vertex of the net it joins.

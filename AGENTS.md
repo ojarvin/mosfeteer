@@ -137,8 +137,8 @@ Persistent net highlights (`circuit.netHighlights`) are document data keyed
 by `netGroupKey`, so one color covers a whole electrical group: equally named
 nets and every net on one unnamed rail. Colors are unique palette tokens that
 cycle forward and wrap to clear. The renderer paints the group's wires, net
-labels, junction dots, and rail markers in that color without changing their
-own styles.
+labels, junction dots, rail markers, and interface ports (the parts a net
+hover glows) in that color without changing their own styles.
 
 ### Rendering and math
 

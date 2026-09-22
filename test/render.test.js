@@ -865,3 +865,18 @@ test('a net highlight colors the solder dots on that net only', async () => {
   assert.ok(dotSvg(mine).includes(COLOR_PALETTE.blue));
   assert.ok(!dotSvg(other).includes(COLOR_PALETTE.blue));
 });
+
+test('a net highlight colors the interface ports on that net and their labels', async () => {
+  const { runCommand } = await import('../src/core/commands.js');
+  const { COLOR_PALETTE } = await import('../src/core/style.js');
+  const c = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0', 'add output OUT --at 400 0', 'connect R1.b OUT.p', 'add input IN --at -400 0', 'connect IN.p R1.a']) runCommand(c, line);
+  const net = c.netOfTerminal({ comp: 'OUT', term: 'p' });
+  c.netHighlights.set(c.netGroupKey(net), 'purple');
+  const svg = svgString(c).toLowerCase();
+  const purple = COLOR_PALETTE.purple.toLowerCase();
+  const group = (ref) => svg.match(new RegExp(`data-ref="${ref.toLowerCase()}"[^]*?</g></g>`))[0];
+  assert.ok(group('OUT').includes(purple), 'the port on the highlighted net');
+  assert.ok(!group('IN').includes(purple), 'a port on another net');
+  assert.match(svg, new RegExp(`<text[^>]*fill="${purple}"[^>]*>[^<]*out`));
+});

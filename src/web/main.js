@@ -3600,8 +3600,8 @@ function placeShapeAnnotation(world, endOverride = null) {
   return true;
 }
 
-/** The net under a highlight click: a pin, a wire, a net label, or a
- * ground/supply/VCM marker, in that order. */
+/** The net under a highlight click: a pin, a wire, a net label, or a part
+ * that stands for a net (ground/supply/VCM marker or interface port). */
 function highlightTargetAt(world) {
   const terminal = nearestTerminal(world);
   if (terminal) {
@@ -3618,6 +3618,9 @@ function highlightTargetAt(world) {
     const info = referenceMarkerInfo(component.type);
     return circuit.netOfTerminal({ comp: component.refdes, term: info.terminal });
   }
+  if (INTERFACE_PIN_TYPES.has(component?.type)) {
+    return circuit.netOfTerminal({ comp: component.refdes, term: component.terminalDefs[0]?.name });
+  }
   return null;
 }
 
@@ -3625,7 +3628,7 @@ function highlightTargetAt(world) {
 function highlightNetAt(world) {
   const net = highlightTargetAt(world);
   if (!net) {
-    hintLine('HIGHLIGHT: click a wire, pin, net label, or rail marker');
+    hintLine('HIGHLIGHT: click a wire, pin, net label, rail marker, or port');
     return false;
   }
   let color = null;
@@ -11851,7 +11854,7 @@ function renderStatus() {
   }
   if (activePlacementGuides.length) parts.push(describeGuides(activePlacementGuides));
   if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
-  if (labelMode === 'highlight') parts.push('click a wire, pin, net label, or rail marker to cycle its net color · 8 removes all · Esc exits');
+  if (labelMode === 'highlight') parts.push('click a wire, pin, net label, rail marker, or port to cycle its net color · 8 removes all · Esc exits');
   if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
   if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
   if (wire) {
