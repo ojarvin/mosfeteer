@@ -640,6 +640,31 @@ export function svgString(circuit, opts = {}) {
   const labels = [...circuit.labels.values()];
   const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
 
+  // Persistent net highlights recolor a highlighted group's wires, its net
+  // labels, its junction dots, and the ground/supply/VCM markers on it, over
+  // their own styles.
+  const withHighlight = (style, color) => (color ? { ...(style || {}), color } : style);
+  const markerHighlights = new Map();
+  const solderAt = new Map([...circuit.components.values()]
+    .filter((c) => c.type === 'solder')
+    .map((c) => [`${c.transform.x},${c.transform.y}`, c.refdes]));
+  for (const net of circuit.nets.values()) {
+    const color = circuit.netHighlight?.(net);
+    if (!color) continue;
+    for (const { comp } of net.terminals) {
+      if (isReferenceMarker(circuit.components.get(comp))) markerHighlights.set(comp, color);
+    }
+    // Solder dots on the net's wires belong to it too: every dot sits on a
+    // junction or a branch vertex of the net it joins.
+    for (const point of [...(net.junctions || []), ...net.paths().flat()]) {
+      const solder = solderAt.get(`${point.x},${point.y}`);
+      if (solder) markerHighlights.set(solder, color);
+    }
+  }
+  const compStyle = (c) => withHighlight(c.style, markerHighlights.get(c.refdes));
+  const labelHighlight = (label) => (label.netId ? circuit.netHighlight?.(circuit.nets.get(label.netId)) : null)
+    || (label.owner ? markerHighlights.get(label.owner) : null) || null;
+
   // Bottom layer: visual shape annotations and their child labels. Keeping
   // these together prevents annotation text from floating above the other
   // default layers when a box or arrow has a caption.
@@ -679,11 +704,11 @@ export function svgString(circuit, opts = {}) {
     if (!ink.has(attrs)) ink.set(attrs, []);
     ink.get(attrs).push(d);
   };
-  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(c.style);
+  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(compStyle(c));
   for (const c of comps) {
     if (!inkLeads(c)) continue;
     for (const g of c.def.graphics) {
-      if (g.terminalLead) addInk(inkAttrs(c.style), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
+      if (g.terminalLead) addInk(inkAttrs(compStyle(c)), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
     }
   }
   const UNPAINTED = ' stroke-opacity="0"';
@@ -699,6 +724,8 @@ export function svgString(circuit, opts = {}) {
           ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
           : [net.points()];
     const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
+    const highlight = circuit.netHighlight?.(net) || null;
+    const netStyle = withHighlight(net.style, highlight);
     for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
@@ -708,17 +735,17 @@ export function svgString(circuit, opts = {}) {
       const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-        const inked = !opacity && solidStyle(net.style);
-        const geometry = polylineArrowheads(pts, net.style?.arrowhead, wireArrowheadOptions(circuit, pts));
-        if (inked) addInk(inkAttrs(net.style), polylineD(geometry.shaftPoints));
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(net.style, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
-        parts.push(arrowheadsSvg(geometry.heads, net.style?.color, opacity));
+        const inked = !opacity && solidStyle(netStyle);
+        const geometry = polylineArrowheads(pts, netStyle?.arrowhead, wireArrowheadOptions(circuit, pts));
+        if (inked) addInk(inkAttrs(netStyle), polylineD(geometry.shaftPoints));
+        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(netStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(arrowheadsSvg(geometry.heads, netStyle?.color, opacity));
         continue;
       }
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]; const b = pts[i];
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
-        const segmentStyle = { ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) };
+        const segmentStyle = withHighlight({ ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) }, highlight);
         const inked = !opacity && solidStyle(segmentStyle);
         const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
         // Solid wires are painted by the shared ink path below, but dashed
@@ -745,13 +772,13 @@ export function svgString(circuit, opts = {}) {
     parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     if (c.type === 'block') {
       const r = c.blockSize;
-      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`);
+      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(compStyle(c), 'emph')}/>`);
     } else {
       const leadsInked = inkLeads(c);
-      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', c.style));
+      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', compStyle(c)));
     }
     parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, c.style?.color || '#111'));
+    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
     if (o.includeBBox) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
@@ -826,7 +853,7 @@ export function svgString(circuit, opts = {}) {
     const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
     const labelVisual = label.math
       ? mathLabelSvg(label)
-      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(label.style?.color || '#111'), label.style?.width, label.style);
+      : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(labelHighlight(label) || label.style?.color || '#111'), label.style?.width, label.style);
     if (label.selectable === false) {
       parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
     } else {

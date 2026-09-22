@@ -825,3 +825,43 @@ test('a highlighted net glows its reference markers and ports, not other devices
   assert.equal((overlay.match(/class="selection-glow net-marker-glow"/g) || []).length, 2);
   assert.equal(editorOverlay(circuit, { nets: [net] }).includes('net-marker-glow'), false);
 });
+
+test('a net highlight colors the group wires, net labels, and rail markers without restyling them', async () => {
+  const { runCommand } = await import('../src/core/commands.js');
+  const { COLOR_PALETTE } = await import('../src/core/style.js');
+  const c = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0', 'add ground G1 --at 160 200', 'add resistor R2 --at 400 400', 'connect R1.b G1.gnd', 'connect R2.a R2.b']) runCommand(c, line);
+  const vss = c.netOfTerminal({ comp: 'G1', term: 'gnd' });
+  c.addNetLabel(vss.id, { anchor: { x: 80, y: 0 }, align: 'center' });
+  const plain = svgString(c);
+  const ownColor = vss.style?.color;
+  assert.doesNotMatch(plain, new RegExp(COLOR_PALETTE.teal, 'i'));
+  c.netHighlights.set(c.netGroupKey(vss), 'teal');
+  const svg = svgString(c);
+  const teal = COLOR_PALETTE.teal;
+  assert.match(svg, new RegExp(`data-net-id="${vss.id}"[^>]*stroke="${teal}"`, 'i'));
+  assert.match(svg, new RegExp(`data-ref="G1"[\\s\\S]*?stroke="${teal}"`, 'i'));
+  assert.match(svg, new RegExp(`<text[^>]*fill="${teal}"[^>]*>[^<]*VSS`, 'i'));
+  // Model styles are untouched, so clearing restores the drawing exactly.
+  assert.equal(vss.style?.color, ownColor);
+  c.clearNetHighlights();
+  assert.equal(svgString(c), plain);
+});
+
+test('a net highlight colors the solder dots on that net only', async () => {
+  const { runCommand } = await import('../src/core/commands.js');
+  const { COLOR_PALETTE } = await import('../src/core/style.js');
+  const c = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'add resistor R3 --at 200 400', 'connect R1.b R2.a R3.a',
+    'add resistor R4 --at 0 800', 'add resistor R5 --at 400 800', 'add resistor R6 --at 200 1200', 'connect R4.b R5.a R6.a']) runCommand(c, line);
+  c.syncJunctionSolders();
+  const dots = [...c.components.values()].filter((x) => x.type === 'solder');
+  assert.equal(dots.length, 2);
+  const net = c.netOfTerminal({ comp: 'R1', term: 'b' });
+  c.netHighlights.set(c.netGroupKey(net), 'blue');
+  const svg = svgString(c);
+  const dotSvg = (dot) => svg.match(new RegExp(`data-ref="${dot.refdes}"[^]*?</g></g>`))[0].toLowerCase();
+  const [mine, other] = dots.sort((a, b) => a.transform.y - b.transform.y);
+  assert.ok(dotSvg(mine).includes(COLOR_PALETTE.blue));
+  assert.ok(!dotSvg(other).includes(COLOR_PALETTE.blue));
+});

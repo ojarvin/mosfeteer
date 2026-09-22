@@ -133,6 +133,13 @@ edit. Scripted commands never prompt: the model keeps one name and records a
 short: the editor asks, in the same picker, to rename the net to the rail
 (`VSS`/`VDD`/`VCM`), and a cancel reverts the whole edit.
 
+Persistent net highlights (`circuit.netHighlights`) are document data keyed
+by `netGroupKey`, so one color covers a whole electrical group: equally named
+nets and every net on one unnamed rail. Colors are unique palette tokens that
+cycle forward and wrap to clear. The renderer paints the group's wires, net
+labels, junction dots, and rail markers in that color without changing their
+own styles.
+
 ### Rendering and math
 
 - The renderer layers annotations below wires and components/labels above
@@ -229,7 +236,7 @@ Core keyboard vocabulary:
 | --- | --- |
 | normal | `i` insert, `w` wire, `m` move, `Shift+m` detached move, `c` copy, `r` rotate, `Shift+r`/`Ctrl+r` mirrors, `x` check, `u`/`U` undo/redo |
 | view | `F` fit, `#` grid, `C` crosshair, `G` guides, `D` theme, `P` side panel, `?` help, `:` command line (log drawer) |
-| editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open |
+| editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `9` net highlight tool, `8` remove all highlights |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or nearest-terminal cursor snapping while wiring |
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
 

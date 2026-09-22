@@ -1680,6 +1680,18 @@ button:disabled {
 
 /* ----- side panel ---------------------------------------------- */
 
+/* A persistently highlighted net shows its color beside its name. */
+.net-highlight-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--net-highlight);
+  vertical-align: 0.05em;
+}
+
 /* Align sits in the Selection inspector under Style; it shares the Style
    block's separator and heading. */
 .align-count {

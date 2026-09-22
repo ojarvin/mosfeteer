@@ -107,6 +107,10 @@ export function referenceMarkerName(component) {
   return canonicalNetName(label?._text || '');
 }
 
+/** Persistent net highlight colors, in cycling order. Palette tokens, so a
+ * highlight follows the theme like any other colored object. */
+export const NET_HIGHLIGHT_COLORS = Object.freeze(['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
+
 /** Unnamed (global) reference markers attached to a net that carries a
  * different given name, e.g. a ground on `OUT`. The net keeps its name, but
  * the marker still ties it into the shared rail, so the join shorts two names.
@@ -1521,6 +1525,8 @@ export class Circuit {
     this.suppressedJunctions = new Set();
     /** Pending warnings from merging separately named physical nets. */
     this.netNameWarnings = [];
+    /** Persistent highlight color per electrical group (see netGroupKey). */
+    this.netHighlights = new Map();
     this._routingEnvCache = new Map();
   }
 
@@ -2233,6 +2239,7 @@ export class Circuit {
   renameNet(netOrId, name) {
     this.invalidateRoutingCache();
     const net = this._resolveNet(netOrId);
+    const previousGroup = this.netGroupKey(net);
     const canonical = canonicalNetName(name);
     if (!canonical && this.netLabels(net).length > 0) throw new Error(`cannot clear name of net ${net.id} while net labels are attached`);
     net.name = canonical;
@@ -2262,7 +2269,72 @@ export class Circuit {
     this._syncInterfacePinLabels(net);
     this._syncReferenceMarkerLabels(net);
     this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
+    this._carryNetHighlight(previousGroup, this.netGroupKey(net));
     return net;
+  }
+
+  // ----- persistent net highlights -------------------------------------
+
+  /** Unnamed global reference marker (ground, supply, VCM) that names this
+   * net with its rail name, or null. */
+  unnamedReferenceInfo(net) {
+    for (const terminal of net?.terminals || []) {
+      const component = this.components.get(terminal.comp);
+      if (!isReferenceMarker(component) || referenceMarkerIsLocal(component)) continue;
+      const info = referenceMarkerInfo(component.type);
+      if (info?.terminal === terminal.term && isReferenceMarkerGlobalName(info, net.name)) return info;
+    }
+    return null;
+  }
+
+  /** The electrical group a physical net belongs to: nets on one unnamed
+   * rail share the rail name, equally named nets are virtually connected,
+   * and any other net stands alone under its id. */
+  netGroupKey(net) {
+    if (!net?.id) return '';
+    return `name:${this.unnamedReferenceInfo(net)?.globalName || net.name || net.id}`;
+  }
+
+  /** Highlight color token of a net's electrical group, or null. */
+  netHighlight(net) {
+    return this.netHighlights.get(this.netGroupKey(net)) || null;
+  }
+
+  /** Advance a group's highlight to the next color no other highlighted
+   * group uses; past the last color it clears. Returns the new color. */
+  cycleNetHighlight(netOrId) {
+    const key = this.netGroupKey(this._resolveNet(netOrId));
+    const live = this._liveNetGroups();
+    const taken = new Set([...this.netHighlights]
+      .filter(([other]) => other !== key && live.has(other))
+      .map(([, color]) => color));
+    const current = this.netHighlights.get(key);
+    const from = current ? NET_HIGHLIGHT_COLORS.indexOf(current) + 1 : 0;
+    const next = NET_HIGHLIGHT_COLORS.slice(from).find((color) => !taken.has(color)) || null;
+    if (!current && !next) throw new Error('every highlight color is already in use');
+    if (next) this.netHighlights.set(key, next);
+    else this.netHighlights.delete(key);
+    return next;
+  }
+
+  /** Remove every net highlight. Returns how many groups were highlighted. */
+  clearNetHighlights() {
+    const count = [...this.netHighlights.keys()].filter((key) => this._liveNetGroups().has(key)).length;
+    this.netHighlights.clear();
+    return count;
+  }
+
+  _liveNetGroups() {
+    return new Set([...this.nets.values()].map((net) => this.netGroupKey(net)));
+  }
+
+  /** A rename that moves a whole group to a new key keeps its highlight. A
+   * net leaving a group that still has other members leaves it uncolored. */
+  _carryNetHighlight(from, to) {
+    if (!from || from === to || !this.netHighlights.has(from) || this.netHighlights.has(to)) return;
+    if (this._liveNetGroups().has(from)) return;
+    this.netHighlights.set(to, this.netHighlights.get(from));
+    this.netHighlights.delete(from);
   }
 
   /** A port's owned label is its identity, exactly like every other
@@ -5534,13 +5606,23 @@ export class Circuit {
         message: warning.message,
       })),
       suppressedJunctions: [...this.suppressedJunctions],
+      ...this._netHighlightsJSON(),
     };
+  }
+
+  _netHighlightsJSON() {
+    const live = this._liveNetGroups();
+    const entries = [...this.netHighlights].filter(([key]) => live.has(key));
+    return entries.length ? { netHighlights: Object.fromEntries(entries) } : {};
   }
 
   static fromJSON(data) {
     if (!data || ![1, 2].includes(data.version)) throw new Error('unsupported state version');
     const circuit = new Circuit();
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
+    for (const [key, color] of Object.entries(data.netHighlights || {})) {
+      if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
+    }
     circuit._loading = true;
     for (const c of data.components) {
       // The filled terminal marker was folded into the one labelled port.

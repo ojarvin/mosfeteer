@@ -180,6 +180,8 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['dd', 'delete the selected object set'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
+    ['9', 'highlight nets: each click cycles a net group\'s color'],
+    ['8', 'remove every net highlight'],
     ['t', 'edit the primary selected label (no-op otherwise)'],
     ['Ctrl/Cmd+i', 'toggle italic on selected labels'],
     ['Ctrl/Cmd+b', 'toggle bold on selected labels'],

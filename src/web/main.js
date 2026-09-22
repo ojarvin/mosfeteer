@@ -18,7 +18,7 @@ import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { componentShapeSvg, editorOverlay, svgString, texToMathML, viewportFrame, viewportGridPath } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
-import { themeInkSvg } from '../core/style.js';
+import { resolveColor, themeInkSvg } from '../core/style.js';
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
 import { createDocument, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -197,6 +197,7 @@ const ICON_PATHS = {
   detach: '<rect x="8" y="6.5" width="8" height="11" rx="1.8" fill="currentColor" fill-opacity=".16"/><path d="M2.5 12H5M19 12h2.5"/><path d="m5.5 9-1 6M19.5 9l-1 6"/>',
   copy: '<rect x="3.5" y="3.5" width="11" height="11" rx="2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".16"/>',
   tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
+  highlight: '<path d="M14.5 4.5l5 5-8 8H6.5v-5z" fill="currentColor" fill-opacity=".16"/><path d="M12 7l5 5"/><path d="M3.5 20.5h8"/>',
   text: '<path d="M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6"/>',
   arrow: '<path d="M5 19 16 8"/><path d="M20 4l-1.6 9-7.4-7.4z" fill="currentColor" stroke="none"/>',
   rectangle: '<rect x="3.5" y="5.5" width="17" height="13" rx="2" fill="currentColor" fill-opacity=".16"/>',
@@ -232,6 +233,7 @@ const TOOL_CURSOR_ICONS = {
   copy: 'copy',
   delete: 'trash',
   'net-label': 'tag',
+  highlight: 'highlight',
   annotation: 'text',
   equation: 'text',
   arrow: 'arrow',
@@ -514,6 +516,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   };
   if (visual) return { key: 'visual', canvasClass: 'mode-visual', toolbar: 'visual', label: 'VISUAL' };
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL' };
+  if (labelMode === 'highlight') return { key: 'highlight', canvasClass: 'mode-highlight', toolbar: 'highlight', label: 'HIGHLIGHT' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION' };
   if (labelMode === 'equation') return { key: 'equation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'EQUATION' };
   if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE' };
@@ -1717,14 +1720,7 @@ function isTransientCopyGhostNet(id) {
 }
 
 function unnamedReferenceInfoForNet(net) {
-  if (!net) return null;
-  for (const terminal of net.terminals || []) {
-    const component = circuit.components.get(terminal.comp);
-    if (!isReferenceMarker(component) || referenceMarkerIsLocal(component)) continue;
-    const info = referenceMarkerInfo(component.type);
-    if (info?.terminal === terminal.term && isReferenceMarkerGlobalName(info, net.name)) return info;
-  }
-  return null;
+  return net ? circuit.unnamedReferenceInfo(net) : null;
 }
 
 function referenceGroupNets(netOrInfo) {
@@ -1734,9 +1730,7 @@ function referenceGroupNets(netOrInfo) {
 }
 
 function namedNetGroupKey(net) {
-  if (!net?.id) return '';
-  const info = unnamedReferenceInfoForNet(net);
-  return `name:${info?.globalName || net.name || net.id}`;
+  return circuit.netGroupKey(net);
 }
 
 function namedGroupNets(net) {
@@ -3606,6 +3600,79 @@ function placeShapeAnnotation(world, endOverride = null) {
   return true;
 }
 
+/** The net under a highlight click: a pin, a wire, a net label, or a
+ * ground/supply/VCM marker, in that order. */
+function highlightTargetAt(world) {
+  const terminal = nearestTerminal(world);
+  if (terminal) {
+    const net = circuit.netOfTerminal({ comp: terminal.refdes, term: terminal.term });
+    if (net) return net;
+  }
+  const wireNet = pickWire(world)?.net;
+  if (wireNet) return wireNet;
+  const label = pickLabel(world);
+  if (label?.netId) return circuit.nets.get(label.netId) || null;
+  const hit = pickAt(world);
+  const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
+  if (isReferenceMarker(component)) {
+    const info = referenceMarkerInfo(component.type);
+    return circuit.netOfTerminal({ comp: component.refdes, term: info.terminal });
+  }
+  return null;
+}
+
+/** Cycle the clicked net's electrical group to its next free highlight color. */
+function highlightNetAt(world) {
+  const net = highlightTargetAt(world);
+  if (!net) {
+    hintLine('HIGHLIGHT: click a wire, pin, net label, or rail marker');
+    return false;
+  }
+  let color = null;
+  try {
+    commit(() => { color = circuit.cycleNetHighlight(net); });
+  } catch (err) {
+    logLine(`HIGHLIGHT: ${err.message}`, 'error');
+    return false;
+  }
+  const name = net.name || net.id;
+  logLine(color ? `net ${name} highlighted ${color}` : `net ${name} highlight removed`);
+  render();
+  return true;
+}
+
+function removeAllNetHighlights() {
+  let count = 0;
+  commit(() => { count = circuit.clearNetHighlights(); });
+  logLine(count ? `removed ${count} net highlight${count === 1 ? '' : 's'}` : 'no net highlights to remove');
+  render();
+}
+
+/** Right-click on the highlight tool: its one bulk action. */
+function openHighlightToolMenu(x, y) {
+  if (!componentContextMenuEl) return;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  heading.textContent = 'Net highlight';
+  menu.appendChild(heading);
+  const highlighted = circuit.toJSON().netHighlights;
+  appendContextItem(menu, 'Remove all highlights', removeAllNetHighlights, { disabled: !highlighted, shortcut: '8', danger: true });
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+document.getElementById('btn-mode-highlight')?.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  ev.stopPropagation();
+  openHighlightToolMenu(ev.clientX, ev.clientY);
+});
+
 function placeNetLabelAt(world) {
   const target = netLabelTargetAt(world);
   if (!target) {
@@ -4588,7 +4655,7 @@ function bindHoverPreview(row, target) {
 
 function updateCanvasHover(w) {
   if (hoverFromPanel) return;
-  const quiet = mode === 'insert' || labelMode || visual || quickAdd;
+  const quiet = mode === 'insert' || (labelMode && labelMode !== 'highlight') || visual || quickAdd;
   const selecting = !quiet && !wire && !directWire && !moveMode && !copyMode && !deleteMode;
   const hit = selecting ? pickAt(w) : null;
   const pinsRef = hit?.refdes && isPinDragCandidate(circuit.components.get(hit.refdes)?.def) ? hit.refdes : null;
@@ -7940,6 +8007,7 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'labelplace') {
     if (!movedOut) {
       if (labelMode === 'net') placeNetLabelAt(w);
+      else if (labelMode === 'highlight') highlightNetAt(w);
       else if (labelMode === 'annotation') placeAnnotationAt(w);
       else if (labelMode === 'equation') placeEquationAt(w);
     }
@@ -9953,6 +10021,14 @@ function renderNets() {
 
     const ref = document.createElement('span');
     ref.className = 'ref';
+    const highlight = circuit.netHighlight(net);
+    if (highlight) {
+      const dot = document.createElement('span');
+      dot.className = 'net-highlight-dot';
+      dot.style.setProperty('--net-highlight', resolveColor(highlight));
+      dot.title = `Highlighted ${highlight}`;
+      ref.appendChild(dot);
+    }
     appendMarkupText(ref, net.name || net.id);
     ref.title = 'Double-click to rename';
 
@@ -10565,6 +10641,16 @@ function onNormalKey(key, shiftKey = false) {
   if (movePending && key === 'Enter') {
     if (drag) drag.shift = shiftKey;
     commitModalMove();
+    return;
+  }
+  // 9 arms net highlighting and 8 removes every highlight, unless they
+  // continue a count already being typed (e.g. 18 then an arrow).
+  if (key === '9' && !counts) {
+    activateHighlight();
+    return;
+  }
+  if (key === '8' && !counts) {
+    removeAllNetHighlights();
     return;
   }
   if (/^[0-9]$/.test(key)) {
@@ -11353,6 +11439,7 @@ const TOOLBAR_IDS = {
   'send-back': ['btn-send-back'],
   'bring-front': ['btn-bring-front'],
   'net-label': ['btn-net-label', 'btn-mode-net-label', 'tool-net-label', 'mode-net-label'],
+  highlight: ['btn-mode-highlight'],
   annotation: ['btn-annotation', 'btn-mode-annotation', 'tool-annotation', 'mode-annotation'],
   arrow: ['btn-arrow', 'btn-mode-arrow', 'tool-arrow', 'mode-arrow'],
   box: ['btn-box', 'btn-mode-box', 'tool-box', 'mode-box'],
@@ -11728,7 +11815,7 @@ function syncInteractionUI() {
   }
   // Toggle only real changes: rewriting the canvas class invalidates style
   // for the whole drawing, and this runs on every repaint.
-  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-annotation']) {
+  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-highlight', 'mode-annotation']) {
     canvasEl.classList.toggle(name, name === state.canvasClass);
   }
   canvasEl.classList.toggle(state.canvasClass, true);
@@ -11764,6 +11851,7 @@ function renderStatus() {
   }
   if (activePlacementGuides.length) parts.push(describeGuides(activePlacementGuides));
   if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
+  if (labelMode === 'highlight') parts.push('click a wire, pin, net label, or rail marker to cycle its net color · 8 removes all · Esc exits');
   if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
   if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
   if (wire) {
@@ -12174,6 +12262,8 @@ function activateLabelPlacement(kind) {
   annotationPoints = [];
   hintLine(kind === 'net'
     ? 'NET LABEL: click a physical wire; stays active until Esc'
+    : kind === 'highlight'
+      ? 'HIGHLIGHT: click a net to cycle its color; 8 removes all; Esc exits'
     : kind === 'annotation'
       ? 'ANNOTATION: click anywhere to place free text; Esc cancels'
       : `${kind.toUpperCase()}: click start and end points; stays active until Esc`);
@@ -12182,6 +12272,10 @@ function activateLabelPlacement(kind) {
 
 function activateNetLabel() {
   activateLabelPlacement('net');
+}
+
+function activateHighlight() {
+  activateLabelPlacement('highlight');
 }
 
 function activateAnnotation() {
@@ -12688,6 +12782,7 @@ function bindInteractionControls() {
     'send-back': () => restackSelected('back'),
     'bring-front': () => restackSelected('front'),
     'net-label': activateNetLabel,
+    highlight: activateHighlight,
     annotation: activateAnnotation,
     arrow: () => activateShapeAnnotation('arrow'),
     box: () => activateShapeAnnotation('box'),

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit, referenceMarkerNameConflicts, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
+import { Circuit, NET_HIGHLIGHT_COLORS, referenceMarkerNameConflicts, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
 import { GRID, snap, onGrid } from '../src/core/grid.js';
 import { segThroughInterior } from '../src/core/router.js';
 import { svgString } from '../src/core/render.js';
@@ -3687,4 +3687,49 @@ test('an unnamed reference marker on a differently named net is a rail conflict'
   assert.equal(c.netOfTerminal({ comp: 'P1', term: 'p' }).name, 'VDD');
   c.renameNet(net, 'GND');
   assert.deepEqual(referenceMarkerNameConflicts(c), []);
+});
+
+test('net highlights color whole electrical groups with unique cycling colors', async () => {
+  const { runCommand } = await import('../src/core/commands.js');
+  const c = new Circuit();
+  for (const line of [
+    'add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'add resistor R3 --at 0 400', 'add resistor R4 --at 400 400',
+    'connect R1.b R2.a --name OUT', 'connect R3.b R4.a --name OUT',
+    'add ground G1 --at 1000 200', 'add ground G2 --at 1400 200', 'add resistor R5 --at 1000 0', 'add resistor R6 --at 1400 0',
+    'connect R5.a G1.gnd', 'connect R6.a G2.gnd', 'connect R1.a R3.a',
+  ]) runCommand(c, line);
+  const net = (term) => c.netOfTerminal(term);
+  const out1 = net({ comp: 'R1', term: 'b' });
+  const out2 = net({ comp: 'R3', term: 'b' });
+  assert.notEqual(out1.id, out2.id);
+  // Equally named physical nets are one virtual group; so are unnamed grounds.
+  assert.equal(c.netGroupKey(out1), c.netGroupKey(out2));
+  assert.equal(c.netGroupKey(net({ comp: 'G1', term: 'gnd' })), c.netGroupKey(net({ comp: 'G2', term: 'gnd' })));
+
+  assert.equal(c.cycleNetHighlight(out1), 'red');
+  assert.equal(c.netHighlight(out2), 'red');
+  // Another group skips the color in use; cycling it moves past red too.
+  const vss = net({ comp: 'G2', term: 'gnd' });
+  assert.equal(c.cycleNetHighlight(vss), 'orange');
+  assert.equal(c.cycleNetHighlight(out1), 'yellow');
+  assert.equal(c.cycleNetHighlight(vss), 'green');
+  // Past the last free color the highlight clears.
+  const lone = net({ comp: 'R1', term: 'a' });
+  for (let i = 0; i < NET_HIGHLIGHT_COLORS.length - 2; i++) assert.ok(c.cycleNetHighlight(lone));
+  assert.equal(c.cycleNetHighlight(lone), null);
+  assert.equal(c.netHighlight(lone), null);
+
+  // Renaming a whole group keeps its color; saving and loading keeps them all.
+  c.renameNet(lone, 'BIAS');
+  c.cycleNetHighlight(lone);
+  const color = c.netHighlight(lone);
+  c.renameNet(lone, 'VB');
+  assert.equal(c.netHighlight(lone), color);
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.equal(loaded.netHighlight(loaded.nets.get(out2.id)), 'yellow');
+  assert.equal(loaded.netHighlight(loaded.nets.get(lone.id)), color);
+
+  assert.equal(c.clearNetHighlights(), 3);
+  assert.equal(c.netHighlight(out1), null);
+  assert.equal(c.toJSON().netHighlights, undefined);
 });
