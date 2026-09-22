@@ -800,3 +800,14 @@ test('wire mode enlarges terminal markers and emphasizes the Alt snap target', (
   assert.match(overlay, /class="wire-snap-target"[^>]+r="12"/);
   assert.match(overlay, /r="8" fill="var\(--paper, #fff\)"/);
 });
+
+test('a highlighted net glows its reference markers and ports, not other devices', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('ground', { refdes: 'G1', x: 200, y: 80 });
+  circuit.addComponent('input', { refdes: 'VI1', x: -240, y: 0 });
+  const net = circuit.connect('R1.b', 'G1.gnd');
+  const overlay = editorOverlay(circuit, { nets: [net], netMarkers: ['G1', 'G1', 'VI1', 'missing'] });
+  assert.equal((overlay.match(/class="selection-glow net-marker-glow"/g) || []).length, 2);
+  assert.equal(editorOverlay(circuit, { nets: [net] }).includes('net-marker-glow'), false);
+});

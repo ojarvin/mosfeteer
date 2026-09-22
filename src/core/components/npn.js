@@ -16,6 +16,7 @@ export const npn = defineSymbol({
     { name: 'e', x: 0, y: 120, direction: 'emitter', dir: { x: 0, y: 1 } },
   ],
   bbox: { x: -160, y: -120, w: 160, h: 240 },
+  seriesTerminals: ['c', 'e'],
   graphics: [
     { kind: 'path', d: 'M -160 0 L -67.48 0', style: 'symbol' },
     { kind: 'path', d: 'M -67.48 -53.38 L -67.48 53.32', style: 'emph' },

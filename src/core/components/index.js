@@ -113,3 +113,12 @@ export function getSymbol(type) {
   }
   return def;
 }
+
+/** Terminal names a part joins in series when dropped along a straight wire:
+ * the declared `seriesTerminals` pair (MOS drain/source, BJT collector/emitter)
+ * or both pins of any two-terminal part. Returns null for other parts. */
+export function seriesTerminalNames(def) {
+  if (Array.isArray(def?.seriesTerminals) && def.seriesTerminals.length === 2) return [...def.seriesTerminals];
+  const terminals = def?.terminals || [];
+  return terminals.length === 2 ? terminals.map((terminal) => terminal.name) : null;
+}

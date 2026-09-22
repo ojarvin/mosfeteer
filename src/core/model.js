@@ -1,6 +1,6 @@
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
-import { getSymbol } from './components/index.js';
+import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
@@ -4946,8 +4946,9 @@ export class Circuit {
     const net = this.nets.get(netId);
     if (!net) throw new Error(`unknown net "${netId}"`);
     if (net.routingMode === 'fixed') throw new Error('cannot splice into a fixed net');
-    const terminals = comp.worldTerminals();
-    if (terminals.length !== 2) throw new Error(`${refdes} does not have two terminals`);
+    const series = seriesTerminalNames(comp.def);
+    if (!series) throw new Error(`${refdes} does not have two series terminals`);
+    const terminals = comp.worldTerminals().filter((t) => series.includes(t.name));
     if (terminals.some((t) => this.netOfTerminal({ comp: refdes, term: t.name }))) {
       throw new Error(`${refdes} is already connected`);
     }

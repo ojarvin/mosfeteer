@@ -11,12 +11,12 @@
  */
 
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
-import { getSymbol, symbolTypeNames } from '../core/components/index.js';
+import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
-import { editorOverlay, svgString, texToMathML } from '../core/render.js';
+import { componentShapeSvg, editorOverlay, svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
@@ -40,7 +40,7 @@ import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
-import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement, radialSector, spliceCandidate, wheelIntent } from './gestures.js';
+import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 
@@ -487,6 +487,14 @@ let wiresDirty = true; // set when wire geometry may have changed; recomputes ne
  * by alternate (Virtuoso-style) control surfaces without duplicating mode
  * precedence rules.
  */
+/** Nets Ctrl+A selects: every net with drawn wire, and every net that joins
+ * pins directly (touching terminals have a connection but no wire length). */
+export function selectAllNetIds(model) {
+  return [...model.nets.values()]
+    .filter((net) => net.paths().some((path) => path.length >= 2) || net.terminals.length >= 2)
+    .map((net) => net.id);
+}
+
 export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
   if (directWire) return {
     key: 'wire',
@@ -752,11 +760,18 @@ function rememberHistory(state, trim = true) {
  * 'defer' for callers that record before the mutation or gesture finishes, and
  * 'none' for direct-manipulation wire drags, which get no flash.
  */
+// A pending "which net name survives" question (see askNetNameChoice).
+let pendingNetNameChoice = null;
+/** Set while scripted commands run, so an agent or CLI edit never waits on a
+ * menu; their merges keep the model's name and report the conflict in Check. */
+let suppressNetNameChoice = false;
+
 function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now') {
   if (!startSnapshot) return;
   rememberHistory(startSnapshot, trim);
   future.length = 0;
   queueCommitFeedback(startSnapshot, feedback);
+  askNameForNewNetNameConflict(startSnapshot);
 }
 
 // ----- commit feedback ----------------------------------------------------
@@ -3677,8 +3692,9 @@ function setTerminalSnap(on) {
 }
 
 // ----- splice into wire -------------------------------------------------------
-// A free two-terminal part whose pins both land on one straight managed wire
-// segment is inserted in series: the span between its pins is cut.
+// A part whose two free series pins (both pins of a two-terminal part, or a
+// transistor's drain/source or collector/emitter) land on one straight managed
+// wire segment is inserted in series: the span between those pins is cut.
 
 function managedWirePaths() {
   return [...circuit.nets.values()]
@@ -3686,20 +3702,27 @@ function managedWirePaths() {
     .flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
 }
 
-/** The segment a free two-pin part would splice into, given its pin points. */
+/** World points of a part's series pins under `transform`, or null. */
+function seriesPinPoints(def, transform) {
+  const names = seriesTerminalNames(def);
+  if (!names) return null;
+  return def.terminals.filter((t) => names.includes(t.name)).map((t) => applyTransform(transform, t.x, t.y));
+}
+
+/** The segment a part's free series pins would splice into. For a placed part
+ * (`refdes`), a series pin that is already connected rules the splice out. */
 function spliceTargetFor(points, refdes = null) {
   if (points?.length !== 2) return null;
-  if (refdes && points.some((_, i) => {
-    const comp = circuit.components.get(refdes);
-    const name = comp?.worldTerminals()[i]?.name;
-    return name && circuit.netOfTerminal({ comp: refdes, term: name });
-  })) return null;
+  if (refdes) {
+    const names = seriesTerminalNames(circuit.components.get(refdes)?.def) || [];
+    if (names.some((term) => circuit.netOfTerminal({ comp: refdes, term }))) return null;
+  }
   return spliceCandidate(points, managedWirePaths());
 }
 
 function spliceIfOnWire(comp) {
   if (!comp) return false;
-  const points = comp.worldTerminals().map((t) => ({ x: t.x, y: t.y }));
+  const points = seriesPinPoints(comp.def, comp.transform);
   const target = spliceTargetFor(points, comp.refdes);
   if (!target) return false;
   const name = circuit.nets.get(target.netId)?.name || target.netId;
@@ -3710,15 +3733,15 @@ function spliceIfOnWire(comp) {
 
 /** Highlight for the wire a ghost or a dragged part would splice into. */
 function splicePreviewTarget(ghost) {
-  if (ghost?.def?.terminals?.length === 2) {
+  if (ghost?.def) {
     const t = { x: ghost.x, y: ghost.y, rotation: ghost.rotation, mirrorX: ghost.mirrorX, mirrorY: ghost.mirrorY };
-    return spliceTargetFor(ghost.def.terminals.map((terminal) => applyTransform(t, terminal.x, terminal.y)));
+    return spliceTargetFor(seriesPinPoints(ghost.def, t));
   }
   if (drag?.mode === 'move' && drag.moved && !drag.detached && drag.origins?.size === 1) {
     const refdes = [...drag.origins.keys()][0];
     const comp = circuit.components.get(refdes);
-    if (comp?.worldTerminals().length !== 2) return null;
-    return spliceTargetFor(comp.worldTerminals().map((t) => ({ x: t.x, y: t.y })), refdes);
+    if (!comp) return null;
+    return spliceTargetFor(seriesPinPoints(comp.def, comp.transform), refdes);
   }
   return null;
 }
@@ -3744,7 +3767,7 @@ function placePending() {
       mirrorY: t.mirrorY,
       noLabel: false,
     }));
-    // A lone two-pin part dropped along a wire is spliced into it.
+    // A lone part dropped with its series pins along a wire is spliced into it.
     if (placed.length === 1) spliceIfOnWire(placed[0]);
     // Treat a committed insertion exactly like a component move/copy that
     // lands on existing connectivity. `addComponent` joins coincident pins,
@@ -4232,9 +4255,11 @@ function renderCanvas(modelKey) {
   // Design-check focus is drawn separately (error color); only real selection is blue.
   const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
   // Solder dots sitting on a highlighted net's junction points get a halo so
-  // wire junctions on the net stand out (device bodies are deliberately NOT
-  // highlighted — only wires + solder dots belong to a net's visual).
+  // wire junctions on the net stand out. Device bodies are not highlighted,
+  // but the parts that stand for the net itself are: reference markers
+  // (ground, supply, VCM) and interface ports on it glow with its wires.
   const netSolder = [];
+  const netMarkers = netMarkerRefs(nets);
   const solders = new Map();
   for (const c of circuit.components.values()) {
     if (c.type === 'solder') solders.set(`${c.transform.x},${c.transform.y}`, c);
@@ -4361,6 +4386,8 @@ function renderCanvas(modelKey) {
     selLabel,
     selLabels: [...selLabels],
     nets,
+    netSolder,
+    netMarkers,
     previewSelection,
     // Keep the committed clicks visible while a line is being drafted.
     annotationPreview: labelMode === 'line' && (annotationPoints.length || drag?.mode === 'annotationlineplace')
@@ -4398,6 +4425,20 @@ function renderCanvas(modelKey) {
 let hoverTarget = null; // { kind:'net', ids } | { kind:'component', refdes }
 let hoverFromPanel = false;
 let hoverPinsRef = null; // component whose pins show drag handles in Select mode
+
+/** Parts that stand for a net itself: the reference markers (ground, supply,
+ * VCM) and interface ports on it. A net highlight, selected or hovered, glows
+ * them along with its wires. */
+function netMarkerRefs(nets) {
+  const refs = new Set();
+  for (const net of nets) {
+    for (const terminal of net?.terminals || []) {
+      const component = circuit.components.get(terminal.comp);
+      if (component && (isReferenceMarker(component) || INTERFACE_PIN_TYPES.has(component.type))) refs.add(component.refdes);
+    }
+  }
+  return [...refs];
+}
 
 function sameHover(a, b) {
   if (!a || !b) return a === b;
@@ -4438,7 +4479,11 @@ function updateCanvasHover(w) {
     const terminal = nearestTerminal(w);
     net = terminal ? circuit.netOfTerminal({ comp: terminal.refdes, term: terminal.term }) : pickWire(w)?.net || null;
   }
-  setHoverTarget(net ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id) } : null);
+  // A pin or wire previews its net; a part body previews the part's own row.
+  const body = !net && hit?.refdes && !hit.term ? circuit.components.get(hit.refdes) : null;
+  setHoverTarget(net
+    ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id) }
+    : body && body.type !== 'solder' ? { kind: 'component', refdes: body.refdes } : null);
 }
 
 // ----- snap pulse ------------------------------------------------------------------
@@ -4470,20 +4515,56 @@ function allWirePaths() {
   return [...circuit.nets.values()].flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
 }
 
-/** Delete every wire segment a knife stroke crosses, as one undo entry. */
-function cutWiresAlong(stroke) {
-  const keys = knifeCrossings(stroke, allWirePaths());
-  if (!keys.length) {
-    hintLine('knife: no wire crossed');
+/** The drawn outline of a box, line, or arrow annotation, or null for text. */
+function annotationOutline(label) {
+  if (['line', 'arrow'].includes(label.kind)) return label.points || null;
+  if (label.kind !== 'box') return null;
+  const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
+  const y0 = Math.min(label.anchor.y, label.end.y); const y1 = Math.max(label.anchor.y, label.end.y);
+  return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 }];
+}
+
+/** Everything a knife stroke cuts: wire segments it crosses, parts whose body
+ * it passes through, line/arrow/box annotations whose linework it crosses, and
+ * free text or net labels it passes through. A part's box is inset a little so
+ * cutting a wire at a pin does not take the part too. Owned name labels go
+ * with their part, and solder dots follow the wires, so neither is a target. */
+function knifeTargets(stroke) {
+  const inset = GRID / 4;
+  const refs = [];
+  for (const c of circuit.components.values()) {
+    if (c.type === 'solder') continue;
+    const r = c.bboxWorld();
+    if (strokeCrossesRect(stroke, { x: r.x + inset, y: r.y + inset, w: r.w - 2 * inset, h: r.h - 2 * inset })) refs.push(c.refdes);
+  }
+  const labelIds = [];
+  for (const label of circuit.labels.values()) {
+    if (label.owner || label.selectable === false) continue;
+    const outline = annotationOutline(label);
+    if (outline ? strokeCrossesPolyline(stroke, outline) : strokeCrossesRect(stroke, label.bbox())) labelIds.push(label.id);
+  }
+  return { wires: knifeCrossings(stroke, allWirePaths()), refs, labels: labelIds };
+}
+
+/** Delete everything a knife stroke cuts, as one undo entry. */
+function cutAlong(stroke) {
+  const { wires, refs, labels: labelIds } = knifeTargets(stroke);
+  if (!wires.length && !refs.length && !labelIds.length) {
+    hintLine('knife: nothing crossed');
     return;
   }
-  setSelection([]);
-  setLabelSelection([]);
+  setSelection(refs);
+  setLabelSelection(labelIds);
   selectedNets.clear();
-  selectedWires = new Set(keys);
+  selectedWires = new Set(wires);
   syncSelectedWire();
   deleteSelection();
-  logLine(`cut ${keys.length} wire segment${keys.length === 1 ? '' : 's'}`);
+  const counts = [
+    wires.length && `${wires.length} wire segment${wires.length === 1 ? '' : 's'}`,
+    refs.length && `${refs.length} part${refs.length === 1 ? '' : 's'}`,
+    labelIds.length && `${labelIds.length} label${labelIds.length === 1 ? '' : 's'}/annotation${labelIds.length === 1 ? '' : 's'}`,
+  ].filter(Boolean);
+  logLine(`knife cut ${counts.join(', ')}`);
 }
 
 /** Gesture feedback appended to the editor overlay's elements, in world units. */
@@ -4503,6 +4584,9 @@ function withGestureOverlay(svg, ghost) {
         if (pts.length > 1) parts.push(`<polyline class="gesture-hover-net" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
       }
     }
+    for (const ref of netMarkerRefs(hoverTarget.ids.map((id) => circuit.nets.get(id)))) {
+      parts.push(`<g class="selection-glow gesture-hover-marker" pointer-events="none">${componentShapeSvg(circuit.components.get(ref))}</g>`);
+    }
   }
   const pinsComp = !drag && hoverPinsRef ? circuit.components.get(hoverPinsRef) : null;
   if (pinsComp) {
@@ -4510,16 +4594,31 @@ function withGestureOverlay(svg, ghost) {
     const r = 4.5 * (p ? view.w / p.w : 1);
     for (const t of pinsComp.worldTerminals()) parts.push(`<circle class="gesture-pin" cx="${t.x}" cy="${t.y}" r="${r}" vector-effect="non-scaling-stroke"/>`);
   }
-  if (hoverTarget?.kind === 'component') {
+  // The canvas already shows the part under the pointer; only a panel hover
+  // needs to point at it.
+  if (hoverTarget?.kind === 'component' && hoverFromPanel) {
     const box = circuit.components.get(hoverTarget.refdes)?.bboxWorld();
     if (box) parts.push(`<rect class="gesture-hover-comp" x="${box.x - 8}" y="${box.y - 8}" width="${box.w + 16}" height="${box.h + 16}" rx="10" vector-effect="non-scaling-stroke"/>`);
   }
   if (drag?.mode === 'deletemarquee' && drag.knife && drag.moved) {
     const stroke = [...drag.knife];
-    for (const key of knifeCrossings(stroke, allWirePaths())) {
+    const cut = knifeTargets(stroke);
+    for (const key of cut.wires) {
       const { netId, branch, segment } = keyToWire(key);
       const pts = circuit.nets.get(netId)?.paths()?.[branch];
       if (pts?.[segment]) parts.push(`<line class="gesture-cut" x1="${pts[segment - 1].x}" y1="${pts[segment - 1].y}" x2="${pts[segment].x}" y2="${pts[segment].y}" vector-effect="non-scaling-stroke"/>`);
+    }
+    for (const ref of cut.refs) {
+      parts.push(`<g class="selection-glow gesture-cut-part" pointer-events="none">${componentShapeSvg(circuit.components.get(ref))}</g>`);
+    }
+    for (const id of cut.labels) {
+      const label = circuit.labels.get(id);
+      const outline = annotationOutline(label);
+      if (outline) parts.push(`<polyline class="gesture-cut" fill="none" points="${outline.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+      else {
+        const b = label.bbox();
+        parts.push(`<rect class="gesture-cut-label" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="3" vector-effect="non-scaling-stroke"/>`);
+      }
     }
     parts.push(`<polyline class="gesture-knife" points="${stroke.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
   }
@@ -5631,14 +5730,28 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
 // Right-drag (or hold) on a component opens a marking menu around the press.
 // Releasing in a sector runs it, so a practiced flick needs no reading; release
 // in the centre cancels. Sector 0 is up and indices run clockwise.
+// Every item acts on the part the menu was opened on: the tools pick it up at
+// the release point exactly as a click on it with that tool armed would, so
+// the part follows the pointer from where the flick ended.
 const RADIAL_ITEMS = [
   { label: 'Rotate', icon: 'rotate', run: () => selectedTransform('rotate') },
   { label: 'Mirror H', icon: 'mirror-x', run: () => selectedTransform('mirror-x') },
   { label: 'Mirror V', icon: 'mirror-y', run: () => selectedTransform('mirror-y') },
   { label: 'Delete', icon: 'trash', danger: true, run: () => deleteSelection() },
-  { label: 'Move', icon: 'move', run: () => activateMove('connected') },
-  { label: 'Copy', icon: 'copy', run: () => activateCopy() },
+  { label: 'Copy', icon: 'copy', run: (radial, at) => {
+    activateCopy();
+    if (copyMode) beginCopySource(at.world, at.client);
+  } },
+  { label: 'Detach move', icon: 'detach', run: (radial, at) => radialMove(radial, at, 'detached') },
+  { label: 'Move', icon: 'move', run: (radial, at) => radialMove(radial, at, 'connected') },
 ];
+
+function radialMove(radial, at, kind) {
+  activateMove(kind);
+  if (!moveMode || !circuit.components.has(radial.refdes)) return;
+  cursor = { x: snap(at.world.x), y: snap(at.world.y) };
+  armModalMove({ refdes: radial.refdes }, at.world, at.client);
+}
 const RADIAL_RADIUS = 72;
 let radialMenuEl = null;
 
@@ -5686,10 +5799,10 @@ function closeRadialMenu() {
   radialMenuEl = null;
 }
 
-function finishRadialMenu(radial, dx, dy) {
+function finishRadialMenu(radial, client) {
   closeRadialMenu();
-  const sector = radialSector(dx, dy, RADIAL_ITEMS.length, 22);
-  if (sector >= 0) RADIAL_ITEMS[sector].run();
+  const sector = radialSector(client.x - radial.startClient.x, client.y - radial.startClient.y, RADIAL_ITEMS.length, 22);
+  if (sector >= 0) RADIAL_ITEMS[sector].run(radial, { client: { ...client }, world: clientToWorld(client.x, client.y) });
   render();
 }
 
@@ -5868,7 +5981,7 @@ function canvasMouseDown(ev) {
       startLabelSelection: new Set(selLabels),
       moved: false,
       rubber: null,
-      // Shift-drag is a knife: it cuts every wire segment the stroke crosses.
+      // Shift-drag is a knife: it deletes everything the stroke cuts (see knifeTargets).
       knife: ev.shiftKey ? [{ x: startWorld.x, y: startWorld.y }] : null,
     };
     return;
@@ -7330,7 +7443,7 @@ function canvasMouseUp(ev) {
     const radial = drag;
     drag = null;
     suppressContextMenuUntil = Date.now() + 400;
-    finishRadialMenu(radial, ev.clientX - radial.startClient.x, ev.clientY - radial.startClient.y);
+    finishRadialMenu(radial, { x: ev.clientX, y: ev.clientY });
     return;
   }
   if (drag.mode === 'pan') {
@@ -7652,7 +7765,7 @@ function canvasMouseUp(ev) {
       recordHistoryEntry(drag.startSnapshot);
     }
   } else if (drag.mode === 'deletemarquee' && drag.knife && drag.moved) {
-    cutWiresAlong([...drag.knife, { x: releaseWorld.x, y: releaseWorld.y }]);
+    cutAlong([...drag.knife, { x: releaseWorld.x, y: releaseWorld.y }]);
   } else if (drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (drag.moved) {
       const box = worldRect(drag.startWorld, w);
@@ -11068,7 +11181,8 @@ function runLine(line) {
 
   if (result && result.mutated) {
     if (trimmed.split(/\s+/)[0].toLowerCase() === 'clear') resetCheckState();
-    recordHistoryEntry(before);
+    suppressNetNameChoice = true;
+    try { recordHistoryEntry(before); } finally { suppressNetNameChoice = false; }
     markModelChanged(); // commands can re-route / splice nets or mutate block geometry
     multi = new Set([...multi].filter((r) => circuit.components.has(r)));
     if (!circuit.components.has(selected)) selected = multi.size ? [...multi][0] : null;
@@ -11121,19 +11235,80 @@ function shortNetsAtPlacedSolder(comp) {
     return false;
   } catch (err) {
     if (err.code !== 'net-name-choice') throw err;
-    pendingSolderNameChoice = { point, refdes: comp.refdes, names: err.names, historyLength: history.length };
-    requestAnimationFrame(openSolderNameMenu);
+    const historyLength = history.length;
+    askNetNameChoice({
+      point,
+      names: err.names,
+      pick(name) {
+        const before = snapshot();
+        const net = circuit.shortNetsAt(point, { name });
+        markModelChanged();
+        playCommitFeedback(before);
+        logLine(`solder joined nets at (${point.x},${point.y}) into ${net?.name || net?.id}`);
+      },
+      cancel() {
+        if (history.length === historyLength) {
+          // The placement was the latest commit: undo it without a redo entry.
+          circuit = Circuit.fromJSON(JSON.parse(history.pop()));
+        } else {
+          circuit.components.delete(comp.refdes);
+          circuit.syncJunctionSolders();
+        }
+        markModelChanged();
+        logLine('solder cancelled: no net name chosen');
+      },
+    });
     return true;
   }
 }
 
-let pendingSolderNameChoice = null;
 let contextMenuDismiss = null;
 
-/** Ask which given name the shorted net keeps. Escape or an outside click
- * cancels the whole placement, removing the dot. */
-function openSolderNameMenu() {
-  const choice = pendingSolderNameChoice;
+/** Every edit that shorts nets carrying different given names (a solder dot
+ * on a crossing, a wire or pin drag onto another named net, a splice, a move
+ * onto a pin) asks which name the merged net keeps. The question is one menu
+ * at the short: a pick applies the name, Escape or an outside click cancels
+ * the whole edit. `choice` is { point, names, pick(name), cancel() }. */
+function askNetNameChoice(choice) {
+  pendingNetNameChoice = choice;
+  requestAnimationFrame(openNetNameChoiceMenu);
+}
+
+/** Model merges that allow name conflicts keep one name and leave a
+ * netNameWarnings entry. A commit that adds one asks the user instead: the
+ * pick renames the merged net, a cancel restores the pre-commit document. */
+function askNameForNewNetNameConflict(startSnapshot) {
+  if (pendingNetNameChoice || suppressNetNameChoice) return;
+  const warnings = circuit.netNameWarnings || [];
+  if (!warnings.length) return;
+  let previous = [];
+  try { previous = JSON.parse(startSnapshot).netNameWarnings || []; } catch { return; }
+  const key = (warning) => `${warning.netId}:${warning.names.join('|')}`;
+  const known = new Set(previous.map(key));
+  const warning = warnings.find((entry) => !known.has(key(entry)) && circuit.nets.has(entry.netId));
+  if (!warning) return;
+  const historyLength = history.length;
+  const netId = warning.netId;
+  askNetNameChoice({
+    point: { ...cursor },
+    names: [...warning.names],
+    pick(name) {
+      const net = circuit.nets.get(netId);
+      if (!net) return;
+      circuit.renameNet(net, name);
+      markModelChanged();
+      logLine(`merged net ${net.id} keeps the name ${name}`);
+    },
+    cancel() {
+      if (history.length === historyLength) history.pop();
+      applyJson(startSnapshot);
+      logLine('connection cancelled: no net name chosen');
+    },
+  });
+}
+
+function openNetNameChoiceMenu() {
+  const choice = pendingNetNameChoice;
   if (!choice || !componentContextMenuEl) return;
   closeComponentContextMenu();
   const menu = componentContextMenuEl;
@@ -11148,42 +11323,27 @@ function openSolderNameMenu() {
   for (const name of choice.names) {
     const item = appendContextItem(menu, '', () => {
       contextMenuDismiss = null;
-      pendingSolderNameChoice = null;
-      const before = snapshot();
+      pendingNetNameChoice = null;
       try {
-        const net = circuit.shortNetsAt(choice.point, { name });
-        markModelChanged();
-        playCommitFeedback(before);
-        logLine(`solder joined nets at (${choice.point.x},${choice.point.y}) into ${net?.name || net?.id}`);
+        choice.pick(name);
       } catch (err) {
-        logLine(`solder cancelled: ${err.message}`, 'error');
-        cancelSolderPlacement(choice);
+        logLine(`net name choice failed: ${err.message}`, 'error');
+        choice.cancel();
       }
+      render();
     });
     const text = document.createElement('span');
     appendMarkupText(text, name);
     item.prepend(text);
   }
   contextMenuDismiss = () => {
-    pendingSolderNameChoice = null;
-    cancelSolderPlacement(choice);
-    logLine('solder cancelled: no net name chosen');
+    pendingNetNameChoice = null;
+    choice.cancel();
     render();
   };
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
   menu.querySelector('button')?.focus();
-}
-
-function cancelSolderPlacement(choice) {
-  if (history.length === choice.historyLength) {
-    // The placement was the latest commit: undo it without a redo entry.
-    circuit = Circuit.fromJSON(JSON.parse(history.pop()));
-  } else {
-    circuit.components.delete(choice.refdes);
-    circuit.syncJunctionSolders();
-  }
-  markModelChanged();
 }
 
 /** Briefly pulse a rail button to confirm a tool or wire-shape change. */
@@ -11218,7 +11378,6 @@ const RAIL_FLYOUT_TOOLS = ['annotation', 'arrow', 'box', 'line'];
 const railFlyoutProxyEl = document.getElementById('btn-rail-annotate');
 const railFlyoutEl = document.getElementById('rail-flyout');
 let railFlyoutTool = 'annotation';
-let railFlyoutTimer = 0;
 
 function railFlyoutButton(tool) {
   return railFlyoutEl?.querySelector(`[data-action="${tool}"]`) || null;
@@ -11239,62 +11398,74 @@ function syncRailFlyout(state) {
   if (source) railFlyoutProxyEl.title = `${source.title} · hover or right-click for all annotation tools`;
 }
 
-function openRailFlyout() {
-  if (!railFlyoutEl || !railFlyoutProxyEl || !railFlyoutEl.hidden) return;
-  const pane = document.querySelector('.canvas-pane').getBoundingClientRect();
-  const r = railFlyoutProxyEl.getBoundingClientRect();
-  railFlyoutEl.hidden = false;
-  // Beside a vertical rail; below the horizontal strip a narrow window uses.
-  const horizontal = modeToolbarEl && getComputedStyle(modeToolbarEl).flexDirection === 'row';
-  railFlyoutEl.style.left = `${horizontal ? r.left - pane.left - 5 : r.right - pane.left + 8}px`;
-  railFlyoutEl.style.top = `${horizontal ? r.bottom - pane.top + 8 : r.top - pane.top - 5}px`;
-  railFlyoutProxyEl.setAttribute('aria-expanded', 'true');
-}
-
-function closeRailFlyout() {
-  window.clearTimeout(railFlyoutTimer);
-  if (!railFlyoutEl || railFlyoutEl.hidden) return;
-  railFlyoutEl.hidden = true;
-  railFlyoutProxyEl?.setAttribute('aria-expanded', 'false');
-}
-
-if (railFlyoutProxyEl && railFlyoutEl) {
-  railFlyoutProxyEl.addEventListener('click', (ev) => {
+/** Hover, right-click, or a long press on a rail slot opens its flyout strip
+ * beside it; leaving both, picking a tool, or Escape closes it. Clicking the
+ * slot itself stays the slot's own action. Shared by the annotation tools and
+ * the wire shapes so both behave and look the same. */
+function bindRailFlyout(proxy, flyout) {
+  if (!proxy || !flyout) return { close() {} };
+  let timer = 0;
+  const open = () => {
+    if (!flyout.hidden) return;
+    for (const other of railFlyouts) if (other.flyout !== flyout) other.close();
+    const pane = document.querySelector('.canvas-pane').getBoundingClientRect();
+    const r = proxy.getBoundingClientRect();
+    flyout.hidden = false;
+    // Beside a vertical rail; below the horizontal strip a narrow window uses.
+    const horizontal = modeToolbarEl && getComputedStyle(modeToolbarEl).flexDirection === 'row';
+    flyout.style.left = `${horizontal ? r.left - pane.left - 5 : r.right - pane.left + 8}px`;
+    flyout.style.top = `${horizontal ? r.bottom - pane.top + 8 : r.top - pane.top - 5}px`;
+    proxy.setAttribute('aria-expanded', 'true');
+  };
+  const close = () => {
+    window.clearTimeout(timer);
+    if (flyout.hidden) return;
+    flyout.hidden = true;
+    proxy.setAttribute('aria-expanded', 'false');
+  };
+  proxy.addEventListener('click', close);
+  proxy.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
-    closeRailFlyout();
-    railFlyoutButton(railFlyoutTool)?.click();
+    open();
   });
-  railFlyoutProxyEl.addEventListener('contextmenu', (ev) => {
-    ev.preventDefault();
-    openRailFlyout();
-  });
-  railFlyoutProxyEl.addEventListener('pointerdown', (ev) => {
+  proxy.addEventListener('pointerdown', (ev) => {
     if (ev.pointerType === 'mouse') return;
-    railFlyoutTimer = window.setTimeout(openRailFlyout, 400);
+    timer = window.setTimeout(open, 400);
   });
   const hoverIn = () => {
-    window.clearTimeout(railFlyoutTimer);
-    railFlyoutTimer = window.setTimeout(openRailFlyout, 350);
+    window.clearTimeout(timer);
+    timer = window.setTimeout(open, 350);
   };
   const hoverOut = (ev) => {
-    if (railFlyoutEl.contains(ev.relatedTarget) || railFlyoutProxyEl.contains(ev.relatedTarget)) return;
-    window.clearTimeout(railFlyoutTimer);
-    railFlyoutTimer = window.setTimeout(closeRailFlyout, 220);
+    if (flyout.contains(ev.relatedTarget) || proxy.contains(ev.relatedTarget)) return;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(close, 220);
   };
-  railFlyoutProxyEl.addEventListener('pointerenter', hoverIn);
-  railFlyoutProxyEl.addEventListener('pointerleave', hoverOut);
-  railFlyoutEl.addEventListener('pointerenter', () => window.clearTimeout(railFlyoutTimer));
-  railFlyoutEl.addEventListener('pointerleave', hoverOut);
-  railFlyoutEl.addEventListener('click', (ev) => {
-    if (ev.target.closest('button')) closeRailFlyout();
+  proxy.addEventListener('pointerenter', hoverIn);
+  proxy.addEventListener('pointerleave', hoverOut);
+  flyout.addEventListener('pointerenter', () => window.clearTimeout(timer));
+  flyout.addEventListener('pointerleave', hoverOut);
+  flyout.addEventListener('click', (ev) => {
+    if (ev.target.closest('button')) close();
   });
-  railFlyoutEl.addEventListener('keydown', (ev) => {
+  flyout.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
     ev.stopPropagation();
-    closeRailFlyout();
-    railFlyoutProxyEl.focus();
+    close();
+    proxy.focus();
   });
+  const handle = { flyout, open, close };
+  railFlyouts.push(handle);
+  return handle;
 }
+
+const railFlyouts = [];
+
+bindRailFlyout(railFlyoutProxyEl, railFlyoutEl);
+railFlyoutProxyEl?.addEventListener('click', (ev) => {
+  ev.preventDefault();
+  railFlyoutButton(railFlyoutTool)?.click();
+});
 
 /** Reveal a newly selected mode with the smallest possible rail scroll. */
 function revealModeToolbarControl(control) {
@@ -11337,7 +11508,9 @@ function syncInteractionUI() {
     }
   }
   for (const kind of ['orthogonal', 'diagonal']) {
-    const active = routeMode === kind;
+    // Like the annotation strip, a shape reads as pressed only while it is the
+    // tool in use.
+    const active = routeMode === kind && state.toolbar === 'wire';
     for (const el of routeModeElements(kind)) {
       el.setAttribute('aria-pressed', String(active));
       el.setAttribute('aria-current', active ? 'true' : 'false');
@@ -11730,10 +11903,15 @@ function pickQuickAdd(type) {
   }
   const def = getSymbol(type);
   const direction = fromWire && wire?.source ? arrivalDirection(draftRoutePath(wire, point)) : null;
-  const placement = quickAddPlacement(def, point, direction);
+  const sourceComp = fromWire && wire?.source?.refdes ? circuit.components.get(wire.source.refdes) : null;
+  const source = sourceComp ? { ...sourceComp.transform, defaultMirrorX: !!sourceComp.def?.defaultMirrorX, defaultMirrorY: !!sourceComp.def?.defaultMirrorY } : null;
+  const placement = quickAddPlacement(def, point, direction, source);
   const before = snapshot();
   try {
-    const comp = circuit.addComponent(type, { x: placement.x, y: placement.y, rotation: placement.rotation, noLabel: false });
+    const comp = circuit.addComponent(type, {
+      x: placement.x, y: placement.y, rotation: placement.rotation,
+      mirrorX: placement.mirrorX, mirrorY: placement.mirrorY, noLabel: false,
+    });
     markModelChanged();
     if (fromWire && wire?.source && placement.terminal) {
       connectWireToTerminal({ refdes: comp.refdes, term: placement.terminal, x: point.x, y: point.y }, before);
@@ -11787,7 +11965,7 @@ function activateLabelPlacement(kind) {
   hintLine(kind === 'net'
     ? 'NET LABEL: click a physical wire; stays active until Esc'
     : kind === 'annotation'
-      ? 'ANNOTATION: click anywhere to place free text; stays active until Esc'
+      ? 'ANNOTATION: click anywhere to place free text; Esc cancels'
       : `${kind.toUpperCase()}: click start and end points; stays active until Esc`);
   render();
 }
@@ -12254,32 +12432,17 @@ function syncWireButtonRouteMode(flash = false) {
   const icon = button.querySelector('.button-icon');
   if (icon) icon.innerHTML = ICON_PATHS[routeMode === 'diagonal' ? 'wire-diagonal' : 'wire'];
   button.dataset.routeShape = routeMode;
-  button.title = `Draw an electrical wire (w) · hold Alt to snap to the nearest terminal · ${routeMode} shape · F3 or right-click to change`;
+  button.title = `Draw an electrical wire (w) · hold Alt to snap to the nearest terminal · ${routeMode} shape · F3 to toggle; hover or right-click for both shapes`;
   if (flash) flashToolButton(button);
 }
 
-function openRouteModeMenu(x, y) {
-  if (!componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 220))}px`;
-  menu.style.top = `${Math.max(4, y)}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = 'Wire shape';
-  menu.appendChild(heading);
-  appendContextItem(menu, 'Orthogonal', () => setRouteMode('orthogonal'), { active: routeMode === 'orthogonal', shortcut: 'F3' });
-  appendContextItem(menu, 'Diagonal', () => setRouteMode('diagonal'), { active: routeMode === 'diagonal', shortcut: 'F3' });
-  const rect = menu.getBoundingClientRect();
-  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
-  menu.querySelector('.context-item-active')?.focus() || menu.querySelector('button')?.focus();
-}
-
-document.getElementById('btn-mode-wire')?.addEventListener('contextmenu', (ev) => {
-  ev.preventDefault();
-  const rect = ev.currentTarget.getBoundingClientRect();
-  openRouteModeMenu(rect.right + 6, rect.top);
+// The wire shapes share the Wire rail slot the way the annotation tools share
+// theirs: clicking the slot draws with the current shape, and its flyout picks
+// a shape and starts drawing with it.
+bindRailFlyout(document.getElementById('btn-mode-wire'), document.getElementById('wire-flyout'));
+document.getElementById('wire-flyout')?.addEventListener('click', (ev) => {
+  if (!ev.target.closest('[data-route-mode]')) return;
+  if (interactionState().toolbar !== 'wire') activateWire();
 });
 
 function toggleRouteMode() {
@@ -12347,6 +12510,15 @@ function bindInteractionControls() {
 }
 
 bindInteractionControls();
+
+// A pointer click on a rail tool hands the keyboard back to the canvas, so
+// Escape and the tool keys work at once. (A focused button swallows canvas
+// keys; keyboard activation keeps focus on the rail for further tabbing.)
+for (const rail of document.querySelectorAll('.mode-toolbar, .rail-flyout')) {
+  rail.addEventListener('click', (ev) => {
+    if (ev.detail > 0 && ev.target.closest('button')) canvasEl.focus({ preventScroll: true });
+  });
+}
 document.getElementById('style-line-row')?.addEventListener('click', (ev) => {
   const arrowButton = ev.target.closest?.('[data-arrow-end]');
   if (arrowButton) {
@@ -13162,11 +13334,7 @@ window.addEventListener('keydown', (ev) => {
       selectedWire = null;
       selectedWires.clear();
       // Select every non-empty net too, so Ctrl+A grabs the whole drawing.
-      selectedNets = new Set(
-        [...circuit.nets.values()]
-          .filter((n) => n.paths().some((path) => path.length >= 2))
-          .map((n) => n.id)
-      );
+      selectedNets = new Set(selectAllNetIds(circuit));
       render();
     } else if (k === 'c' && !ev.shiftKey) {
       ev.preventDefault();
@@ -13318,7 +13486,7 @@ window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.str
 window.__circuit = () => ({
   kind: 'circuit',
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
-  nets: [...circuit.nets.values()].map((net) => ({ id: net.id, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, branches: net.branches, junctions: net.junctions, pts: net.points() })),
+  nets: [...circuit.nets.values()].map((net) => ({ id: net.id, name: net.name || null, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, branches: net.branches, junctions: net.junctions, pts: net.points() })),
   labels: [...circuit.labels.values()].map((l) => ({ ...l.toJSON(), world: l.anchorWorld() })),
 });
 

@@ -122,8 +122,13 @@ alias for an unnamed ground marker.
 
 `solder` joins nets only when at least three wire arms meet at its grid point.
 Fewer arms leave a plain annotation, which `syncJunctionSolders` may prune.
-Placement is atomic: Escape or an outside click removes the pending dot; a
-multiple-name join asks which net name to keep.
+Placement is atomic: Escape or an outside click removes the pending dot.
+
+Any interactive edit that shorts nets with different given names (a solder
+dot, a wire or pin drag, a splice, a move onto a pin) asks which name the merged
+net keeps, in one shared picker; Escape or an outside click cancels the whole
+edit. Scripted commands never prompt: the model keeps one name and records a
+`netNameWarnings` entry for Design Check.
 
 ### Rendering and math
 
@@ -223,7 +228,7 @@ Core keyboard vocabulary:
 | view | `F` fit, `#` grid, `C` crosshair, `G` guides, `D` theme, `?` help, `:` command line (log drawer) |
 | editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or nearest-terminal cursor snapping while wiring |
-| pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife; Space-drag pans; double-click paper inserts |
+| pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
 
 View toggles are handled before mode-specific keys, except printable insert
 query text before a ghost exists. `Ctrl+Shift+r` is intentionally unbound.

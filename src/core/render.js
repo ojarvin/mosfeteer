@@ -813,7 +813,9 @@ export function svgString(circuit, opts = {}) {
  * Editor-only overlays rendered on top of svgString output.
  * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
  * halos around each selected component's bbox. opts.nets [net]: highlight
- * (select) net routes. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
+ * (select) net routes. opts.netMarkers [refdes]: reference markers and ports on
+ * those nets, glowing like their wires. opts.netSolder [{x,y}]: solder halos
+ * on those nets. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
  * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
  * selection bounds, with small edge ticks and a center marker.
  * opts.wireMode: show all component terminals, colored by net membership.
@@ -1044,6 +1046,13 @@ export function editorOverlay(circuit, opts = {}) {
       parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
       parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
     }
+  }
+
+  // Reference markers and ports on a highlighted net glow along their own
+  // linework, in the net highlight's color.
+  for (const ref of new Set(opts.netMarkers || [])) {
+    const c = circuit.components.get(ref);
+    if (c) parts.push(`<g class="selection-glow net-marker-glow" pointer-events="none">${componentShapeSvg(c)}</g>`);
   }
 
   for (const net of opts.nets || []) {

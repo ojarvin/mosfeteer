@@ -28,29 +28,78 @@ export function arrivalDirection(path) {
   return null;
 }
 
-/** Choose the rotation and terminal that land a new part on `point` with its
+/** Choose the transform and terminal that land a new part on `point` with its
  * body continuing in the wire's arrival `direction`. The chosen terminal's
- * world position is exactly `point`; the origin follows from it. Rotation 0 and
- * the first terminal win ties so common parts keep their textbook pose. */
-export function quickAddPlacement(def, point, direction = null) {
+ * world position is exactly `point`; the origin follows from it.
+ *
+ * Multi-terminal parts score each rotation, mirror, and terminal by how well
+ * the body continues the wire. Ties keep the `source` part's pose: its
+ * rotation first, then its mirror deviation from its own symbol default, so a
+ * part added from a mirrored transistor inherits that mirror while a gate still
+ * lands gate-to-gate. Interface ports turn so their body lies beyond the drop
+ * point, preferring a mirror over a rotation. Other single-terminal markers
+ * (ground, supply, VCM) keep their only pose. */
+export function quickAddPlacement(def, point, direction = null, source = null) {
   const terminals = def?.terminals || [];
-  const mirror = { mirrorX: !!def?.defaultMirrorX, mirrorY: !!def?.defaultMirrorY };
-  if (!terminals.length) return { x: point.x, y: point.y, rotation: 0, terminal: null };
-  if (terminals.length === 1 || !direction) {
-    const offset = applyTransform({ x: 0, y: 0, rotation: 0, ...mirror }, terminals[0].x, terminals[0].y);
-    return { x: point.x - offset.x, y: point.y - offset.y, rotation: 0, terminal: terminals[0].name };
+  const defaults = { mirrorX: !!def?.defaultMirrorX, mirrorY: !!def?.defaultMirrorY };
+  const result = (transform, terminal, offset) => ({
+    x: point.x - offset.x, y: point.y - offset.y,
+    rotation: transform.rotation, mirrorX: transform.mirrorX, mirrorY: transform.mirrorY,
+    terminal,
+  });
+  if (!terminals.length) return result({ rotation: 0, ...defaults }, null, { x: 0, y: 0 });
+  const port = terminals.length === 1 && terminals[0].direction === 'port';
+  if (!direction || (terminals.length === 1 && !port)) {
+    const transform = { rotation: 0, ...defaults };
+    return result(transform, terminals[0].name, applyTransform({ x: 0, y: 0, ...transform }, terminals[0].x, terminals[0].y));
   }
+  // The pose the new part should echo when the wire leaves room for a choice.
+  const preferred = {
+    rotation: ((source?.rotation || 0) % 360 + 360) % 360,
+    mirrorX: defaults.mirrorX !== (!!source?.mirrorX !== !!source?.defaultMirrorX),
+    mirrorY: defaults.mirrorY !== (!!source?.mirrorY !== !!source?.defaultMirrorY),
+  };
+  const bbox = def.bbox || { x: 0, y: 0, w: 0, h: 0 };
+  const body = { x: bbox.x + bbox.w / 2, y: bbox.y + bbox.h / 2 };
+  const rotations = port ? [0, 180, 90, 270] : [0, 90, 180, 270];
   let best = null;
-  for (const rotation of [0, 90, 180, 270]) {
-    for (const terminal of terminals) {
-      const offset = applyTransform({ x: 0, y: 0, rotation, ...mirror }, terminal.x, terminal.y);
-      const length = Math.hypot(offset.x, offset.y);
-      // A terminal at the origin has no body direction to align.
-      const score = length ? (-offset.x * direction.x - offset.y * direction.y) / length : -1;
-      if (!best || score > best.score + 1e-9) best = { score, rotation, terminal: terminal.name, offset };
+  for (const rotation of rotations) {
+    for (const mirrorX of [defaults.mirrorX, !defaults.mirrorX]) {
+      for (const mirrorY of [defaults.mirrorY, !defaults.mirrorY]) {
+        const transform = { rotation, mirrorX, mirrorY };
+        for (const terminal of terminals) {
+          const offset = applyTransform({ x: 0, y: 0, ...transform }, terminal.x, terminal.y);
+          let score;
+          if (port) {
+            // A port's body lies beyond its pin, along the wire.
+            const reach = applyTransform({ x: 0, y: 0, ...transform }, body.x - terminal.x, body.y - terminal.y);
+            const length = Math.hypot(reach.x, reach.y);
+            score = length ? (reach.x * direction.x + reach.y * direction.y) / length : -1;
+          } else {
+            const length = Math.hypot(offset.x, offset.y);
+            // A terminal at the origin has no body direction to align.
+            score = length ? (-offset.x * direction.x - offset.y * direction.y) / length : -1;
+          }
+          const turn = Math.min(Math.abs(rotation - preferred.rotation), 360 - Math.abs(rotation - preferred.rotation));
+          const keep = port
+            ? [rotation === 0 ? 0 : 1, mirrorY === defaults.mirrorY ? 0 : 1]
+            : [turn, (mirrorX === preferred.mirrorX ? 0 : 1) + (mirrorY === preferred.mirrorY ? 0 : 1)];
+          const candidate = { score, keep, transform, terminal: terminal.name, offset };
+          if (!best || betterQuickAdd(candidate, best)) best = candidate;
+        }
+      }
     }
   }
-  return { x: point.x - best.offset.x, y: point.y - best.offset.y, rotation: best.rotation, terminal: best.terminal };
+  return result(best.transform, best.terminal, best.offset);
+}
+
+function betterQuickAdd(a, b) {
+  if (a.score > b.score + 1e-9) return true;
+  if (a.score < b.score - 1e-9) return false;
+  for (let i = 0; i < a.keep.length; i++) {
+    if (a.keep[i] !== b.keep[i]) return a.keep[i] < b.keep[i];
+  }
+  return false;
 }
 
 /** Radial (marking) menu sector for a pointer offset. Sector 0 is straight up
@@ -96,6 +145,27 @@ export function knifeCrossings(stroke, paths) {
     }
   }
   return [...keys];
+}
+
+/** Does a knife stroke touch a polyline? */
+export function strokeCrossesPolyline(stroke, pts) {
+  if (!Array.isArray(stroke) || stroke.length < 2 || !Array.isArray(pts)) return false;
+  for (let i = 1; i < stroke.length; i++) {
+    for (let j = 1; j < pts.length; j++) {
+      if (segmentsIntersect(stroke[i - 1], stroke[i], pts[j - 1], pts[j])) return true;
+    }
+  }
+  return false;
+}
+
+/** Does a knife stroke enter a rectangle { x, y, w, h }? A stroke point
+ * inside it counts, as does a segment crossing its edge. */
+export function strokeCrossesRect(stroke, rect) {
+  if (!Array.isArray(stroke) || !stroke.length || !rect || rect.w <= 0 || rect.h <= 0) return false;
+  const inside = (p) => p.x >= rect.x && p.x <= rect.x + rect.w && p.y >= rect.y && p.y <= rect.y + rect.h;
+  if (stroke.some(inside)) return true;
+  const { x, y, w, h } = rect;
+  return strokeCrossesPolyline(stroke, [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }, { x, y }]);
 }
 
 /** A two-terminal part dropped with both terminals on one straight wire

@@ -37,6 +37,8 @@ export function createMos(type, { pmos = false, bulk = false } = {}) {
     // asymmetric bbox that extends toward the gate. This is symbol metadata,
     // not a MOS-specific branch in the editor's guide/distribute tools.
     layoutAnchorTerminals: ['d', 's'],
+    // Drain and source can be spliced in series into a straight wire (a cascode).
+    seriesTerminals: ['d', 's'],
     bbox: { ...BBOX },
     graphics: mosGraphics(
       pmos

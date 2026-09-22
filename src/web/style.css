@@ -295,6 +295,18 @@ button:focus-visible {
   border-radius: 5px;
 }
 
+/* Save carries the unsaved state quietly: accent text on a light tint while
+   there is something to save, a plain disabled button otherwise. */
+.save-action:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.save-action:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .primary-action:not(:disabled) {
   color: #fff;
   background: var(--accent);
@@ -460,14 +472,34 @@ button:focus-visible {
   text-overflow: ellipsis;
 }
 
-/* The title hugs its text so the unsaved dot and chevron sit right after it. */
+/* The title hugs its full text so the unsaved dot and chevron sit right after
+   it. On one toolbar row it is the only item that gives way: it shows the
+   whole name while there is room and ellipsizes when there is not. */
 @supports (field-sizing: content) {
   .toolbar .circuit-picker #circuit-name {
     field-sizing: content;
+    flex: 0 1 auto;
     width: auto;
     min-width: 6rem;
-    max-width: 18rem;
     padding-right: 4px;
+  }
+}
+
+@media (min-width: 761px) {
+  .toolbar {
+    flex-wrap: nowrap;
+  }
+
+  .toolbar > :not(.document-cluster, .toolbar-spacer) {
+    flex-shrink: 0;
+  }
+
+  .document-cluster {
+    flex: 0 1 auto;
+  }
+
+  .circuit-picker {
+    flex: 0 1 auto;
   }
 }
 
@@ -509,10 +541,6 @@ button:focus-visible {
 #circuit-select option {
   color: var(--text);
   background: var(--bg-panel);
-}
-
-@media (max-width: 1280px) {
-  .toolbar .circuit-picker #circuit-name { width: 9rem; max-width: 11rem; }
 }
 
 .danger-action {
@@ -2235,7 +2263,11 @@ button.status-chip:hover {
   color: var(--ok);
 }
 
+/* The message leads the right-hand chips, so its changing width only moves
+   its own left edge; it is also the chip that gives way when space is short. */
 .status-message {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: min(34vw, 420px);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2789,7 +2821,8 @@ button.off {
   background: var(--bg-hover);
 }
 
-/* The annotation flyout: a horizontal strip beside its rail slot. */
+/* Rail flyouts (annotation tools, wire shapes): a horizontal strip beside
+   their rail slot. */
 .rail-flyout {
   position: absolute;
   z-index: 6;
@@ -2805,7 +2838,7 @@ button.off {
   from { opacity: 0; transform: translateX(-4px) scale(0.97); }
 }
 
-/* A small corner mark says "more tools here", like the wire button's. */
+/* A small corner mark says "more tools here". */
 .rail-flyout-proxy {
   position: relative;
 }
@@ -2888,21 +2921,6 @@ button.off {
   }
 }
 
-/* A small corner mark tells that the Wire tool has a shape menu. */
-.mode-toolbar #btn-mode-wire {
-  position: relative;
-}
-
-.mode-toolbar #btn-mode-wire::after {
-  content: "";
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  border-left: 4px solid transparent;
-  border-bottom: 4px solid currentColor;
-  opacity: 0.55;
-}
-
 /* A tool change (or a wire-shape change) pulses the active rail button once,
    so a keyboard switch is confirmed in peripheral vision. */
 :is(.mode-toolbar, .rail-flyout) .mode-control.tool-flash {
@@ -2929,9 +2947,11 @@ button.off {
 }
 
 @media (max-width: 760px) {
+  /* The horizontal strip hugs its tools and scrolls only when the canvas is
+     narrower than they are. */
   .mode-toolbar {
-    right: 6px;
-    width: auto;
+    width: max-content;
+    max-width: calc(100% - 16px);
     max-height: none;
     flex-direction: row;
     flex-wrap: nowrap;
@@ -3347,6 +3367,26 @@ button.off {
   stroke-width: 8;
   stroke-opacity: 0.35;
   stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Parts and labels a knife stroke will delete glow in the danger color. */
+.selection-glow.gesture-cut-part * {
+  stroke: var(--danger) !important;
+  fill: var(--danger) !important;
+  stroke-opacity: 0.35 !important;
+}
+
+.selection-glow.gesture-cut-part [fill="none"] {
+  fill: none !important;
+}
+
+.gesture-cut-label {
+  fill: var(--danger);
+  fill-opacity: 0.12;
+  stroke: var(--danger);
+  stroke-opacity: 0.6;
+  stroke-width: 1.5;
 }
 
 .toolbar-menu [role="menuitemcheckbox"][aria-checked="true"]::after {
@@ -3400,6 +3440,16 @@ button.off {
   fill: var(--accent) !important;
   fill-opacity: 0.16 !important;
   vector-effect: none !important;
+}
+
+.net-marker-glow * {
+  stroke-opacity: 0.35 !important;
+}
+
+/* A hovered net's markers and ports match its lighter hover tint. */
+.gesture-hover-marker * {
+  stroke-width: 7px !important;
+  fill-opacity: 0.1 !important;
 }
 
 .selection-glow [fill="none"] {

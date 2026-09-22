@@ -28,7 +28,7 @@ test('quick-add lands the chosen terminal on the drop point, body continuing the
     const placement = quickAddPlacement(def(type), point, direction);
     const t = def(type).terminals.find((terminal) => terminal.name === placement.terminal);
     const world = applyTransform({ x: placement.x, y: placement.y, rotation: placement.rotation,
-      mirrorX: !!def(type).defaultMirrorX, mirrorY: !!def(type).defaultMirrorY }, t.x, t.y);
+      mirrorX: placement.mirrorX, mirrorY: placement.mirrorY }, t.x, t.y);
     return { placement, world };
   };
   // A wire arriving rightwards meets a resistor's a terminal in its default pose.
@@ -52,6 +52,38 @@ test('quick-add lands the chosen terminal on the drop point, body continuing the
   // PMOS honours its default mirror while scoring.
   ({ world } = landed('pmos', { x: 0, y: -1 }));
   assert.deepEqual(world, point);
+});
+
+test('quick-add ports face along the wire and parts inherit the source pose', () => {
+  const point = { x: 400, y: 200 };
+  const pose = (placement) => ({ rotation: placement.rotation, mirrorX: placement.mirrorX, mirrorY: placement.mirrorY });
+  // An input port on a leftward wire keeps its textbook pose, with its pin on the point.
+  let placement = quickAddPlacement(def('input'), point, { x: -1, y: 0 });
+  assert.deepEqual(pose(placement), { rotation: 0, mirrorX: false, mirrorY: false });
+  assert.deepEqual({ x: placement.x, y: placement.y }, point);
+  // From a mirrored MOS gate the wire runs right: the port mirrors instead of turning.
+  placement = quickAddPlacement(def('input'), point, { x: 1, y: 0 });
+  assert.deepEqual(pose(placement), { rotation: 0, mirrorX: true, mirrorY: false });
+  // Output ports already face right by default and flip for a leftward wire.
+  assert.equal(quickAddPlacement(def('output'), point, { x: 1, y: 0 }).mirrorX, true);
+  assert.equal(quickAddPlacement(def('output'), point, { x: -1, y: 0 }).mirrorX, false);
+  // A vertical wire turns the port so its body continues the wire.
+  placement = quickAddPlacement(def('port'), point, { x: 0, y: 1 });
+  const body = applyTransform({ x: 0, y: 0, ...pose(placement) }, -40, 0);
+  assert.ok(body.y > 0 && body.x === 0);
+  // Ground keeps its only pose whatever the source.
+  assert.deepEqual(pose(quickAddPlacement(def('ground'), point, { x: 1, y: 0 }, { rotation: 0, mirrorX: true })),
+    { rotation: 0, mirrorX: false, mirrorY: false });
+  // Stacking on a mirrored NMOS drain inherits the mirror; PMOS keeps its default Y mirror.
+  const mirroredNmos = { rotation: 0, mirrorX: true, mirrorY: false };
+  assert.deepEqual(pose(quickAddPlacement(def('nmos'), point, { x: 0, y: -1 }, mirroredNmos)), { rotation: 0, mirrorX: true, mirrorY: false });
+  assert.deepEqual(pose(quickAddPlacement(def('pmos'), point, { x: 0, y: -1 }, mirroredNmos)), { rotation: 0, mirrorX: true, mirrorY: true });
+  // An unmirrored source keeps the defaults.
+  assert.deepEqual(pose(quickAddPlacement(def('nmos'), point, { x: 0, y: -1 }, { rotation: 0 })), { rotation: 0, mirrorX: false, mirrorY: false });
+  // A MOS added on a mirrored gate's wire lands upright, gate to gate.
+  placement = quickAddPlacement(def('nmos'), point, { x: 1, y: 0 }, mirroredNmos);
+  assert.equal(placement.terminal, 'g');
+  assert.deepEqual(pose(placement), { rotation: 0, mirrorX: false, mirrorY: false });
 });
 
 test('radial sectors start at the top and run clockwise, with a dead zone', () => {
@@ -131,11 +163,92 @@ test('editor gestures are wired through the shared draft, history, and menus', a
   assert.match(main, /if \(drag\.modal && !drag\.committed\) \{\s*recordHistoryEntry/);
   // Knife, corner flip, double-click insert, Space pan, trackpad scheme.
   assert.match(main, /knife: ev\.shiftKey \? \[/);
-  assert.match(main, /cutWiresAlong\(\[\.\.\.drag\.knife/);
+  assert.match(main, /cutAlong\(\[\.\.\.drag\.knife/);
   assert.match(main, /key === '\/'\) \{[\s\S]{0,120}wire\.flipCorner = !wire\.flipCorner;/);
   assert.match(main, /if \(draft\.flipCorner && i === endpoints\.length - 1\) leg = flippedCornerLeg\(leg, route\) \|\| leg;/);
   assert.match(main, /Double-clicking empty paper opens the insert menu right there\.\s*cursor = snappedWorld\(w\);\s*activatePlace\(\);/);
   assert.match(main, /if \(b === 1 \|\| \(b === 0 && spaceHeld\)\)/);
   assert.match(main, /if \(wheelIntent\(ev, scrollScheme\) === 'pan'\)/);
   assert.match(main, /localStorage\.setItem\('mosfeteer\.scrollScheme', scrollScheme\)/);
+});
+
+test('named-net shorts share one name picker; scripted commands never prompt', async () => {
+  const { readFileSync } = await import('node:fs');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  // Every recorded edit checks for a new merged-name conflict.
+  assert.match(main, /queueCommitFeedback\(startSnapshot, feedback\);\s*askNameForNewNetNameConflict\(startSnapshot\);/);
+  // Solder and wire shorts go through the same picker.
+  assert.equal((main.match(/askNetNameChoice\(\{/g) || []).length, 2);
+  // Command-line edits keep the model's name instead of prompting.
+  assert.match(main, /suppressNetNameChoice = true;\s*try \{ recordHistoryEntry\(before\); \} finally \{ suppressNetNameChoice = false; \}/);
+});
+
+test('rail tools hand keyboard focus back to the canvas after a pointer click', async () => {
+  const { readFileSync } = await import('node:fs');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /querySelectorAll\('\.mode-toolbar, \.rail-flyout'\)[\s\S]{0,200}ev\.detail > 0 && ev\.target\.closest\('button'\)\) canvasEl\.focus/);
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  // Wire shapes live in a flyout like the annotation tools; box select is key-only.
+  assert.match(html, /id="btn-mode-wire" class="mode-control rail-flyout-proxy"[^>]*aria-controls="wire-flyout"/);
+  assert.match(html, /id="wire-flyout" class="rail-flyout glass"/);
+  assert.doesNotMatch(html, /id="btn-mode-visual"/);
+});
+
+test('hover previews: net hovers glow markers and ports; part bodies light their panel row', async () => {
+  const { readFileSync } = await import('node:fs');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  // Selected and hovered nets share one marker/port lookup.
+  assert.match(main, /const netMarkers = netMarkerRefs\(nets\);/);
+  assert.match(main, /netMarkerRefs\(hoverTarget\.ids\.map\(/);
+  // A canvas hover over a part body targets that part's row.
+  assert.match(main, /body && body\.type !== 'solder' \? \{ kind: 'component', refdes: body\.refdes \}/);
+});
+
+test('knife strokes cross rectangles and polylines', async () => {
+  const { strokeCrossesRect, strokeCrossesPolyline } = await import('../src/web/gestures.js');
+  const rect = { x: 0, y: 0, w: 100, h: 60 };
+  assert.equal(strokeCrossesRect([{ x: -20, y: 30 }, { x: 120, y: 30 }], rect), true); // passes through
+  assert.equal(strokeCrossesRect([{ x: 20, y: 20 }, { x: 40, y: 40 }], rect), true); // entirely inside
+  assert.equal(strokeCrossesRect([{ x: -20, y: -20 }, { x: 120, y: -20 }], rect), false); // passes above
+  assert.equal(strokeCrossesRect([{ x: 0, y: 0 }], rect), true);
+  assert.equal(strokeCrossesRect([{ x: 0, y: 0 }, { x: 10, y: 10 }], { x: 0, y: 0, w: 0, h: 0 }), false);
+  const line = [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 200 }];
+  assert.equal(strokeCrossesPolyline([{ x: 100, y: -20 }, { x: 100, y: 20 }], line), true);
+  assert.equal(strokeCrossesPolyline([{ x: 100, y: 20 }, { x: 180, y: 180 }], line), false);
+});
+
+test('the knife deletes every object kind it cuts through one delete', async () => {
+  const { readFileSync } = await import('node:fs');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const cut = main.slice(main.indexOf('function knifeTargets('), main.indexOf('/** Gesture feedback appended'));
+  assert.match(cut, /if \(c\.type === 'solder'\) continue;/);
+  assert.match(cut, /if \(label\.owner \|\| label\.selectable === false\) continue;/);
+  assert.match(cut, /setSelection\(refs\);\s*setLabelSelection\(labelIds\);[\s\S]*selectedWires = new Set\(wires\);[\s\S]*deleteSelection\(\);/);
+  assert.match(main, /cutAlong\(\[\.\.\.drag\.knife, \{ x: releaseWorld\.x, y: releaseWorld\.y \}\]\);/);
+});
+
+test('radial menu tools act on their part at the release point', async () => {
+  const { readFileSync } = await import('node:fs');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const radial = main.slice(main.indexOf('const RADIAL_ITEMS = ['), main.indexOf('const RADIAL_RADIUS'));
+  for (const label of ['Rotate', 'Mirror H', 'Mirror V', 'Delete', 'Copy', 'Detach move', 'Move']) assert.match(radial, new RegExp(`label: '${label}'`));
+  assert.match(radial, /radialMove\(radial, at, 'detached'\)/);
+  assert.match(radial, /armModalMove\(\{ refdes: radial\.refdes \}, at\.world, at\.client\)/);
+  assert.match(radial, /if \(copyMode\) beginCopySource\(at\.world, at\.client\)/);
+  assert.match(main, /finishRadialMenu\(radial, \{ x: ev\.clientX, y: ev\.clientY \}\);/);
+});
+
+test('Ctrl+A selects nets that join touching pins without any wire', async () => {
+  const { readFileSync } = await import('node:fs');
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /selectedNets = new Set\(selectAllNetIds\(circuit\)\);/);
+  const body = main.slice(main.indexOf('export function selectAllNetIds('), main.indexOf('export function deriveInteractionState('));
+  // Rebuild the pure helper and exercise it on a real model.
+  const { Circuit } = await import('../src/core/model.js');
+  const selectAllNetIds = new Function(`${body.replace('export ', '')}; return selectAllNetIds;`)();
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R2', x: 160, y: 0 });
+  assert.equal(circuit.nets.size, 1);
+  assert.deepEqual(selectAllNetIds(circuit), [...circuit.nets.keys()]);
 });
