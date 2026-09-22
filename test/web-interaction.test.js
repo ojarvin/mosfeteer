@@ -501,7 +501,7 @@ test('fit reserves the axis the mode rail is thin along', () => {
   assert.match(fit, /topPx = railRect && !railIsColumn/);
   // Whichever axis is reserved, the drawing centres in what is left of it.
   assert.match(fit, /fitH = Math\.max\(1, usableH - marginPx \* 2\)/);
-  assert.match(fit, /view\.y = \(y0 \+ y1\) \/ 2 - th \* usableCenterPy \/ paneH/);
+  assert.match(fit, /target\.y = \(y0 \+ y1\) \/ 2 - th \* usableCenterPy \/ paneH/);
 });
 
 test('empty canvas fit starts at a 30-cell planning view', () => {
@@ -621,8 +621,8 @@ test('Alt arms symmetric placement without swallowing the ghost keys', () => {
   // Alt held on its own arms it; releasing it or losing the window drops the
   // mirrored ghost.
   assert.match(main, /if \(ev\.key === 'Alt'\) \{[\s\S]{0,220}setSymmetry\(true\)/);
-  assert.match(main, /keyup[\s\S]{0,120}ev\.key !== 'Alt'[\s\S]{0,120}setSymmetry\(false\)/);
-  assert.match(main, /'blur', \(\) => \{[\s\S]{0,180}setSymmetry\(false\)/);
+  assert.match(main, /keyup[\s\S]{0,260}ev\.key !== 'Alt'[\s\S]{0,120}setSymmetry\(false\)/);
+  assert.match(main, /'blur', \(\) => \{[\s\S]{0,260}setSymmetry\(false\)/);
   // The modifier branch otherwise swallows every key it does not bind, which
   // would leave the ghost undrivable, untransformable and uncommittable while
   // Alt is down -- r and Shift+r included, which carry the Alt modifier.
@@ -709,7 +709,7 @@ test('view toggles answer in every mode but the insert search', () => {
   // Typing a component name is the one place a printable key is not a command.
   assert.match(view, /if \(mode === 'insert' && !pendingPlace\) return false;/);
   for (const binding of [/setGrid\(!showGrid\)/, /setCrosshair\(!crosshairVisible\)/,
-    /setGuides\(!guidesVisible\)/, /toggleTheme\(\)/, /fitView\(\)/, /showHelp\(\)/]) {
+    /setGuides\(!guidesVisible\)/, /toggleTheme\(\)/, /fitView\(\{ animate: true \}\)/, /showHelp\(\)/]) {
     assert.match(view, binding);
   }
   // Lower-case d and c belong to dd and copy mode, so only the shifted forms.

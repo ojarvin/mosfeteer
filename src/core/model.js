@@ -4936,6 +4936,58 @@ export class Circuit {
     return net;
   }
 
+  /** Splice a two-terminal part into one straight managed wire segment.
+   *  Both terminals of `refdes` must lie on segment `segment` of `branch`; the
+   *  span between them is cut, the remaining pieces become separate nets, and
+   *  each terminal joins the piece ending at it. Returns the resulting nets. */
+  spliceIntoSegment(refdes, netId, branch, segment) {
+    this.invalidateRoutingCache();
+    const comp = this.getComponent(refdes);
+    const net = this.nets.get(netId);
+    if (!net) throw new Error(`unknown net "${netId}"`);
+    if (net.routingMode === 'fixed') throw new Error('cannot splice into a fixed net');
+    const terminals = comp.worldTerminals();
+    if (terminals.length !== 2) throw new Error(`${refdes} does not have two terminals`);
+    if (terminals.some((t) => this.netOfTerminal({ comp: refdes, term: t.name }))) {
+      throw new Error(`${refdes} is already connected`);
+    }
+    const paths = net.paths();
+    const path = paths[branch];
+    if (!path || segment <= 0 || segment >= path.length) throw new Error('unknown wire segment');
+    const a = path[segment - 1];
+    const b = path[segment];
+    const along = (point) => Math.abs(point.x - a.x) + Math.abs(point.y - a.y);
+    const onSegment = (point) => (a.x === b.x
+      ? point.x === a.x && point.y >= Math.min(a.y, b.y) && point.y <= Math.max(a.y, b.y)
+      : a.y === b.y && point.y === a.y && point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x));
+    if (!terminals.every(onSegment)) throw new Error(`${refdes} does not lie on that wire segment`);
+    const [near, far] = [...terminals].sort((p, q) => along(p) - along(q));
+    const next = [];
+    for (let bi = 0; bi < paths.length; bi++) {
+      if (bi !== branch) {
+        next.push(clonePath(paths[bi], net.allowDiagonal));
+        continue;
+      }
+      const head = normalizePath([...path.slice(0, segment), { x: near.x, y: near.y }]);
+      const tail = normalizePath([{ x: far.x, y: far.y }, ...path.slice(segment)]);
+      if (head.length > 1) next.push(head);
+      if (tail.length > 1) next.push(tail);
+    }
+    if (next.length === 0) {
+      this.removeNet(net);
+    } else {
+      net.branches = next.map((p) => clonePath(p, net.allowDiagonal));
+      net.route = clonePath(net.branches[0], net.allowDiagonal);
+      net.junctions = this._netJunctions(net, next);
+      this._splitDisconnectedNet(net);
+    }
+    // Each now-free terminal joins the wire piece that ends on it.
+    this.reconnectCoincidentNets();
+    this.connectCoincident(refdes);
+    this.syncJunctionSolders();
+    return terminals.map((t) => this.netOfTerminal({ comp: refdes, term: t.name })).filter(Boolean);
+  }
+
   /**
    * Split a protected direct net at the selected edges without passing its
    * geometry through any managed-wire helper.  The input paths and edge

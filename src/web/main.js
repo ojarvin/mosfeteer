@@ -26,7 +26,7 @@ import { resolveCopySelection } from '../core/selection.js';
 import { DRAWING_EXPORT_OPTIONS, selectionDrawing } from '../core/selection-drawing.js';
 import { svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { writeDrawingToClipboard } from './clipboard.js';
-import { distanceToSegment } from '../core/geometry.js';
+import { applyTransform, distanceToSegment } from '../core/geometry.js';
 import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
@@ -34,12 +34,13 @@ import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
-import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, editorKeymap, layerActionForKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
+import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
 import { createPersistenceAdapter, defaultExportDirectory, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
+import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement, radialSector, spliceCandidate, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 
@@ -179,6 +180,10 @@ const ICON_PATHS = {
   'align-right': '<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>',
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
+  rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M20 4v5h-5"/>',
+  trackpad: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 15h17M12 15v4"/>',
+  'mirror-x': '<path d="M12 3v18" stroke-dasharray="2 2.4"/><path d="M9 7 4 17h5zM15 7l5 10h-5z"/>',
+  'mirror-y': '<path d="M3 12h18" stroke-dasharray="2 2.4"/><path d="M7 9 17 4v5zM7 15l10 5v-5z"/>',
   'route-orthogonal': '<path d="M4 18h8V6h8"/>',
   'route-diagonal': '<path d="M4 18h5l6-12h5"/>',
   cursor: '<path d="M6 3.5 18.5 12l-5.8 1.4L9.5 19.5z" fill="currentColor" fill-opacity=".16"/>',
@@ -417,6 +422,12 @@ let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
 let wirePreview = null;
 let terminalSnap = false; // Alt-held wiring cursor: snap to the nearest terminal
+let spaceHeld = false; // Space turns a left drag into a pan
+// 'mouse': the wheel zooms. 'trackpad': two-finger scroll pans, pinch zooms.
+// A per-machine preference, so it lives in browser storage, not the document.
+let scrollScheme = (() => {
+  try { return localStorage.getItem('mosfeteer.scrollScheme') === 'trackpad' ? 'trackpad' : 'mouse'; } catch { return 'mouse'; }
+})();
 let altHeld = false;
 let directWire = null; // protected direct wire: { source:{refdes,term}, points:[] }
 let counts = 0;
@@ -2679,13 +2690,16 @@ function applySingletonWorldMirror(comp, axis, pivot = null) {
  * Copy ghosts and mixed selections share transformMixedSelection so their
  * mirrored halves follow the same world-space operation.
  */
+/** A modal move ghost, or a live mouse drag that has started moving: both
+ * accept r / Shift+r / Ctrl+r about the cursor without dropping the drag. */
 function moveGhostActive() {
-  return drag?.mode === 'move' && drag.modal;
+  return drag?.mode === 'move' && (drag.modal || (drag.moved && drag.committed && !drag.duplicate));
 }
 
 function recordMoveGhostMutation() {
   if (!drag || !moveGhostActive()) return;
-  if (!drag.committed) {
+  // A live drag previews in its own document; its drop records the one entry.
+  if (drag.modal && !drag.committed) {
     recordHistoryEntry(drag.startSnapshot || snapshot(), true, 'defer');
     drag.committed = true;
   }
@@ -3109,7 +3123,42 @@ function followCursor() {
 
 /** Fit the view to all contents (F), preserving the pane aspect ratio so the
  *  drawing always fills the space without distortion. */
-function fitView() {
+// ----- view animation --------------------------------------------------------
+// Fit, zoom-to-box, and jump-to-issue ease the view over a few frames so the
+// eye can follow where the drawing went. Any direct pan/zoom cancels it.
+let viewAnimation = 0;
+
+function prefersReducedMotion() {
+  return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
+function cancelViewAnimation() {
+  if (viewAnimation) cancelAnimationFrame(viewAnimation);
+  viewAnimation = 0;
+}
+
+function animateViewTo(target, ms = 200) {
+  cancelViewAnimation();
+  const from = { ...view };
+  const to = { x: target.x, y: target.y, w: target.w, h: target.h };
+  if (prefersReducedMotion() || document.hidden) {
+    Object.assign(view, to);
+    render();
+    return;
+  }
+  const start = performance.now();
+  const step = (now) => {
+    const t = (now - start) / ms;
+    Object.assign(view, lerpView(from, to, t));
+    viewAnimation = t < 1 ? requestAnimationFrame(step) : 0;
+    render();
+  };
+  viewAnimation = requestAnimationFrame(step);
+}
+
+function fitView({ animate = false } = {}) {
+  cancelViewAnimation();
+  const target = { ...view };
   let x0 = Infinity;
   let y0 = Infinity;
   let x1 = -Infinity;
@@ -3178,11 +3227,16 @@ function fitView() {
     tw = maxW;
     th = tw / aspect;
   }
-  view.w = tw;
-  view.h = th;
-  view.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
-  view.y = (y0 + y1) / 2 - th * usableCenterPy / paneH;
+  target.w = tw;
+  target.h = th;
+  target.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
+  target.y = (y0 + y1) / 2 - th * usableCenterPy / paneH;
   viewPane = paneSize();
+  if (animate) {
+    animateViewTo(target);
+    return;
+  }
+  Object.assign(view, target);
   render();
 }
 
@@ -3622,6 +3676,53 @@ function setTerminalSnap(on) {
   return true;
 }
 
+// ----- splice into wire -------------------------------------------------------
+// A free two-terminal part whose pins both land on one straight managed wire
+// segment is inserted in series: the span between its pins is cut.
+
+function managedWirePaths() {
+  return [...circuit.nets.values()]
+    .filter((net) => net.routingMode !== 'fixed')
+    .flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
+}
+
+/** The segment a free two-pin part would splice into, given its pin points. */
+function spliceTargetFor(points, refdes = null) {
+  if (points?.length !== 2) return null;
+  if (refdes && points.some((_, i) => {
+    const comp = circuit.components.get(refdes);
+    const name = comp?.worldTerminals()[i]?.name;
+    return name && circuit.netOfTerminal({ comp: refdes, term: name });
+  })) return null;
+  return spliceCandidate(points, managedWirePaths());
+}
+
+function spliceIfOnWire(comp) {
+  if (!comp) return false;
+  const points = comp.worldTerminals().map((t) => ({ x: t.x, y: t.y }));
+  const target = spliceTargetFor(points, comp.refdes);
+  if (!target) return false;
+  const name = circuit.nets.get(target.netId)?.name || target.netId;
+  circuit.spliceIntoSegment(comp.refdes, target.netId, target.branch, target.segment);
+  logLine(`spliced ${comp.refdes} into ${name}`);
+  return true;
+}
+
+/** Highlight for the wire a ghost or a dragged part would splice into. */
+function splicePreviewTarget(ghost) {
+  if (ghost?.def?.terminals?.length === 2) {
+    const t = { x: ghost.x, y: ghost.y, rotation: ghost.rotation, mirrorX: ghost.mirrorX, mirrorY: ghost.mirrorY };
+    return spliceTargetFor(ghost.def.terminals.map((terminal) => applyTransform(t, terminal.x, terminal.y)));
+  }
+  if (drag?.mode === 'move' && drag.moved && !drag.detached && drag.origins?.size === 1) {
+    const refdes = [...drag.origins.keys()][0];
+    const comp = circuit.components.get(refdes);
+    if (comp?.worldTerminals().length !== 2) return null;
+    return spliceTargetFor(comp.worldTerminals().map((t) => ({ x: t.x, y: t.y })), refdes);
+  }
+  return null;
+}
+
 function placePending() {
   if (!pendingPlace) return;
   if (pendingPlace.kind === 'label') {
@@ -3643,6 +3744,8 @@ function placePending() {
       mirrorY: t.mirrorY,
       noLabel: false,
     }));
+    // A lone two-pin part dropped along a wire is spliced into it.
+    if (placed.length === 1) spliceIfOnWire(placed[0]);
     // Treat a committed insertion exactly like a component move/copy that
     // lands on existing connectivity. `addComponent` joins coincident pins,
     // while the follow-up pass also attaches a new terminal to a wire endpoint
@@ -3813,16 +3916,29 @@ function draftRoutePath(draft, to = cursor) {
   // points, auto-routed legs at pins.
   if (allowDiagonal) return diagonalDraftPath(circuit, endpoints, env) || undefined;
   const path = [endpoints[0]];
+  const route = (a, b) => smartRoute(a, b, { ...env, allowDiagonal: false, preferMidpoint: true });
   for (let i = 1; i < endpoints.length; i++) {
     // Keep the interactive suggestion centered when several safe orthogonal
     // channels are otherwise equivalent; Enter commits this same path.
-    const leg = smartRoute(endpoints[i - 1], endpoints[i], {
-      ...env, allowDiagonal: false, preferMidpoint: true,
-    });
+    let leg = route(endpoints[i - 1], endpoints[i]);
     if (!leg) return undefined;
+    if (draft.flipCorner && i === endpoints.length - 1) leg = flippedCornerLeg(leg, route) || leg;
     for (const point of leg.slice(1)) path.push({ ...point });
   }
   return path;
+}
+
+/** The same leg turning the other way first: through the opposite corner of
+ * its bounding box. Null when that corner cannot be routed safely. */
+function flippedCornerLeg(leg, route) {
+  const a = leg[0];
+  const b = leg.at(-1);
+  if (a.x === b.x || a.y === b.y || leg.length < 2) return null;
+  const firstHorizontal = leg[1].y === a.y;
+  const corner = firstHorizontal ? { x: a.x, y: b.y } : { x: b.x, y: a.y };
+  const first = route(a, corner);
+  const second = route(corner, b);
+  return first && second ? [...first, ...second.slice(1)] : null;
 }
 
 function draftWirePreview(draft) {
@@ -4263,9 +4379,116 @@ function renderCanvas(modelKey) {
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
-  overlayEl.innerHTML = themeInkSvg(overlay);
+  overlayEl.innerHTML = themeInkSvg(withGestureOverlay(overlay, ghost));
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
+}
+
+// ----- hover preview -------------------------------------------------------------
+// Hovering a wire or pin tints its whole net, and the matching side-panel row
+// lights up; hovering a panel row does the same on the canvas.
+let hoverTarget = null; // { kind:'net', ids } | { kind:'component', refdes }
+let hoverFromPanel = false;
+let hoverPinsRef = null; // component whose pins show drag handles in Select mode
+
+function sameHover(a, b) {
+  if (!a || !b) return a === b;
+  return a.kind === b.kind && (a.kind === 'net' ? a.ids.join(' ') === b.ids.join(' ') : a.refdes === b.refdes);
+}
+
+function setHoverTarget(next, fromPanel = false) {
+  if (sameHover(hoverTarget, next)) return;
+  hoverTarget = next;
+  hoverFromPanel = !!next && fromPanel;
+  const ids = new Set(next?.kind === 'net' ? next.ids : []);
+  for (const row of netsListEl?.querySelectorAll('[data-net-ids]') || []) {
+    row.classList.toggle('hover', row.dataset.netIds.split(' ').some((id) => ids.has(id)));
+  }
+  for (const row of componentsListEl?.querySelectorAll('[data-refdes]') || []) {
+    row.classList.toggle('hover', next?.kind === 'component' && row.dataset.refdes === next.refdes);
+  }
+  scheduleInteractionRender();
+}
+
+function bindHoverPreview(row, target) {
+  row.addEventListener('mouseenter', () => setHoverTarget(target(), true));
+  row.addEventListener('mouseleave', () => { if (hoverFromPanel) setHoverTarget(null); });
+}
+
+function updateCanvasHover(w) {
+  if (hoverFromPanel) return;
+  const quiet = mode === 'insert' || labelMode || visual || quickAdd;
+  const selecting = !quiet && !wire && !directWire && !moveMode && !copyMode && !deleteMode;
+  const hit = selecting ? pickAt(w) : null;
+  const pinsRef = hit?.refdes && isPinDragCandidate(circuit.components.get(hit.refdes)?.def) ? hit.refdes : null;
+  if (pinsRef !== hoverPinsRef) {
+    hoverPinsRef = pinsRef;
+    scheduleInteractionRender();
+  }
+  let net = null;
+  if (!quiet) {
+    const terminal = nearestTerminal(w);
+    net = terminal ? circuit.netOfTerminal({ comp: terminal.refdes, term: terminal.term }) : pickWire(w)?.net || null;
+  }
+  setHoverTarget(net ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id) } : null);
+}
+
+/** Every drawn wire path, fixed and managed, for knife hit tests. */
+function allWirePaths() {
+  return [...circuit.nets.values()].flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
+}
+
+/** Delete every wire segment a knife stroke crosses, as one undo entry. */
+function cutWiresAlong(stroke) {
+  const keys = knifeCrossings(stroke, allWirePaths());
+  if (!keys.length) {
+    hintLine('knife: no wire crossed');
+    return;
+  }
+  setSelection([]);
+  setLabelSelection([]);
+  selectedNets.clear();
+  selectedWires = new Set(keys);
+  syncSelectedWire();
+  deleteSelection();
+  logLine(`cut ${keys.length} wire segment${keys.length === 1 ? '' : 's'}`);
+}
+
+/** Gesture feedback appended to the editor overlay's elements, in world units. */
+function withGestureOverlay(svg, ghost) {
+  const parts = [];
+  if (hoverTarget?.kind === 'net' && !drag) {
+    for (const id of hoverTarget.ids) {
+      for (const pts of circuit.nets.get(id)?.paths() || []) {
+        if (pts.length > 1) parts.push(`<polyline class="gesture-hover-net" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+      }
+    }
+  }
+  const pinsComp = !drag && hoverPinsRef ? circuit.components.get(hoverPinsRef) : null;
+  if (pinsComp) {
+    const p = paneSize();
+    const r = 4.5 * (p ? view.w / p.w : 1);
+    for (const t of pinsComp.worldTerminals()) parts.push(`<circle class="gesture-pin" cx="${t.x}" cy="${t.y}" r="${r}" vector-effect="non-scaling-stroke"/>`);
+  }
+  if (hoverTarget?.kind === 'component') {
+    const box = circuit.components.get(hoverTarget.refdes)?.bboxWorld();
+    if (box) parts.push(`<rect class="gesture-hover-comp" x="${box.x - 8}" y="${box.y - 8}" width="${box.w + 16}" height="${box.h + 16}" rx="10" vector-effect="non-scaling-stroke"/>`);
+  }
+  if (drag?.mode === 'deletemarquee' && drag.knife && drag.moved) {
+    const stroke = [...drag.knife];
+    for (const key of knifeCrossings(stroke, allWirePaths())) {
+      const { netId, branch, segment } = keyToWire(key);
+      const pts = circuit.nets.get(netId)?.paths()?.[branch];
+      if (pts?.[segment]) parts.push(`<line class="gesture-cut" x1="${pts[segment - 1].x}" y1="${pts[segment - 1].y}" x2="${pts[segment].x}" y2="${pts[segment].y}" vector-effect="non-scaling-stroke"/>`);
+    }
+    parts.push(`<polyline class="gesture-knife" points="${stroke.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+  }
+  const splice = splicePreviewTarget(ghost);
+  if (splice) {
+    parts.push(`<line class="gesture-splice" x1="${splice.a.x}" y1="${splice.a.y}" x2="${splice.b.x}" y2="${splice.b.y}" vector-effect="non-scaling-stroke"/>`);
+  }
+  if (!parts.length) return svg;
+  return `${svg}\n<g class="gesture-overlay" pointer-events="none">${parts.join('')}</g>`;
 }
 
 // ----- mouse ------------------------------------------------------------
@@ -4345,6 +4568,19 @@ function newWireBodyViolation(beforeSnapshot, touchedNetIds) {
 /** Abort an in-progress mouse drag. A cancelled wire run is restored to its
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
+  if (drag?.mode === 'radialpending' || drag?.mode === 'radial') {
+    window.clearTimeout(drag.holdTimer);
+    closeRadialMenu();
+    drag = null;
+    render();
+    return;
+  }
+  if (drag?.mode === 'pinwire' || drag?.mode === 'copygrab' || drag?.mode === 'knife') {
+    drag = null;
+    endGestureWire();
+    render();
+    return;
+  }
   if (drag?.mode === 'blockresize') {
     if (drag.startSnapshot) circuit = loadDocument(JSON.parse(drag.startSnapshot));
     drag = null;
@@ -4708,10 +4944,7 @@ function zoomToWorldRect(r) {
   else tw = th * aspect;
   tw = Math.min(Math.max(tw, minViewW()), maxViewW());
   th = tw / aspect;
-  view.w = tw;
-  view.h = th;
-  view.x = (r.x0 + r.x1) / 2 - tw / 2;
-  view.y = (r.y0 + r.y1) / 2 - th / 2;
+  animateViewTo({ x: (r.x0 + r.x1) / 2 - tw / 2, y: (r.y0 + r.y1) / 2 - th / 2, w: tw, h: th });
 }
 
 // ----- wire segment editing (see src/core/wireedit.js) ----------------------
@@ -4869,8 +5102,7 @@ function cursorWorld(point) {
   return wire && terminalSnap ? terminalSnapWorld(point) : snappedWorld(point);
 }
 
-function connectTwo(src, dst, points) {
-  const before = snapshot();
+function connectTwo(src, dst, points, before = snapshot()) {
   const meet = circuit.components.get(dst.refdes).terminalWorld(dst.term);
   const net = circuit.wireTo(`${src.refdes}.${src.term}`, meet, points, wireRouteOptions());
   markModelChanged(); // wireTo grew / spliced a net
@@ -5161,7 +5393,7 @@ function commitWireAtCursor() {
 /** Commit the draft wire onto a component terminal. Terminal-origin wires go
  *  through connectTwo; free-point / on-wire-origin drafts splice into the
  *  target net without disturbing its existing wire. */
-function connectWireToTerminal(dst) {
+function connectWireToTerminal(dst, before = null) {
   const src = wire.source;
   if (src.fixed) {
     if (commitFixedEndpointDraft(src.fixed, `${dst.refdes}.${dst.term}`, wire.points, 'smart')) wire = newWireDraft();
@@ -5178,13 +5410,13 @@ function connectWireToTerminal(dst) {
   }
   const points = draftPath ? draftPath.slice(1, -1) : wire.points;
   if (src.refdes) {
-    connectTwo(src, dst, points);
+    connectTwo(src, dst, points, before || snapshot());
     return;
   }
-  const before = snapshot();
+  const start = before || snapshot();
   const net = circuit.wirePointTo({ x: src.x, y: src.y }, end, points, src.netId, wireRouteOptions());
   markModelChanged(); // a draft spliced into the target net
-  recordHistoryEntry(before, false);
+  recordHistoryEntry(start, false);
   wire = newWireDraft();
   selectedNets = new Set([net.id]);
   logLine(`wired into net ${net.id} at ${dst.refdes}.${dst.term}; len=${net.length()}`);
@@ -5355,6 +5587,178 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
   return true;
 }
 
+// ----- radial menu -------------------------------------------------------------
+// Right-drag (or hold) on a component opens a marking menu around the press.
+// Releasing in a sector runs it, so a practiced flick needs no reading; release
+// in the centre cancels. Sector 0 is up and indices run clockwise.
+const RADIAL_ITEMS = [
+  { label: 'Rotate', icon: 'rotate', run: () => selectedTransform('rotate') },
+  { label: 'Mirror H', icon: 'mirror-x', run: () => selectedTransform('mirror-x') },
+  { label: 'Mirror V', icon: 'mirror-y', run: () => selectedTransform('mirror-y') },
+  { label: 'Delete', icon: 'trash', danger: true, run: () => deleteSelection() },
+  { label: 'Move', icon: 'move', run: () => activateMove('connected') },
+  { label: 'Copy', icon: 'copy', run: () => activateCopy() },
+];
+const RADIAL_RADIUS = 72;
+let radialMenuEl = null;
+
+function openRadialMenu(radial) {
+  window.clearTimeout(radial.holdTimer);
+  radial.mode = 'radial';
+  const comp = circuit.components.get(radial.refdes);
+  if (comp) selectContextTarget({ kind: 'component', value: comp });
+  render();
+  radialMenuEl?.remove();
+  radialMenuEl = document.createElement('div');
+  radialMenuEl.className = 'radial-menu';
+  radialMenuEl.setAttribute('role', 'menu');
+  radialMenuEl.style.left = `${radial.startClient.x}px`;
+  radialMenuEl.style.top = `${radial.startClient.y}px`;
+  const hub = document.createElement('div');
+  hub.className = 'radial-hub glass';
+  hub.textContent = radial.refdes;
+  radialMenuEl.appendChild(hub);
+  RADIAL_ITEMS.forEach((item, index) => {
+    const angle = (index / RADIAL_ITEMS.length) * Math.PI * 2;
+    const el = document.createElement('div');
+    el.className = `radial-item glass${item.danger ? ' danger' : ''}`;
+    el.setAttribute('role', 'menuitem');
+    el.style.left = `${Math.sin(angle) * RADIAL_RADIUS}px`;
+    el.style.top = `${-Math.cos(angle) * RADIAL_RADIUS}px`;
+    el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
+    el.title = item.label;
+    const text = document.createElement('span');
+    text.textContent = item.label;
+    el.appendChild(text);
+    radialMenuEl.appendChild(el);
+  });
+  document.body.appendChild(radialMenuEl);
+}
+
+function highlightRadial(dx, dy) {
+  if (!radialMenuEl) return;
+  const sector = radialSector(dx, dy, RADIAL_ITEMS.length, 22);
+  [...radialMenuEl.querySelectorAll('.radial-item')].forEach((el, index) => el.classList.toggle('active', index === sector));
+}
+
+function closeRadialMenu() {
+  radialMenuEl?.remove();
+  radialMenuEl = null;
+}
+
+function finishRadialMenu(radial, dx, dy) {
+  closeRadialMenu();
+  const sector = radialSector(dx, dy, RADIAL_ITEMS.length, 22);
+  if (sector >= 0) RADIAL_ITEMS[sector].run();
+  render();
+}
+
+// ----- pin-drag wiring --------------------------------------------------------
+// Dragging out of a pin draws a managed wire without entering Wire mode. The
+// draft is the ordinary `wire` draft, so preview, routing, and commits are the
+// Wire tool's own; the gesture only decides where the drop lands.
+
+let gestureWire = false; // the current wire draft belongs to a pin drag
+
+function beginPinWire(moveDrag, w) {
+  cancelPreviewTransaction();
+  setSelection([]);
+  setLabelSelection([]);
+  wire = newWireDraft();
+  gestureWire = true;
+  wire.source = { ...moveDrag.pinGrab };
+  wire.points = [];
+  drag = { mode: 'pinwire', startWorld: moveDrag.startWorld, startClient: moveDrag.startClient };
+  cursor = pinWireCursor(w);
+  hintLine(`wire from ${wire.source.refdes}.${wire.source.term} — drop on a pin or wire, or in space to add a part`);
+  render();
+}
+
+/** Drops snap to a nearby pin first, so a near miss still connects. */
+function pinWireCursor(w) {
+  const target = nearestTerminal(w);
+  const source = wire?.source;
+  if (target && !(source && target.refdes === source.refdes && target.term === source.term)) {
+    return { x: target.x, y: target.y };
+  }
+  return snappedWorld(w);
+}
+
+/** Ctrl/Cmd-drag from inside a wire: a new branch grows from the grab point. */
+function beginBranchWire(segDrag, w) {
+  cancelPreviewTransaction();
+  setSelection([]);
+  setLabelSelection([]);
+  selectedWire = null;
+  selectedWires.clear();
+  wire = newWireDraft();
+  gestureWire = true;
+  startWireAt(segDrag.startWorld);
+  if (!wire.source) {
+    endGestureWire();
+    drag = null;
+    render();
+    return;
+  }
+  drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient };
+  cursor = pinWireCursor(w);
+  hintLine('branch wire — drop on a pin or wire, or in space to add a part');
+  render();
+}
+
+/** Ctrl/Cmd-drag on an object drags a copy; a plain Ctrl/Cmd-click still toggles selection. */
+function beginCopyDrag(grab, ev) {
+  const { hit, startWorld, startClient } = grab;
+  const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
+  const labels = multi.has(hit.refdes) ? [...selLabels] : [];
+  drag = null;
+  setSelection(refs, hit.refdes, true);
+  setLabelSelection(labels, labels[0], true);
+  beginObjectMove(refs, labels, startWorld, startClient, { duplicate: true });
+  canvasMouseMove(ev);
+}
+
+function endGestureWire() {
+  if (!gestureWire) return;
+  gestureWire = false;
+  wire = null;
+  terminalSnap = false;
+}
+
+function finishPinWire(w, ev) {
+  if (!wire?.source) {
+    endGestureWire();
+    render();
+    return;
+  }
+  const source = wire.source;
+  const target = nearestTerminal(w);
+  if (target && !(target.refdes === source.refdes && target.term === source.term)) {
+    cursor = { x: target.x, y: target.y };
+    try { connectWireToTerminal(target); } catch (err) { logLine(String(err.message || err)); }
+    endGestureWire();
+    render();
+    return;
+  }
+  const wireHit = pickWire(w);
+  if (wireHit) {
+    cursor = snappedWorld(w);
+    joinWireToNet(wireHit);
+    endGestureWire();
+    render();
+    return;
+  }
+  const origin = wireOrigin(source);
+  cursor = snappedWorld(w);
+  if (origin && origin.x === cursor.x && origin.y === cursor.y) {
+    endGestureWire();
+    render();
+    return;
+  }
+  render();
+  openQuickAdd({ clientX: ev.clientX, clientY: ev.clientY, point: { ...cursor }, fromWire: true });
+}
+
 function canvasMouseDown(ev) {
   if (analysisPick && ev.button === 0) {
     ev.preventDefault();
@@ -5367,10 +5771,11 @@ function canvasMouseDown(ev) {
   const startWorld = b === 0 && wire && terminalSnap ? terminalSnapWorld(rawStartWorld) : rawStartWorld;
   const startClient = { x: ev.clientX, y: ev.clientY };
 
-  if (b === 1) {
+  if (b === 1 || (b === 0 && spaceHeld)) {
     ev.preventDefault();
     drag = {
       mode: 'pan',
+      spacePan: b === 0,
       startClient,
       startWorld,
       startView: { ...view },
@@ -5381,9 +5786,13 @@ function canvasMouseDown(ev) {
   }
   if (b === 2) {
     const hit = pickAt(startWorld);
-    if (hit?.refdes && circuit.components.has(hit.refdes)) {
+    if (hit?.refdes && circuit.components.has(hit.refdes) && !hasWireDraft() && !hasModalPlacement()) {
       ev.preventDefault();
-      drag = null;
+      closeComponentContextMenu();
+      drag = { mode: 'radialpending', refdes: hit.refdes, startClient, startWorld };
+      drag.holdTimer = window.setTimeout(() => {
+        if (drag?.mode === 'radialpending') openRadialMenu(drag);
+      }, 280);
       return;
     }
     ev.preventDefault();
@@ -5419,6 +5828,8 @@ function canvasMouseDown(ev) {
       startLabelSelection: new Set(selLabels),
       moved: false,
       rubber: null,
+      // Shift-drag is a knife: it cuts every wire segment the stroke crosses.
+      knife: ev.shiftKey ? [{ x: startWorld.x, y: startWorld.y }] : null,
     };
     return;
   }
@@ -5806,6 +6217,11 @@ function canvasMouseDown(ev) {
   }
   if (termHit) {
     beginComponentDrag(hit, startWorld, startClient, ev);
+    // A drag that leaves a multi-terminal part's pin draws a wire from it
+    // instead of moving the part; a plain click still selects.
+    if (drag?.mode === 'move' && !isSelectionModifier(ev) && isPinDragCandidate(componentHit?.def)) {
+      drag.pinGrab = { refdes: termHit.refdes, term: termHit.term };
+    }
     return;
   }
 
@@ -5945,6 +6361,8 @@ function canvasMouseDown(ev) {
       startSnapshot: snapshot(),
       netSnapshots,
       doubleWireClick,
+      // Ctrl/Cmd-drag grows a new branch from this point instead of moving the run.
+      branchGrab: (ev.ctrlKey || ev.metaKey) && !ev.shiftKey,
     };
     render();
     return;
@@ -5965,9 +6383,10 @@ function canvasMouseDown(ev) {
  * the same relative-anchor and wire behavior. */
 function beginObjectMove(refs, labelIds, startWorld, startClient, options = {}) {
   const startSnapshot = snapshot();
-  // Copy mode owns its own paste transaction. Normal connected/detached moves
-  // get an isolated preview document from the first pointer down instead.
-  if (!options.duplicate) beginPreviewTransaction(startSnapshot);
+  // Moves and Ctrl/Cmd-drag copies preview in an isolated document from the
+  // first pointer down, so a cancelled drag leaves nothing behind and a drop
+  // is one undo entry.
+  beginPreviewTransaction(startSnapshot);
   const componentRefs = [...new Set(refs)].filter((refdes) => circuit.components.has(refdes));
   const labels = [...new Set(labelIds)].filter((id) => circuit.labels.has(id));
   setSelection(componentRefs, componentRefs[0], true);
@@ -5996,6 +6415,10 @@ function beginObjectMove(refs, labelIds, startWorld, startClient, options = {}) 
  *  drag. Shared by exact-terminal hits and bbox fallback picks. */
 function beginComponentDrag(hit, startWorld, startClient, ev, options = {}) {
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !options.detached) {
+    drag = { mode: 'copygrab', hit, startWorld, startClient };
+    return;
+  }
   if (isSelectionModifier(ev)) {
     applyEditorSelection({ kind: 'component', id: hit.refdes }, true);
     render();
@@ -6221,6 +6644,7 @@ function finishMoveMutation(moveDrag) {
   if (!moveDrag.moved) return;
   const refs = [...moveDrag.origins.keys()];
   const previewed = moveDrag.netRoutes instanceof Map;
+  if (!moveDrag.detached && refs.length === 1) spliceIfOnWire(circuit.components.get(refs[0]));
   if (moveDrag.detached) {
     circuit.reconnectCoincidentNets();
     markModelChanged();
@@ -6426,9 +6850,12 @@ function placementWorld(current, shiftKey) {
 }
 
 function canvasMouseMove(ev) {
+  // The quick-add menu is anchored at the drop point; the wire preview stays there.
+  if (quickAdd) return;
   const { w, cursorChanged } = updateCursorFromEvent(ev);
 
   if (!drag) {
+    updateCanvasHover(w);
     // The cursor follows the mouse, always snapped to the nearest grid point.
     // The view never pans on its own — pan manually with the middle button.
     const point = mode === 'insert' && pendingPlace ? placementWorld(w, ev.shiftKey) : w;
@@ -6442,6 +6869,30 @@ function canvasMouseMove(ev) {
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
   const movedWorld = constrainedWorld(drag.startWorld, w, ev.shiftKey);
   if (drag.modal) drag.shift = ev.shiftKey;
+  if (drag.mode === 'radialpending' || drag.mode === 'radial') {
+    const dx = ev.clientX - drag.startClient.x;
+    const dy = ev.clientY - drag.startClient.y;
+    if (drag.mode === 'radialpending' && Math.hypot(dx, dy) > 10) openRadialMenu(drag);
+    if (drag.mode === 'radial') highlightRadial(dx, dy);
+    return;
+  }
+  if (drag.mode === 'move' && drag.pinGrab && !drag.moved && movedOut) {
+    beginPinWire(drag, w);
+    return;
+  }
+  if (drag.mode === 'pinwire') {
+    cursor = pinWireCursor(w);
+    scheduleInteractionRender();
+    return;
+  }
+  if (drag.mode === 'wireseg' && drag.branchGrab && !drag.moved && movedOut) {
+    beginBranchWire(drag, w);
+    return;
+  }
+  if (drag.mode === 'copygrab') {
+    if (movedOut) beginCopyDrag(drag, ev);
+    return;
+  }
   if (movedOut) lastSchematicComponentClick = null;
   if (drag.mode === 'blockresize') {
     if (!movedOut) return;
@@ -6551,6 +7002,13 @@ function canvasMouseMove(ev) {
     return;
   }
 
+  if (drag.mode === 'deletemarquee' && drag.knife) {
+    if (movedOut) drag.moved = true;
+    const last = drag.knife.at(-1);
+    if (Math.hypot(w.x - last.x, w.y - last.y) > GRID / 8) drag.knife.push({ x: w.x, y: w.y });
+    scheduleInteractionRender();
+    return;
+  }
   if (drag.mode === 'zoom' || drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (movedOut) drag.moved = true;
     const r = worldRect(drag.startWorld, w);
@@ -6693,13 +7151,18 @@ function canvasMouseMove(ev) {
       const moved = new Map();
       if (!drag.committed) {
         if (drag.duplicate) {
-          // Paste at the selection anchor so the whole gesture stays atomic.
-          copySelection();
-          const anchor = clipboard?.anchor;
-          if (anchor) {
-            cursor = { ...anchor };
-            pasteClipboard();
+          // Paste at the selection anchor inside the preview document, so the
+          // whole gesture stays one atomic, cancellable edit. The user's own
+          // clipboard is left as it was.
+          const savedClipboard = clipboard;
+          if (copySelection({ quiet: true })) {
+            const anchor = clipboard?.anchor;
+            if (anchor) {
+              cursor = { ...anchor };
+              pasteClipboard({ recordHistory: false, connect: false });
+            }
           }
+          clipboard = savedClipboard;
           drag.origins = new Map(selectedComps().map((c) => [c.refdes, { x: c.transform.x, y: c.transform.y }]));
           drag.labelOrigins = new Map(selectedLabels().map((l) => [l.id, { x: l.anchorWorld().x, y: l.anchorWorld().y }]));
           hintLine('duplicated selection — dragging the copy');
@@ -6800,8 +7263,33 @@ function canvasMouseUp(ev) {
     render();
     return;
   }
+  if (drag.mode === 'pinwire') {
+    drag = null;
+    finishPinWire(releaseWorld, ev);
+    return;
+  }
+  if (drag.mode === 'copygrab') {
+    applyEditorSelection({ kind: 'component', id: drag.hit.refdes }, true);
+    drag = null;
+    render();
+    return;
+  }
+  if (drag.mode === 'radialpending') {
+    window.clearTimeout(drag.holdTimer);
+    drag = null;
+    suppressContextMenuUntil = Date.now() + 400;
+    openContextMenuAt(ev.clientX, ev.clientY);
+    return;
+  }
+  if (drag.mode === 'radial') {
+    const radial = drag;
+    drag = null;
+    suppressContextMenuUntil = Date.now() + 400;
+    finishRadialMenu(radial, ev.clientX - radial.startClient.x, ev.clientY - radial.startClient.y);
+    return;
+  }
   if (drag.mode === 'pan') {
-    if (ev.button !== 1 && drag.pointerId !== ev.pointerId && ev.pointerType === 'mouse') return;
+    if (ev.button !== 1 && !(ev.button === 0 && drag.spacePan) && drag.pointerId !== ev.pointerId && ev.pointerType === 'mouse') return;
     drag = drag.resume || null;
     render();
     return;
@@ -7118,6 +7606,8 @@ function canvasMouseUp(ev) {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       recordHistoryEntry(drag.startSnapshot);
     }
+  } else if (drag.mode === 'deletemarquee' && drag.knife && drag.moved) {
+    cutWiresAlong([...drag.knife, { x: releaseWorld.x, y: releaseWorld.y }]);
   } else if (drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (drag.moved) {
       const box = worldRect(drag.startWorld, w);
@@ -7256,6 +7746,7 @@ canvasEl.addEventListener('mouseenter', () => {
 });
 canvasEl.addEventListener('mouseleave', () => {
   cursorInCanvas = false;
+  if (!hoverFromPanel) setHoverTarget(null);
   scheduleInteractionRender();
 });
 function contextStyleValue(target, field) {
@@ -8544,8 +9035,9 @@ function appendContextActions(menu, target) {
   menu.appendChild(group);
 }
 
-canvasEl.addEventListener('contextmenu', (ev) => {
-  const world = clientToWorld(ev.clientX, ev.clientY);
+/** Open the context menu for whatever is under a client point. */
+function openContextMenuAt(clientX, clientY) {
+  const world = clientToWorld(clientX, clientY);
   const label = pickLabel(world);
   const annotation = annotationGeometryAt(world);
   const hit = pickAt(world);
@@ -8560,12 +9052,23 @@ canvasEl.addEventListener('contextmenu', (ev) => {
         : wire
           ? { kind: 'wire', value: { net: wire.net, branch: wire.branch, segment: wire.seg } }
           : null;
-  ev.preventDefault();
   if (target) {
     selectContextTarget(target);
     render();
-    openComponentContextMenu(target, ev.clientX, ev.clientY);
+    openComponentContextMenu(target, clientX, clientY);
   } else closeComponentContextMenu();
+}
+
+// A right press on a component is either a tap (context menu on release), a
+// hold or a drag (radial menu). Linux browsers send `contextmenu` on press, so
+// the menu waits for the release while that press is still undecided; the
+// release after a radial choice swallows a late (Windows-order) event.
+let suppressContextMenuUntil = 0;
+canvasEl.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  if (drag?.mode === 'radialpending' || drag?.mode === 'radial') return;
+  if (Date.now() < suppressContextMenuUntil) return;
+  openContextMenuAt(ev.clientX, ev.clientY);
 });
 window.addEventListener('mousedown', (ev) => {
   if (componentContextMenuEl?.hidden || componentContextMenuEl.contains(ev.target)) return;
@@ -8589,6 +9092,11 @@ window.addEventListener('mouseup', canvasMouseUp);
 // Releasing Alt drops the mirrored ghost or terminal-snap aid; so does losing the window, since no
 // keyup arrives then and the twin would otherwise be stuck on screen.
 window.addEventListener('keyup', (ev) => {
+  if (ev.key === ' ') {
+    spaceHeld = false;
+    canvasEl.classList.remove('space-pan');
+    return;
+  }
   if (ev.key !== 'Alt') return;
   altHeld = false;
   setSymmetry(false);
@@ -8598,6 +9106,8 @@ window.addEventListener('keyup', (ev) => {
   }
 });
 window.addEventListener('blur', () => {
+  spaceHeld = false;
+  canvasEl.classList.remove('space-pan');
   altHeld = false;
   setSymmetry(false);
   if (terminalSnap) {
@@ -8669,6 +9179,11 @@ canvasEl.addEventListener('dblclick', (ev) => {
       selectedWires.clear();
       selectedNets = new Set([wire.net.id]);
       render();
+    } else if (mode === 'normal' && !hasWireDraft() && !labelMode && !moveMode && !copyMode && !deleteMode && !visual
+        && !hasSelectableObjectAt(w)) {
+      // Double-clicking empty paper opens the insert menu right there.
+      cursor = snappedWorld(w);
+      activatePlace();
     }
   }
 });
@@ -8918,7 +9433,18 @@ canvasEl.addEventListener(
   'wheel',
   (ev) => {
     ev.preventDefault();
-    const f = Math.pow(1.0016, ev.deltaY);
+    cancelViewAnimation();
+    const scale = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? 400 : 1;
+    if (wheelIntent(ev, scrollScheme) === 'pan') {
+      const p = paneSize();
+      const unitsPerPx = p ? view.w / p.w : 1;
+      view.x += ev.deltaX * scale * unitsPerPx;
+      view.y += ev.deltaY * scale * unitsPerPx;
+      render();
+      return;
+    }
+    // Pinch arrives as a ctrl-wheel with small deltas; give it a finer base.
+    const f = Math.pow(ev.ctrlKey && scrollScheme === 'trackpad' ? 1.01 : 1.0016, ev.deltaY * scale);
     const nw = Math.min(Math.max(view.w * f, minViewW()), maxViewW());
     const factor = nw / view.w;
     const w = clientToWorld(ev.clientX, ev.clientY);
@@ -9001,6 +9527,7 @@ function renderComponents() {
     row.className = 'row' + (multi.has(comp.refdes) ? ' selected' : '');
     row.dataset.ref = comp.refdes;
     row.dataset.refdes = comp.refdes;
+    bindHoverPreview(row, () => ({ kind: 'component', refdes: comp.refdes }));
     row.dataset.type = comp.type;
     row.setAttribute('role', 'option');
     row.tabIndex = multi.has(comp.refdes) || (!multi.size && comp.refdes === comps[0]?.refdes) ? 0 : -1;
@@ -9114,6 +9641,8 @@ function renderNets() {
     row.setAttribute('role', 'option');
     row.tabIndex = groupSelected || (!selectedNets.size && net.id === nets[0]?.id) ? 0 : -1;
     row.id = `net-option-${CSS.escape(net.id)}`;
+    row.dataset.netIds = groupedIds.join(' ');
+    bindHoverPreview(row, () => ({ kind: 'net', ids: groupedIds }));
     row.setAttribute('aria-selected', String(groupSelected));
 
     const ref = document.createElement('span');
@@ -9428,6 +9957,7 @@ const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 function onWireKey(key) {
   if (key === 'Escape') {
     wire = null;
+    gestureWire = false;
     terminalSnap = false;
     selectedWire = null;
     selectedWires.clear();
@@ -9444,6 +9974,13 @@ function onWireKey(key) {
     }
   } else if (key === 'Enter') {
     commitWireAtCursor();
+  } else if (key === '/') {
+    // Flip which way the corner of the leg under the cursor turns.
+    if (wire) {
+      wire.flipCorner = !wire.flipCorner;
+      wirePreview = draftWirePreview(wire);
+    }
+    hintLine(wire?.flipCorner ? 'corner flipped' : 'corner restored');
   } else if (key === 'Tab') {
     // Wires and wire highlights are never part of Tab cycling.
     return;
@@ -9671,7 +10208,7 @@ function onInsertKey(key, shiftKey = false) {
  *  where every printable key is search text. Returns true when handled. */
 function viewKey(key, shiftKey = false) {
   if (mode === 'insert' && !pendingPlace) return false;
-  if (key === 'F' || key === 'f') fitView();
+  if (key === 'F' || key === 'f') fitView({ animate: true });
   else if (key === '#') setGrid(!showGrid);
   else if (key === 'C' || (key === 'c' && shiftKey)) setCrosshair(!crosshairVisible);
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
@@ -10062,7 +10599,7 @@ helpSearch?.addEventListener('keydown', (ev) => {
  * selected on its own is stored in `labels` as a floating annotation. */
 let clipboard = null;
 
-function copySelection() {
+function copySelection({ quiet = false } = {}) {
   const parts = resolveCopySelection(circuit, copySelectionSource());
   const { comps, freeLabels } = parts;
   if (!comps.length && !freeLabels.length && !parts.nets.length && !parts.fragments.length) {
@@ -10130,7 +10667,7 @@ function copySelection() {
     style: styleSource?.style || null,
   };
 
-  logLine(`copied ${comps.length} component(s), ${freeLabels.length} label(s), ${nets.length} net(s), ${fragments.length} wire island(s)`);
+  if (!quiet) logLine(`copied ${comps.length} component(s), ${freeLabels.length} label(s), ${nets.length} net(s), ${fragments.length} wire island(s)`);
   return true;
 }
 
@@ -11007,6 +11544,170 @@ function updateInsertMenu() {
   insertMenu.style.top = `${top}px`;
 }
 
+// ----- quick-add menu ---------------------------------------------------------
+// Dropping a pin-drag wire in empty space offers the parts that usually end a
+// wire there. The chosen part is placed so one of its pins lands exactly on the
+// drop point, turned so its body continues the wire, and wired in the same
+// undo entry. Typing filters every placeable type.
+const QUICK_ADD_DEFAULTS = ['ground', 'supply', 'input', 'output', 'port', 'resistor', 'capacitor', 'nmos', 'pmos', 'current_source'];
+const QUICK_ADD_SPECIAL = {
+  '@netlabel': { label: 'Net label', icon: 'tag', words: ['net', 'label', 'name'] },
+  '@open': { label: 'Leave an open end', icon: 'wire', words: ['open', 'end', 'wire', 'leave'] },
+};
+let quickAdd = null; // { point, fromWire, query, index, el, input, list }
+
+function quickAddEntries(query) {
+  const specials = quickAdd?.fromWire ? Object.keys(QUICK_ADD_SPECIAL) : [];
+  if (!query) return [...QUICK_ADD_DEFAULTS.filter((type) => symbolTypeNames.includes(type)), ...specials];
+  const scored = INSERT_COMPONENT_TYPES
+    .filter((type) => type !== 'solder')
+    .map((type) => [type, placementSearchScore(query, type)])
+    .filter(([, score]) => score >= 0);
+  for (const key of specials) {
+    const score = Math.max(...[QUICK_ADD_SPECIAL[key].label, ...QUICK_ADD_SPECIAL[key].words].map((word) => fuzzyScore(query, word)));
+    if (score >= 0) scored.push([key, score]);
+  }
+  return scored.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 10).map(([type]) => type);
+}
+
+function openQuickAdd({ clientX, clientY, point, fromWire = false }) {
+  closeQuickAdd({ cancel: false });
+  const el = document.createElement('div');
+  el.className = 'quick-add glass';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-label', 'Add a part at the wire end');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'quick-add-input';
+  input.placeholder = 'Add part…';
+  input.setAttribute('aria-label', 'Filter parts');
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  const list = document.createElement('div');
+  list.className = 'quick-add-list';
+  list.setAttribute('role', 'listbox');
+  el.append(input, list);
+  document.body.appendChild(el);
+  quickAdd = { point, fromWire, query: '', index: 0, el, input, list };
+  renderQuickAdd();
+  const rect = el.getBoundingClientRect();
+  const left = Math.max(8, Math.min(clientX + 12, window.innerWidth - rect.width - 8));
+  const top = Math.max(8, Math.min(clientY - 18, window.innerHeight - rect.height - 8));
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+  input.addEventListener('input', () => {
+    quickAdd.query = input.value.trim();
+    quickAdd.index = 0;
+    renderQuickAdd();
+  });
+  input.addEventListener('keydown', (ev) => {
+    const entries = quickAddEntries(quickAdd.query);
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const step = ev.key === 'ArrowDown' ? 1 : -1;
+      quickAdd.index = (quickAdd.index + step + entries.length) % Math.max(1, entries.length);
+      renderQuickAdd();
+    } else if (ev.key === 'Enter' || ev.key === 'Tab') {
+      ev.preventDefault();
+      if (entries[quickAdd.index]) pickQuickAdd(entries[quickAdd.index]);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeQuickAdd();
+    }
+  });
+  input.focus();
+}
+
+function renderQuickAdd() {
+  if (!quickAdd) return;
+  const entries = quickAddEntries(quickAdd.query);
+  quickAdd.index = Math.min(quickAdd.index, Math.max(0, entries.length - 1));
+  quickAdd.list.replaceChildren();
+  if (!entries.length) {
+    const none = document.createElement('div');
+    none.className = 'quick-add-none';
+    none.textContent = 'no match';
+    quickAdd.list.appendChild(none);
+  }
+  entries.forEach((type, index) => {
+    const item = document.createElement('div');
+    item.className = `quick-add-item${index === quickAdd.index ? ' active' : ''}`;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(index === quickAdd.index));
+    const preview = document.createElement('span');
+    preview.className = 'quick-add-preview';
+    const special = QUICK_ADD_SPECIAL[type];
+    preview.innerHTML = special
+      ? `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[special.icon]}</svg>`
+      : symbolPreviewSvg(type);
+    const name = document.createElement('span');
+    name.textContent = special ? special.label : (PLACEMENT_LABELS[type] || type);
+    item.append(preview, name);
+    item.addEventListener('mousemove', () => {
+      if (quickAdd.index === index) return;
+      quickAdd.index = index;
+      for (const [i, el] of [...quickAdd.list.children].entries()) el.classList.toggle('active', i === index);
+    });
+    item.addEventListener('mousedown', (ev) => {
+      ev.preventDefault();
+      pickQuickAdd(type);
+    });
+    quickAdd.list.appendChild(item);
+  });
+  quickAdd.list.children[quickAdd.index]?.scrollIntoView?.({ block: 'nearest' });
+}
+
+function closeQuickAdd({ cancel = true } = {}) {
+  if (!quickAdd) return;
+  quickAdd.el.remove();
+  quickAdd = null;
+  if (cancel) {
+    endGestureWire();
+    render();
+  }
+  canvasEl.focus({ preventScroll: true });
+}
+
+function pickQuickAdd(type) {
+  if (!quickAdd) return;
+  const { point, fromWire } = quickAdd;
+  closeQuickAdd({ cancel: false });
+  cursor = { ...point };
+  if (type === '@open' || type === '@netlabel') {
+    if (wire?.source) commitWireAtCursor();
+    endGestureWire();
+    if (type === '@netlabel') placeNetLabelAt(point);
+    render();
+    return;
+  }
+  const def = getSymbol(type);
+  const direction = fromWire && wire?.source ? arrivalDirection(draftRoutePath(wire, point)) : null;
+  const placement = quickAddPlacement(def, point, direction);
+  const before = snapshot();
+  try {
+    const comp = circuit.addComponent(type, { x: placement.x, y: placement.y, rotation: placement.rotation, noLabel: false });
+    markModelChanged();
+    if (fromWire && wire?.source && placement.terminal) {
+      connectWireToTerminal({ refdes: comp.refdes, term: placement.terminal, x: point.x, y: point.y }, before);
+    } else {
+      circuit.connectCoincident(comp.refdes);
+      recordHistoryEntry(before, true);
+    }
+    rememberInsertType(type);
+    logLine(`placed ${comp.refdes} (${type}) at the wire end`);
+  } catch (err) {
+    applyJson(before);
+    logLine(`Could not add ${PLACEMENT_LABELS[type] || type}: ${err.message || err}`, 'error');
+  }
+  endGestureWire();
+  render();
+}
+
+window.addEventListener('pointerdown', (ev) => {
+  if (quickAdd && !quickAdd.el.contains(ev.target)) closeQuickAdd();
+}, true);
+
 // ----- Virtuoso-compatible toolbar actions ----------------------------------
 
 function hasWireDraft() {
@@ -11150,6 +11851,7 @@ function activateWire() {
   // F3 changes the route style of this same managed workflow.  Diagonal wires
   // never become direct/fixed nets.
   wire = newWireDraft();
+  gestureWire = false;
   hintLine(`wiring (${routeMode}): click a terminal or point to start; Alt snaps to the nearest terminal; terminal clicks commit, Enter commits elsewhere`);
   render();
 }
@@ -11327,13 +12029,9 @@ function focusCheckIssue(issue) {
   else w = h * aspect;
   w = Math.min(Math.max(w, minViewW()), maxViewW());
   h = w / aspect;
-  view.w = w;
-  view.h = h;
-  view.x = (x0 + x1) / 2 - w / 2;
-  view.y = (y0 + y1) / 2 - h / 2;
   viewPane = p;
   cursor = { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
-  render();
+  animateViewTo({ x: (x0 + x1) / 2 - w / 2, y: (y0 + y1) / 2 - h / 2, w, h });
 }
 
 let renderedCheckReport;
@@ -12073,6 +12771,17 @@ revealDocumentBtn?.addEventListener('click', revealCurrentDocument);
 document.getElementById('btn-open-file')?.addEventListener('click', openDocumentDialog);
 document.getElementById('btn-save-as')?.addEventListener('click', () => saveCircuit({ saveAs: true }));
 document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
+const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
+function syncScrollSchemeButton() {
+  scrollSchemeButton?.setAttribute('aria-checked', String(scrollScheme === 'trackpad'));
+}
+scrollSchemeButton?.addEventListener('click', () => {
+  scrollScheme = scrollScheme === 'trackpad' ? 'mouse' : 'trackpad';
+  try { localStorage.setItem('mosfeteer.scrollScheme', scrollScheme); } catch { /* per-session only */ }
+  syncScrollSchemeButton();
+  hintLine(scrollScheme === 'trackpad' ? 'trackpad scrolling: scroll pans, pinch zooms' : 'mouse scrolling: the wheel zooms');
+});
+syncScrollSchemeButton();
 exportCircuitBtn?.addEventListener('click', exportCircuit);
 exportCancel?.addEventListener('click', () => exportDialog?.close());
 exportForm?.addEventListener('input', renderExportLocation);
@@ -12316,6 +13025,17 @@ window.addEventListener('keydown', (ev) => {
   // canvas command such as Delete, Wire, or a transform.
   if (isKeyboardSurfaceTarget(ev.target)) return;
 
+  // Holding Space turns a left drag into a pan (insert-menu queries keep their
+  // spaces while no ghost is armed).
+  if (ev.key === ' ' && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !(mode === 'insert' && !pendingPlace)) {
+    if (!spaceHeld) {
+      spaceHeld = true;
+      canvasEl.classList.add('space-pan');
+    }
+    ev.preventDefault();
+    return;
+  }
+
   // Alt is a hold-only modifier. In managed Wire mode it turns on terminal
   // snapping; with a placement or copy ghost it arms the mirrored preview.
   // Track the physical hold separately so a ghost created by a mouse click
@@ -12544,6 +13264,7 @@ cmdInput.addEventListener('keydown', (ev) => {
 // ----- boot ------------------------------------------------------------
 
 window.__run = (line) => { runLine(line); };
+window.__dbg = () => JSON.stringify({ drag: drag && { mode: drag.mode, moved: drag.moved }, wire: !!wire, multi: [...multi] });
 window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); fitView(); };
 window.__circuit = () => ({
   kind: 'circuit',
@@ -12664,6 +13385,6 @@ if (consoleEl && logDrawerEl) {
   });
 }
 
-statusZoomEl?.addEventListener('click', () => { fitView(); render(); });
+statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
 statusCheckEl?.addEventListener('click', () => focusCheckSummary());
 
