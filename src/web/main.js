@@ -16,7 +16,7 @@ import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
-import { componentShapeSvg, editorOverlay, svgString, texToMathML } from '../core/render.js';
+import { componentShapeSvg, editorOverlay, svgString, texToMathML, viewportFrame, viewportGridPath } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { themeInkSvg } from '../core/style.js';
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
@@ -39,7 +39,7 @@ import { createPersistenceAdapter, defaultExportDirectory, validDocumentName } f
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
+import { alignedAnchorShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
 import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
@@ -423,6 +423,7 @@ let visual = null; // visual mode: anchor grid point {x,y} the selection box sta
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
 let wirePreview = null;
+let wirePreviewStale = false;
 let terminalSnap = false; // Alt-held wiring cursor: snap to the nearest terminal
 let spaceHeld = false; // Space turns a left drag into a pan
 // 'mouse': the wheel zooms. 'trackpad': two-finger scroll pans, pinch zooms.
@@ -476,6 +477,7 @@ let labelCache = null;
 let wireHitIndex = null;
 let wireHitIndexRevision = -1;
 let committedCanvasKey = '';
+let committedViewKey = '';
 let canvasSvgEl = null;
 let overlayEl = null;
 let labelMetricsRenderPending = false;
@@ -880,7 +882,9 @@ function flushDraft() {
   } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
 }
 function scheduleInteractionRender() {
-  wirePreview = wire ? draftWirePreview(wire) : null;
+  // Routing the draft is the costly part of a wire-mode repaint; do it once
+  // per painted frame rather than once per input event.
+  wirePreviewStale = true;
   if (renderFrame !== null) return;
   renderFrame = requestAnimationFrame(() => { renderFrame = null; render(); });
 }
@@ -1357,9 +1361,18 @@ if (toolbarEl) {
   document.fonts?.ready?.then(scheduleToolbarFit);
 }
 
+let toolbarFitKey = '';
+
 function renderSaveState() {
-  scheduleToolbarFit();
   const dirty = hasUnsavedChanges();
+  // Fitting measures the toolbar at each compaction stage (a forced layout
+  // apiece), so refit only when the title or dirty dot can change its width;
+  // the toolbar's ResizeObserver covers everything else.
+  const fitKey = `${circuitNameEl.value}|${circuitNameEl.placeholder}|${dirty}`;
+  if (fitKey !== toolbarFitKey) {
+    toolbarFitKey = fitKey;
+    scheduleToolbarFit();
+  }
   const dirtyDot = document.getElementById('dirty-dot');
   if (dirtyDot) dirtyDot.hidden = !dirty;
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentDocumentPath || deleteInFlight;
@@ -3848,15 +3861,27 @@ function updateNetWarnings() {
   netWarnings = crossNetOverlaps(nets);
 }
 
+let documentSurfaceShown = false;
+
 function syncDocumentSurface() {
-  for (const element of document.querySelectorAll('[data-doc-kind]')) {
-    element.hidden = false;
+  // Reveal the schematic surface once. Later visibility belongs to each
+  // control's owner: unhiding here on every repaint flip-flopped the align
+  // panel against updateAlignControls, re-laying out the side panel per frame.
+  if (!documentSurfaceShown) {
+    documentSurfaceShown = true;
+    for (const element of document.querySelectorAll('[data-doc-kind]')) {
+      element.hidden = false;
+    }
   }
+  // Every repaint calls this. Write only real changes: rewriting the toolbar
+  // heading's text is a DOM mutation, and the toolbar's overflow observer
+  // answers each one with a forced layout.
   const heading = document.getElementById('mode-heading');
-  if (heading) heading.textContent = 'Schematic tools';
-  if (cmdInput) cmdInput.placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
+  if (heading && heading.textContent !== 'Schematic tools') heading.textContent = 'Schematic tools';
+  const placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
+  if (cmdInput && cmdInput.placeholder !== placeholder) cmdInput.placeholder = placeholder;
   const netLabelButton = document.getElementById('btn-mode-net-label');
-  if (netLabelButton) {
+  if (netLabelButton && netLabelButton.title !== 'Place a label on a physical wire (L)') {
     netLabelButton.title = 'Place a label on a physical wire (L)';
     netLabelButton.setAttribute('aria-label', 'Place a label on a physical wire');
   }
@@ -4211,14 +4236,15 @@ function syncRenderedLabelMetrics() {
     // crosses a cell boundary jump one square left on every reload.
     if (label.id.startsWith('category_')) continue;
     if (label.math && !mathFontReady) continue;
-    const group = groups.get(label.id);
-    const bounds = renderedLabelTextBounds(group);
-    if (!bounds) continue;
     // A measured bbox is a one-time model resize for the current text. Do not
     // feed a later container-size measurement back into the model or a
     // foreignObject can resize itself forever. Text edits clear this runtime
-    // metric and allow one fresh pass.
+    // metric and allow one fresh pass. Checking first also spares the forced
+    // layout that measuring costs on every rebuild.
     if (label._renderedTextBounds) continue;
+    const group = groups.get(label.id);
+    const bounds = renderedLabelTextBounds(group);
+    if (!bounds) continue;
     const before = label.bbox();
     if (!label.setRenderedTextBounds(bounds.w, bounds.h)) continue;
     keepAlignedEdge(label, before);
@@ -4265,10 +4291,18 @@ function renderCanvas(modelKey) {
     for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
   }
   const editingLabelId = inlineInput?.dataset.labelId || '';
-  const canvasKey = `${modelKey}|${showGrid}|${view.x},${view.y},${view.w},${view.h}|${editingLabelId}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
-  const canvasRebuilt = canvasKey !== committedCanvasKey;
+  // The drawing is in world coordinates; only its frame depends on the view.
+  // Pan and zoom therefore re-apply the frame and keep the drawing's DOM.
+  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
+  const viewKey = `${view.x},${view.y},${view.w},${view.h}`;
+  const canvasRebuilt = canvasKey !== committedCanvasKey || !canvasSvgEl;
+  if (!canvasRebuilt && viewKey !== committedViewKey) {
+    committedViewKey = viewKey;
+    applyCanvasViewport();
+  }
   if (canvasRebuilt) {
     committedCanvasKey = canvasKey;
+    committedViewKey = viewKey;
     canvasEl.innerHTML = svgString(circuit, {
       themeInk: true,
       underlay: true,
@@ -4448,7 +4482,7 @@ function renderCanvas(modelKey) {
       : drag && drag.rubber
         ? drag.rubber
         : undefined,
-    wirePreview: wire ? wirePreview : null,
+    wirePreview: wire ? currentWirePreview() : null,
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
@@ -4461,6 +4495,28 @@ function renderCanvas(modelKey) {
   syncSnapPulse();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
+}
+
+function currentWirePreview() {
+  if (wirePreviewStale) {
+    wirePreview = wire ? draftWirePreview(wire) : null;
+    wirePreviewStale = false;
+  }
+  return wirePreview;
+}
+
+/** Re-frame the committed drawing for the current view: root size, background,
+ * and grid. Same output as a full svgString rebuild at this viewport. */
+function applyCanvasViewport() {
+  const vp = { x: view.x, y: view.y, w: view.w, h: view.h };
+  const frame = viewportFrame(vp);
+  canvasSvgEl.setAttribute('width', frame.width);
+  canvasSvgEl.setAttribute('height', frame.height);
+  canvasSvgEl.setAttribute('viewBox', frame.viewBox);
+  const background = canvasSvgEl.firstElementChild;
+  if (background?.tagName !== 'rect') return;
+  for (const [name, value] of Object.entries(frame.background)) background.setAttribute(name, value);
+  canvasSvgEl.querySelector(':scope > .grid-line')?.setAttribute('d', viewportGridPath(vp));
 }
 
 // ----- hover preview -------------------------------------------------------------
@@ -7099,11 +7155,14 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'blockresize') {
     if (!movedOut) return;
     drag.moved = true;
+    const rect = blockResizeRect(drag.origin, drag.handle, movedWorld);
+    const rectKey = `${rect.x},${rect.y},${rect.w},${rect.h}`;
+    if (drag.appliedRect === rectKey) return; // same snapped rectangle as the last preview
+    drag.appliedRect = rectKey;
     try {
       // Rebuild each preview from the immutable pointer-down snapshot. This
       // keeps corner drags reversible and avoids accumulating grid rounding.
       circuit = loadDocument(JSON.parse(drag.startSnapshot));
-      const rect = blockResizeRect(drag.origin, drag.handle, movedWorld);
       circuit.resizeBlock(drag.refdes, rect);
       drag.invalid = false;
       drag.previewRevision = (drag.previewRevision || 0) + 1;
@@ -7233,6 +7292,15 @@ function canvasMouseMove(ev) {
           else r.net.route = r.pts;
         }
       }
+      const axis = drag.orient === 'h' ? movedWorld.y : movedWorld.x;
+      const delta = axis - drag.startAxis;
+      // Runs sit on grid lines and moveWireRun snaps its target, so a delta
+      // within the same cell reproduces the previous frame exactly.
+      if (drag.appliedDelta === snap(delta)) {
+        scheduleInteractionRender();
+        return;
+      }
+      drag.appliedDelta = snap(delta);
       // Rebuild from the drag-start topology before every frame. Without this,
       // moving a run onto an adjacent run collapses the two terminal legs into
       // one straight segment, making the original run impossible to drag back.
@@ -7246,8 +7314,6 @@ function canvasMouseMove(ev) {
         r.pts = paths[r.branch] || paths[0];
         r.line = r.startLine;
       }
-      const axis = drag.orient === 'h' ? movedWorld.y : movedWorld.x;
-      const delta = axis - drag.startAxis;
       for (const r of drag.runs) {
         const target = r.startLine + delta;
         moveManagedWireRun(r, target);
@@ -7396,6 +7462,12 @@ function canvasMouseMove(ev) {
         drag.committed = true;
       }
       const delta = snappedDragDelta(drag.startWorld, movedWorld);
+      // Most pointer events land in the same grid cell as the last one; the
+      // re-anchored preview would be identical, so skip the reroute. A rebase
+      // (rotate/mirror mid-drag) installs new origins and invalidates this.
+      if (drag.appliedDelta?.origins === drag.origins &&
+          drag.appliedDelta.dx === delta.dx && drag.appliedDelta.dy === delta.dy) return;
+      drag.appliedDelta = { origins: drag.origins, dx: delta.dx, dy: delta.dy };
       for (const [r, o] of drag.origins) {
         const c = circuit.components.get(r);
         if (!c) continue;
@@ -7868,8 +7940,12 @@ function canvasMouseUp(ev) {
   render();
 }
 canvasEl.addEventListener('mousedown', canvasMouseDown);
-canvasEl.addEventListener('mousemove', canvasMouseMove);
-canvasEl.addEventListener('pointermove', canvasMouseMove);
+const isCompatibilityMove = compatibilityMoveFilter();
+function canvasPointerMove(ev) {
+  if (!isCompatibilityMove(ev)) canvasMouseMove(ev);
+}
+canvasEl.addEventListener('mousemove', canvasPointerMove);
+canvasEl.addEventListener('pointermove', canvasPointerMove);
 
 // SVG objects are keyboard-addressable even though the committed scene is
 // regenerated during edits.  The semantic hit is resolved from data-* attrs,
@@ -7938,7 +8014,7 @@ function forwardCanvasMove(ev) {
   if (!shouldForwardCanvasMove(ev.target, canvasEl)) return;
   const r = document.querySelector('.canvas-pane')?.getBoundingClientRect();
   if (!r || ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) return;
-  canvasMouseMove(ev);
+  canvasPointerMove(ev);
 }
 window.addEventListener('pointermove', forwardCanvasMove, true);
 window.addEventListener('mousemove', forwardCanvasMove, true);
@@ -9642,7 +9718,7 @@ canvasEl.addEventListener(
       const unitsPerPx = p ? view.w / p.w : 1;
       view.x += ev.deltaX * scale * unitsPerPx;
       view.y += ev.deltaY * scale * unitsPerPx;
-      render();
+      scheduleInteractionRender();
       return;
     }
     // Pinch arrives as a ctrl-wheel with small deltas; give it a finer base.
@@ -9654,7 +9730,7 @@ canvasEl.addEventListener(
     view.y = w.y - (w.y - view.y) * factor;
     view.w = nw;
     view.h *= factor;
-    render();
+    scheduleInteractionRender();
   },
   { passive: false }
 );
@@ -10180,7 +10256,7 @@ function onWireKey(key) {
     // Flip which way the corner of the leg under the cursor turns.
     if (wire) {
       wire.flipCorner = !wire.flipCorner;
-      wirePreview = draftWirePreview(wire);
+      wirePreviewStale = true;
     }
     hintLine(wire?.flipCorner ? 'corner flipped' : 'corner restored');
   } else if (key === 'Tab') {
@@ -11264,10 +11340,22 @@ function interactionState() {
   return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, movePending, copyPending, routeMode });
 }
 
+/** Elements matched by `selectors`, cached: the toolbars are static markup and
+ * every repaint syncs them, so re-query only once a cached node was removed. */
+const staticElementCache = new Map();
+function staticElements(key, selectors) {
+  const cached = staticElementCache.get(key);
+  if (cached && cached.every((el) => el.isConnected)) return cached;
+  const found = [...new Set(selectors().flatMap((selector) => [...document.querySelectorAll(selector)]))];
+  staticElementCache.set(key, found);
+  return found;
+}
+
 function toolbarElements(action) {
-  const selectors = (TOOLBAR_IDS[action] || []).map((id) => `#${id}`);
-  selectors.push(`[data-interaction="${action}"]`, `[data-tool="${action}"]`, `[data-mode="${action}"]`, `[data-action="${action}"]`);
-  return [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
+  return staticElements(`toolbar:${action}`, () => [
+    ...(TOOLBAR_IDS[action] || []).map((id) => `#${id}`),
+    `[data-interaction="${action}"]`, `[data-tool="${action}"]`, `[data-mode="${action}"]`, `[data-action="${action}"]`,
+  ]);
 }
 
 /** Short the nets crossing at a just-placed solder dot. Returns true when the
@@ -11567,10 +11655,14 @@ function syncInteractionUI() {
     const select = document.getElementById(id);
     if (select?.tagName === 'SELECT') select.value = routeMode;
   }
-  canvasEl.classList.remove('mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-annotation', 'wire-mode', 'direct-wire-mode');
-  canvasEl.classList.add(state.canvasClass);
-  if (wire) canvasEl.classList.add('wire-mode');
-  if (directWire) canvasEl.classList.add('direct-wire-mode');
+  // Toggle only real changes: rewriting the canvas class invalidates style
+  // for the whole drawing, and this runs on every repaint.
+  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-annotation']) {
+    canvasEl.classList.toggle(name, name === state.canvasClass);
+  }
+  canvasEl.classList.toggle(state.canvasClass, true);
+  canvasEl.classList.toggle('wire-mode', !!wire || state.canvasClass === 'wire-mode');
+  canvasEl.classList.toggle('direct-wire-mode', !!directWire || state.canvasClass === 'direct-wire-mode');
   syncRailFlyout(state);
   syncToolCursor(state);
   return state;
@@ -11646,7 +11738,9 @@ function renderStatus() {
     statusSelectionEl.hidden = !fields.selection;
   }
   if (statusCursorEl) statusCursorEl.textContent = fields.cursor;
-  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(view, paneSize()?.w, zoom)}%`;
+  // render() measured the pane before writing the DOM; measuring again here
+  // would force a synchronous layout on every frame.
+  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(view, (viewPane || paneSize())?.w, zoom)}%`;
 }
 
 // ----- insert-mode menu ----------------------------------------------------
@@ -12429,9 +12523,10 @@ const ROUTE_MODE_IDS = {
 };
 
 function routeModeElements(kind) {
-  const selectors = (ROUTE_MODE_IDS[kind] || []).map((id) => `#${id}`);
-  selectors.push(`[data-route-mode="${kind}"]`, `[data-route="${kind}"]`);
-  return [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
+  return staticElements(`route:${kind}`, () => [
+    ...(ROUTE_MODE_IDS[kind] || []).map((id) => `#${id}`),
+    `[data-route-mode="${kind}"]`, `[data-route="${kind}"]`,
+  ]);
 }
 
 function routeChoiceContainers() {

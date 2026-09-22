@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { alignedAnchorShift, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { alignedAnchorShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -837,4 +837,23 @@ test('transient copy ghosts stay out of side panels until committed', () => {
 
   const detail = main.slice(main.indexOf('function renderDetail('), main.indexOf('// ----- insert-mode menu'));
   assert.match(detail, /isTransientCopyGhostRef\(comp\.refdes\)/);
+});
+
+test('a compatibility mousemove after the same mouse pointermove is skipped', () => {
+  const skip = compatibilityMoveFilter();
+  const pointer = { type: 'pointermove', pointerType: 'mouse', clientX: 10, clientY: 20, buttons: 1 };
+  const mouse = { type: 'mousemove', clientX: 10, clientY: 20, buttons: 1 };
+  assert.equal(skip(pointer), false);
+  assert.equal(skip(mouse), true);
+  // Automation that sends only mouse events is handled every time.
+  assert.equal(skip(mouse), false);
+  assert.equal(skip(mouse), false);
+  // A different position or button state is new motion, not the echo.
+  skip(pointer);
+  assert.equal(skip({ ...mouse, clientX: 11 }), false);
+  skip(pointer);
+  assert.equal(skip({ ...mouse, buttons: 0 }), false);
+  // Touch and pen have no compatibility echo to drop.
+  skip({ ...pointer, pointerType: 'touch' });
+  assert.equal(skip(mouse), false);
 });

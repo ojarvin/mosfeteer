@@ -145,7 +145,10 @@ browser and `/api/export`, not here.
 `node --test`; no Jest or transpilation. JSON fixtures live under
 `fixtures/`. Read one existing `test/<thing>.test.js` before writing a new one.
 The browser rendering benchmark is `test/browser-performance.html`; serve the
-repository over HTTP before opening it.
+repository over HTTP before opening it. `render()` runs on every pointer frame:
+helpers it calls must write the DOM only when a value actually changes (a
+same-value write still invalidates style or fires observers), and pan/zoom must
+stay on the viewport-only path in `renderCanvas` rather than rebuilding the SVG.
 
 Add a test for any new behavior, any new command, any new symbol, and any
 edge case in `Circuit` that you touch. If a test would be slow, factor the

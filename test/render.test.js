@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { editorOverlay, svgString, texToMathML, svgPixelSize } from '../src/core/render.js';
+import { editorOverlay, svgString, texToMathML, svgPixelSize, viewportFrame, viewportGridPath } from '../src/core/render.js';
 import { Circuit, Net } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 import { getSymbol } from '../src/core/components/index.js';
@@ -21,8 +21,22 @@ test('the shared analysis MathML renderer renders fractions and escapes literal 
 test('grid lines use the ordinary style throughout', () => {
   const svg = svgString(new Circuit(), { grid: true, viewport: { x: -40, y: -40, w: 400, h: 400 } });
   assert.doesNotMatch(svg, /major-grid/);
-  assert.match(svg, /class="grid-line"[^>]+x1="0"/);
-  assert.match(svg, /class="grid-line"[^>]+x1="40"/);
+  assert.match(svg, /class="grid-line" d="[^"]*M 0 -40 V 360/);
+  assert.match(svg, /class="grid-line" d="[^"]*M 40 -40 V 360/);
+  assert.match(svg, /class="grid-line" d="[^"]*M -40 0 H 360/);
+});
+
+test('a viewport grid is one path that re-frames with the view', () => {
+  const vp = { x: -40, y: -40, w: 400, h: 400 };
+  const svg = svgString(new Circuit(), { grid: true, viewport: vp });
+  assert.equal(svg.match(/class="grid-line"/g).length, 1);
+  assert.ok(svg.includes(`d="${viewportGridPath(vp)}"`));
+  const panned = viewportGridPath({ x: 20, y: -40, w: 400, h: 400 });
+  assert.match(panned, /^M 40 -40 V 360/);
+  assert.deepEqual(viewportFrame({ x: 20, y: -40, w: 400, h: 300 }), {
+    width: '400', height: '300', viewBox: '20 -40 400 300',
+    background: { x: '20', y: '-40', width: '400', height: '300' },
+  });
 });
 
 test('export padding leaves a safety margin around measured label bounds', () => {

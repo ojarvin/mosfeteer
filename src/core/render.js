@@ -529,6 +529,40 @@ export function labelShapeSvg(label) {
 }
 
 /**
+ * The view-dependent parts of a viewport render: the root sizing attributes,
+ * the background rectangle, and the grid lines. Everything else in the drawing
+ * is in world coordinates, so the editor re-applies only this frame on pan and
+ * zoom instead of re-rendering the whole schematic.
+ */
+export function viewportFrame(vp) {
+  const x1 = vp.x + vp.w;
+  const y1 = vp.y + vp.h;
+  const W = x1 - vp.x;
+  const H = y1 - vp.y;
+  return {
+    width: `${W}`,
+    height: `${H}`,
+    viewBox: `${fmt(vp.x)} ${fmt(vp.y)} ${fmt(W)} ${fmt(H)}`,
+    background: { x: fmt(vp.x), y: fmt(vp.y), width: fmt(W), height: fmt(H) },
+  };
+}
+
+/** Grid lines covering a viewport, as one path: panning then rewrites a
+ * single attribute instead of replacing hundreds of elements. */
+export function viewportGridPath(vp) {
+  const x1 = vp.x + vp.w;
+  const y1 = vp.y + vp.h;
+  const d = [];
+  for (let x = ceilGrid(vp.x); x <= ceilGrid(x1); x += GRID) d.push(`M ${fmt(x)} ${fmt(vp.y)} V ${fmt(y1)}`);
+  for (let y = ceilGrid(vp.y); y <= ceilGrid(y1); y += GRID) d.push(`M ${fmt(vp.x)} ${fmt(y)} H ${fmt(x1)}`);
+  return d.join(' ');
+}
+
+export function viewportGridSvg(vp) {
+  return `<path class="grid-line" d="${viewportGridPath(vp)}" fill="none" stroke="#e9e9e9" stroke-width="1"/>`;
+}
+
+/**
  * Render a Circuit to an SVG string.
  * opts.grid: draw the coarse 40-unit grid. opts.terminals / opts.junctions:
  * draw terminal dots / net junction dots. opts.background: white rect.
@@ -582,12 +616,7 @@ export function svgString(circuit, opts = {}) {
 
   if (o.grid) {
     if (vp) {
-      for (let x = ceilGrid(vp.x); x <= ceilGrid(vp.x + vp.w); x += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
-      for (let y = ceilGrid(vp.y); y <= ceilGrid(vp.y + vp.h); y += GRID) {
-        parts.push(`<line class="grid-line" x1="${fmt(x0)}" y1="${fmt(y)}" x2="${fmt(x1)}" y2="${fmt(y)}" stroke="#e9e9e9" stroke-width="1"/>`);
-      }
+      parts.push(viewportGridSvg(vp));
     } else {
       for (let x = x0; x <= x1; x += GRID) {
         parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);

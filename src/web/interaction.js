@@ -97,6 +97,24 @@ export function shouldForwardCanvasMove(target, canvasElement) {
   return !target?.closest?.('#insert-menu');
 }
 
+/** Browsers follow each mouse `pointermove` with a compatibility `mousemove`
+ * for the same motion. Both are listened to (automation may send either), so
+ * the returned predicate flags the second of such a pair — same position and
+ * buttons right after a pointermove — letting one motion do one update. */
+export function compatibilityMoveFilter() {
+  let pending = null;
+  return (ev) => {
+    if (ev.type === 'pointermove') {
+      pending = ev.pointerType === 'mouse' ? { x: ev.clientX, y: ev.clientY, buttons: ev.buttons } : null;
+      return false;
+    }
+    const duplicate = ev.type === 'mousemove' && !!pending &&
+      pending.x === ev.clientX && pending.y === ev.clientY && pending.buttons === ev.buttons;
+    pending = null;
+    return duplicate;
+  };
+}
+
 /** A blank touch press pans the canvas; a press on an object remains an edit
  * gesture.  Keeping this policy pure makes touch behavior testable without a
  * browser surface. */
