@@ -24,6 +24,13 @@ const REFERENCE_MARKER_INFO = Object.freeze({
 // Keep `GND` as a compatibility alias; new unnamed ground markers use `VSS`.
 const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.freeze(['GND']) });
 
+// A schematic block's origin is its center. An even number of cells per side
+// keeps that center, and so every perimeter terminal after a snapped move or
+// rotation, on the grid.
+function blockSpan(value) {
+  return Math.max(2 * GRID, Math.ceil(snap(Number(value)) / (2 * GRID)) * 2 * GRID);
+}
+
 const SIGNAL_FLOW_TYPES = new Set(['signal_sum', 'signal_multiply']);
 const SIGNAL_INPUT_SIGN_ROLE = 'signal-input-sign';
 
@@ -791,6 +798,9 @@ export class LabelInstance {
 
   clearRenderedTextBounds() {
     if (!this._renderedTextBounds && !this._mathBox) return false;
+    // The last measured box, so the editor can keep an edge that was flush
+    // against a parent arrow or box when the new text is measured.
+    this._boxBeforeEdit = this.bbox();
     this._renderedTextBounds = null;
     this._mathBox = null;
     this.circuit.invalidateRoutingCache();
@@ -927,6 +937,36 @@ export class LabelInstance {
     this.circuit.invalidateRoutingCache();
   }
 
+  /** Resize a box annotation to a world rectangle. Its text and child labels
+   * keep their place relative to the box: on each axis a point stays at its
+   * distance from whichever of the near edge, center, or far edge it was
+   * closest to, so a title above the box, a caption in a corner, and centered
+   * text all read the same after the resize. */
+  resizeBox(rect) {
+    if (this.kind !== 'box') return false;
+    const next = { x0: snap(rect.x), y0: snap(rect.y), x1: snap(rect.x + rect.w), y1: snap(rect.y + rect.h) };
+    if (next.x1 <= next.x0 || next.y1 <= next.y0) return false;
+    const prev = {
+      x0: Math.min(this.anchor.x, this.end.x), x1: Math.max(this.anchor.x, this.end.x),
+      y0: Math.min(this.anchor.y, this.end.y), y1: Math.max(this.anchor.y, this.end.y),
+    };
+    const follow = (v, a0, a1, b0, b1) => {
+      const refs = [[a0, b0], [(a0 + a1) / 2, (b0 + b1) / 2], [a1, b1]];
+      const [from, to] = refs.reduce((best, ref) => (Math.abs(v - ref[0]) < Math.abs(v - best[0]) ? ref : best));
+      const out = snap(to + v - from);
+      return v >= a0 && v <= a1 ? Math.min(b1, Math.max(b0, out)) : out;
+    };
+    const place = (p) => ({ x: follow(p.x, prev.x0, prev.x1, next.x0, next.x1), y: follow(p.y, prev.y0, prev.y1, next.y0, next.y1) });
+    this.textAnchor = place(this.textAnchor);
+    for (const label of this.circuit.labels.values()) {
+      if (label.parent === this.id) label.anchor = place(label.anchor);
+    }
+    this.anchor = { x: next.x0, y: next.y0 };
+    this.end = { x: next.x1, y: next.y1 };
+    this.circuit.invalidateRoutingCache();
+    return true;
+  }
+
   moveSegment(index, dx, dy) {
     if (!['arrow', 'line'].includes(this.kind) || !Number.isInteger(index) || index < 1 || index >= this.points.length) return false;
     for (const point of [this.points[index - 1], this.points[index]]) {
@@ -1026,10 +1066,13 @@ export class ComponentInstance {
     // Schematic blocks are the one resizable symbol. Keep their geometry and
     // perimeter terminal slots on the instance rather than mutating the shared
     // symbol definition (which would resize every block in the document).
+    // A saved size is kept as authored: widening a legacy odd-sized block on
+    // load would move its edges off the grid. Its next resize evens it.
+    const span = opts.blockTerminals ? (v) => Math.max(2 * GRID, snap(v)) : blockSpan;
     this.blockSize = this.type === 'block'
       ? {
-          w: Math.max(2 * GRID, snap(opts.blockSize?.w ?? opts.width ?? 160)),
-          h: Math.max(2 * GRID, snap(opts.blockSize?.h ?? opts.height ?? 160)),
+          w: span(opts.blockSize?.w ?? opts.width ?? 160),
+          h: span(opts.blockSize?.h ?? opts.height ?? 160),
         }
       : null;
     this.blockTerminals = this.type === 'block'
@@ -1079,8 +1122,8 @@ export class ComponentInstance {
     if (this.type !== 'block') throw new Error(`component ${this.refdes} is not a schematic block`);
     const old = { ...this.blockSize };
     const next = {
-      w: Math.max(2 * GRID, snap(Number(size.w ?? old.w))),
-      h: Math.max(2 * GRID, snap(Number(size.h ?? old.h))),
+      w: blockSpan(size.w ?? old.w),
+      h: blockSpan(size.h ?? old.h),
     };
     if (![next.w, next.h].every(Number.isFinite)) throw new Error('block size must be finite');
     const connected = new Set();
@@ -1893,6 +1936,16 @@ export class Circuit {
       if (y > oldRect.y && bottom >= oldRect.y + oldRect.h) y = bottom - 2 * GRID;
       else if (bottom < oldRect.y + oldRect.h && y <= oldRect.y) bottom = y + 2 * GRID;
       else { y = oldRect.y; bottom = oldRect.y + oldRect.h; }
+    }
+    // Round an odd span up by one cell on the side that moved; growing never
+    // crosses an occupied terminal.
+    if ((right - x) % (2 * GRID)) {
+      if (x !== oldRect.x) x -= GRID;
+      else right += GRID;
+    }
+    if ((bottom - y) % (2 * GRID)) {
+      if (y !== oldRect.y) y -= GRID;
+      else bottom += GRID;
     }
     w = right - x;
     h = bottom - y;

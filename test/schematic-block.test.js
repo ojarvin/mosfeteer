@@ -4,6 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { evaluate } from '../src/core/commands.js';
 import { editorOverlay, svgString } from '../src/core/render.js';
 import { moveAnnotationEndpoint } from '../src/web/interaction.js';
+import { GRID } from '../src/core/grid.js';
 
 test('schematic block exposes perimeter pins, centered value text, and no dangling-pin error', () => {
   const circuit = new Circuit();
@@ -101,8 +102,10 @@ test('schematic block resize preserves occupied perimeter positions and clamps s
   assert.deepEqual(block.terminalWorld('T9'), { x: 0, y: -80 });
   assert.deepEqual(net.paths()[0][0], { x: 0, y: -80 });
 
+  // The clamp stops the left edge one cell short of the pin at x=0; the odd
+  // span that leaves grows back out to an even one on the moved side.
   circuit.resizeBlock('B1', { x: 0, y: -80, w: 80, h: 160 });
-  assert.deepEqual(block.bboxWorld(), { x: -40, y: -80, w: 120, h: 160 });
+  assert.deepEqual(block.bboxWorld(), { x: -80, y: -80, w: 160, h: 160 });
   assert.deepEqual(block.terminalWorld('T9'), { x: 0, y: -80 });
   assert.deepEqual(net.paths()[0][0], { x: 0, y: -80 });
 });
@@ -133,4 +136,63 @@ test('arrow vertices move and edit as a path, including intermediate corners', (
   assert.deepEqual(arrow.points[1], { x: 160, y: 240 });
   assert.deepEqual(arrow.anchor, arrow.points[0]);
   assert.deepEqual(arrow.end, arrow.points.at(-1));
+});
+
+test('blocks and box annotations share the eight resize handles; arrow vertices show drag points', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('block', { refdes: 'B1', x: 0, y: 0 });
+  const box = circuit.addAnnotation('box', { x: 200, y: 0, end: { x: 360, y: 120 } });
+  const arrow = circuit.addAnnotation('arrow', { points: [{ x: 0, y: 200 }, { x: 0, y: 280 }, { x: 160, y: 280 }] });
+  const overlay = editorOverlay(circuit, { resizeBlocks: ['B1'], resizeBoxes: [box.id], selLabels: [box.id, arrow.id] });
+  assert.match(overlay, /data-resize-kind="component" data-resize-id="B1"/);
+  assert.match(overlay, new RegExp(`data-resize-kind="annotation" data-resize-id="${box.id}"`));
+  assert.equal((overlay.match(/data-resize-handle=/g) || []).length, 16);
+  assert.match(overlay, /data-resize-handle="e"[^>]*><rect x="346" y="46" width="28" height="28"/);
+  // Handles keep their screen size: at 2 world units per pixel they double.
+  const zoomedOut = editorOverlay(circuit, { resizeBoxes: [box.id], handleScale: 2 });
+  assert.match(zoomedOut, /data-resize-handle="e"[^>]*><rect x="332" y="32" width="56" height="56"/);
+  assert.equal((overlay.match(/class="annotation-vertex-handle"/g) || []).length, 3);
+
+  const hovered = editorOverlay(circuit, { hoverAnnotation: arrow.id });
+  assert.equal((hovered.match(/class="annotation-vertex-handle"[^>]*fill="var\(--paper/g) || []).length, 3);
+});
+
+test('resizing a box keeps its child labels in place relative to the box', () => {
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 200 }, text: 'Bias' });
+  const title = [...circuit.labels.values()].find((label) => label.parent === box.id);
+  const title0 = { ...title.anchor };
+  const centered = circuit.addLabel({ text: 'mid', parent: box.id, x: 200, y: 80 });
+  const corner = circuit.addLabel({ text: 'c', parent: box.id, x: 360, y: 160 });
+
+  assert.equal(box.resizeBox({ x: -80, y: 0, w: 640, h: 360 }), true);
+  assert.deepEqual([box.anchor, box.end], [{ x: -80, y: 0 }, { x: 560, y: 360 }]);
+  // The title above the top edge keeps its offset from the top center.
+  assert.deepEqual(title.anchor, { x: title0.x + 40, y: title0.y });
+  // Near-center text stays near the center; corner text keeps its corner gap.
+  assert.deepEqual(centered.anchor, { x: 240, y: 160 });
+  assert.deepEqual(corner.anchor, { x: 520, y: 320 });
+
+  // Shrinking never pushes an inside label out of the box.
+  box.resizeBox({ x: 0, y: 0, w: 40, h: 40 });
+  assert.ok(corner.anchor.x <= 40 && corner.anchor.y <= 40);
+  assert.equal(box.resizeBox({ x: 0, y: 0, w: 0, h: 40 }), false);
+});
+
+test('block sizes are even cell counts, keeping the center and every pin on the grid', () => {
+  const circuit = new Circuit();
+  const block = circuit.addComponent('block', { refdes: 'B1', x: 0, y: 0, width: 120, height: 200 });
+  assert.deepEqual(block.blockSize, { w: 160, h: 240 });
+  circuit.resizeBlock('B1', { x: -80, y: -80, w: 160, h: 120 });
+  assert.deepEqual(block.bboxWorld(), { x: -80, y: -120, w: 160, h: 160 });
+  circuit.resizeBlock('B1', { x: -120, y: -80, w: 200, h: 160 });
+  assert.deepEqual(block.bboxWorld(), { x: -160, y: -80, w: 240, h: 160 });
+  const onGrid = (v) => v % GRID === 0;
+  assert.ok(onGrid(block.transform.x) && onGrid(block.transform.y));
+  assert.ok(block.worldTerminals().every(({ x, y }) => onGrid(x) && onGrid(y)));
+
+  // A saved odd size loads as authored rather than moving its edges.
+  const legacy = circuit.toJSON();
+  legacy.components.find((c) => c.refdes === 'B1').blockSize = { w: 240, h: 120 };
+  assert.deepEqual(Circuit.fromJSON(legacy).components.get('B1').blockSize, { w: 240, h: 120 });
 });

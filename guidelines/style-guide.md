@@ -227,9 +227,12 @@ Notes:
   drawing. Double-click the body or its component-row entry to edit the
   centered caption. Their perimeter pins use ordinary schematic wires, and
   the body remains an obstacle for overlap and wire-through checks. Resize a
-  selected block with the same eight resize handles; the
-  opposite corner stays fixed, touched managed nets are rerouted atomically,
-  and the size is persisted per instance. Connected pins keep their authored
+  selected block with the same eight resize handles as a box annotation; the
+  opposite edges stay fixed (hold Ctrl to resize symmetrically about the
+  center), touched managed nets are rerouted atomically,
+  and the size is persisted per instance. Each side is an even number of grid
+  cells, so the block's center origin and every perimeter pin stay on the grid
+  after a move or rotation; a resize steps two cells at a time. Connected pins keep their authored
   perimeter positions when the new rectangle can contain them; shrinking
   stops before an occupied pin would be crossed. Terminal names remain stable
   when possible, but the attachment position is the visual invariant.
@@ -500,10 +503,19 @@ removing one label occurrence does not remove or rename its net. In the editor,
 `L` persistently places a net label only on an unambiguous physical wire; at a
 crossing, select/highlight the intended net first. `Shift+N` places one free
 annotation and then returns to selection; `a` places a multi-point arrow by
-clicking vertices and committing with Enter, while `b` places one box. The
-generic insert-menu entry is also an annotation. `l`
-draws a non-electrical multi-point line annotation with rounded caps; its
-snapped vertices and segments remain editable.
+clicking vertices, while `b` places one box. The generic insert-menu entry is
+also an annotation. `l` draws a non-electrical multi-point line annotation with
+rounded caps; its snapped vertices and segments remain editable. Line and
+arrow drafts share the wire tool's keys: Enter ends at the cursor, Backspace
+removes the last point, Shift locks the current leg orthogonal (as it locks a
+move), and each tool places one annotation. An arrow caption
+keeps its edge on the arrow start when its text is measured or edited.
+
+A selected box annotation shows the same eight resize handles as a selected
+block; Ctrl-dragging a handle resizes symmetrically about the center. The rest
+of the outline moves the box (the pointer shows a move cursor), and the box's
+text keeps its place relative to the nearest edge or the center. Arrow and line
+vertices show drag handles when hovered or selected.
 
 Selection and editing preserve these roles: owned labels follow their
 components, net labels remain on their drawable paths, and annotations move

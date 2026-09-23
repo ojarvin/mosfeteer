@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { alignedAnchorShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from '../src/web/interaction.js';
+import { GRID } from '../src/core/grid.js';
+import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from '../src/web/interaction.js';
 
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
@@ -313,7 +314,7 @@ test('global shortcuts yield to interactive controls', () => {
   assert.equal(isKeyboardSurfaceTarget({ tagName: 'div' }), false);
 });
 
-test('annotation endpoints move, resize, and reject invalid shapes', () => {
+test('annotation endpoints move and reject invalid shapes', () => {
   const arrow = { kind: 'arrow', anchor: { x: 0, y: 0 }, end: { x: 160, y: 0 } };
   assert.equal(moveAnnotationEndpoint(arrow, 'end', { x: 240, y: 80 }), true);
   assert.deepEqual(arrow.end, { x: 240, y: 80 });
@@ -321,16 +322,49 @@ test('annotation endpoints move, resize, and reject invalid shapes', () => {
   assert.equal(moveAnnotationEndpoint(arrow, 'end', { x: 40, y: 0 }), false);
   assert.deepEqual(arrow.end, before);
 
-  const box = { kind: 'box', anchor: { x: 0, y: 0 }, end: { x: 160, y: 80 } };
-  assert.equal(moveAnnotationEndpoint(box, 'corner:bottom-right', { x: 240, y: 120 }), true);
-  assert.deepEqual(box, { kind: 'box', anchor: { x: 240, y: 120 }, end: { x: 0, y: 0 } });
-
   const line = { kind: 'line', anchor: { x: 0, y: 0 }, end: { x: 160, y: 0 }, points: [{ x: 0, y: 0 }, { x: 160, y: 0 }] };
   line.moveVertex = (index, x, y) => { line.points[index] = { x, y }; };
   assert.equal(moveAnnotationEndpoint(line, 'vertex:1', { x: 160, y: 80 }), true);
   assert.deepEqual(line.points[1], { x: 160, y: 80 });
 });
 
+
+test('resize handles move their edges, and Ctrl mirrors them about the center', () => {
+  const rect = { x: 0, y: 0, w: 160, h: 80 };
+  assert.deepEqual(resizeRect(rect, 'e', { x: 238, y: 999 }), { x: 0, y: 0, w: 240, h: 80 });
+  assert.deepEqual(resizeRect(rect, 'nw', { x: -40, y: -40 }), { x: -40, y: -40, w: 200, h: 120 });
+  // An edge never passes the minimum size, however far it is pulled.
+  assert.deepEqual(resizeRect(rect, 'w', { x: 400, y: 0 }), { x: 80, y: 0, w: 80, h: 80 });
+  assert.deepEqual(resizeRect(rect, 'w', { x: 400, y: 0 }, { min: GRID }), { x: 120, y: 0, w: 40, h: 80 });
+
+  // Blocks step two cells at a time so their center stays on the grid.
+  assert.deepEqual(resizeRect(rect, 's', { x: 0, y: 120 }, { step: 2 * GRID }), { x: 0, y: 0, w: 160, h: 160 });
+  assert.deepEqual(resizeRect(rect, 'e', { x: 200, y: 0 }, { step: 2 * GRID }), { x: 0, y: 0, w: 240, h: 80 });
+
+  assert.deepEqual(resizeRect(rect, 'e', { x: 200, y: 0 }, { symmetric: true }), { x: -40, y: 0, w: 240, h: 80 });
+  assert.deepEqual(resizeRect(rect, 'se', { x: 200, y: 120 }, { symmetric: true }), { x: -40, y: -40, w: 240, h: 160 });
+  // Dragging past the center mirrors back out instead of inverting.
+  assert.deepEqual(resizeRect(rect, 'e', { x: -40, y: 0 }, { symmetric: true }), { x: -40, y: 0, w: 240, h: 80 });
+  // A half-cell center keeps mirrored edges on the grid, down to the minimum.
+  const odd = { x: 0, y: 0, w: 120, h: 120 };
+  assert.deepEqual(resizeRect(odd, 's', { x: 0, y: 200 }, { symmetric: true }), { x: 0, y: -80, w: 120, h: 280 });
+  assert.deepEqual(resizeRect(odd, 'e', { x: 60, y: 0 }, { symmetric: true }), { x: 0, y: 0, w: 120, h: 120 });
+  assert.deepEqual(resizeRect(odd, 'e', { x: 60, y: 0 }, { symmetric: true, min: GRID }), { x: 40, y: 0, w: 40, h: 120 });
+});
+
+test('a child label keeps the edge that was flush against its parent when it is measured', () => {
+  const start = { x0: 0, x1: 0, y0: 0, y1: 0 };
+  // Caption left of a rightward arrow: estimated 80 wide, measured 160.
+  assert.deepEqual(attachedEdgeShift({ x: -80, y: -40, w: 80, h: 80 }, { w: 160, h: 80 }, start), { dx: -40, dy: 0 });
+  // Caption right of a leftward arrow, and one above a downward arrow.
+  assert.deepEqual(attachedEdgeShift({ x: 0, y: -40, w: 80, h: 80 }, { w: 160, h: 80 }, start), { dx: 40, dy: 0 });
+  assert.deepEqual(attachedEdgeShift({ x: -40, y: -80, w: 80, h: 80 }, { w: 80, h: 160 }, start), { dx: 0, dy: -40 });
+  // A title above a box keeps its bottom edge on the box top.
+  const box = { x0: -200, x1: 200, y0: 0, y1: 160 };
+  assert.deepEqual(attachedEdgeShift({ x: -40, y: -80, w: 80, h: 80 }, { w: 160, h: 160 }, box), { dx: 0, dy: -40 });
+  // A reloaded caption re-measured against its estimate is not flush: no drift.
+  assert.deepEqual(attachedEdgeShift({ x: -120, y: -40, w: 80, h: 80 }, { w: 160, h: 80 }, start), { dx: 0, dy: 0 });
+});
 
 test('editor shell exposes keyboard canvas and live status surfaces', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');

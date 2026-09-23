@@ -77,7 +77,7 @@ The routing-sensitive symbol contract is:
 | DFF / latch | inputs at `(-80,-40)`, `(-80,40)`; outputs at `(80,-40)`, `(80,40)` | reset, when present, is `(0,120)`; bbox expands downward |
 | ground / supply / VCM | ground `gnd=(0,0)`; supply `p=(0,0)`; VCM `vcm=(0,0)` | ground hangs down, supply hangs up, VCM is outline-only |
 | ports | `p=(0,0)` | `port` is open-circle; boxed ports use `VI`/`VO`/`VIO` prefixes |
-| block | `T1`…`T12` around the perimeter | default bbox `{-80,-80,160,160}`, resizable |
+| block | `T1`…`T12` around the perimeter | default bbox `{-80,-80,160,160}`, resizable in even cell counts |
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at `(0,-40)`, `(0,40)`, `(-40,0)`, `(40,0)` | bbox `{-40,-40,80,80}`, 40-unit-radius circle with plus or multiply mark; unused terminals do not fail Design Check; optional negative inputs are owned sign labels |
 
 All symbol linework is textbook style: butt-ended normal symbol strokes,

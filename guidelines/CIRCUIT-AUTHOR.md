@@ -324,7 +324,7 @@ geometry; the rules for how to lay them out are in `style-guide.md`.
   while the current design has unsaved changes; save first, or the selection is
   restored and an unsaved-changes warning is logged.
 - In armed Move or Copy mode, drag from empty space to box-select the complete set before clicking to enter ghost mode; labels remain part of mixed selections.
-- `l` starts a non-connectivity multi-point line annotation; click successive points and press Enter or double-click to commit. Selected line segments and vertices can be dragged.
+- `l` starts a non-connectivity multi-point line annotation and `a` a multi-point arrow; click successive points, then press Enter to end at the cursor (as for a wire) or double-click the last point. Backspace removes the last point, and holding Shift locks the leg from the previous point horizontal or vertical. Either tool places one annotation and returns to selection. Selected segments and vertices can be dragged; Shift squares a dragged end vertex against its neighbor. Shift/Ctrl-click adds a line or arrow to the selection or removes it.
 - `w` is the single managed Wire command. It supports orthogonal or diagonal
   routes and can start at a terminal, an existing wire, or any grid point.
   Clicking a terminal commits immediately; clicking elsewhere adds a route

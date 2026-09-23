@@ -927,19 +927,31 @@ export function editorOverlay(circuit, opts = {}) {
     if (c) parts.push(`<g class="equation-emphasis">${componentShapeSvg(c)}</g>`);
   }
 
-  // Resizable schematic blocks use the same eight-handle affordance as block
-  // diagrams. Handles live in the interaction overlay, so they never become
-  // selectable circuit geometry or affect bounds/routing.
-  for (const ref of opts.resizeBlocks || []) {
-    const c = circuit.components.get(ref);
-    if (!c || c.type !== 'block') continue;
-    const r = c.bboxWorld();
+  // Resizable schematic blocks and box annotations share one eight-handle
+  // affordance: the handles resize, the rest of the outline moves. Handles
+  // live in the interaction overlay, so they never become selectable circuit
+  // geometry or affect bounds/routing. They are appended last so no later
+  // overlay (a selection outline, a net glow) can cover and steal a press.
+  const handleParts = [];
+  // Handles keep a constant on-screen size (`handleScale` is world units per
+  // screen pixel): a 14 px mark inside a 28 px grab area.
+  const unit = Number.isFinite(opts.handleScale) && opts.handleScale > 0 ? opts.handleScale : 1;
+  const resizeHandles = (kind, id, name, r) => {
     const handles = [
       ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
       ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
       ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
     ];
-    parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
+    const square = (x, y, px) => `x="${fmt(x - px * unit / 2)}" y="${fmt(y - px * unit / 2)}" width="${fmt(px * unit)}" height="${fmt(px * unit)}"`;
+    return `<g class="resize-handles" data-resize-kind="${kind}" data-resize-id="${escapeSvg(id)}">${handles.map(([handle, x, y]) => `<g data-resize-handle="${handle}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(name)} ${handle}"><rect ${square(x, y, 28)} fill="transparent"/><rect ${square(x, y, 14)} rx="${fmt(2 * unit)}" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2" vector-effect="non-scaling-stroke"/></g>`).join('')}</g>`;
+  };
+  for (const ref of opts.resizeBlocks || []) {
+    const c = circuit.components.get(ref);
+    if (c?.type === 'block') handleParts.push(resizeHandles('component', c.refdes, c.refdes, c.bboxWorld()));
+  }
+  for (const id of opts.resizeBoxes || []) {
+    const label = circuit.labels.get(id);
+    if (label?.kind === 'box') handleParts.push(resizeHandles('annotation', label.id, 'box', label.bbox()));
   }
 
   // Selection centerlines are deliberately sky blue and dashed so they read
@@ -1087,6 +1099,13 @@ export function editorOverlay(circuit, opts = {}) {
     }
   }
 
+  // Arrow and line vertices are drag points: solid when the annotation is
+  // selected, hollow while the pointer rests on an unselected one.
+  const vertexHandles = (label, solid) => label.points.map((p) => `<circle class="annotation-vertex-handle" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(5 * unit)}" fill="${solid ? SELECT : 'var(--paper, #fff)'}" stroke="${solid ? 'var(--paper, #fff)' : SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`).join('');
+  const hoverAnnotation = opts.hoverAnnotation && !(opts.selLabels || []).includes(opts.hoverAnnotation)
+    ? circuit.labels.get(opts.hoverAnnotation) : null;
+  if (hoverAnnotation?.points) parts.push(vertexHandles(hoverAnnotation, false));
+
   if (opts.selLabels && opts.selLabels.length) {
     for (const id of opts.selLabels) {
       const label = circuit.labels.get(id);
@@ -1094,7 +1113,8 @@ export function editorOverlay(circuit, opts = {}) {
       const b = label.bbox();
       const a = label.anchorWorld();
       parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
-      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
+      if (label.points) parts.push(vertexHandles(label, true));
+      else if (label.kind !== 'box') parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
     }
   } else if (opts.selLabel) {
     const label = circuit.labels.get(opts.selLabel);
@@ -1320,5 +1340,6 @@ export function editorOverlay(circuit, opts = {}) {
     }
   }
 
+  parts.push(...handleParts);
   return parts.join('\n');
 }

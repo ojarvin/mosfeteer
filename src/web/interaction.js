@@ -6,20 +6,6 @@ export function moveAnnotationEndpoint(label, endpoint, p) {
   const oldPoints = label.points?.map((point) => ({ ...point }));
   if (['arrow', 'line'].includes(label.kind) && endpoint.startsWith('vertex:')) {
     label.moveVertex(Number(endpoint.slice(7)), p.x, p.y);
-  } else if (endpoint.startsWith('corner:')) {
-    const corner = endpoint.slice(7);
-    const x0 = Math.min(label.anchor.x, label.end.x);
-    const x1 = Math.max(label.anchor.x, label.end.x);
-    const y0 = Math.min(label.anchor.y, label.end.y);
-    const y1 = Math.max(label.anchor.y, label.end.y);
-    const fixed = {
-      'top-left': { x: x1, y: y1 },
-      'top-right': { x: x0, y: y1 },
-      'bottom-right': { x: x0, y: y0 },
-      'bottom-left': { x: x1, y: y0 },
-    }[corner];
-    label.anchor = p;
-    label.end = fixed;
   } else if (endpoint === 'start') {
     label.anchor = p;
     if (label.points?.length) label.points[0] = { ...p };
@@ -27,24 +13,62 @@ export function moveAnnotationEndpoint(label, endpoint, p) {
     label.end = p;
     if (label.points?.length) label.points[label.points.length - 1] = { ...p };
   }
-  else if (endpoint === 'left' || endpoint === 'right') {
-    const left = endpoint === 'left';
-    if ((label.anchor.x < label.end.x) === left) label.anchor.x = p.x;
-    else label.end.x = p.x;
-  } else {
-    const top = endpoint === 'top';
-    if ((label.anchor.y < label.end.y) === top) label.anchor.y = p.y;
-    else label.end.y = p.y;
-  }
   const invalid = label.kind === 'arrow'
-    ? Math.hypot(label.anchor.x - label.end.x, label.anchor.y - label.end.y) < GRID * 2
-    : label.kind === 'box' && (label.anchor.x === label.end.x || label.anchor.y === label.end.y);
+    && Math.hypot(label.anchor.x - label.end.x, label.anchor.y - label.end.y) < GRID * 2;
   if (invalid) {
     label.anchor = oldAnchor;
     label.end = oldEnd;
     if (oldPoints) label.points = oldPoints;
   }
   return !invalid;
+}
+
+/** The rectangle a resize handle drag produces. `handle` names the moved
+ * edges (`n`, `ne`, `e`, ... `nw`); the others stay put, or, with `symmetric`
+ * (Ctrl held), mirror the moved edges about the rectangle's center. Edges snap
+ * to the grid, a one-sided drag keeps the size a multiple of `step`, and no
+ * side closes below `min`. The center may sit on a half cell, but twice it is
+ * always on the grid, so mirrored edges stay grid-aligned. */
+export function resizeRect(rect, handle, world, { symmetric = false, min = 2 * GRID, step = GRID } = {}) {
+  const p = { x: snap(world.x), y: snap(world.y) };
+  let x0 = rect.x; let y0 = rect.y; let x1 = rect.x + rect.w; let y1 = rect.y + rect.h;
+  if (symmetric) {
+    // Mirroring a grid point through a center whose double is on the grid
+    // lands on the grid, so only the minimum-size clamp needs rounding.
+    const mirrored = (moved, sum) => {
+      const c = sum / 2;
+      const far = Math.max(c + Math.abs(moved - c), Math.ceil((c + min / 2) / GRID) * GRID);
+      return [sum - far, far];
+    };
+    if (/[we]/.test(handle)) [x0, x1] = mirrored(p.x, x0 + x1);
+    if (/[ns]/.test(handle)) [y0, y1] = mirrored(p.y, y0 + y1);
+  } else {
+    const span = (d) => Math.max(min, Math.round(d / step) * step);
+    if (handle.includes('w')) x0 = x1 - span(x1 - p.x);
+    if (handle.includes('e')) x1 = x0 + span(p.x - x0);
+    if (handle.includes('n')) y0 = y1 - span(y1 - p.y);
+    if (handle.includes('s')) y1 = y0 + span(p.y - y0);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** How far a child label's anchor must move after its box changes size
+ * (`before` to `after`, both centered on the anchor) to keep the edge that was
+ * flush against its parent. `reach` is the parent's extent: an arrow's start
+ * point or a box's rectangle. A caption left of an arrow's start keeps its
+ * right edge on the start; a title above a box keeps its bottom edge on the
+ * top. An edge that was not flush grows symmetrically, as before. */
+export function attachedEdgeShift(before, after, reach) {
+  const axis = (lo, size, nextSize, reachLo, reachHi) => {
+    const half = (nextSize - size) / 2;
+    if (lo + size === reachLo) return -half;
+    if (lo === reachHi) return half;
+    return 0;
+  };
+  return {
+    dx: axis(before.x, before.w, after.w, reach.x0, reach.x1),
+    dy: axis(before.y, before.h, after.h, reach.y0, reach.y1),
+  };
 }
 
 /** A label's anchor is the center of its box, so re-measuring its text moves
