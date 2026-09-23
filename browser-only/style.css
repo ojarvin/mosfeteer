@@ -1569,15 +1569,17 @@ button:disabled {
   border: 0 !important;
 }
 
-.canvas svg .component-resize-handles rect { cursor: nwse-resize; pointer-events: all; }
-.canvas svg .component-resize-handles rect[data-component-handle="n"],
-.canvas svg .component-resize-handles rect[data-component-handle="s"] { cursor: ns-resize; }
-.canvas svg .component-resize-handles rect[data-component-handle="e"],
-.canvas svg .component-resize-handles rect[data-component-handle="w"] { cursor: ew-resize; }
-.canvas svg .component-resize-handles rect[data-component-handle="ne"],
-.canvas svg .component-resize-handles rect[data-component-handle="sw"] { cursor: nesw-resize; }
-.canvas svg .component-resize-handles rect[data-component-handle="nw"],
-.canvas svg .component-resize-handles rect[data-component-handle="se"] { cursor: nwse-resize; }
+.canvas svg .resize-handles rect { pointer-events: all; }
+.canvas svg .resize-handles [data-resize-handle="n"],
+.canvas svg .resize-handles [data-resize-handle="s"] { cursor: ns-resize; }
+.canvas svg .resize-handles [data-resize-handle="e"],
+.canvas svg .resize-handles [data-resize-handle="w"] { cursor: ew-resize; }
+.canvas svg .resize-handles [data-resize-handle="ne"],
+.canvas svg .resize-handles [data-resize-handle="sw"] { cursor: nesw-resize; }
+.canvas svg .resize-handles [data-resize-handle="nw"],
+.canvas svg .resize-handles [data-resize-handle="se"] { cursor: nwse-resize; }
+/* The outline of a resizable object away from its handles moves it. */
+.canvas.hover-move svg { cursor: move; }
 
 /* Placement/move target: intentionally lighter than selection and wire
    overlays, while still using the editor's established blue accent. */

@@ -11511,6 +11511,13 @@ const REFERENCE_MARKER_INFO = Object.freeze({
 // Keep `GND` as a compatibility alias; new unnamed ground markers use `VSS`.
 const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.freeze(['GND']) });
 
+// A schematic block's origin is its center. An even number of cells per side
+// keeps that center, and so every perimeter terminal after a snapped move or
+// rotation, on the grid.
+function blockSpan(value) {
+  return Math.max(2 * GRID, Math.ceil(snap(Number(value)) / (2 * GRID)) * 2 * GRID);
+}
+
 const SIGNAL_FLOW_TYPES = new Set(['signal_sum', 'signal_multiply']);
 const SIGNAL_INPUT_SIGN_ROLE = 'signal-input-sign';
 
@@ -12278,6 +12285,9 @@ class LabelInstance {
 
   clearRenderedTextBounds() {
     if (!this._renderedTextBounds && !this._mathBox) return false;
+    // The last measured box, so the editor can keep an edge that was flush
+    // against a parent arrow or box when the new text is measured.
+    this._boxBeforeEdit = this.bbox();
     this._renderedTextBounds = null;
     this._mathBox = null;
     this.circuit.invalidateRoutingCache();
@@ -12414,6 +12424,36 @@ class LabelInstance {
     this.circuit.invalidateRoutingCache();
   }
 
+  /** Resize a box annotation to a world rectangle. Its text and child labels
+   * keep their place relative to the box: on each axis a point stays at its
+   * distance from whichever of the near edge, center, or far edge it was
+   * closest to, so a title above the box, a caption in a corner, and centered
+   * text all read the same after the resize. */
+  resizeBox(rect) {
+    if (this.kind !== 'box') return false;
+    const next = { x0: snap(rect.x), y0: snap(rect.y), x1: snap(rect.x + rect.w), y1: snap(rect.y + rect.h) };
+    if (next.x1 <= next.x0 || next.y1 <= next.y0) return false;
+    const prev = {
+      x0: Math.min(this.anchor.x, this.end.x), x1: Math.max(this.anchor.x, this.end.x),
+      y0: Math.min(this.anchor.y, this.end.y), y1: Math.max(this.anchor.y, this.end.y),
+    };
+    const follow = (v, a0, a1, b0, b1) => {
+      const refs = [[a0, b0], [(a0 + a1) / 2, (b0 + b1) / 2], [a1, b1]];
+      const [from, to] = refs.reduce((best, ref) => (Math.abs(v - ref[0]) < Math.abs(v - best[0]) ? ref : best));
+      const out = snap(to + v - from);
+      return v >= a0 && v <= a1 ? Math.min(b1, Math.max(b0, out)) : out;
+    };
+    const place = (p) => ({ x: follow(p.x, prev.x0, prev.x1, next.x0, next.x1), y: follow(p.y, prev.y0, prev.y1, next.y0, next.y1) });
+    this.textAnchor = place(this.textAnchor);
+    for (const label of this.circuit.labels.values()) {
+      if (label.parent === this.id) label.anchor = place(label.anchor);
+    }
+    this.anchor = { x: next.x0, y: next.y0 };
+    this.end = { x: next.x1, y: next.y1 };
+    this.circuit.invalidateRoutingCache();
+    return true;
+  }
+
   moveSegment(index, dx, dy) {
     if (!['arrow', 'line'].includes(this.kind) || !Number.isInteger(index) || index < 1 || index >= this.points.length) return false;
     for (const point of [this.points[index - 1], this.points[index]]) {
@@ -12513,10 +12553,13 @@ class ComponentInstance {
     // Schematic blocks are the one resizable symbol. Keep their geometry and
     // perimeter terminal slots on the instance rather than mutating the shared
     // symbol definition (which would resize every block in the document).
+    // A saved size is kept as authored: widening a legacy odd-sized block on
+    // load would move its edges off the grid. Its next resize evens it.
+    const span = opts.blockTerminals ? (v) => Math.max(2 * GRID, snap(v)) : blockSpan;
     this.blockSize = this.type === 'block'
       ? {
-          w: Math.max(2 * GRID, snap(opts.blockSize?.w ?? opts.width ?? 160)),
-          h: Math.max(2 * GRID, snap(opts.blockSize?.h ?? opts.height ?? 160)),
+          w: span(opts.blockSize?.w ?? opts.width ?? 160),
+          h: span(opts.blockSize?.h ?? opts.height ?? 160),
         }
       : null;
     this.blockTerminals = this.type === 'block'
@@ -12566,8 +12609,8 @@ class ComponentInstance {
     if (this.type !== 'block') throw new Error(`component ${this.refdes} is not a schematic block`);
     const old = { ...this.blockSize };
     const next = {
-      w: Math.max(2 * GRID, snap(Number(size.w ?? old.w))),
-      h: Math.max(2 * GRID, snap(Number(size.h ?? old.h))),
+      w: blockSpan(size.w ?? old.w),
+      h: blockSpan(size.h ?? old.h),
     };
     if (![next.w, next.h].every(Number.isFinite)) throw new Error('block size must be finite');
     const connected = new Set();
@@ -13380,6 +13423,16 @@ class Circuit {
       if (y > oldRect.y && bottom >= oldRect.y + oldRect.h) y = bottom - 2 * GRID;
       else if (bottom < oldRect.y + oldRect.h && y <= oldRect.y) bottom = y + 2 * GRID;
       else { y = oldRect.y; bottom = oldRect.y + oldRect.h; }
+    }
+    // Round an odd span up by one cell on the side that moved; growing never
+    // crosses an occupied terminal.
+    if ((right - x) % (2 * GRID)) {
+      if (x !== oldRect.x) x -= GRID;
+      else right += GRID;
+    }
+    if ((bottom - y) % (2 * GRID)) {
+      if (y !== oldRect.y) y -= GRID;
+      else bottom += GRID;
     }
     w = right - x;
     h = bottom - y;
@@ -18233,19 +18286,31 @@ function editorOverlay(circuit, opts = {}) {
     if (c) parts.push(`<g class="equation-emphasis">${componentShapeSvg(c)}</g>`);
   }
 
-  // Resizable schematic blocks use the same eight-handle affordance as block
-  // diagrams. Handles live in the interaction overlay, so they never become
-  // selectable circuit geometry or affect bounds/routing.
-  for (const ref of opts.resizeBlocks || []) {
-    const c = circuit.components.get(ref);
-    if (!c || c.type !== 'block') continue;
-    const r = c.bboxWorld();
+  // Resizable schematic blocks and box annotations share one eight-handle
+  // affordance: the handles resize, the rest of the outline moves. Handles
+  // live in the interaction overlay, so they never become selectable circuit
+  // geometry or affect bounds/routing. They are appended last so no later
+  // overlay (a selection outline, a net glow) can cover and steal a press.
+  const handleParts = [];
+  // Handles keep a constant on-screen size (`handleScale` is world units per
+  // screen pixel): a 14 px mark inside a 28 px grab area.
+  const unit = Number.isFinite(opts.handleScale) && opts.handleScale > 0 ? opts.handleScale : 1;
+  const resizeHandles = (kind, id, name, r) => {
     const handles = [
       ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
       ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
       ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
     ];
-    parts.push(`<g class="component-resize-handles" data-component-resize-id="${escapeSvg(c.refdes)}">${handles.map(([name, x, y]) => `<rect data-component-handle="${name}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(c.refdes)} ${name}" x="${fmt(x - 7)}" y="${fmt(y - 7)}" width="14" height="14" rx="2" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2"/>`).join('')}</g>`);
+    const square = (x, y, px) => `x="${fmt(x - px * unit / 2)}" y="${fmt(y - px * unit / 2)}" width="${fmt(px * unit)}" height="${fmt(px * unit)}"`;
+    return `<g class="resize-handles" data-resize-kind="${kind}" data-resize-id="${escapeSvg(id)}">${handles.map(([handle, x, y]) => `<g data-resize-handle="${handle}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(name)} ${handle}"><rect ${square(x, y, 28)} fill="transparent"/><rect ${square(x, y, 14)} rx="${fmt(2 * unit)}" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2" vector-effect="non-scaling-stroke"/></g>`).join('')}</g>`;
+  };
+  for (const ref of opts.resizeBlocks || []) {
+    const c = circuit.components.get(ref);
+    if (c?.type === 'block') handleParts.push(resizeHandles('component', c.refdes, c.refdes, c.bboxWorld()));
+  }
+  for (const id of opts.resizeBoxes || []) {
+    const label = circuit.labels.get(id);
+    if (label?.kind === 'box') handleParts.push(resizeHandles('annotation', label.id, 'box', label.bbox()));
   }
 
   // Selection centerlines are deliberately sky blue and dashed so they read
@@ -18393,6 +18458,13 @@ function editorOverlay(circuit, opts = {}) {
     }
   }
 
+  // Arrow and line vertices are drag points: solid when the annotation is
+  // selected, hollow while the pointer rests on an unselected one.
+  const vertexHandles = (label, solid) => label.points.map((p) => `<circle class="annotation-vertex-handle" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(5 * unit)}" fill="${solid ? SELECT : 'var(--paper, #fff)'}" stroke="${solid ? 'var(--paper, #fff)' : SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`).join('');
+  const hoverAnnotation = opts.hoverAnnotation && !(opts.selLabels || []).includes(opts.hoverAnnotation)
+    ? circuit.labels.get(opts.hoverAnnotation) : null;
+  if (hoverAnnotation?.points) parts.push(vertexHandles(hoverAnnotation, false));
+
   if (opts.selLabels && opts.selLabels.length) {
     for (const id of opts.selLabels) {
       const label = circuit.labels.get(id);
@@ -18400,7 +18472,8 @@ function editorOverlay(circuit, opts = {}) {
       const b = label.bbox();
       const a = label.anchorWorld();
       parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
-      parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
+      if (label.points) parts.push(vertexHandles(label, true));
+      else if (label.kind !== 'box') parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
     }
   } else if (opts.selLabel) {
     const label = circuit.labels.get(opts.selLabel);
@@ -18626,6 +18699,7 @@ function editorOverlay(circuit, opts = {}) {
     }
   }
 
+  parts.push(...handleParts);
   return parts.join('\n');
 }
 
@@ -22122,20 +22196,6 @@ function moveAnnotationEndpoint(label, endpoint, p) {
   const oldPoints = label.points?.map((point) => ({ ...point }));
   if (['arrow', 'line'].includes(label.kind) && endpoint.startsWith('vertex:')) {
     label.moveVertex(Number(endpoint.slice(7)), p.x, p.y);
-  } else if (endpoint.startsWith('corner:')) {
-    const corner = endpoint.slice(7);
-    const x0 = Math.min(label.anchor.x, label.end.x);
-    const x1 = Math.max(label.anchor.x, label.end.x);
-    const y0 = Math.min(label.anchor.y, label.end.y);
-    const y1 = Math.max(label.anchor.y, label.end.y);
-    const fixed = {
-      'top-left': { x: x1, y: y1 },
-      'top-right': { x: x0, y: y1 },
-      'bottom-right': { x: x0, y: y0 },
-      'bottom-left': { x: x1, y: y0 },
-    }[corner];
-    label.anchor = p;
-    label.end = fixed;
   } else if (endpoint === 'start') {
     label.anchor = p;
     if (label.points?.length) label.points[0] = { ...p };
@@ -22143,24 +22203,62 @@ function moveAnnotationEndpoint(label, endpoint, p) {
     label.end = p;
     if (label.points?.length) label.points[label.points.length - 1] = { ...p };
   }
-  else if (endpoint === 'left' || endpoint === 'right') {
-    const left = endpoint === 'left';
-    if ((label.anchor.x < label.end.x) === left) label.anchor.x = p.x;
-    else label.end.x = p.x;
-  } else {
-    const top = endpoint === 'top';
-    if ((label.anchor.y < label.end.y) === top) label.anchor.y = p.y;
-    else label.end.y = p.y;
-  }
   const invalid = label.kind === 'arrow'
-    ? Math.hypot(label.anchor.x - label.end.x, label.anchor.y - label.end.y) < GRID * 2
-    : label.kind === 'box' && (label.anchor.x === label.end.x || label.anchor.y === label.end.y);
+    && Math.hypot(label.anchor.x - label.end.x, label.anchor.y - label.end.y) < GRID * 2;
   if (invalid) {
     label.anchor = oldAnchor;
     label.end = oldEnd;
     if (oldPoints) label.points = oldPoints;
   }
   return !invalid;
+}
+
+/** The rectangle a resize handle drag produces. `handle` names the moved
+ * edges (`n`, `ne`, `e`, ... `nw`); the others stay put, or, with `symmetric`
+ * (Ctrl held), mirror the moved edges about the rectangle's center. Edges snap
+ * to the grid, a one-sided drag keeps the size a multiple of `step`, and no
+ * side closes below `min`. The center may sit on a half cell, but twice it is
+ * always on the grid, so mirrored edges stay grid-aligned. */
+function resizeRect(rect, handle, world, { symmetric = false, min = 2 * GRID, step = GRID } = {}) {
+  const p = { x: snap(world.x), y: snap(world.y) };
+  let x0 = rect.x; let y0 = rect.y; let x1 = rect.x + rect.w; let y1 = rect.y + rect.h;
+  if (symmetric) {
+    // Mirroring a grid point through a center whose double is on the grid
+    // lands on the grid, so only the minimum-size clamp needs rounding.
+    const mirrored = (moved, sum) => {
+      const c = sum / 2;
+      const far = Math.max(c + Math.abs(moved - c), Math.ceil((c + min / 2) / GRID) * GRID);
+      return [sum - far, far];
+    };
+    if (/[we]/.test(handle)) [x0, x1] = mirrored(p.x, x0 + x1);
+    if (/[ns]/.test(handle)) [y0, y1] = mirrored(p.y, y0 + y1);
+  } else {
+    const span = (d) => Math.max(min, Math.round(d / step) * step);
+    if (handle.includes('w')) x0 = x1 - span(x1 - p.x);
+    if (handle.includes('e')) x1 = x0 + span(p.x - x0);
+    if (handle.includes('n')) y0 = y1 - span(y1 - p.y);
+    if (handle.includes('s')) y1 = y0 + span(p.y - y0);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** How far a child label's anchor must move after its box changes size
+ * (`before` to `after`, both centered on the anchor) to keep the edge that was
+ * flush against its parent. `reach` is the parent's extent: an arrow's start
+ * point or a box's rectangle. A caption left of an arrow's start keeps its
+ * right edge on the start; a title above a box keeps its bottom edge on the
+ * top. An edge that was not flush grows symmetrically, as before. */
+function attachedEdgeShift(before, after, reach) {
+  const axis = (lo, size, nextSize, reachLo, reachHi) => {
+    const half = (nextSize - size) / 2;
+    if (lo + size === reachLo) return -half;
+    if (lo === reachHi) return half;
+    return 0;
+  };
+  return {
+    dx: axis(before.x, before.w, after.w, reach.x0, reach.x1),
+    dy: axis(before.y, before.h, after.h, reach.y0, reach.y1),
+  };
 }
 
 /** A label's anchor is the center of its box, so re-measuring its text moves
@@ -22293,6 +22391,8 @@ function constrainAxis(start, current, enabled = true) {
 }
 
 __exports.moveAnnotationEndpoint = moveAnnotationEndpoint;
+__exports.resizeRect = resizeRect;
+__exports.attachedEdgeShift = attachedEdgeShift;
 __exports.alignedAnchorShift = alignedAnchorShift;
 __exports.viewFollowingCursor = viewFollowingCursor;
 __exports.isSelectionModifier = isSelectionModifier;
@@ -22769,7 +22869,7 @@ const { createPersistenceAdapter, defaultExportDirectory, validDocumentName } = 
 const { confirmChoice, showFileDialog } = __require("src/web/file-dialog.js");
 const { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js");
 const { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js");
-const { alignedAnchorShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js");
+const { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js");
 const { chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js");
 const { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js");
 const { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js");
@@ -25199,14 +25299,7 @@ function annotationEndpointAt(world) {
       const index = label.points.findIndex((point) => Math.abs(p.x - point.x) <= GRID / 2 && Math.abs(p.y - point.y) <= GRID / 2);
       if (index >= 0) return { label, endpoint: `vertex:${index}` };
     }
-    if (!['arrow', 'box'].includes(label.kind)) continue;
-    if (label.kind === 'box') {
-      const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
-      const y0 = Math.min(label.anchor.y, label.end.y); const y1 = Math.max(label.anchor.y, label.end.y);
-      const corners = [['top-left', x0, y0], ['top-right', x1, y0], ['bottom-right', x1, y1], ['bottom-left', x0, y1]];
-      const hit = corners.find(([, x, y]) => Math.abs(p.x - x) <= GRID / 2 && Math.abs(p.y - y) <= GRID / 2);
-      if (hit) return { label, endpoint: `corner:${hit[0]}` };
-    }
+    if (label.kind !== 'arrow') continue;
     for (const endpoint of ['start', 'end']) {
       const q = endpoint === 'start' ? label.anchor : label.end;
       if (Math.abs(p.x - q.x) <= GRID / 2 && Math.abs(p.y - q.y) <= GRID / 2) return { label, endpoint };
@@ -26297,27 +26390,47 @@ function placeEquationAt(world) {
   inlineEditLabel(label, { equationDraft: true });
 }
 
-function commitLineAnnotation() {
-  if (annotationPoints.length < 2) return false;
+/** The next point of a line or arrow draft under `world`. Shift locks the
+ * leg from the previous point to horizontal or vertical, as it locks a move. */
+function draftPointAt(world, shiftKey) {
+  const point = snappedWorld(world);
+  const previous = annotationPoints.at(-1) || annotationStart;
+  return shiftKey && previous && (labelMode === 'line' || labelMode === 'arrow') ? constrainAxis(previous, point) : point;
+}
+
+/** A drafted line or arrow's points. Enter commits at the cursor, as it does
+ * for wires, so the cursor is the final point unless it repeats the last
+ * click (a double-click has already added it). */
+function draftAnnotationPoints(includeCursor) {
+  const points = annotationPoints.map((point) => ({ ...point }));
+  const tail = points.at(-1);
+  if (includeCursor && tail && (tail.x !== cursor.x || tail.y !== cursor.y)) points.push({ ...cursor });
+  return points;
+}
+
+function commitLineAnnotation(includeCursor = true) {
+  const points = draftAnnotationPoints(includeCursor);
+  if (points.length < 2) return false;
   let annotation;
-  commit(() => { annotation = circuit.addAnnotation('line', { points: annotationPoints }); });
+  commit(() => { annotation = circuit.addAnnotation('line', { points }); });
+  if (!annotation) return false; // rejected (too short); keep drafting
   setSelection([]);
   setLabelSelection([annotation.id]);
-  logLine(`placed line annotation with ${annotationPoints.length} points`);
+  logLine(`placed line annotation with ${points.length} points`);
   annotationPoints = [];
   lastLineClick = null;
+  // Like every annotation tool, a line is placed once, then back to selection.
+  labelMode = null;
   render();
   return true;
 }
 
 function commitArrowAnnotation(includeCursor = true) {
-  if (annotationPoints.length < 2) return false;
-  const points = annotationPoints.map((point) => ({ ...point }));
-  const tail = points.at(-1);
-  if (includeCursor && (!tail || tail.x !== cursor.x || tail.y !== cursor.y)) points.push({ ...cursor });
+  const points = draftAnnotationPoints(includeCursor);
   if (points.length < 2) return false;
   let annotation;
   commit(() => { annotation = circuit.addAnnotation('arrow', { points, text: 'label' }); });
+  if (!annotation) return false; // rejected (too short); keep drafting
   setSelection([]);
   setLabelSelection([annotation.id]);
   logLine(`placed arrow with ${points.length} points`);
@@ -26338,7 +26451,7 @@ function placeShapeAnnotation(world, endOverride = null) {
     if (!annotationStart) {
       annotationStart = point;
       annotationPoints = [point];
-      hintLine('ARROW: choose intermediate/end points; press Enter to commit');
+      hintLine('ARROW: click intermediate points; Enter ends at the cursor');
       render();
       return false;
     }
@@ -26346,7 +26459,7 @@ function placeShapeAnnotation(world, endOverride = null) {
     const next = endOverride || point;
     const previous = annotationPoints.at(-1);
     if (!previous || previous.x !== next.x || previous.y !== next.y) annotationPoints.push(next);
-    hintLine(`arrow point ${annotationPoints.length}; press Enter to commit`);
+    hintLine(`arrow point ${annotationPoints.length}; Enter ends at the cursor, Backspace removes a point`);
     render();
     return false;
   }
@@ -27085,6 +27198,13 @@ if (!mathFontReady) {
 // are even cell multiples, so half a change stays on the grid.
 function keepAlignedEdge(label, before) {
   if (label.netId || label.owner) return; // anchored to a wire or a component
+  const parent = label.parent ? circuit.labels.get(label.parent) : null;
+  const reach = parent ? annotationReach(parent) : null;
+  if (reach) {
+    const { dx, dy } = attachedEdgeShift(before, label.bbox(), reach);
+    if (dx || dy) label.moveTo(label.anchor.x + dx, label.anchor.y + dy);
+    return;
+  }
   const shift = alignedAnchorShift(label.align, before.w, label.bbox().w);
   if (!shift) return;
   const anchor = label.anchorWorld();
@@ -27113,7 +27233,11 @@ function syncRenderedLabelMetrics() {
     const group = groups.get(label.id);
     const bounds = renderedLabelTextBounds(group);
     if (!bounds) continue;
-    const before = label.bbox();
+    // A caption's edge against its parent was set by the box it had before
+    // this text: the placement estimate for new text, the last measurement
+    // after an edit.
+    const before = (label.parent && label._boxBeforeEdit) || label.bbox();
+    label._boxBeforeEdit = null;
     if (!label.setRenderedTextBounds(bounds.w, bounds.h)) continue;
     keepAlignedEdge(label, before);
     changed = true;
@@ -27299,6 +27423,9 @@ function renderCanvas(modelKey) {
       const component = circuit.components.get(ref);
       return component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY;
     }),
+    resizeBoxes: [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box'),
+    hoverAnnotation: drag ? null : hoverAnnotationId,
+    handleScale: (() => { const p = paneSize(); return p ? view.w / p.w : 1; })(),
     ghostTwin,
     symmetryAxis,
     centerGuides: placementGuide?.guides.length ? null : selectionCenterBounds(),
@@ -27393,6 +27520,8 @@ function applyCanvasViewport() {
 let hoverTarget = null; // { kind:'net', ids } | { kind:'component', refdes }
 let hoverFromPanel = false;
 let hoverPinsRef = null; // component whose pins show drag handles in Select mode
+let hoverAnnotationId = null; // arrow/line whose vertex handles show in Select mode
+let hoverMove = false; // pointer rests where a press moves a block or box
 
 /** Parts that stand for a net itself: the reference markers (ground, supply,
  * VCM) and interface ports on it. A net highlight, selected or hovered, glows
@@ -27437,10 +27566,26 @@ function updateCanvasHover(w) {
   const quiet = mode === 'insert' || (labelMode && labelMode !== 'highlight') || visual || quickAdd;
   const selecting = !quiet && !wire && !directWire && !moveMode && !copyMode && !deleteMode;
   const hit = selecting ? pickAt(w) : null;
-  const pinsRef = hit?.refdes && isPinDragCandidate(circuit.components.get(hit.refdes)?.def) ? hit.refdes : null;
-  if (pinsRef !== hoverPinsRef) {
+  const hitComponent = hit?.refdes ? circuit.components.get(hit.refdes) : null;
+  // A selected block shows resize handles on its outline; pin handles there
+  // would sit on top of them.
+  const pinsRef = hitComponent && isPinDragCandidate(hitComponent.def) &&
+    !(hitComponent.type === 'block' && multi.has(hitComponent.refdes)) ? hitComponent.refdes : null;
+  // Mirror canvasMouseDown's order: annotation drag points and outlines are
+  // picked before labels and components.
+  const annotation = selecting ? annotationEndpointAt(w)?.label || annotationGeometryAt(w) : null;
+  const annotationId = annotation && ['arrow', 'line'].includes(annotation.kind) ? annotation.id : null;
+  if (pinsRef !== hoverPinsRef || annotationId !== hoverAnnotationId) {
     hoverPinsRef = pinsRef;
+    hoverAnnotationId = annotationId;
     scheduleInteractionRender();
+  }
+  const move = annotation
+    ? annotation.kind === 'box' && !annotationTextAt(w)
+    : !!(hitComponent?.type === 'block' && !hit.term && !pickLabel(w));
+  if (move !== hoverMove) {
+    hoverMove = move;
+    canvasEl.classList.toggle('hover-move', move);
   }
   let net = null;
   if (!quiet) {
@@ -27484,6 +27629,18 @@ function allWirePaths() {
 }
 
 /** The drawn outline of a box, line, or arrow annotation, or null for text. */
+/** The part of an arrow or box its captions attach to: an arrow's start
+ * point, where addAnnotation places the caption, or the box's rectangle. */
+function annotationReach(label) {
+  if (label.kind === 'arrow' && label.points?.length) {
+    const a = label.points[0];
+    return { x0: a.x, x1: a.x, y0: a.y, y1: a.y };
+  }
+  if (label.kind !== 'box') return null;
+  const b = label.bbox();
+  return { x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h };
+}
+
 function annotationOutline(label) {
   if (['line', 'arrow'].includes(label.kind)) return label.points || null;
   if (label.kind !== 'box') return null;
@@ -28927,16 +29084,17 @@ function canvasMouseDown(ev) {
     return;
   }
   if (b !== 0) return;
-  const blockHandle = ev.target.closest?.('[data-component-handle]');
-  if (blockHandle) {
-    const refdes = blockHandle.closest?.('[data-component-resize-id]')?.dataset.componentResizeId;
-    const component = refdes && circuit.components.get(refdes);
+  const handle = ev.target.closest?.('[data-resize-handle]');
+  const handleOwner = handle?.closest?.('[data-resize-id]');
+  if (handleOwner?.dataset.resizeKind === 'component') {
+    const refdes = handleOwner.dataset.resizeId;
+    const component = circuit.components.get(refdes);
     if (component?.type === 'block') {
       const origin = component.bboxWorld();
       setSelection([refdes]);
       setLabelSelection([]);
       drag = {
-        mode: 'blockresize', refdes, handle: blockHandle.dataset.componentHandle,
+        mode: 'blockresize', refdes, handle: handle.dataset.resizeHandle,
         startWorld, startClient, origin, startSnapshot: snapshot(), moved: false,
       };
       try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
@@ -28944,6 +29102,21 @@ function canvasMouseDown(ev) {
       return;
     }
   }
+  if (handleOwner?.dataset.resizeKind === 'annotation') {
+    const label = circuit.labels.get(handleOwner.dataset.resizeId);
+    if (label?.kind === 'box') {
+      setSelection([]);
+      setLabelSelection([label.id]);
+      drag = {
+        mode: 'boxresize', label, handle: handle.dataset.resizeHandle,
+        startWorld, startClient, origin: label.bbox(), startBox: boxState(label), startSnapshot: snapshot(), moved: false,
+      };
+      try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
+      render();
+      return;
+    }
+  }
+
   if (deleteMode) {
     // Defer the click action until mouseup so a real drag can form a box.
     // A stationary click keeps the existing Delete-mode semantics.
@@ -28995,7 +29168,7 @@ function canvasMouseDown(ev) {
   const openEndpoint = openFixedEndpointAt(startWorld);
 
   if (labelMode === 'line') {
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    cursor = draftPointAt(startWorld, ev.shiftKey);
     drag = { mode: 'annotationlineplace', startClient, startWorld, moved: false, previewEnd: { ...cursor }, rubber: null };
     return;
   }
@@ -29003,7 +29176,7 @@ function canvasMouseDown(ev) {
     // Keep the cursor and preview anchored to the actual press. When a first
     // click has already established annotationStart, the next press begins
     // with its endpoint visible before any movement occurs.
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    cursor = draftPointAt(startWorld, ev.shiftKey);
     drag = {
       mode: 'annotationplace',
       startClient,
@@ -29169,6 +29342,13 @@ function canvasMouseDown(ev) {
     return;
   }
   const endpointHit = annotationEndpointAt(startWorld);
+  const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
+  const pickedLine = endpointHit?.label || annotationSegment?.label;
+  if (pickedLine && isSelectionModifier(ev)) {
+    applyEditorSelection({ kind: 'label', id: pickedLine.id }, true);
+    render();
+    return;
+  }
   if (endpointHit) {
     setSelection([]);
     setLabelSelection([endpointHit.label.id]);
@@ -29194,7 +29374,6 @@ function canvasMouseDown(ev) {
     render();
     return;
   }
-  const annotationSegment = annotationSegmentAt(startWorld);
   if (annotationSegment) {
     setSelection([]);
     setLabelSelection([annotationSegment.label.id]);
@@ -29985,7 +30164,8 @@ function canvasMouseMove(ev) {
     updateCanvasHover(w);
     // The cursor follows the mouse, always snapped to the nearest grid point.
     // The view never pans on its own — pan manually with the middle button.
-    const point = mode === 'insert' && pendingPlace ? placementWorld(w, ev.shiftKey) : w;
+    const point = mode === 'insert' && pendingPlace ? placementWorld(w, ev.shiftKey)
+      : labelMode === 'line' || labelMode === 'arrow' ? draftPointAt(w, ev.shiftKey) : w;
     const nextCursor = cursorWorld(point);
     const changed = nextCursor.x !== cursor.x || nextCursor.y !== cursor.y;
     cursor = nextCursor;
@@ -30029,7 +30209,7 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'blockresize') {
     if (!movedOut) return;
     drag.moved = true;
-    const rect = blockResizeRect(drag.origin, drag.handle, movedWorld);
+    const rect = resizeRect(drag.origin, drag.handle, movedWorld, { symmetric: ev.ctrlKey || ev.metaKey, step: 2 * GRID });
     const rectKey = `${rect.x},${rect.y},${rect.w},${rect.h}`;
     if (drag.appliedRect === rectKey) return; // same snapped rectangle as the last preview
     drag.appliedRect = rectKey;
@@ -30048,6 +30228,17 @@ function canvasMouseMove(ev) {
       drag.previewRevision = (drag.previewRevision || 0) + 1;
       renderCanvas(`${modelRevision}:blockresize:${drag.previewRevision}`);
     }
+    return;
+  }
+  if (drag.mode === 'boxresize') {
+    if (!movedOut && !drag.moved) return;
+    drag.moved = true;
+    // Resize from the pointer-down state every frame, so child labels follow
+    // the box without accumulating grid rounding.
+    restoreBoxState(drag.label, drag.startBox);
+    drag.label.resizeBox(resizeRect(drag.origin, drag.handle, movedWorld, { symmetric: ev.ctrlKey || ev.metaKey, min: GRID }));
+    markModelChanged(false);
+    scheduleInteractionRender();
     return;
   }
   if (drag.mode === 'diagonalseg') {
@@ -30069,7 +30260,7 @@ function canvasMouseMove(ev) {
   }
   if (drag.mode === 'annotationlineplace') {
     if (movedOut) drag.moved = true;
-    drag.previewEnd = snappedWorld(movedWorld);
+    drag.previewEnd = draftPointAt(w, ev.shiftKey);
     cursor = { ...drag.previewEnd };
     scheduleInteractionRender();
     return;
@@ -30077,7 +30268,7 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationplace') {
     if (movedOut) drag.moved = true;
     if (annotationStart || drag.moved) {
-      drag.previewEnd = snappedWorld(movedWorld);
+      drag.previewEnd = labelMode === 'box' ? snappedWorld(movedWorld) : draftPointAt(w, ev.shiftKey);
       cursor = { ...drag.previewEnd };
       scheduleInteractionRender();
     }
@@ -30111,7 +30302,14 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'annotationendpoint') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
-      const point = snappedWorld(movedWorld);
+      // Shift squares an end leg against its neighbor; an inner vertex has two
+      // legs, so it keeps the move's axis lock instead.
+      const index = Number(drag.endpoint.slice(7));
+      const points = drag.label.points || [];
+      const neighbor = drag.endpoint.startsWith('vertex:') && points.length > 1
+        ? index === 0 ? points[1] : index === points.length - 1 ? points[index - 1] : null
+        : null;
+      const point = ev.shiftKey && neighbor ? constrainAxis(neighbor, snappedWorld(w)) : snappedWorld(movedWorld);
       moveAnnotationEndpoint(drag.label, drag.endpoint, point);
       cursor = point;
       markModelChanged(false);
@@ -30741,14 +30939,14 @@ function canvasMouseUp(ev) {
     }
   } else if (drag.mode === 'annotationlineplace') {
     if (!movedOut) {
-      const point = { x: snap(w.x), y: snap(w.y) };
+      const point = draftPointAt(w, ev.shiftKey);
       if (!annotationPoints.length || point.x !== annotationPoints.at(-1).x || point.y !== annotationPoints.at(-1).y) annotationPoints.push(point);
       const now = Date.now();
       const previous = lastLineClick;
       const doubleClick = ev.detail >= 2 || (previous && now - previous.at < 500 &&
         Math.abs(point.x - previous.x) <= GRID && Math.abs(point.y - previous.y) <= GRID);
       lastLineClick = { x: point.x, y: point.y, at: now };
-      if (doubleClick) commitLineAnnotation();
+      if (doubleClick) commitLineAnnotation(false);
     }
   } else if (drag.mode === 'annotationtextmove') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
@@ -30765,7 +30963,7 @@ function canvasMouseUp(ev) {
       if (copySelectionExists()) deleteSelection();
       else deleteAtPoint(w);
     }
-  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint') {
+  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint' || drag.mode === 'boxresize') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       recordHistoryEntry(drag.startSnapshot);
     }
@@ -30779,9 +30977,9 @@ function canvasMouseUp(ev) {
   } else if (drag.mode === 'annotationplace') {
     if (drag.moved) {
       if (!annotationStart) annotationStart = { x: snap(drag.startWorld.x), y: snap(drag.startWorld.y) };
-      placeShapeAnnotation(movedWorld, snappedWorld(movedWorld));
+      placeShapeAnnotation(movedWorld, labelMode === 'box' ? snappedWorld(movedWorld) : draftPointAt(w, ev.shiftKey));
     } else {
-      placeShapeAnnotation(w);
+      placeShapeAnnotation(w, labelMode === 'box' ? null : draftPointAt(w, ev.shiftKey));
     }
   } else if (drag.mode === 'labelplace') {
     if (!movedOut) {
@@ -32269,14 +32467,21 @@ window.addEventListener('blur', () => {
   }
 });
 
-function blockResizeRect(rect, handle, world) {
-  const p = { x: snap(world.x), y: snap(world.y) };
-  let x0 = rect.x; let y0 = rect.y; let x1 = rect.x + rect.w; let y1 = rect.y + rect.h;
-  if (handle.includes('w')) x0 = Math.min(p.x, x1 - 2 * GRID);
-  if (handle.includes('e')) x1 = Math.max(p.x, x0 + 2 * GRID);
-  if (handle.includes('n')) y0 = Math.min(p.y, y1 - 2 * GRID);
-  if (handle.includes('s')) y1 = Math.max(p.y, y0 + 2 * GRID);
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+/** A box annotation's geometry and its child labels' anchors, to restore. */
+function boxState(label) {
+  const children = new Map();
+  for (const child of circuit.labels.values()) if (child.parent === label.id) children.set(child.id, { ...child.anchor });
+  return { anchor: { ...label.anchor }, end: { ...label.end }, textAnchor: { ...label.textAnchor }, children };
+}
+
+function restoreBoxState(label, state) {
+  label.anchor = { ...state.anchor };
+  label.end = { ...state.end };
+  label.textAnchor = { ...state.textAnchor };
+  for (const [id, anchor] of state.children) {
+    const child = circuit.labels.get(id);
+    if (child) child.anchor = { ...anchor };
+  }
 }
 
 
@@ -33443,8 +33648,8 @@ function onNormalKey(key, shiftKey = false) {
     commitLineAnnotation();
     return;
   }
-  if (key === 'Enter' && labelMode === 'arrow' && annotationPoints.length >= 2) {
-    commitArrowAnnotation(true);
+  if (key === 'Enter' && labelMode === 'arrow') {
+    commitArrowAnnotation();
     return;
   }
   if (key === 'm' || key === 'M') {
@@ -33629,13 +33834,13 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  // Backspace takes back the last clicked point, as it does for a wire draft.
   if (key === 'Backspace') {
-    if (labelMode === 'line') {
-      if (annotationPoints.length) {
-        annotationPoints.pop();
-        lastLineClick = null;
-        render();
-      }
+    if ((labelMode === 'line' || labelMode === 'arrow') && annotationPoints.length) {
+      annotationPoints.pop();
+      if (!annotationPoints.length) annotationStart = null;
+      lastLineClick = null;
+      render();
     }
     return;
   }
