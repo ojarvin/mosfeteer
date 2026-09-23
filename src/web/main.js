@@ -13,6 +13,8 @@
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
+import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
+import { TipBook } from './tips.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
@@ -183,6 +185,7 @@ const ICON_PATHS = {
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
   rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M20 4v5h-5"/>',
+  lightbulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/>',
   trackpad: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 15h17M12 15v4"/>',
   'mirror-x': '<path d="M12 3v18" stroke-dasharray="2 2.4"/><path d="M9 7 4 17h5zM15 7l5 10h-5z"/>',
   'mirror-y': '<path d="M3 12h18" stroke-dasharray="2 2.4"/><path d="M7 9 17 4v5zM7 15l10 5v-5z"/>',
@@ -307,7 +310,7 @@ function preloadToolCursors() {
 }
 
 function installButtonIcons() {
-  for (const button of document.querySelectorAll('button[data-icon]')) {
+  for (const button of document.querySelectorAll('button[data-icon], .tip-card-mark[data-icon]')) {
     const path = ICON_PATHS[button.dataset.icon];
     if (!path || button.querySelector('.button-icon')) continue;
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -322,6 +325,73 @@ function installButtonIcons() {
 
 installButtonIcons();
 preloadToolCursors();
+
+// ----- contextual tips ---------------------------------------------------------
+// One quiet line in the canvas corner when a faster way exists for what the
+// user is doing. The rules that keep them scarce live in tips.js; this only
+// stores the state and shows the card. `noteTip` is safe to call anywhere.
+const TIPS_KEY = 'mosfeteer.tips';
+const tipBook = new TipBook((() => {
+  try { return JSON.parse(localStorage.getItem(TIPS_KEY) || 'null'); } catch { return null; }
+})());
+const tipCardEl = document.getElementById('tip-card');
+const tipTextEl = document.getElementById('tip-card-text');
+const tipsButton = document.getElementById('btn-tips');
+const TIP_VISIBLE_MS = 14000;
+let shownTip = null;
+let tipHideTimer = 0;
+
+function saveTips() {
+  try { localStorage.setItem(TIPS_KEY, JSON.stringify(tipBook.toJSON())); } catch { /* per-session only */ }
+}
+
+function hideTip() {
+  window.clearTimeout(tipHideTimer);
+  shownTip = null;
+  if (tipCardEl) tipCardEl.hidden = true;
+}
+
+function noteTip(event) {
+  const tip = tipBook.note(event, Date.now());
+  // Using the feature a visible tip describes answers it.
+  if (shownTip && tipBook.state.retired.includes(shownTip.id)) hideTip();
+  saveTips();
+  if (!tip || !tipCardEl) return;
+  shownTip = tip;
+  tipTextEl.textContent = tip.text;
+  tipCardEl.hidden = false;
+  window.clearTimeout(tipHideTimer);
+  tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS);
+}
+
+function syncTipsButton() {
+  tipsButton?.setAttribute('aria-checked', String(!tipBook.state.off));
+}
+
+document.getElementById('tip-card-close')?.addEventListener('click', () => {
+  if (shownTip) tipBook.retire(shownTip.id);
+  saveTips();
+  hideTip();
+});
+document.getElementById('tip-card-off')?.addEventListener('click', () => {
+  tipBook.setOff(true);
+  saveTips();
+  hideTip();
+  syncTipsButton();
+  logLine('tips off — turn them back on from the More menu', 'status');
+});
+// Hovering keeps a tip up while it is being read.
+tipCardEl?.addEventListener('mouseenter', () => window.clearTimeout(tipHideTimer));
+tipCardEl?.addEventListener('mouseleave', () => {
+  if (shownTip) tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS / 2);
+});
+tipsButton?.addEventListener('click', () => {
+  tipBook.setOff(!tipBook.state.off);
+  if (tipBook.state.off) hideTip();
+  saveTips();
+  syncTipsButton();
+});
+syncTipsButton();
 const modeToolbarEl = document.querySelector('.mode-toolbar');
 // ----- editor state ----------------------------------------------
 
@@ -2379,8 +2449,9 @@ function updateStyleControls() {
 function pickLabel(w) {
   const x = snap(w.x);
   const y = snap(w.y);
+  const barHidden = hiddenSupplyBarLabels(circuit);
   for (const label of labels()) {
-    if (label.selectable === false) continue;
+    if (label.selectable === false || barHidden.has(label.id)) continue;
     if (['arrow', 'box', 'line'].includes(label.kind)) continue;
     const r = label.bbox();
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
@@ -3647,6 +3718,7 @@ function highlightNetAt(world) {
   let color = null;
   try {
     commit(() => { color = circuit.cycleNetHighlight(net); });
+    noteTip('net-highlight');
   } catch (err) {
     logLine(`HIGHLIGHT: ${err.message}`, 'error');
     return false;
@@ -3831,6 +3903,7 @@ function setSymmetry(on) {
           waitingForMotion: drag?.mode === 'copyghost',
           armedCursor: drag?.mode === 'copyghost' ? { ...cursor } : null,
         };
+    noteTip('symmetry');
     logLine(symmetryMemory
       ? `symmetry axis resumed about ${symmetryAxisText()}`
       : `symmetry axis at (${cursor.x},${cursor.y}) · move off it to mirror · release Alt to drop`);
@@ -3849,6 +3922,7 @@ function setTerminalSnap(on) {
   const next = !!on && !!wire;
   if (terminalSnap === next) return false;
   terminalSnap = next;
+  if (next) noteTip('terminal-snap');
   render();
   return true;
 }
@@ -3921,6 +3995,7 @@ function placePending() {
     // land in the same commit, so the pair is one undo.
     const twin = symmetryTwin();
     const placements = [pendingTransform(), ...(twin ? [twin] : [])].filter(Boolean);
+    const repeatType = !twin && [...circuit.components.values()].some((c) => c.type === pendingPlace.type);
     const placed = placements.map((t) => circuit.addComponent(pendingPlace.type, {
       x: t.x,
       y: t.y,
@@ -3953,6 +4028,9 @@ function placePending() {
       ? `placed ${placed.map((comp) => comp.refdes).join(' and ')} (${pendingPlace.type}) mirrored about ${symmetryAxisText()}`
       : `placed ${placed[0].refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
     rememberInsertType(pendingPlace.type);
+    // A second part of a kind is where a mirrored twin would have helped.
+    if (repeatType && !isReferenceMarker(placed[0]) && !INTERFACE_PIN_TYPES.has(pendingPlace.type)
+      && !['solder', 'block'].includes(pendingPlace.type)) noteTip('place-repeat');
   }
   if (pendingPlace) pendingPlace.startWorld = { ...cursor };
 }
@@ -4797,6 +4875,7 @@ function knifeTargets(stroke) {
 
 /** Delete everything a knife stroke cuts, as one undo entry. */
 function cutAlong(stroke) {
+  noteTip('knife');
   const { wires, refs, labels: labelIds } = knifeTargets(stroke);
   if (!wires.length && !refs.length && !labelIds.length) {
     hintLine('knife: nothing crossed');
@@ -5139,6 +5218,23 @@ function hasSelectableObjectAt(world) {
 /** `matchAt` for an unsnapped world point. */
 function pickAt(w) {
   return matchAt(snap(w.x), snap(w.y));
+}
+
+/** A joined supply bar acts as one part: its supplies, or just `refdes`. */
+function supplyBarGroup(refdes) {
+  if (circuit.components.get(refdes)?.type !== 'supply') return [refdes];
+  return supplyBars(circuit).find((bar) => bar.refs.includes(refdes))?.refs || [refdes];
+}
+
+/** The joined bar under a pointer, as a hit on its first supply. The gap
+ *  between two supplies belongs to no symbol, so it is tested separately
+ *  (with the wire hit tolerance) rather than through `matchAt`. */
+function supplyBarHit(w) {
+  const p = paneSize();
+  const tol = Math.max(GRID / 4, 12 / (p ? view.w / p.w : 1));
+  const bar = supplyBars(circuit).find(({ rect: r }) => w.x >= r.x - tol && w.x <= r.x + r.w + tol
+    && w.y >= r.y - tol && w.y <= r.y + r.h + tol);
+  return bar ? { refdes: bar.refs[0] } : null;
 }
 
 /** Pick the nearest net route within a forgiving screen-sized hit area.
@@ -5654,6 +5750,7 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
       wire.points = [];
       cursor = { x: hit.x ?? x, y: hit.y ?? y };
       hintLine(`wire from ${hit.refdes}.${hit.term} — terminal clicks commit; other clicks guide; Enter commits elsewhere`);
+      noteWireToolStart();
     } else if (hit.refdes === wire.source.refdes && hit.term === wire.source.term) {
       logLine('same terminal — click the other terminal');
     } else {
@@ -5686,8 +5783,17 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
     // Starting a wire needs no terminal: click any grid point (or a wire) and
     // the draft grows from there.
     startWireAt({ x, y });
+    if (wire?.source) noteWireToolStart();
   }
   render();
+}
+
+/** A wire begun by clicking in the Wire tool: the situation both the Alt-snap
+ *  and the pin-drag tips are about. The first tip that is due wins. */
+function noteWireToolStart() {
+  if (terminalSnap) return;
+  noteTip('wire-start');
+  noteTip('wire-tool-start');
 }
 
 /** Begin a wire from a non-terminal point: empty space starts a free-floating
@@ -5797,6 +5903,7 @@ function connectWireToTerminal(dst, before = null) {
     return;
   }
   const points = draftPath ? draftPath.slice(1, -1) : wire.points;
+  noteTip('wire-commit');
   if (src.refdes) {
     connectTwo(src, dst, points, before || snapshot());
     return;
@@ -6008,6 +6115,7 @@ const RADIAL_RADIUS = radialRingRadius(RADIAL_ITEMS.length, RADIAL_TILE, 10);
 let radialMenuEl = null;
 
 function openRadialMenu(radial) {
+  noteTip('radial');
   window.clearTimeout(radial.holdTimer);
   radial.mode = 'radial';
   const comp = circuit.components.get(radial.refdes);
@@ -6077,6 +6185,7 @@ function beginPinWire(moveDrag, w) {
   wire.source = { ...moveDrag.pinGrab };
   wire.points = [];
   drag = { mode: 'pinwire', startWorld: moveDrag.startWorld, startClient: moveDrag.startClient };
+  noteTip('pin-drag');
   cursor = pinWireCursor(w);
   hintLine(`wire from ${wire.source.refdes}.${wire.source.term} — drop on a pin or wire, or in space to add a part`);
   render();
@@ -6109,6 +6218,7 @@ function beginBranchWire(segDrag, w) {
     return;
   }
   drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient };
+  noteTip('pin-drag');
   cursor = pinWireCursor(w);
   hintLine('branch wire — drop on a pin or wire, or in space to add a part');
   render();
@@ -6117,7 +6227,8 @@ function beginBranchWire(segDrag, w) {
 /** Ctrl/Cmd-drag on an object drags a copy; a plain Ctrl/Cmd-click still toggles selection. */
 function beginCopyDrag(grab, ev) {
   const { hit, startWorld, startClient } = grab;
-  const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
+  // A joined supply bar moves (or copies) as one part.
+  const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
   const labels = multi.has(hit.refdes) ? [...selLabels] : [];
   drag = null;
   setSelection(refs, hit.refdes, true);
@@ -6621,7 +6732,7 @@ function canvasMouseDown(ev) {
   // Wires render behind component bodies, but remain selectable inside or
   // along them. Hit order: exact TERMINAL, then WIRE, then component bbox,
   // then empty space.
-  const hit = pickAt(startWorld);
+  const hit = pickAt(startWorld) || (pickWire(startWorld) ? null : supplyBarHit(startWorld));
   const termHit = hit && hit.term ? hit : null;
   const componentHit = hit?.refdes ? circuit.components.get(hit.refdes) : null;
   if (componentHit && !termHit) {
@@ -6633,7 +6744,7 @@ function canvasMouseDown(ev) {
     lastSchematicComponentClick = { refdes: componentHit.refdes, x: startWorld.x, y: startWorld.y, at: now };
     if (doubleClick) {
       lastSchematicComponentClick = null;
-      setSelection([componentHit.refdes]);
+      setSelection(supplyBarGroup(componentHit.refdes), componentHit.refdes);
       setLabelSelection([]);
       render();
       // The canvas SVG is regenerated during the click sequence, so defer the
@@ -6856,7 +6967,8 @@ function beginComponentDrag(hit, startWorld, startClient, ev, options = {}) {
   }
   // A click on an existing member confirms the complete mixed selection;
   // clicking a new component starts a component-only selection.
-  const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
+  // A joined supply bar moves (or copies) as one part.
+  const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
   const labels = multi.has(hit.refdes) ? [...selLabels] : [];
   beginObjectMove(refs, labels, startWorld, startClient, { duplicate: false, detached: options.detached });
 }
@@ -7216,6 +7328,7 @@ function beginCopySource(startWorld, startClient) {
   return startCopyGhost(startWorld, startClient);
 }
 function deleteAtPoint(world) {
+  noteTip('delete-click');
   const label = pickLabel(world) || annotationGeometryAt(world);
   const hitWire = pickWire(world);
   const hitComp = pickAt(world);
@@ -9447,7 +9560,7 @@ function openComponentContextMenu(target, x, y) {
 function selectContextTarget(target) {
   if (target.kind === 'component') {
     if (multi.has(target.value.refdes)) return;
-    setSelection([target.value.refdes]);
+    setSelection(supplyBarGroup(target.value.refdes), target.value.refdes);
     setLabelSelection([], null, true);
     selectedNets = new Set();
   } else if (target.kind === 'label') {
@@ -9478,6 +9591,25 @@ function renameFromPanel(listEl, selector, start) {
   start(ref);
 }
 
+/** Join a supply's bar with its aligned same-rail neighbours. A selection of
+ *  several supplies is the scope; a single supply joins its whole row, since a
+ *  bar needs two ends. The join is visual only (see core/supply-bars.js). */
+function appendSupplyBarItem(group, comp) {
+  const selectedSupplies = [...multi].filter((ref) => circuit.components.get(ref)?.type === 'supply');
+  const scope = selectedSupplies.length > 1 ? selectedSupplies : supplyBarRow(circuit, comp.refdes);
+  // Joining pairs each supply only with same-named neighbours, so a selection
+  // spanning VDD and VDD2 rows joins each rail's own bars. It splits only
+  // when everything in scope is already joined.
+  const joined = scope.length > 0 && scope.every((ref) => circuit.components.get(ref)?.joinBar);
+  const mixed = !joined && scope.some((ref) => circuit.components.get(ref)?.joinBar);
+  appendContextItem(group, scope.length > 1 ? 'Join supply bars' : 'Join supply bars (no aligned supply)', () => {
+    commit(() => {
+      for (const ref of scope) circuit.setSupplyBarJoin(ref, !joined);
+    });
+    logLine(`${joined ? 'split' : 'joined'} supply bar: ${scope.join(', ')}`, 'status');
+  }, { disabled: scope.length < 2 && !joined, active: joined, mixed });
+}
+
 function appendContextActions(menu, target) {
   const group = document.createElement('div');
   group.className = 'context-menu-group';
@@ -9491,6 +9623,7 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Rotate', () => selectedTransform('rotate'), { shortcut: 'R' });
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl+R' });
+    if (comp.type === 'supply') appendSupplyBarItem(group, comp);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 'T' });
   } else if (target.kind === 'net' || target.kind === 'wire') {
@@ -9515,8 +9648,8 @@ function openContextMenuAt(clientX, clientY) {
   const world = clientToWorld(clientX, clientY);
   const label = pickLabel(world);
   const annotation = annotationGeometryAt(world);
-  const hit = pickAt(world);
   const wire = pickWire(world);
+  const hit = pickAt(world) || (wire ? null : supplyBarHit(world));
   const labelNet = label?.netId ? circuit.nets.get(label.netId) : null;
   const target = label
     ? labelNet ? { kind: 'net', value: labelNet } : { kind: 'label', value: label }
@@ -9652,9 +9785,9 @@ canvasEl.addEventListener('dblclick', (ev) => {
   const label = pickLabel(w);
   if (label) inlineEditLabel(label);
   else {
-    const hit = pickAt(w);
-    const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
     const wire = pickWire(w);
+    const hit = pickAt(w) || (wire ? null : supplyBarHit(w));
+    const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
     if (component) openComponentChildLabelEditor(component);
     else if (wire) {
       selectedWire = null;
@@ -9693,8 +9826,38 @@ function openComponentChildLabelEditor(component) {
   label = circuit._ensureComponentInstanceLabel(component);
   if (label) inlineEditLabel(label, { ownedLabelDraft: true, initialSnapshot: before });
 }
+/** A joined supply bar has one label, shown over its first supply and
+ *  centred on the bar; its name goes to every supply on the bar. */
+function openSupplyBarLabelEditor(refs) {
+  const lead = circuit.components.get(refs[0]);
+  const existing = circuit.labelOf(lead.refdes);
+  if (existing) {
+    inlineEditLabel(existing, { removeOnEmpty: true });
+    return;
+  }
+  const bar = supplyBars(circuit).find((candidate) => candidate.refs[0] === lead.refdes);
+  const info = referenceMarkerInfo('supply');
+  const centre = bar ? bar.rect.x + bar.rect.w / 2 : lead.transform.x;
+  const before = snapshot();
+  const label = circuit.addLabel({
+    text: '',
+    owner: lead.refdes,
+    // Local offsets rotate with the supply; a bar is only ever centred for an
+    // upright one, which is also the only way a row of them reads as a bar.
+    offset: lead.transform.rotation ? info.labelOffset : { x: snap(centre - lead.transform.x), y: info.labelOffset.y },
+    align: 'center',
+    style: { color: lead.style.color },
+  });
+  inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
+}
+
 function openReferenceMarkerEditor(component) {
   if (!component || inlineInput) return;
+  const bar = component.type === 'supply' ? supplyBarGroup(component.refdes) : [];
+  if (bar.length > 1) {
+    openSupplyBarLabelEditor(bar);
+    return;
+  }
   const existing = circuit.labelOf(component.refdes);
   if (existing) {
     inlineEditLabel(existing, { removeOnEmpty: true });
@@ -9718,6 +9881,12 @@ function inlineEditLabel(label, options = {}) {
   const equationDraft = !!options.equationDraft;
   const initialSnapshot = options.initialSnapshot || null;
   const initialName = options.initialName || '';
+  // A joined supply bar is one rail: whatever this edit names, every supply on
+  // the bar takes. Captured now, since the edit itself may break the bar.
+  const barRefs = label.owner ? supplyBarGroup(label.owner) : [];
+  const nameBar = (text) => {
+    if (barRefs.length > 1) circuit.nameSupplyBar(barRefs, text);
+  };
   lastLabelClick = null; // starting an edit clears any pending double-click state
   const b = label.bbox();
   const pane = document.querySelector('.canvas-pane');
@@ -9821,6 +9990,7 @@ function inlineEditLabel(label, options = {}) {
         try {
           label.setText(v);
           if (!v) circuit.removeLabel(label.id);
+          nameBar(v);
           recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
           logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
@@ -9865,12 +10035,16 @@ function inlineEditLabel(label, options = {}) {
           commit(() => renameLabelThroughModel(label, v));
         }
       } else {
-        commit(() => renameLabelThroughModel(label, v));
+        commit(() => {
+          renameLabelThroughModel(label, v);
+          nameBar(v);
+        });
       }
     }
     else if (options.removeOnEmpty && !v) commit(() => {
       if (label.owner && isReferenceMarker(circuit.components.get(label.owner))) label.setText('');
       circuit.removeLabel(label.id);
+      nameBar('');
     });
     render();
     return true;
@@ -11159,6 +11333,7 @@ function copySelection({ quiet = false } = {}) {
       mirrorX: c.transform.mirrorX,
       mirrorY: c.transform.mirrorY,
       negativeInputs: c.negativeInputs ? [...c.negativeInputs] : [],
+      joinBar: !!c.joinBar,
       style: { ...(c.style || {}) },
     })),
     labels: freeLabels.map(copyableLabelPayload),
@@ -11423,6 +11598,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           mirrorX: c.mirrorX,
           mirrorY: c.mirrorY,
           negativeInputs: c.negativeInputs,
+          joinBar: c.joinBar,
           style: c.style,
         });
         refMap.set(c.origRef, comp.refdes);
@@ -12495,6 +12671,7 @@ function activateWire() {
 
 function activateMove(kind = 'connected') {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before moving'); return; }
+  noteTip('move-start');
   mode = 'normal';
   terminalSnap = false;
   visual = null;

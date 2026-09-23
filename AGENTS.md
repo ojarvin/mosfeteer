@@ -120,6 +120,12 @@ marker label is distinct from the global rail name; deleting it clears the
 marker value and restores the global behavior. `GND` remains a compatibility
 alias for an unnamed ground marker.
 
+Supplies may join their bars (`joinBar`, `src/core/supply-bars.js`). A joined
+bar is visual only: it never adds connectivity, and it breaks between
+differently named supplies, across other parts, and across wires. Every supply
+on a bar keeps the rail name in its own owned label; the bar shows one of them
+and hides the rest only while it stays joined.
+
 `solder` joins nets only when at least three wire arms meet at its grid point.
 Fewer arms leave a plain annotation, which `syncJunctionSolders` may prune.
 Placement is atomic: Escape or an outside click removes the pending dot.

@@ -5,6 +5,7 @@ import { applyDir, applyTransform, fmt, rectsOverlap } from './geometry.js';
 import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
+import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
@@ -301,7 +302,10 @@ export function evaluate(circuit) {
       }
     }
   }
-  const labels = [...circuit.labels.values()].filter((label) => !['arrow', 'box', 'line'].includes(label.kind));
+  // A joined supply bar shows one of its supplies' labels; the hidden ones
+  // are not drawn, so they cannot overlap anything.
+  const barHidden = hiddenSupplyBarLabels(circuit);
+  const labels = [...circuit.labels.values()].filter((label) => !['arrow', 'box', 'line'].includes(label.kind) && !barHidden.has(label.id));
   const labelComponentOverlaps = [];
   const labelOverlaps = [];
   const netLabelIssues = [];
@@ -481,6 +485,8 @@ export function commandHelp() {
     '  value <refdes> <V>             - set value/label text',
     '  rename <refdes> <new>          - rename a component',
     '  rm <refdes>                    - remove a component',
+    '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbours (visual only)',
+    '  supplybar name <NAME|-> <refdes> ... - name every supply of a bar at once (- clears)',
     '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
@@ -735,6 +741,24 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const v = pos[1];
     circuit.setValue(c.refdes, v);
     return result(`${c.refdes} value = "${v}"`, { refdes: c.refdes, value: v }, true);
+  }
+  if (cmd === 'supplybar' && String(pos[0] || '').toLowerCase() === 'name') {
+    if (pos.length < 3) throw new Error('usage: supplybar name <NAME|-> <refdes> [refdes...]');
+    const name = pos[1] === '-' ? '' : pos[1];
+    const refs = pos.slice(2).map((ref) => circuit.getComponent(ref).refdes);
+    circuit.nameSupplyBar(refs, name);
+    return result(`supply bar ${refs.join(', ')} ${name ? `named ${name}` : 'unnamed'}`, { refdes: refs, name }, true);
+  }
+  if (cmd === 'supplybar') {
+    const mode = String(pos[0] || '').toLowerCase();
+    if (!['on', 'off'].includes(mode) || pos.length < 2) throw new Error('usage: supplybar on|off <refdes> [refdes...]');
+    // Validate every name first so a bad one leaves the circuit untouched.
+    const refs = pos.slice(1).map((ref) => circuit.getComponent(ref));
+    const other = refs.find((c) => c.type !== 'supply');
+    if (other) throw new Error(`component ${other.refdes} is not a supply; only supply bars join`);
+    for (const c of refs) circuit.setSupplyBarJoin(c.refdes, mode === 'on');
+    const names = refs.map((c) => c.refdes);
+    return result(`supply bar ${mode === 'on' ? 'joined' : 'split'}: ${names.join(', ')}`, { refdes: names, joinBar: mode === 'on' }, true);
   }
   if (cmd === 'rename') {
     const c = circuit.getComponent(pos[0]);

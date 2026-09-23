@@ -48,6 +48,7 @@
           <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace" title="Choose the folder the document list shows and new documents are saved into">Change workspace folder…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Two-finger scroll pans and pinch zooms; off: the mouse wheel zooms">Trackpad scrolling</button>
+          <button id="btn-tips" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb" title="Occasional one-line tips in the corner of the canvas about faster ways to draw">Tips</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Permanently delete the current document file" disabled>Delete document…</button>
         </div>
@@ -186,6 +187,14 @@
       <button id="btn-side-panel" type="button" class="side-panel-toggle glass icon-button" data-icon="sidebar" aria-controls="side-panel" aria-expanded="false" aria-label="Components, nets, and selection" title="Show the components, nets, and selection panel">Panel</button>
       <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Editor canvas. Tab to focus objects; Enter or Space selects the focused object; arrow keys nudge selection."></div>
       <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Context actions"></div>
+      <div id="tip-card" class="tip-card glass" role="status" aria-live="polite" hidden>
+        <span class="tip-card-mark" data-icon="lightbulb" aria-hidden="true"></span>
+        <p id="tip-card-text" class="tip-card-text"></p>
+        <div class="tip-card-actions">
+          <button type="button" id="tip-card-off" class="tip-card-off" title="Stop showing tips; turn them back on from the More menu">Turn off tips</button>
+          <button type="button" id="tip-card-close" class="tip-card-close" title="Got it — do not show this tip again">Got it</button>
+        </div>
+      </div>
     </section>
 
     <section id="analysis-dialog" class="analysis-dock" aria-labelledby="analysis-dialog-title" hidden>

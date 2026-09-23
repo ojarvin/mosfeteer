@@ -1104,6 +1104,9 @@ export class ComponentInstance {
     };
     this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
+    // A supply may draw its bar joined to aligned same-rail neighbours
+    // (see supply-bars.js). Visual only: it never adds connectivity.
+    this.joinBar = this.type === 'supply' && opts.joinBar === true;
   }
 
   /** Dynamic terminal definitions for a resizable schematic block. */
@@ -1232,6 +1235,7 @@ export class ComponentInstance {
       transform: { ...this.transform },
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
+      ...(this.joinBar ? { joinBar: true } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -1800,6 +1804,46 @@ export class Circuit {
       }
       this._syncSignalInputLabels(component);
     }
+  }
+
+  /** Join (or stop joining) a supply's bar to its aligned same-rail neighbours. */
+  setSupplyBarJoin(refdes, join = true) {
+    const component = this.getComponent(refdes);
+    if (component.type !== 'supply') throw new Error(`component ${component.refdes} is not a supply; only supply bars join`);
+    component.joinBar = !!join;
+    return component;
+  }
+
+  /** Name every supply of a joined bar at once, so the bar stays one rail.
+   *  Each supply keeps the name in its own owned label (a bar shows only
+   *  one); an empty name clears them all back to the global supply rail.
+   *  `offsets` optionally places a supply's new label, keyed by refdes. */
+  nameSupplyBar(refs, text, offsets = {}) {
+    const supplies = refs.map((ref) => this.getComponent(ref));
+    const other = supplies.find((component) => component.type !== 'supply');
+    if (other) throw new Error(`component ${other.refdes} is not a supply`);
+    const info = referenceMarkerInfo('supply');
+    for (const component of supplies) {
+      let label = this.labelOf(component.refdes);
+      if (!text) {
+        if (label) {
+          label.setText('');
+          this.removeLabel(label.id);
+        }
+        continue;
+      }
+      if (!label) {
+        label = this.addLabel({
+          text: '',
+          owner: component.refdes,
+          offset: offsets[component.refdes] || info.labelOffset,
+          align: 'center',
+          style: { color: component.style.color },
+        });
+      }
+      label.setText(text);
+    }
+    return supplies;
   }
 
   /** Toggle the polarity marker for one of the three signal-flow inputs. */
@@ -5690,6 +5734,7 @@ export class Circuit {
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
         negativeInputs: c.negativeInputs,
+        joinBar: c.joinBar,
         style: c.style,
         analysis: migrateSerializedComponentAnalysis(c.analysis),
         drawOrder: c.drawOrder,

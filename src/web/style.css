@@ -3650,3 +3650,68 @@ button.off {
     opacity: 0;
   }
 }
+
+/* Contextual tip: one quiet line in the canvas corner, never modal. */
+.tip-card {
+  position: absolute;
+  z-index: 5;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  max-width: min(22rem, calc(100% - 24px));
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  animation: tip-card-in 180ms ease-out;
+}
+
+.tip-card[hidden] {
+  display: none;
+}
+
+.tip-card-mark {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.tip-card-mark .button-icon,
+.tip-card-mark svg {
+  width: 17px;
+  height: 17px;
+}
+
+.tip-card-text {
+  margin: 0;
+}
+
+.tip-card-actions {
+  grid-column: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.tip-card-actions button {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.tip-card-off {
+  color: var(--text-dim);
+  background: none;
+  border-color: transparent;
+}
+
+@keyframes tip-card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tip-card { animation: none; }
+}
+

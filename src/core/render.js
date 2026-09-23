@@ -4,6 +4,7 @@ import { autoRoute, steinerBranches } from './router.js';
 import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
+import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -765,6 +766,10 @@ export function svgString(circuit, opts = {}) {
     parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
   }
 
+  // A joined supply bar is drawn as one shape (below), so the slabs it covers
+  // are left out: two coincident fills would double their anti-aliased edges.
+  const bars = supplyBars(circuit);
+  const barred = new Set(bars.flatMap((bar) => bar.refs));
   // Top layer: components and their body/value graphics sit above wires.
   for (const c of comps) {
     const t = c.transform;
@@ -777,7 +782,11 @@ export function svgString(circuit, opts = {}) {
       parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(compStyle(c), 'emph')}/>`);
     } else {
       const leadsInked = inkLeads(c);
-      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', compStyle(c)));
+      for (const g of bodyGraphics) {
+        if (leadsInked && g.terminalLead) continue;
+        if (barred.has(c.refdes) && g.fill === 'foreground') continue;
+        parts.push(graphicsToSvg(g, '', compStyle(c)));
+      }
     }
     parts.push('</g></g>');
     for (const g of textGraphics) parts.push(symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
@@ -785,6 +794,16 @@ export function svgString(circuit, opts = {}) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
     }
+  }
+
+  // Joined supply bars: one continuous bar over each run of aligned same-rail
+  // supplies, in the slab's own ink, so the row reads as one bar. It covers
+  // the slabs themselves too, so no seam shows where they meet. Visual only.
+  for (const bar of bars) {
+    const from = circuit.components.get(bar.refs[0]);
+    const ghost = bar.refs.some((ref) => ghostRefs.has(ref)) ? ' opacity="0.34"' : '';
+    const r = bar.rect;
+    parts.push(`<rect class="supply-bar-join" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${escapeSvg(resolveColor(compStyle(from)?.color || '#111'))}" stroke="none" pointer-events="none"${ghost}/>`);
   }
 
   // Junction dots are placed by the routing algorithm as actual `solder`
@@ -846,8 +865,9 @@ export function svgString(circuit, opts = {}) {
   // Dedicated / instance label objects (instance identifiers are bold+italic and
   // larger than free-standing annotation labels). Text is aligned inside the
   // label's rendered box (left/center/right) and vertically centered.
+  const barHidden = hiddenSupplyBarLabels(circuit);
   for (const label of labels
-    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent)
+    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent && !barHidden.has(candidate.id))
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
