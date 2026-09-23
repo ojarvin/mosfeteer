@@ -2596,6 +2596,8 @@ button.status-chip:hover {
 .component-context-menu {
   position: fixed;
   z-index: 400;
+  /* Never squeezed by the viewport edge: the opener shifts it left instead. */
+  width: max-content;
   min-width: 190px;
   padding: 4px;
   display: flex;
@@ -2654,6 +2656,92 @@ button.status-chip:hover {
   padding-bottom: 4px;
   margin-bottom: 2px;
   border-bottom: 1px solid var(--border);
+}
+
+/* The style strip reuses the side panel's controls; these rules undo the
+   menu's full-width row buttons for them. */
+.context-style-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 6px 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.context-style-strip[hidden],
+.context-style-row[hidden] { display: none; }
+
+.context-style-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-style-strip .swatches {
+  flex-wrap: nowrap;
+}
+
+.component-context-menu .context-style-strip button {
+  flex: none;
+  justify-content: center;
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+.component-context-menu .context-style-strip button:hover,
+.component-context-menu .context-style-strip button:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.component-context-menu .context-style-strip button[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.component-context-menu .context-style-strip .text-toggle {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+.component-context-menu .context-style-strip .text-toggle-bold { font-weight: 800; }
+.component-context-menu .context-style-strip .text-toggle-italic { font-style: italic; }
+
+.component-context-menu .context-style-strip .swatch,
+.component-context-menu .context-style-strip .swatch:hover,
+.component-context-menu .context-style-strip .swatch:focus-visible {
+  width: 18px;
+  height: 18px;
+  background: var(--swatch);
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  border-radius: 50%;
+}
+
+.component-context-menu .context-style-strip .swatch:hover { transform: scale(1.12); }
+
+.component-context-menu .context-style-strip .swatch:focus-visible {
+  outline: 1px solid var(--text-dim);
+  outline-offset: 2px;
+}
+
+.component-context-menu .context-style-strip .swatch-ink,
+.component-context-menu .context-style-strip .swatch-ink:hover,
+.component-context-menu .context-style-strip .swatch-ink:focus-visible {
+  background: var(--svg-ink);
+}
+
+.component-context-menu .context-style-strip .swatch[aria-checked="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .context-item-shortcut {

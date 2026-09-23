@@ -736,6 +736,108 @@ test('the style menu exposes one shared arrowhead as independent start/end toggl
   assert.match(main, /field !== 'arrowhead' \|\| supportsArrowhead/);
 });
 
+test('the context menu carries the style panel controls and stays open while styling', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="style-line-row" data-style-row="line"/);
+  assert.match(html, /id="style-text-row" data-style-row="text"/);
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const open = main.slice(main.indexOf('function openComponentContextMenu('), main.indexOf('\nfunction selectContextTarget('));
+  assert.match(open, /menu\.appendChild\(heading\);\s*appendContextStyleStrip\(menu\);\s*appendContextActions\(menu, target\);/);
+  const strip = main.slice(main.indexOf('function appendContextStyleStrip('), main.indexOf('\nfunction openComponentContextMenu('));
+  // Cloned panel controls must not duplicate the panel's ids.
+  assert.match(strip, /removeAttribute\('id'\)/);
+  assert.match(strip, /strip\.addEventListener\('click', \(ev\) => handleStyleControlClick\(strip, ev\)\)/);
+  assert.doesNotMatch(strip, /closeComponentContextMenu/);
+  const handler = main.slice(main.indexOf('function handleStyleControlClick('), main.indexOf('\nfunction updateStyleControls('));
+  assert.doesNotMatch(handler, /closeComponentContextMenu/);
+  // The panel and an open strip reflect the same selection after every render.
+  const update = main.slice(main.indexOf('function updateStyleControls('), main.indexOf('\nfunction pickLabel('));
+  assert.match(update, /syncStyleControls\(panel, state\)/);
+  assert.match(update, /syncStyleControls\(strip, state\)/);
+  assert.match(main, /getElementById\('style-panel'\)\?\.addEventListener\('click', \(ev\) => handleStyleControlClick\(ev\.currentTarget, ev\)\)/);
+});
+
+test('opening another design ends the tutorial, but a sync reload of its own does not', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const body = (name) => main.slice(main.indexOf(`function ${name}(`), main.indexOf('\n}\n', main.indexOf(`function ${name}(`)));
+  assert.match(body('loadCircuit'), /if \(data\.path !== currentDocumentPath\) dropTutorial\(\);\s*\/\/[^\n]*\n[^\n]*\n\s*history = \[\];/);
+  assert.match(body('openUnsavedDocument'), /dropTutorial\(\);/);
+  assert.match(body('startNewDocument'), /dropTutorial\(\);/);
+  assert.match(body('deleteSavedCircuit'), /dropTutorial\(\);/);
+  // The tutorial starts in a fresh document, so it is dropped before it begins.
+  assert.match(body('offerTutorial'), /startNewDocument\(\);\s*startTutorial\(\);/);
+});
+
+test('hovering another context menu item closes submenus it is not part of', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const start = main.indexOf('function closeStrayContextSubmenus(');
+  const close = vm.runInNewContext(`(${main.slice(start, main.indexOf('\n}\n', start) + 2)})`, {
+    get componentContextMenuEl() { return menu; },
+    get document() { return { activeElement: active }; },
+  });
+  const el = (children = []) => {
+    const node = { children, classes: new Set(), attrs: {}, parent: null, focused: false,
+      classList: { remove: (c) => node.classes.delete(c), add: (c) => node.classes.add(c) },
+      setAttribute: (k, v) => { node.attrs[k] = v; },
+      contains: (other) => other === node || node.children.some((child) => child.contains(other)),
+      focus: () => { active = node; } };
+    for (const child of children) child.parent = node;
+    return node;
+  };
+  const inner = el();
+  const trigger = el();
+  const submenu = el([inner]);
+  submenu.classes.add('open');
+  const plain = el();
+  const menu = el([trigger, submenu, plain]);
+  menu.hidden = false;
+  submenu.previousElementSibling = trigger;
+  menu.querySelectorAll = () => [...(submenu.classes.has('open') ? [submenu] : [])];
+  let active = trigger;
+  close(inner); // pointer inside the submenu keeps it
+  assert.ok(submenu.classes.has('open'));
+  close(trigger); // back on its own trigger keeps it
+  assert.ok(submenu.classes.has('open'));
+  close(plain); // a sibling row closes it and takes focus
+  assert.ok(!submenu.classes.has('open'));
+  assert.equal(trigger.attrs['aria-expanded'], 'false');
+  assert.equal(active, plain);
+});
+
+test('tools switch straight from inside another tool, dropping its uncommitted work', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const body = (name) => main.slice(main.indexOf(`function ${name}(`), main.indexOf('\n}\n', main.indexOf(`function ${name}(`)));
+  // No tool refuses because another one is mid-interaction any more.
+  assert.doesNotMatch(main, /finish (or cancel )?the active interaction/);
+  for (const name of ['activateLabelPlacement', 'activatePlace', 'activateSelect', 'activateVisual', 'activateDelete', 'activateMove', 'activateCopy']) {
+    assert.match(body(name), /^function \w+\([^)]*\) \{\s*leaveActiveInteraction\(\);/, name);
+  }
+  // Re-picking Wire keeps a half-drawn wire; anything else is dropped first.
+  assert.match(body('activateWire'), /if \(hasWireDraft\(\)\) \{[^}]*return; \}\s*leaveActiveInteraction\(\);/);
+  const leave = body('leaveActiveInteraction');
+  for (const part of [/cancelDrag\(\)/, /wire = null;/, /directWire = null;/, /pendingPlace = null;/, /mode = 'normal';/, /visual = null;/]) assert.match(leave, part);
+
+  const pick = vm.runInNewContext(`(${body('toolSwitchForKey')}\n})`, {
+    get wire() { return state.wire; }, get directWire() { return null; }, get mode() { return state.mode; },
+    get pendingPlace() { return state.pendingPlace; }, get visual() { return null; }, get drag() { return null; },
+    hasModalPlacement: () => false, wireTerminalLetter: (key) => state.terminals.includes(key),
+    activatePlace: 'place', activateWire: 'wire', activateMove: () => {}, activateCopy: 'copy', activateHighlight: 'hl',
+    activateShapeAnnotation: () => {}, activateNetLabel: 'netlabel', activateEquation: 'eq', activateVisual: 'visual', activateAnnotation: 'note',
+  });
+  let state = { mode: 'insert', pendingPlace: null, wire: null, terminals: [] };
+  assert.equal(pick('w'), null); // the insert search keeps its letters
+  state.pendingPlace = { kind: 'component' };
+  assert.equal(pick('w'), 'wire'); // a placement ghost gives way to the wire tool
+  assert.equal(pick('r'), null); // r still rotates the ghost
+  state = { mode: 'normal', pendingPlace: null, wire: {}, terminals: ['c'] };
+  assert.equal(pick('i'), 'place');
+  assert.equal(pick('w'), null); // re-picking Wire keeps the draft
+  assert.equal(pick('c'), null); // pointing at a BJT, c is still its collector
+  assert.equal(pick('L'), 'netlabel');
+  state = { mode: 'normal', pendingPlace: null, wire: null, terminals: [] };
+  assert.equal(pick('w'), null); // idle normal mode is onNormalKey's
+});
+
 test('view toggles answer in every mode but the insert search', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const start = main.indexOf('function viewKey(');
@@ -750,7 +852,7 @@ test('view toggles answer in every mode but the insert search', () => {
   assert.doesNotMatch(view, /key === 'd'/);
   assert.doesNotMatch(view, /key === 'c'(?! && shiftKey)/);
   // Routed before the per-mode handlers, and no longer duplicated inside one.
-  assert.match(main, /if \(viewKey\(key, ev\.shiftKey\)\) \{[\s\S]{0,60}return;\s*\}\s*\n\s*if \(directWire\)/);
+  assert.match(main, /if \(viewKey\(key, ev\.shiftKey\)\) \{[\s\S]{0,60}return;\s*\}\s*\n\s*const toolSwitch = toolSwitchForKey\(key, ev\.shiftKey\);[\s\S]{0,120}return;\s*\}\s*\n\s*if \(directWire\)/);
   const normal = main.slice(main.indexOf('function onNormalKey('), main.indexOf('\nfunction onInsertKey('));
   assert.doesNotMatch(normal, /setGrid\(!showGrid\)|toggleTheme\(\)|setCrosshair\(!crosshairVisible\)/);
 });

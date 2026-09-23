@@ -524,9 +524,15 @@ function startTutorial() {
   logLine('Tutorial started: follow the card at the bottom left, or close it any time.', 'status');
 }
 
-function endTutorial() {
+/** Drop the tutorial's state; the card hides on the next render. The tutorial
+ *  belongs to its own drawing, so opening another design ends it. */
+function dropTutorial() {
   tutorial = null;
   window.clearTimeout(tutorialCheerTimer);
+}
+
+function endTutorial() {
+  dropTutorial();
   render();
   canvasEl.focus();
 }
@@ -1453,6 +1459,9 @@ async function loadCircuit(path, quiet = false, options = {}) {
       if (data.etag) lastCircuitTag = data.etag;
       return true;
     }
+    // Sync re-applies the same document after outside edits; only a
+    // different one ends the tutorial.
+    if (data.path !== currentDocumentPath) dropTutorial();
     // A document owns its undo history. Navigation must not make Undo
     // restore a different document kind.
     history = [];
@@ -1485,6 +1494,7 @@ async function loadCircuit(path, quiet = false, options = {}) {
 
 /** Open document contents that have no file path (a dropped file). Saving puts it in the workspace. */
 function openUnsavedDocument(state, name) {
+  dropTutorial();
   history = [];
   future = [];
   applyJson(JSON.stringify(state));
@@ -1654,6 +1664,7 @@ async function deleteSavedCircuit() {
     history = [];
     future = [];
     cancelPreviewTransaction();
+    dropTutorial();
     circuit = new Circuit();
     clearLatestAnalysisResult();
     markModelChanged(false);
@@ -2564,65 +2575,99 @@ function applySelectedStyle(field, value) {
   });
   render();
 }
-function syncTextStyleControls() {
-  const row = document.getElementById('style-text-row');
-  if (!row) return;
-  const { labels, blocks } = selectedTextTargets();
-  row.hidden = !labels.length && !blocks.length;
-  if (row.hidden) return;
-  const align = labels.length && labels.every((label) => label.align === labels[0].align) ? labels[0].align : null;
-  for (const button of row.querySelectorAll('[data-style-align]')) {
-    button.hidden = !labels.length;
-    button.setAttribute('aria-pressed', String(button.dataset.styleAlign === align));
-  }
-  for (const button of row.querySelectorAll('[data-style-font]')) {
-    button.setAttribute('aria-pressed', String(selectedFontState(button.dataset.styleFont)));
-  }
-}
-
-/** Reflect a (possibly mixed) selection style; the panel only exists while something is styleable. */
-function updateStyleControls() {
-  const panel = document.getElementById('style-panel');
-  const lineRow = document.getElementById('style-line-row');
-  const linePattern = document.getElementById('style-line-pattern');
-  const lineMenuButtons = [...document.querySelectorAll('#style-line-menu [data-line-style]')];
-  const arrowStart = document.getElementById('style-arrow-start');
-  const arrowEnd = document.getElementById('style-arrow-end');
-  const widthButtons = [...document.querySelectorAll('#style-width-row [data-width]')];
-  const swatches = [...document.querySelectorAll('#style-color .swatch')];
-  if (!panel || !lineRow || !linePattern || !arrowStart || !arrowEnd) return;
-  const show = (colorValue, lineValue, arrowheadValue, widthValue, supportsLine, supportsArrowhead) => {
-    panel.hidden = false;
-    syncTextStyleControls();
-    lineRow.hidden = !supportsLine;
-    linePattern.disabled = !supportsLine;
-    arrowStart.hidden = arrowEnd.hidden = !supportsArrowhead;
-    arrowStart.disabled = arrowEnd.disabled = !supportsArrowhead;
-    const ends = arrowheadEnds(arrowheadValue);
-    arrowStart.setAttribute('aria-pressed', String(ends.start));
-    arrowEnd.setAttribute('aria-pressed', String(ends.end));
-    const icon = linePattern.querySelector('.button-icon');
-    if (icon) icon.innerHTML = ICON_PATHS[LINE_STYLE_ICONS[lineValue] || 'line-solid'];
-    for (const button of lineMenuButtons) button.setAttribute('aria-pressed', String(button.dataset.lineStyle === lineValue));
-    for (const button of widthButtons) button.setAttribute('aria-pressed', String(button.dataset.width === widthValue));
-    for (const swatch of swatches) swatch.setAttribute('aria-checked', String(swatch.dataset.value === colorValue));
-  };
-  const common = (values) => (values.length && values.every((v) => v === values[0]) ? values[0] : '');
+/** The selection's shared style, or null when nothing styleable is selected.
+ * A field the selection disagrees on reads as ''. */
+function selectionStyleState() {
   const wireTargets = selectedWireTargets();
   if (selectedWire) {
     const net = circuit.nets.get(selectedWire.netId);
     if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
   }
   const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean)];
-  if (!objects.length && !wireTargets.length) { panel.hidden = true; return; }
-  const hasWireSelection = wireTargets.length > 0 || selectedWire || selectedWires.size > 0 || selectedNets.size > 0;
-  const supportsLine = hasWireSelection || objects.some((o) => ['arrow', 'box', 'line'].includes(o.kind));
-  const hasArrowheadSelection = hasWireSelection || objects.some(supportsArrowhead);
+  if (!objects.length && !wireTargets.length) return null;
+  const hasWireSelection = wireTargets.length > 0 || selectedNets.size > 0;
+  const common = (values) => (values.length && values.every((v) => v === values[0]) ? values[0] : '');
   const pick = (field) => common([
     ...objects.map((o) => objectStyleValue(o, field)),
     ...wireTargets.map(({ net, key }) => wireStyleValue(net, key, field)),
   ]);
-  show(pick('color'), pick('lineStyle'), pick('arrowhead'), pick('width'), supportsLine, hasArrowheadSelection);
+  const { labels } = selectedTextTargets();
+  return {
+    color: pick('color'),
+    lineStyle: pick('lineStyle'),
+    arrowhead: pick('arrowhead'),
+    width: pick('width'),
+    supportsLine: hasWireSelection || objects.some((o) => ['arrow', 'box', 'line'].includes(o.kind)),
+    supportsArrowhead: hasWireSelection || objects.some(supportsArrowhead),
+    text: labels.length ? {
+      align: labels.every((label) => label.align === labels[0].align) ? labels[0].align : null,
+      bold: selectedFontState('bold'),
+      italic: selectedFontState('italic'),
+    } : null,
+  };
+}
+
+/** Reflect a selection style in one set of style controls: the side panel's
+ * or the context menu's strip, which share their data attributes. */
+function syncStyleControls(root, state) {
+  const pressed = (button, on) => button.setAttribute('aria-pressed', String(on));
+  const lineRow = root.querySelector('[data-style-row="line"]');
+  const textRow = root.querySelector('[data-style-row="text"]');
+  if (lineRow) lineRow.hidden = !state.supportsLine;
+  if (textRow) textRow.hidden = !state.text;
+  const ends = arrowheadEnds(state.arrowhead);
+  for (const button of root.querySelectorAll('[data-arrow-end]')) {
+    button.hidden = button.disabled = !state.supportsArrowhead;
+    pressed(button, ends[button.dataset.arrowEnd]);
+  }
+  for (const button of root.querySelectorAll('[data-line-style]')) pressed(button, button.dataset.lineStyle === state.lineStyle);
+  for (const button of root.querySelectorAll('[data-width]')) pressed(button, button.dataset.width === state.width);
+  for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(swatch.dataset.value === state.color));
+  for (const button of root.querySelectorAll('[data-style-align]')) pressed(button, button.dataset.styleAlign === state.text?.align);
+  for (const button of root.querySelectorAll('[data-style-font]')) pressed(button, !!state.text?.[button.dataset.styleFont]);
+}
+
+/** Apply a style control click inside `root`; returns whether it was one. */
+function handleStyleControlClick(root, ev) {
+  const button = ev.target.closest?.('button');
+  if (!button || button.disabled || !root.contains(button)) return false;
+  const { dataset } = button;
+  if (dataset.arrowEnd) {
+    const on = (end) => root.querySelector(`[data-arrow-end="${end}"]`)?.getAttribute('aria-pressed') === 'true';
+    const start = dataset.arrowEnd === 'start' ? !on('start') : on('start');
+    const end = dataset.arrowEnd === 'end' ? !on('end') : on('end');
+    applySelectedStyle('arrowhead', combineArrowheadEnds(start, end));
+  } else if (dataset.lineStyle) applySelectedStyle('lineStyle', dataset.lineStyle);
+  else if (dataset.width) applySelectedStyle('width', dataset.width);
+  else if (button.classList.contains('swatch')) applySelectedStyle('color', dataset.value);
+  else if (dataset.styleAlign) setSelectedLabelAlign(dataset.styleAlign);
+  else if (dataset.styleFont) setSelectedLabelFont(dataset.styleFont, button.getAttribute('aria-pressed') !== 'true');
+  else return false;
+  return true;
+}
+
+/** The panel only exists while something is styleable; an open context menu's
+ * strip follows the same selection. */
+function updateStyleControls() {
+  const state = selectionStyleState();
+  const panel = document.getElementById('style-panel');
+  if (panel) {
+    panel.hidden = !state;
+    if (state) {
+      syncStyleControls(panel, state);
+      const linePattern = document.getElementById('style-line-pattern');
+      if (linePattern) {
+        linePattern.disabled = !state.supportsLine;
+        const icon = linePattern.querySelector('.button-icon');
+        if (icon) icon.innerHTML = ICON_PATHS[LINE_STYLE_ICONS[state.lineStyle] || 'line-solid'];
+      }
+    }
+  }
+  const strip = componentContextMenuEl?.querySelector('.context-style-strip');
+  if (strip) {
+    strip.hidden = !state;
+    if (state) syncStyleControls(strip, state);
+  }
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
@@ -3938,7 +3983,9 @@ function openHighlightToolMenu(x, y) {
   appendContextItem(menu, 'Remove all highlights', removeAllNetHighlights, { disabled: !highlighted, shortcut: '8', danger: true });
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
-  menu.querySelector('button:not(:disabled)')?.focus();
+  if (rect.right > window.innerWidth - 4) menu.style.left = `${Math.max(4, window.innerWidth - 4 - rect.width)}px`;
+  // Keyboard focus starts on the first action, not the first swatch.
+  (menu.querySelector('.context-menu-group button:not(:disabled)') || menu.querySelector('button:not(:disabled)'))?.focus();
 }
 
 document.getElementById('btn-mode-highlight')?.addEventListener('contextmenu', (ev) => {
@@ -9706,6 +9753,54 @@ function appendContextSmallSignalMenu(menu, target) {
   });
 }
 
+/** The side panel's style controls, laid out inline at the top of the context
+ * menu so a right-click restyles without a trip to the panel. The controls are
+ * cloned from the panel, so both share labels, icons, and data attributes; a
+ * click keeps the menu open for the next field. */
+function appendContextStyleStrip(menu) {
+  const state = selectionStyleState();
+  const panel = document.getElementById('style-panel');
+  if (!state || !panel) return;
+  const strip = document.createElement('div');
+  strip.className = 'context-style-strip';
+  strip.setAttribute('role', 'group');
+  strip.setAttribute('aria-label', 'Style');
+  const clone = (selector) => {
+    const node = panel.querySelector(selector).cloneNode(true);
+    for (const el of [node, ...node.querySelectorAll('[id]')]) el.removeAttribute('id');
+    for (const el of node.querySelectorAll('[aria-controls]')) el.removeAttribute('aria-controls');
+    return node;
+  };
+  const row = (name, ...children) => {
+    const el = document.createElement('div');
+    el.className = 'context-style-row';
+    if (name) el.dataset.styleRow = name;
+    el.append(...children);
+    strip.appendChild(el);
+    return el;
+  };
+  row('', clone('#style-color'));
+  // The panel tucks the dash patterns into a popover; here they sit between
+  // the two arrowhead toggles, one click each.
+  const line = document.createElement('div');
+  line.className = 'segmented';
+  line.setAttribute('role', 'group');
+  line.setAttribute('aria-label', 'Line style and arrowheads');
+  const patterns = [...panel.querySelectorAll('#style-line-menu [data-line-style]')].map((button) => {
+    const copy = button.cloneNode(true);
+    copy.removeAttribute('role');
+    copy.setAttribute('aria-pressed', 'false');
+    return copy;
+  });
+  line.append(clone('#style-arrow-start'), ...patterns, clone('#style-arrow-end'));
+  row('line', line);
+  row('', clone('#style-width-row .segmented'));
+  row('text', clone('#style-text-row .style-text-controls'));
+  strip.addEventListener('click', (ev) => handleStyleControlClick(strip, ev));
+  syncStyleControls(strip, state);
+  menu.appendChild(strip);
+}
+
 function openComponentContextMenu(target, x, y) {
   if (!componentContextMenuEl || !target) return;
   closeComponentContextMenu();
@@ -9733,6 +9828,7 @@ function openComponentContextMenu(target, x, y) {
   const meta = [headingMeta, scopeSuffix.trim()].filter(Boolean).join(' ');
   if (meta) heading.append(` · ${meta}`);
   menu.appendChild(heading);
+  appendContextStyleStrip(menu);
   appendContextActions(menu, target);
   appendContextSelectionMenu(menu, target);
   appendSignalFlowPolarityMenu(menu, target);
@@ -9871,6 +9967,32 @@ window.addEventListener('mousedown', (ev) => {
   if (componentContextMenuEl?.hidden || componentContextMenuEl.contains(ev.target)) return;
   closeComponentContextMenu();
 });
+// As in desktop menus, hovering another item closes submenus it is not part
+// of. The short delay lets a diagonal move from a trigger reach its submenu
+// across the rows in between.
+let contextHoverButton = null;
+let contextHoverTimer = 0;
+componentContextMenuEl?.addEventListener('mouseover', (ev) => {
+  const button = ev.target.closest?.('button');
+  if (!button || button === contextHoverButton) return;
+  contextHoverButton = button;
+  window.clearTimeout(contextHoverTimer);
+  contextHoverTimer = window.setTimeout(() => closeStrayContextSubmenus(contextHoverButton), 150);
+});
+
+function closeStrayContextSubmenus(button) {
+  if (!componentContextMenuEl || componentContextMenuEl.hidden || !componentContextMenuEl.contains(button)) return;
+  for (const submenu of componentContextMenuEl.querySelectorAll('.context-submenu.open')) {
+    const trigger = submenu.previousElementSibling;
+    if (submenu.contains(button) || trigger === button) continue;
+    submenu.classList.remove('open');
+    trigger?.setAttribute('aria-expanded', 'false');
+    trigger?.classList.remove('context-item-open');
+    // Hovering a trigger focuses it; hand focus on so neither the old row
+    // stays highlighted nor :focus-within keeps the submenu showing.
+    if (document.activeElement === trigger || submenu.contains(document.activeElement)) button.focus({ preventScroll: true });
+  }
+}
 window.addEventListener('keydown', (ev) => {
   if (componentContextMenuEl?.hidden) return;
   if (ev.key === 'Escape') {
@@ -12714,11 +12836,67 @@ function hasModalPlacement() {
   return !!drag?.modal && (movePending || copyPending);
 }
 
-function activateLabelPlacement(kind) {
-  if (hasWireDraft() || hasModalPlacement()) {
-    logLine('finish or cancel the active interaction before placing a label');
-    return;
+/** Drop whatever the current tool has not committed -- a half-drawn wire, a
+ *  placement ghost, a pending move or copy, a box selection -- as Escape would,
+ *  so any tool can be picked straight from any other. */
+function leaveActiveInteraction() {
+  if (quickAdd) closeQuickAdd();
+  if (hasModalPlacement() || drag?.mode === 'copyghost') cancelDrag();
+  if (wire || directWire) {
+    wire = null;
+    directWire = null;
+    gestureWire = false;
+    selectedWire = null;
+    selectedWires.clear();
+    selectedNets.clear();
   }
+  terminalSnap = false;
+  pendingPlace = null;
+  clearSymmetry();
+  insertQuery = '';
+  mode = 'normal';
+  visual = null;
+}
+
+/** A letter that picks a terminal in Wire mode: one the part under the cursor
+ *  (or the selected part) actually has. */
+function wireTerminalLetter(key) {
+  if (!TERM_LETTERS.has(key)) return false;
+  const comp = compUnderCursor() || selectedComp();
+  return !!comp?.terminalDefs.some((terminal) => terminal.name === key);
+}
+
+/** The tool a key picks from inside another tool's interaction, or null.
+ *  Idle normal mode handles tool keys in onNormalKey. The insert search keeps
+ *  every letter as query text, and in Wire mode a letter naming a terminal of
+ *  the part being pointed at still picks that terminal. */
+function toolSwitchForKey(key, shiftKey = false) {
+  const inside = wire || directWire || (mode === 'insert' && pendingPlace) || visual;
+  if (!inside || (drag && !hasModalPlacement())) return null;
+  if (key === 'w' && (wire || directWire)) return null;
+  if (key === 'v' && visual) return null;
+  if (wire && wireTerminalLetter(key)) return null;
+  if (key === 'N' && shiftKey) return activateAnnotation;
+  const tools = {
+    i: activatePlace,
+    I: activatePlace,
+    w: activateWire,
+    m: () => activateMove('connected'),
+    M: () => activateMove('detached'),
+    c: activateCopy,
+    9: activateHighlight,
+    a: () => activateShapeAnnotation('arrow'),
+    b: () => activateShapeAnnotation('box'),
+    l: () => activateShapeAnnotation('line'),
+    L: activateNetLabel,
+    e: activateEquation,
+    v: activateVisual,
+  };
+  return tools[key] || null;
+}
+
+function activateLabelPlacement(kind) {
+  leaveActiveInteraction();
   mode = 'normal';
   terminalSnap = false;
   pendingPlace = null;
@@ -12764,7 +12942,7 @@ function activateShapeAnnotation(kind) {
 }
 
 function activatePlace() {
-  if (hasWireDraft() || hasModalPlacement()) { logLine('finish the active interaction before placing'); return; }
+  leaveActiveInteraction();
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -12782,7 +12960,7 @@ function activatePlace() {
 }
 
 function activateSelect() {
-  if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction first'); return; }
+  leaveActiveInteraction();
   mode = 'normal';
   terminalSnap = false;
   pendingPlace = null;
@@ -12799,7 +12977,7 @@ function activateSelect() {
   render();
 }
 function activateVisual() {
-  if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before box selection'); return; }
+  leaveActiveInteraction();
   mode = 'normal';
   terminalSnap = false;
   moveMode = null;
@@ -12816,7 +12994,7 @@ function activateVisual() {
 }
 
 function activateDelete() {
-  if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before deleting'); return; }
+  leaveActiveInteraction();
   if (copySelectionExists()) {
     deleteSelection();
     deleteMode = false;
@@ -12839,7 +13017,8 @@ function activateDelete() {
 function activateWire() {
   // Re-clicking Wire is intentionally harmless: a toolbar click must not lose
   // a partially drawn path, including its manually entered waypoints.
-  if (hasWireDraft() || hasModalPlacement()) { logLine('active interaction retained'); render(); return; }
+  if (hasWireDraft()) { logLine('active interaction retained'); render(); return; }
+  leaveActiveInteraction();
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -12859,7 +13038,7 @@ function activateWire() {
 }
 
 function activateMove(kind = 'connected') {
-  if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before moving'); return; }
+  leaveActiveInteraction();
   noteTip('move-start');
   mode = 'normal';
   terminalSnap = false;
@@ -12875,7 +13054,7 @@ function activateMove(kind = 'connected') {
 }
 
 function activateCopy() {
-  if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before copying'); return; }
+  leaveActiveInteraction();
   mode = 'normal';
   terminalSnap = false;
   visual = null;
@@ -13312,33 +13491,7 @@ for (const rail of document.querySelectorAll('.mode-toolbar, .rail-flyout')) {
     if (ev.detail > 0 && ev.target.closest('button')) canvasEl.focus({ preventScroll: true });
   });
 }
-document.getElementById('style-line-row')?.addEventListener('click', (ev) => {
-  const arrowButton = ev.target.closest?.('[data-arrow-end]');
-  if (arrowButton) {
-    if (arrowButton.disabled) return;
-    const startOn = document.getElementById('style-arrow-start')?.getAttribute('aria-pressed') === 'true';
-    const endOn = document.getElementById('style-arrow-end')?.getAttribute('aria-pressed') === 'true';
-    const start = arrowButton.dataset.arrowEnd === 'start' ? !startOn : startOn;
-    const end = arrowButton.dataset.arrowEnd === 'end' ? !endOn : endOn;
-    applySelectedStyle('arrowhead', combineArrowheadEnds(start, end));
-    return;
-  }
-  const lineStyleButton = ev.target.closest?.('[data-line-style]');
-  if (lineStyleButton) applySelectedStyle('lineStyle', lineStyleButton.dataset.lineStyle);
-});
-document.getElementById('style-width-row')?.addEventListener('click', (ev) => {
-  const widthButton = ev.target.closest?.('[data-width]');
-  if (widthButton && !widthButton.disabled) applySelectedStyle('width', widthButton.dataset.width);
-});
-document.getElementById('style-text-row')?.addEventListener('click', (ev) => {
-  const button = ev.target.closest?.('button');
-  if (button?.dataset.styleAlign) setSelectedLabelAlign(button.dataset.styleAlign);
-  else if (button?.dataset.styleFont) setSelectedLabelFont(button.dataset.styleFont, button.getAttribute('aria-pressed') !== 'true');
-});
-document.getElementById('style-color')?.addEventListener('click', (ev) => {
-  const swatch = ev.target.closest?.('.swatch');
-  if (swatch) applySelectedStyle('color', swatch.dataset.value);
-});
+document.getElementById('style-panel')?.addEventListener('click', (ev) => handleStyleControlClick(ev.currentTarget, ev));
 
 // ----- side panel: collapsible sections, filter, resizable width ------------
 
@@ -13466,6 +13619,8 @@ function startNewDocument() {
   // references from an earlier unnamed schematic; named documents keep their
   // own scoped preferences and are restored when reopened.
   try { localStorage.removeItem(analysisFormStorageKey('new')); } catch { /* storage unavailable */ }
+  // Starting the tutorial restarts it right after this.
+  dropTutorial();
   syncGeneration += 1;
   activeSyncSuspended = true;
   circuitNameEl.value = '';
@@ -14336,6 +14491,13 @@ window.addEventListener('keydown', (ev) => {
 
   if (viewKey(key, ev.shiftKey)) {
     ev.preventDefault();
+    return;
+  }
+
+  const toolSwitch = toolSwitchForKey(key, ev.shiftKey);
+  if (toolSwitch) {
+    ev.preventDefault();
+    toolSwitch();
     return;
   }
 

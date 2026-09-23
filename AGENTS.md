@@ -250,7 +250,11 @@ Core keyboard vocabulary:
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
 
 View toggles are handled before mode-specific keys, except printable insert
-query text before a ghost exists. `Ctrl+Shift+r` is intentionally unbound.
+query text before a ghost exists. Any tool can be picked straight from another
+(key or toolbar), dropping the old tool's uncommitted work as Escape would;
+re-picking Wire keeps a half-drawn wire, and in Wire mode a letter naming a
+terminal of the part being pointed at still picks that terminal.
+`Ctrl+Shift+r` is intentionally unbound.
 Selection is role-aware across components, labels, nets, annotations, and wire
 runs; component/managed-wire transactions are one undo entry.
 
