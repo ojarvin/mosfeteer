@@ -2,33 +2,35 @@
 
 <h1 align="center">Mosfeteer</h1>
 
-A keyboard-driven editor for textbook-style analog schematics, with auto-routed wires, symbolic small-signal analysis, and a CLI/HTTP interface for scripts and agents.
+<p align="center">A keyboard-driven editor for textbook-style analog schematics, with auto-routed wires and symbolic small-signal analysis.</p>
 
-![Fitted folded-cascode OTA in the editor, with a bottom-left to top-right diagonal separating light and dark themes](docs/images/editor.png)
+![A folded-cascode OTA in the editor, split diagonally between the light and dark themes](docs/images/editor.png)
 
-## Symbolic small-signal analysis
+## Symbolic analysis
 
-Pick input and output nets, and it derives `Z_in`, `Z_out`, `A_v`, poles, and zeros using textbook approximations. You can annotate the schematic with the results.
+Pick the input and output nets to derive `Z_in`, `Z_out`, `A_v`, and any poles and zeros, simplified the way a textbook would. Hover or click any term to light up the devices it comes from, then annotate the schematic with the results.
 
-![Folded-cascode OTA and highlighted symbolic analysis equations in dark mode](docs/images/analysis.png)
+![Derived OTA equations; the locked g_m9 r_o9 r_o8 term highlights M9 and M8 on the schematic](docs/images/analysis.png)
 
 ## Fast editing
 
-| Fuzzy insert with symbol previews | Right-click actions and per-device overrides |
-| :---: | :---: |
-| ![Highlighted fuzzy insert picker with live MOS symbol previews in light mode](docs/images/insert.png) | ![Highlighted per-device small-signal actions on the folded-cascode OTA in dark mode](docs/images/context-menu.png) |
+Press `i` and type to insert a part. Wires route themselves around parts on the grid, and Design Check (`x`) catches dangling pins, overlaps, and off-grid geometry. Press `?` for every shortcut.
 
-Press `?` in the editor for the full keyboard reference.
+![Fuzzy insert picker filtered to MOS transistors, open beside the OTA](docs/images/insert.png)
+
+| Persistent net highlights (`9`) | Right-drag a part for quick actions |
+| :---: | :---: |
+| ![The OTA with its V_XN, V_XP, V_OUT, and tail nets each highlighted in a different color](docs/images/highlight.png) | ![Radial menu around M9 with rotate, mirror, move, copy, and delete](docs/images/radial.png) |
 
 ## Symbols
 
-The built-in symbol library covers analog and digital circuits in a consistent textbook style.
+Analog, digital, and mixed-signal symbols share one textbook style, plus resizable blocks and signal-flow nodes for block diagrams.
 
-![Complete symbols reference sheet in light mode](docs/images/symbols.png)
+![A selection of passive, source, transistor, amplifier, reference, port, logic, flip-flop, and ADC symbols](docs/images/symbols.png)
 
 ## Install and run
 
-The only requirement is [Node.js](https://nodejs.org/) 18 or newer. There are no packages to install.
+All you need is [Node.js](https://nodejs.org/) 18 or newer. There is nothing else to install.
 
 ```sh
 git clone https://github.com/ojarvin/mosfeteer.git
@@ -36,51 +38,32 @@ cd mosfeteer
 ./start.sh                  # or: node launch.mjs
 ```
 
-To start it by double-clicking instead:
+The editor opens in an app-style Chromium window, or your default browser. To get a desktop launcher, run `node launch.mjs --install` once on Linux or macOS; on Windows, double-click `Mosfeteer.cmd`.
 
-- **Linux:** run `node launch.mjs --install` once. *Mosfeteer* then appears in your application launcher.
-- **macOS:** double-click `Mosfeteer.command`, or run `node launch.mjs --install` once to add *Mosfeteer* to `~/Applications`.
-- **Windows:** double-click `Mosfeteer.cmd`.
+**No Node?** Open [`browser-only/index.html`](browser-only/index.html) directly. It is the same editor, using the browser's file pickers and downloads, without the CLI or PDF export.
 
-The launcher starts a small local server and opens the editor in an app-style Chromium window, or in your default browser if Chromium isn't installed. The server only accepts requests from the editor on your own machine. It stops by itself shortly after you close the last editor window. Launching again while it's running reuses the same server.
+## Documents
 
-### Browser-only release
+- Each schematic is a single `.json` file you can keep in a repository or share like any other file.
+- New documents are saved to a workspace folder, `~/Documents/Schematics` by default. **Open** (Ctrl/Cmd+O) and **Save as** work with any folder.
+- An open document with no unsaved changes reloads when its file changes on disk, for example after a `git pull`.
+- **Export** (Ctrl/Cmd+E) writes SVG, PDF, and PNG.
 
-The checked-in `browser-only/` folder is a static release that does not need
-Node, npm, or a local server. Double-click [`browser-only/index.html`](browser-only/index.html)
-to open it in a browser. Open and Save use browser file pickers/downloads;
-documents are cached locally for the document list, and **Forget from browser…**
-removes a stale cached entry without deleting a downloaded file. SVG export
-downloads directly; PNG export uses the browser's save picker when available. The CLI,
-server workspace browser, live file sync, and PDF export are intentionally
-omitted in this mode.
+## Scripting
 
-Developers can regenerate the release with `node scripts/build_browser_only.mjs`
-(or `npm run browser-only`).
+The editor, the CLI, and the HTTP API all run the same command language:
 
-## Documents and sharing
-
-Each schematic is one self-contained `.json` file. You can keep it anywhere and send it to anyone.
-
-- **Workspace folder:** the document list shows this folder, and new documents are saved into it. The default is `~/Documents/Schematics`. Change it from the **⋯** menu, or start with `node launch.mjs <folder>`.
-- **Open file…** (Ctrl/Cmd+O) and **Save as…** (Ctrl/Cmd+Shift+S) work with any folder, such as a project repository or a shared drive. Files opened from outside the workspace are listed under *Recent elsewhere*.
-- **Drop** a `.json` file (for example, an email attachment) onto the window to open a copy. Saving it puts the copy in your workspace.
-- If a file changes on disk (for example, after `git pull` or an edit by a coworker on a shared drive), an open document with no unsaved changes reloads automatically.
-- `node launch.mjs path/to/amp.json` opens a document directly.
-- **Export** writes SVG, PDF, and 3× PNG files into a folder you choose (by default, your OS Pictures folder in Node mode). Press Ctrl/Cmd+E to open the export dialog. PDFs are vector files printed by a Chrome, Chromium, Edge, or Brave install found on your machine; without one, the PDF contains the high-resolution image instead.
+```sh
+npm run cli -- amp "add nmos M1 --at 120 120"   # edits <workspace>/amp.json
+```
 
 ## Development
 
 ```sh
-npm run serve   # dev server with auto-restart on source changes (http://127.0.0.1:47280/)
-npm run symbols # regenerate the symbols reference document through the running server
+npm run serve   # dev server with auto-restart (http://127.0.0.1:47280/)
 npm test
 ```
 
-Scripted editing goes through the CLI against a running server, for example `npm run cli -- amp "add nmos M1 --at 120 120"`. Here `amp` is `<workspace>/amp.json`.
-
-## More
-
-- [`AGENTS.md`](AGENTS.md): editor behavior and symbol specification
+- [`AGENTS.md`](AGENTS.md): editor behavior and the symbol specification
 - [`docs/circuit-spec.md`](docs/circuit-spec.md): deterministic circuit generation
 - [`docs/topological-small-signal.md`](docs/topological-small-signal.md): how the analysis works
