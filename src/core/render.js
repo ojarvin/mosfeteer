@@ -5,6 +5,7 @@ import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttr
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
+import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -600,15 +601,23 @@ export function svgString(circuit, opts = {}) {
   // view (so free panning never rescales the drawing); without one, the view
   // auto-fits the circuit contents (exports / PNG).
   const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
-  const x0 = vp ? vp.x : floorGrid(b.x) - pad;
+  let x0 = vp ? vp.x : floorGrid(b.x) - pad;
   const y0 = vp ? vp.y : floorGrid(b.y) - pad;
-  const x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
+  let x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
   const y1 = vp ? vp.y + vp.h : ceilGrid(b.y + b.h) + pad;
+  // A page guide fixes the exported width, so the figure set at 100% column
+  // width gets the guide's text size (see page-guide.js).
+  const pageGuide = vp ? null : normalizePageGuide(o.pageGuide);
+  if (pageGuide) {
+    const frame = pageGuideFrame(pageGuide, x0, x1);
+    x0 = frame.x;
+    x1 = frame.x + frame.width;
+  }
   const W = x1 - x0;
   const H = y1 - y0;
 
   const parts = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(W)} ${fmt(H)}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(W)}" height="${fmt(H)}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(W)} ${fmt(H)}">`,
   ];
 
   if (o.background) parts.push(`<rect x="${fmt(x0)}" y="${fmt(y0)}" width="${fmt(W)}" height="${fmt(H)}" fill="#fff"/>`);
@@ -619,7 +628,7 @@ export function svgString(circuit, opts = {}) {
     if (vp) {
       parts.push(viewportGridSvg(vp));
     } else {
-      for (let x = x0; x <= x1; x += GRID) {
+      for (let x = ceilGrid(x0); x <= x1; x += GRID) {
         parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
       }
       for (let y = y0; y <= y1; y += GRID) {
@@ -990,6 +999,50 @@ export function editorOverlay(circuit, opts = {}) {
       `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
       `<rect x="${fmt(cx - 4)}" y="${fmt(cy - 4)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="2" transform="rotate(45 ${fmt(cx)} ${fmt(cy)})"/>` +
       `</g>`);
+  }
+
+  // Tutorial targets: where the current step suggests placing a part. A
+  // dashed outline of the symbol's box with its name, never a real object.
+  for (const target of opts.tutorialTargets || []) {
+    const r = target.rect;
+    parts.push(`<g class="tutorial-target" pointer-events="none">`
+      + `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" rx="8" fill="#16a34a" fill-opacity="0.06" stroke="#16a34a" stroke-width="2" stroke-dasharray="8 6" vector-effect="non-scaling-stroke"/>`
+      + `<text x="${fmt(r.x + r.w / 2)}" y="${fmt(r.y - 12)}" text-anchor="middle" fill="#16a34a" font-size="22" font-family="system-ui, sans-serif">${escapeSvg(target.caption)}</text>`
+      + '</g>');
+  }
+
+  // Page guide: the two column edges an export will be padded to, so the
+  // figure's text lands at the template's size at 100% width. Drawn across the
+  // whole view, quietly; it turns red when the drawing is already wider.
+  if (opts.pageGuide?.frame && opts.pageGuide.view) {
+    const { frame, view: v, caption } = opts.pageGuide;
+    const ink = frame.fits ? '#6b7a90' : '#dc2626';
+    const left = frame.x;
+    const right = frame.x + frame.width;
+    const top = v.y;
+    const bottom = v.y + v.h;
+    const trim = frame.trimCells !== undefined ? Math.round(frame.trimCells * 10) / 10 : 0;
+    const note = frame.fits ? caption : `${caption} · ${trim} cells too wide on each side: text would be ${frame.textPt.toFixed(1)} pt`;
+    const size = Math.max(10, v.w / 110);
+    // Too wide: shade what falls outside the column and draw the column's own
+    // edges above and below the figure, so the trim is visible at a glance.
+    if (!frame.fits && frame.target) {
+      const inner = [frame.target.x, frame.target.x + frame.target.width];
+      const strips = [[left, inner[0]], [inner[1], right]];
+      const above = Number.isFinite(frame.top) ? frame.top : top;
+      const below = Number.isFinite(frame.bottom) ? frame.bottom : bottom;
+      const edges = inner.map((x) => (above > top ? `M ${fmt(x)} ${fmt(top)} V ${fmt(above)} ` : '')
+        + (below < bottom ? `M ${fmt(x)} ${fmt(below)} V ${fmt(bottom)}` : '')).join(' ').trim();
+      parts.push(`<g class="page-guide-overflow" pointer-events="none">`
+        + strips.map(([a, b]) => `<rect x="${fmt(a)}" y="${fmt(top)}" width="${fmt(b - a)}" height="${fmt(bottom - top)}" fill="#dc2626" fill-opacity="0.07"/>`).join('')
+        + (edges ? `<path class="page-guide-target" d="${edges}" fill="none" stroke="#6b7a90" stroke-width="1.5" stroke-dasharray="10 6" stroke-opacity="0.9" vector-effect="non-scaling-stroke"/>` : '')
+        + strips.map(([a, b]) => `<text x="${fmt((a + b) / 2)}" y="${fmt(Math.max(top + size * 3.4, above - size * 0.8))}" text-anchor="middle" fill="#dc2626" font-size="${fmt(size)}" font-family="system-ui, sans-serif">−${trim} cells</text>`).join('')
+        + '</g>');
+    }
+    parts.push(`<g class="page-guide" pointer-events="none">`
+      + `<path d="M ${fmt(left)} ${fmt(top)} V ${fmt(bottom)} M ${fmt(right)} ${fmt(top)} V ${fmt(bottom)}" fill="none" stroke="${ink}" stroke-width="1.5" stroke-dasharray="10 6" stroke-opacity="0.75" vector-effect="non-scaling-stroke"/>`
+      + `<text x="${fmt(Math.max(left, v.x) + size * 0.6)}" y="${fmt(top + size * 1.8)}" fill="${ink}" fill-opacity="0.85" font-size="${fmt(size)}" font-family="system-ui, sans-serif">${escapeSvg(note)}</text>`
+      + '</g>');
   }
 
   // Placement guides: the spacing and alignment relationships the object being

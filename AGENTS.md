@@ -156,6 +156,9 @@ hover glows) in that color without changing their own styles.
 - Solid wires and terminal leads share square-capped `wire-ink` paths so
   terminal joints rasterize once. Per-segment wire elements remain transparent
   hit targets; ghost/dashed strokes retain their own painted elements.
+- An active page guide (`src/core/page-guide.js`, an app preference) pads a
+  drawing export to its exact width, centred, so the figure at full column
+  width gets the guide's text size. The editor draws the same frame.
 - Labels support `_{...}` and `^{...}`. Math uses the vendored Latin Modern
   Math face in `src/web/fonts/`; exports embed it when the drawing contains
   math. Persisted/exported text never contains provenance markers.

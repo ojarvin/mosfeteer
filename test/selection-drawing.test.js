@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Circuit, Net } from '../src/core/model.js';
 import { resolveCopySelection } from '../src/core/selection.js';
 import { selectionDrawing } from '../src/core/selection-drawing.js';
@@ -153,4 +154,40 @@ test('wire appearance survives a fragment split inside an authored segment', () 
   const svg = selectionDrawing(circuit, { wireKeys: ['TEE:0:1'] });
   const red = [...svg.matchAll(/<path class="wire-fixed"[^>]+stroke="#ff0000"[^>]+stroke-dasharray/g)];
   assert.equal(red.length, 2);
+});
+
+test('exporting only the selection renders the subset with the normal export frame', async () => {
+  const { selectionSubset, hasDrawableSelection, DRAWING_EXPORT_OPTIONS: exportOptions } = await import('../src/core/selection-drawing.js');
+  const { svgString } = await import('../src/core/render.js');
+  const { runCommand: run } = await import('../src/core/commands.js');
+  const { Circuit: Model } = await import('../src/core/model.js');
+  const circuit = new Model();
+  run(circuit, 'add resistor R1 --at 0 0');
+  run(circuit, 'add resistor R2 --at 800 0');
+  assert.equal(hasDrawableSelection({}), false);
+  assert.equal(selectionSubset(circuit, {}), circuit, 'no selection is the whole document');
+  const subset = selectionSubset(circuit, { refs: new Set(['R1']) });
+  assert.deepEqual([...subset.components.keys()], ['R1']);
+  const svg = svgString(subset, exportOptions);
+  assert.match(svg, /data-ref="R1"/);
+  assert.doesNotMatch(svg, /data-ref="R2"/);
+  assert.ok(circuit.components.has('R2'), 'the document is untouched');
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  assert.match(html, /name="selection"[^>]*\/> Only the selection/);
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /exportSelectionInput\.checked = false;/);
+});
+
+test('a selection keeps the net highlight colors of the document', async () => {
+  const { resolveColor } = await import('../src/core/style.js');
+  const { circuit, net } = fixture();
+  circuit.cycleNetHighlight(net);
+  const color = resolveColor(circuit.netHighlight(net));
+  assert.ok(color);
+  const count = (svg) => (svg.match(new RegExp(color, 'g')) || []).length;
+  // Whole parts with their net, and a lone wire segment (a fragment net).
+  const whole = selectionDrawing(circuit, { refs: new Set(['R1', 'R2']), netIds: new Set([net.id]) });
+  assert.ok(count(whole) > 0, 'the highlighted net keeps its color');
+  const segment = selectionDrawing(circuit, { wireKeys: new Set([`${net.id}:0:1`]) });
+  assert.ok(count(segment) > 0, 'a partial wire keeps its color too');
 });

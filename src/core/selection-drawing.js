@@ -17,6 +17,11 @@ function schematicSubset(circuit, selection) {
   const drawing = new Circuit();
   drawing.components = new Map(comps.map((comp) => [comp.refdes, comp]));
   drawing.nets = new Map(nets.map((net) => [net.id, net]));
+  // Net highlights are keyed by the source document's electrical groups, and
+  // a partial wire becomes a new fragment net below. Every drawn net therefore
+  // takes its color from the source net it came from.
+  const sourceOf = new Map(nets.map((net) => [net.id, net]));
+  drawing.netHighlight = (net) => circuit.netHighlight(sourceOf.get(net?.id) || net);
   const labelIds = new Set(freeLabels.map((label) => label.id));
   drawing.labels = new Map([...circuit.labels].filter(([id, label]) =>
     labelIds.has(id) || (label.owner && drawing.components.has(label.owner)) ||
@@ -45,6 +50,7 @@ function schematicSubset(circuit, selection) {
       }
     }
     drawing.nets.set(net.id, net);
+    sourceOf.set(net.id, fragment.net);
   }
   // Junction dots are derived parts of complete wire topology. Internal paste
   // recreates them; an image must retain the existing dots without mutating or
@@ -64,13 +70,22 @@ function schematicSubset(circuit, selection) {
   return drawing;
 }
 
+/** Whether a selection names anything to draw. */
+export function hasDrawableSelection(selection = {}) {
+  return ['refs', 'labels', 'netIds', 'wireKeys'].some((key) => [...(selection[key] || [])].length > 0);
+}
+
+/** The selected objects as a drawing of their own (a subset, never a crop);
+ * no selection means the entire document. Model objects are shared read-only. */
+export function selectionSubset(document, selection = {}) {
+  return hasDrawableSelection(selection) ? schematicSubset(document, selection) : document;
+}
+
 /** Render a subset, never a crop. No selection means the entire document.
  * Model objects are read only: measured labels and authored routes stay intact.
  * Font embedding is supplied by the browser's standalone export adapter. */
 export function selectionDrawing(document, selection = {}, options = {}) {
-  const selected = ['refs', 'labels', 'netIds', 'wireKeys']
-    .some((key) => [...(selection[key] || [])].length > 0);
-  const drawing = !selected ? document : schematicSubset(document, selection);
+  const drawing = selectionSubset(document, selection);
   const padding = options.padding ?? GRID;
   if (!Number.isFinite(padding) || padding < 0) throw new Error('drawing padding must be a non-negative number');
   const bounds = drawing.bounds();

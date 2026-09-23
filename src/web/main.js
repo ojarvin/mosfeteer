@@ -15,6 +15,8 @@ import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/compone
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
 import { TipBook } from './tips.js';
+import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
+import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
@@ -25,10 +27,10 @@ import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arro
 import { createDocument, loadDocument, renderDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { resolveCopySelection } from '../core/selection.js';
-import { DRAWING_EXPORT_OPTIONS, selectionDrawing } from '../core/selection-drawing.js';
+import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } from '../core/selection-drawing.js';
 import { svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { writeDrawingToClipboard } from './clipboard.js';
-import { applyTransform, distanceToSegment } from '../core/geometry.js';
+import { applyTransform, distanceToSegment, transformRect } from '../core/geometry.js';
 import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
@@ -97,6 +99,9 @@ const exportForm = document.getElementById('export-form');
 const exportCancel = document.getElementById('export-cancel');
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
 const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
+const exportSelectionInput = exportForm?.querySelector('input[name="selection"]');
+// The selection as it stood when the export dialog opened.
+let exportSelection = null;
 const checkSummaryBodyEl = document.getElementById('check-summary-body');
 const clearCheckButtonEl = document.getElementById('btn-clear-check');
 const helpDialog = document.getElementById('help-dialog');
@@ -185,6 +190,9 @@ const ICON_PATHS = {
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
   rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M20 4v5h-5"/>',
+  'page-guide': '<path d="M5 3v18M19 3v18" stroke-dasharray="2.5 2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  graduation: '<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5M22 9v6"/>',
   lightbulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/>',
   trackpad: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 15h17M12 15v4"/>',
   'mirror-x': '<path d="M12 3v18" stroke-dasharray="2 2.4"/><path d="M9 7 4 17h5zM15 7l5 10h-5z"/>',
@@ -331,6 +339,8 @@ preloadToolCursors();
 // user is doing. The rules that keep them scarce live in tips.js; this only
 // stores the state and shows the card. `noteTip` is safe to call anywhere.
 const TIPS_KEY = 'mosfeteer.tips';
+// The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.
+let tutorial = null;
 const tipBook = new TipBook((() => {
   try { return JSON.parse(localStorage.getItem(TIPS_KEY) || 'null'); } catch { return null; }
 })());
@@ -352,7 +362,8 @@ function hideTip() {
 }
 
 function noteTip(event) {
-  const tip = tipBook.note(event, Date.now());
+  // The tutorial teaches the same things; tips still retire, but stay quiet.
+  const tip = tutorial ? (tipBook.note(event, -Infinity), null) : tipBook.note(event, Date.now());
   // Using the feature a visible tip describes answers it.
   if (shownTip && tipBook.state.retired.includes(shownTip.id)) hideTip();
   saveTips();
@@ -392,6 +403,146 @@ tipsButton?.addEventListener('click', () => {
   syncTipsButton();
 });
 syncTipsButton();
+
+// ----- first-drawing tutorial ------------------------------------------------
+// Optional and never offered by itself: it starts only from the More menu or
+// the empty-canvas card, and closing it leaves the drawing as it is. Steps are
+// checked from the drawing's structure in tutorial.js.
+const tutorialCardEl = document.getElementById('tutorial-card');
+const tutorialStepEl = document.getElementById('tutorial-step');
+const tutorialStepsEl = document.getElementById('tutorial-steps');
+const tutorialCountEl = document.getElementById('tutorial-count');
+const tutorialBarEl = document.getElementById('tutorial-bar-fill');
+const tutorialSkipEl = document.getElementById('tutorial-skip');
+const tutorialStepsToggleEl = document.getElementById('tutorial-steps-toggle');
+let tutorialKey = '';
+let tutorialState = null;
+let tutorialCheerTimer = 0;
+
+function currentTutorialProgress() {
+  if (!tutorial) return null;
+  const key = `${modelRevision}:${[...tutorial.skipped].join(',')}:${circuit.netHighlights.size}`;
+  if (key !== tutorialKey) {
+    tutorialKey = key;
+    tutorialState = tutorialProgress(circuit, tutorial.skipped);
+  }
+  return tutorialState;
+}
+
+function tutorialTargetRects() {
+  const progress = currentTutorialProgress();
+  if (!progress?.current) return [];
+  return openTutorialTargets(circuit, progress.current).map((target) => {
+    const def = getSymbol(target.type);
+    const transform = { x: target.x, y: target.y, rotation: 0, mirrorX: target.mirrorX, mirrorY: !!def.defaultMirrorY };
+    return { rect: transformRect(transform, def.bbox), caption: target.caption };
+  });
+}
+
+function appendTutorialText(parent, text) {
+  for (const run of tutorialRuns(text)) {
+    parent.append(run.key ? Object.assign(document.createElement('kbd'), { textContent: run.text }) : run.text);
+  }
+}
+
+function tutorialElapsed() {
+  const seconds = Math.round(((tutorial.finishedAt || Date.now()) - tutorial.startedAt) / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function syncTutorial() {
+  if (!tutorialCardEl) return;
+  tutorialCardEl.hidden = !tutorial;
+  const progress = currentTutorialProgress();
+  if (!progress) return;
+  // A step finished since the last look earns a short cheer.
+  const fresh = progress.steps.filter((step) => step.done && !tutorial.cheered.has(step.id));
+  for (const step of fresh) tutorial.cheered.add(step.id);
+  if (fresh.length) {
+    tutorial.cheer = TUTORIAL_STEPS.find((step) => step.id === fresh.at(-1).id).title;
+    window.clearTimeout(tutorialCheerTimer);
+    tutorialCheerTimer = window.setTimeout(() => {
+      if (tutorial) tutorial.cheer = null;
+      syncTutorial();
+    }, 2600);
+  }
+  if (progress.finished && !tutorial.finishedAt) tutorial.finishedAt = Date.now();
+  const total = TUTORIAL_STEPS.length;
+  tutorialCountEl.textContent = `${progress.doneCount} / ${total}`;
+  tutorialBarEl.style.width = `${(progress.doneCount / total) * 100}%`;
+  tutorialStepEl.replaceChildren();
+  if (tutorial.cheer) {
+    tutorialStepEl.append(Object.assign(document.createElement('div'), { className: 'tutorial-cheer', textContent: `✓ ${tutorial.cheer}` }));
+  }
+  const heading = document.createElement('h3');
+  const body = document.createElement('p');
+  if (progress.current) {
+    heading.textContent = progress.current.title;
+    appendTutorialText(body, progress.current.text);
+  } else {
+    const skippedCount = progress.steps.filter((step) => step.skipped).length;
+    heading.textContent = skippedCount ? 'Through the tutorial' : 'You drew a 5T OTA!';
+    appendTutorialText(body, `${skippedCount ? `All steps visited in ${tutorialElapsed()}; skipped ones tick off whenever you finish them.` : `Done in ${tutorialElapsed()}.`} Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.`);
+  }
+  tutorialStepEl.append(heading, body);
+  tutorialStepsEl.hidden = !tutorial.showSteps;
+  tutorialStepsToggleEl.textContent = tutorial.showSteps ? 'Hide steps' : 'All steps';
+  tutorialStepsEl.replaceChildren(...progress.steps.map((step) => {
+    const item = document.createElement('li');
+    item.textContent = TUTORIAL_STEPS.find((candidate) => candidate.id === step.id).title;
+    item.classList.toggle('done', step.done);
+    item.classList.toggle('skipped', step.skipped);
+    item.classList.toggle('current', step.id === progress.current?.id);
+    return item;
+  }));
+  tutorialSkipEl.hidden = !progress.current;
+}
+
+/** Begin the tutorial in a fresh document (after the usual unsaved-changes check). */
+function offerTutorial() {
+  requestDocumentAction('Starting the tutorial', () => {
+    startNewDocument();
+    startTutorial();
+  });
+}
+
+function startTutorial() {
+  circuitNameEl.value = 'tutorial-5t-ota';
+  renderSaveState();
+  tutorial = { startedAt: Date.now(), skipped: new Set(), cheered: new Set(), cheer: null, finishedAt: null };
+  tutorialKey = '';
+  hideTip();
+  fitView();
+  // Keep the marked spots clear of the card at the bottom left.
+  const pane = paneSize();
+  if (pane && tutorialCardEl) {
+    const cardWorld = ((tutorialCardEl.getBoundingClientRect().width || 340) + 68) * (view.w / pane.w);
+    view = { ...view, x: view.x - cardWorld / 2 };
+  }
+  render();
+  canvasEl.focus();
+  logLine('Tutorial started: follow the card at the bottom left, or close it any time.', 'status');
+}
+
+function endTutorial() {
+  tutorial = null;
+  window.clearTimeout(tutorialCheerTimer);
+  render();
+  canvasEl.focus();
+}
+
+document.getElementById('tutorial-close')?.addEventListener('click', endTutorial);
+tutorialStepsToggleEl?.addEventListener('click', () => {
+  if (!tutorial) return;
+  tutorial.showSteps = !tutorial.showSteps;
+  syncTutorial();
+});
+tutorialSkipEl?.addEventListener('click', () => {
+  const current = currentTutorialProgress()?.current;
+  if (current) tutorial.skipped.add(current.id);
+  render();
+});
+document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
 const modeToolbarEl = document.querySelector('.mode-toolbar');
 // ----- editor state ----------------------------------------------
 
@@ -491,6 +642,10 @@ let crosshairVisible = false;
 // off for a drawing being laid out by hand, without touching the symmetry
 // axis, which is armed deliberately rather than offered.
 let guidesVisible = true;
+// The page guide preset ({ preset, textPt }) or null; see core/page-guide.js.
+let pageGuide = (() => {
+  try { return normalizePageGuide(localStorage.getItem('mosfeteer.pageGuide')); } catch { return null; }
+})();
 let visual = null; // visual mode: anchor grid point {x,y} the selection box starts from
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
@@ -1168,7 +1323,7 @@ async function copyAsImage() {
   }
 }
 
-async function runExport({ dir, name, formats, grid = false, dark = false }) {
+async function runExport({ dir, name, formats, grid = false, dark = false, selection = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
   const unsupported = formats.filter((format) => !supportedFormats.has(format));
   if (unsupported.length) {
@@ -1189,10 +1344,19 @@ async function runExport({ dir, name, formats, grid = false, dark = false }) {
       committedCanvasKey = '';
       render();
     }
-    const renderedSvg = renderDocument(circuit, {
+    // Only the selection: the same export, of the selected subset alone.
+    const drawing = selection ? selectionSubset(circuit, selection) : circuit;
+    const renderedSvg = renderDocument(drawing, {
       ...DRAWING_EXPORT_OPTIONS,
       grid,
+      pageGuide,
     });
+    if (pageGuide) {
+      const frame = circuitPageGuideFrame(drawing, pageGuide, DRAWING_EXPORT_OPTIONS.padding);
+      logLine(frame.fits
+        ? `Padded to the page guide: ${pageGuideCaption(pageGuide)}.`
+        : `The drawing is wider than the page guide; at full width its text is ${frame.textPt.toFixed(1)} pt.`);
+    }
     const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
     const request = { dir, name, formats, svg };
     if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
@@ -1247,6 +1411,22 @@ function exportCircuit() {
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  // Selection-only is offered per export, never remembered: a later export
+  // with nothing selected must not silently shrink to a stale choice.
+  const source = copySelectionSource();
+  exportSelection = hasDrawableSelection(source)
+    ? { refs: new Set(source.refs), labels: [...source.labels], netIds: new Set(source.netIds), wireKeys: new Set(source.wireKeys) }
+    : null;
+  if (exportSelectionInput) {
+    exportSelectionInput.checked = false;
+    exportSelectionInput.disabled = !exportSelection;
+    exportSelectionInput.closest('label')?.classList.toggle('disabled', !exportSelection);
+  }
+  const selectionCount = document.getElementById('export-selection-count');
+  if (selectionCount) {
+    const count = exportSelection ? exportSelection.refs.size + exportSelection.labels.length + exportSelection.netIds.size + exportSelection.wireKeys.size : 0;
+    selectionCount.textContent = exportSelection ? `(${count} selected)` : '(nothing selected)';
+  }
   if (Array.isArray(saved?.formats)) {
     for (const input of exportForm.querySelectorAll('input[name="format"]')) {
       const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
@@ -3325,6 +3505,12 @@ function fitView({ animate = false } = {}) {
   if (b.w > 0 || b.h > 0) {
     add(b.x, b.y);
     add(b.x + b.w, b.y + b.h);
+    // A page guide is part of what the figure will be: fit its edges too.
+    if (pageGuide) {
+      const frame = circuitPageGuideFrame(circuit, pageGuide);
+      add(frame.x, b.y);
+      add(frame.x + frame.width, b.y + b.h);
+    }
   }
   for (const c of selectedComps()) {
     const r = c.bboxWorld();
@@ -4119,7 +4305,7 @@ function syncEmptyState() {
   const card = document.getElementById('empty-state');
   if (!card) return;
   const empty = !circuit.components.size && !circuit.labels.size && !circuit.nets.size;
-  card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode;
+  card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode || !!tutorial;
   if (card.hidden) return;
   card.querySelector('.empty-state-title').textContent = 'Empty schematic';
   card.querySelector('[data-empty-action="wire"] .empty-state-text').textContent = 'Draw a wire';
@@ -4129,6 +4315,7 @@ function syncEmptyState() {
 function render() {
   syncDocumentSurface();
   syncEmptyState();
+  syncTutorial();
   syncViewToPane();
   // A context menu is independent of canvas repainting. Closing it here made
   // it vanish on the first pointer move after opening it.
@@ -4617,6 +4804,8 @@ function renderCanvas(modelKey) {
     };
   }
   const overlay = editorOverlay(circuit, {
+    tutorialTargets: tutorialTargetRects(),
+    pageGuide: pageGuide ? { frame: circuitPageGuideFrame(circuit, pageGuide), view, caption: pageGuideCaption(pageGuide) } : null,
     cursor,
     selection: [...multi],
     emphasis: equationEmphasis,
@@ -13540,6 +13729,7 @@ modelDialog?.addEventListener('close', () => {
 
 const toolbarMenus = [
   [document.getElementById('btn-document-menu'), document.getElementById('document-menu')],
+  [document.getElementById('btn-settings'), document.getElementById('settings-menu')],
   [document.getElementById('style-line-pattern'), document.getElementById('style-line-menu')],
 ].filter(([button, menu]) => button && menu);
 
@@ -13721,7 +13911,8 @@ exportForm?.addEventListener('submit', (event) => {
     else folders[documentKey] = exportFolder;
     localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
   } catch { /* storage unavailable */ }
-  runExport({ dir: exportFolder, name, formats, ...settings });
+  const selection = exportSelectionInput?.checked && exportSelection ? exportSelection : null;
+  runExport({ dir: exportFolder, name, formats, ...settings, selection });
 });
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => {
@@ -13767,7 +13958,8 @@ document.getElementById('empty-state')?.addEventListener('click', (ev) => {
   else if (action === 'wire') activateWire();
   else if (action === 'open') openDocumentDialog();
   else if (action === 'help') showHelp();
-  if (action && action !== 'open' && action !== 'help') canvasEl.focus();
+  else if (action === 'tutorial') offerTutorial();
+  if (action && !['open', 'help', 'tutorial'].includes(action)) canvasEl.focus();
 });
 // Documents created by the CLI, another window, or a file manager appear without a manual reload.
 circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
@@ -13862,6 +14054,29 @@ if (guidesBtn) {
   guidesBtn.addEventListener('click', () => setGuides(!guidesVisible));
   guidesBtn.setAttribute('aria-pressed', String(guidesVisible));
 }
+
+// Page guide: an app preference, like the other view toggles. It shows the
+// width an export will be padded to (see core/page-guide.js).
+const PAGE_GUIDE_KEY = 'mosfeteer.pageGuide';
+function syncPageGuideControls() {
+  for (const item of document.querySelectorAll('[data-page-guide]')) {
+    item.setAttribute('aria-checked', String((pageGuide?.preset || '') === item.dataset.pageGuide));
+  }
+}
+function setPageGuide(preset) {
+  pageGuide = normalizePageGuide(preset);
+  try { localStorage.setItem(PAGE_GUIDE_KEY, pageGuide?.preset || ''); } catch { /* per-session only */ }
+  syncPageGuideControls();
+  render();
+  hintLine(pageGuide ? `page guide: ${pageGuideCaption(pageGuide)}` : 'page guide off');
+}
+for (const item of document.querySelectorAll('[data-page-guide]')) {
+  item.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    setPageGuide(item.dataset.pageGuide);
+  });
+}
+syncPageGuideControls();
 
 if (crosshairBtn) {
   crosshairBtn.addEventListener('click', () => setCrosshair(!crosshairVisible));

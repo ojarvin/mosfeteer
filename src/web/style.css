@@ -256,6 +256,7 @@ button:focus-visible {
 }
 
 .view-cluster .icon-button,
+.settings-cluster .icon-button,
 .segmented .icon-button {
   color: var(--text-dim);
   background: transparent;
@@ -263,6 +264,8 @@ button:focus-visible {
 }
 
 .view-cluster .icon-button:hover,
+.settings-cluster .icon-button:hover,
+.settings-cluster .icon-button[aria-expanded="true"],
 .segmented .icon-button:hover {
   color: var(--text);
   background: var(--bg-hover);
@@ -3713,5 +3716,197 @@ button.off {
 
 @media (prefers-reduced-motion: reduce) {
   .tip-card { animation: none; }
+}
+
+/* Settings menu: headed sections; the page guide has a note on its purpose. */
+.settings-menu {
+  left: auto;
+  right: 0;
+  width: 17rem;
+}
+
+.toolbar-menu-heading {
+  margin: 6px 9px 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.toolbar-menu-note {
+  margin: 4px 9px 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.toolbar-menu [role="menuitemradio"][aria-checked="true"]::after {
+  content: '✓';
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.toolbar-menu [role="menuitemradio"] {
+  display: flex;
+  align-items: center;
+}
+
+/* First-drawing tutorial: a small checklist card beside the tool rail. */
+.tutorial-card {
+  position: absolute;
+  z-index: 6;
+  left: 68px;
+  bottom: 12px;
+  width: min(21rem, calc(100% - 84px));
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 10px 12px 12px;
+  border-radius: 12px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tutorial-card[hidden] {
+  display: none;
+}
+
+.tutorial-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tutorial-title {
+  font-weight: 600;
+}
+
+.tutorial-count {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.tutorial-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: none;
+  border-color: transparent;
+  color: var(--text-dim);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.tutorial-bar {
+  height: 4px;
+  margin: 8px 0 10px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  overflow: hidden;
+}
+
+.tutorial-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 320ms ease-out;
+}
+
+.tutorial-step h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.tutorial-step p {
+  margin: 0;
+}
+
+.tutorial-step kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.tutorial-cheer {
+  margin-bottom: 6px;
+  color: #16a34a;
+  font-weight: 600;
+  animation: tutorial-cheer 900ms ease-out;
+}
+
+.tutorial-steps {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 1px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.tutorial-steps li::before {
+  content: '○';
+  display: inline-block;
+  width: 1.4em;
+}
+
+.tutorial-steps li.done {
+  color: var(--text);
+}
+
+.tutorial-steps li.done::before {
+  content: '✓';
+  color: #16a34a;
+}
+
+.tutorial-steps li.skipped::before {
+  content: '–';
+}
+
+.tutorial-steps li.current {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tutorial-steps li.current::before {
+  content: '▸';
+}
+
+.tutorial-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tutorial-steps[hidden] {
+  display: none;
+}
+
+.tutorial-steps-toggle {
+  margin-right: auto;
+  background: none;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.tutorial-actions button {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+@keyframes tutorial-cheer {
+  0% { opacity: 0; transform: scale(0.9); }
+  30% { opacity: 1; transform: scale(1.06); }
+  100% { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tutorial-cheer { animation: none; }
+  .tutorial-bar span { transition: none; }
 }
 
