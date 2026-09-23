@@ -802,6 +802,27 @@ test('a placement midpoint is referenced from the ghost to the full-pitch ruler'
   assert.match(overlay, />6 cells</);
 });
 
+test('a faded suggestion and a far alignment stay quiet in the overlay', () => {
+  const overlay = editorOverlay(new Circuit(), {
+    placementGuide: {
+      moving: { anchor: { x: 0, y: 0 }, bbox: { x: -40, y: -40, w: 80, h: 80 } },
+      guides: [
+        { kind: 'align', axis: 'y', value: 0, weight: 1, points: [
+          { id: '__ghost__', x: 0, y: 0, moving: true },
+          { id: 'M1', x: 1600, y: 0, moving: false },
+        ] },
+        { kind: 'spacing', axis: 'y', cells: 8, exact: false, weight: 0.4, target: 160, points: [
+          { id: 'A', x: 0, y: -480, moving: false },
+          { id: 'B', x: 0, y: -160, moving: false },
+          { id: '__ghost__', x: 0, y: 160, moving: true },
+        ] },
+      ],
+    },
+  });
+  assert.match(overlay, /class="placement-guide-faded" opacity="0.4"/);
+  assert.match(overlay, /class="placement-align-far" d="M 80 0 H 1520"/);
+});
+
 test('wire mode enlarges terminal markers and emphasizes the Alt snap target', () => {
   const circuit = new Circuit();
   circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });

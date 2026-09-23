@@ -113,10 +113,16 @@ export function distributionPlan(items, axis, measure = 'gaps', grid = GRID) {
 // wherever the object happens to be sitting -- so a guide that is still a
 // suggestion says the same thing as the one that confirms the landing.
 const MAX_SPACING_CELLS = 24; // beyond this two objects are not "a spacing"
+const MAX_INTERVAL_CELLS = 12; // a pitch longer than this is rarely a pattern
+const MIN_INTERVAL_CELLS = 3; // a shorter interval is judged by eye without help
+const ALIGN_REACH_CELLS = 64; // far alignment is exactly what the eye cannot judge
 const MAX_HINT_CELLS = 10; // how far off a target may be and still be offered
 const SPACING_POOL = 8; // nearest peers considered as run-defining pairs
 const LOCAL_CELLS = 16; // keep a nearby branch in view even when the ghost is beside it
 const MAX_REPEAT_GAPS = 4; // enough repeated pitches to reach a deliberate double gap
+const MIN_WEIGHT = 0.4; // emphasis of a suggestion at the edge of its reach
+
+const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /** Every position at which the moving object would be evenly spaced against
  *  one pair of peers: continuing their run in either direction, or centred
@@ -152,7 +158,10 @@ function spacingCandidates(peers, moving, axis, grid) {
       // a symmetric stage offer the same centre from both sides; the guide has
       // to name the one being worked next to, not its mirror image.
       const aside = Math.max(...[a, b].map((peer) => Math.abs(peer.anchor[other] - moving.anchor[other])));
-      for (let repeat = 1; repeat <= MAX_REPEAT_GAPS; repeat += 1) {
+      // Continuing a run needs the pitch itself to be a plausible spacing, and
+      // the repeats may not walk further than a spacing reaches.
+      const continues = pair <= MAX_INTERVAL_CELLS * grid;
+      for (let repeat = 1; continues && repeat <= MAX_REPEAT_GAPS && pair * repeat <= MAX_SPACING_CELLS * grid; repeat += 1) {
         candidates.push(
           { target: a.anchor[axis] - pair * repeat, span: pair, run: [null, a, b], alike, aside, repeat, side: -1 },
           { target: b.anchor[axis] + pair * repeat, span: pair, run: [a, b, null], alike, aside, repeat, side: 1 },
@@ -179,8 +188,18 @@ function spacingCandidates(peers, moving, axis, grid) {
  *  together) follows from that. */
 function spacingGuide(peers, moving, axis, grid) {
   const m = moving.anchor[axis];
+  const reach = (span) => Math.min(span / 2, MAX_HINT_CELLS * grid);
+  // A target the object could not occupy is not worth pointing at: in a
+  // dense array it is usually the next device's own slot.
+  const occupied = (target) => {
+    const box = { ...moving.bbox, [axis]: moving.bbox[axis] + target - m };
+    return peers.some((peer) => overlaps(box, peer.bbox));
+  };
   const within = spacingCandidates(peers, moving, axis, grid).filter(({ target, span }) =>
-    span > 0 && Math.abs(target - m) <= Math.min(span / 2, MAX_HINT_CELLS * grid));
+    span >= MIN_INTERVAL_CELLS * grid && Math.abs(target - m) <= reach(span)
+    // An odd gap is only worth reporting where a centre is being attempted.
+    && (nearGrid(target - m, grid) || Math.abs(target - m) < grid)
+    && (target === m || !occupied(target)));
   // Keep the closest defining couple stable first. Ranking target distance
   // before branch distance made a one-cell pointer move switch from the local
   // column to a much farther pair whose midpoint happened to be nearer. A
@@ -256,9 +275,16 @@ function spacingGuide(peers, moving, axis, grid) {
       };
     }
   }
+  // A suggestion fades with its distance, so in a crowded neighbourhood the
+  // relationship about to be reached reads first and far offers stay quiet.
+  const awayCells = Math.abs(best.target - m) / grid;
+  const reachCells = reach(best.span) / grid;
+  const weight = best.target === m || reachCells <= 1 ? 1
+    : Math.max(MIN_WEIGHT, 1 - (1 - MIN_WEIGHT) * (awayCells - 1) / (reachCells - 1));
   return {
     kind: 'spacing',
     axis,
+    weight: Math.round(weight * 100) / 100,
     cells: best.span / grid,
     exact: best.target === m,
     offGrid: !nearGrid(best.target - m, grid),
@@ -271,13 +297,14 @@ function spacingGuide(peers, moving, axis, grid) {
 
 /** The nearest peer on each side that the moving object currently shares a row
  *  (`axis:'y'`) or column (`axis:'x'`) with, as one line through their anchors.
- *  Only the immediate neighbours: a part on the far side of the drawing shares
- *  the row by coincidence, and a line reaching it says nothing about this
- *  placement while covering everything in between. */
-function alignGuide(peers, moving, axis, grid) {
+ *  Only the immediate neighbours, and only within `reach` cells: alignment
+ *  reaches much further than spacing, because a distant row is exactly the one
+ *  that cannot be judged by eye, but a part on the far side of the drawing
+ *  shares the row by coincidence. */
+function alignGuide(peers, moving, axis, grid, reachCells) {
   const along = axis === 'x' ? 'y' : 'x';
   const value = moving.anchor[axis];
-  const reach = MAX_SPACING_CELLS * grid;
+  const reach = reachCells * grid;
   const shared = peers.filter((peer) => peer.anchor[axis] === value
     && Math.abs(peer.anchor[along] - moving.anchor[along]) <= reach);
   const nearest = (dir) => shared
@@ -288,7 +315,7 @@ function alignGuide(peers, moving, axis, grid) {
   const points = [...members, moving]
     .map((item) => ({ id: item.id, x: item.anchor.x, y: item.anchor.y, moving: item.id === moving.id }))
     .sort((a, b) => a[along] - b[along] || a.id.localeCompare(b.id));
-  return { kind: 'align', axis, value, points };
+  return { kind: 'align', axis, value, weight: 1, points };
 }
 
 /** When alignment has only one peer, there is no pair from which to infer an
@@ -300,7 +327,9 @@ function directSpacingGuide(alignment, moving, grid) {
   const peer = peers[0];
   const axis = alignment.axis === 'x' ? 'y' : 'x';
   const distance = Math.abs(moving.anchor[axis] - peer[axis]);
-  if (!distance || !nearGrid(distance, grid)) return null;
+  // A far alignment is worth drawing; its length is not a spacing anyone is
+  // matching, so the dimension would only add a long ruler across the drawing.
+  if (distance < MIN_INTERVAL_CELLS * grid || !nearGrid(distance, grid) || distance > MAX_INTERVAL_CELLS * grid) return null;
   const points = [peer, {
     id: moving.id,
     x: moving.anchor.x,
@@ -311,6 +340,7 @@ function directSpacingGuide(alignment, moving, grid) {
     kind: 'spacing',
     direct: true,
     axis,
+    weight: 1,
     cells: distance / grid,
     exact: true,
     offGrid: false,
@@ -337,7 +367,12 @@ export function placementGuides(items, moving, grid = GRID) {
     // relationship is otherwise equal.
     const spacing = spacingGuide(others, moving, axis, grid);
     if (spacing) guides.push(spacing);
-    const align = alignGuide(alike, moving, axis, grid) || alignGuide(others, moving, axis, grid);
+    // Nearby neighbours first, like parts before any part; only then the
+    // longer reach, so a distant peer never displaces a local one.
+    const align = alignGuide(alike, moving, axis, grid, MAX_SPACING_CELLS)
+      || alignGuide(others, moving, axis, grid, MAX_SPACING_CELLS)
+      || alignGuide(alike, moving, axis, grid, ALIGN_REACH_CELLS)
+      || alignGuide(others, moving, axis, grid, ALIGN_REACH_CELLS);
     if (align) {
       const along = axis === 'x' ? 'y' : 'x';
       if (!guides.some((guide) => guide.kind === 'spacing' && guide.axis === along)) {
@@ -347,7 +382,8 @@ export function placementGuides(items, moving, grid = GRID) {
       guides.push(align);
     }
   }
-  return guides;
+  // Fainter guides are drawn first, so the strongest reads on top.
+  return guides.sort((a, b) => a.weight - b.weight);
 }
 
 /** The guides in words for the status line: the drawing shows the geometry,

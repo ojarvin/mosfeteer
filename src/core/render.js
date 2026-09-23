@@ -979,13 +979,19 @@ export function editorOverlay(circuit, opts = {}) {
   // measures, with a leader from each anchor to the dimension line, so what
   // is being compared is never in doubt; two equal intervals carry the same
   // number side by side. Only the blue anchor/alignment family is rendered.
+  // A guide's `weight` fades a suggestion that is still far from its target,
+  // so the relationship about to be reached is the one that reads.
   if (opts.placementGuide?.guides?.length) {
     const { moving, guides } = opts.placementGuide;
     const ANCHOR_INK = '#0ea5e9';
+    const FAR_ALIGN = 16 * GRID;
     const tick = 9;
     const dot = (p, solid, ink) => `<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="4.5" fill="${p.moving && !p.synthetic && solid ? ink : 'var(--paper, #fff)'}" stroke="${ink}" stroke-width="2"/>`;
     parts.push(`<g class="placement-guides" pointer-events="none" fill="none" stroke-width="2" vector-effect="non-scaling-stroke">`);
     for (const guide of guides) {
+      const weight = guide.weight ?? 1;
+      if (weight < 1) parts.push(`<g class="placement-guide-faded" opacity="${weight}">`);
+      const close = () => { if (weight < 1) parts.push('</g>'); };
       const color = ANCHOR_INK;
       const axis = guide.axis;
       const along = axis === 'x' ? 'y' : 'x';
@@ -995,13 +1001,27 @@ export function editorOverlay(circuit, opts = {}) {
       // single visual cue instead of several competing rhythms.
       const SUGGESTION_DASH = '7 5';
       if (guide.kind === 'align') {
-        const lo = Math.min(...guide.points.map((p) => pt(p, along)));
-        const hi = Math.max(...guide.points.map((p) => pt(p, along)));
+        const stops = guide.points.map((p) => pt(p, along)).sort((a, b) => a - b);
         const line = (a, b) => axis === 'y'
           ? `M ${fmt(a)} ${fmt(guide.value)} H ${fmt(b)}`
           : `M ${fmt(guide.value)} ${fmt(a)} V ${fmt(b)}`;
-        parts.push(`<path d="${line(lo - GRID / 2, hi + GRID / 2)}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.85"/>`);
+        // A far alignment keeps its full line, but only the stretch beside each
+        // anchor is at strength; the long middle crosses unrelated parts and
+        // stays a hairline.
+        const near = [];
+        const far = [];
+        for (let i = 0; i + 1 < stops.length; i += 1) {
+          const [a, b] = [stops[i], stops[i + 1]];
+          if (b - a > FAR_ALIGN) {
+            near.push(line(a, a + 2 * GRID), line(b - 2 * GRID, b));
+            far.push(line(a + 2 * GRID, b - 2 * GRID));
+          } else near.push(line(a, b));
+        }
+        near.push(line(stops[0] - GRID / 2, stops[0]), line(stops.at(-1), stops.at(-1) + GRID / 2));
+        parts.push(`<path d="${near.join(' ')}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.85"/>`);
+        if (far.length) parts.push(`<path class="placement-align-far" d="${far.join(' ')}" stroke="${color}" stroke-dasharray="${SUGGESTION_DASH}" stroke-opacity="0.3" stroke-width="1.25"/>`);
         parts.push(guide.points.map((p) => dot(p, true, color)).join(''));
+        close();
         continue;
       }
       // One dimension line clear of every anchor and of the moving symbol. A
@@ -1057,6 +1077,7 @@ export function editorOverlay(circuit, opts = {}) {
         parts.push(`<g class="placement-halfway-reference" stroke="${color}" stroke-opacity="0.4" stroke-width="1.25"><path d="${reference}"/></g>${text}`);
       }
       parts.push(guide.points.map((p) => dot(p, guide.exact, color)).join(''));
+      close();
     }
     parts.push('</g>');
   }

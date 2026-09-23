@@ -210,6 +210,72 @@ test('guides stay local: a distant peer neither spaces nor aligns', () => {
   assert.deepEqual(placementGuides([item('A', -80000, 0), item('B', -40000, 0)], item('__ghost__', 0, 0)), []);
 });
 
+test('alignment reaches far, where the eye cannot judge it, without a long ruler', () => {
+  // Forty cells away the row is still named, but its length is not a spacing
+  // anyone matches, so no direct dimension is drawn beside it.
+  const guides = placementGuides([item('M1', 1600, 0, 120, 160, 'nmos')], item('__ghost__', 0, 0, 120, 160, 'nmos'));
+  assert.deepEqual(guides.map((guide) => guide.kind), ['align']);
+  assert.deepEqual(guides[0].points.map((point) => point.id), ['__ghost__', 'M1']);
+  // A nearby part of another type still beats a far one of the same type.
+  const near = placementGuides([item('R1', -320, 0), item('M1', 1600, 0, 120, 160, 'nmos')],
+    item('__ghost__', 0, 0, 120, 160, 'nmos')).find((guide) => guide.kind === 'align');
+  assert.deepEqual(near.points.map((point) => point.id), ['R1', '__ghost__']);
+});
+
+test('a long pitch is not continued, though it can still be centred', () => {
+  // Twenty cells is a pair to centre between, not a pitch to repeat.
+  const pair = [item('A', 0, 0), item('B', 800, 0)];
+  assert.equal(placementGuides(pair, item('__ghost__', 1600, 0)).some((guide) => guide.kind === 'spacing'), false);
+  const middle = placementGuides(pair, item('__ghost__', 400, 0)).find((guide) => guide.kind === 'spacing');
+  assert.deepEqual(middle.points.map((point) => point.id), ['A', '__ghost__', 'B']);
+  // Repeats stop where a spacing stops reaching.
+  assert.equal(placementGuides([item('A', 0, 0), item('B', 480, 0)], item('__ghost__', 1920, 0))
+    .some((guide) => guide.kind === 'spacing'), false);
+});
+
+test('an interval under three cells is not dimensioned', () => {
+  // Centring between parts four cells apart would mark two-cell gaps.
+  assert.equal(placementGuides([item('A', 0, 0), item('B', 160, 0)], item('__ghost__', 80, 480))
+    .some((guide) => guide.kind === 'spacing'), false);
+  assert.equal(placementGuides([item('A', 0, 0), item('B', 240, 0)], item('__ghost__', 480, 0))
+    .find((guide) => guide.kind === 'spacing' && !guide.direct).cells, 6);
+  // A two-cell direct distance is dropped; three cells is still labelled.
+  const direct = (y) => placementGuides([item('A', 0, 0)], item('__ghost__', 0, y))
+    .find((guide) => guide.kind === 'spacing');
+  assert.equal(direct(80), undefined);
+  assert.equal(direct(120).cells, 3);
+});
+
+test('a crowded array offers no slot another device already fills', () => {
+  const row = [0, 320, 640, 960].map((x, i) => item(`M${i + 1}`, x, 0, 120, 160, 'nmos'));
+  // Just below and right of M4: continuing M2, M3 would land on M4 itself.
+  const guide = placementGuides(row, item('__ghost__', 1120, 120, 120, 160, 'nmos'))
+    .find((candidate) => candidate.kind === 'spacing' && candidate.axis === 'x');
+  assert.notEqual(guide?.target, 960);
+  // A slot that is free is still offered.
+  assert.equal(placementGuides(row, item('__ghost__', 1240, 120, 120, 160, 'nmos'))
+    .find((candidate) => candidate.kind === 'spacing' && candidate.axis === 'x').target, 1280);
+});
+
+test('an odd gap is reported only beside the centre being attempted', () => {
+  const stack = [item('M1', 0, 0, 120, 160, 'nmos'), item('M2', 0, 360, 120, 160, 'nmos')];
+  assert.equal(placementGuides(stack, item('__ghost__', 480, 160, 80, 80, 'port'))
+    .find((guide) => guide.kind === 'spacing').offGrid, true);
+  assert.equal(placementGuides(stack, item('__ghost__', 480, 120, 80, 80, 'port'))
+    .some((guide) => guide.kind === 'spacing'), false);
+});
+
+test('a suggestion fades with distance and the strongest guide is drawn last', () => {
+  const peers = [item('A', 0, 0), item('B', 480, 0)];
+  const weight = (x) => placementGuides(peers, item('__ghost__', x, 0)).find((guide) => guide.kind === 'spacing').weight;
+  assert.equal(weight(960), 1);
+  assert.equal(weight(920), 1);
+  assert.ok(weight(840) < weight(880));
+  assert.equal(weight(720), 0.4);
+  const guides = placementGuides(peers, item('__ghost__', 720, 0));
+  assert.deepEqual(guides.map((guide) => guide.weight), [...guides.map((guide) => guide.weight)].sort((a, b) => a - b));
+});
+
 test('an alignment guide reaches only the immediate neighbours', () => {
   const row = [item('A', -640, 0), item('B', -320, 0), item('C', 320, 0)];
   const align = placementGuides(row, item('__ghost__', 0, 0)).find((guide) => guide.kind === 'align');
