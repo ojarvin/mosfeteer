@@ -8597,7 +8597,9 @@ const { applyDir, applyTransform, fmt, rectsOverlap } = __require("src/core/geom
 const { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js");
 const { crossNetOverlaps } = __require("src/core/wiring.js");
 const { svgString } = __require("src/core/render.js");
+const { hiddenSupplyBarLabels } = __require("src/core/supply-bars.js");
 const { analyzeSmallSignal } = __require("src/core/analysis/index.js");
+
 
 
 
@@ -8901,7 +8903,10 @@ function evaluate(circuit) {
       }
     }
   }
-  const labels = [...circuit.labels.values()].filter((label) => !['arrow', 'box', 'line'].includes(label.kind));
+  // A joined supply bar shows one of its supplies' labels; the hidden ones
+  // are not drawn, so they cannot overlap anything.
+  const barHidden = hiddenSupplyBarLabels(circuit);
+  const labels = [...circuit.labels.values()].filter((label) => !['arrow', 'box', 'line'].includes(label.kind) && !barHidden.has(label.id));
   const labelComponentOverlaps = [];
   const labelOverlaps = [];
   const netLabelIssues = [];
@@ -9081,6 +9086,8 @@ function commandHelp() {
     '  value <refdes> <V>             - set value/label text',
     '  rename <refdes> <new>          - rename a component',
     '  rm <refdes>                    - remove a component',
+    '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbours (visual only)',
+    '  supplybar name <NAME|-> <refdes> ... - name every supply of a bar at once (- clears)',
     '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
@@ -9335,6 +9342,24 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const v = pos[1];
     circuit.setValue(c.refdes, v);
     return result(`${c.refdes} value = "${v}"`, { refdes: c.refdes, value: v }, true);
+  }
+  if (cmd === 'supplybar' && String(pos[0] || '').toLowerCase() === 'name') {
+    if (pos.length < 3) throw new Error('usage: supplybar name <NAME|-> <refdes> [refdes...]');
+    const name = pos[1] === '-' ? '' : pos[1];
+    const refs = pos.slice(2).map((ref) => circuit.getComponent(ref).refdes);
+    circuit.nameSupplyBar(refs, name);
+    return result(`supply bar ${refs.join(', ')} ${name ? `named ${name}` : 'unnamed'}`, { refdes: refs, name }, true);
+  }
+  if (cmd === 'supplybar') {
+    const mode = String(pos[0] || '').toLowerCase();
+    if (!['on', 'off'].includes(mode) || pos.length < 2) throw new Error('usage: supplybar on|off <refdes> [refdes...]');
+    // Validate every name first so a bad one leaves the circuit untouched.
+    const refs = pos.slice(1).map((ref) => circuit.getComponent(ref));
+    const other = refs.find((c) => c.type !== 'supply');
+    if (other) throw new Error(`component ${other.refdes} is not a supply; only supply bars join`);
+    for (const c of refs) circuit.setSupplyBarJoin(c.refdes, mode === 'on');
+    const names = refs.map((c) => c.refdes);
+    return result(`supply bar ${mode === 'on' ? 'joined' : 'split'}: ${names.join(', ')}`, { refdes: names, joinBar: mode === 'on' }, true);
   }
   if (cmd === 'rename') {
     const c = circuit.getComponent(pos[0]);
@@ -12591,6 +12616,9 @@ class ComponentInstance {
     };
     this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
+    // A supply may draw its bar joined to aligned same-rail neighbours
+    // (see supply-bars.js). Visual only: it never adds connectivity.
+    this.joinBar = this.type === 'supply' && opts.joinBar === true;
   }
 
   /** Dynamic terminal definitions for a resizable schematic block. */
@@ -12719,6 +12747,7 @@ class ComponentInstance {
       transform: { ...this.transform },
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
+      ...(this.joinBar ? { joinBar: true } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -13287,6 +13316,46 @@ class Circuit {
       }
       this._syncSignalInputLabels(component);
     }
+  }
+
+  /** Join (or stop joining) a supply's bar to its aligned same-rail neighbours. */
+  setSupplyBarJoin(refdes, join = true) {
+    const component = this.getComponent(refdes);
+    if (component.type !== 'supply') throw new Error(`component ${component.refdes} is not a supply; only supply bars join`);
+    component.joinBar = !!join;
+    return component;
+  }
+
+  /** Name every supply of a joined bar at once, so the bar stays one rail.
+   *  Each supply keeps the name in its own owned label (a bar shows only
+   *  one); an empty name clears them all back to the global supply rail.
+   *  `offsets` optionally places a supply's new label, keyed by refdes. */
+  nameSupplyBar(refs, text, offsets = {}) {
+    const supplies = refs.map((ref) => this.getComponent(ref));
+    const other = supplies.find((component) => component.type !== 'supply');
+    if (other) throw new Error(`component ${other.refdes} is not a supply`);
+    const info = referenceMarkerInfo('supply');
+    for (const component of supplies) {
+      let label = this.labelOf(component.refdes);
+      if (!text) {
+        if (label) {
+          label.setText('');
+          this.removeLabel(label.id);
+        }
+        continue;
+      }
+      if (!label) {
+        label = this.addLabel({
+          text: '',
+          owner: component.refdes,
+          offset: offsets[component.refdes] || info.labelOffset,
+          align: 'center',
+          style: { color: component.style.color },
+        });
+      }
+      label.setText(text);
+    }
+    return supplies;
   }
 
   /** Toggle the polarity marker for one of the three signal-flow inputs. */
@@ -17177,6 +17246,7 @@ class Circuit {
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
         negativeInputs: c.negativeInputs,
+        joinBar: c.joinBar,
         style: c.style,
         analysis: migrateSerializedComponentAnalysis(c.analysis),
         drawOrder: c.drawOrder,
@@ -17357,6 +17427,8 @@ const { autoRoute, steinerBranches } = __require("src/core/router.js");
 const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
 const { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
 const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
+const { hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js");
+
 
 
 
@@ -18124,6 +18196,10 @@ function svgString(circuit, opts = {}) {
     parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
   }
 
+  // A joined supply bar is drawn as one shape (below), so the slabs it covers
+  // are left out: two coincident fills would double their anti-aliased edges.
+  const bars = supplyBars(circuit);
+  const barred = new Set(bars.flatMap((bar) => bar.refs));
   // Top layer: components and their body/value graphics sit above wires.
   for (const c of comps) {
     const t = c.transform;
@@ -18136,7 +18212,11 @@ function svgString(circuit, opts = {}) {
       parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(compStyle(c), 'emph')}/>`);
     } else {
       const leadsInked = inkLeads(c);
-      for (const g of bodyGraphics) if (!(leadsInked && g.terminalLead)) parts.push(graphicsToSvg(g, '', compStyle(c)));
+      for (const g of bodyGraphics) {
+        if (leadsInked && g.terminalLead) continue;
+        if (barred.has(c.refdes) && g.fill === 'foreground') continue;
+        parts.push(graphicsToSvg(g, '', compStyle(c)));
+      }
     }
     parts.push('</g></g>');
     for (const g of textGraphics) parts.push(symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
@@ -18144,6 +18224,16 @@ function svgString(circuit, opts = {}) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
     }
+  }
+
+  // Joined supply bars: one continuous bar over each run of aligned same-rail
+  // supplies, in the slab's own ink, so the row reads as one bar. It covers
+  // the slabs themselves too, so no seam shows where they meet. Visual only.
+  for (const bar of bars) {
+    const from = circuit.components.get(bar.refs[0]);
+    const ghost = bar.refs.some((ref) => ghostRefs.has(ref)) ? ' opacity="0.34"' : '';
+    const r = bar.rect;
+    parts.push(`<rect class="supply-bar-join" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${escapeSvg(resolveColor(compStyle(from)?.color || '#111'))}" stroke="none" pointer-events="none"${ghost}/>`);
   }
 
   // Junction dots are placed by the routing algorithm as actual `solder`
@@ -18205,8 +18295,9 @@ function svgString(circuit, opts = {}) {
   // Dedicated / instance label objects (instance identifiers are bold+italic and
   // larger than free-standing annotation labels). Text is aligned inside the
   // label's rendered box (left/center/right) and vertically centered.
+  const barHidden = hiddenSupplyBarLabels(circuit);
   for (const label of labels
-    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent)
+    .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent && !barHidden.has(candidate.id))
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
     if (label.id === o.editingLabel) continue;
     const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
@@ -20117,6 +20208,159 @@ __exports.fontAttrs = fontAttrs;
 __exports.styleAttrs = styleAttrs;
 __exports.COLOR_PALETTE = COLOR_PALETTE;
 __exports.escapeSvg = escapeSvg;
+};
+
+__modules["src/core/supply-bars.js"] = function (__require, __exports) {
+const { transformRect } = __require("src/core/geometry.js");
+const { canonicalNetName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js");
+
+
+
+// Joined supply bars. Supplies that share one bar line may draw their
+// horizontal slabs as one continuous bar. The bar is purely visual: the
+// markers are already one rail by name, so it adds no connectivity, and it is
+// never drawn between supplies of different names, across another part, or
+// across a wire, where it would read as a connection that does not exist.
+
+const EPS = 1e-6;
+
+/** The filled slab of the supply symbol, in local coordinates. */
+function localSlab(def) {
+  const slab = def.graphics.find((g) => g.kind === 'polygon' && g.fill === 'foreground');
+  const xs = slab.points.map((p) => p.x);
+  const ys = slab.points.map((p) => p.y);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+}
+
+/** A supply's rail identity: its own marker name (or, for a scripted marker
+ *  without a label, its value), else the global supply rail. Erring toward
+ *  distinct names only ever breaks a bar. */
+function supplyRailName(component) {
+  return referenceMarkerName(component) || canonicalNetName(component.value || '')
+    || referenceMarkerInfo('supply').globalName;
+}
+
+function slabOf(component) {
+  const rect = transformRect(component.transform, localSlab(component.def));
+  const axis = rect.w >= rect.h ? 'x' : 'y';
+  const cross = axis === 'x' ? 'y' : 'x';
+  const size = axis === 'x' ? 'h' : 'w';
+  // Two slabs lie on one bar line only if they cover the same band across it,
+  // which also keeps supplies hanging the opposite way apart.
+  const line = `${axis}:${Math.round(rect[cross] * 100)}:${Math.round(rect[size] * 100)}`;
+  return { component, rect, axis, line };
+}
+
+/** Every supply sharing a bar line with any other supply, ordered along it. */
+function barLines(circuit) {
+  const lines = new Map();
+  for (const component of circuit.components.values()) {
+    if (component.type !== 'supply') continue;
+    const slab = slabOf(component);
+    if (!lines.has(slab.line)) lines.set(slab.line, []);
+    lines.get(slab.line).push(slab);
+  }
+  for (const row of lines.values()) row.sort((a, b) => a.rect[a.axis] - b.rect[b.axis] || a.component.refdes.localeCompare(b.component.refdes));
+  return lines;
+}
+
+const overlaps = (a, b) => a.x < b.x + b.w - EPS && b.x < a.x + a.w - EPS && a.y < b.y + b.h - EPS && b.y < a.y + a.h - EPS;
+
+function segmentCrosses(p, q, r) {
+  const lo = { x: Math.min(p.x, q.x), y: Math.min(p.y, q.y) };
+  const hi = { x: Math.max(p.x, q.x), y: Math.max(p.y, q.y) };
+  // Wires are orthogonal or diagonal; a bounding-box test is exact for the
+  // former and conservative for the latter, which only ever breaks a bar.
+  return lo.x <= r.x + r.w && hi.x >= r.x && lo.y <= r.y + r.h && hi.y >= r.y;
+}
+
+function gapBlocked(circuit, gap) {
+  for (const component of circuit.components.values()) {
+    if (component.type === 'supply' || component.type === 'solder') continue;
+    if (overlaps(component.bboxWorld(), gap)) return true;
+  }
+  for (const net of circuit.nets.values()) {
+    for (const path of net.paths()) {
+      for (let i = 1; i < path.length; i += 1) if (segmentCrosses(path[i - 1], path[i], gap)) return true;
+    }
+  }
+  return false;
+}
+
+/** The bar pieces to draw between joined neighbours:
+ *  [{ from, to, rect }] with world rectangles. */
+function supplyBarJoins(circuit) {
+  const joins = [];
+  for (const row of barLines(circuit).values()) {
+    for (let i = 0; i + 1 < row.length; i += 1) {
+      const a = row[i];
+      const b = row[i + 1];
+      if (!a.component.joinBar || !b.component.joinBar) continue;
+      if (supplyRailName(a.component) !== supplyRailName(b.component)) continue;
+      const axis = a.axis;
+      const start = a.rect[axis] + (axis === 'x' ? a.rect.w : a.rect.h);
+      const end = b.rect[axis];
+      if (end - start <= EPS) continue;
+      const gap = axis === 'x'
+        ? { x: start, y: a.rect.y, w: end - start, h: a.rect.h }
+        : { x: a.rect.x, y: start, w: a.rect.w, h: end - start };
+      if (gapBlocked(circuit, gap)) continue;
+      joins.push({ from: a.component.refdes, to: b.component.refdes, rect: gap, axis, start: a.rect[axis], end: end + (axis === 'x' ? b.rect.w : b.rect.h) });
+    }
+  }
+  return joins;
+}
+
+/** Joined neighbours merged into continuous bars, each spanning its end
+ *  supplies' slabs: [{ refs, rect }]. Drawing one shape over the slabs, rather
+ *  than filling only the gaps, leaves no anti-aliased seam where a gap meets a
+ *  slab edge. */
+function supplyBars(circuit) {
+  const bars = [];
+  for (const join of supplyBarJoins(circuit)) {
+    const last = bars.at(-1);
+    if (last && last.refs.at(-1) === join.from) {
+      last.refs.push(join.to);
+      last.end = join.end;
+    } else bars.push({ refs: [join.from, join.to], axis: join.axis, band: join.rect, start: join.start, end: join.end });
+  }
+  return bars.map(({ refs, axis, band, start, end }) => ({
+    refs,
+    rect: axis === 'x'
+      ? { x: start, y: band.y, w: end - start, h: band.h }
+      : { x: band.x, y: start, w: band.w, h: end - start },
+  }));
+}
+
+/** Owned labels that a joined bar keeps out of sight. Every supply on a bar
+ *  carries the rail name in its own label, so electrical naming never depends
+ *  on the drawing; the bar shows one of them (its first labelled supply's)
+ *  and hides the rest. Splitting the bar shows them all again. */
+function hiddenSupplyBarLabels(circuit) {
+  const hidden = new Set();
+  for (const bar of supplyBars(circuit)) {
+    const owned = bar.refs.map((ref) => circuit.labelOf(ref)).filter(Boolean);
+    for (const label of owned.slice(1)) hidden.add(label.id);
+  }
+  return hidden;
+}
+
+/** The supplies a bar join applies to from one of them: the same-rail
+ *  supplies on its bar line, itself included, in order along the line. */
+function supplyBarRow(circuit, refdes) {
+  const component = circuit.components.get(refdes);
+  if (component?.type !== 'supply') return [];
+  const line = slabOf(component).line;
+  const row = barLines(circuit).get(line) || [];
+  const rail = supplyRailName(component);
+  return row.filter((slab) => supplyRailName(slab.component) === rail).map((slab) => slab.component.refdes);
+}
+
+__exports.supplyRailName = supplyRailName;
+__exports.supplyBarJoins = supplyBarJoins;
+__exports.supplyBars = supplyBars;
+__exports.hiddenSupplyBarLabels = hiddenSupplyBarLabels;
+__exports.supplyBarRow = supplyBarRow;
 };
 
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
@@ -22900,6 +23144,8 @@ __modules["src/web/main.js"] = function (__require, __exports) {
 const { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js");
 const { getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js");
 const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
+const { hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js");
+const { TipBook } = __require("src/web/tips.js");
 const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
 const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
 const { smallSignalSchematic } = __require("src/core/analysis/model-schematic.js");
@@ -22942,6 +23188,8 @@ const { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, gh
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
+
 
 
 
@@ -23116,6 +23364,7 @@ const ICON_PATHS = {
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
   rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M20 4v5h-5"/>',
+  lightbulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/>',
   trackpad: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 15h17M12 15v4"/>',
   'mirror-x': '<path d="M12 3v18" stroke-dasharray="2 2.4"/><path d="M9 7 4 17h5zM15 7l5 10h-5z"/>',
   'mirror-y': '<path d="M3 12h18" stroke-dasharray="2 2.4"/><path d="M7 9 17 4v5zM7 15l10 5v-5z"/>',
@@ -23240,7 +23489,7 @@ function preloadToolCursors() {
 }
 
 function installButtonIcons() {
-  for (const button of document.querySelectorAll('button[data-icon]')) {
+  for (const button of document.querySelectorAll('button[data-icon], .tip-card-mark[data-icon]')) {
     const path = ICON_PATHS[button.dataset.icon];
     if (!path || button.querySelector('.button-icon')) continue;
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -23255,6 +23504,73 @@ function installButtonIcons() {
 
 installButtonIcons();
 preloadToolCursors();
+
+// ----- contextual tips ---------------------------------------------------------
+// One quiet line in the canvas corner when a faster way exists for what the
+// user is doing. The rules that keep them scarce live in tips.js; this only
+// stores the state and shows the card. `noteTip` is safe to call anywhere.
+const TIPS_KEY = 'mosfeteer.tips';
+const tipBook = new TipBook((() => {
+  try { return JSON.parse(localStorage.getItem(TIPS_KEY) || 'null'); } catch { return null; }
+})());
+const tipCardEl = document.getElementById('tip-card');
+const tipTextEl = document.getElementById('tip-card-text');
+const tipsButton = document.getElementById('btn-tips');
+const TIP_VISIBLE_MS = 14000;
+let shownTip = null;
+let tipHideTimer = 0;
+
+function saveTips() {
+  try { localStorage.setItem(TIPS_KEY, JSON.stringify(tipBook.toJSON())); } catch { /* per-session only */ }
+}
+
+function hideTip() {
+  window.clearTimeout(tipHideTimer);
+  shownTip = null;
+  if (tipCardEl) tipCardEl.hidden = true;
+}
+
+function noteTip(event) {
+  const tip = tipBook.note(event, Date.now());
+  // Using the feature a visible tip describes answers it.
+  if (shownTip && tipBook.state.retired.includes(shownTip.id)) hideTip();
+  saveTips();
+  if (!tip || !tipCardEl) return;
+  shownTip = tip;
+  tipTextEl.textContent = tip.text;
+  tipCardEl.hidden = false;
+  window.clearTimeout(tipHideTimer);
+  tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS);
+}
+
+function syncTipsButton() {
+  tipsButton?.setAttribute('aria-checked', String(!tipBook.state.off));
+}
+
+document.getElementById('tip-card-close')?.addEventListener('click', () => {
+  if (shownTip) tipBook.retire(shownTip.id);
+  saveTips();
+  hideTip();
+});
+document.getElementById('tip-card-off')?.addEventListener('click', () => {
+  tipBook.setOff(true);
+  saveTips();
+  hideTip();
+  syncTipsButton();
+  logLine('tips off — turn them back on from the More menu', 'status');
+});
+// Hovering keeps a tip up while it is being read.
+tipCardEl?.addEventListener('mouseenter', () => window.clearTimeout(tipHideTimer));
+tipCardEl?.addEventListener('mouseleave', () => {
+  if (shownTip) tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS / 2);
+});
+tipsButton?.addEventListener('click', () => {
+  tipBook.setOff(!tipBook.state.off);
+  if (tipBook.state.off) hideTip();
+  saveTips();
+  syncTipsButton();
+});
+syncTipsButton();
 const modeToolbarEl = document.querySelector('.mode-toolbar');
 // ----- editor state ----------------------------------------------
 
@@ -25312,8 +25628,9 @@ function updateStyleControls() {
 function pickLabel(w) {
   const x = snap(w.x);
   const y = snap(w.y);
+  const barHidden = hiddenSupplyBarLabels(circuit);
   for (const label of labels()) {
-    if (label.selectable === false) continue;
+    if (label.selectable === false || barHidden.has(label.id)) continue;
     if (['arrow', 'box', 'line'].includes(label.kind)) continue;
     const r = label.bbox();
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
@@ -26580,6 +26897,7 @@ function highlightNetAt(world) {
   let color = null;
   try {
     commit(() => { color = circuit.cycleNetHighlight(net); });
+    noteTip('net-highlight');
   } catch (err) {
     logLine(`HIGHLIGHT: ${err.message}`, 'error');
     return false;
@@ -26764,6 +27082,7 @@ function setSymmetry(on) {
           waitingForMotion: drag?.mode === 'copyghost',
           armedCursor: drag?.mode === 'copyghost' ? { ...cursor } : null,
         };
+    noteTip('symmetry');
     logLine(symmetryMemory
       ? `symmetry axis resumed about ${symmetryAxisText()}`
       : `symmetry axis at (${cursor.x},${cursor.y}) · move off it to mirror · release Alt to drop`);
@@ -26782,6 +27101,7 @@ function setTerminalSnap(on) {
   const next = !!on && !!wire;
   if (terminalSnap === next) return false;
   terminalSnap = next;
+  if (next) noteTip('terminal-snap');
   render();
   return true;
 }
@@ -26854,6 +27174,7 @@ function placePending() {
     // land in the same commit, so the pair is one undo.
     const twin = symmetryTwin();
     const placements = [pendingTransform(), ...(twin ? [twin] : [])].filter(Boolean);
+    const repeatType = !twin && [...circuit.components.values()].some((c) => c.type === pendingPlace.type);
     const placed = placements.map((t) => circuit.addComponent(pendingPlace.type, {
       x: t.x,
       y: t.y,
@@ -26886,6 +27207,9 @@ function placePending() {
       ? `placed ${placed.map((comp) => comp.refdes).join(' and ')} (${pendingPlace.type}) mirrored about ${symmetryAxisText()}`
       : `placed ${placed[0].refdes} (${pendingPlace.type}) @ (${cursor.x},${cursor.y})`);
     rememberInsertType(pendingPlace.type);
+    // A second part of a kind is where a mirrored twin would have helped.
+    if (repeatType && !isReferenceMarker(placed[0]) && !INTERFACE_PIN_TYPES.has(pendingPlace.type)
+      && !['solder', 'block'].includes(pendingPlace.type)) noteTip('place-repeat');
   }
   if (pendingPlace) pendingPlace.startWorld = { ...cursor };
 }
@@ -27730,6 +28054,7 @@ function knifeTargets(stroke) {
 
 /** Delete everything a knife stroke cuts, as one undo entry. */
 function cutAlong(stroke) {
+  noteTip('knife');
   const { wires, refs, labels: labelIds } = knifeTargets(stroke);
   if (!wires.length && !refs.length && !labelIds.length) {
     hintLine('knife: nothing crossed');
@@ -28072,6 +28397,23 @@ function hasSelectableObjectAt(world) {
 /** `matchAt` for an unsnapped world point. */
 function pickAt(w) {
   return matchAt(snap(w.x), snap(w.y));
+}
+
+/** A joined supply bar acts as one part: its supplies, or just `refdes`. */
+function supplyBarGroup(refdes) {
+  if (circuit.components.get(refdes)?.type !== 'supply') return [refdes];
+  return supplyBars(circuit).find((bar) => bar.refs.includes(refdes))?.refs || [refdes];
+}
+
+/** The joined bar under a pointer, as a hit on its first supply. The gap
+ *  between two supplies belongs to no symbol, so it is tested separately
+ *  (with the wire hit tolerance) rather than through `matchAt`. */
+function supplyBarHit(w) {
+  const p = paneSize();
+  const tol = Math.max(GRID / 4, 12 / (p ? view.w / p.w : 1));
+  const bar = supplyBars(circuit).find(({ rect: r }) => w.x >= r.x - tol && w.x <= r.x + r.w + tol
+    && w.y >= r.y - tol && w.y <= r.y + r.h + tol);
+  return bar ? { refdes: bar.refs[0] } : null;
 }
 
 /** Pick the nearest net route within a forgiving screen-sized hit area.
@@ -28587,6 +28929,7 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
       wire.points = [];
       cursor = { x: hit.x ?? x, y: hit.y ?? y };
       hintLine(`wire from ${hit.refdes}.${hit.term} — terminal clicks commit; other clicks guide; Enter commits elsewhere`);
+      noteWireToolStart();
     } else if (hit.refdes === wire.source.refdes && hit.term === wire.source.term) {
       logLine('same terminal — click the other terminal');
     } else {
@@ -28619,8 +28962,17 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
     // Starting a wire needs no terminal: click any grid point (or a wire) and
     // the draft grows from there.
     startWireAt({ x, y });
+    if (wire?.source) noteWireToolStart();
   }
   render();
+}
+
+/** A wire begun by clicking in the Wire tool: the situation both the Alt-snap
+ *  and the pin-drag tips are about. The first tip that is due wins. */
+function noteWireToolStart() {
+  if (terminalSnap) return;
+  noteTip('wire-start');
+  noteTip('wire-tool-start');
 }
 
 /** Begin a wire from a non-terminal point: empty space starts a free-floating
@@ -28730,6 +29082,7 @@ function connectWireToTerminal(dst, before = null) {
     return;
   }
   const points = draftPath ? draftPath.slice(1, -1) : wire.points;
+  noteTip('wire-commit');
   if (src.refdes) {
     connectTwo(src, dst, points, before || snapshot());
     return;
@@ -28941,6 +29294,7 @@ const RADIAL_RADIUS = radialRingRadius(RADIAL_ITEMS.length, RADIAL_TILE, 10);
 let radialMenuEl = null;
 
 function openRadialMenu(radial) {
+  noteTip('radial');
   window.clearTimeout(radial.holdTimer);
   radial.mode = 'radial';
   const comp = circuit.components.get(radial.refdes);
@@ -29010,6 +29364,7 @@ function beginPinWire(moveDrag, w) {
   wire.source = { ...moveDrag.pinGrab };
   wire.points = [];
   drag = { mode: 'pinwire', startWorld: moveDrag.startWorld, startClient: moveDrag.startClient };
+  noteTip('pin-drag');
   cursor = pinWireCursor(w);
   hintLine(`wire from ${wire.source.refdes}.${wire.source.term} — drop on a pin or wire, or in space to add a part`);
   render();
@@ -29042,6 +29397,7 @@ function beginBranchWire(segDrag, w) {
     return;
   }
   drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient };
+  noteTip('pin-drag');
   cursor = pinWireCursor(w);
   hintLine('branch wire — drop on a pin or wire, or in space to add a part');
   render();
@@ -29050,7 +29406,8 @@ function beginBranchWire(segDrag, w) {
 /** Ctrl/Cmd-drag on an object drags a copy; a plain Ctrl/Cmd-click still toggles selection. */
 function beginCopyDrag(grab, ev) {
   const { hit, startWorld, startClient } = grab;
-  const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
+  // A joined supply bar moves (or copies) as one part.
+  const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
   const labels = multi.has(hit.refdes) ? [...selLabels] : [];
   drag = null;
   setSelection(refs, hit.refdes, true);
@@ -29554,7 +29911,7 @@ function canvasMouseDown(ev) {
   // Wires render behind component bodies, but remain selectable inside or
   // along them. Hit order: exact TERMINAL, then WIRE, then component bbox,
   // then empty space.
-  const hit = pickAt(startWorld);
+  const hit = pickAt(startWorld) || (pickWire(startWorld) ? null : supplyBarHit(startWorld));
   const termHit = hit && hit.term ? hit : null;
   const componentHit = hit?.refdes ? circuit.components.get(hit.refdes) : null;
   if (componentHit && !termHit) {
@@ -29566,7 +29923,7 @@ function canvasMouseDown(ev) {
     lastSchematicComponentClick = { refdes: componentHit.refdes, x: startWorld.x, y: startWorld.y, at: now };
     if (doubleClick) {
       lastSchematicComponentClick = null;
-      setSelection([componentHit.refdes]);
+      setSelection(supplyBarGroup(componentHit.refdes), componentHit.refdes);
       setLabelSelection([]);
       render();
       // The canvas SVG is regenerated during the click sequence, so defer the
@@ -29789,7 +30146,8 @@ function beginComponentDrag(hit, startWorld, startClient, ev, options = {}) {
   }
   // A click on an existing member confirms the complete mixed selection;
   // clicking a new component starts a component-only selection.
-  const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
+  // A joined supply bar moves (or copies) as one part.
+  const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
   const labels = multi.has(hit.refdes) ? [...selLabels] : [];
   beginObjectMove(refs, labels, startWorld, startClient, { duplicate: false, detached: options.detached });
 }
@@ -30149,6 +30507,7 @@ function beginCopySource(startWorld, startClient) {
   return startCopyGhost(startWorld, startClient);
 }
 function deleteAtPoint(world) {
+  noteTip('delete-click');
   const label = pickLabel(world) || annotationGeometryAt(world);
   const hitWire = pickWire(world);
   const hitComp = pickAt(world);
@@ -32380,7 +32739,7 @@ function openComponentContextMenu(target, x, y) {
 function selectContextTarget(target) {
   if (target.kind === 'component') {
     if (multi.has(target.value.refdes)) return;
-    setSelection([target.value.refdes]);
+    setSelection(supplyBarGroup(target.value.refdes), target.value.refdes);
     setLabelSelection([], null, true);
     selectedNets = new Set();
   } else if (target.kind === 'label') {
@@ -32411,6 +32770,25 @@ function renameFromPanel(listEl, selector, start) {
   start(ref);
 }
 
+/** Join a supply's bar with its aligned same-rail neighbours. A selection of
+ *  several supplies is the scope; a single supply joins its whole row, since a
+ *  bar needs two ends. The join is visual only (see core/supply-bars.js). */
+function appendSupplyBarItem(group, comp) {
+  const selectedSupplies = [...multi].filter((ref) => circuit.components.get(ref)?.type === 'supply');
+  const scope = selectedSupplies.length > 1 ? selectedSupplies : supplyBarRow(circuit, comp.refdes);
+  // Joining pairs each supply only with same-named neighbours, so a selection
+  // spanning VDD and VDD2 rows joins each rail's own bars. It splits only
+  // when everything in scope is already joined.
+  const joined = scope.length > 0 && scope.every((ref) => circuit.components.get(ref)?.joinBar);
+  const mixed = !joined && scope.some((ref) => circuit.components.get(ref)?.joinBar);
+  appendContextItem(group, scope.length > 1 ? 'Join supply bars' : 'Join supply bars (no aligned supply)', () => {
+    commit(() => {
+      for (const ref of scope) circuit.setSupplyBarJoin(ref, !joined);
+    });
+    logLine(`${joined ? 'split' : 'joined'} supply bar: ${scope.join(', ')}`, 'status');
+  }, { disabled: scope.length < 2 && !joined, active: joined, mixed });
+}
+
 function appendContextActions(menu, target) {
   const group = document.createElement('div');
   group.className = 'context-menu-group';
@@ -32424,6 +32802,7 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Rotate', () => selectedTransform('rotate'), { shortcut: 'R' });
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl+R' });
+    if (comp.type === 'supply') appendSupplyBarItem(group, comp);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 'T' });
   } else if (target.kind === 'net' || target.kind === 'wire') {
@@ -32448,8 +32827,8 @@ function openContextMenuAt(clientX, clientY) {
   const world = clientToWorld(clientX, clientY);
   const label = pickLabel(world);
   const annotation = annotationGeometryAt(world);
-  const hit = pickAt(world);
   const wire = pickWire(world);
+  const hit = pickAt(world) || (wire ? null : supplyBarHit(world));
   const labelNet = label?.netId ? circuit.nets.get(label.netId) : null;
   const target = label
     ? labelNet ? { kind: 'net', value: labelNet } : { kind: 'label', value: label }
@@ -32585,9 +32964,9 @@ canvasEl.addEventListener('dblclick', (ev) => {
   const label = pickLabel(w);
   if (label) inlineEditLabel(label);
   else {
-    const hit = pickAt(w);
-    const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
     const wire = pickWire(w);
+    const hit = pickAt(w) || (wire ? null : supplyBarHit(w));
+    const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
     if (component) openComponentChildLabelEditor(component);
     else if (wire) {
       selectedWire = null;
@@ -32626,8 +33005,38 @@ function openComponentChildLabelEditor(component) {
   label = circuit._ensureComponentInstanceLabel(component);
   if (label) inlineEditLabel(label, { ownedLabelDraft: true, initialSnapshot: before });
 }
+/** A joined supply bar has one label, shown over its first supply and
+ *  centred on the bar; its name goes to every supply on the bar. */
+function openSupplyBarLabelEditor(refs) {
+  const lead = circuit.components.get(refs[0]);
+  const existing = circuit.labelOf(lead.refdes);
+  if (existing) {
+    inlineEditLabel(existing, { removeOnEmpty: true });
+    return;
+  }
+  const bar = supplyBars(circuit).find((candidate) => candidate.refs[0] === lead.refdes);
+  const info = referenceMarkerInfo('supply');
+  const centre = bar ? bar.rect.x + bar.rect.w / 2 : lead.transform.x;
+  const before = snapshot();
+  const label = circuit.addLabel({
+    text: '',
+    owner: lead.refdes,
+    // Local offsets rotate with the supply; a bar is only ever centred for an
+    // upright one, which is also the only way a row of them reads as a bar.
+    offset: lead.transform.rotation ? info.labelOffset : { x: snap(centre - lead.transform.x), y: info.labelOffset.y },
+    align: 'center',
+    style: { color: lead.style.color },
+  });
+  inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
+}
+
 function openReferenceMarkerEditor(component) {
   if (!component || inlineInput) return;
+  const bar = component.type === 'supply' ? supplyBarGroup(component.refdes) : [];
+  if (bar.length > 1) {
+    openSupplyBarLabelEditor(bar);
+    return;
+  }
   const existing = circuit.labelOf(component.refdes);
   if (existing) {
     inlineEditLabel(existing, { removeOnEmpty: true });
@@ -32651,6 +33060,12 @@ function inlineEditLabel(label, options = {}) {
   const equationDraft = !!options.equationDraft;
   const initialSnapshot = options.initialSnapshot || null;
   const initialName = options.initialName || '';
+  // A joined supply bar is one rail: whatever this edit names, every supply on
+  // the bar takes. Captured now, since the edit itself may break the bar.
+  const barRefs = label.owner ? supplyBarGroup(label.owner) : [];
+  const nameBar = (text) => {
+    if (barRefs.length > 1) circuit.nameSupplyBar(barRefs, text);
+  };
   lastLabelClick = null; // starting an edit clears any pending double-click state
   const b = label.bbox();
   const pane = document.querySelector('.canvas-pane');
@@ -32754,6 +33169,7 @@ function inlineEditLabel(label, options = {}) {
         try {
           label.setText(v);
           if (!v) circuit.removeLabel(label.id);
+          nameBar(v);
           recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
           logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
@@ -32798,12 +33214,16 @@ function inlineEditLabel(label, options = {}) {
           commit(() => renameLabelThroughModel(label, v));
         }
       } else {
-        commit(() => renameLabelThroughModel(label, v));
+        commit(() => {
+          renameLabelThroughModel(label, v);
+          nameBar(v);
+        });
       }
     }
     else if (options.removeOnEmpty && !v) commit(() => {
       if (label.owner && isReferenceMarker(circuit.components.get(label.owner))) label.setText('');
       circuit.removeLabel(label.id);
+      nameBar('');
     });
     render();
     return true;
@@ -34092,6 +34512,7 @@ function copySelection({ quiet = false } = {}) {
       mirrorX: c.transform.mirrorX,
       mirrorY: c.transform.mirrorY,
       negativeInputs: c.negativeInputs ? [...c.negativeInputs] : [],
+      joinBar: !!c.joinBar,
       style: { ...(c.style || {}) },
     })),
     labels: freeLabels.map(copyableLabelPayload),
@@ -34356,6 +34777,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           mirrorX: c.mirrorX,
           mirrorY: c.mirrorY,
           negativeInputs: c.negativeInputs,
+          joinBar: c.joinBar,
           style: c.style,
         });
         refMap.set(c.origRef, comp.refdes);
@@ -35428,6 +35850,7 @@ function activateWire() {
 
 function activateMove(kind = 'connected') {
   if (hasWireDraft() || hasModalPlacement()) { logLine('finish or cancel the active interaction before moving'); return; }
+  noteTip('move-start');
   mode = 'normal';
   terminalSnap = false;
   visual = null;
@@ -37599,6 +38022,128 @@ __exports.logDrawerTransition = logDrawerTransition;
 __exports.zoomPercent = zoomPercent;
 __exports.statusFields = statusFields;
 __exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
+};
+
+__modules["src/web/tips.js"] = function (__require, __exports) {
+// Contextual tips: one short line in a corner of the canvas, offered when the
+// user is doing something a faster way exists for. They are deliberately
+// scarce. A tip waits until its situation has come up a few times, is retired
+// for good once the user uses the feature (or dismisses it), is shown at most
+// twice ever, and only a few tips appear per session, several minutes apart.
+// Everything here is pure; the editor supplies the clock and the storage.
+
+const TIPS = Object.freeze([
+  {
+    id: 'wire-alt',
+    trigger: 'wire-start',
+    after: 2,
+    retiredBy: 'terminal-snap',
+    text: 'Hold Alt while wiring: the cursor jumps to the nearest terminal, so there is no need to aim.',
+  },
+  {
+    id: 'pin-drag',
+    trigger: 'wire-tool-start',
+    after: 3,
+    retiredBy: 'pin-drag',
+    text: 'Wiring works without the Wire tool too: drag from any pin. Drop in empty space to add a part there.',
+  },
+  {
+    id: 'place-symmetry',
+    trigger: 'place-repeat',
+    after: 2,
+    retiredBy: 'symmetry',
+    text: 'Hold Alt while placing to add a mirrored twin about an axis, which suits differential pairs and mirrors.',
+  },
+  {
+    id: 'radial',
+    trigger: 'move-start',
+    after: 3,
+    retiredBy: 'radial',
+    text: 'Hold the right button on a part, or right-drag it, for a quick move, copy, and rotate menu.',
+  },
+  {
+    id: 'knife',
+    trigger: 'delete-click',
+    after: 4,
+    retiredBy: 'knife',
+    text: 'In Delete, Shift-drag a stroke to remove every wire and part it crosses.',
+  },
+  {
+    id: 'net-highlight',
+    trigger: 'wire-commit',
+    after: 6,
+    retiredBy: 'net-highlight',
+    text: 'Press 9 and click a net to color it through the whole drawing; 8 clears all highlights.',
+  },
+]);
+
+const TIP_COOLDOWN_MS = 4 * 60 * 1000;
+const TIPS_PER_SESSION = 3;
+const TIP_MAX_SHOWS = 2;
+
+const TIP_EVENTS = new Set(TIPS.flatMap((tip) => [tip.trigger, tip.retiredBy]));
+
+/** The persisted part of the tip state, normalized from whatever was stored. */
+function loadTipState(raw) {
+  const data = raw && typeof raw === 'object' ? raw : {};
+  const ids = new Set(TIPS.map((tip) => tip.id));
+  const counts = (value, keys) => Object.fromEntries(Object.entries(value && typeof value === 'object' ? value : {})
+    .filter(([key, n]) => keys.has(key) && Number.isFinite(n) && n > 0));
+  return {
+    off: data.off === true,
+    retired: [...new Set((Array.isArray(data.retired) ? data.retired : []).filter((id) => ids.has(id)))],
+    shown: counts(data.shown, ids),
+    seen: counts(data.seen, TIP_EVENTS),
+  };
+}
+
+/** Tip bookkeeping for one editor session over a persisted state. */
+class TipBook {
+  constructor(state = {}) {
+    this.state = loadTipState(state);
+    this.sessionShown = [];
+    this.lastShownAt = -Infinity;
+  }
+
+  /** Record that `event` happened at `now` (ms). Returns the tip to show, or
+   *  null. Using a feature retires its tip before anything else is decided. */
+  note(event, now) {
+    if (!TIP_EVENTS.has(event)) return null;
+    const { state } = this;
+    state.seen[event] = (state.seen[event] || 0) + 1;
+    for (const tip of TIPS) if (tip.retiredBy === event) this.retire(tip.id);
+    if (state.off || this.sessionShown.length >= TIPS_PER_SESSION || now - this.lastShownAt < TIP_COOLDOWN_MS) return null;
+    const tip = TIPS.find((candidate) => candidate.trigger === event
+      && !state.retired.includes(candidate.id)
+      && !this.sessionShown.includes(candidate.id)
+      && (state.shown[candidate.id] || 0) < TIP_MAX_SHOWS
+      && state.seen[event] >= candidate.after);
+    if (!tip) return null;
+    state.shown[tip.id] = (state.shown[tip.id] || 0) + 1;
+    this.sessionShown.push(tip.id);
+    this.lastShownAt = now;
+    return tip;
+  }
+
+  retire(id) {
+    if (!this.state.retired.includes(id)) this.state.retired.push(id);
+  }
+
+  setOff(off) {
+    this.state.off = !!off;
+  }
+
+  toJSON() {
+    return { ...this.state, retired: [...this.state.retired], shown: { ...this.state.shown }, seen: { ...this.state.seen } };
+  }
+}
+
+__exports.loadTipState = loadTipState;
+__exports.TIPS = TIPS;
+__exports.TIP_COOLDOWN_MS = TIP_COOLDOWN_MS;
+__exports.TIPS_PER_SESSION = TIPS_PER_SESSION;
+__exports.TIP_MAX_SHOWS = TIP_MAX_SHOWS;
+__exports.TipBook = TipBook;
 };
 
 __modules["src/web/toolbar-fit.js"] = function (__require, __exports) {
