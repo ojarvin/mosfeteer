@@ -47,9 +47,6 @@
           <button id="btn-reveal-document" type="button" role="menuitem" data-icon="folder" title="Show the document file in your file manager" disabled>Show in folder</button>
           <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace" title="Choose the folder the document list shows and new documents are saved into">Change workspace folder…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
-          <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Two-finger scroll pans and pinch zooms; off: the mouse wheel zooms">Trackpad scrolling</button>
-          <button id="btn-tips" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb" title="Occasional one-line tips in the corner of the canvas about faster ways to draw">Tips</button>
-          <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Permanently delete the current document file" disabled>Delete document…</button>
         </div>
       </div>
@@ -66,6 +63,31 @@
       <button id="btn-guides" class="icon-button" data-icon="guides" aria-pressed="true" aria-label="Placement guides" title="Show or hide the spacing and alignment guides (G)">Guides</button>
       <button id="btn-crosshair" class="icon-button" data-icon="crosshair" aria-pressed="true" aria-label="Crosshair" title="Show or hide the crosshair (C)">Crosshair</button>
       <button id="btn-theme" class="icon-button" data-icon="moon" aria-pressed="false" aria-label="Dark theme" title="Switch between light and dark themes (D)">Dark</button>
+    </div>
+
+    <!-- Settings: choices that are set once rather than toggled while drawing.
+         Toolbar buttons are one-click toggles; More holds document actions.
+         Outside the view cluster so a folded toolbar keeps it. -->
+    <div class="toolbar-cluster settings-cluster" role="group" aria-label="Settings">
+      <div class="toolbar-popover">
+        <button id="btn-settings" class="icon-button" data-icon="sliders" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" aria-label="Settings" title="Settings: page guide, scrolling, tips, and the tutorial">Settings</button>
+        <div id="settings-menu" class="toolbar-menu settings-menu" role="menu" aria-label="Settings" hidden>
+          <p class="toolbar-menu-heading" id="settings-page-heading">Page guide</p>
+          <p class="toolbar-menu-note">Shows the width at which an exported figure set to full column width gets 8 pt text, the size of IEEE figure captions. Export pads the figure to this width, centred.</p>
+          <div role="group" aria-labelledby="settings-page-heading">
+            <button type="button" role="menuitemradio" aria-checked="true" data-page-guide="">No page guide</button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-1col">IEEE single column (3.5 in)</button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-2col">IEEE double column (7.16 in)</button>
+          </div>
+          <span class="toolbar-menu-separator" role="separator"></span>
+          <p class="toolbar-menu-heading">Input</p>
+          <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Two-finger scroll pans and pinch zooms; off: the mouse wheel zooms">Trackpad scrolling</button>
+          <span class="toolbar-menu-separator" role="separator"></span>
+          <p class="toolbar-menu-heading">Learning</p>
+          <button id="btn-tips" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb" title="Occasional one-line tips in the corner of the canvas about faster ways to draw">Tips</button>
+          <button id="btn-tutorial" type="button" role="menuitem" data-icon="graduation" title="An optional guided first drawing: a five-transistor OTA, step by step, in a new document">Tutorial: draw a 5T OTA</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -116,6 +138,10 @@
         <legend>Appearance</legend>
         <label><input type="checkbox" name="grid" /> Include grid</label>
         <label><input type="checkbox" name="dark" /> Dark mode</label>
+      </fieldset>
+      <fieldset>
+        <legend>Content</legend>
+        <label title="Export just the selected parts, wires, and labels, framed on their own"><input type="checkbox" name="selection" /> Only the selection <span id="export-selection-count" class="export-extensions"></span></label>
       </fieldset>
       <div class="dialog-actions">
         <button id="export-cancel" type="button" data-icon="x-circle">Cancel</button>
@@ -183,10 +209,25 @@
         <button type="button" data-empty-action="wire"><kbd>w</kbd><span class="empty-state-text">Draw a wire</span></button>
         <button type="button" data-empty-action="open"><kbd>Ctrl+O</kbd><span class="empty-state-text">Open a document</span></button>
         <button type="button" data-empty-action="help"><kbd>?</kbd><span class="empty-state-text">All shortcuts</span></button>
+        <button type="button" data-empty-action="tutorial"><kbd>5 min</kbd><span class="empty-state-text">Learn by drawing a 5T OTA</span></button>
       </div>
       <button id="btn-side-panel" type="button" class="side-panel-toggle glass icon-button" data-icon="sidebar" aria-controls="side-panel" aria-expanded="false" aria-label="Components, nets, and selection" title="Show the components, nets, and selection panel">Panel</button>
       <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Editor canvas. Tab to focus objects; Enter or Space selects the focused object; arrow keys nudge selection."></div>
       <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Context actions"></div>
+      <section id="tutorial-card" class="tutorial-card glass" aria-labelledby="tutorial-title" hidden>
+        <header class="tutorial-head">
+          <span id="tutorial-title" class="tutorial-title">Tutorial · 5T OTA</span>
+          <span id="tutorial-count" class="tutorial-count"></span>
+          <button type="button" id="tutorial-close" class="tutorial-close" aria-label="Leave the tutorial" title="Leave the tutorial; the drawing stays">×</button>
+        </header>
+        <div class="tutorial-bar" aria-hidden="true"><span id="tutorial-bar-fill"></span></div>
+        <div id="tutorial-step" class="tutorial-step" aria-live="polite"></div>
+        <ol id="tutorial-steps" class="tutorial-steps"></ol>
+        <div class="tutorial-actions">
+          <button type="button" id="tutorial-steps-toggle" class="tutorial-steps-toggle" aria-controls="tutorial-steps">All steps</button>
+          <button type="button" id="tutorial-skip" title="Move on without finishing this step">Skip step</button>
+        </div>
+      </section>
       <div id="tip-card" class="tip-card glass" role="status" aria-live="polite" hidden>
         <span class="tip-card-mark" data-icon="lightbulb" aria-hidden="true"></span>
         <p id="tip-card-text" class="tip-card-text"></p>

@@ -17420,6 +17420,98 @@ __exports.Net = Net;
 __exports.Circuit = Circuit;
 };
 
+__modules["src/core/page-guide.js"] = function (__require, __exports) {
+const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
+const { LABEL_FONT_SIZE } = __require("src/core/model.js");
+
+
+
+// Page guides. A figure placed at 100% of a LaTeX column width is scaled so its
+// exported width fills the column, so its text size follows from that width
+// alone. The guide shows the drawing width at which label text lands at the
+// template's text size, and export pads the figure to exactly that width.
+//
+// Normal-weight labels are LABEL_FONT_SIZE world units tall. A figure W units
+// wide set at a column of C points scales text to LABEL_FONT_SIZE * C / W
+// points, so the width for T-point text is W = LABEL_FONT_SIZE * C / T.
+
+const PAGE_GUIDES = Object.freeze({
+  // IEEEtran journal: 3.5 in columns and 7.16 in text width. Figure text at
+  // 8 pt matches the captions and leaves a usable width (10 pt body-size text
+  // would allow only about 24 grid cells across a column).
+  'ieee-1col': { name: 'IEEE single column', widthPt: 252, widthLabel: '3.5 in', textPt: 8 },
+  'ieee-2col': { name: 'IEEE double column', widthPt: 516, widthLabel: '7.16 in', textPt: 8 },
+});
+
+/** A stored guide choice, normalized; null when no guide is on. */
+function normalizePageGuide(value) {
+  const preset = typeof value === 'string' ? value : value?.preset;
+  if (!PAGE_GUIDES[preset]) return null;
+  return { preset, textPt: PAGE_GUIDES[preset].textPt };
+}
+
+/** World width at which label text exports at the guide's text size. */
+function pageGuideWidth(guide) {
+  const preset = PAGE_GUIDES[guide.preset];
+  return (LABEL_FONT_SIZE * preset.widthPt) / guide.textPt;
+}
+
+/** Text size (pt) that labels of a figure `width` units wide get in the column. */
+function pageGuideTextSize(guide, width) {
+  return (LABEL_FONT_SIZE * PAGE_GUIDES[guide.preset].widthPt) / width;
+}
+
+/** The horizontal frame for a figure whose natural export extends x0..x1:
+ *  centred on it and exactly the guide's width. When the drawing is wider it
+ *  cannot be padded to fit; the frame keeps the natural extent and `fits` is
+ *  false, with the text size the figure would get instead, the guide's own
+ *  width centred on the drawing as `target`, and how many grid cells to trim
+ *  from each side to fit (`trimCells`). */
+function pageGuideFrame(guide, x0, x1) {
+  const width = pageGuideWidth(guide);
+  const natural = x1 - x0;
+  if (natural > width + 1e-6) {
+    return {
+      x: x0,
+      width: natural,
+      fits: false,
+      textPt: pageGuideTextSize(guide, natural),
+      target: { x: (x0 + x1) / 2 - width / 2, width },
+      trimCells: (natural - width) / 2 / GRID,
+    };
+  }
+  return { x: (x0 + x1) / 2 - width / 2, width, fits: true, textPt: guide.textPt };
+}
+
+/** One line naming what the guide is for, e.g. for the canvas caption. */
+function pageGuideCaption(guide) {
+  const preset = PAGE_GUIDES[guide.preset];
+  const width = guide.preset === 'ieee-2col' ? '\\textwidth' : '\\columnwidth';
+  return `${preset.name} (${preset.widthLabel}) · ${guide.textPt} pt text with \\includegraphics[width=${width}]`;
+}
+
+/** The frame an export of `circuit` would get, with the same bounds and
+ *  padding the drawing export uses; an empty drawing centres it on the origin. */
+function circuitPageGuideFrame(circuit, guide, padding = GRID) {
+  const b = circuit.bounds(0);
+  if (b.w <= 0 && b.h <= 0) return pageGuideFrame(guide, 0, 0);
+  return {
+    ...pageGuideFrame(guide, floorGrid(b.x) - padding, ceilGrid(b.x + b.w) + padding),
+    // The figure's vertical extent, so an overflow can be marked clear of it.
+    top: floorGrid(b.y) - padding,
+    bottom: ceilGrid(b.y + b.h) + padding,
+  };
+}
+
+__exports.normalizePageGuide = normalizePageGuide;
+__exports.pageGuideWidth = pageGuideWidth;
+__exports.pageGuideTextSize = pageGuideTextSize;
+__exports.pageGuideFrame = pageGuideFrame;
+__exports.pageGuideCaption = pageGuideCaption;
+__exports.circuitPageGuideFrame = circuitPageGuideFrame;
+__exports.PAGE_GUIDES = PAGE_GUIDES;
+};
+
 __modules["src/core/render.js"] = function (__require, __exports) {
 const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
 const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
@@ -17428,6 +17520,8 @@ const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs
 const { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
 const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
 const { hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js");
+const { normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js");
+
 
 
 
@@ -18030,15 +18124,23 @@ function svgString(circuit, opts = {}) {
   // view (so free panning never rescales the drawing); without one, the view
   // auto-fits the circuit contents (exports / PNG).
   const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
-  const x0 = vp ? vp.x : floorGrid(b.x) - pad;
+  let x0 = vp ? vp.x : floorGrid(b.x) - pad;
   const y0 = vp ? vp.y : floorGrid(b.y) - pad;
-  const x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
+  let x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
   const y1 = vp ? vp.y + vp.h : ceilGrid(b.y + b.h) + pad;
+  // A page guide fixes the exported width, so the figure set at 100% column
+  // width gets the guide's text size (see page-guide.js).
+  const pageGuide = vp ? null : normalizePageGuide(o.pageGuide);
+  if (pageGuide) {
+    const frame = pageGuideFrame(pageGuide, x0, x1);
+    x0 = frame.x;
+    x1 = frame.x + frame.width;
+  }
   const W = x1 - x0;
   const H = y1 - y0;
 
   const parts = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(W)} ${fmt(H)}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(W)}" height="${fmt(H)}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(W)} ${fmt(H)}">`,
   ];
 
   if (o.background) parts.push(`<rect x="${fmt(x0)}" y="${fmt(y0)}" width="${fmt(W)}" height="${fmt(H)}" fill="#fff"/>`);
@@ -18049,7 +18151,7 @@ function svgString(circuit, opts = {}) {
     if (vp) {
       parts.push(viewportGridSvg(vp));
     } else {
-      for (let x = x0; x <= x1; x += GRID) {
+      for (let x = ceilGrid(x0); x <= x1; x += GRID) {
         parts.push(`<line class="grid-line" x1="${fmt(x)}" y1="${fmt(y0)}" x2="${fmt(x)}" y2="${fmt(y1)}" stroke="#e9e9e9" stroke-width="1"/>`);
       }
       for (let y = y0; y <= y1; y += GRID) {
@@ -18420,6 +18522,50 @@ function editorOverlay(circuit, opts = {}) {
       `<path d="M ${fmt(r.x)} ${fmt(cy - tick)} L ${fmt(r.x)} ${fmt(cy + tick)} M ${fmt(r.x + r.w)} ${fmt(cy - tick)} L ${fmt(r.x + r.w)} ${fmt(cy + tick)} M ${fmt(cx - tick)} ${fmt(r.y)} L ${fmt(cx + tick)} ${fmt(r.y)} M ${fmt(cx - tick)} ${fmt(r.y + r.h)} L ${fmt(cx + tick)} ${fmt(r.y + r.h)}" fill="none" stroke="${color}" stroke-width="3"/>` +
       `<rect x="${fmt(cx - 4)}" y="${fmt(cy - 4)}" width="8" height="8" fill="#fff" stroke="${color}" stroke-width="2" transform="rotate(45 ${fmt(cx)} ${fmt(cy)})"/>` +
       `</g>`);
+  }
+
+  // Tutorial targets: where the current step suggests placing a part. A
+  // dashed outline of the symbol's box with its name, never a real object.
+  for (const target of opts.tutorialTargets || []) {
+    const r = target.rect;
+    parts.push(`<g class="tutorial-target" pointer-events="none">`
+      + `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" rx="8" fill="#16a34a" fill-opacity="0.06" stroke="#16a34a" stroke-width="2" stroke-dasharray="8 6" vector-effect="non-scaling-stroke"/>`
+      + `<text x="${fmt(r.x + r.w / 2)}" y="${fmt(r.y - 12)}" text-anchor="middle" fill="#16a34a" font-size="22" font-family="system-ui, sans-serif">${escapeSvg(target.caption)}</text>`
+      + '</g>');
+  }
+
+  // Page guide: the two column edges an export will be padded to, so the
+  // figure's text lands at the template's size at 100% width. Drawn across the
+  // whole view, quietly; it turns red when the drawing is already wider.
+  if (opts.pageGuide?.frame && opts.pageGuide.view) {
+    const { frame, view: v, caption } = opts.pageGuide;
+    const ink = frame.fits ? '#6b7a90' : '#dc2626';
+    const left = frame.x;
+    const right = frame.x + frame.width;
+    const top = v.y;
+    const bottom = v.y + v.h;
+    const trim = frame.trimCells !== undefined ? Math.round(frame.trimCells * 10) / 10 : 0;
+    const note = frame.fits ? caption : `${caption} · ${trim} cells too wide on each side: text would be ${frame.textPt.toFixed(1)} pt`;
+    const size = Math.max(10, v.w / 110);
+    // Too wide: shade what falls outside the column and draw the column's own
+    // edges above and below the figure, so the trim is visible at a glance.
+    if (!frame.fits && frame.target) {
+      const inner = [frame.target.x, frame.target.x + frame.target.width];
+      const strips = [[left, inner[0]], [inner[1], right]];
+      const above = Number.isFinite(frame.top) ? frame.top : top;
+      const below = Number.isFinite(frame.bottom) ? frame.bottom : bottom;
+      const edges = inner.map((x) => (above > top ? `M ${fmt(x)} ${fmt(top)} V ${fmt(above)} ` : '')
+        + (below < bottom ? `M ${fmt(x)} ${fmt(below)} V ${fmt(bottom)}` : '')).join(' ').trim();
+      parts.push(`<g class="page-guide-overflow" pointer-events="none">`
+        + strips.map(([a, b]) => `<rect x="${fmt(a)}" y="${fmt(top)}" width="${fmt(b - a)}" height="${fmt(bottom - top)}" fill="#dc2626" fill-opacity="0.07"/>`).join('')
+        + (edges ? `<path class="page-guide-target" d="${edges}" fill="none" stroke="#6b7a90" stroke-width="1.5" stroke-dasharray="10 6" stroke-opacity="0.9" vector-effect="non-scaling-stroke"/>` : '')
+        + strips.map(([a, b]) => `<text x="${fmt((a + b) / 2)}" y="${fmt(Math.max(top + size * 3.4, above - size * 0.8))}" text-anchor="middle" fill="#dc2626" font-size="${fmt(size)}" font-family="system-ui, sans-serif">−${trim} cells</text>`).join('')
+        + '</g>');
+    }
+    parts.push(`<g class="page-guide" pointer-events="none">`
+      + `<path d="M ${fmt(left)} ${fmt(top)} V ${fmt(bottom)} M ${fmt(right)} ${fmt(top)} V ${fmt(bottom)}" fill="none" stroke="${ink}" stroke-width="1.5" stroke-dasharray="10 6" stroke-opacity="0.75" vector-effect="non-scaling-stroke"/>`
+      + `<text x="${fmt(Math.max(left, v.x) + size * 0.6)}" y="${fmt(top + size * 1.8)}" fill="${ink}" fill-opacity="0.85" font-size="${fmt(size)}" font-family="system-ui, sans-serif">${escapeSvg(note)}</text>`
+      + '</g>');
   }
 
   // Placement guides: the spacing and alignment relationships the object being
@@ -19959,6 +20105,11 @@ function schematicSubset(circuit, selection) {
   const drawing = new Circuit();
   drawing.components = new Map(comps.map((comp) => [comp.refdes, comp]));
   drawing.nets = new Map(nets.map((net) => [net.id, net]));
+  // Net highlights are keyed by the source document's electrical groups, and
+  // a partial wire becomes a new fragment net below. Every drawn net therefore
+  // takes its color from the source net it came from.
+  const sourceOf = new Map(nets.map((net) => [net.id, net]));
+  drawing.netHighlight = (net) => circuit.netHighlight(sourceOf.get(net?.id) || net);
   const labelIds = new Set(freeLabels.map((label) => label.id));
   drawing.labels = new Map([...circuit.labels].filter(([id, label]) =>
     labelIds.has(id) || (label.owner && drawing.components.has(label.owner)) ||
@@ -19987,6 +20138,7 @@ function schematicSubset(circuit, selection) {
       }
     }
     drawing.nets.set(net.id, net);
+    sourceOf.set(net.id, fragment.net);
   }
   // Junction dots are derived parts of complete wire topology. Internal paste
   // recreates them; an image must retain the existing dots without mutating or
@@ -20006,13 +20158,22 @@ function schematicSubset(circuit, selection) {
   return drawing;
 }
 
+/** Whether a selection names anything to draw. */
+function hasDrawableSelection(selection = {}) {
+  return ['refs', 'labels', 'netIds', 'wireKeys'].some((key) => [...(selection[key] || [])].length > 0);
+}
+
+/** The selected objects as a drawing of their own (a subset, never a crop);
+ * no selection means the entire document. Model objects are shared read-only. */
+function selectionSubset(document, selection = {}) {
+  return hasDrawableSelection(selection) ? schematicSubset(document, selection) : document;
+}
+
 /** Render a subset, never a crop. No selection means the entire document.
  * Model objects are read only: measured labels and authored routes stay intact.
  * Font embedding is supplied by the browser's standalone export adapter. */
 function selectionDrawing(document, selection = {}, options = {}) {
-  const selected = ['refs', 'labels', 'netIds', 'wireKeys']
-    .some((key) => [...(selection[key] || [])].length > 0);
-  const drawing = !selected ? document : schematicSubset(document, selection);
+  const drawing = selectionSubset(document, selection);
   const padding = options.padding ?? GRID;
   if (!Number.isFinite(padding) || padding < 0) throw new Error('drawing padding must be a non-negative number');
   const bounds = drawing.bounds();
@@ -20023,6 +20184,8 @@ function selectionDrawing(document, selection = {}, options = {}) {
   return renderDocument(drawing, { ...DRAWING_EXPORT_OPTIONS, ...options, viewport, emptyHint: false });
 }
 
+__exports.hasDrawableSelection = hasDrawableSelection;
+__exports.selectionSubset = selectionSubset;
 __exports.selectionDrawing = selectionDrawing;
 __exports.DRAWING_EXPORT_OPTIONS = DRAWING_EXPORT_OPTIONS;
 };
@@ -23146,6 +23309,8 @@ const { getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/
 const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
 const { hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js");
 const { TipBook } = __require("src/web/tips.js");
+const { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js");
+const { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js");
 const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
 const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
 const { smallSignalSchematic } = __require("src/core/analysis/model-schematic.js");
@@ -23156,10 +23321,10 @@ const { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrow
 const { createDocument, loadDocument, renderDocument } = __require("src/core/document.js");
 const { snap, GRID } = __require("src/core/grid.js");
 const { resolveCopySelection } = __require("src/core/selection.js");
-const { DRAWING_EXPORT_OPTIONS, selectionDrawing } = __require("src/core/selection-drawing.js");
+const { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } = __require("src/core/selection-drawing.js");
 const { svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js");
 const { writeDrawingToClipboard } = __require("src/web/clipboard.js");
-const { applyTransform, distanceToSegment } = __require("src/core/geometry.js");
+const { applyTransform, distanceToSegment, transformRect } = __require("src/core/geometry.js");
 const { applyMarkup } = __require("src/core/model.js");
 const { smartRoute } = __require("src/core/router.js");
 const { moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js");
@@ -23188,6 +23353,8 @@ const { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, gh
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
+
 
 
 
@@ -23276,6 +23443,9 @@ const exportForm = document.getElementById('export-form');
 const exportCancel = document.getElementById('export-cancel');
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
 const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
+const exportSelectionInput = exportForm?.querySelector('input[name="selection"]');
+// The selection as it stood when the export dialog opened.
+let exportSelection = null;
 const checkSummaryBodyEl = document.getElementById('check-summary-body');
 const clearCheckButtonEl = document.getElementById('btn-clear-check');
 const helpDialog = document.getElementById('help-dialog');
@@ -23364,6 +23534,9 @@ const ICON_PATHS = {
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
   rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M20 4v5h-5"/>',
+  'page-guide': '<path d="M5 3v18M19 3v18" stroke-dasharray="2.5 2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  graduation: '<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5M22 9v6"/>',
   lightbulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/>',
   trackpad: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 15h17M12 15v4"/>',
   'mirror-x': '<path d="M12 3v18" stroke-dasharray="2 2.4"/><path d="M9 7 4 17h5zM15 7l5 10h-5z"/>',
@@ -23510,6 +23683,8 @@ preloadToolCursors();
 // user is doing. The rules that keep them scarce live in tips.js; this only
 // stores the state and shows the card. `noteTip` is safe to call anywhere.
 const TIPS_KEY = 'mosfeteer.tips';
+// The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.
+let tutorial = null;
 const tipBook = new TipBook((() => {
   try { return JSON.parse(localStorage.getItem(TIPS_KEY) || 'null'); } catch { return null; }
 })());
@@ -23531,7 +23706,8 @@ function hideTip() {
 }
 
 function noteTip(event) {
-  const tip = tipBook.note(event, Date.now());
+  // The tutorial teaches the same things; tips still retire, but stay quiet.
+  const tip = tutorial ? (tipBook.note(event, -Infinity), null) : tipBook.note(event, Date.now());
   // Using the feature a visible tip describes answers it.
   if (shownTip && tipBook.state.retired.includes(shownTip.id)) hideTip();
   saveTips();
@@ -23571,6 +23747,146 @@ tipsButton?.addEventListener('click', () => {
   syncTipsButton();
 });
 syncTipsButton();
+
+// ----- first-drawing tutorial ------------------------------------------------
+// Optional and never offered by itself: it starts only from the More menu or
+// the empty-canvas card, and closing it leaves the drawing as it is. Steps are
+// checked from the drawing's structure in tutorial.js.
+const tutorialCardEl = document.getElementById('tutorial-card');
+const tutorialStepEl = document.getElementById('tutorial-step');
+const tutorialStepsEl = document.getElementById('tutorial-steps');
+const tutorialCountEl = document.getElementById('tutorial-count');
+const tutorialBarEl = document.getElementById('tutorial-bar-fill');
+const tutorialSkipEl = document.getElementById('tutorial-skip');
+const tutorialStepsToggleEl = document.getElementById('tutorial-steps-toggle');
+let tutorialKey = '';
+let tutorialState = null;
+let tutorialCheerTimer = 0;
+
+function currentTutorialProgress() {
+  if (!tutorial) return null;
+  const key = `${modelRevision}:${[...tutorial.skipped].join(',')}:${circuit.netHighlights.size}`;
+  if (key !== tutorialKey) {
+    tutorialKey = key;
+    tutorialState = tutorialProgress(circuit, tutorial.skipped);
+  }
+  return tutorialState;
+}
+
+function tutorialTargetRects() {
+  const progress = currentTutorialProgress();
+  if (!progress?.current) return [];
+  return openTutorialTargets(circuit, progress.current).map((target) => {
+    const def = getSymbol(target.type);
+    const transform = { x: target.x, y: target.y, rotation: 0, mirrorX: target.mirrorX, mirrorY: !!def.defaultMirrorY };
+    return { rect: transformRect(transform, def.bbox), caption: target.caption };
+  });
+}
+
+function appendTutorialText(parent, text) {
+  for (const run of tutorialRuns(text)) {
+    parent.append(run.key ? Object.assign(document.createElement('kbd'), { textContent: run.text }) : run.text);
+  }
+}
+
+function tutorialElapsed() {
+  const seconds = Math.round(((tutorial.finishedAt || Date.now()) - tutorial.startedAt) / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function syncTutorial() {
+  if (!tutorialCardEl) return;
+  tutorialCardEl.hidden = !tutorial;
+  const progress = currentTutorialProgress();
+  if (!progress) return;
+  // A step finished since the last look earns a short cheer.
+  const fresh = progress.steps.filter((step) => step.done && !tutorial.cheered.has(step.id));
+  for (const step of fresh) tutorial.cheered.add(step.id);
+  if (fresh.length) {
+    tutorial.cheer = TUTORIAL_STEPS.find((step) => step.id === fresh.at(-1).id).title;
+    window.clearTimeout(tutorialCheerTimer);
+    tutorialCheerTimer = window.setTimeout(() => {
+      if (tutorial) tutorial.cheer = null;
+      syncTutorial();
+    }, 2600);
+  }
+  if (progress.finished && !tutorial.finishedAt) tutorial.finishedAt = Date.now();
+  const total = TUTORIAL_STEPS.length;
+  tutorialCountEl.textContent = `${progress.doneCount} / ${total}`;
+  tutorialBarEl.style.width = `${(progress.doneCount / total) * 100}%`;
+  tutorialStepEl.replaceChildren();
+  if (tutorial.cheer) {
+    tutorialStepEl.append(Object.assign(document.createElement('div'), { className: 'tutorial-cheer', textContent: `✓ ${tutorial.cheer}` }));
+  }
+  const heading = document.createElement('h3');
+  const body = document.createElement('p');
+  if (progress.current) {
+    heading.textContent = progress.current.title;
+    appendTutorialText(body, progress.current.text);
+  } else {
+    const skippedCount = progress.steps.filter((step) => step.skipped).length;
+    heading.textContent = skippedCount ? 'Through the tutorial' : 'You drew a 5T OTA!';
+    appendTutorialText(body, `${skippedCount ? `All steps visited in ${tutorialElapsed()}; skipped ones tick off whenever you finish them.` : `Done in ${tutorialElapsed()}.`} Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.`);
+  }
+  tutorialStepEl.append(heading, body);
+  tutorialStepsEl.hidden = !tutorial.showSteps;
+  tutorialStepsToggleEl.textContent = tutorial.showSteps ? 'Hide steps' : 'All steps';
+  tutorialStepsEl.replaceChildren(...progress.steps.map((step) => {
+    const item = document.createElement('li');
+    item.textContent = TUTORIAL_STEPS.find((candidate) => candidate.id === step.id).title;
+    item.classList.toggle('done', step.done);
+    item.classList.toggle('skipped', step.skipped);
+    item.classList.toggle('current', step.id === progress.current?.id);
+    return item;
+  }));
+  tutorialSkipEl.hidden = !progress.current;
+}
+
+/** Begin the tutorial in a fresh document (after the usual unsaved-changes check). */
+function offerTutorial() {
+  requestDocumentAction('Starting the tutorial', () => {
+    startNewDocument();
+    startTutorial();
+  });
+}
+
+function startTutorial() {
+  circuitNameEl.value = 'tutorial-5t-ota';
+  renderSaveState();
+  tutorial = { startedAt: Date.now(), skipped: new Set(), cheered: new Set(), cheer: null, finishedAt: null };
+  tutorialKey = '';
+  hideTip();
+  fitView();
+  // Keep the marked spots clear of the card at the bottom left.
+  const pane = paneSize();
+  if (pane && tutorialCardEl) {
+    const cardWorld = ((tutorialCardEl.getBoundingClientRect().width || 340) + 68) * (view.w / pane.w);
+    view = { ...view, x: view.x - cardWorld / 2 };
+  }
+  render();
+  canvasEl.focus();
+  logLine('Tutorial started: follow the card at the bottom left, or close it any time.', 'status');
+}
+
+function endTutorial() {
+  tutorial = null;
+  window.clearTimeout(tutorialCheerTimer);
+  render();
+  canvasEl.focus();
+}
+
+document.getElementById('tutorial-close')?.addEventListener('click', endTutorial);
+tutorialStepsToggleEl?.addEventListener('click', () => {
+  if (!tutorial) return;
+  tutorial.showSteps = !tutorial.showSteps;
+  syncTutorial();
+});
+tutorialSkipEl?.addEventListener('click', () => {
+  const current = currentTutorialProgress()?.current;
+  if (current) tutorial.skipped.add(current.id);
+  render();
+});
+document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
 const modeToolbarEl = document.querySelector('.mode-toolbar');
 // ----- editor state ----------------------------------------------
 
@@ -23670,6 +23986,10 @@ let crosshairVisible = false;
 // off for a drawing being laid out by hand, without touching the symmetry
 // axis, which is armed deliberately rather than offered.
 let guidesVisible = true;
+// The page guide preset ({ preset, textPt }) or null; see core/page-guide.js.
+let pageGuide = (() => {
+  try { return normalizePageGuide(localStorage.getItem('mosfeteer.pageGuide')); } catch { return null; }
+})();
 let visual = null; // visual mode: anchor grid point {x,y} the selection box starts from
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
@@ -24347,7 +24667,7 @@ async function copyAsImage() {
   }
 }
 
-async function runExport({ dir, name, formats, grid = false, dark = false }) {
+async function runExport({ dir, name, formats, grid = false, dark = false, selection = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
   const unsupported = formats.filter((format) => !supportedFormats.has(format));
   if (unsupported.length) {
@@ -24368,10 +24688,19 @@ async function runExport({ dir, name, formats, grid = false, dark = false }) {
       committedCanvasKey = '';
       render();
     }
-    const renderedSvg = renderDocument(circuit, {
+    // Only the selection: the same export, of the selected subset alone.
+    const drawing = selection ? selectionSubset(circuit, selection) : circuit;
+    const renderedSvg = renderDocument(drawing, {
       ...DRAWING_EXPORT_OPTIONS,
       grid,
+      pageGuide,
     });
+    if (pageGuide) {
+      const frame = circuitPageGuideFrame(drawing, pageGuide, DRAWING_EXPORT_OPTIONS.padding);
+      logLine(frame.fits
+        ? `Padded to the page guide: ${pageGuideCaption(pageGuide)}.`
+        : `The drawing is wider than the page guide; at full width its text is ${frame.textPt.toFixed(1)} pt.`);
+    }
     const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
     const request = { dir, name, formats, svg };
     if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
@@ -24426,6 +24755,22 @@ function exportCircuit() {
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  // Selection-only is offered per export, never remembered: a later export
+  // with nothing selected must not silently shrink to a stale choice.
+  const source = copySelectionSource();
+  exportSelection = hasDrawableSelection(source)
+    ? { refs: new Set(source.refs), labels: [...source.labels], netIds: new Set(source.netIds), wireKeys: new Set(source.wireKeys) }
+    : null;
+  if (exportSelectionInput) {
+    exportSelectionInput.checked = false;
+    exportSelectionInput.disabled = !exportSelection;
+    exportSelectionInput.closest('label')?.classList.toggle('disabled', !exportSelection);
+  }
+  const selectionCount = document.getElementById('export-selection-count');
+  if (selectionCount) {
+    const count = exportSelection ? exportSelection.refs.size + exportSelection.labels.length + exportSelection.netIds.size + exportSelection.wireKeys.size : 0;
+    selectionCount.textContent = exportSelection ? `(${count} selected)` : '(nothing selected)';
+  }
   if (Array.isArray(saved?.formats)) {
     for (const input of exportForm.querySelectorAll('input[name="format"]')) {
       const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
@@ -26504,6 +26849,12 @@ function fitView({ animate = false } = {}) {
   if (b.w > 0 || b.h > 0) {
     add(b.x, b.y);
     add(b.x + b.w, b.y + b.h);
+    // A page guide is part of what the figure will be: fit its edges too.
+    if (pageGuide) {
+      const frame = circuitPageGuideFrame(circuit, pageGuide);
+      add(frame.x, b.y);
+      add(frame.x + frame.width, b.y + b.h);
+    }
   }
   for (const c of selectedComps()) {
     const r = c.bboxWorld();
@@ -27298,7 +27649,7 @@ function syncEmptyState() {
   const card = document.getElementById('empty-state');
   if (!card) return;
   const empty = !circuit.components.size && !circuit.labels.size && !circuit.nets.size;
-  card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode;
+  card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode || !!tutorial;
   if (card.hidden) return;
   card.querySelector('.empty-state-title').textContent = 'Empty schematic';
   card.querySelector('[data-empty-action="wire"] .empty-state-text').textContent = 'Draw a wire';
@@ -27308,6 +27659,7 @@ function syncEmptyState() {
 function render() {
   syncDocumentSurface();
   syncEmptyState();
+  syncTutorial();
   syncViewToPane();
   // A context menu is independent of canvas repainting. Closing it here made
   // it vanish on the first pointer move after opening it.
@@ -27796,6 +28148,8 @@ function renderCanvas(modelKey) {
     };
   }
   const overlay = editorOverlay(circuit, {
+    tutorialTargets: tutorialTargetRects(),
+    pageGuide: pageGuide ? { frame: circuitPageGuideFrame(circuit, pageGuide), view, caption: pageGuideCaption(pageGuide) } : null,
     cursor,
     selection: [...multi],
     emphasis: equationEmphasis,
@@ -36719,6 +37073,7 @@ modelDialog?.addEventListener('close', () => {
 
 const toolbarMenus = [
   [document.getElementById('btn-document-menu'), document.getElementById('document-menu')],
+  [document.getElementById('btn-settings'), document.getElementById('settings-menu')],
   [document.getElementById('style-line-pattern'), document.getElementById('style-line-menu')],
 ].filter(([button, menu]) => button && menu);
 
@@ -36900,7 +37255,8 @@ exportForm?.addEventListener('submit', (event) => {
     else folders[documentKey] = exportFolder;
     localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
   } catch { /* storage unavailable */ }
-  runExport({ dir: exportFolder, name, formats, ...settings });
+  const selection = exportSelectionInput?.checked && exportSelection ? exportSelection : null;
+  runExport({ dir: exportFolder, name, formats, ...settings, selection });
 });
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => {
@@ -36946,7 +37302,8 @@ document.getElementById('empty-state')?.addEventListener('click', (ev) => {
   else if (action === 'wire') activateWire();
   else if (action === 'open') openDocumentDialog();
   else if (action === 'help') showHelp();
-  if (action && action !== 'open' && action !== 'help') canvasEl.focus();
+  else if (action === 'tutorial') offerTutorial();
+  if (action && !['open', 'help', 'tutorial'].includes(action)) canvasEl.focus();
 });
 // Documents created by the CLI, another window, or a file manager appear without a manual reload.
 circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
@@ -37041,6 +37398,29 @@ if (guidesBtn) {
   guidesBtn.addEventListener('click', () => setGuides(!guidesVisible));
   guidesBtn.setAttribute('aria-pressed', String(guidesVisible));
 }
+
+// Page guide: an app preference, like the other view toggles. It shows the
+// width an export will be padded to (see core/page-guide.js).
+const PAGE_GUIDE_KEY = 'mosfeteer.pageGuide';
+function syncPageGuideControls() {
+  for (const item of document.querySelectorAll('[data-page-guide]')) {
+    item.setAttribute('aria-checked', String((pageGuide?.preset || '') === item.dataset.pageGuide));
+  }
+}
+function setPageGuide(preset) {
+  pageGuide = normalizePageGuide(preset);
+  try { localStorage.setItem(PAGE_GUIDE_KEY, pageGuide?.preset || ''); } catch { /* per-session only */ }
+  syncPageGuideControls();
+  render();
+  hintLine(pageGuide ? `page guide: ${pageGuideCaption(pageGuide)}` : 'page guide off');
+}
+for (const item of document.querySelectorAll('[data-page-guide]')) {
+  item.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    setPageGuide(item.dataset.pageGuide);
+  });
+}
+syncPageGuideControls();
 
 if (crosshairBtn) {
   crosshairBtn.addEventListener('click', () => setCrosshair(!crosshairVisible));
@@ -38528,6 +38908,210 @@ __exports.PLACEMENT_ALIASES = PLACEMENT_ALIASES;
 __exports.INSERT_RECENT_LIMIT = INSERT_RECENT_LIMIT;
 __exports.naturalCompare = naturalCompare;
 __exports.EDITOR_KEYMAP = EDITOR_KEYMAP;
+};
+
+__modules["src/web/tutorial.js"] = function (__require, __exports) {
+const { INTERFACE_PIN_TYPES } = __require("src/core/model.js");
+// The first-drawing tutorial: a five-transistor OTA drawn step by step. It is
+// optional and self-contained. Each step is checked from the drawing's
+// structure (which parts exist, which pins share a net), never from exact
+// coordinates, so any sensible layout completes it; the marked spots are only
+// suggestions. Everything here is pure; the editor draws the card and targets.
+
+
+
+const NMOS = new Set(['nmos', 'nmosb']);
+const PMOS = new Set(['pmos', 'pmosb']);
+
+// Suggested spots, as a textbook 5T OTA: the tail at the bottom, the input
+// pair above it with gates facing out, and the mirror loads on top with gates
+// facing each other, each row eight cells from the next.
+const TUTORIAL_TARGETS = Object.freeze({
+  tail: [{ type: 'nmos', x: 0, y: 320, mirrorX: false, caption: 'NMOS (tail)' }],
+  pair: [
+    { type: 'nmos', x: -240, y: 0, mirrorX: false, caption: 'NMOS' },
+    { type: 'nmos', x: 240, y: 0, mirrorX: true, caption: 'NMOS, mirrored' },
+  ],
+  loads: [
+    { type: 'pmos', x: -240, y: -320, mirrorX: true, caption: 'PMOS, mirrored' },
+    { type: 'pmos', x: 240, y: -320, mirrorX: false, caption: 'PMOS' },
+  ],
+});
+
+function netId(circuit, comp, term) {
+  if (!comp) return null;
+  try { return circuit.netOfTerminal({ comp: comp.refdes, term })?.id || null; } catch { return null; }
+}
+
+function netHas(circuit, id, predicate) {
+  const net = id && circuit.nets.get(id);
+  return !!net && net.terminals.some((terminal) => predicate(circuit.components.get(terminal.comp)));
+}
+
+/** The OTA's roles as found in the drawing: which parts are the tail, the
+ *  input pair, and the loads. Missing roles are null. */
+function tutorialRoles(circuit) {
+  const parts = [...circuit.components.values()];
+  const nmos = parts.filter((c) => NMOS.has(c.type));
+  const pmos = parts.filter((c) => PMOS.has(c.type));
+  const byX = (a, b) => a.transform.x - b.transform.x;
+  // The input pair: two NMOS on one row with a third NMOS below them.
+  let pair = null;
+  let tail = null;
+  for (const a of nmos) {
+    for (const b of nmos) {
+      if (a === b || a.transform.y !== b.transform.y || a.transform.x >= b.transform.x) continue;
+      const below = nmos.filter((c) => c !== a && c !== b && c.transform.y > a.transform.y)
+        .sort((c, d) => Math.abs(c.transform.x - (a.transform.x + b.transform.x) / 2)
+          - Math.abs(d.transform.x - (a.transform.x + b.transform.x) / 2))[0];
+      if (below && !pair) {
+        pair = [a, b];
+        tail = below;
+      }
+    }
+  }
+  // The loads: two PMOS on one row above the pair, gates facing each other.
+  let loads = null;
+  for (const a of pmos) {
+    for (const b of pmos) {
+      if (a === b || a.transform.y !== b.transform.y || a.transform.x >= b.transform.x) continue;
+      if (pair && a.transform.y >= pair[0].transform.y) continue;
+      const inward = a.terminalWorld('g').x > a.transform.x && b.terminalWorld('g').x < b.transform.x;
+      if (inward && !loads) loads = [a, b].sort(byX);
+    }
+  }
+  return { tail, pair, loads, nmos, pmos };
+}
+
+const SUPPLY = (c) => c?.type === 'supply';
+const GROUND = (c) => c?.type === 'ground';
+const PORT = (c) => INTERFACE_PIN_TYPES.has(c?.type);
+
+const TUTORIAL_STEPS = Object.freeze([
+  {
+    id: 'tail',
+    title: 'Place the tail transistor',
+    text: 'Press **i**, type **nmos**, and click the marked spot at the bottom. Press **?** any time to see every key.',
+    targets: 'tail',
+    done: (circuit, roles) => roles.nmos.length >= 1,
+  },
+  {
+    id: 'pair',
+    title: 'Place the input pair',
+    text: 'Place two more NMOS on one row above the tail. Hold **Alt** while placing to drop a mirrored twin: move away from the axis and click once for both.',
+    targets: 'pair',
+    done: (circuit, roles) => !!roles.pair,
+  },
+  {
+    id: 'loads',
+    title: 'Place the PMOS loads',
+    text: 'Place two PMOS on one row at the top, with their gates facing each other. Alt symmetry works here too; otherwise **Shift+R** mirrors a part.',
+    targets: 'loads',
+    done: (circuit, roles) => !!roles.loads,
+  },
+  {
+    id: 'tail-wire',
+    title: 'Wire the tail',
+    text: 'Press **w** and connect both pair sources to the tail drain. Hold **Alt** while wiring and the cursor snaps to the nearest pin.',
+    done: (circuit, { pair, tail }) => {
+      const net = netId(circuit, tail, 'd');
+      return !!net && netId(circuit, pair?.[0], 's') === net && netId(circuit, pair?.[1], 's') === net;
+    },
+  },
+  {
+    id: 'load-wires',
+    title: 'Wire the loads',
+    text: 'Connect each pair drain to the PMOS drain above it. You can also just drag from a pin to start a wire.',
+    done: (circuit, { pair, loads }) => {
+      const left = netId(circuit, pair?.[0], 'd');
+      const right = netId(circuit, pair?.[1], 'd');
+      return !!left && !!right && left !== right
+        && left === netId(circuit, loads?.[0], 'd') && right === netId(circuit, loads?.[1], 'd');
+    },
+  },
+  {
+    id: 'mirror',
+    title: 'Make the current mirror',
+    text: 'Tie the two PMOS gates together, and to the left PMOS drain.',
+    done: (circuit, { loads }) => {
+      const gates = netId(circuit, loads?.[0], 'g');
+      return !!gates && gates === netId(circuit, loads?.[1], 'g')
+        && [netId(circuit, loads[0], 'd'), netId(circuit, loads[1], 'd')].includes(gates);
+    },
+  },
+  {
+    id: 'rails',
+    title: 'Add the supply and ground',
+    text: 'Insert a **supply** on the PMOS sources and a **ground** under the tail source, and wire them up.',
+    done: (circuit, { loads, tail }) => !!loads
+      && loads.every((load) => netHas(circuit, netId(circuit, load, 's'), SUPPLY))
+      && netHas(circuit, netId(circuit, tail, 's'), GROUND),
+  },
+  {
+    id: 'pins',
+    title: 'Add the pins',
+    text: 'Insert **port**, **input**, or **output** pins on both input gates, the tail gate (the bias), and the output: the right-hand drain.',
+    done: (circuit, { pair, tail, loads }) => {
+      if (!pair || !tail || !loads) return false;
+      const gates = netId(circuit, loads[0], 'g');
+      const output = [netId(circuit, loads[0], 'd'), netId(circuit, loads[1], 'd')].find((id) => id && id !== gates);
+      return [netId(circuit, pair[0], 'g'), netId(circuit, pair[1], 'g'), netId(circuit, tail, 'g'), output]
+        .every((id) => netHas(circuit, id, PORT));
+    },
+  },
+  {
+    id: 'label',
+    title: 'Name a net',
+    text: 'Press **L** and click a wire to place a net label, then type a name, for example **X** for the mirror node.',
+    done: (circuit) => [...circuit.labels.values()].some((label) => label.netId),
+  },
+  {
+    id: 'highlight',
+    title: 'Probe a net',
+    text: 'Press **9** and click a wire: the whole net lights up in a color. Click again to cycle colors; **8** clears them.',
+    done: (circuit) => circuit.netHighlights.size > 0,
+  },
+]);
+
+/** Progress through the tutorial for the current drawing. Steps can finish in
+ *  any order; `current` is the first one neither done nor skipped. */
+function tutorialProgress(circuit, skipped = new Set()) {
+  const roles = tutorialRoles(circuit);
+  const steps = TUTORIAL_STEPS.map((step) => {
+    let done = false;
+    try { done = !!step.done(circuit, roles); } catch { done = false; }
+    return { id: step.id, done, skipped: !done && skipped.has(step.id) };
+  });
+  const current = steps.find((step) => !step.done && !step.skipped) || null;
+  return {
+    steps,
+    current: current ? TUTORIAL_STEPS.find((step) => step.id === current.id) : null,
+    doneCount: steps.filter((step) => step.done).length,
+    finished: !current,
+  };
+}
+
+/** The suggested spots still open for a step: a spot counts as taken once a
+ *  part of the same kind stands on it. */
+function openTutorialTargets(circuit, step) {
+  const targets = TUTORIAL_TARGETS[step?.targets] || [];
+  const parts = [...circuit.components.values()];
+  return targets.filter((target) => !parts.some((c) => c.type.startsWith(target.type)
+    && c.transform.x === target.x && c.transform.y === target.y));
+}
+
+/** Split **bold** markup into text runs, for building the card safely. */
+function tutorialRuns(text) {
+  return String(text).split(/(\*\*[^*]+\*\*)/).filter(Boolean)
+    .map((part) => (part.startsWith('**') ? { key: true, text: part.slice(2, -2) } : { key: false, text: part }));
+}
+
+__exports.tutorialRoles = tutorialRoles;
+__exports.tutorialProgress = tutorialProgress;
+__exports.openTutorialTargets = openTutorialTargets;
+__exports.tutorialRuns = tutorialRuns;
+__exports.TUTORIAL_TARGETS = TUTORIAL_TARGETS;
+__exports.TUTORIAL_STEPS = TUTORIAL_STEPS;
 };
 
 __modules["src/web/wire-index.js"] = function (__require, __exports) {
