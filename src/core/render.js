@@ -167,6 +167,12 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
   return `<text ${attrs}>${body}</text>`;
 }
 
+/** The solid greys a beat draws with: what it dims, and (in the editor) what
+ * it hides -- ink at about 30% and 12% over white paper. The editor and the
+ * presenter use the theme's --svg-dim / --svg-faded instead. */
+export const BEAT_DIM_INK = '#b8b8b8';
+export const BEAT_FADE_INK = '#e2e2e2';
+
 const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
 
 function mathMlAtom(value, kind = 'mi', attrs = '') {
@@ -477,9 +483,9 @@ export function texToMathML(source) {
   return `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" style="font-family:${MATH_FONT_FAMILY};color:inherit"><mrow>${parseSequence()}</mrow></math>`;
 }
 
-function mathLabelSvg(label, opacity = '') {
+function mathLabelSvg(label, opacity = '', ink = null) {
   const box = label.bbox();
-  const color = resolveColor(label.style?.color || '#111');
+  const color = ink || resolveColor(label.style?.color || '#111');
   // Keep the default ink theme-aware.  Math labels live in an XHTML
   // foreignObject, so the SVG attribute recoloring rules used by ordinary
   // <text> labels do not reach their inline `color` declaration.  Explicit
@@ -615,8 +621,18 @@ export function svgString(circuit, opts = {}) {
   const GHOST = ' opacity="0.34"';
   const DIMMED = ' opacity="0.3"';
   const FADED = ' opacity="0.12"';
-  const refOpacity = (ref) => (ghostRefs.has(ref) ? GHOST : beatHiddenRef(ref) ? FADED : beat?.dimRefs.has(ref) ? DIMMED : '');
-  const labelOpacity = (id) => (ghostLabels.has(id) ? GHOST : beatHiddenLabel(id) ? FADED : beat?.dimLabels.has(id) ? DIMMED : '');
+  // A beat draws what it dims -- and, in the editor, what it hides -- in a
+  // solid grey between ink and paper. Opacity would paint every place two
+  // faint strokes overlap (a lead under a wire, a dot on a joint) twice.
+  const DIM_INK = o.themeInk ? `var(--svg-dim, ${BEAT_DIM_INK})` : BEAT_DIM_INK;
+  const FADE_INK = o.themeInk ? `var(--svg-faded, ${BEAT_FADE_INK})` : BEAT_FADE_INK;
+  const refInk = (ref) => (beatFade && beatHiddenRef(ref) ? FADE_INK : beat?.dimRefs.has(ref) ? DIM_INK : null);
+  const labelInk = (id) => (beatFade && beatHiddenLabel(id) ? FADE_INK : beat?.dimLabels.has(id) ? DIM_INK : null);
+  const refOpacity = (ref) => (ghostRefs.has(ref) ? GHOST : '');
+  const labelOpacity = (id) => (ghostLabels.has(id) ? GHOST : '');
+  // Shape annotations and a few legacy texts keep a faint opacity instead.
+  const shapeOpacity = (id) => labelOpacity(id) || (beatHiddenLabel(id) ? FADED : beat?.dimLabels.has(id) ? DIMMED : '');
+  const refTextOpacity = (ref) => refOpacity(ref) || (beatHiddenRef(ref) ? FADED : beat?.dimRefs.has(ref) ? DIMMED : '');
   const b = circuit.bounds(o.grid || o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
@@ -710,8 +726,9 @@ export function svgString(circuit, opts = {}) {
       if (solder) markerHighlights.set(solder, color);
     }
   }
-  const compStyle = (c) => withHighlight(c.style, markerHighlights.get(c.refdes));
-  const labelHighlight = (label) => (label.netId && circuit.nets.has(label.netId) ? netHighlightOf(circuit.nets.get(label.netId)) : null)
+  const compStyle = (c) => withHighlight(c.style, refInk(c.refdes) || markerHighlights.get(c.refdes));
+  const labelHighlight = (label) => labelInk(label.id)
+    || (label.netId && circuit.nets.has(label.netId) ? netHighlightOf(circuit.nets.get(label.netId)) : null)
     || (label.owner ? markerHighlights.get(label.owner) : null) || null;
 
   // Bottom layer: visual shape annotations and their child labels. Keeping
@@ -722,7 +739,7 @@ export function svgString(circuit, opts = {}) {
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
   for (const label of annotationShapes) {
     if (label.id === o.editingLabel) continue;
-    const opacity = labelOpacity(label.id);
+    const opacity = shapeOpacity(label.id);
     parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`${label.kind} annotation ${label.text || label.id}`)}">${shapeAnnotationSvg(label, '')}</g>`);
     if (label.kind !== 'line') {
       const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
@@ -730,7 +747,7 @@ export function svgString(circuit, opts = {}) {
     }
     for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
       if (child.id === o.editingLabel) continue;
-      const childOpacity = ghostLabels.has(label.id) ? GHOST : labelOpacity(child.id);
+      const childOpacity = ghostLabels.has(label.id) ? GHOST : shapeOpacity(child.id);
       const t = child.textPos();
       const childVisual = child.math
         ? mathLabelSvg(child)
@@ -766,13 +783,13 @@ export function svgString(circuit, opts = {}) {
     const shown = beat?.wires.get(net.id) ?? 'all';
     if (shown === 'none' && !beatFade) continue;
     const highlight = netHighlightOf(net);
-    const netStyle = withHighlight(net.style, highlight);
+    let netStyle = withHighlight(net.style, highlight);
     if (typeof shown === 'object') {
       // Faint pieces of one style share a path, so their joints are not
       // painted twice.
       const faint = new Map();
-      const piece = ({ a, b, branch, segment }, opacity) => {
-        const style = withHighlight({ ...(net.style || {}), ...(net.wireStyles?.[`${branch}:${segment}`] || {}) }, highlight);
+      const piece = ({ a, b, branch, segment }, opacity, ink = null) => {
+        const style = withHighlight({ ...(net.style || {}), ...(net.wireStyles?.[`${branch}:${segment}`] || {}) }, ink || highlight);
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         if (!opacity && solidStyle(style)) addInk(inkAttrs(style), d);
         else {
@@ -782,7 +799,7 @@ export function svgString(circuit, opts = {}) {
       };
       const ghost = ghostNets.has(net.id) ? GHOST : '';
       for (const p of shown.shown) piece(p, ghost);
-      for (const p of shown.dimmed) piece(p, ghost || DIMMED);
+      for (const p of shown.dimmed) piece(p, ghost, DIM_INK);
       for (const [attrs, ds] of faint) parts.push(`<path class="wire-beat" d="${ds.join(' ')}" ${attrs} pointer-events="none"/>`);
       // The editor keeps the whole net, faded, as the thing to click.
       if (!beatFade) continue;
@@ -791,7 +808,10 @@ export function svgString(circuit, opts = {}) {
     // managed fallback so multi-terminal managed nets retain their old
     // rendering behavior.
     const paths = drawnNetPaths(net);
-    const opacity = ghostNets.has(net.id) ? GHOST : shown !== 'all' ? FADED : '';
+    const opacity = ghostNets.has(net.id) ? GHOST : '';
+    // What the beat keeps is drawn over this, so the whole net is the faint
+    // layer underneath (and what the editor clicks).
+    if (shown !== 'all') netStyle = withHighlight(netStyle, FADE_INK);
     for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
@@ -811,7 +831,7 @@ export function svgString(circuit, opts = {}) {
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]; const b = pts[i];
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
-        const segmentStyle = withHighlight({ ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) }, highlight);
+        const segmentStyle = withHighlight({ ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) }, shown !== 'all' ? FADE_INK : highlight);
         const inked = !opacity && solidStyle(segmentStyle);
         const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
         // Solid wires are painted by the shared ink path below, but dashed
@@ -825,7 +845,9 @@ export function svgString(circuit, opts = {}) {
       }
     }
   }
-  for (const [attrs, ds] of ink) {
+  // The faint layers go under the ink they sit beneath.
+  const inkLayer = (attrs) => (attrs.includes(FADE_INK) ? 0 : attrs.includes(DIM_INK) ? 1 : 2);
+  for (const [attrs, ds] of [...ink].sort(([a], [b]) => inkLayer(a) - inkLayer(b))) {
     parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
   }
 
@@ -901,7 +923,7 @@ export function svgString(circuit, opts = {}) {
   // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
   for (const c of comps) {
     const def = c.def;
-    const opacity = refOpacity(c.refdes);
+    const opacity = refTextOpacity(c.refdes);
     if (def.refPrefix && def.refPos && !def.labelOffset) {
       const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
       // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
@@ -940,7 +962,7 @@ export function svgString(circuit, opts = {}) {
     const t = label.textPos();
     const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
     const labelVisual = label.math
-      ? mathLabelSvg(label)
+      ? mathLabelSvg(label, '', labelInk(label.id))
       : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(labelHighlight(label) || label.style?.color || '#111'), label.style?.width, label.style);
     if (label.selectable === false) {
       parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);

@@ -751,13 +751,15 @@ export function resolveBeat(circuit, index) {
       if (look === 'show') countArm(arms.shown, pointKey(point));
     }
   }
-  // A junction dot marks three or more arms; it goes (or dims) with fewer.
+  // A junction dot marks three or more arms on the page; it goes with
+  // fewer. It keeps full ink while a shown wire runs through it (two shown
+  // arms), even when its third arm is dimmed.
   for (const solder of solders) {
     const key = pointKey(solder.transform);
     const all = arms.all.get(key) || 0;
-    const fewer = (map) => (map.get(key) || 0) < 3 && (map.get(key) || 0) < all;
-    if (fewer(arms.page)) hiddenRefs.add(solder.refdes);
-    else if (fewer(arms.shown)) dimRefs.add(solder.refdes);
+    const page = arms.page.get(key) || 0;
+    if (page < 3 && page < all) hiddenRefs.add(solder.refdes);
+    else if ((arms.shown.get(key) || 0) < 2) dimRefs.add(solder.refdes);
   }
 
   const highlights = highlightsAt(circuit, index);

@@ -28,7 +28,10 @@ drawing fixes every beat. Code: `src/core/beats.js`; tests:
    something hidden, such as the placeholder label it carried. A junction dot
    shows while three or more arms meet at it. An owned label shows with its
    part. A net label that no beat mentions follows the parts on its net.
-   Wire that joins only dimmed parts is dimmed too.
+   Wire that joins only dimmed parts is dimmed too, and a junction dot dims
+   only when no shown wire runs through it. Dimmed parts are drawn in a
+   solid grey (`--svg-dim` in the editor and presenter), so where faint
+   strokes meet they do not double up.
 5. **Switches and highlights are per beat** on top of the drawing's own
    positions and highlights, with the same carry-forward rule.
 

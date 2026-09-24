@@ -35,7 +35,9 @@ export function applyExportDarkTheme(svg) {
     .replace(/#e9e9e9\b/gi, '#22262e')
     .replace(/#eee\b/gi, '#22262e')
     .replace(/#fff\b/gi, '#15171c')
-    .replace(/#111\b/gi, '#dde1e8');
+    .replace(/#111\b/gi, '#dde1e8')
+    // A beat's dimmed grey, re-mixed over the dark paper.
+    .replace(/#b8b8b8\b/gi, '#515459');
 }
 
 // An exported drawing leaves this page: a standalone SVG, a PNG rasterized

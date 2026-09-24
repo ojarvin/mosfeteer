@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { loadDocument } from '../src/core/document.js';
 import { runCommand } from '../src/core/commands.js';
-import { svgString } from '../src/core/render.js';
+import { BEAT_DIM_INK, BEAT_FADE_INK, svgString } from '../src/core/render.js';
 import {
   addBeat, cycleBeatHighlight, introduceAt, phaseBeats, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
   setPresenceAt, setPresenceFrom, switchStateAt, visibleBeats,
@@ -201,7 +201,9 @@ test('a beat drawing leaves hidden objects out, or fades them for the editor', (
   assert.ok(omitted.includes('data-ref="R1"'));
   assert.ok(!omitted.includes('data-net-id="N1"'), 'a partial net is drawn as plain ink');
   const faded = svgString(circuit, { beat: { view, fade: true } });
-  assert.match(faded, /opacity="0.12" data-ref="R3"/);
+  // Solid greys, not opacity: overlapping faint strokes would double up.
+  assert.ok(faded.includes(`class="wire-ink" d="M 200 163`) && faded.includes(`stroke="${BEAT_FADE_INK}"`));
+  assert.ok(!faded.includes('opacity="0.12"'));
   assert.ok(faded.includes('data-net-id="N1"'), 'the editor keeps the net to click');
   // Every beat keeps the whole drawing's frame.
   const box = (svg) => svg.match(/viewBox="([^"]+)"/)[1];
@@ -217,10 +219,13 @@ test('a dimmed part stays on the page, faint, with the wire that joins it', () =
     [undefined, ['R3'], undefined], [['R3'], undefined, undefined], [undefined, undefined, ['R3']],
   ]);
   const first = resolveBeat(circuit, 0);
-  assert.deepEqual([...first.dimRefs].sort(), ['J1', 'R3'], 'the dot has only two shown arms');
+  // The dot stays inked: the shown wire from R1 to R2 runs through it.
+  assert.deepEqual([...first.dimRefs].sort(), ['R3']);
   assert.deepEqual(first.wires.get('N1').dimmed.map(({ a, b }) => [a, b]), [[{ x: 200, y: 160 }, { x: 200, y: 0 }]]);
   assert.equal(first.wires.get('N1').shown.length, 2);
-  assert.match(svgString(circuit, { beat: { view: first } }), /opacity="0.3" data-ref="R3"/);
+  const dimmed = svgString(circuit, { beat: { view: first } });
+  // The dimmed wire and leads share one grey ink path, so joints paint once.
+  assert.equal((dimmed.match(new RegExp(`class="wire-ink"[^>]*stroke="${BEAT_DIM_INK}"`, 'g')) || []).length, 1);
   assert.deepEqual(visibleBeats(circuit, 'R3'), [0, 1]);
   // Hidden before a leading dim needs saying: it is not implied.
   const later = tee(2);
