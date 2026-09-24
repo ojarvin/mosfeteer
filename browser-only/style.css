@@ -4073,6 +4073,12 @@ button.off {
   background: var(--accent-dim);
 }
 
+/* Picked for Delete (Ctrl/Shift-click), beside the beat on screen. */
+.beat-chip.picked {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 .beat-chip-number {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
