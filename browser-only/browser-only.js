@@ -9424,6 +9424,8 @@ const { svgString } = __require("src/core/render.js");
 const { hiddenSupplyBarLabels } = __require("src/core/supply-bars.js");
 const { analyzeSmallSignal } = __require("src/core/analysis/index.js");
 const { addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js");
+const { addTimingDiagram } = __require("src/core/timing-diagram.js");
+
 
 
 
@@ -9930,6 +9932,7 @@ function commandHelp() {
     '  netlabel list [NET]             - list net labels',
     '  annotation (label/annotate) add [ID] TEXT X Y [--align ALIGN --right-edge X] - place a free annotation',
     '  annotation rename|move|align|rm ... - edit/remove an annotation label',
+    '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
@@ -9948,6 +9951,7 @@ function commandHelp() {
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per switch phase: what it connects shown, the rest dimmed',
+    '  timing                         - add a timing diagram template under the drawing, one waveform per switch phase',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -10272,6 +10276,10 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
+  if (cmd === 'timing') {
+    const rows = addTimingDiagram(circuit);
+    return result(`added a timing diagram template: ${rows.map((row) => `${row.phase} ${row.line}`).join(', ')}`, rows, true);
+  }
   if (cmd === 'switch') {
     const [ref, state] = pos;
     if (!ref || !state) throw new Error('usage: switch REF|PHASE open|closed');
@@ -10439,7 +10447,15 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     circuit.removeLabel(label);
     return result(`removed annotation ${label.id}`, null, true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|list ...');
+  if (op === 'vertex-rm') {
+    const label = circuit.labels.get(pos[1]);
+    if (!label || !['arrow', 'line'].includes(label.kind)) throw new Error(`unknown line or arrow "${pos[1]}"`);
+    const index = Number(pos[2]);
+    if (!Number.isInteger(index)) throw new Error('usage: annotation vertex-rm ID N');
+    if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
+    return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
+  }
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */
@@ -13412,6 +13428,27 @@ class LabelInstance {
     this.points[index] = snapPoint(wx, wy);
     this.anchor = { ...this.points[0] };
     this.end = { ...this.points.at(-1) };
+    return true;
+  }
+
+  /** True when vertex `index` can go: the path keeps two distinct points,
+   * and an arrow keeps its two-cell minimum length. */
+  canRemoveVertex(index) {
+    if (!['arrow', 'line'].includes(this.kind) || !Number.isInteger(index) || index < 0 || index >= this.points.length) return false;
+    const rest = this.points.filter((_, i) => i !== index);
+    if (rest.length < 2 || rest.every((p) => p.x === rest[0].x && p.y === rest[0].y)) return false;
+    if (this.kind !== 'arrow') return true;
+    return rest.reduce((sum, p, i) => (i ? sum + Math.hypot(p.x - rest[i - 1].x, p.y - rest[i - 1].y) : 0), 0) >= GRID * 2;
+  }
+
+  /** Drop vertex `index`; its neighbors join with one straight segment. */
+  removeVertex(index) {
+    if (!this.canRemoveVertex(index)) return false;
+    this.points = this.points.filter((_, i) => i !== index)
+      .filter((p, i, all) => !i || p.x !== all[i - 1].x || p.y !== all[i - 1].y);
+    this.anchor = { ...this.points[0] };
+    this.end = { ...this.points.at(-1) };
+    this.circuit.invalidateRoutingCache();
     return true;
   }
 
@@ -19508,6 +19545,38 @@ const SELECT = 'var(--accent, #2563eb)';
 const WARN = 'var(--warn, #b45309)';
 const DANGER = 'var(--danger, #c53030)';
 const NEUTRAL = 'var(--svg-faint, #7a7d85)';
+// Align to has its own ink and shapes (diamonds, edge bars) so its picks never
+// read as a resize handle, an annotation vertex, or a terminal.
+const ALIGN = 'var(--align, #c026d3)';
+
+/** Align to: the selection's outline with its pickable points, the matching
+ * features of the object under the pointer, and where the set would land. */
+function alignToolSvg({ outline, source, hover, features, focus, preview, target }, unit) {
+  const same = (a, b) => !!a && !!b && a.kind === b.kind && a.name === b.name && a.owner === b.owner;
+  const rect = (r, attrs) => `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" ${attrs} vector-effect="non-scaling-stroke"/>`;
+  const diamond = (p, solid) => {
+    const r = 6 * unit;
+    return `<path class="align-point${solid ? ' active' : ''}" d="M ${fmt(p.x)} ${fmt(p.y - r)} L ${fmt(p.x + r)} ${fmt(p.y)} L ${fmt(p.x)} ${fmt(p.y + r)} L ${fmt(p.x - r)} ${fmt(p.y)} Z" fill="${solid ? ALIGN : 'var(--paper, #fff)'}" stroke="${solid ? 'var(--paper, #fff)' : ALIGN}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  };
+  const bar = (edge, width, opacity) => `<path class="align-edge" d="M ${fmt(edge.ends[0].x)} ${fmt(edge.ends[0].y)} L ${fmt(edge.ends[1].x)} ${fmt(edge.ends[1].y)}" stroke="${ALIGN}" stroke-width="${width}" stroke-opacity="${opacity}" stroke-linecap="square" vector-effect="non-scaling-stroke"/>`;
+  const out = [`<g class="align-tool" pointer-events="none" fill="none">`];
+  out.push(rect(outline, `class="align-outline" stroke="${ALIGN}" stroke-width="1.5" stroke-dasharray="2 4"`));
+  if (focus) out.push(rect(focus, `class="align-focus" stroke="${ALIGN}" stroke-width="1" stroke-opacity="0.5" stroke-dasharray="2 4"`));
+  if (preview) out.push(rect(preview, `class="align-preview" fill="${ALIGN}" fill-opacity="0.06" stroke="${ALIGN}" stroke-width="2" stroke-dasharray="7 5"`));
+  if (source && target) {
+    const from = source.kind === 'point' ? source : { x: (source.ends[0].x + source.ends[1].x) / 2, y: (source.ends[0].y + source.ends[1].y) / 2 };
+    const to = target.kind === 'point' ? target : { x: (target.ends[0].x + target.ends[1].x) / 2, y: (target.ends[0].y + target.ends[1].y) / 2 };
+    out.push(`<path class="align-link" d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" stroke="${ALIGN}" stroke-width="1.5" stroke-dasharray="7 5" vector-effect="non-scaling-stroke"/>`);
+  }
+  for (const edge of [source, hover].filter((feature) => feature?.kind === 'edge')) out.push(bar(edge, 6, 0.55));
+  for (const feature of features.filter((feature) => feature.kind === 'edge' && !same(feature, hover))) out.push(bar(feature, 3, 0.35));
+  for (const feature of features.filter((feature) => feature.kind === 'point')) {
+    out.push(diamond(feature, same(feature, source) || same(feature, hover)));
+  }
+  for (const feature of [source, hover].filter((feature) => feature?.kind === 'point' && !features.some((f) => same(f, feature)))) out.push(diamond(feature, true));
+  out.push('</g>');
+  return out.join('');
+}
 
 function editorOverlay(circuit, opts = {}) {
   const parts = [];
@@ -19795,7 +19864,8 @@ function editorOverlay(circuit, opts = {}) {
       const b = label.bbox();
       const a = label.anchorWorld();
       parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
-      if (label.points) parts.push(vertexHandles(label, true));
+      // Align to draws its own picks; vertex drag points would compete.
+      if (label.points && !opts.alignTool) parts.push(vertexHandles(label, true));
       else if (label.kind !== 'box') parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
     }
   } else if (opts.selLabel) {
@@ -20022,6 +20092,7 @@ function editorOverlay(circuit, opts = {}) {
     }
   }
 
+  if (opts.alignTool) parts.push(alignToolSvg(opts.alignTool, unit));
   parts.push(...handleParts);
   return parts.join('\n');
 }
@@ -21593,6 +21664,71 @@ __exports.supplyBarJoins = supplyBarJoins;
 __exports.supplyBars = supplyBars;
 __exports.hiddenSupplyBarLabels = hiddenSupplyBarLabels;
 __exports.supplyBarRow = supplyBarRow;
+};
+
+__modules["src/core/timing-diagram.js"] = function (__require, __exports) {
+const { GRID, ceilGrid, floorGrid } = __require("src/core/grid.js");
+const { isTexSource, switchPhases } = __require("src/core/beats.js");
+/**
+ * Timing diagram template: one clock waveform per switch phase, drawn under
+ * the drawing as plain annotations the author then edits into the real
+ * timing. Each phase gets a free label (its own spelling, TeX drawn as math)
+ * and a line annotation two cells tall with vertical edges: 4 cells low,
+ * 8 high, 8 low, 4 high.
+ */
+
+
+
+
+/** Waveform levels by run, in cells: [length, high?]. */
+const WAVE = [[4, false], [8, true], [8, false], [4, true]];
+const WAVE_HEIGHT = 2 * GRID;
+const ROW_PITCH = 3 * GRID;
+const GAP_BELOW_DRAWING = 2 * GRID;
+const LABEL_GAP = GRID;
+
+/** Points of one template waveform starting at (x, top). */
+function timingWavePoints(x, top) {
+  const level = (high) => (high ? top : top + WAVE_HEIGHT);
+  const points = [{ x, y: level(WAVE[0][1]) }];
+  for (const [cells, high] of WAVE) {
+    const last = points.at(-1);
+    if (last.y !== level(high)) points.push({ x: last.x, y: level(high) });
+    points.push({ x: last.x + cells * GRID, y: level(high) });
+  }
+  return points;
+}
+
+/**
+ * Add the template under everything drawn so far. Returns the ids of the
+ * labels and lines it added, row by row: [{ phase, label, line }].
+ */
+function addTimingDiagram(circuit) {
+  const phases = switchPhases(circuit);
+  if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
+  const drawn = circuit.bounds();
+  const left = floorGrid(drawn.x);
+  const top = ceilGrid(drawn.y + drawn.h) + GAP_BELOW_DRAWING;
+  const labels = phases.map(({ source }, row) => circuit.addLabel({
+    text: source,
+    math: isTexSource(source),
+    align: 'right',
+    x: left,
+    y: top + row * ROW_PITCH + WAVE_HEIGHT / 2,
+  }));
+  // Right-align the phase names in one column flush with the drawing's left
+  // edge; the waveforms start one cell after the widest.
+  const column = Math.max(...labels.map((label) => label.bbox().w));
+  const edge = left + column;
+  for (const label of labels) label.moveTo(edge - label.bbox().w / 2, label.anchor.y);
+  return labels.map((label, row) => {
+    const line = circuit.addAnnotation('line', { points: timingWavePoints(edge + LABEL_GAP, top + row * ROW_PITCH) });
+    return { phase: phases[row].key, label: label.id, line: line.id };
+  });
+}
+
+__exports.timingWavePoints = timingWavePoints;
+__exports.addTimingDiagram = addTimingDiagram;
 };
 
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
@@ -24018,6 +24154,79 @@ function distributionPlan(items, axis, measure = 'gaps', grid = GRID) {
   return { ok: true, deltas, exact: nearGrid(pitch, grid) };
 }
 
+// Align to: the selected set moves as one rigid piece so that a feature of its
+// outline lands on a matching feature of another object. Edges align along
+// their own axis only. An edge's midpoint centres along that edge (the middle
+// of the top edge moves only in x), and a corner or the centre moves in both.
+
+const EDGES = [
+  ['left', 'x', (r) => r.x, (r) => [{ x: r.x, y: r.y }, { x: r.x, y: r.y + r.h }]],
+  ['right', 'x', (r) => r.x + r.w, (r) => [{ x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }]],
+  ['top', 'y', (r) => r.y, (r) => [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }]],
+  ['bottom', 'y', (r) => r.y + r.h, (r) => [{ x: r.x, y: r.y + r.h }, { x: r.x + r.w, y: r.y + r.h }]],
+];
+const POINTS = [
+  ['top-left', 0, 0, ['x', 'y']], ['top', 0.5, 0, ['x']], ['top-right', 1, 0, ['x', 'y']],
+  ['left', 0, 0.5, ['y']], ['center', 0.5, 0.5, ['x', 'y']], ['right', 1, 0.5, ['y']],
+  ['bottom-left', 0, 1, ['x', 'y']], ['bottom', 0.5, 1, ['x']], ['bottom-right', 1, 1, ['x', 'y']],
+];
+
+/** The edges and points of a rectangle that Align to can pick. */
+function alignFeatures(rect, owner = null) {
+  return [
+    ...EDGES.map(([name, axis, value, ends]) => ({ kind: 'edge', name, axis, value: value(rect), ends: ends(rect), owner })),
+    ...POINTS.map(([name, fx, fy, axes]) => ({ kind: 'point', name, x: rect.x + rect.w * fx, y: rect.y + rect.h * fy, axes, owner })),
+  ];
+}
+
+/** Union outline of a set of layout items, or null for an empty set. */
+function outlineOf(items) {
+  if (!items.length) return null;
+  const x = Math.min(...items.map((item) => item.bbox.x));
+  const y = Math.min(...items.map((item) => item.bbox.y));
+  const x1 = Math.max(...items.map((item) => item.bbox.x + item.bbox.w));
+  const y1 = Math.max(...items.map((item) => item.bbox.y + item.bbox.h));
+  return { x, y, w: x1 - x, h: y1 - y };
+}
+
+/** A target feature a picked source can align to: an edge to an edge that
+ * runs the same way, a point to any point. */
+function alignCompatible(source, target) {
+  if (!source) return true;
+  return source.kind === target.kind && (source.kind === 'point' || source.axis === target.axis);
+}
+
+function segmentDistance(p, [a, b]) {
+  const dx = b.x - a.x; const dy = b.y - a.y;
+  const t = dx || dy ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy))) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** The feature under `p`: the nearest point within `tolerance`, else the
+ * nearest edge within it. Points win so a corner is never read as its edge. */
+function alignFeatureAt(features, p, tolerance) {
+  let best = null;
+  for (const kind of ['point', 'edge']) {
+    for (const feature of features) {
+      if (feature.kind !== kind) continue;
+      const d = kind === 'point' ? Math.hypot(p.x - feature.x, p.y - feature.y) : segmentDistance(p, feature.ends);
+      if (d <= tolerance && (!best || d < best.d)) best = { feature, d };
+    }
+    if (best) return best.feature;
+  }
+  return null;
+}
+
+/** The whole-cell move that lands `source` on `target`. A target between grid
+ * points rounds to the nearest one and reports `exact: false`. */
+function alignToDelta(source, target, grid = GRID) {
+  const raw = { x: 0, y: 0 };
+  if (source.kind === 'edge') raw[source.axis] = target.value - source.value;
+  else for (const axis of source.axes) raw[axis] = target[axis] - source[axis];
+  const round = (value) => (nearGrid(value, grid) ? value : Math.round(value / grid) * grid) || 0;
+  return { dx: round(raw.x), dy: round(raw.y), exact: nearGrid(raw.x, grid) && nearGrid(raw.y, grid) };
+}
+
 // Live placement guides. They are advisory only: the grid stays authoritative
 // and nothing ever snaps. Every number drawn is measured between two real
 // anchors and the position the guide points at, never between an anchor and
@@ -24369,6 +24578,11 @@ __exports.ghostLayoutItem = ghostLayoutItem;
 __exports.labelLayoutItem = labelLayoutItem;
 __exports.alignmentPlan = alignmentPlan;
 __exports.distributionPlan = distributionPlan;
+__exports.alignFeatures = alignFeatures;
+__exports.outlineOf = outlineOf;
+__exports.alignCompatible = alignCompatible;
+__exports.alignFeatureAt = alignFeatureAt;
+__exports.alignToDelta = alignToDelta;
 __exports.placementGuides = placementGuides;
 __exports.describeGuides = describeGuides;
 __exports.layoutSuggestions = layoutSuggestions;
@@ -24379,6 +24593,7 @@ const { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, com
 const { getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js");
 const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
 const { hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js");
+const { addTimingDiagram } = __require("src/core/timing-diagram.js");
 const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } = __require("src/core/beats.js");
 const { TipBook } = __require("src/web/tips.js");
 const { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js");
@@ -24413,7 +24628,7 @@ const { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrai
 const { chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js");
 const { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js");
 const { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js");
-const { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js");
+const { alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides } = __require("src/web/layout.js");
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -24425,6 +24640,7 @@ const { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, gh
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -24633,6 +24849,8 @@ const ICON_PATHS = {
   front: '<rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
+  timing: '<path d="M3 16h4V8h6v8h6V8h2"/>',
+  align: '<path d="M4 3v18"/><rect x="7" y="6" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/><path d="m20 12-2-2m2 2-2 2"/>',
   play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor" fill-opacity=".18"/>',
   'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
@@ -24662,6 +24880,7 @@ const TOOL_CURSOR_ICONS = {
   'detached-move': 'detach',
   copy: 'copy',
   delete: 'trash',
+  align: 'align',
   'net-label': 'tag',
   highlight: 'highlight',
   annotation: 'text',
@@ -25006,6 +25225,7 @@ let annotationPoints = [];
 let moveMode = null; // null | 'connected' | 'detached' (armed one-shot move)
 let copyMode = false; // armed one-shot copy placement
 let deleteMode = false; // persistent one-shot delete tool
+let alignTool = null; // Align to: { source, hover } while the tool is active
 let movePending = false;
 let copyPending = false;
 let routeMode = 'orthogonal'; // 'orthogonal' | 'diagonal'; applies when w starts
@@ -25171,7 +25391,7 @@ function selectAllNetIds(model) {
     .map((net) => net.id);
 }
 
-function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
+function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, alignMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
   if (directWire) return {
     key: 'wire',
     canvasClass: 'direct-wire-mode',
@@ -25195,6 +25415,7 @@ function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null
   if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'PLACE' };
   if (copyMode) return { key: 'copy', canvasClass: 'mode-copy', toolbar: 'copy', label: 'COPY' };
   if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE' };
+  if (alignMode) return { key: 'align', canvasClass: 'mode-align', toolbar: 'align', label: 'ALIGN' };
   if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE' };
   if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE' };
   return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL' };
@@ -26178,6 +26399,7 @@ async function deleteSavedCircuit() {
     moveMode = null;
     copyMode = false;
     deleteMode = false;
+    alignTool = null;
     movePending = false;
     copyPending = false;
     visual = null;
@@ -26357,6 +26579,7 @@ function applyJson(blob) {
   moveMode = null;
   copyMode = false;
   deleteMode = false;
+  if (alignTool) alignTool = { source: null, hover: null };
   movePending = false;
   copyPending = false;
   visual = null;
@@ -26407,9 +26630,11 @@ function undo() {
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
+  const kept = alignTool && keptAlignSelection();
   future.push(snapshot());
   applyJson(history.pop());
   restoreToolState(toolState);
+  if (kept) kept();
   render();
 }
 
@@ -26420,9 +26645,11 @@ function redo() {
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
+  const kept = alignTool && keptAlignSelection();
   rememberHistory(snapshot(), false);
   applyJson(future.pop());
   restoreToolState(toolState);
+  if (kept) kept();
   render();
 }
 
@@ -27367,6 +27594,166 @@ function alignSelectionByKey({ align, repeat }) {
   let plan = layoutPlan(align);
   if (plan.ok && plan.deltas.every(({ dx, dy }) => !dx && !dy)) plan = layoutPlan(repeat);
   applyLayoutPlan(plan);
+}
+
+// ----- Align to -------------------------------------------------------------
+// Shift+A: the selection moves as one rigid piece. The first click picks an
+// edge or point of the selection's outline, the second a matching edge or
+// point of another object. Nothing is stored: the selection is the group.
+
+const ALIGN_SOURCE_HINT = 'ALIGN: click an edge or point of the selection (click objects to change it); Esc exits';
+const ALIGN_POINT_PX = 10;
+
+/** World units per screen pixel, for hit radii that keep their on-screen size. */
+function worldPerPixel() {
+  const p = paneSize();
+  return p ? view.w / p.w : 1;
+}
+
+/** The selection's outline: parts and free or owned text, not wires, which
+ * follow their parts. */
+function alignOutline() {
+  const labels = selectedLabels().filter((label) => !label.owner || !multi.has(label.owner));
+  return outlineOf([...selectedComps().map(componentLayoutItem), ...labels.map(labelLayoutItem)]);
+}
+
+/** Objects the selection can align to: every part and label outside it. A
+ * selected part's own labels and a selected shape's captions move with it. */
+function alignTargets() {
+  const out = [];
+  for (const c of circuit.components.values()) {
+    if (!multi.has(c.refdes) && c.type !== 'solder') out.push({ id: c.refdes, bbox: c.bboxWorld() });
+  }
+  for (const label of circuit.labels.values()) {
+    if (label.selectable === false || selLabels.has(label.id) || selLabels.has(label.parent) || multi.has(label.owner)) continue;
+    out.push({ id: label.id, bbox: label.bbox() });
+  }
+  return out;
+}
+
+function alignSourceFeatures() {
+  const outline = alignOutline();
+  return outline ? alignFeatures(outline, null) : [];
+}
+
+function alignTargetFeatures() {
+  const source = alignTool?.source;
+  return alignTargets().flatMap((target) => alignFeatures(target.bbox, target.id))
+    .filter((feature) => alignCompatible(source, feature));
+}
+
+const sameFeature = (a, b) => (!a && !b) || (!!a && !!b && a.kind === b.kind && a.name === b.name && a.owner === b.owner);
+
+function updateAlignHover(w) {
+  const tolerance = ALIGN_POINT_PX * worldPerPixel();
+  const hover = alignTool.source
+    ? alignFeatureAt(alignTargetFeatures(), w, tolerance) || alignFeatureAt(alignSourceFeatures(), w, tolerance)
+    : alignFeatureAt(alignSourceFeatures(), w, tolerance);
+  const focus = alignTool.source && !hover?.owner
+    ? alignTargets().filter(({ bbox }) => w.x >= bbox.x - tolerance && w.x <= bbox.x + bbox.w + tolerance && w.y >= bbox.y - tolerance && w.y <= bbox.y + bbox.h + tolerance)
+      .sort((a, b) => a.bbox.w * a.bbox.h - b.bbox.w * b.bbox.h)[0]?.id || null
+    : hover?.owner || null;
+  if (sameFeature(hover, alignTool.hover) && focus === alignTool.focus) return;
+  alignTool.hover = hover;
+  alignTool.focus = focus;
+  scheduleInteractionRender();
+}
+
+/** A picked source and its matching features on the object under the pointer,
+ * with the landing outline previewed. Interaction only. */
+function alignOverlay() {
+  if (!alignTool) return null;
+  const outline = alignOutline();
+  if (!outline) return null;
+  const { source, hover } = alignTool;
+  const target = source && hover?.owner ? hover : null;
+  const focus = target?.owner || alignTool.focus;
+  const focusTarget = focus ? alignTargets().find((candidate) => candidate.id === focus) : null;
+  const delta = target ? alignToDelta(source, target) : null;
+  return {
+    outline,
+    source,
+    hover,
+    features: source
+      ? [...alignFeatures(outline, null).filter((feature) => feature.kind === 'point'),
+        ...(focusTarget ? alignFeatures(focusTarget.bbox, focusTarget.id).filter((feature) => alignCompatible(source, feature)) : [])]
+      : alignFeatures(outline, null).filter((feature) => feature.kind === 'point'),
+    focus: focusTarget?.bbox || null,
+    preview: delta ? { x: outline.x + delta.dx, y: outline.y + delta.dy, w: outline.w, h: outline.h } : null,
+    target,
+  };
+}
+
+function keptAlignSelection() {
+  const refs = [...multi];
+  const labels = [...selLabels];
+  return () => {
+    setSelection(refs.filter((ref) => circuit.components.has(ref)));
+    setLabelSelection(labels.filter((id) => circuit.labels.has(id)));
+  };
+}
+
+function alignMouseDown(startWorld, startClient, ev) {
+  const tolerance = ALIGN_POINT_PX * worldPerPixel();
+  if (alignTool.source) {
+    const target = alignFeatureAt(alignTargetFeatures(), startWorld, tolerance);
+    if (target) {
+      alignSelectionTo(alignTool.source, target);
+      return;
+    }
+  }
+  const source = alignFeatureAt(alignSourceFeatures(), startWorld, tolerance);
+  if (source) {
+    alignTool = { source, hover: null };
+    hintLine(`ALIGN: click a ${source.kind === 'edge' ? `${source.axis === 'x' ? 'vertical' : 'horizontal'} edge` : 'point'} of another object to align to; Esc picks again`);
+    render();
+    return;
+  }
+  if (alignTool.source) {
+    hintLine('ALIGN: click a highlighted edge or point of another object; Esc picks again');
+    return;
+  }
+  // Before a source is picked, clicks shape the selection as in Select.
+  const extend = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+  const label = pickLabel(startWorld) || annotationTextAt(startWorld) || annotationGeometryAt(startWorld) || annotationEndpointAt(startWorld)?.label;
+  const hit = label ? null : pickAt(startWorld);
+  const target = label?.owner && circuit.components.has(label.owner) ? { kind: 'component', id: label.owner }
+    : label ? { kind: 'label', id: label.id }
+      : hit?.refdes && circuit.components.has(hit.refdes) ? { kind: 'component', id: hit.refdes } : null;
+  if (!target) {
+    beginMarqueeSelection(startWorld, startClient, ev);
+    return;
+  }
+  // A near miss on a handle must not shrink the set to the part under it.
+  if (!extend && (target.kind === 'component' ? multi : selLabels).has(target.id)) {
+    hintLine(ALIGN_SOURCE_HINT);
+    return;
+  }
+  applyEditorSelection(target, extend);
+  hintLine(ALIGN_SOURCE_HINT);
+  render();
+}
+
+/** Move the whole selection so `source` lands on `target`, through the same
+ * drag path as the Move tool: wires inside the set translate, wires to the
+ * rest reroute, and the edit is one undo entry. */
+function alignSelectionTo(source, target) {
+  const { dx, dy, exact } = alignToDelta(source, target);
+  alignTool = { source: null, hover: null };
+  if (!dx && !dy) {
+    hintLine('already aligned');
+    render();
+    return;
+  }
+  const start = { x: snap(cursor.x), y: snap(cursor.y) };
+  const from = worldToClient(start.x, start.y);
+  const to = worldToClient(start.x + dx, start.y + dy);
+  beginObjectMove([...multi], [...selLabels], start, from);
+  drag.moved = true;
+  canvasMouseMove({ clientX: to.x, clientY: to.y, shiftKey: false });
+  canvasMouseUp({ clientX: to.x, clientY: to.y, button: 0, shiftKey: false });
+  hintLine(exact ? 'aligned the selection; pick another edge or point, or Esc'
+    : 'aligned to the nearest grid point; exact alignment falls between grid points');
 }
 
 function previewLayoutPlan(plan) {
@@ -28878,6 +29265,19 @@ function addPhaseBeats() {
   setActiveBeat(index);
 }
 
+/** A timing diagram template under the drawing: each phase's name and a
+ * waveform line to edit into its timing (core/timing-diagram.js). */
+function addTimingDiagramTemplate() {
+  let rows = [];
+  commit(() => { rows = addTimingDiagram(circuit); });
+  if (!rows.length) return;
+  setSelection([]);
+  setLabelSelection(rows.flatMap((row) => [row.label, row.line]));
+  logLine(`added a timing diagram for ${rows.length} phase${rows.length === 1 ? '' : 's'}: drag its vertices into each phase's timing, or click one in Delete to remove it`);
+  fitView({ animate: true });
+  render();
+}
+
 /** Context-menu items for beats: show/hide, switch position. */
 function appendBeatContextItems(group, target) {
   if (target.kind === 'component' && switchState(target.value)) {
@@ -28993,6 +29393,7 @@ document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
 document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
+document.getElementById('btn-timing-diagram')?.addEventListener('click', addTimingDiagramTemplate);
 document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);
@@ -29893,16 +30294,17 @@ function renderCanvas(modelKey) {
     selection: [...multi],
     emphasis: equationEmphasis,
     diagnostic: diagnosticSelection,
-    resizeBlocks: [...multi].filter((ref) => {
+    alignTool: alignOverlay(),
+    resizeBlocks: alignTool ? [] : [...multi].filter((ref) => {
       const component = circuit.components.get(ref);
       return component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY;
     }),
-    resizeBoxes: [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box'),
-    hoverAnnotation: drag ? null : hoverAnnotationId,
-    handleScale: (() => { const p = paneSize(); return p ? view.w / p.w : 1; })(),
+    resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box'),
+    hoverAnnotation: drag || alignTool ? null : hoverAnnotationId,
+    handleScale: worldPerPixel(),
     ghostTwin,
     symmetryAxis,
-    centerGuides: placementGuide?.guides.length ? null : selectionCenterBounds(),
+    centerGuides: placementGuide?.guides.length || alignTool ? null : selectionCenterBounds(),
     layoutPreviewRects,
     placementGuide,
     wireSegments: (() => {
@@ -30037,6 +30439,10 @@ function bindHoverPreview(row, target) {
 
 function updateCanvasHover(w) {
   if (hoverFromPanel) return;
+  if (alignTool) {
+    updateAlignHover(w);
+    return;
+  }
   const quiet = mode === 'insert' || (labelMode && labelMode !== 'highlight') || visual || quickAdd;
   const selecting = !quiet && !wire && !directWire && !moveMode && !copyMode && !deleteMode;
   const hit = selecting ? pickAt(w) : null;
@@ -30048,7 +30454,10 @@ function updateCanvasHover(w) {
   // Mirror canvasMouseDown's order: annotation drag points and outlines are
   // picked before labels and components.
   const annotation = selecting ? annotationEndpointAt(w)?.label || annotationGeometryAt(w) : null;
-  const annotationId = annotation && ['arrow', 'line'].includes(annotation.kind) ? annotation.id : null;
+  // Delete shows a line's vertices while the pointer rests on one it can
+  // remove alone.
+  const deleteVertex = deleteMode && !quiet ? removableVertexAt(w)?.label : null;
+  const annotationId = deleteVertex?.id || (annotation && ['arrow', 'line'].includes(annotation.kind) ? annotation.id : null);
   if (pinsRef !== hoverPinsRef || annotationId !== hoverAnnotationId) {
     hoverPinsRef = pinsRef;
     hoverAnnotationId = annotationId;
@@ -31610,6 +32019,10 @@ function canvasMouseDown(ev) {
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
     return;
   }
+  if (alignTool && b === 0) {
+    alignMouseDown(startWorld, startClient, ev);
+    return;
+  }
   if (b !== 0) return;
   const handle = ev.target.closest?.('[data-resize-handle]');
   const handleOwner = handle?.closest?.('[data-resize-id]');
@@ -31871,6 +32284,7 @@ function canvasMouseDown(ev) {
   const endpointHit = annotationEndpointAt(startWorld);
   const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
   const pickedLine = endpointHit?.label || annotationSegment?.label;
+  if (pickedLine && armLabelCopyGrab(pickedLine, startWorld, startClient, ev)) return;
   if (pickedLine && isSelectionModifier(ev)) {
     applyEditorSelection({ kind: 'label', id: pickedLine.id }, true);
     render();
@@ -31884,6 +32298,7 @@ function canvasMouseDown(ev) {
   }
   const annotationText = annotationTextAt(startWorld);
   if (annotationText) {
+    if (armLabelCopyGrab(annotationText, startWorld, startClient, ev)) return;
     if (!isSelectionModifier(ev)) {
       setSelection([]);
       setLabelSelection([annotationText.id]);
@@ -32621,8 +33036,23 @@ function beginCopySource(startWorld, startClient) {
   if (!copySelection()) return false;
   return startCopyGhost(startWorld, startClient);
 }
+/** A line or arrow vertex under `world` that Delete can remove on its own,
+ * leaving the rest of the annotation: { label, index } or null. */
+function removableVertexAt(world) {
+  const hit = annotationEndpointAt(world);
+  const index = hit?.endpoint.startsWith('vertex:') ? Number(hit.endpoint.slice(7)) : -1;
+  return index >= 0 && hit.label.canRemoveVertex(index) ? { label: hit.label, index } : null;
+}
+
 function deleteAtPoint(world) {
   noteTip('delete-click');
+  const vertex = removableVertexAt(world);
+  if (vertex) {
+    commit(() => vertex.label.removeVertex(vertex.index));
+    clearCheckReport();
+    render();
+    return true;
+  }
   const label = pickLabel(world) || annotationGeometryAt(world);
   const hitWire = pickWire(world);
   const hitComp = pickAt(world);
@@ -36522,8 +36952,13 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === 'i' || key === 'I' || key === 'A') {
+  if (key === 'i' || key === 'I') {
     activatePlace();
+    return;
+  }
+
+  if (key === 'A') {
+    activateAlign();
     return;
   }
 
@@ -36580,6 +37015,19 @@ function onNormalKey(key, shiftKey = false) {
     } else {
       activateDelete();
     }
+    return;
+  }
+
+  // Escape in Align to drops a picked source first, then leaves the tool with
+  // the selection intact.
+  if (key === 'Escape' && alignTool) {
+    if (alignTool.source) {
+      alignTool = { source: null, hover: null };
+      hintLine(ALIGN_SOURCE_HINT);
+    } else {
+      alignTool = null;
+    }
+    render();
     return;
   }
 
@@ -37176,7 +37624,7 @@ const TOOLBAR_IDS = {
 };
 
 function interactionState() {
-  return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, movePending, copyPending, routeMode });
+  return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, alignMode: !!alignTool, movePending, copyPending, routeMode });
 }
 
 /** Elements matched by `selectors`, cached: the toolbars are static markup and
@@ -37985,6 +38433,7 @@ function leaveActiveInteraction() {
   insertQuery = '';
   mode = 'normal';
   visual = null;
+  alignTool = null;
 }
 
 /** A letter that picks a terminal in Wire mode: one the part under the cursor
@@ -38013,6 +38462,7 @@ function toolSwitchForKey(key, shiftKey = false) {
     m: () => activateMove('connected'),
     M: () => activateMove('detached'),
     c: activateCopy,
+    A: activateAlign,
     9: activateHighlight,
     a: () => activateShapeAnnotation('arrow'),
     b: () => activateShapeAnnotation('box'),
@@ -38195,6 +38645,21 @@ function activateCopy() {
   annotationPoints = [];
   copyMode = true; // source click and placement are handled by the canvas
   hintLine('COPY: click an object, or use the existing selection; move the copy, then click/Enter (Esc exits)');
+  render();
+}
+
+function activateAlign() {
+  leaveActiveInteraction();
+  terminalSnap = false;
+  moveMode = null;
+  copyMode = false;
+  deleteMode = false;
+  movePending = false;
+  copyPending = false;
+  labelMode = null;
+  annotationPoints = [];
+  alignTool = { source: null, hover: null };
+  hintLine(ALIGN_SOURCE_HINT);
   render();
 }
 
@@ -38561,6 +39026,7 @@ function bindInteractionControls() {
     'detach-move': () => activateMove('detached'),
     copy: activateCopy,
     delete: activateDelete,
+    align: activateAlign,
     'send-back': () => restackSelected('back'),
     'bring-front': () => restackSelected('front'),
     'net-label': activateNetLabel,
@@ -40694,7 +41160,7 @@ const naturalCompare = new Intl.Collator(undefined, { numeric: true, sensitivity
 // the dialog. Keep this registry alongside the keyboard-facing toolbar.
 const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
-    ['i / Shift+I / Shift+A', 'insert mode (fuzzy-search component and label placement)'],
+    ['i / Shift+I', 'insert mode (fuzzy-search component and label placement)'],
     ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal; Enter commits'],
     ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
     ['/ (wire)', 'flip which way the corner under the cursor turns'],
@@ -40727,6 +41193,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['dd', 'delete the selected object set'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
+    ['Shift+A', 'align to: click an edge or point of the selection, then a matching one of another object; the set moves as one'],
     ['9', 'highlight nets: each click cycles a net group\'s color'],
     ['8', 'remove every net highlight'],
     ['t', 'edit the primary selected label (no-op otherwise)'],

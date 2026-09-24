@@ -31,6 +31,8 @@
   --danger: #c53030;
   --warn: #b45309;
   --ok: #157347;
+  /* Align to picks: distinct from the accent of selection and resize handles. */
+  --align: #c026d3;
   --ink: #111111;
   --paper: #ffffff;
   --svg-ink: #111111;
@@ -2866,6 +2868,7 @@ html.dark {
   --danger: #f07178;
   --warn: #fbbf24;
   --ok: #4ade80;
+  --align: #e879f9;
   --paper: #15171c;
   --svg-ink: #dde1e8;
   --svg-mid: #dde1e8;

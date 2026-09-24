@@ -49,6 +49,7 @@
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats" title="Show the beat strip: steps that build the drawing up for a talk or a paper (Shift+B; + adds a beat)">Beats <kbd>Shift+B</kbd></button>
           <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats" title="Add one beat per switch phase: the phase's switches closed, the others open, what it connects shown and the rest dimmed">Beats from switch phases</button>
+          <button id="btn-timing-diagram" type="button" role="menuitem" data-icon="timing" title="Draw a timing diagram template under the drawing: each switch phase's name and a waveform to edit into its timing">Timing diagram from switch phases</button>
           <button id="btn-present" type="button" role="menuitem" data-icon="play" title="Present the beats full screen, from the current one (Shift+F5)">Present <kbd>Shift+F5</kbd></button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Permanently delete the current document file" disabled>Delete document…</button>
@@ -199,6 +200,7 @@
         <button id="btn-mode-move" class="mode-control" data-icon="move" data-action="move" aria-pressed="false" title="Move selected objects with their connectivity; stays active until Esc (m)" aria-label="Move selected objects">Move <kbd>m</kbd></button>
         <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Move selected objects without carrying connected nets; stays active until Esc (Shift+M)" aria-label="Detach move">Detach move <kbd>Shift+M</kbd></button>
         <button id="btn-mode-copy" class="mode-control" data-icon="copy" data-action="copy" aria-pressed="false" title="Copy a selected object or set; stays active for repeated copies (c)" aria-label="Copy selected objects">Copy <kbd>c</kbd></button>
+        <button id="btn-mode-align" class="mode-control" data-icon="align" data-action="align" aria-pressed="false" title="Align the selection as one piece: click an edge or point of it, then a matching edge or point of another object; stays active until Esc (Shift+A)" aria-label="Align selection to another object">Align <kbd>Shift+A</kbd></button>
         <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc (Delete)" aria-label="Delete selected objects">Delete <kbd>Delete</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
         <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a label on a physical wire (Shift+L)" aria-label="Place a label on a physical wire">Net label <kbd>Shift+L</kbd></button>
