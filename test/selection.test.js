@@ -24,8 +24,10 @@ test('copying a net label does not expand its physical net', () => {
   const payload = copyableLabelPayload(label);
   assert.deepEqual(payload, {
     id: 'SIG_LABEL', kind: 'label', parent: null, text: 'SIG', align: 'center',
-    x: 200, y: 0, end: null, points: null, style: { color: '#111' },
+    x: 200, y: 0, end: null, points: null, style: { color: '#111' }, math: false, mathBox: null,
   });
+  // An equation copies as an equation.
+  assert.equal(copyableLabelPayload({ ...label, math: true, text: '$$x$$' }).math, true);
   assert.equal('netId' in payload, false);
   assert.equal(copyableLabelPayload({ owner: 'R1' }), null);
 });

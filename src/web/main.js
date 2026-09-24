@@ -7025,8 +7025,28 @@ function beginBranchWire(segDrag, w) {
 }
 
 /** Ctrl/Cmd-drag on an object drags a copy; a plain Ctrl/Cmd-click still toggles selection. */
+/** Ctrl/Cmd on a label arms a copy, as it does on a part: dragging copies
+ * the label (with the rest of the selection it belongs to), and a click
+ * without a drag toggles it in the selection. An owned label copies its part. */
+function armLabelCopyGrab(label, startWorld, startClient, ev) {
+  if (!(ev.ctrlKey || ev.metaKey) || ev.shiftKey) return false;
+  cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  const owner = label.owner ? circuit.components.get(label.owner) : null;
+  drag = owner
+    ? { mode: 'copygrab', hit: { refdes: owner.refdes }, startWorld, startClient }
+    : { mode: 'copygrab', label: { id: label.id }, startWorld, startClient };
+  return true;
+}
+
 function beginCopyDrag(grab, ev) {
   const { hit, startWorld, startClient } = grab;
+  if (grab.label) {
+    const member = selLabels.has(grab.label.id);
+    drag = null;
+    beginObjectMove(member ? [...multi] : [], member ? [...selLabels] : [grab.label.id], startWorld, startClient, { duplicate: true });
+    canvasMouseMove(ev);
+    return;
+  }
   // A joined supply bar moves (or copies) as one part.
   const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
   const labels = multi.has(hit.refdes) ? [...selLabels] : [];
@@ -7427,6 +7447,7 @@ function canvasMouseDown(ev) {
   }
   const annotationGeometry = annotationGeometryAt(startWorld);
   if (annotationGeometry) {
+    if (armLabelCopyGrab(annotationGeometry, startWorld, startClient, ev)) return;
     if (isSelectionModifier(ev)) {
       applyEditorSelection({ kind: 'label', id: annotationGeometry.id }, true);
       render();
@@ -7482,6 +7503,7 @@ function canvasMouseDown(ev) {
       setTimeout(() => inlineEditLabel(labelHit), 0);
       return;
     }
+    if (armLabelCopyGrab(labelHit, startWorld, startClient, ev)) return;
     if (isSelectionModifier(ev)) {
       applyEditorSelection({ kind: 'label', id: labelHit.id }, true);
       render();
@@ -8652,7 +8674,7 @@ function canvasMouseUp(ev) {
     return;
   }
   if (drag.mode === 'copygrab') {
-    applyEditorSelection({ kind: 'component', id: drag.hit.refdes }, true);
+    applyEditorSelection(drag.label ? { kind: 'label', id: drag.label.id } : { kind: 'component', id: drag.hit.refdes }, true);
     drag = null;
     render();
     return;
@@ -12263,6 +12285,8 @@ function copySelection({ quiet = false } = {}) {
       negativeInputs: c.negativeInputs ? [...c.negativeInputs] : [],
       joinBar: !!c.joinBar,
       style: { ...(c.style || {}) },
+      // The value: a resistance, a switch's phase.
+      value: c.value,
     })),
     labels: freeLabels.map(copyableLabelPayload),
     nets,
@@ -12528,6 +12552,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           negativeInputs: c.negativeInputs,
           joinBar: c.joinBar,
           style: c.style,
+          value: c.value,
         });
         refMap.set(c.origRef, comp.refdes);
         addedComps.push(comp.refdes);
@@ -12542,7 +12567,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         addedLabels.push(shape.id);
       }
       for (const l of clipboard.labels.filter((label) => label.kind === 'label')) {
-        const nl = circuit.addLabel({ text: l.text, align: l.align, parent: l.parent ? labelMap.get(l.parent) : null, x: l.x + dx, y: l.y + dy, style: l.style });
+        const nl = circuit.addLabel({ text: l.text, align: l.align, parent: l.parent ? labelMap.get(l.parent) : null, x: l.x + dx, y: l.y + dy, style: l.style, math: l.math, mathBox: l.mathBox || undefined });
         addedLabels.push(nl.id);
       }
       const netMap = new Map();

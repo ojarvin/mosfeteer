@@ -173,6 +173,9 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
 export const BEAT_DIM_INK = '#b8b8b8';
 export const BEAT_FADE_INK = '#e2e2e2';
 
+/** Outline that gives drawing math the weight of the other labels. */
+const MATH_LABEL_STROKE = '0.03em';
+
 const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
 
 function mathMlAtom(value, kind = 'mi', attrs = '') {
@@ -496,7 +499,9 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   const aria = escapeSvg(`Math label ${label.text}`);
   const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
   const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
-  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;pointer-events:none;`;
+  // Latin Modern Math has one weight, too light beside the drawing's strokes
+  // and bold labels; a thin outline in the text color thickens every glyph.
+  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;-webkit-text-stroke:${MATH_LABEL_STROKE} currentColor;pointer-events:none;`;
   const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
   const lines = stripMathDelimiters(label.text).split(/\r?\n/)
     .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)

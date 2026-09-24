@@ -17,6 +17,9 @@ export function copyableLabelPayload(label) {
     end: label.kind === 'label' ? null : { ...label.end },
     points: label.kind === 'line' ? label.points.map((point) => ({ ...point })) : null,
     style: { ...(label.style || {}) },
+    // An equation stays an equation, with its measured box until it renders.
+    math: !!label.math,
+    mathBox: (label.math && typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
   };
 }
 
