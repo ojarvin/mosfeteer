@@ -8589,6 +8589,581 @@ __exports.approximateTopology = approximateTopology;
 __exports.buildTopologyIdentities = buildTopologyIdentities;
 };
 
+__modules["src/core/beats.js"] = function (__require, __exports) {
+const { getSymbol } = __require("src/core/components/index.js");
+const { steinerBranches } = __require("src/core/router.js");
+/**
+ * Beats: an ordered list of view states over one drawing, so a figure can be
+ * built up (or its switch phases shown) step by step. The contract is in
+ * docs/beats.md.
+ *
+ * A beat stores only what changes at it, relative to the beat before; the
+ * first beat is relative to the drawing itself:
+ *
+ *   show / hide  object ids: component refdes, free and net label ids
+ *   switches     { refdes: 'open' | 'closed' }
+ *   highlights   { netGroupKey: color | null }
+ *
+ * An object nobody mentions is visible in every beat, so an edit to the
+ * drawing shows up everywhere without touching the beats. An object whose
+ * first change is a `show` is hidden before it. Wires, owned labels, and
+ * junction dots are never listed: they follow what they connect or belong to.
+ *
+ * Every edit decodes the per-beat states of an object (its "track"), changes
+ * the track, and encodes it back. Inserting, deleting, or moving a beat
+ * therefore never changes how any other beat looks.
+ */
+
+
+
+
+const SWITCH_TYPES = Object.freeze({ open: 'switch_open', closed: 'switch_closed' });
+const SWITCH_STATE_OF_TYPE = { switch_open: 'open', switch_closed: 'closed' };
+
+/** 'open' or 'closed' for a switch component, otherwise null. */
+function switchState(component) {
+  return SWITCH_STATE_OF_TYPE[component?.type] || null;
+}
+
+// ----- stored form ------------------------------------------------------
+
+function emptyBeat(id, name = '') {
+  return { id, name, show: [], hide: [], switches: {}, highlights: {} };
+}
+
+/** Beats read from a document. Anything malformed is dropped, never guessed. */
+function beatsFromJSON(data) {
+  if (!Array.isArray(data)) return [];
+  const seen = new Set();
+  const beats = [];
+  for (const entry of data) {
+    if (!entry || typeof entry !== 'object') continue;
+    let id = typeof entry.id === 'string' && entry.id ? entry.id : '';
+    if (!id || seen.has(id)) id = nextBeatId({ beats: [...beats, { id }] });
+    seen.add(id);
+    const beat = emptyBeat(id, typeof entry.name === 'string' ? entry.name : '');
+    const ids = (list) => [...new Set((Array.isArray(list) ? list : []).filter((value) => typeof value === 'string' && value))];
+    beat.show = ids(entry.show);
+    beat.hide = ids(entry.hide).filter((value) => !beat.show.includes(value));
+    for (const [ref, state] of Object.entries(entry.switches || {})) {
+      if (state === 'open' || state === 'closed') beat.switches[ref] = state;
+    }
+    for (const [key, color] of Object.entries(entry.highlights || {})) {
+      if (color === null || typeof color === 'string') beat.highlights[key] = color;
+    }
+    beats.push(beat);
+  }
+  return beats;
+}
+
+/** Beats as saved. References to deleted objects are left out; empty fields
+ * are omitted so an untouched beat is just its id and name. */
+function beatsToJSON(circuit) {
+  const live = (id) => beatObjectKind(circuit, id) !== null;
+  return (circuit.beats || []).map((beat) => {
+    const out = { id: beat.id, name: beat.name || '' };
+    const show = beat.show.filter(live);
+    const hide = beat.hide.filter(live);
+    const switches = Object.entries(beat.switches).filter(([ref]) => switchState(circuit.components.get(ref)));
+    const highlights = Object.entries(beat.highlights);
+    if (show.length) out.show = show;
+    if (hide.length) out.hide = hide;
+    if (switches.length) out.switches = Object.fromEntries(switches);
+    if (highlights.length) out.highlights = Object.fromEntries(highlights);
+    return out;
+  });
+}
+
+function nextBeatId(circuit) {
+  const used = new Set((circuit.beats || []).map((beat) => beat.id));
+  let n = 1;
+  while (used.has(`b${n}`)) n += 1;
+  return `b${n}`;
+}
+
+/** Display name of a beat: its number, and its name when it has one. */
+function beatTitle(circuit, index) {
+  const beat = circuit.beats?.[index];
+  if (!beat) return '';
+  return beat.name ? `${index + 1} · ${beat.name}` : `Beat ${index + 1}`;
+}
+
+// ----- what a beat can list -------------------------------------------------
+
+/** 'component' or 'label' when `id` can be shown or hidden by a beat, else
+ * null. Junction dots, owned labels, and captions of annotation shapes
+ * follow their owners instead. */
+function beatObjectKind(circuit, id) {
+  const component = circuit.components.get(id);
+  if (component) return component.type === 'solder' ? null : 'component';
+  const label = circuit.labels.get(id);
+  if (label && !label.owner && !label.parent) return 'label';
+  return null;
+}
+
+/** The object a beat lists for a selected id: an owned label stands for its
+ * component and a shape's caption for its shape. */
+function beatTargetId(circuit, id) {
+  const label = circuit.components.has(id) ? null : circuit.labels.get(id);
+  if (label?.owner) return circuit.components.has(label.owner) ? label.owner : null;
+  if (label?.parent) return beatTargetId(circuit, label.parent);
+  return beatObjectKind(circuit, id) ? id : null;
+}
+
+// ----- tracks -----------------------------------------------------------------
+
+/** Per-beat visibility of one object. */
+function visibilityTrack(beats, id) {
+  const first = beats.find((beat) => beat.show.includes(id) || beat.hide.includes(id));
+  let visible = !first?.show.includes(id);
+  return beats.map((beat) => {
+    if (beat.show.includes(id)) visible = true;
+    else if (beat.hide.includes(id)) visible = false;
+    return visible;
+  });
+}
+
+function writeVisibilityTrack(beats, id, track) {
+  for (const beat of beats) {
+    beat.show = beat.show.filter((value) => value !== id);
+    beat.hide = beat.hide.filter((value) => value !== id);
+  }
+  const firstVisible = track.indexOf(true);
+  if (firstVisible === -1) {
+    if (beats.length) beats[0].hide.push(id);
+    return;
+  }
+  // Hidden before its first appearance: a leading `show` says so on its own.
+  let visible = firstVisible === 0;
+  track.forEach((value, index) => {
+    if (value === visible) return;
+    (value ? beats[index].show : beats[index].hide).push(id);
+    visible = value;
+  });
+}
+
+/** Per-beat value of one keyed field (switches, highlights) over `base`. */
+function valueTrack(beats, field, key, base) {
+  let value = base;
+  return beats.map((beat) => {
+    if (Object.hasOwn(beat[field], key)) value = beat[field][key];
+    return value;
+  });
+}
+
+function writeValueTrack(beats, field, key, track, base) {
+  let value = base;
+  track.forEach((next, index) => {
+    delete beats[index][field][key];
+    if (next === value) return;
+    beats[index][field][key] = next;
+    value = next;
+  });
+}
+
+const switchBase = (circuit, ref) => switchState(circuit.components.get(ref)) || 'open';
+const highlightBase = (circuit, key) => circuit.netHighlights.get(key) || null;
+
+/** Change a track at `index` and at the following beats that looked the same,
+ * so a change carries forward until the next beat that differs. */
+function carryForward(track, index, value) {
+  const old = track[index];
+  for (let i = index; i < track.length && track[i] === old; i += 1) track[i] = value;
+}
+
+/** Apply a structural edit to every track, then store the result. */
+function editAllTracks(circuit, edit) {
+  const beats = circuit.beats;
+  const ids = new Set(beats.flatMap((beat) => [...beat.show, ...beat.hide]));
+  const refs = new Set(beats.flatMap((beat) => Object.keys(beat.switches)));
+  const keys = new Set(beats.flatMap((beat) => Object.keys(beat.highlights)));
+  const tracks = [
+    ...[...ids].map((id) => ({ kind: 'visible', key: id, track: visibilityTrack(beats, id), base: true })),
+    ...[...refs].map((ref) => ({ kind: 'switches', key: ref, track: valueTrack(beats, 'switches', ref, switchBase(circuit, ref)), base: switchBase(circuit, ref) })),
+    ...[...keys].map((key) => ({ kind: 'highlights', key, track: valueTrack(beats, 'highlights', key, highlightBase(circuit, key)), base: highlightBase(circuit, key) })),
+  ];
+  edit(tracks);
+  for (const beat of beats) {
+    beat.show = [];
+    beat.hide = [];
+    beat.switches = {};
+    beat.highlights = {};
+  }
+  for (const { kind, key, track, base } of tracks) {
+    if (kind === 'visible') writeVisibilityTrack(beats, key, track);
+    else writeValueTrack(beats, kind, key, track, base);
+  }
+}
+
+function checkIndex(circuit, index) {
+  if (!Number.isInteger(index) || index < 0 || index >= circuit.beats.length) {
+    throw new Error(`no beat ${Number.isInteger(index) ? index + 1 : index}`);
+  }
+}
+
+// ----- editing the list ---------------------------------------------------------
+
+/** Insert a beat at `index` (default: the end) that looks like the beat
+ * before it -- or like the first beat when inserted at the front. */
+function addBeat(circuit, { index = circuit.beats.length, name = '' } = {}) {
+  if (!Number.isInteger(index) || index < 0 || index > circuit.beats.length) throw new Error(`cannot insert a beat at ${index + 1}`);
+  const beat = emptyBeat(nextBeatId(circuit), String(name || '').trim());
+  editAllTracks(circuit, (tracks) => {
+    circuit.beats.splice(index, 0, beat);
+    for (const entry of tracks) {
+      const copied = entry.track.length ? entry.track[Math.max(0, index - 1)] : entry.base;
+      entry.track.splice(index, 0, copied);
+    }
+  });
+  return index;
+}
+
+/** Remove one beat; every other beat keeps its look. */
+function removeBeat(circuit, index) {
+  checkIndex(circuit, index);
+  editAllTracks(circuit, (tracks) => {
+    circuit.beats.splice(index, 1);
+    for (const entry of tracks) entry.track.splice(index, 1);
+  });
+}
+
+/** Move a beat to a new position; every beat keeps its look. */
+function moveBeat(circuit, from, to) {
+  checkIndex(circuit, from);
+  checkIndex(circuit, to);
+  if (from === to) return;
+  editAllTracks(circuit, (tracks) => {
+    circuit.beats.splice(to, 0, circuit.beats.splice(from, 1)[0]);
+    for (const entry of tracks) entry.track.splice(to, 0, entry.track.splice(from, 1)[0]);
+  });
+}
+
+function renameBeat(circuit, index, name) {
+  checkIndex(circuit, index);
+  circuit.beats[index].name = String(name || '').trim();
+}
+
+// ----- editing what a beat shows ------------------------------------------------
+
+function targetIds(circuit, ids) {
+  const out = [];
+  for (const id of ids) {
+    const target = beatTargetId(circuit, id);
+    if (!target) throw new Error(`"${id}" cannot be shown or hidden by a beat`);
+    if (!out.includes(target)) out.push(target);
+  }
+  return out;
+}
+
+function visibleAt(circuit, id, index) {
+  return visibilityTrack(circuit.beats, id)[index] ?? true;
+}
+
+/** Show or hide objects from beat `index` on, until the next beat where they
+ * already looked different. Returns the listed ids. */
+function setVisibleFrom(circuit, index, ids, visible) {
+  checkIndex(circuit, index);
+  const targets = targetIds(circuit, ids);
+  for (const id of targets) {
+    const track = visibilityTrack(circuit.beats, id);
+    carryForward(track, index, !!visible);
+    writeVisibilityTrack(circuit.beats, id, track);
+  }
+  return targets;
+}
+
+/** Show or hide objects in beat `index` alone. */
+function setVisibleAt(circuit, index, ids, visible) {
+  checkIndex(circuit, index);
+  const targets = targetIds(circuit, ids);
+  for (const id of targets) {
+    const track = visibilityTrack(circuit.beats, id);
+    track[index] = !!visible;
+    writeVisibilityTrack(circuit.beats, id, track);
+  }
+  return targets;
+}
+
+/** New objects drawn while a beat is shown appear from that beat on. */
+function introduceAt(circuit, index, ids) {
+  checkIndex(circuit, index);
+  for (const id of ids) {
+    if (!beatObjectKind(circuit, id) || circuit.beats.some((beat) => beat.show.includes(id) || beat.hide.includes(id))) continue;
+    writeVisibilityTrack(circuit.beats, id, circuit.beats.map((_, i) => i >= index));
+  }
+}
+
+/** Beats (0-based) in which an object is visible. */
+function visibleBeats(circuit, id) {
+  const target = beatTargetId(circuit, id);
+  if (!target) return [];
+  return visibilityTrack(circuit.beats, target).flatMap((visible, index) => (visible ? [index] : []));
+}
+
+function switchStateAt(circuit, ref, index) {
+  const base = switchBase(circuit, ref);
+  return valueTrack(circuit.beats, 'switches', ref, base)[index] ?? base;
+}
+
+/** Set a switch open or closed from beat `index` on. */
+function setSwitchFrom(circuit, index, ref, state) {
+  checkIndex(circuit, index);
+  if (!switchState(circuit.components.get(ref))) throw new Error(`"${ref}" is not a switch`);
+  if (state !== 'open' && state !== 'closed') throw new Error('a switch is open or closed');
+  const base = switchBase(circuit, ref);
+  const track = valueTrack(circuit.beats, 'switches', ref, base);
+  carryForward(track, index, state);
+  writeValueTrack(circuit.beats, 'switches', ref, track, base);
+}
+
+/** Highlight colors in beat `index`, keyed by net group. */
+function highlightsAt(circuit, index) {
+  const colors = new Map(circuit.netHighlights);
+  for (const beat of circuit.beats.slice(0, index + 1)) {
+    for (const [key, color] of Object.entries(beat.highlights)) {
+      if (color) colors.set(key, color);
+      else colors.delete(key);
+    }
+  }
+  return colors;
+}
+
+/** Set a net group's highlight (null clears it) from beat `index` on. */
+function setHighlightFrom(circuit, index, key, color) {
+  checkIndex(circuit, index);
+  const base = highlightBase(circuit, key);
+  const track = valueTrack(circuit.beats, 'highlights', key, base);
+  carryForward(track, index, color || null);
+  writeValueTrack(circuit.beats, 'highlights', key, track, base);
+}
+
+/** The beat version of Circuit#cycleNetHighlight: advance the net's group to
+ * the next color unused in that beat, from that beat on. */
+function cycleBeatHighlight(circuit, index, net, colors) {
+  const key = circuit.netGroupKey(net);
+  const live = new Set([...circuit.nets.values()].map((other) => circuit.netGroupKey(other)));
+  const current = highlightsAt(circuit, index);
+  const taken = new Set([...current].filter(([other]) => other !== key && live.has(other)).map(([, color]) => color));
+  const now = current.get(key);
+  const from = now ? colors.indexOf(now) + 1 : 0;
+  const next = colors.slice(from).find((color) => !taken.has(color)) || null;
+  if (!now && !next) throw new Error('every highlight color is already in use');
+  setHighlightFrom(circuit, index, key, next);
+  return next;
+}
+
+// ----- model maintenance -----------------------------------------------------
+
+/** A renamed component keeps its place in every beat. */
+function renameBeatObject(circuit, from, to) {
+  for (const beat of circuit.beats || []) {
+    beat.show = beat.show.map((id) => (id === from ? to : id));
+    beat.hide = beat.hide.map((id) => (id === from ? to : id));
+    if (Object.hasOwn(beat.switches, from)) {
+      beat.switches[to] = beat.switches[from];
+      delete beat.switches[from];
+    }
+  }
+}
+
+/** A net group renamed as a whole keeps its per-beat highlights. */
+function renameBeatHighlightKey(circuit, from, to) {
+  for (const beat of circuit.beats || []) {
+    if (!Object.hasOwn(beat.highlights, from) || Object.hasOwn(beat.highlights, to)) continue;
+    beat.highlights[to] = beat.highlights[from];
+    delete beat.highlights[from];
+  }
+}
+
+// ----- resolving one beat for drawing -------------------------------------------
+
+/** The polylines a net draws: the same choice the renderer makes. */
+function drawnNetPaths(net) {
+  if (net.routingMode === 'fixed') return net.paths();
+  if (net.branches) return net.branches;
+  if (!net.route && net.terminals.length >= 3) {
+    return steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] });
+  }
+  return [net.points()];
+}
+
+const pointKey = (p) => `${p.x},${p.y}`;
+
+function strictlyInside(p, a, b) {
+  const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  if (Math.abs(cross) > 1e-6) return false;
+  const dot = (p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y);
+  const len = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+  return dot > 1e-6 && dot < len - 1e-6;
+}
+
+/** Wire segments cut at every point that matters, keeping their origin
+ * (branch index and 1-based segment index, as wireStyles key them). */
+function cutSegments(paths, cuts) {
+  const edges = [];
+  paths.forEach((pts, branch) => {
+    for (let i = 1; i < (pts?.length || 0); i += 1) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      if (a.x === b.x && a.y === b.y) continue;
+      const inner = cuts.filter((p) => strictlyInside(p, a, b))
+        .sort((p, q) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(q.x - a.x, q.y - a.y));
+      let from = a;
+      for (const to of [...inner, b]) {
+        edges.push({ a: from, b: to, branch, segment: i });
+        from = to;
+      }
+    }
+  });
+  return edges;
+}
+
+/** The wire needed to join the anchors: every dangling end that is not an
+ * anchor is trimmed back, so a lone anchor keeps no wire at all. */
+function joiningEdges(edges, anchors) {
+  const alive = new Set(edges.map((_, i) => i));
+  const at = new Map();
+  edges.forEach((edge, i) => {
+    for (const key of [pointKey(edge.a), pointKey(edge.b)]) {
+      if (!at.has(key)) at.set(key, new Set());
+      at.get(key).add(i);
+    }
+  });
+  const queue = [...at.keys()].filter((key) => at.get(key).size === 1 && !anchors.has(key));
+  while (queue.length) {
+    const key = queue.pop();
+    const touching = at.get(key);
+    if (touching.size !== 1 || anchors.has(key)) continue;
+    const [i] = touching;
+    alive.delete(i);
+    const edge = edges[i];
+    for (const end of [pointKey(edge.a), pointKey(edge.b)]) {
+      at.get(end).delete(i);
+      if (end !== key && at.get(end).size === 1 && !anchors.has(end)) queue.push(end);
+    }
+  }
+  return edges.filter((_, i) => alive.has(i));
+}
+
+/**
+ * What beat `index` shows. Returns null when there is no such beat.
+ *
+ *   hiddenRefs / hiddenLabels  objects left out (or faded in the editor)
+ *   switchTypes                refdes -> symbol type drawn in this beat
+ *   highlights                 net group key -> color
+ *   wires                      net id -> 'all' | 'none' | visible pieces
+ *                              [{ a, b, branch, segment }]
+ */
+function resolveBeat(circuit, index) {
+  const beats = circuit.beats || [];
+  if (!Number.isInteger(index) || index < 0 || index >= beats.length) return null;
+  const mentioned = new Set(beats.flatMap((beat) => [...beat.show, ...beat.hide]));
+  const listedVisible = (id) => !mentioned.has(id) || visibilityTrack(beats, id)[index];
+
+  const hiddenRefs = new Set();
+  for (const component of circuit.components.values()) {
+    if (component.type !== 'solder' && !listedVisible(component.refdes)) hiddenRefs.add(component.refdes);
+  }
+  const terminalVisible = (net) => net.terminals.some(({ comp }) => circuit.components.has(comp) && !hiddenRefs.has(comp));
+
+  const hiddenLabels = new Set();
+  const labelHidden = (label) => {
+    if (label.owner) return hiddenRefs.has(label.owner);
+    if (label.parent && circuit.labels.has(label.parent)) return labelHidden(circuit.labels.get(label.parent));
+    if (mentioned.has(label.id)) return !listedVisible(label.id);
+    // An unlisted net label stays while anything it names is on show.
+    if (label.netId) {
+      const net = circuit.nets.get(label.netId);
+      return !!net && net.terminals.length > 0 && !terminalVisible(net);
+    }
+    return false;
+  };
+  for (const label of circuit.labels.values()) if (labelHidden(label)) hiddenLabels.add(label.id);
+
+  const switchTypes = new Map();
+  for (const ref of new Set(beats.flatMap((beat) => Object.keys(beat.switches)))) {
+    const component = circuit.components.get(ref);
+    if (!switchState(component)) continue;
+    const type = SWITCH_TYPES[switchStateAt(circuit, ref, index)];
+    if (type !== component.type) switchTypes.set(ref, type);
+  }
+
+  const solders = [...circuit.components.values()].filter((c) => c.type === 'solder');
+  const solderPoints = solders.map((c) => ({ x: c.transform.x, y: c.transform.y }));
+  const wires = new Map();
+  const visibleArms = new Map();
+  const allArms = new Map();
+  const countArm = (arms, key) => arms.set(key, (arms.get(key) || 0) + 1);
+  for (const net of circuit.nets.values()) {
+    const terminals = net.terminals
+      .map(({ comp, term }) => ({ comp, point: circuit.components.get(comp)?.terminalWorld(term) }))
+      .filter(({ point }) => point);
+    const labels = [...circuit.labels.values()].filter((label) => label.netId === net.id);
+    const anchors = [
+      ...terminals.filter(({ comp }) => !hiddenRefs.has(comp)).map(({ point }) => point),
+      ...labels.filter((label) => !hiddenLabels.has(label.id)).map((label) => label.anchorWorld()),
+    ];
+    const cuts = [...terminals.map(({ point }) => point), ...labels.map((label) => label.anchorWorld()), ...solderPoints];
+    const edges = cutSegments(drawnNetPaths(net), cuts);
+    const kept = joiningEdges(edges, new Set(anchors.map(pointKey)));
+    wires.set(net.id, kept.length === edges.length ? 'all' : kept.length ? kept : 'none');
+    for (const edge of edges) for (const p of [edge.a, edge.b]) countArm(allArms, pointKey(p));
+    for (const edge of kept) for (const p of [edge.a, edge.b]) countArm(visibleArms, pointKey(p));
+    for (const { comp, point } of terminals) {
+      countArm(allArms, pointKey(point));
+      if (!hiddenRefs.has(comp)) countArm(visibleArms, pointKey(point));
+    }
+  }
+  // A junction dot marks three or more arms; it goes when the beat leaves fewer.
+  for (const solder of solders) {
+    const key = pointKey(solder.transform);
+    const arms = visibleArms.get(key) || 0;
+    if (arms < 3 && arms < (allArms.get(key) || 0)) hiddenRefs.add(solder.refdes);
+  }
+
+  const highlights = highlightsAt(circuit, index);
+  return {
+    index,
+    hiddenRefs,
+    hiddenLabels,
+    switchTypes,
+    highlights,
+    wires,
+    netHighlight: (net) => highlights.get(circuit.netGroupKey(net)) || null,
+    /** Symbol definition drawn for a component in this beat. */
+    defOf: (component) => (switchTypes.has(component.refdes) ? getSymbol(switchTypes.get(component.refdes)) : component.def),
+  };
+}
+
+__exports.switchState = switchState;
+__exports.beatsFromJSON = beatsFromJSON;
+__exports.beatsToJSON = beatsToJSON;
+__exports.nextBeatId = nextBeatId;
+__exports.beatTitle = beatTitle;
+__exports.beatObjectKind = beatObjectKind;
+__exports.beatTargetId = beatTargetId;
+__exports.visibilityTrack = visibilityTrack;
+__exports.addBeat = addBeat;
+__exports.removeBeat = removeBeat;
+__exports.moveBeat = moveBeat;
+__exports.renameBeat = renameBeat;
+__exports.visibleAt = visibleAt;
+__exports.setVisibleFrom = setVisibleFrom;
+__exports.setVisibleAt = setVisibleAt;
+__exports.introduceAt = introduceAt;
+__exports.visibleBeats = visibleBeats;
+__exports.switchStateAt = switchStateAt;
+__exports.setSwitchFrom = setSwitchFrom;
+__exports.highlightsAt = highlightsAt;
+__exports.setHighlightFrom = setHighlightFrom;
+__exports.cycleBeatHighlight = cycleBeatHighlight;
+__exports.renameBeatObject = renameBeatObject;
+__exports.renameBeatHighlightKey = renameBeatHighlightKey;
+__exports.drawnNetPaths = drawnNetPaths;
+__exports.resolveBeat = resolveBeat;
+__exports.SWITCH_TYPES = SWITCH_TYPES;
+};
+
 __modules["src/core/commands.js"] = function (__require, __exports) {
 const { Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld } = __require("src/core/model.js");
 const { getSymbol, symbolTypeNames } = __require("src/core/components/index.js");
@@ -8599,6 +9174,8 @@ const { crossNetOverlaps } = __require("src/core/wiring.js");
 const { svgString } = __require("src/core/render.js");
 const { hiddenSupplyBarLabels } = __require("src/core/supply-bars.js");
 const { analyzeSmallSignal } = __require("src/core/analysis/index.js");
+const { addBeat, beatTitle, moveBeat, removeBeat, renameBeat, resolveBeat, setSwitchFrom, setVisibleFrom } = __require("src/core/beats.js");
+
 
 
 
@@ -8728,6 +9305,8 @@ const FLAG_ARITY = {
   json: 0,
   explain: 0,
   grid: 0,
+  after: 1,
+  beat: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -9112,7 +9691,13 @@ function commandHelp() {
     '    --ignore-channel-length-modulation --dominant-pole',
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
-    '  svg [file] [--grid]            - export SVG (default data/preview.svg)',
+    '  switch <refdes> open|closed    - draw a switch open or closed',
+    '  beat list                      - list beats (presentation steps; see docs/beats.md)',
+    '  beat add [NAME] [--after N]    - add a beat that looks like the one before it',
+    '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
+    '  beat show|hide N ID ...        - show or hide parts and labels from beat N on',
+    '  beat switch N REF open|closed  - set a switch position from beat N on',
+    '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
   ].join('\n');
@@ -9435,11 +10020,19 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return annotationCommand(circuit, pos, result, flags);
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
+  if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
+  if (cmd === 'switch') {
+    const [ref, state] = pos;
+    if (!ref || !state) throw new Error('usage: switch <refdes> open|closed');
+    circuit.setSwitchState(ref, state);
+    return result(`${ref} drawn ${state}`, null, true);
+  }
 
   // ---------- files / render ----------
   if (cmd === 'svg' || cmd === 'export') {
     const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.svg';
-    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true });
+    const beat = flags.beat ? resolveBeat(circuit, beatIndex(circuit, flags.beat[0])) : null;
+    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true, ...(beat ? { beat: { view: beat } } : {}) });
     if (io) {
       io.writeTextFile(file, svg);
       return result(`wrote ${file} (${svg.length} bytes)`, null);
@@ -9596,6 +10189,70 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     return result(`removed annotation ${label.id}`, null, true);
   }
   throw new Error('usage: annotation add|rename|move|align|rm|list ...');
+}
+
+/** A 1-based beat number from a command, as a 0-based index. */
+function beatIndex(circuit, value) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > circuit.beats.length) {
+    throw new Error(circuit.beats.length ? `no beat ${value}; beats are 1..${circuit.beats.length}` : 'there are no beats; add one with: beat add');
+  }
+  return n - 1;
+}
+
+function beatList(circuit) {
+  return circuit.beats.map((beat, index) => {
+    const parts = [beatTitle(circuit, index).padEnd(18)];
+    if (beat.show.length) parts.push(`show ${beat.show.join(' ')}`);
+    if (beat.hide.length) parts.push(`hide ${beat.hide.join(' ')}`);
+    const switches = Object.entries(beat.switches);
+    if (switches.length) parts.push(`switches ${switches.map(([ref, state]) => `${ref}=${state}`).join(' ')}`);
+    const highlights = Object.entries(beat.highlights);
+    if (highlights.length) parts.push(`highlights ${highlights.map(([key, color]) => `${key.replace(/^name:/, '')}=${color || 'none'}`).join(' ')}`);
+    return parts.join('  ');
+  }).join('\n');
+}
+
+function beatCommand(circuit, pos, flags, result) {
+  const sub = pos[0] || 'list';
+  if (sub === 'list') return result(beatList(circuit) || '(no beats)', circuit.toJSON().beats || []);
+  if (sub === 'add') {
+    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
+    addBeat(circuit, { index, name: pos.slice(1).join(' ') });
+    return result(`added ${beatTitle(circuit, index)}`, { index: index + 1 }, true);
+  }
+  if (sub === 'rm') {
+    const index = beatIndex(circuit, pos[1]);
+    const title = beatTitle(circuit, index);
+    removeBeat(circuit, index);
+    return result(`removed ${title}`, null, true);
+  }
+  if (sub === 'rename') {
+    const index = beatIndex(circuit, pos[1]);
+    renameBeat(circuit, index, pos.slice(2).join(' '));
+    return result(`renamed ${beatTitle(circuit, index)}`, null, true);
+  }
+  if (sub === 'move') {
+    const from = beatIndex(circuit, pos[1]);
+    const to = beatIndex(circuit, pos[2]);
+    moveBeat(circuit, from, to);
+    return result(`moved beat ${from + 1} to ${to + 1}`, null, true);
+  }
+  if (sub === 'show' || sub === 'hide') {
+    const index = beatIndex(circuit, pos[1]);
+    const ids = pos.slice(2);
+    if (!ids.length) throw new Error(`usage: beat ${sub} N ID ...`);
+    const listed = setVisibleFrom(circuit, index, ids, sub === 'show');
+    return result(`${sub === 'show' ? 'shown' : 'hidden'} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
+  }
+  if (sub === 'switch') {
+    const index = beatIndex(circuit, pos[1]);
+    const [ref, state] = pos.slice(2);
+    if (!ref || !state) throw new Error('usage: beat switch N REF open|closed');
+    setSwitchFrom(circuit, index, ref, state);
+    return result(`${ref} ${state} from beat ${index + 1}`, null, true);
+  }
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|hide|switch`);
 }
 
 function netCommand(circuit, pos, result) {
@@ -11510,6 +12167,8 @@ const { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCross
 const { collapseCollinear } = __require("src/core/wireedit.js");
 const { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js");
 const { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js");
+const { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, switchState } = __require("src/core/beats.js");
+
 
 
 
@@ -13086,6 +13745,8 @@ class Circuit {
     this.netNameWarnings = [];
     /** Persistent highlight color per electrical group (see netGroupKey). */
     this.netHighlights = new Map();
+    /** Presentation steps over this drawing (see beats.js). */
+    this.beats = [];
     this._routingEnvCache = new Map();
   }
 
@@ -13146,6 +13807,17 @@ class Circuit {
     return inst;
   }
 
+  /** Draw a switch open or closed. Both symbols share one footprint and
+   * terminals, so connectivity and routing are untouched. */
+  setSwitchState(refdes, state) {
+    const component = this.getComponent(refdes);
+    if (!switchState(component)) throw new Error(`"${refdes}" is not a switch`);
+    if (!SWITCH_TYPES[state]) throw new Error('a switch is open or closed');
+    component.type = SWITCH_TYPES[state];
+    component.def = getSymbol(component.type);
+    return component;
+  }
+
   getComponent(refdes) {
     const c = this.components.get(refdes);
     if (!c) throw new Error(`unknown component "${refdes}"`);
@@ -13203,6 +13875,7 @@ class Circuit {
         }
       }
     }
+    renameBeatObject(this, current, next);
     for (const label of ownedLabels) {
       label.owner = next;
       // Reference-marker labels can be local rail names, so preserve those
@@ -13940,6 +14613,7 @@ class Circuit {
   /** A rename that moves a whole group to a new key keeps its highlight. A
    * net leaving a group that still has other members leaves it uncolored. */
   _carryNetHighlight(from, to) {
+    if (from && from !== to && !this._liveNetGroups().has(from)) renameBeatHighlightKey(this, from, to);
     if (!from || from === to || !this.netHighlights.has(from) || this.netHighlights.has(to)) return;
     if (this._liveNetGroups().has(from)) return;
     this.netHighlights.set(to, this.netHighlights.get(from));
@@ -17216,6 +17890,7 @@ class Circuit {
       })),
       suppressedJunctions: [...this.suppressedJunctions],
       ...this._netHighlightsJSON(),
+      ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
     };
   }
 
@@ -17229,6 +17904,7 @@ class Circuit {
     if (!data || ![1, 2].includes(data.version)) throw new Error('unsupported state version');
     const circuit = new Circuit();
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
+    circuit.beats = beatsFromJSON(data.beats);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
       if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
     }
@@ -17515,12 +18191,14 @@ __exports.PAGE_GUIDES = PAGE_GUIDES;
 __modules["src/core/render.js"] = function (__require, __exports) {
 const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
 const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
-const { autoRoute, steinerBranches } = __require("src/core/router.js");
+const { autoRoute } = __require("src/core/router.js");
 const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
 const { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
 const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
 const { hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js");
+const { drawnNetPaths } = __require("src/core/beats.js");
 const { normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js");
+
 
 
 
@@ -18097,12 +18775,25 @@ function viewportGridSvg(vp) {
  * opts.underlay: emit an empty editor-underlay group above the grid for effects.
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
+ * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it hides
+ * is left out, or with `fade` drawn faint so the editor can still reach it.
+ * The frame stays the whole drawing's, so every beat lines up.
  */
 function svgString(circuit, opts = {}) {
   const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
   const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
   const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
   const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
+  const beat = o.beat?.view || null;
+  const beatFade = !!beat && o.beat.fade === true;
+  const beatHiddenRef = (ref) => !!beat?.hiddenRefs.has(ref);
+  const beatHiddenLabel = (id) => !!beat?.hiddenLabels.has(id);
+  const defOf = (c) => (beat ? beat.defOf(c) : c.def);
+  const netHighlightOf = (net) => (beat ? beat.netHighlight(net) : circuit.netHighlight?.(net) || null);
+  const GHOST = ' opacity="0.34"';
+  const FADED = ' opacity="0.2"';
+  const refOpacity = (ref) => (ghostRefs.has(ref) ? GHOST : beatHiddenRef(ref) ? FADED : '');
+  const labelOpacity = (id) => (ghostLabels.has(id) ? GHOST : beatHiddenLabel(id) ? FADED : '');
   const b = circuit.bounds(o.grid || o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
@@ -18170,8 +18861,8 @@ function svgString(circuit, opts = {}) {
   }
   const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
   const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);
-  const labels = [...circuit.labels.values()];
-  const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
+  const labels = [...circuit.labels.values()].filter((label) => beatFade || !beatHiddenLabel(label.id));
+  const comps = [...circuit.components.values()].filter((c) => beatFade || !beatHiddenRef(c.refdes)).sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
 
   // Persistent net highlights recolor a highlighted group's wires, its net
   // labels, its junction dots, and the parts that stand for the net itself --
@@ -18183,7 +18874,7 @@ function svgString(circuit, opts = {}) {
     .filter((c) => c.type === 'solder')
     .map((c) => [`${c.transform.x},${c.transform.y}`, c.refdes]));
   for (const net of circuit.nets.values()) {
-    const color = circuit.netHighlight?.(net);
+    const color = netHighlightOf(net);
     if (!color) continue;
     for (const { comp } of net.terminals) {
       const component = circuit.components.get(comp);
@@ -18197,7 +18888,7 @@ function svgString(circuit, opts = {}) {
     }
   }
   const compStyle = (c) => withHighlight(c.style, markerHighlights.get(c.refdes));
-  const labelHighlight = (label) => (label.netId ? circuit.netHighlight?.(circuit.nets.get(label.netId)) : null)
+  const labelHighlight = (label) => (label.netId && circuit.nets.has(label.netId) ? netHighlightOf(circuit.nets.get(label.netId)) : null)
     || (label.owner ? markerHighlights.get(label.owner) : null) || null;
 
   // Bottom layer: visual shape annotations and their child labels. Keeping
@@ -18208,7 +18899,7 @@ function svgString(circuit, opts = {}) {
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
   for (const label of annotationShapes) {
     if (label.id === o.editingLabel) continue;
-    const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+    const opacity = labelOpacity(label.id);
     parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`${label.kind} annotation ${label.text || label.id}`)}">${shapeAnnotationSvg(label, '')}</g>`);
     if (label.kind !== 'line') {
       const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
@@ -18216,7 +18907,7 @@ function svgString(circuit, opts = {}) {
     }
     for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
       if (child.id === o.editingLabel) continue;
-      const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+      const childOpacity = ghostLabels.has(label.id) ? GHOST : labelOpacity(child.id);
       const t = child.textPos();
       const childVisual = child.math
         ? mathLabelSvg(child)
@@ -18239,28 +18930,35 @@ function svgString(circuit, opts = {}) {
     if (!ink.has(attrs)) ink.set(attrs, []);
     ink.get(attrs).push(d);
   };
-  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(compStyle(c));
+  const inkLeads = (c) => c.type !== 'block' && !refOpacity(c.refdes) && solidStyle(compStyle(c));
   for (const c of comps) {
     if (!inkLeads(c)) continue;
-    for (const g of c.def.graphics) {
+    for (const g of defOf(c).graphics) {
       if (g.terminalLead) addInk(inkAttrs(compStyle(c)), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
     }
   }
   const UNPAINTED = ' stroke-opacity="0"';
   for (const net of nets) {
-    // Fixed paths are already the complete authored geometry. Keep the legacy
-    // managed fallback below so multi-terminal managed nets retain their old
-    // rendering behavior.
-    const paths = net.routingMode === 'fixed'
-      ? net.paths()
-      : net.branches
-        ? net.branches
-        : !net.route && net.terminals.length >= 3
-          ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
-          : [net.points()];
-    const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
-    const highlight = circuit.netHighlight?.(net) || null;
+    // A beat draws only the wire that joins what it shows (see beats.js).
+    const shown = beat?.wires.get(net.id) ?? 'all';
+    if (shown === 'none' && !beatFade) continue;
+    const highlight = netHighlightOf(net);
     const netStyle = withHighlight(net.style, highlight);
+    if (Array.isArray(shown)) {
+      for (const { a, b, branch, segment } of shown) {
+        const style = withHighlight({ ...(net.style || {}), ...(net.wireStyles?.[`${branch}:${segment}`] || {}) }, highlight);
+        const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
+        if (solidStyle(style) && !ghostNets.has(net.id)) addInk(inkAttrs(style), d);
+        else parts.push(`<path class="wire-beat" d="${d}" fill="none"${ghostNets.has(net.id) ? GHOST : ''} ${styleAttrs(style, 'wire')} pointer-events="none"/>`);
+      }
+      // The editor keeps the whole net, faded, as the thing to click.
+      if (!beatFade) continue;
+    }
+    // Fixed paths are already the complete authored geometry. Keep the legacy
+    // managed fallback so multi-terminal managed nets retain their old
+    // rendering behavior.
+    const paths = drawnNetPaths(net);
+    const opacity = ghostNets.has(net.id) ? GHOST : shown !== 'all' ? FADED : '';
     for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
@@ -18300,14 +18998,14 @@ function svgString(circuit, opts = {}) {
 
   // A joined supply bar is drawn as one shape (below), so the slabs it covers
   // are left out: two coincident fills would double their anti-aliased edges.
-  const bars = supplyBars(circuit);
+  const bars = supplyBars(circuit).filter((bar) => !bar.refs.some(beatHiddenRef));
   const barred = new Set(bars.flatMap((bar) => bar.refs));
   // Top layer: components and their body/value graphics sit above wires.
   for (const c of comps) {
     const t = c.transform;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
-    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
-    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
+    const opacity = refOpacity(c.refdes);
+    const textGraphics = defOf(c).graphics.filter((g) => g.kind === 'text');
+    const bodyGraphics = defOf(c).graphics.filter((g) => g.kind !== 'text');
     parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     if (c.type === 'block') {
       const r = c.blockSize;
@@ -18321,7 +19019,7 @@ function svgString(circuit, opts = {}) {
       }
     }
     parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
+    for (const g of textGraphics) parts.push(opacity ? `<g${opacity}>${symbolTextSvg(g, t, compStyle(c)?.color || '#111')}</g>` : symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
     if (o.includeBBox) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
@@ -18333,7 +19031,7 @@ function svgString(circuit, opts = {}) {
   // the slabs themselves too, so no seam shows where they meet. Visual only.
   for (const bar of bars) {
     const from = circuit.components.get(bar.refs[0]);
-    const ghost = bar.refs.some((ref) => ghostRefs.has(ref)) ? ' opacity="0.34"' : '';
+    const ghost = bar.refs.some((ref) => ghostRefs.has(ref)) ? GHOST : '';
     const r = bar.rect;
     parts.push(`<rect class="supply-bar-join" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${escapeSvg(resolveColor(compStyle(from)?.color || '#111'))}" stroke="none" pointer-events="none"${ghost}/>`);
   }
@@ -18348,7 +19046,7 @@ function svgString(circuit, opts = {}) {
       if (net.terminals.length < 3) continue;
       for (const { comp, term } of net.terminals) {
         const c = circuit.components.get(comp);
-        if (!c) continue;
+        if (!c || beatHiddenRef(comp)) continue;
         const p = c.terminalWorld(term);
         parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#292929"/>`);
       }
@@ -18370,7 +19068,7 @@ function svgString(circuit, opts = {}) {
   // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
   for (const c of comps) {
     const def = c.def;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    const opacity = refOpacity(c.refdes);
     if (def.refPrefix && def.refPos && !def.labelOffset) {
       const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
       // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
@@ -18397,12 +19095,14 @@ function svgString(circuit, opts = {}) {
   // Dedicated / instance label objects (instance identifiers are bold+italic and
   // larger than free-standing annotation labels). Text is aligned inside the
   // label's rendered box (left/center/right) and vertically centered.
-  const barHidden = hiddenSupplyBarLabels(circuit);
+  const barHidden = beat
+    ? new Set(bars.flatMap((bar) => bar.refs.map((ref) => circuit.labelOf(ref)).filter(Boolean).slice(1).map((label) => label.id)))
+    : hiddenSupplyBarLabels(circuit);
   for (const label of labels
     .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent && !barHidden.has(candidate.id))
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
     if (label.id === o.editingLabel) continue;
-    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
+    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? GHOST : labelOpacity(label.id);
     const t = label.textPos();
     const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
     const labelVisual = label.math
@@ -23304,10 +24004,11 @@ __exports.layoutSuggestions = layoutSuggestions;
 };
 
 __modules["src/web/main.js"] = function (__require, __exports) {
-const { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js");
+const { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js");
 const { getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js");
 const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
 const { hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js");
+const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setSwitchFrom, setVisibleAt, setVisibleFrom, switchState, switchStateAt } = __require("src/core/beats.js");
 const { TipBook } = __require("src/web/tips.js");
 const { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js");
 const { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js");
@@ -23353,6 +24054,7 @@ const { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, gh
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -23559,6 +24261,8 @@ const ICON_PATHS = {
   line: '<path d="M6 18 18 6"/><circle cx="5" cy="19" r="2" fill="currentColor" stroke="none"/><circle cx="19" cy="5" r="2" fill="currentColor" stroke="none"/>',
   front: '<rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
+  beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
+  play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor" fill-opacity=".18"/>',
   'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
   // Line-style choices are shown as the pattern itself, using the same
@@ -24061,6 +24765,21 @@ let labelMetricsRenderPending = false;
 // Cross-net collinear wire overlaps (B4): highlighted spans + status warning.
 let netWarnings = []; // [{ key, otherKey, x0, y0, x1, y1 }]
 let wiresDirty = true; // set when wire geometry may have changed; recomputes netWarnings
+// Beats (see core/beats.js and the beats section below). The beat on screen
+// is editor state, never saved: the document holds only the beats.
+let activeBeatId = null;
+let beatStripOpen = null; // null: open exactly when the document has beats
+let beatViewCache = null; // { circuit, key, view }
+let beatViewsCache = null; // every beat, for the strip's visibility dots
+let beatKnown = { circuit: null, objects: new WeakSet(), ids: new Set() };
+let beatStripKey = '';
+let presenter = null; // { index, blank, fullscreen }
+const beatStripEl = document.getElementById('beat-strip');
+const beatListEl = document.getElementById('beat-list');
+const beatHintEl = document.getElementById('beat-hint');
+const presenterEl = document.getElementById('presenter');
+const presenterStageEl = document.getElementById('presenter-stage');
+const presenterCountEl = document.getElementById('presenter-count');
 
 /**
  * Derive the one interaction state used by the toolbar, canvas, and status
@@ -24269,6 +24988,7 @@ function markModelChanged(wires = true) {
   modelRevision += 1;
   circuit.invalidateRoutingCache();
   if (wires) wiresDirty = true;
+  introduceNewBeatObjects();
   persistDraft();
 }
 
@@ -24312,6 +25032,7 @@ function commitPreviewTransaction() {
   previewRevision += 1;
   circuit.invalidateRoutingCache();
   wiresDirty = true;
+  introduceNewBeatObjects();
   persistDraft();
   return true;
 }
@@ -24673,19 +25394,28 @@ async function copyAsImage() {
   }
 }
 
-async function runExport({ dir, name, formats, grid = false, dark = false, selection = null }) {
+/**
+ * `beat` is null for the whole drawing, a beat index for that beat, or 'all'
+ * for every beat as numbered files (`name-1`, `name-2`, ...). Beats share the
+ * whole drawing's frame, so the files line up when stepped through.
+ */
+async function runExport({ dir, name, formats, grid = false, dark = false, selection = null, beat = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
   const unsupported = formats.filter((format) => !supportedFormats.has(format));
   if (unsupported.length) {
     logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
     return;
   }
+  const jobs = beat === 'all'
+    ? circuit.beats.map((_, index) => ({ name: `${name}-${index + 1}`, beat: index }))
+    : [{ name, beat }];
   try {
-    logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
+    logLine(`Exporting ${jobs.flatMap((job) => formats.map((format) => `${job.name}.${format}`)).join(', ')}…`);
     // Reserve a native PNG save target while the submit event still carries
     // user activation. Rasterization below is asynchronous and may otherwise
-    // make a later download click get blocked by the browser.
-    const prepared = persistence.prepareExport
+    // make a later download click get blocked by the browser. A set of beat
+    // files is downloaded instead of asking for each one.
+    const prepared = persistence.prepareExport && jobs.length === 1
       ? await persistence.prepareExport({ name, formats })
       : null;
     // A MathML label can acquire its final browser-sized box after the last
@@ -24696,43 +25426,93 @@ async function runExport({ dir, name, formats, grid = false, dark = false, selec
     }
     // Only the selection: the same export, of the selected subset alone.
     const drawing = selection ? selectionSubset(circuit, selection) : circuit;
-    const renderedSvg = renderDocument(drawing, {
-      ...DRAWING_EXPORT_OPTIONS,
-      grid,
-      pageGuide,
-    });
     if (pageGuide) {
       const frame = circuitPageGuideFrame(drawing, pageGuide, DRAWING_EXPORT_OPTIONS.padding);
       logLine(frame.fits
         ? `Padded to the page guide: ${pageGuideCaption(pageGuide)}.`
         : `The drawing is wider than the page guide; at full width its text is ${frame.textPt.toFixed(1)} pt.`);
     }
-    const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
-    const request = { dir, name, formats, svg };
-    if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
-    let result;
-    try {
-      result = await persistence.exportFiles(request, { prepared });
-    } catch (err) {
-      if (err.code !== 'exists') throw err;
-      const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
-      const replace = await confirmChoice({
-        title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
-        message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(dir)}. Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`,
-        confirmLabel: 'Replace',
-        danger: true,
+    let overwrite = false;
+    const paths = [];
+    const notes = new Set();
+    let folder = dir;
+    for (const job of jobs) {
+      const view = job.beat === null ? null : resolveBeat(circuit, job.beat);
+      const renderedSvg = renderDocument(drawing, {
+        ...DRAWING_EXPORT_OPTIONS,
+        grid,
+        pageGuide,
+        ...(view ? { beat: { view } } : {}),
       });
-      if (!replace) {
-        logLine('Export canceled.');
-        return;
+      const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
+      const request = { dir, name: job.name, formats, svg };
+      if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
+      let result;
+      try {
+        result = await persistence.exportFiles({ ...request, ...(overwrite ? { overwrite: true } : {}) }, { prepared });
+      } catch (err) {
+        if (err.code !== 'exists') throw err;
+        const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
+        const others = jobs.length > 1 ? ' Replacing overwrites them, and any other beat files with this name.' : '';
+        const replace = await confirmChoice({
+          title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
+          message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(dir)}.${others || ` Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`}`,
+          confirmLabel: 'Replace',
+          danger: true,
+        });
+        if (!replace) {
+          logLine(paths.length ? `Export stopped after ${paths.length} file${paths.length === 1 ? '' : 's'}.` : 'Export canceled.');
+          return;
+        }
+        overwrite = true;
+        result = await persistence.exportFiles({ ...request, overwrite: true }, { prepared });
       }
-      result = await persistence.exportFiles({ ...request, overwrite: true }, { prepared });
+      paths.push(...result.paths);
+      folder = result.dir;
+      for (const note of result.notes || []) notes.add(note);
     }
-    logLine(`Exported ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(result.dir)}.`);
-    for (const note of result.notes || []) logLine(note);
+    logLine(`Exported ${paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(folder)}.`);
+    for (const note of notes) logLine(note);
   } catch (err) {
     logLine(`Could not export: ${err.message}`, 'error');
   }
+}
+
+/** The export dialog offers beats only when the document has them, starting
+ * from the beat on screen. A beat is exported whole, never as a selection. */
+function syncExportBeatChoice() {
+  const row = document.getElementById('export-beat-row');
+  const select = document.getElementById('export-beat');
+  if (!row || !select) return;
+  row.hidden = !circuit.beats.length;
+  select.replaceChildren();
+  const option = (value, text) => {
+    const el = document.createElement('option');
+    el.value = value;
+    el.textContent = text;
+    select.appendChild(el);
+  };
+  option('', 'Whole drawing');
+  circuit.beats.forEach((_, index) => option(String(index), beatTitle(circuit, index)));
+  if (circuit.beats.length) option('all', `Every beat (${circuit.beats.length} numbered files)`);
+  const active = activeBeatIndex();
+  select.value = active === null ? '' : String(active);
+  syncExportSelectionForBeat();
+}
+
+function syncExportSelectionForBeat() {
+  const beatChosen = !!document.getElementById('export-beat')?.value;
+  if (!exportSelectionInput) return;
+  const disabled = !exportSelection || beatChosen;
+  if (beatChosen) exportSelectionInput.checked = false;
+  exportSelectionInput.disabled = disabled;
+  exportSelectionInput.closest('label')?.classList.toggle('disabled', disabled);
+}
+
+function chosenExportBeat() {
+  const value = document.getElementById('export-beat')?.value || '';
+  if (!value || !circuit.beats.length) return null;
+  return value === 'all' ? 'all' : Number(value);
 }
 
 const EXPORT_SETTINGS_KEY = 'mosfeteer:export';
@@ -24783,6 +25563,7 @@ function exportCircuit() {
       input.checked = supported && saved.formats.includes(input.value);
     }
   }
+  syncExportBeatChoice();
   const documentKey = currentDocumentPath || '';
   const defaultFolder = defaultExportDirectory(workspaceState, { browserOnly: persistence.browserOnly });
   exportFolder = (saved?.folders && saved.folders[documentKey]) || defaultFolder;
@@ -25208,6 +25989,8 @@ function applyJson(blob) {
   annotationPoints = [];
   resetCheckState();
   circuit = loadDocument(JSON.parse(blob));
+  // Loads, undo, and redo bring objects back; none of them is newly drawn.
+  rememberBeatObjects();
   markModelChanged(); // wire geometry may have changed under any wholesale load
   // A wholesale replacement has no compatible editor selection.
   selected = null;
@@ -27291,25 +28074,467 @@ function highlightNetAt(world) {
     return false;
   }
   let color = null;
+  // On a beat, the highlight belongs to that beat and the ones after it.
+  const beatIndex = activeBeatIndex();
   try {
-    commit(() => { color = circuit.cycleNetHighlight(net); });
+    commit(() => {
+      color = beatIndex === null ? circuit.cycleNetHighlight(net) : cycleBeatHighlight(circuit, beatIndex, net, NET_HIGHLIGHT_COLORS);
+    });
     noteTip('net-highlight');
   } catch (err) {
     logLine(`HIGHLIGHT: ${err.message}`, 'error');
     return false;
   }
   const name = net.name || net.id;
-  logLine(color ? `net ${name} highlighted ${color}` : `net ${name} highlight removed`);
+  const where = beatIndex === null ? '' : ` from beat ${beatIndex + 1}`;
+  logLine(color ? `net ${name} highlighted ${color}${where}` : `net ${name} highlight removed${where}`);
   render();
   return true;
 }
 
 function removeAllNetHighlights() {
   let count = 0;
-  commit(() => { count = circuit.clearNetHighlights(); });
+  const beatIndex = activeBeatIndex();
+  commit(() => {
+    if (beatIndex === null) {
+      count = circuit.clearNetHighlights();
+      return;
+    }
+    for (const key of highlightsAt(circuit, beatIndex).keys()) {
+      setHighlightFrom(circuit, beatIndex, key, null);
+      count += 1;
+    }
+  });
   logLine(count ? `removed ${count} net highlight${count === 1 ? '' : 's'}` : 'no net highlights to remove');
   render();
 }
+
+// ----- beats ---------------------------------------------------------------------
+// A beat is a view of the one drawing (core/beats.js). The editor shows one
+// beat at a time: what it hides is faded but still selectable, and drawing
+// edits still change the drawing, in every beat. View changes made on a beat
+// -- h (show/hide), s (switch position), the highlight tool -- belong to that
+// beat and carry on to the following beats that looked the same.
+
+function activeBeatIndex() {
+  if (!activeBeatId) return null;
+  const index = circuit.beats.findIndex((beat) => beat.id === activeBeatId);
+  return index === -1 ? null : index;
+}
+
+function activeBeatView(modelKey) {
+  const index = activeBeatIndex();
+  if (index === null) return null;
+  const key = `${modelKey}|${index}`;
+  if (beatViewCache?.circuit !== circuit || beatViewCache.key !== key) {
+    beatViewCache = { circuit, key, view: resolveBeat(circuit, index) };
+  }
+  return beatViewCache.view;
+}
+
+function allBeatViews() {
+  const key = `${modelRevision}|${circuit.beats.length}`;
+  if (beatViewsCache?.circuit !== circuit || beatViewsCache.key !== key) {
+    beatViewsCache = { circuit, key, views: circuit.beats.map((_, index) => resolveBeat(circuit, index)) };
+  }
+  return beatViewsCache.views;
+}
+
+function rememberBeatObjects() {
+  const objects = new WeakSet();
+  const ids = new Set();
+  for (const component of circuit.components.values()) { objects.add(component); ids.add(component.refdes); }
+  for (const label of circuit.labels.values()) { objects.add(label); ids.add(label.id); }
+  beatKnown = { circuit, objects, ids };
+}
+
+/** Parts and labels drawn while a beat is shown appear from that beat on.
+ * An object is new when both its id and its instance are: a rename keeps
+ * the instance, and a document reload (undo, sync) keeps the ids. */
+function introduceNewBeatObjects() {
+  const index = activeBeatIndex();
+  if (index !== null) {
+    const { circuit: knownCircuit, objects, ids } = beatKnown;
+    const isNew = (object, id) => !ids.has(id) && (knownCircuit !== circuit || !objects.has(object));
+    const fresh = [
+      ...[...circuit.components.values()].filter((c) => isNew(c, c.refdes)).map((c) => c.refdes),
+      ...[...circuit.labels.values()].filter((label) => isNew(label, label.id)).map((label) => label.id),
+    ];
+    if (fresh.length) introduceAt(circuit, index, fresh);
+  }
+  rememberBeatObjects();
+}
+
+function beatStripVisible() {
+  return beatStripOpen ?? circuit.beats.length > 0;
+}
+
+/** Show one beat (an index), or the whole drawing (null). */
+function setActiveBeat(index) {
+  const beat = index === null ? null : circuit.beats[index];
+  activeBeatId = beat?.id || null;
+  if (beat) beatStripOpen = true;
+  rememberBeatObjects();
+  render();
+}
+
+function stepBeat(delta) {
+  if (!circuit.beats.length) {
+    hintLine('BEATS: there are no beats yet; B adds one');
+    return;
+  }
+  const index = activeBeatIndex();
+  const last = circuit.beats.length - 1;
+  const next = index === null ? (delta > 0 ? 0 : last) : index + delta;
+  setActiveBeat(next < 0 ? null : Math.min(next, last));
+}
+
+/** Add a beat after the one on screen (or at the end) and show it. It starts
+ * out looking like the beat before it. */
+function addBeatHere() {
+  const current = activeBeatIndex();
+  const index = current === null ? circuit.beats.length : current + 1;
+  commit(() => addBeat(circuit, { index }));
+  logLine(`added beat ${index + 1}${circuit.beats.length === 1 ? ' — hide what should come later with h' : ''}`);
+  setActiveBeat(index);
+}
+
+function deleteBeat(index) {
+  const title = beatTitle(circuit, index);
+  const wasActive = activeBeatIndex() === index;
+  commit(() => removeBeat(circuit, index));
+  logLine(`removed ${title}; the other beats look as before`);
+  if (wasActive) setActiveBeat(circuit.beats.length ? Math.min(index, circuit.beats.length - 1) : null);
+  else render();
+}
+
+function moveBeatBy(index, delta) {
+  const to = index + delta;
+  if (to < 0 || to >= circuit.beats.length) return;
+  commit(() => moveBeat(circuit, index, to));
+  render();
+}
+
+/** Beat-listable ids of the selection: parts and labels (an owned label
+ * stands for its part). Wires follow what they join. */
+function beatSelectionIds() {
+  const ids = [...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)]
+    .map((id) => beatTargetId(circuit, id))
+    .filter(Boolean);
+  return [...new Set(ids)];
+}
+
+function beatShows(view, id) {
+  return !view.hiddenRefs.has(id) && !view.hiddenLabels.has(id);
+}
+
+/** h: hide the selection from this beat on, or show it when all of it is hidden. */
+function toggleSelectionInBeat() {
+  const index = activeBeatIndex();
+  if (index === null) {
+    hintLine(circuit.beats.length ? 'BEATS: pick a beat first — ] steps into them' : 'BEATS: B adds a beat; then h hides or shows the selection in it');
+    return;
+  }
+  const ids = beatSelectionIds();
+  if (!ids.length) {
+    hintLine('BEATS: select parts or labels to show or hide — wires follow the parts they join');
+    return;
+  }
+  const view = resolveBeat(circuit, index);
+  const show = !ids.some((id) => beatShows(view, id));
+  commit(() => setVisibleFrom(circuit, index, ids, show));
+  logLine(`${show ? 'shown' : 'hidden'} from beat ${index + 1}: ${ids.join(', ')}`);
+  render();
+}
+
+/** s: open or close the selected switches -- in the drawing, or from the
+ * beat on screen on. */
+function flipSelectedSwitches() {
+  const switches = selectedComps().filter((c) => switchState(c));
+  if (!switches.length) {
+    hintLine('SWITCH: select a switch to open or close it');
+    return;
+  }
+  const index = activeBeatIndex();
+  const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(circuit, c.refdes, index));
+  const next = switches.every((c) => stateOf(c) === 'closed') ? 'open' : 'closed';
+  commit(() => {
+    for (const c of switches) {
+      if (index === null) circuit.setSwitchState(c.refdes, next);
+      else setSwitchFrom(circuit, index, c.refdes, next);
+    }
+  });
+  logLine(`${switches.map((c) => c.refdes).join(', ')} ${next}${index === null ? '' : ` from beat ${index + 1}`}`);
+  render();
+}
+
+function beatHintText(index) {
+  if (!circuit.beats.length) return 'B adds a beat; it starts as a copy of the one before.';
+  if (index === null) return 'Whole drawing. ] steps into the beats.';
+  return 'Faded: hidden here. h shows/hides from this beat on · s flips a switch · drawing edits reach every beat.';
+}
+
+/** The strip's dot for one beat: does the selection show in it? */
+function beatDotState(view, ids) {
+  const shown = ids.filter((id) => beatShows(view, id)).length;
+  return shown === ids.length ? 'shown' : shown ? 'mixed' : 'hidden';
+}
+
+function renderBeatStrip() {
+  if (!beatStripEl || !beatListEl) return;
+  const visible = beatStripVisible();
+  const index = activeBeatIndex();
+  if (activeBeatId && index === null) activeBeatId = null;
+  const ids = visible ? beatSelectionIds() : [];
+  // Stepping between beats only moves the pressed chip: rebuilding the chips
+  // under a click would swallow a double-click on the same chip.
+  const syncPressed = () => {
+    beatListEl.querySelector('.beat-chip-all')?.setAttribute('aria-pressed', String(index === null));
+    for (const chip of beatListEl.querySelectorAll('[data-beat-index]')) chip.setAttribute('aria-pressed', String(Number(chip.dataset.beatIndex) === index));
+    if (beatHintEl) beatHintEl.textContent = beatHintText(index);
+  };
+  const key = `${visible}|${modelRevision}|${circuit.beats.length}|${ids.join(',')}|${circuit.beats.map((beat) => beat.name).join('|')}`;
+  if (key === beatStripKey && beatStripEl.hidden === !visible) {
+    syncPressed();
+    return;
+  }
+  beatStripKey = key;
+  beatStripEl.hidden = !visible;
+  document.getElementById('btn-beats')?.setAttribute('aria-checked', String(visible));
+  if (!visible) return;
+  const views = ids.length ? allBeatViews() : [];
+  const chips = [];
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'beat-chip beat-chip-all';
+  all.textContent = 'All';
+  all.title = 'Show and edit the whole drawing';
+  all.setAttribute('aria-pressed', String(index === null));
+  all.addEventListener('click', () => setActiveBeat(null));
+  chips.push(all);
+  circuit.beats.forEach((beat, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'beat-chip-group';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'beat-chip';
+    button.dataset.beatIndex = String(i);
+    button.setAttribute('aria-pressed', String(i === index));
+    button.title = `${beatTitle(circuit, i)} — click to show, double-click to rename, right-click for more`;
+    const number = document.createElement('span');
+    number.className = 'beat-chip-number';
+    number.textContent = String(i + 1);
+    button.appendChild(number);
+    if (beat.name) {
+      const name = document.createElement('span');
+      name.className = 'beat-chip-name';
+      name.textContent = beat.name;
+      button.appendChild(name);
+    }
+    button.addEventListener('click', () => setActiveBeat(i));
+    button.addEventListener('dblclick', () => startBeatRename(i, button));
+    button.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      openBeatMenu(i, ev.clientX, ev.clientY);
+    });
+    chip.appendChild(button);
+    if (ids.length) {
+      const state = beatDotState(views[i], ids);
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'beat-dot';
+      dot.dataset.state = state;
+      const what = ids.length === 1 ? ids[0] : 'the selection';
+      dot.title = `${state === 'shown' ? 'Shown' : state === 'mixed' ? 'Partly shown' : 'Hidden'} in beat ${i + 1} — click to ${state === 'shown' ? 'hide' : 'show'} ${what} in this beat only`;
+      dot.setAttribute('aria-label', dot.title);
+      dot.addEventListener('click', () => {
+        const show = state !== 'shown';
+        commit(() => setVisibleAt(circuit, i, ids, show));
+        logLine(`${show ? 'shown' : 'hidden'} in beat ${i + 1} only: ${ids.join(', ')}`);
+        render();
+      });
+      chip.appendChild(dot);
+    }
+    chips.push(chip);
+  });
+  beatListEl.replaceChildren(...chips);
+  syncPressed();
+}
+
+function startBeatRename(index, button) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'beat-rename';
+  input.value = circuit.beats[index]?.name || '';
+  input.placeholder = `Beat ${index + 1}`;
+  input.setAttribute('aria-label', `Name of beat ${index + 1}`);
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (save && circuit.beats[index] && input.value.trim() !== circuit.beats[index].name) {
+      commit(() => renameBeat(circuit, index, input.value));
+    }
+    beatStripKey = '';
+    render();
+    canvasEl.focus({ preventScroll: true });
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') finish(true);
+    else if (ev.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  button.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function openBeatMenu(index, x, y) {
+  if (!componentContextMenuEl) return;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  heading.textContent = beatTitle(circuit, index);
+  menu.appendChild(heading);
+  const group = document.createElement('div');
+  group.className = 'context-menu-group';
+  const chip = () => beatListEl.querySelector(`[data-beat-index="${index}"]`);
+  appendContextItem(group, 'Rename…', () => setTimeout(() => { if (chip()) startBeatRename(index, chip()); }, 0), { shortcut: 'dbl-click' });
+  appendContextItem(group, 'Add beat after', () => { setActiveBeat(index); addBeatHere(); }, { shortcut: 'B' });
+  appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
+  appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === circuit.beats.length - 1 });
+  appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
+  appendContextItem(group, 'Delete beat', () => deleteBeat(index), { danger: true });
+  menu.appendChild(group);
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+/** Context-menu items for the beat on screen: show/hide, switch position. */
+function appendBeatContextItems(group, target) {
+  if (target.kind === 'component' && switchState(target.value)) {
+    const index = activeBeatIndex();
+    const state = index === null ? switchState(target.value) : switchStateAt(circuit, target.value.refdes, index);
+    const where = index === null ? '' : ' from this beat';
+    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} switch${where}`, flipSelectedSwitches, { shortcut: 'S' });
+  }
+  const index = activeBeatIndex();
+  if (index === null || (target.kind !== 'component' && target.kind !== 'label')) return;
+  const ids = beatSelectionIds();
+  if (!ids.length) return;
+  const view = resolveBeat(circuit, index);
+  const show = !ids.some((id) => beatShows(view, id));
+  appendContextItem(group, show ? 'Show from this beat' : 'Hide from this beat', toggleSelectionInBeat, { shortcut: 'H' });
+}
+
+// ----- presenting --------------------------------------------------------------
+
+function openPresenter(start = activeBeatIndex() ?? 0) {
+  if (!presenterEl) return;
+  if (!circuit.beats.length) {
+    logLine('Nothing to present: add a beat first (B).', 'status');
+    return;
+  }
+  closeComponentContextMenu();
+  presenter = { index: Math.max(0, Math.min(start, circuit.beats.length - 1)), blank: false, fullscreen: false };
+  presenterEl.hidden = false;
+  presenterEl.focus({ preventScroll: true });
+  const request = presenterEl.requestFullscreen?.();
+  request?.then(() => { if (presenter) presenter.fullscreen = true; }).catch(() => {});
+  showPresenterFrame(false);
+}
+
+function closePresenter() {
+  if (!presenter) return;
+  const { index } = presenter;
+  presenter = null;
+  presenterEl.hidden = true;
+  presenterStageEl.replaceChildren();
+  if (document.fullscreenElement === presenterEl) document.exitFullscreen?.().catch(() => {});
+  // Come back to the beat the talk stopped at.
+  setActiveBeat(index < circuit.beats.length ? index : null);
+  canvasEl.focus({ preventScroll: true });
+}
+
+function showPresenterFrame(animate = true) {
+  if (!presenter) return;
+  const frame = document.createElement('div');
+  frame.className = 'presenter-frame';
+  if (!presenter.blank) {
+    frame.innerHTML = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, pageGuide: null, beat: { view: resolveBeat(circuit, presenter.index) } });
+    const svg = frame.querySelector('svg');
+    svg?.removeAttribute('width');
+    svg?.removeAttribute('height');
+    svg?.setAttribute('role', 'img');
+    svg?.setAttribute('aria-label', beatTitle(circuit, presenter.index));
+  }
+  // The new frame fades in over the old one, which then goes; every beat
+  // shares the drawing's frame, so only what changed appears to move.
+  const previous = [...presenterStageEl.children];
+  const still = !animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still) previous.forEach((el) => el.remove());
+  else {
+    frame.classList.add('entering');
+    frame.addEventListener('animationend', () => previous.forEach((el) => el.remove()), { once: true });
+  }
+  presenterStageEl.appendChild(frame);
+  const beat = circuit.beats[presenter.index];
+  if (presenterCountEl) presenterCountEl.textContent = presenter.blank ? '' : `${presenter.index + 1} / ${circuit.beats.length}${beat?.name ? ` · ${beat.name}` : ''}`;
+}
+
+function presenterStep(delta) {
+  if (!presenter) return;
+  const next = Math.max(0, Math.min(presenter.index + delta, circuit.beats.length - 1));
+  if (next === presenter.index && !presenter.blank) return;
+  presenter.index = next;
+  presenter.blank = false;
+  showPresenterFrame();
+}
+
+function onPresenterKey(ev) {
+  const key = ev.key;
+  const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n'];
+  const back = ['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p'];
+  if (forward.includes(key)) presenterStep(1);
+  else if (back.includes(key)) presenterStep(-1);
+  else if (key === 'Home') presenterStep(-circuit.beats.length);
+  else if (key === 'End') presenterStep(circuit.beats.length);
+  else if (key === '.' || key === 'b') {
+    presenter.blank = !presenter.blank;
+    showPresenterFrame(false);
+  } else if (key === 'Escape') closePresenter();
+  else return;
+  ev.preventDefault();
+}
+
+presenterEl?.addEventListener('click', () => presenterStep(1));
+presenterEl?.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  presenterStep(-1);
+});
+// Leaving full screen (the browser owns Escape there) ends the presentation.
+document.addEventListener('fullscreenchange', () => {
+  if (presenter?.fullscreen && document.fullscreenElement !== presenterEl) closePresenter();
+});
+document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
+document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
+document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
+document.getElementById('beat-strip-close')?.addEventListener('click', () => {
+  beatStripOpen = false;
+  setActiveBeat(null);
+});
+document.getElementById('btn-beats')?.addEventListener('click', () => {
+  const open = !beatStripVisible();
+  beatStripOpen = open;
+  if (!open) setActiveBeat(null);
+  else render();
+});
 
 /** Right-click on the highlight tool: its one bulk action. */
 function openHighlightToolMenu(x, y) {
@@ -27730,6 +28955,7 @@ function render() {
   }
   renderCheckSummary();
   syncAnalysisDock();
+  renderBeatStrip();
   renderStatus();
   renderSaveState();
   updateInsertMenu();
@@ -28063,9 +29289,10 @@ function renderCanvas(modelKey) {
     for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
   }
   const editingLabelId = inlineInput?.dataset.labelId || '';
+  const beatView = activeBeatView(modelKey);
   // The drawing is in world coordinates; only its frame depends on the view.
   // Pan and zoom therefore re-apply the frame and keep the drawing's DOM.
-  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
+  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${beatView ? beatView.index : ''}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
   const viewKey = `${view.x},${view.y},${view.w},${view.h}`;
   const canvasRebuilt = canvasKey !== committedCanvasKey || !canvasSvgEl;
   if (!canvasRebuilt && viewKey !== committedViewKey) {
@@ -28088,6 +29315,7 @@ function renderCanvas(modelKey) {
       ghostLabels,
       ghostNets,
       editingLabel: editingLabelId,
+      ...(beatView ? { beat: { view: beatView, fade: true } } : {}),
     });
     canvasSvgEl = canvasEl.querySelector('svg');
     if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
@@ -33253,8 +34481,10 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl+R' });
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
+    appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 'T' });
+    appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
     appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
@@ -34534,6 +35764,8 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'D') toggleTheme();
   else if (key === 'P') toggleSidePanel();
   else if (key === '?') showHelp();
+  else if (key === ']') stepBeat(1);
+  else if (key === '[') stepBeat(-1);
   else return false;
   return true;
 }
@@ -34588,6 +35820,18 @@ function onNormalKey(key, shiftKey = false) {
   }
   if (key === '8' && !counts) {
     removeAllNetHighlights();
+    return;
+  }
+  if (key === 'h') {
+    toggleSelectionInBeat();
+    return;
+  }
+  if (key === 's') {
+    flipSelectedSwitches();
+    return;
+  }
+  if (key === 'B') {
+    addBeatHere();
     return;
   }
   if (/^[0-9]$/.test(key)) {
@@ -37386,6 +38630,7 @@ syncScrollSchemeButton();
 exportCircuitBtn?.addEventListener('click', exportCircuit);
 exportCancel?.addEventListener('click', () => exportDialog?.close());
 exportForm?.addEventListener('input', renderExportLocation);
+document.getElementById('export-beat')?.addEventListener('change', syncExportSelectionForBeat);
 exportForm?.addEventListener('change', renderExportLocation);
 document.getElementById('export-choose-folder')?.addEventListener('click', async () => {
   const choice = await showFileDialog(persistence, { mode: 'folder', dir: exportFolder, title: 'Choose export folder' });
@@ -37411,7 +38656,7 @@ exportForm?.addEventListener('submit', (event) => {
     localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
   } catch { /* storage unavailable */ }
   const selection = exportSelectionInput?.checked && exportSelection ? exportSelection : null;
-  runExport({ dir: exportFolder, name, formats, ...settings, selection });
+  runExport({ dir: exportFolder, name, formats, ...settings, selection, beat: chosenExportBeat() });
 });
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => {
@@ -37586,6 +38831,16 @@ if (crosshairBtn) {
 // ----- keyboard -------------------------------------------------------------
 
 window.addEventListener('keydown', (ev) => {
+  // Presenting owns the keyboard until it ends.
+  if (presenter) {
+    onPresenterKey(ev);
+    return;
+  }
+  if (ev.key === 'F5' && ev.shiftKey && !inlineInput) {
+    ev.preventDefault();
+    openPresenter();
+    return;
+  }
   if (ev.key === 'F5') {
     ev.preventDefault();
     flushDraft();
@@ -37915,6 +39170,8 @@ window.__circuit = () => ({
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
   nets: [...circuit.nets.values()].map((net) => ({ id: net.id, name: net.name || null, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, branches: net.branches, junctions: net.junctions, pts: net.points() })),
   labels: [...circuit.labels.values()].map((l) => ({ ...l.toJSON(), world: l.anchorWorld() })),
+  beats: circuit.toJSON().beats || [],
+  activeBeat: activeBeatIndex(),
 });
 
 /** Tell the local server this window is open; the launcher stops the server after the last one closes. */
@@ -38939,6 +40196,14 @@ const EDITOR_KEYMAP = Object.freeze([
     ['P', 'show or hide the components, nets, and selection panel'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
+  ]],
+  ['beats', [
+    ['B', 'add a beat after the one on screen; it starts out looking the same'],
+    ['] / [', 'step to the next / previous beat; before the first is the whole drawing'],
+    ['h (on a beat)', 'hide the selection from this beat on, or show it when hidden'],
+    ['s', 'open or close the selected switches (on a beat: from that beat on)'],
+    ['9 / 8 (on a beat)', 'highlights belong to the beat on screen and the ones after it'],
+    ['Shift+F5', 'present the beats full screen; arrows or Space step, . blanks, Esc ends'],
   ]],
   ['file and console', [
     ['Ctrl/Cmd+S', 'save'],
