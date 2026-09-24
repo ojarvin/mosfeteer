@@ -8591,6 +8591,7 @@ __exports.buildTopologyIdentities = buildTopologyIdentities;
 
 __modules["src/core/beats.js"] = function (__require, __exports) {
 const { getSymbol } = __require("src/core/components/index.js");
+const { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName } = __require("src/core/model.js");
 const { steinerBranches } = __require("src/core/router.js");
 /**
  * Beats: an ordered list of view states over one drawing, so a figure can be
@@ -8615,6 +8616,7 @@ const { steinerBranches } = __require("src/core/router.js");
  * the track, and encodes it back. Inserting, deleting, or moving a beat
  * therefore never changes how any other beat looks.
  */
+
 
 
 
@@ -9009,6 +9011,112 @@ function cycleBeatHighlight(circuit, index, net, colors) {
   return next;
 }
 
+// ----- beats from switch phases -------------------------------------------------
+
+/** The phases in the drawing, in the order their first switch was placed:
+ * [{ key, source }], where source is that switch's own spelling. */
+function switchPhases(circuit) {
+  const phases = new Map();
+  for (const component of circuit.components.values()) {
+    const source = switchPhase(component);
+    if (source && !phases.has(phaseKey(source))) phases.set(phaseKey(source), { key: phaseKey(source), source });
+  }
+  return [...phases.values()];
+}
+
+const isAttachment = (component) => REFERENCE_MARKER_TYPES.includes(component?.type) || INTERFACE_PIN_TYPES.has(component?.type);
+
+/** Net groups that are supply or ground rails: they join everything, so they
+ * never count as a connection. */
+function railGroups(circuit) {
+  const rails = new Set();
+  for (const net of circuit.nets.values()) {
+    const marker = net.terminals.some(({ comp }) => REFERENCE_MARKER_TYPES.includes(circuit.components.get(comp)?.type));
+    const named = net.name && REFERENCE_MARKER_TYPES.some((type) => isReferenceMarkerGlobalName(type, net.name));
+    if (marker || named) rails.add(circuit.netGroupKey(net));
+  }
+  return rails;
+}
+
+/**
+ * Which parts one phase connects: with its switches closed and every other
+ * phase's open, the parts joined -- through anything but a rail or an open
+ * switch -- to one of its switches. Returns a Set of refdes, pins and rail
+ * markers included when a connected part shares their wire.
+ */
+function phaseConnected(circuit, key) {
+  const rails = railGroups(circuit);
+  const closed = (component) => {
+    if (!switchState(component)) return true;
+    const phase = phaseKey(switchPhase(component));
+    return phase ? phase === key : switchState(component) === 'closed';
+  };
+  const netsOf = new Map();
+  for (const net of circuit.nets.values()) {
+    const group = circuit.netGroupKey(net);
+    for (const { comp } of net.terminals) {
+      if (!netsOf.has(comp)) netsOf.set(comp, new Set());
+      if (!rails.has(group)) netsOf.get(comp).add(group);
+    }
+  }
+  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c));
+  const reached = new Set();
+  const reachedNets = new Set();
+  const queue = parts.filter((c) => switchState(c) && phaseKey(switchPhase(c)) === key);
+  for (const c of queue) reached.add(c.refdes);
+  while (queue.length) {
+    const component = queue.pop();
+    if (!closed(component)) continue;
+    for (const net of netsOf.get(component.refdes) || []) {
+      if (reachedNets.has(net)) continue;
+      reachedNets.add(net);
+      for (const other of parts) {
+        // An open switch is cut off even where it touches: it dims.
+        if (!reached.has(other.refdes) && closed(other) && netsOf.get(other.refdes)?.has(net)) {
+          reached.add(other.refdes);
+          queue.push(other);
+        }
+      }
+    }
+  }
+  // A pin or rail marker goes with the parts on its own wire.
+  for (const component of circuit.components.values()) {
+    if (!isAttachment(component)) continue;
+    const wires = [...circuit.nets.values()].filter((net) => net.terminals.some(({ comp }) => comp === component.refdes));
+    if (wires.some((net) => net.terminals.some(({ comp }) => reached.has(comp)))) reached.add(component.refdes);
+  }
+  return reached;
+}
+
+/** Set a switch's phase open or closed in beat `index` alone. */
+function setSwitchAt(circuit, index, key, state) {
+  const base = switchBase(circuit, key);
+  const track = valueTrack(circuit.beats, 'switches', key, base);
+  track[index] = state;
+  writeValueTrack(circuit.beats, 'switches', key, track, base);
+}
+
+/**
+ * Insert one beat per switch phase at `index`, named after the phase: its
+ * switches closed and every other phase's open, what it connects shown and
+ * the rest -- open switches included -- dimmed. Returns how many beats.
+ */
+function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
+  const phases = switchPhases(circuit);
+  if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
+  const listable = [...circuit.components.values()].filter((c) => beatObjectKind(circuit, c.refdes) === 'component');
+  phases.forEach(({ key, source }, step) => {
+    const at = index + step;
+    addBeat(circuit, { index: at, name: source });
+    for (const other of phases) setSwitchAt(circuit, at, other.key, other.key === key ? 'closed' : 'open');
+    const connected = phaseConnected(circuit, key);
+    for (const component of listable) {
+      setPresenceAt(circuit, at, [component.refdes], connected.has(component.refdes) ? 'show' : 'dim');
+    }
+  });
+  return phases.length;
+}
+
 // ----- model maintenance -----------------------------------------------------
 
 /** A renamed component keeps its place in every beat. */
@@ -9291,6 +9399,9 @@ __exports.setSwitchFrom = setSwitchFrom;
 __exports.highlightsAt = highlightsAt;
 __exports.setHighlightFrom = setHighlightFrom;
 __exports.cycleBeatHighlight = cycleBeatHighlight;
+__exports.switchPhases = switchPhases;
+__exports.phaseConnected = phaseConnected;
+__exports.phaseBeats = phaseBeats;
 __exports.renameBeatObject = renameBeatObject;
 __exports.carryBeatSwitchKey = carryBeatSwitchKey;
 __exports.renameBeatHighlightKey = renameBeatHighlightKey;
@@ -9310,7 +9421,7 @@ const { crossNetOverlaps } = __require("src/core/wiring.js");
 const { svgString } = __require("src/core/render.js");
 const { hiddenSupplyBarLabels } = __require("src/core/supply-bars.js");
 const { analyzeSmallSignal } = __require("src/core/analysis/index.js");
-const { addBeat, beatTitle, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js");
+const { addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js");
 
 
 
@@ -9834,6 +9945,7 @@ function commandHelp() {
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
+    '  beat phases [--after N]        - add a beat per switch phase: what it connects shown, the rest dimmed',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -10381,6 +10493,11 @@ function beatCommand(circuit, pos, flags, result) {
     const listed = setPresenceFrom(circuit, index, ids, sub);
     return result(`${{ show: 'shown', dim: 'dimmed', hide: 'hidden' }[sub]} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
   }
+  if (sub === 'phases') {
+    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
+    const count = phaseBeats(circuit, { index });
+    return result(`added beats ${index + 1}..${index + count}, one per switch phase`, { index: index + 1, count }, true);
+  }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);
     const [ref, state] = pos.slice(2);
@@ -10388,7 +10505,7 @@ function beatCommand(circuit, pos, flags, result) {
     setSwitchFrom(circuit, index, ref, state);
     return result(`${ref} ${state} from beat ${index + 1}`, null, true);
   }
-  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch`);
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch|phases`);
 }
 
 function netCommand(circuit, pos, result) {
@@ -18583,6 +18700,16 @@ const GREEK_UPPER = {
   Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
 };
 
+/** A short TeX phrase as label markup, for places that draw labels but not
+ * math: $\phi_1$ becomes ϕ_{1}. Anything else is returned as it is. */
+function texToLabelMarkup(source) {
+  const text = String(source ?? '').trim();
+  if (!(text.length >= 2 && text.startsWith('$') && text.endsWith('$'))) return text;
+  return stripMathDelimiters(text)
+    .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
+    .replace(/([_^])([^{])/g, '$1{$2}');
+}
+
 /** Short TeX or label markup as readable plain text, for menus and
  * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
 function plainTexText(source) {
@@ -19870,6 +19997,7 @@ function editorOverlay(circuit, opts = {}) {
   return parts.join('\n');
 }
 
+__exports.texToLabelMarkup = texToLabelMarkup;
 __exports.plainTexText = plainTexText;
 __exports.svgPixelSize = svgPixelSize;
 __exports.texToMathML = texToMathML;
@@ -24218,14 +24346,14 @@ const { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, com
 const { getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js");
 const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
 const { hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js");
-const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt } = __require("src/core/beats.js");
+const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } = __require("src/core/beats.js");
 const { TipBook } = __require("src/web/tips.js");
 const { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js");
 const { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js");
 const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
 const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
 const { smallSignalSchematic } = __require("src/core/analysis/model-schematic.js");
-const { componentShapeSvg, editorOverlay, plainTexText, svgString, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js");
+const { componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js");
 const { componentsOfSymbols } = __require("src/core/analysis/provenance.js");
 const { resolveColor, themeInkSvg } = __require("src/core/style.js");
 const { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js");
@@ -25703,7 +25831,7 @@ function syncExportBeatChoice() {
     select.appendChild(el);
   };
   option('', 'Whole drawing');
-  circuit.beats.forEach((_, index) => option(String(index), beatTitle(circuit, index)));
+  circuit.beats.forEach((_, index) => option(String(index), beatLabel(index)));
   if (circuit.beats.length) option('all', `Every beat (${circuit.beats.length} numbered files)`);
   const active = activeBeatIndex();
   select.value = active === null ? '' : String(active);
@@ -28418,7 +28546,7 @@ function addBeatHere() {
 }
 
 function deleteBeat(index) {
-  const title = beatTitle(circuit, index);
+  const title = beatLabel(index);
   const wasActive = activeBeatIndex() === index;
   commit(() => removeBeat(circuit, index));
   logLine(`removed ${title}; the other beats look as before`);
@@ -28476,6 +28604,7 @@ function selectedSwitchGroups() {
 
 // Plain text for messages: φ_{1} reads φ1, $\phi_1$ reads ϕ1.
 const plainMarkup = plainTexText;
+const beatLabel = (index) => plainMarkup(beatTitle(circuit, index));
 const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))} switches` : c.refdes);
 
 /** s: open or close the selected switches, with the rest of their phases --
@@ -28552,7 +28681,7 @@ function renderBeatStrip() {
     button.className = 'beat-chip';
     button.dataset.beatIndex = String(i);
     button.setAttribute('aria-pressed', String(i === index));
-    button.title = `${beatTitle(circuit, i)} — click to show, double-click to rename, right-click for more`;
+    button.title = `${beatLabel(i)} — click to show, double-click to rename, right-click for more`;
     const number = document.createElement('span');
     number.className = 'beat-chip-number';
     number.textContent = String(i + 1);
@@ -28560,7 +28689,7 @@ function renderBeatStrip() {
     if (beat.name) {
       const name = document.createElement('span');
       name.className = 'beat-chip-name';
-      appendMarkupText(name, beat.name);
+      appendMarkupText(name, texToLabelMarkup(beat.name));
       button.appendChild(name);
     }
     button.addEventListener('click', () => setActiveBeat(i));
@@ -28631,7 +28760,7 @@ function openBeatMenu(index, x, y) {
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
   const heading = document.createElement('div');
   heading.className = 'context-menu-heading';
-  heading.textContent = beatTitle(circuit, index);
+  heading.textContent = beatLabel(index);
   menu.appendChild(heading);
   const group = document.createElement('div');
   group.className = 'context-menu-group';
@@ -28646,6 +28775,18 @@ function openBeatMenu(index, x, y) {
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
   menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+/** One beat per switch phase, after the beat on screen: what the phase
+ * connects shown, the rest dimmed (core/beats.js phaseBeats). */
+function addPhaseBeats() {
+  const current = activeBeatIndex();
+  const index = current === null ? circuit.beats.length : current + 1;
+  let count = 0;
+  commit(() => { count = phaseBeats(circuit, { index }); });
+  if (!count) return;
+  logLine(`added ${count} phase beats: each shows what its phase connects and dims the rest`);
+  setActiveBeat(index);
 }
 
 /** Context-menu items for beats: show/hide, switch position. */
@@ -28706,7 +28847,7 @@ function showPresenterFrame(animate = true) {
     svg?.removeAttribute('width');
     svg?.removeAttribute('height');
     svg?.setAttribute('role', 'img');
-    svg?.setAttribute('aria-label', beatTitle(circuit, presenter.index));
+    svg?.setAttribute('aria-label', beatLabel(presenter.index));
   }
   // The new frame fades in over the old one, which then goes; every beat
   // shares the drawing's frame, so only what changed appears to move.
@@ -28721,7 +28862,7 @@ function showPresenterFrame(animate = true) {
   const beat = circuit.beats[presenter.index];
   if (presenterCountEl) {
     presenterCountEl.replaceChildren(presenter.blank ? '' : `${presenter.index + 1} / ${circuit.beats.length}${beat?.name ? ' · ' : ''}`);
-    if (!presenter.blank && beat?.name) appendMarkupText(presenterCountEl, beat.name);
+    if (!presenter.blank && beat?.name) appendMarkupText(presenterCountEl, texToLabelMarkup(beat.name));
   }
 }
 
@@ -28762,6 +28903,7 @@ document.addEventListener('fullscreenchange', () => {
 document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
 document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
+document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
 document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);
@@ -34443,6 +34585,13 @@ function appendContextSelectionMenu(menu, target) {
         appendContextItem(submenu, 'Select same named nets', () => selectContextNet(target, { namedGroup: true }), { disabled: !net?.name });
       }
     }
+    const phase = target.kind === 'component' ? switchPhase(target.value) : '';
+    if (phase) {
+      appendContextItem(submenu, 'Same switch phase', () => {
+        setSelection(switchesOf(circuit, switchGroupKey(target.value)).map((c) => c.refdes));
+        setLabelSelection([], null, true);
+      });
+    }
     const typeLabel = target.kind === 'component' ? 'Same component type'
       : target.kind === 'wire' ? 'Same wire type'
         : target.kind === 'net' ? 'Same net name' : 'Same label type';
@@ -34453,6 +34602,29 @@ function appendContextSelectionMenu(menu, target) {
       if (target.kind === 'net' && !target.value.name) continue;
       appendContextItem(submenu, label, () => selectSameTarget(criterion));
     }
+  });
+}
+
+/** Put the selected switches on a phase: one already in the drawing, none
+ * (each switch its own), or a new one typed into the label. */
+function appendSwitchPhaseMenu(menu, target) {
+  if (target.kind !== 'component' || !switchState(target.value)) return;
+  const switches = selectedComps().filter((c) => switchState(c));
+  const scope = switches.length ? switches : [target.value];
+  const all = (test) => scope.every(test);
+  const setPhase = (source) => {
+    commit(() => { for (const c of scope) circuit.setValue(c.refdes, source); });
+    logLine(`${scope.map((c) => c.refdes).join(', ')} ${source ? `on phase ${plainMarkup(source)}` : 'on no phase'}`);
+  };
+  appendContextSubmenu(menu, 'Phase', (submenu) => {
+    for (const { key, source } of switchPhases(circuit)) {
+      appendContextItem(submenu, plainMarkup(source), () => setPhase(source), { active: all((c) => switchGroupKey(c) === key) });
+    }
+    appendContextItem(submenu, 'None', () => setPhase(''), { active: all((c) => !switchPhase(c)) });
+    appendContextItem(submenu, 'New phase…', () => setTimeout(() => {
+      const label = circuit.labelOf(target.value.refdes);
+      if (label) inlineEditLabel(label);
+    }, 0), { shortcut: 'dbl-click label' });
   });
 }
 
@@ -34637,6 +34809,7 @@ function openComponentContextMenu(target, x, y) {
   appendContextActions(menu, target);
   appendContextSelectionMenu(menu, target);
   appendSignalFlowPolarityMenu(menu, target);
+  appendSwitchPhaseMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(menu, 'Close', closeComponentContextMenu);
