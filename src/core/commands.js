@@ -7,6 +7,7 @@ import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
+import { addBeat, beatTitle, moveBeat, removeBeat, renameBeat, resolveBeat, setSwitchFrom, setVisibleFrom } from './beats.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -127,6 +128,8 @@ const FLAG_ARITY = {
   json: 0,
   explain: 0,
   grid: 0,
+  after: 1,
+  beat: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -511,7 +514,13 @@ export function commandHelp() {
     '    --ignore-channel-length-modulation --dominant-pole',
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
-    '  svg [file] [--grid]            - export SVG (default data/preview.svg)',
+    '  switch <refdes> open|closed    - draw a switch open or closed',
+    '  beat list                      - list beats (presentation steps; see docs/beats.md)',
+    '  beat add [NAME] [--after N]    - add a beat that looks like the one before it',
+    '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
+    '  beat show|hide N ID ...        - show or hide parts and labels from beat N on',
+    '  beat switch N REF open|closed  - set a switch position from beat N on',
+    '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
   ].join('\n');
@@ -834,11 +843,19 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return annotationCommand(circuit, pos, result, flags);
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
+  if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
+  if (cmd === 'switch') {
+    const [ref, state] = pos;
+    if (!ref || !state) throw new Error('usage: switch <refdes> open|closed');
+    circuit.setSwitchState(ref, state);
+    return result(`${ref} drawn ${state}`, null, true);
+  }
 
   // ---------- files / render ----------
   if (cmd === 'svg' || cmd === 'export') {
     const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.svg';
-    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true });
+    const beat = flags.beat ? resolveBeat(circuit, beatIndex(circuit, flags.beat[0])) : null;
+    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true, ...(beat ? { beat: { view: beat } } : {}) });
     if (io) {
       io.writeTextFile(file, svg);
       return result(`wrote ${file} (${svg.length} bytes)`, null);
@@ -995,6 +1012,70 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     return result(`removed annotation ${label.id}`, null, true);
   }
   throw new Error('usage: annotation add|rename|move|align|rm|list ...');
+}
+
+/** A 1-based beat number from a command, as a 0-based index. */
+function beatIndex(circuit, value) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > circuit.beats.length) {
+    throw new Error(circuit.beats.length ? `no beat ${value}; beats are 1..${circuit.beats.length}` : 'there are no beats; add one with: beat add');
+  }
+  return n - 1;
+}
+
+function beatList(circuit) {
+  return circuit.beats.map((beat, index) => {
+    const parts = [beatTitle(circuit, index).padEnd(18)];
+    if (beat.show.length) parts.push(`show ${beat.show.join(' ')}`);
+    if (beat.hide.length) parts.push(`hide ${beat.hide.join(' ')}`);
+    const switches = Object.entries(beat.switches);
+    if (switches.length) parts.push(`switches ${switches.map(([ref, state]) => `${ref}=${state}`).join(' ')}`);
+    const highlights = Object.entries(beat.highlights);
+    if (highlights.length) parts.push(`highlights ${highlights.map(([key, color]) => `${key.replace(/^name:/, '')}=${color || 'none'}`).join(' ')}`);
+    return parts.join('  ');
+  }).join('\n');
+}
+
+function beatCommand(circuit, pos, flags, result) {
+  const sub = pos[0] || 'list';
+  if (sub === 'list') return result(beatList(circuit) || '(no beats)', circuit.toJSON().beats || []);
+  if (sub === 'add') {
+    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
+    addBeat(circuit, { index, name: pos.slice(1).join(' ') });
+    return result(`added ${beatTitle(circuit, index)}`, { index: index + 1 }, true);
+  }
+  if (sub === 'rm') {
+    const index = beatIndex(circuit, pos[1]);
+    const title = beatTitle(circuit, index);
+    removeBeat(circuit, index);
+    return result(`removed ${title}`, null, true);
+  }
+  if (sub === 'rename') {
+    const index = beatIndex(circuit, pos[1]);
+    renameBeat(circuit, index, pos.slice(2).join(' '));
+    return result(`renamed ${beatTitle(circuit, index)}`, null, true);
+  }
+  if (sub === 'move') {
+    const from = beatIndex(circuit, pos[1]);
+    const to = beatIndex(circuit, pos[2]);
+    moveBeat(circuit, from, to);
+    return result(`moved beat ${from + 1} to ${to + 1}`, null, true);
+  }
+  if (sub === 'show' || sub === 'hide') {
+    const index = beatIndex(circuit, pos[1]);
+    const ids = pos.slice(2);
+    if (!ids.length) throw new Error(`usage: beat ${sub} N ID ...`);
+    const listed = setVisibleFrom(circuit, index, ids, sub === 'show');
+    return result(`${sub === 'show' ? 'shown' : 'hidden'} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
+  }
+  if (sub === 'switch') {
+    const index = beatIndex(circuit, pos[1]);
+    const [ref, state] = pos.slice(2);
+    if (!ref || !state) throw new Error('usage: beat switch N REF open|closed');
+    setSwitchFrom(circuit, index, ref, state);
+    return result(`${ref} ${state} from beat ${index + 1}`, null, true);
+  }
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|hide|switch`);
 }
 
 function netCommand(circuit, pos, result) {

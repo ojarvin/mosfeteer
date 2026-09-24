@@ -164,3 +164,9 @@ test('Ctrl/Cmd+Shift+arrows align the selection; a repeat centres that axis', ()
     { key: 'ArrowLeft', shiftKey: true, ctrlKey: true, textEntry: true },
   ]) assert.equal(layoutAlignKey(state), null);
 });
+
+test('beat shortcuts are discoverable in the editor keymap', () => {
+  const help = editorKeymapText();
+  assert.match(help, /-- beats --/);
+  for (const key of ['B ', '] / [', 'h (on a beat)', 'Shift+F5']) assert.ok(help.includes(key), key);
+});

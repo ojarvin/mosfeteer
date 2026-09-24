@@ -271,6 +271,13 @@ analyze transfer-function OUT  derive symbolic A_v (use --input IN)
                                use --reference, --ac-ground, --mode,
                                --differential-side, --model, --context, or
                                the approximation flags as needed
+switch <refdes> open|closed    draw a switch open or closed
+beat list                      list beats (presentation steps; docs/beats.md)
+beat add [NAME] [--after N]    add a beat that looks like the one before it
+beat rm|rename|move N ...      remove, name, or reorder a beat (1-based)
+beat show|hide N ID ...        show or hide parts/labels from beat N on
+beat switch N REF open|closed  set a switch position from beat N on
+svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list
 ```
 

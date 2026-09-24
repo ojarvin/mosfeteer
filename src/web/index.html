@@ -47,6 +47,9 @@
           <button id="btn-reveal-document" type="button" role="menuitem" data-icon="folder" title="Show the document file in your file manager" disabled>Show in folder</button>
           <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace" title="Choose the folder the document list shows and new documents are saved into">Change workspace folder…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
+          <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats" title="Show the beat strip: steps that build the drawing up for a talk or a paper (B adds a beat)">Beats</button>
+          <button id="btn-present" type="button" role="menuitem" data-icon="play" title="Present the beats full screen, from the current one (Shift+F5)">Present <kbd>Shift+F5</kbd></button>
+          <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Permanently delete the current document file" disabled>Delete document…</button>
         </div>
       </div>
@@ -142,6 +145,9 @@
       <fieldset>
         <legend>Content</legend>
         <label title="Export just the selected parts, wires, and labels, framed on their own"><input type="checkbox" name="selection" /> Only the selection <span id="export-selection-count" class="export-extensions"></span></label>
+        <label id="export-beat-row" class="export-beat-row" hidden>Beats
+          <select id="export-beat" name="beat" title="Export one beat, or every beat as numbered files that line up"></select>
+        </label>
       </fieldset>
       <div class="dialog-actions">
         <button id="export-cancel" type="button" data-icon="x-circle">Cancel</button>
@@ -175,6 +181,11 @@
     </form>
   </dialog>
 
+
+  <div id="presenter" class="presenter" tabindex="-1" role="dialog" aria-label="Presenting beats" hidden>
+    <div id="presenter-stage" class="presenter-stage"></div>
+    <div id="presenter-count" class="presenter-count" aria-live="polite"></div>
+  </div>
 
   <main class="layout">
     <section class="canvas-pane">
@@ -228,6 +239,16 @@
           <button type="button" id="tutorial-skip" title="Move on without finishing this step">Skip step</button>
         </div>
       </section>
+      <nav id="beat-strip" class="beat-strip glass" aria-label="Beats" hidden>
+        <p id="beat-hint" class="beat-hint"></p>
+        <div class="beat-strip-row">
+          <span class="beat-strip-title">Beats</span>
+          <div id="beat-list" class="beat-list" role="toolbar" aria-label="Beats"></div>
+          <button type="button" id="beat-add" class="beat-strip-button" data-icon="plus" title="Add a beat after this one; it starts out looking the same (B)" aria-label="Add a beat">Add</button>
+          <button type="button" id="beat-present" class="beat-strip-button" data-icon="play" title="Present full screen from this beat (Shift+F5)" aria-label="Present">Present</button>
+          <button type="button" id="beat-strip-close" class="beat-strip-button icon-button" data-icon="x-circle" title="Hide the beat strip and show the whole drawing" aria-label="Hide the beat strip">Close</button>
+        </div>
+      </nav>
       <div id="tip-card" class="tip-card glass" role="status" aria-live="polite" hidden>
         <span class="tip-card-mark" data-icon="lightbulb" aria-hidden="true"></span>
         <p id="tip-card-text" class="tip-card-text"></p>

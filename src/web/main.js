@@ -10,10 +10,11 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
+import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setSwitchFrom, setVisibleAt, setVisibleFrom, switchState, switchStateAt } from '../core/beats.js';
 import { TipBook } from './tips.js';
 import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
@@ -215,6 +216,8 @@ const ICON_PATHS = {
   line: '<path d="M6 18 18 6"/><circle cx="5" cy="19" r="2" fill="currentColor" stroke="none"/><circle cx="19" cy="5" r="2" fill="currentColor" stroke="none"/>',
   front: '<rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
+  beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
+  play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor" fill-opacity=".18"/>',
   'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
   // Line-style choices are shown as the pattern itself, using the same
@@ -717,6 +720,21 @@ let labelMetricsRenderPending = false;
 // Cross-net collinear wire overlaps (B4): highlighted spans + status warning.
 let netWarnings = []; // [{ key, otherKey, x0, y0, x1, y1 }]
 let wiresDirty = true; // set when wire geometry may have changed; recomputes netWarnings
+// Beats (see core/beats.js and the beats section below). The beat on screen
+// is editor state, never saved: the document holds only the beats.
+let activeBeatId = null;
+let beatStripOpen = null; // null: open exactly when the document has beats
+let beatViewCache = null; // { circuit, key, view }
+let beatViewsCache = null; // every beat, for the strip's visibility dots
+let beatKnown = { circuit: null, objects: new WeakSet(), ids: new Set() };
+let beatStripKey = '';
+let presenter = null; // { index, blank, fullscreen }
+const beatStripEl = document.getElementById('beat-strip');
+const beatListEl = document.getElementById('beat-list');
+const beatHintEl = document.getElementById('beat-hint');
+const presenterEl = document.getElementById('presenter');
+const presenterStageEl = document.getElementById('presenter-stage');
+const presenterCountEl = document.getElementById('presenter-count');
 
 /**
  * Derive the one interaction state used by the toolbar, canvas, and status
@@ -925,6 +943,7 @@ function markModelChanged(wires = true) {
   modelRevision += 1;
   circuit.invalidateRoutingCache();
   if (wires) wiresDirty = true;
+  introduceNewBeatObjects();
   persistDraft();
 }
 
@@ -968,6 +987,7 @@ function commitPreviewTransaction() {
   previewRevision += 1;
   circuit.invalidateRoutingCache();
   wiresDirty = true;
+  introduceNewBeatObjects();
   persistDraft();
   return true;
 }
@@ -1329,19 +1349,28 @@ async function copyAsImage() {
   }
 }
 
-async function runExport({ dir, name, formats, grid = false, dark = false, selection = null }) {
+/**
+ * `beat` is null for the whole drawing, a beat index for that beat, or 'all'
+ * for every beat as numbered files (`name-1`, `name-2`, ...). Beats share the
+ * whole drawing's frame, so the files line up when stepped through.
+ */
+async function runExport({ dir, name, formats, grid = false, dark = false, selection = null, beat = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
   const unsupported = formats.filter((format) => !supportedFormats.has(format));
   if (unsupported.length) {
     logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
     return;
   }
+  const jobs = beat === 'all'
+    ? circuit.beats.map((_, index) => ({ name: `${name}-${index + 1}`, beat: index }))
+    : [{ name, beat }];
   try {
-    logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
+    logLine(`Exporting ${jobs.flatMap((job) => formats.map((format) => `${job.name}.${format}`)).join(', ')}…`);
     // Reserve a native PNG save target while the submit event still carries
     // user activation. Rasterization below is asynchronous and may otherwise
-    // make a later download click get blocked by the browser.
-    const prepared = persistence.prepareExport
+    // make a later download click get blocked by the browser. A set of beat
+    // files is downloaded instead of asking for each one.
+    const prepared = persistence.prepareExport && jobs.length === 1
       ? await persistence.prepareExport({ name, formats })
       : null;
     // A MathML label can acquire its final browser-sized box after the last
@@ -1352,43 +1381,93 @@ async function runExport({ dir, name, formats, grid = false, dark = false, selec
     }
     // Only the selection: the same export, of the selected subset alone.
     const drawing = selection ? selectionSubset(circuit, selection) : circuit;
-    const renderedSvg = renderDocument(drawing, {
-      ...DRAWING_EXPORT_OPTIONS,
-      grid,
-      pageGuide,
-    });
     if (pageGuide) {
       const frame = circuitPageGuideFrame(drawing, pageGuide, DRAWING_EXPORT_OPTIONS.padding);
       logLine(frame.fits
         ? `Padded to the page guide: ${pageGuideCaption(pageGuide)}.`
         : `The drawing is wider than the page guide; at full width its text is ${frame.textPt.toFixed(1)} pt.`);
     }
-    const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
-    const request = { dir, name, formats, svg };
-    if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
-    let result;
-    try {
-      result = await persistence.exportFiles(request, { prepared });
-    } catch (err) {
-      if (err.code !== 'exists') throw err;
-      const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
-      const replace = await confirmChoice({
-        title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
-        message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(dir)}. Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`,
-        confirmLabel: 'Replace',
-        danger: true,
+    let overwrite = false;
+    const paths = [];
+    const notes = new Set();
+    let folder = dir;
+    for (const job of jobs) {
+      const view = job.beat === null ? null : resolveBeat(circuit, job.beat);
+      const renderedSvg = renderDocument(drawing, {
+        ...DRAWING_EXPORT_OPTIONS,
+        grid,
+        pageGuide,
+        ...(view ? { beat: { view } } : {}),
       });
-      if (!replace) {
-        logLine('Export canceled.');
-        return;
+      const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
+      const request = { dir, name: job.name, formats, svg };
+      if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
+      let result;
+      try {
+        result = await persistence.exportFiles({ ...request, ...(overwrite ? { overwrite: true } : {}) }, { prepared });
+      } catch (err) {
+        if (err.code !== 'exists') throw err;
+        const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
+        const others = jobs.length > 1 ? ' Replacing overwrites them, and any other beat files with this name.' : '';
+        const replace = await confirmChoice({
+          title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
+          message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(dir)}.${others || ` Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`}`,
+          confirmLabel: 'Replace',
+          danger: true,
+        });
+        if (!replace) {
+          logLine(paths.length ? `Export stopped after ${paths.length} file${paths.length === 1 ? '' : 's'}.` : 'Export canceled.');
+          return;
+        }
+        overwrite = true;
+        result = await persistence.exportFiles({ ...request, overwrite: true }, { prepared });
       }
-      result = await persistence.exportFiles({ ...request, overwrite: true }, { prepared });
+      paths.push(...result.paths);
+      folder = result.dir;
+      for (const note of result.notes || []) notes.add(note);
     }
-    logLine(`Exported ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(result.dir)}.`);
-    for (const note of result.notes || []) logLine(note);
+    logLine(`Exported ${paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(folder)}.`);
+    for (const note of notes) logLine(note);
   } catch (err) {
     logLine(`Could not export: ${err.message}`, 'error');
   }
+}
+
+/** The export dialog offers beats only when the document has them, starting
+ * from the beat on screen. A beat is exported whole, never as a selection. */
+function syncExportBeatChoice() {
+  const row = document.getElementById('export-beat-row');
+  const select = document.getElementById('export-beat');
+  if (!row || !select) return;
+  row.hidden = !circuit.beats.length;
+  select.replaceChildren();
+  const option = (value, text) => {
+    const el = document.createElement('option');
+    el.value = value;
+    el.textContent = text;
+    select.appendChild(el);
+  };
+  option('', 'Whole drawing');
+  circuit.beats.forEach((_, index) => option(String(index), beatTitle(circuit, index)));
+  if (circuit.beats.length) option('all', `Every beat (${circuit.beats.length} numbered files)`);
+  const active = activeBeatIndex();
+  select.value = active === null ? '' : String(active);
+  syncExportSelectionForBeat();
+}
+
+function syncExportSelectionForBeat() {
+  const beatChosen = !!document.getElementById('export-beat')?.value;
+  if (!exportSelectionInput) return;
+  const disabled = !exportSelection || beatChosen;
+  if (beatChosen) exportSelectionInput.checked = false;
+  exportSelectionInput.disabled = disabled;
+  exportSelectionInput.closest('label')?.classList.toggle('disabled', disabled);
+}
+
+function chosenExportBeat() {
+  const value = document.getElementById('export-beat')?.value || '';
+  if (!value || !circuit.beats.length) return null;
+  return value === 'all' ? 'all' : Number(value);
 }
 
 const EXPORT_SETTINGS_KEY = 'mosfeteer:export';
@@ -1439,6 +1518,7 @@ function exportCircuit() {
       input.checked = supported && saved.formats.includes(input.value);
     }
   }
+  syncExportBeatChoice();
   const documentKey = currentDocumentPath || '';
   const defaultFolder = defaultExportDirectory(workspaceState, { browserOnly: persistence.browserOnly });
   exportFolder = (saved?.folders && saved.folders[documentKey]) || defaultFolder;
@@ -1864,6 +1944,8 @@ function applyJson(blob) {
   annotationPoints = [];
   resetCheckState();
   circuit = loadDocument(JSON.parse(blob));
+  // Loads, undo, and redo bring objects back; none of them is newly drawn.
+  rememberBeatObjects();
   markModelChanged(); // wire geometry may have changed under any wholesale load
   // A wholesale replacement has no compatible editor selection.
   selected = null;
@@ -3947,25 +4029,467 @@ function highlightNetAt(world) {
     return false;
   }
   let color = null;
+  // On a beat, the highlight belongs to that beat and the ones after it.
+  const beatIndex = activeBeatIndex();
   try {
-    commit(() => { color = circuit.cycleNetHighlight(net); });
+    commit(() => {
+      color = beatIndex === null ? circuit.cycleNetHighlight(net) : cycleBeatHighlight(circuit, beatIndex, net, NET_HIGHLIGHT_COLORS);
+    });
     noteTip('net-highlight');
   } catch (err) {
     logLine(`HIGHLIGHT: ${err.message}`, 'error');
     return false;
   }
   const name = net.name || net.id;
-  logLine(color ? `net ${name} highlighted ${color}` : `net ${name} highlight removed`);
+  const where = beatIndex === null ? '' : ` from beat ${beatIndex + 1}`;
+  logLine(color ? `net ${name} highlighted ${color}${where}` : `net ${name} highlight removed${where}`);
   render();
   return true;
 }
 
 function removeAllNetHighlights() {
   let count = 0;
-  commit(() => { count = circuit.clearNetHighlights(); });
+  const beatIndex = activeBeatIndex();
+  commit(() => {
+    if (beatIndex === null) {
+      count = circuit.clearNetHighlights();
+      return;
+    }
+    for (const key of highlightsAt(circuit, beatIndex).keys()) {
+      setHighlightFrom(circuit, beatIndex, key, null);
+      count += 1;
+    }
+  });
   logLine(count ? `removed ${count} net highlight${count === 1 ? '' : 's'}` : 'no net highlights to remove');
   render();
 }
+
+// ----- beats ---------------------------------------------------------------------
+// A beat is a view of the one drawing (core/beats.js). The editor shows one
+// beat at a time: what it hides is faded but still selectable, and drawing
+// edits still change the drawing, in every beat. View changes made on a beat
+// -- h (show/hide), s (switch position), the highlight tool -- belong to that
+// beat and carry on to the following beats that looked the same.
+
+function activeBeatIndex() {
+  if (!activeBeatId) return null;
+  const index = circuit.beats.findIndex((beat) => beat.id === activeBeatId);
+  return index === -1 ? null : index;
+}
+
+function activeBeatView(modelKey) {
+  const index = activeBeatIndex();
+  if (index === null) return null;
+  const key = `${modelKey}|${index}`;
+  if (beatViewCache?.circuit !== circuit || beatViewCache.key !== key) {
+    beatViewCache = { circuit, key, view: resolveBeat(circuit, index) };
+  }
+  return beatViewCache.view;
+}
+
+function allBeatViews() {
+  const key = `${modelRevision}|${circuit.beats.length}`;
+  if (beatViewsCache?.circuit !== circuit || beatViewsCache.key !== key) {
+    beatViewsCache = { circuit, key, views: circuit.beats.map((_, index) => resolveBeat(circuit, index)) };
+  }
+  return beatViewsCache.views;
+}
+
+function rememberBeatObjects() {
+  const objects = new WeakSet();
+  const ids = new Set();
+  for (const component of circuit.components.values()) { objects.add(component); ids.add(component.refdes); }
+  for (const label of circuit.labels.values()) { objects.add(label); ids.add(label.id); }
+  beatKnown = { circuit, objects, ids };
+}
+
+/** Parts and labels drawn while a beat is shown appear from that beat on.
+ * An object is new when both its id and its instance are: a rename keeps
+ * the instance, and a document reload (undo, sync) keeps the ids. */
+function introduceNewBeatObjects() {
+  const index = activeBeatIndex();
+  if (index !== null) {
+    const { circuit: knownCircuit, objects, ids } = beatKnown;
+    const isNew = (object, id) => !ids.has(id) && (knownCircuit !== circuit || !objects.has(object));
+    const fresh = [
+      ...[...circuit.components.values()].filter((c) => isNew(c, c.refdes)).map((c) => c.refdes),
+      ...[...circuit.labels.values()].filter((label) => isNew(label, label.id)).map((label) => label.id),
+    ];
+    if (fresh.length) introduceAt(circuit, index, fresh);
+  }
+  rememberBeatObjects();
+}
+
+function beatStripVisible() {
+  return beatStripOpen ?? circuit.beats.length > 0;
+}
+
+/** Show one beat (an index), or the whole drawing (null). */
+function setActiveBeat(index) {
+  const beat = index === null ? null : circuit.beats[index];
+  activeBeatId = beat?.id || null;
+  if (beat) beatStripOpen = true;
+  rememberBeatObjects();
+  render();
+}
+
+function stepBeat(delta) {
+  if (!circuit.beats.length) {
+    hintLine('BEATS: there are no beats yet; B adds one');
+    return;
+  }
+  const index = activeBeatIndex();
+  const last = circuit.beats.length - 1;
+  const next = index === null ? (delta > 0 ? 0 : last) : index + delta;
+  setActiveBeat(next < 0 ? null : Math.min(next, last));
+}
+
+/** Add a beat after the one on screen (or at the end) and show it. It starts
+ * out looking like the beat before it. */
+function addBeatHere() {
+  const current = activeBeatIndex();
+  const index = current === null ? circuit.beats.length : current + 1;
+  commit(() => addBeat(circuit, { index }));
+  logLine(`added beat ${index + 1}${circuit.beats.length === 1 ? ' — hide what should come later with h' : ''}`);
+  setActiveBeat(index);
+}
+
+function deleteBeat(index) {
+  const title = beatTitle(circuit, index);
+  const wasActive = activeBeatIndex() === index;
+  commit(() => removeBeat(circuit, index));
+  logLine(`removed ${title}; the other beats look as before`);
+  if (wasActive) setActiveBeat(circuit.beats.length ? Math.min(index, circuit.beats.length - 1) : null);
+  else render();
+}
+
+function moveBeatBy(index, delta) {
+  const to = index + delta;
+  if (to < 0 || to >= circuit.beats.length) return;
+  commit(() => moveBeat(circuit, index, to));
+  render();
+}
+
+/** Beat-listable ids of the selection: parts and labels (an owned label
+ * stands for its part). Wires follow what they join. */
+function beatSelectionIds() {
+  const ids = [...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)]
+    .map((id) => beatTargetId(circuit, id))
+    .filter(Boolean);
+  return [...new Set(ids)];
+}
+
+function beatShows(view, id) {
+  return !view.hiddenRefs.has(id) && !view.hiddenLabels.has(id);
+}
+
+/** h: hide the selection from this beat on, or show it when all of it is hidden. */
+function toggleSelectionInBeat() {
+  const index = activeBeatIndex();
+  if (index === null) {
+    hintLine(circuit.beats.length ? 'BEATS: pick a beat first — ] steps into them' : 'BEATS: B adds a beat; then h hides or shows the selection in it');
+    return;
+  }
+  const ids = beatSelectionIds();
+  if (!ids.length) {
+    hintLine('BEATS: select parts or labels to show or hide — wires follow the parts they join');
+    return;
+  }
+  const view = resolveBeat(circuit, index);
+  const show = !ids.some((id) => beatShows(view, id));
+  commit(() => setVisibleFrom(circuit, index, ids, show));
+  logLine(`${show ? 'shown' : 'hidden'} from beat ${index + 1}: ${ids.join(', ')}`);
+  render();
+}
+
+/** s: open or close the selected switches -- in the drawing, or from the
+ * beat on screen on. */
+function flipSelectedSwitches() {
+  const switches = selectedComps().filter((c) => switchState(c));
+  if (!switches.length) {
+    hintLine('SWITCH: select a switch to open or close it');
+    return;
+  }
+  const index = activeBeatIndex();
+  const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(circuit, c.refdes, index));
+  const next = switches.every((c) => stateOf(c) === 'closed') ? 'open' : 'closed';
+  commit(() => {
+    for (const c of switches) {
+      if (index === null) circuit.setSwitchState(c.refdes, next);
+      else setSwitchFrom(circuit, index, c.refdes, next);
+    }
+  });
+  logLine(`${switches.map((c) => c.refdes).join(', ')} ${next}${index === null ? '' : ` from beat ${index + 1}`}`);
+  render();
+}
+
+function beatHintText(index) {
+  if (!circuit.beats.length) return 'B adds a beat; it starts as a copy of the one before.';
+  if (index === null) return 'Whole drawing. ] steps into the beats.';
+  return 'Faded: hidden here. h shows/hides from this beat on · s flips a switch · drawing edits reach every beat.';
+}
+
+/** The strip's dot for one beat: does the selection show in it? */
+function beatDotState(view, ids) {
+  const shown = ids.filter((id) => beatShows(view, id)).length;
+  return shown === ids.length ? 'shown' : shown ? 'mixed' : 'hidden';
+}
+
+function renderBeatStrip() {
+  if (!beatStripEl || !beatListEl) return;
+  const visible = beatStripVisible();
+  const index = activeBeatIndex();
+  if (activeBeatId && index === null) activeBeatId = null;
+  const ids = visible ? beatSelectionIds() : [];
+  // Stepping between beats only moves the pressed chip: rebuilding the chips
+  // under a click would swallow a double-click on the same chip.
+  const syncPressed = () => {
+    beatListEl.querySelector('.beat-chip-all')?.setAttribute('aria-pressed', String(index === null));
+    for (const chip of beatListEl.querySelectorAll('[data-beat-index]')) chip.setAttribute('aria-pressed', String(Number(chip.dataset.beatIndex) === index));
+    if (beatHintEl) beatHintEl.textContent = beatHintText(index);
+  };
+  const key = `${visible}|${modelRevision}|${circuit.beats.length}|${ids.join(',')}|${circuit.beats.map((beat) => beat.name).join('|')}`;
+  if (key === beatStripKey && beatStripEl.hidden === !visible) {
+    syncPressed();
+    return;
+  }
+  beatStripKey = key;
+  beatStripEl.hidden = !visible;
+  document.getElementById('btn-beats')?.setAttribute('aria-checked', String(visible));
+  if (!visible) return;
+  const views = ids.length ? allBeatViews() : [];
+  const chips = [];
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'beat-chip beat-chip-all';
+  all.textContent = 'All';
+  all.title = 'Show and edit the whole drawing';
+  all.setAttribute('aria-pressed', String(index === null));
+  all.addEventListener('click', () => setActiveBeat(null));
+  chips.push(all);
+  circuit.beats.forEach((beat, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'beat-chip-group';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'beat-chip';
+    button.dataset.beatIndex = String(i);
+    button.setAttribute('aria-pressed', String(i === index));
+    button.title = `${beatTitle(circuit, i)} — click to show, double-click to rename, right-click for more`;
+    const number = document.createElement('span');
+    number.className = 'beat-chip-number';
+    number.textContent = String(i + 1);
+    button.appendChild(number);
+    if (beat.name) {
+      const name = document.createElement('span');
+      name.className = 'beat-chip-name';
+      name.textContent = beat.name;
+      button.appendChild(name);
+    }
+    button.addEventListener('click', () => setActiveBeat(i));
+    button.addEventListener('dblclick', () => startBeatRename(i, button));
+    button.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      openBeatMenu(i, ev.clientX, ev.clientY);
+    });
+    chip.appendChild(button);
+    if (ids.length) {
+      const state = beatDotState(views[i], ids);
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'beat-dot';
+      dot.dataset.state = state;
+      const what = ids.length === 1 ? ids[0] : 'the selection';
+      dot.title = `${state === 'shown' ? 'Shown' : state === 'mixed' ? 'Partly shown' : 'Hidden'} in beat ${i + 1} — click to ${state === 'shown' ? 'hide' : 'show'} ${what} in this beat only`;
+      dot.setAttribute('aria-label', dot.title);
+      dot.addEventListener('click', () => {
+        const show = state !== 'shown';
+        commit(() => setVisibleAt(circuit, i, ids, show));
+        logLine(`${show ? 'shown' : 'hidden'} in beat ${i + 1} only: ${ids.join(', ')}`);
+        render();
+      });
+      chip.appendChild(dot);
+    }
+    chips.push(chip);
+  });
+  beatListEl.replaceChildren(...chips);
+  syncPressed();
+}
+
+function startBeatRename(index, button) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'beat-rename';
+  input.value = circuit.beats[index]?.name || '';
+  input.placeholder = `Beat ${index + 1}`;
+  input.setAttribute('aria-label', `Name of beat ${index + 1}`);
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (save && circuit.beats[index] && input.value.trim() !== circuit.beats[index].name) {
+      commit(() => renameBeat(circuit, index, input.value));
+    }
+    beatStripKey = '';
+    render();
+    canvasEl.focus({ preventScroll: true });
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') finish(true);
+    else if (ev.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  button.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function openBeatMenu(index, x, y) {
+  if (!componentContextMenuEl) return;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  heading.textContent = beatTitle(circuit, index);
+  menu.appendChild(heading);
+  const group = document.createElement('div');
+  group.className = 'context-menu-group';
+  const chip = () => beatListEl.querySelector(`[data-beat-index="${index}"]`);
+  appendContextItem(group, 'Rename…', () => setTimeout(() => { if (chip()) startBeatRename(index, chip()); }, 0), { shortcut: 'dbl-click' });
+  appendContextItem(group, 'Add beat after', () => { setActiveBeat(index); addBeatHere(); }, { shortcut: 'B' });
+  appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
+  appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === circuit.beats.length - 1 });
+  appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
+  appendContextItem(group, 'Delete beat', () => deleteBeat(index), { danger: true });
+  menu.appendChild(group);
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+/** Context-menu items for the beat on screen: show/hide, switch position. */
+function appendBeatContextItems(group, target) {
+  if (target.kind === 'component' && switchState(target.value)) {
+    const index = activeBeatIndex();
+    const state = index === null ? switchState(target.value) : switchStateAt(circuit, target.value.refdes, index);
+    const where = index === null ? '' : ' from this beat';
+    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} switch${where}`, flipSelectedSwitches, { shortcut: 'S' });
+  }
+  const index = activeBeatIndex();
+  if (index === null || (target.kind !== 'component' && target.kind !== 'label')) return;
+  const ids = beatSelectionIds();
+  if (!ids.length) return;
+  const view = resolveBeat(circuit, index);
+  const show = !ids.some((id) => beatShows(view, id));
+  appendContextItem(group, show ? 'Show from this beat' : 'Hide from this beat', toggleSelectionInBeat, { shortcut: 'H' });
+}
+
+// ----- presenting --------------------------------------------------------------
+
+function openPresenter(start = activeBeatIndex() ?? 0) {
+  if (!presenterEl) return;
+  if (!circuit.beats.length) {
+    logLine('Nothing to present: add a beat first (B).', 'status');
+    return;
+  }
+  closeComponentContextMenu();
+  presenter = { index: Math.max(0, Math.min(start, circuit.beats.length - 1)), blank: false, fullscreen: false };
+  presenterEl.hidden = false;
+  presenterEl.focus({ preventScroll: true });
+  const request = presenterEl.requestFullscreen?.();
+  request?.then(() => { if (presenter) presenter.fullscreen = true; }).catch(() => {});
+  showPresenterFrame(false);
+}
+
+function closePresenter() {
+  if (!presenter) return;
+  const { index } = presenter;
+  presenter = null;
+  presenterEl.hidden = true;
+  presenterStageEl.replaceChildren();
+  if (document.fullscreenElement === presenterEl) document.exitFullscreen?.().catch(() => {});
+  // Come back to the beat the talk stopped at.
+  setActiveBeat(index < circuit.beats.length ? index : null);
+  canvasEl.focus({ preventScroll: true });
+}
+
+function showPresenterFrame(animate = true) {
+  if (!presenter) return;
+  const frame = document.createElement('div');
+  frame.className = 'presenter-frame';
+  if (!presenter.blank) {
+    frame.innerHTML = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, pageGuide: null, beat: { view: resolveBeat(circuit, presenter.index) } });
+    const svg = frame.querySelector('svg');
+    svg?.removeAttribute('width');
+    svg?.removeAttribute('height');
+    svg?.setAttribute('role', 'img');
+    svg?.setAttribute('aria-label', beatTitle(circuit, presenter.index));
+  }
+  // The new frame fades in over the old one, which then goes; every beat
+  // shares the drawing's frame, so only what changed appears to move.
+  const previous = [...presenterStageEl.children];
+  const still = !animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still) previous.forEach((el) => el.remove());
+  else {
+    frame.classList.add('entering');
+    frame.addEventListener('animationend', () => previous.forEach((el) => el.remove()), { once: true });
+  }
+  presenterStageEl.appendChild(frame);
+  const beat = circuit.beats[presenter.index];
+  if (presenterCountEl) presenterCountEl.textContent = presenter.blank ? '' : `${presenter.index + 1} / ${circuit.beats.length}${beat?.name ? ` · ${beat.name}` : ''}`;
+}
+
+function presenterStep(delta) {
+  if (!presenter) return;
+  const next = Math.max(0, Math.min(presenter.index + delta, circuit.beats.length - 1));
+  if (next === presenter.index && !presenter.blank) return;
+  presenter.index = next;
+  presenter.blank = false;
+  showPresenterFrame();
+}
+
+function onPresenterKey(ev) {
+  const key = ev.key;
+  const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n'];
+  const back = ['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p'];
+  if (forward.includes(key)) presenterStep(1);
+  else if (back.includes(key)) presenterStep(-1);
+  else if (key === 'Home') presenterStep(-circuit.beats.length);
+  else if (key === 'End') presenterStep(circuit.beats.length);
+  else if (key === '.' || key === 'b') {
+    presenter.blank = !presenter.blank;
+    showPresenterFrame(false);
+  } else if (key === 'Escape') closePresenter();
+  else return;
+  ev.preventDefault();
+}
+
+presenterEl?.addEventListener('click', () => presenterStep(1));
+presenterEl?.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  presenterStep(-1);
+});
+// Leaving full screen (the browser owns Escape there) ends the presentation.
+document.addEventListener('fullscreenchange', () => {
+  if (presenter?.fullscreen && document.fullscreenElement !== presenterEl) closePresenter();
+});
+document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
+document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
+document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
+document.getElementById('beat-strip-close')?.addEventListener('click', () => {
+  beatStripOpen = false;
+  setActiveBeat(null);
+});
+document.getElementById('btn-beats')?.addEventListener('click', () => {
+  const open = !beatStripVisible();
+  beatStripOpen = open;
+  if (!open) setActiveBeat(null);
+  else render();
+});
 
 /** Right-click on the highlight tool: its one bulk action. */
 function openHighlightToolMenu(x, y) {
@@ -4386,6 +4910,7 @@ function render() {
   }
   renderCheckSummary();
   syncAnalysisDock();
+  renderBeatStrip();
   renderStatus();
   renderSaveState();
   updateInsertMenu();
@@ -4719,9 +5244,10 @@ function renderCanvas(modelKey) {
     for (const id of drag.startAnchors?.keys?.() || []) ghostLabels.add(id);
   }
   const editingLabelId = inlineInput?.dataset.labelId || '';
+  const beatView = activeBeatView(modelKey);
   // The drawing is in world coordinates; only its frame depends on the view.
   // Pan and zoom therefore re-apply the frame and keep the drawing's DOM.
-  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
+  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${beatView ? beatView.index : ''}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
   const viewKey = `${view.x},${view.y},${view.w},${view.h}`;
   const canvasRebuilt = canvasKey !== committedCanvasKey || !canvasSvgEl;
   if (!canvasRebuilt && viewKey !== committedViewKey) {
@@ -4744,6 +5270,7 @@ function renderCanvas(modelKey) {
       ghostLabels,
       ghostNets,
       editingLabel: editingLabelId,
+      ...(beatView ? { beat: { view: beatView, fade: true } } : {}),
     });
     canvasSvgEl = canvasEl.querySelector('svg');
     if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
@@ -9909,8 +10436,10 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl+R' });
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
+    appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 'T' });
+    appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
     appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
@@ -11190,6 +11719,8 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'D') toggleTheme();
   else if (key === 'P') toggleSidePanel();
   else if (key === '?') showHelp();
+  else if (key === ']') stepBeat(1);
+  else if (key === '[') stepBeat(-1);
   else return false;
   return true;
 }
@@ -11244,6 +11775,18 @@ function onNormalKey(key, shiftKey = false) {
   }
   if (key === '8' && !counts) {
     removeAllNetHighlights();
+    return;
+  }
+  if (key === 'h') {
+    toggleSelectionInBeat();
+    return;
+  }
+  if (key === 's') {
+    flipSelectedSwitches();
+    return;
+  }
+  if (key === 'B') {
+    addBeatHere();
     return;
   }
   if (/^[0-9]$/.test(key)) {
@@ -14042,6 +14585,7 @@ syncScrollSchemeButton();
 exportCircuitBtn?.addEventListener('click', exportCircuit);
 exportCancel?.addEventListener('click', () => exportDialog?.close());
 exportForm?.addEventListener('input', renderExportLocation);
+document.getElementById('export-beat')?.addEventListener('change', syncExportSelectionForBeat);
 exportForm?.addEventListener('change', renderExportLocation);
 document.getElementById('export-choose-folder')?.addEventListener('click', async () => {
   const choice = await showFileDialog(persistence, { mode: 'folder', dir: exportFolder, title: 'Choose export folder' });
@@ -14067,7 +14611,7 @@ exportForm?.addEventListener('submit', (event) => {
     localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
   } catch { /* storage unavailable */ }
   const selection = exportSelectionInput?.checked && exportSelection ? exportSelection : null;
-  runExport({ dir: exportFolder, name, formats, ...settings, selection });
+  runExport({ dir: exportFolder, name, formats, ...settings, selection, beat: chosenExportBeat() });
 });
 circuitNameEl.addEventListener('input', renderSaveState);
 circuitSelectEl.addEventListener('change', () => {
@@ -14242,6 +14786,16 @@ if (crosshairBtn) {
 // ----- keyboard -------------------------------------------------------------
 
 window.addEventListener('keydown', (ev) => {
+  // Presenting owns the keyboard until it ends.
+  if (presenter) {
+    onPresenterKey(ev);
+    return;
+  }
+  if (ev.key === 'F5' && ev.shiftKey && !inlineInput) {
+    ev.preventDefault();
+    openPresenter();
+    return;
+  }
   if (ev.key === 'F5') {
     ev.preventDefault();
     flushDraft();
@@ -14571,6 +15125,8 @@ window.__circuit = () => ({
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
   nets: [...circuit.nets.values()].map((net) => ({ id: net.id, name: net.name || null, terminals: net.terminals.map((t) => t.comp + '.' + t.term), route: net.route, branches: net.branches, junctions: net.junctions, pts: net.points() })),
   labels: [...circuit.labels.values()].map((l) => ({ ...l.toJSON(), world: l.anchorWorld() })),
+  beats: circuit.toJSON().beats || [],
+  activeBeat: activeBeatIndex(),
 });
 
 /** Tell the local server this window is open; the launcher stops the server after the last one closes. */

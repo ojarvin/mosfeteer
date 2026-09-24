@@ -204,6 +204,14 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],
+  ['beats', [
+    ['B', 'add a beat after the one on screen; it starts out looking the same'],
+    ['] / [', 'step to the next / previous beat; before the first is the whole drawing'],
+    ['h (on a beat)', 'hide the selection from this beat on, or show it when hidden'],
+    ['s', 'open or close the selected switches (on a beat: from that beat on)'],
+    ['9 / 8 (on a beat)', 'highlights belong to the beat on screen and the ones after it'],
+    ['Shift+F5', 'present the beats full screen; arrows or Space step, . blanks, Esc ends'],
+  ]],
   ['file and console', [
     ['Ctrl/Cmd+S', 'save'],
     ['Ctrl/Cmd+Shift+S', 'save as: choose a folder and name'],

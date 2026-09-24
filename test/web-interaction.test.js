@@ -998,8 +998,9 @@ test('9 arms net highlighting and 8 clears it unless they continue a count', () 
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /if \(key === '9' && !counts\) \{\s*activateHighlight\(\);/);
   assert.match(main, /if \(key === '8' && !counts\) \{\s*removeAllNetHighlights\(\);/);
-  // Clicks cycle through one undoable model edit; the net list shows the color.
-  assert.match(main, /commit\(\(\) => \{ color = circuit\.cycleNetHighlight\(net\); \}\);/);
+  // Clicks cycle through one undoable model edit (on a beat, the beat's own
+  // highlight); the net list shows the color.
+  assert.match(main, /commit\(\(\) => \{\s*color = beatIndex === null \? circuit\.cycleNetHighlight\(net\) : cycleBeatHighlight\(circuit, beatIndex, net, NET_HIGHLIGHT_COLORS\);\s*\}\);/);
   assert.match(main, /dot\.className = 'net-highlight-dot';/);
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-mode-highlight" class="mode-control"[^>]*data-action="highlight"/);

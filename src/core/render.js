@@ -1,10 +1,11 @@
 import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
-import { autoRoute, steinerBranches } from './router.js';
+import { autoRoute } from './router.js';
 import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
+import { drawnNetPaths } from './beats.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 
 function pt(x, y) {
@@ -574,12 +575,25 @@ export function viewportGridSvg(vp) {
  * opts.underlay: emit an empty editor-underlay group above the grid for effects.
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
+ * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it hides
+ * is left out, or with `fade` drawn faint so the editor can still reach it.
+ * The frame stays the whole drawing's, so every beat lines up.
  */
 export function svgString(circuit, opts = {}) {
   const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
   const ghostRefs = o.ghostRefs instanceof Set ? o.ghostRefs : new Set(o.ghostRefs || []);
   const ghostLabels = o.ghostLabels instanceof Set ? o.ghostLabels : new Set(o.ghostLabels || []);
   const ghostNets = o.ghostNets instanceof Set ? o.ghostNets : new Set(o.ghostNets || []);
+  const beat = o.beat?.view || null;
+  const beatFade = !!beat && o.beat.fade === true;
+  const beatHiddenRef = (ref) => !!beat?.hiddenRefs.has(ref);
+  const beatHiddenLabel = (id) => !!beat?.hiddenLabels.has(id);
+  const defOf = (c) => (beat ? beat.defOf(c) : c.def);
+  const netHighlightOf = (net) => (beat ? beat.netHighlight(net) : circuit.netHighlight?.(net) || null);
+  const GHOST = ' opacity="0.34"';
+  const FADED = ' opacity="0.2"';
+  const refOpacity = (ref) => (ghostRefs.has(ref) ? GHOST : beatHiddenRef(ref) ? FADED : '');
+  const labelOpacity = (id) => (ghostLabels.has(id) ? GHOST : beatHiddenLabel(id) ? FADED : '');
   const b = circuit.bounds(o.grid || o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
@@ -647,8 +661,8 @@ export function svgString(circuit, opts = {}) {
   }
   const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
   const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);
-  const labels = [...circuit.labels.values()];
-  const comps = [...circuit.components.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
+  const labels = [...circuit.labels.values()].filter((label) => beatFade || !beatHiddenLabel(label.id));
+  const comps = [...circuit.components.values()].filter((c) => beatFade || !beatHiddenRef(c.refdes)).sort((a, b) => byDrawOrder(a, b, (x, y) => x.refdes.localeCompare(y.refdes)));
 
   // Persistent net highlights recolor a highlighted group's wires, its net
   // labels, its junction dots, and the parts that stand for the net itself --
@@ -660,7 +674,7 @@ export function svgString(circuit, opts = {}) {
     .filter((c) => c.type === 'solder')
     .map((c) => [`${c.transform.x},${c.transform.y}`, c.refdes]));
   for (const net of circuit.nets.values()) {
-    const color = circuit.netHighlight?.(net);
+    const color = netHighlightOf(net);
     if (!color) continue;
     for (const { comp } of net.terminals) {
       const component = circuit.components.get(comp);
@@ -674,7 +688,7 @@ export function svgString(circuit, opts = {}) {
     }
   }
   const compStyle = (c) => withHighlight(c.style, markerHighlights.get(c.refdes));
-  const labelHighlight = (label) => (label.netId ? circuit.netHighlight?.(circuit.nets.get(label.netId)) : null)
+  const labelHighlight = (label) => (label.netId && circuit.nets.has(label.netId) ? netHighlightOf(circuit.nets.get(label.netId)) : null)
     || (label.owner ? markerHighlights.get(label.owner) : null) || null;
 
   // Bottom layer: visual shape annotations and their child labels. Keeping
@@ -685,7 +699,7 @@ export function svgString(circuit, opts = {}) {
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
   for (const label of annotationShapes) {
     if (label.id === o.editingLabel) continue;
-    const opacity = ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+    const opacity = labelOpacity(label.id);
     parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`${label.kind} annotation ${label.text || label.id}`)}">${shapeAnnotationSvg(label, '')}</g>`);
     if (label.kind !== 'line') {
       const mid = label.textAnchor || { x: (label.anchor.x + label.end.x) / 2, y: (label.anchor.y + label.end.y) / 2 };
@@ -693,7 +707,7 @@ export function svgString(circuit, opts = {}) {
     }
     for (const child of labels.filter((candidate) => candidate.parent === label.id)) {
       if (child.id === o.editingLabel) continue;
-      const childOpacity = ghostLabels.has(child.id) || ghostLabels.has(label.id) ? ' opacity="0.34"' : '';
+      const childOpacity = ghostLabels.has(label.id) ? GHOST : labelOpacity(child.id);
       const t = child.textPos();
       const childVisual = child.math
         ? mathLabelSvg(child)
@@ -716,28 +730,35 @@ export function svgString(circuit, opts = {}) {
     if (!ink.has(attrs)) ink.set(attrs, []);
     ink.get(attrs).push(d);
   };
-  const inkLeads = (c) => c.type !== 'block' && !ghostRefs.has(c.refdes) && solidStyle(compStyle(c));
+  const inkLeads = (c) => c.type !== 'block' && !refOpacity(c.refdes) && solidStyle(compStyle(c));
   for (const c of comps) {
     if (!inkLeads(c)) continue;
-    for (const g of c.def.graphics) {
+    for (const g of defOf(c).graphics) {
       if (g.terminalLead) addInk(inkAttrs(compStyle(c)), transformPathD(g.d, c.transform, strokeWidthOf(c.style) / 2));
     }
   }
   const UNPAINTED = ' stroke-opacity="0"';
   for (const net of nets) {
-    // Fixed paths are already the complete authored geometry. Keep the legacy
-    // managed fallback below so multi-terminal managed nets retain their old
-    // rendering behavior.
-    const paths = net.routingMode === 'fixed'
-      ? net.paths()
-      : net.branches
-        ? net.branches
-        : !net.route && net.terminals.length >= 3
-          ? steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] })
-          : [net.points()];
-    const opacity = ghostNets.has(net.id) ? ' opacity="0.34"' : '';
-    const highlight = circuit.netHighlight?.(net) || null;
+    // A beat draws only the wire that joins what it shows (see beats.js).
+    const shown = beat?.wires.get(net.id) ?? 'all';
+    if (shown === 'none' && !beatFade) continue;
+    const highlight = netHighlightOf(net);
     const netStyle = withHighlight(net.style, highlight);
+    if (Array.isArray(shown)) {
+      for (const { a, b, branch, segment } of shown) {
+        const style = withHighlight({ ...(net.style || {}), ...(net.wireStyles?.[`${branch}:${segment}`] || {}) }, highlight);
+        const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
+        if (solidStyle(style) && !ghostNets.has(net.id)) addInk(inkAttrs(style), d);
+        else parts.push(`<path class="wire-beat" d="${d}" fill="none"${ghostNets.has(net.id) ? GHOST : ''} ${styleAttrs(style, 'wire')} pointer-events="none"/>`);
+      }
+      // The editor keeps the whole net, faded, as the thing to click.
+      if (!beatFade) continue;
+    }
+    // Fixed paths are already the complete authored geometry. Keep the legacy
+    // managed fallback so multi-terminal managed nets retain their old
+    // rendering behavior.
+    const paths = drawnNetPaths(net);
+    const opacity = ghostNets.has(net.id) ? GHOST : shown !== 'all' ? FADED : '';
     for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
       const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
@@ -777,14 +798,14 @@ export function svgString(circuit, opts = {}) {
 
   // A joined supply bar is drawn as one shape (below), so the slabs it covers
   // are left out: two coincident fills would double their anti-aliased edges.
-  const bars = supplyBars(circuit);
+  const bars = supplyBars(circuit).filter((bar) => !bar.refs.some(beatHiddenRef));
   const barred = new Set(bars.flatMap((bar) => bar.refs));
   // Top layer: components and their body/value graphics sit above wires.
   for (const c of comps) {
     const t = c.transform;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
-    const textGraphics = c.def.graphics.filter((g) => g.kind === 'text');
-    const bodyGraphics = c.def.graphics.filter((g) => g.kind !== 'text');
+    const opacity = refOpacity(c.refdes);
+    const textGraphics = defOf(c).graphics.filter((g) => g.kind === 'text');
+    const bodyGraphics = defOf(c).graphics.filter((g) => g.kind !== 'text');
     parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     if (c.type === 'block') {
       const r = c.blockSize;
@@ -798,7 +819,7 @@ export function svgString(circuit, opts = {}) {
       }
     }
     parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
+    for (const g of textGraphics) parts.push(opacity ? `<g${opacity}>${symbolTextSvg(g, t, compStyle(c)?.color || '#111')}</g>` : symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
     if (o.includeBBox) {
       const r = c.bboxWorld();
       parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
@@ -810,7 +831,7 @@ export function svgString(circuit, opts = {}) {
   // the slabs themselves too, so no seam shows where they meet. Visual only.
   for (const bar of bars) {
     const from = circuit.components.get(bar.refs[0]);
-    const ghost = bar.refs.some((ref) => ghostRefs.has(ref)) ? ' opacity="0.34"' : '';
+    const ghost = bar.refs.some((ref) => ghostRefs.has(ref)) ? GHOST : '';
     const r = bar.rect;
     parts.push(`<rect class="supply-bar-join" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${escapeSvg(resolveColor(compStyle(from)?.color || '#111'))}" stroke="none" pointer-events="none"${ghost}/>`);
   }
@@ -825,7 +846,7 @@ export function svgString(circuit, opts = {}) {
       if (net.terminals.length < 3) continue;
       for (const { comp, term } of net.terminals) {
         const c = circuit.components.get(comp);
-        if (!c) continue;
+        if (!c || beatHiddenRef(comp)) continue;
         const p = c.terminalWorld(term);
         parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="3.5" fill="#292929"/>`);
       }
@@ -847,7 +868,7 @@ export function svgString(circuit, opts = {}) {
   // Labels (drawn upright, never mirrored). Symbols with a dedicated instance
   for (const c of comps) {
     const def = c.def;
-    const opacity = ghostRefs.has(c.refdes) ? ' opacity="0.34"' : '';
+    const opacity = refOpacity(c.refdes);
     if (def.refPrefix && def.refPos && !def.labelOffset) {
       const p = applyTransform(c.transform, def.refPos.x, def.refPos.y);
       // Uniform component-id font (bold+italic, INSTANCE_FONT) across all symbols,
@@ -874,12 +895,14 @@ export function svgString(circuit, opts = {}) {
   // Dedicated / instance label objects (instance identifiers are bold+italic and
   // larger than free-standing annotation labels). Text is aligned inside the
   // label's rendered box (left/center/right) and vertically centered.
-  const barHidden = hiddenSupplyBarLabels(circuit);
+  const barHidden = beat
+    ? new Set(bars.flatMap((bar) => bar.refs.map((ref) => circuit.labelOf(ref)).filter(Boolean).slice(1).map((label) => label.id)))
+    : hiddenSupplyBarLabels(circuit);
   for (const label of labels
     .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent && !barHidden.has(candidate.id))
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
     if (label.id === o.editingLabel) continue;
-    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? ' opacity="0.34"' : '';
+    const opacity = ghostLabels.has(label.id) || (label.owner && ghostRefs.has(label.owner)) ? GHOST : labelOpacity(label.id);
     const t = label.textPos();
     const roleName = label.owner ? `Instance label ${label.text}` : label.netId ? `Net label ${label.text}` : `Annotation ${label.text}`;
     const labelVisual = label.math

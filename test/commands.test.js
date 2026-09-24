@@ -853,3 +853,32 @@ test('evaluate reports overlapping distinct label bboxes', () => {
   assert.deepEqual(issue.points, [{ x: 0, y: -40 }, { x: 40, y: 40 }]);
   assert.match(res.text, /label overlaps/);
 });
+
+test('beat commands add, edit, list, and draw presentation steps', () => {
+  const circuit = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0', 'add switch_open S1 --at 400 0', 'connect R1.b S1.a']) runCommand(circuit, line);
+  assert.equal(runCommand(circuit, 'beat list').text, '(no beats)');
+  assert.throws(() => runCommand(circuit, 'beat hide 1 R1'), /there are no beats/);
+  runCommand(circuit, 'beat add Bias');
+  runCommand(circuit, 'beat add');
+  assert.equal(runCommand(circuit, 'beat add Phase --after 1').json.index, 2);
+  runCommand(circuit, 'beat hide 1 S1');
+  runCommand(circuit, 'beat show 2 S1');
+  runCommand(circuit, 'beat switch 3 S1 closed');
+  runCommand(circuit, 'beat rename 3 Closed');
+  assert.equal(runCommand(circuit, 'beat list').text.split('\n').length, 3);
+  assert.deepEqual(circuit.toJSON().beats.map((beat) => beat.name), ['Bias', 'Phase', 'Closed']);
+  // Hidden in beat 1 and shown from 2: a leading show says both.
+  assert.match(runCommand(circuit, 'beat list').text, /2 · Phase\s+show S1/);
+  assert.ok(!runCommand(circuit, 'svg --beat 1').json.svg.includes('data-ref="S1"'));
+  assert.ok(runCommand(circuit, 'svg --beat 3').json.svg.includes('-19.16'), 'closed blade in beat 3');
+  runCommand(circuit, 'beat move 3 1');
+  assert.deepEqual(circuit.toJSON().beats.map((beat) => beat.name), ['Closed', 'Bias', 'Phase']);
+  runCommand(circuit, 'beat rm 1');
+  assert.equal(circuit.beats.length, 2);
+  assert.throws(() => runCommand(circuit, 'beat rm 5'), /no beat 5/);
+  assert.throws(() => runCommand(circuit, 'beat switch 1 R1 closed'), /not a switch/);
+  runCommand(circuit, 'switch S1 closed');
+  assert.equal(circuit.components.get('S1').type, 'switch_closed');
+  assert.throws(() => runCommand(circuit, 'switch R1 open'), /not a switch/);
+});

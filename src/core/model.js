@@ -5,6 +5,7 @@ import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCros
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
+import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, switchState } from './beats.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -1574,6 +1575,8 @@ export class Circuit {
     this.netNameWarnings = [];
     /** Persistent highlight color per electrical group (see netGroupKey). */
     this.netHighlights = new Map();
+    /** Presentation steps over this drawing (see beats.js). */
+    this.beats = [];
     this._routingEnvCache = new Map();
   }
 
@@ -1634,6 +1637,17 @@ export class Circuit {
     return inst;
   }
 
+  /** Draw a switch open or closed. Both symbols share one footprint and
+   * terminals, so connectivity and routing are untouched. */
+  setSwitchState(refdes, state) {
+    const component = this.getComponent(refdes);
+    if (!switchState(component)) throw new Error(`"${refdes}" is not a switch`);
+    if (!SWITCH_TYPES[state]) throw new Error('a switch is open or closed');
+    component.type = SWITCH_TYPES[state];
+    component.def = getSymbol(component.type);
+    return component;
+  }
+
   getComponent(refdes) {
     const c = this.components.get(refdes);
     if (!c) throw new Error(`unknown component "${refdes}"`);
@@ -1691,6 +1705,7 @@ export class Circuit {
         }
       }
     }
+    renameBeatObject(this, current, next);
     for (const label of ownedLabels) {
       label.owner = next;
       // Reference-marker labels can be local rail names, so preserve those
@@ -2428,6 +2443,7 @@ export class Circuit {
   /** A rename that moves a whole group to a new key keeps its highlight. A
    * net leaving a group that still has other members leaves it uncolored. */
   _carryNetHighlight(from, to) {
+    if (from && from !== to && !this._liveNetGroups().has(from)) renameBeatHighlightKey(this, from, to);
     if (!from || from === to || !this.netHighlights.has(from) || this.netHighlights.has(to)) return;
     if (this._liveNetGroups().has(from)) return;
     this.netHighlights.set(to, this.netHighlights.get(from));
@@ -5704,6 +5720,7 @@ export class Circuit {
       })),
       suppressedJunctions: [...this.suppressedJunctions],
       ...this._netHighlightsJSON(),
+      ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
     };
   }
 
@@ -5717,6 +5734,7 @@ export class Circuit {
     if (!data || ![1, 2].includes(data.version)) throw new Error('unsupported state version');
     const circuit = new Circuit();
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
+    circuit.beats = beatsFromJSON(data.beats);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
       if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
     }
