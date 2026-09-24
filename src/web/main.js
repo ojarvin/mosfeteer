@@ -14,6 +14,7 @@ import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, co
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
+import { addTimingDiagram } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } from '../core/beats.js';
 import { TipBook } from './tips.js';
 import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
@@ -48,7 +49,7 @@ import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constra
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
 import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
-import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
+import { alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides } from './layout.js';
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -217,6 +218,8 @@ const ICON_PATHS = {
   front: '<rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
+  timing: '<path d="M3 16h4V8h6v8h6V8h2"/>',
+  align: '<path d="M4 3v18"/><rect x="7" y="6" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/><path d="m20 12-2-2m2 2-2 2"/>',
   play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor" fill-opacity=".18"/>',
   'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.2.8-1.5 1.3-1.5 2.5M12 17h.01"/>',
@@ -246,6 +249,7 @@ const TOOL_CURSOR_ICONS = {
   'detached-move': 'detach',
   copy: 'copy',
   delete: 'trash',
+  align: 'align',
   'net-label': 'tag',
   highlight: 'highlight',
   annotation: 'text',
@@ -590,6 +594,7 @@ let annotationPoints = [];
 let moveMode = null; // null | 'connected' | 'detached' (armed one-shot move)
 let copyMode = false; // armed one-shot copy placement
 let deleteMode = false; // persistent one-shot delete tool
+let alignTool = null; // Align to: { source, hover } while the tool is active
 let movePending = false;
 let copyPending = false;
 let routeMode = 'orthogonal'; // 'orthogonal' | 'diagonal'; applies when w starts
@@ -755,7 +760,7 @@ export function selectAllNetIds(model) {
     .map((net) => net.id);
 }
 
-export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
+export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, alignMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
   if (directWire) return {
     key: 'wire',
     canvasClass: 'direct-wire-mode',
@@ -779,6 +784,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'PLACE' };
   if (copyMode) return { key: 'copy', canvasClass: 'mode-copy', toolbar: 'copy', label: 'COPY' };
   if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE' };
+  if (alignMode) return { key: 'align', canvasClass: 'mode-align', toolbar: 'align', label: 'ALIGN' };
   if (moveMode === 'detached') return { key: 'detached-move', canvasClass: 'mode-detached-move', toolbar: 'move-detached', label: 'DETACHED MOVE' };
   if (moveMode === 'connected') return { key: 'move', canvasClass: 'mode-move', toolbar: 'move', label: 'MOVE' };
   return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL' };
@@ -1762,6 +1768,7 @@ async function deleteSavedCircuit() {
     moveMode = null;
     copyMode = false;
     deleteMode = false;
+    alignTool = null;
     movePending = false;
     copyPending = false;
     visual = null;
@@ -1941,6 +1948,7 @@ function applyJson(blob) {
   moveMode = null;
   copyMode = false;
   deleteMode = false;
+  if (alignTool) alignTool = { source: null, hover: null };
   movePending = false;
   copyPending = false;
   visual = null;
@@ -1991,9 +1999,11 @@ function undo() {
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
+  const kept = alignTool && keptAlignSelection();
   future.push(snapshot());
   applyJson(history.pop());
   restoreToolState(toolState);
+  if (kept) kept();
   render();
 }
 
@@ -2004,9 +2014,11 @@ function redo() {
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
+  const kept = alignTool && keptAlignSelection();
   rememberHistory(snapshot(), false);
   applyJson(future.pop());
   restoreToolState(toolState);
+  if (kept) kept();
   render();
 }
 
@@ -2951,6 +2963,166 @@ function alignSelectionByKey({ align, repeat }) {
   let plan = layoutPlan(align);
   if (plan.ok && plan.deltas.every(({ dx, dy }) => !dx && !dy)) plan = layoutPlan(repeat);
   applyLayoutPlan(plan);
+}
+
+// ----- Align to -------------------------------------------------------------
+// Shift+A: the selection moves as one rigid piece. The first click picks an
+// edge or point of the selection's outline, the second a matching edge or
+// point of another object. Nothing is stored: the selection is the group.
+
+const ALIGN_SOURCE_HINT = 'ALIGN: click an edge or point of the selection (click objects to change it); Esc exits';
+const ALIGN_POINT_PX = 10;
+
+/** World units per screen pixel, for hit radii that keep their on-screen size. */
+function worldPerPixel() {
+  const p = paneSize();
+  return p ? view.w / p.w : 1;
+}
+
+/** The selection's outline: parts and free or owned text, not wires, which
+ * follow their parts. */
+function alignOutline() {
+  const labels = selectedLabels().filter((label) => !label.owner || !multi.has(label.owner));
+  return outlineOf([...selectedComps().map(componentLayoutItem), ...labels.map(labelLayoutItem)]);
+}
+
+/** Objects the selection can align to: every part and label outside it. A
+ * selected part's own labels and a selected shape's captions move with it. */
+function alignTargets() {
+  const out = [];
+  for (const c of circuit.components.values()) {
+    if (!multi.has(c.refdes) && c.type !== 'solder') out.push({ id: c.refdes, bbox: c.bboxWorld() });
+  }
+  for (const label of circuit.labels.values()) {
+    if (label.selectable === false || selLabels.has(label.id) || selLabels.has(label.parent) || multi.has(label.owner)) continue;
+    out.push({ id: label.id, bbox: label.bbox() });
+  }
+  return out;
+}
+
+function alignSourceFeatures() {
+  const outline = alignOutline();
+  return outline ? alignFeatures(outline, null) : [];
+}
+
+function alignTargetFeatures() {
+  const source = alignTool?.source;
+  return alignTargets().flatMap((target) => alignFeatures(target.bbox, target.id))
+    .filter((feature) => alignCompatible(source, feature));
+}
+
+const sameFeature = (a, b) => (!a && !b) || (!!a && !!b && a.kind === b.kind && a.name === b.name && a.owner === b.owner);
+
+function updateAlignHover(w) {
+  const tolerance = ALIGN_POINT_PX * worldPerPixel();
+  const hover = alignTool.source
+    ? alignFeatureAt(alignTargetFeatures(), w, tolerance) || alignFeatureAt(alignSourceFeatures(), w, tolerance)
+    : alignFeatureAt(alignSourceFeatures(), w, tolerance);
+  const focus = alignTool.source && !hover?.owner
+    ? alignTargets().filter(({ bbox }) => w.x >= bbox.x - tolerance && w.x <= bbox.x + bbox.w + tolerance && w.y >= bbox.y - tolerance && w.y <= bbox.y + bbox.h + tolerance)
+      .sort((a, b) => a.bbox.w * a.bbox.h - b.bbox.w * b.bbox.h)[0]?.id || null
+    : hover?.owner || null;
+  if (sameFeature(hover, alignTool.hover) && focus === alignTool.focus) return;
+  alignTool.hover = hover;
+  alignTool.focus = focus;
+  scheduleInteractionRender();
+}
+
+/** A picked source and its matching features on the object under the pointer,
+ * with the landing outline previewed. Interaction only. */
+function alignOverlay() {
+  if (!alignTool) return null;
+  const outline = alignOutline();
+  if (!outline) return null;
+  const { source, hover } = alignTool;
+  const target = source && hover?.owner ? hover : null;
+  const focus = target?.owner || alignTool.focus;
+  const focusTarget = focus ? alignTargets().find((candidate) => candidate.id === focus) : null;
+  const delta = target ? alignToDelta(source, target) : null;
+  return {
+    outline,
+    source,
+    hover,
+    features: source
+      ? [...alignFeatures(outline, null).filter((feature) => feature.kind === 'point'),
+        ...(focusTarget ? alignFeatures(focusTarget.bbox, focusTarget.id).filter((feature) => alignCompatible(source, feature)) : [])]
+      : alignFeatures(outline, null).filter((feature) => feature.kind === 'point'),
+    focus: focusTarget?.bbox || null,
+    preview: delta ? { x: outline.x + delta.dx, y: outline.y + delta.dy, w: outline.w, h: outline.h } : null,
+    target,
+  };
+}
+
+function keptAlignSelection() {
+  const refs = [...multi];
+  const labels = [...selLabels];
+  return () => {
+    setSelection(refs.filter((ref) => circuit.components.has(ref)));
+    setLabelSelection(labels.filter((id) => circuit.labels.has(id)));
+  };
+}
+
+function alignMouseDown(startWorld, startClient, ev) {
+  const tolerance = ALIGN_POINT_PX * worldPerPixel();
+  if (alignTool.source) {
+    const target = alignFeatureAt(alignTargetFeatures(), startWorld, tolerance);
+    if (target) {
+      alignSelectionTo(alignTool.source, target);
+      return;
+    }
+  }
+  const source = alignFeatureAt(alignSourceFeatures(), startWorld, tolerance);
+  if (source) {
+    alignTool = { source, hover: null };
+    hintLine(`ALIGN: click a ${source.kind === 'edge' ? `${source.axis === 'x' ? 'vertical' : 'horizontal'} edge` : 'point'} of another object to align to; Esc picks again`);
+    render();
+    return;
+  }
+  if (alignTool.source) {
+    hintLine('ALIGN: click a highlighted edge or point of another object; Esc picks again');
+    return;
+  }
+  // Before a source is picked, clicks shape the selection as in Select.
+  const extend = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+  const label = pickLabel(startWorld) || annotationTextAt(startWorld) || annotationGeometryAt(startWorld) || annotationEndpointAt(startWorld)?.label;
+  const hit = label ? null : pickAt(startWorld);
+  const target = label?.owner && circuit.components.has(label.owner) ? { kind: 'component', id: label.owner }
+    : label ? { kind: 'label', id: label.id }
+      : hit?.refdes && circuit.components.has(hit.refdes) ? { kind: 'component', id: hit.refdes } : null;
+  if (!target) {
+    beginMarqueeSelection(startWorld, startClient, ev);
+    return;
+  }
+  // A near miss on a handle must not shrink the set to the part under it.
+  if (!extend && (target.kind === 'component' ? multi : selLabels).has(target.id)) {
+    hintLine(ALIGN_SOURCE_HINT);
+    return;
+  }
+  applyEditorSelection(target, extend);
+  hintLine(ALIGN_SOURCE_HINT);
+  render();
+}
+
+/** Move the whole selection so `source` lands on `target`, through the same
+ * drag path as the Move tool: wires inside the set translate, wires to the
+ * rest reroute, and the edit is one undo entry. */
+function alignSelectionTo(source, target) {
+  const { dx, dy, exact } = alignToDelta(source, target);
+  alignTool = { source: null, hover: null };
+  if (!dx && !dy) {
+    hintLine('already aligned');
+    render();
+    return;
+  }
+  const start = { x: snap(cursor.x), y: snap(cursor.y) };
+  const from = worldToClient(start.x, start.y);
+  const to = worldToClient(start.x + dx, start.y + dy);
+  beginObjectMove([...multi], [...selLabels], start, from);
+  drag.moved = true;
+  canvasMouseMove({ clientX: to.x, clientY: to.y, shiftKey: false });
+  canvasMouseUp({ clientX: to.x, clientY: to.y, button: 0, shiftKey: false });
+  hintLine(exact ? 'aligned the selection; pick another edge or point, or Esc'
+    : 'aligned to the nearest grid point; exact alignment falls between grid points');
 }
 
 function previewLayoutPlan(plan) {
@@ -4462,6 +4634,19 @@ function addPhaseBeats() {
   setActiveBeat(index);
 }
 
+/** A timing diagram template under the drawing: each phase's name and a
+ * waveform line to edit into its timing (core/timing-diagram.js). */
+function addTimingDiagramTemplate() {
+  let rows = [];
+  commit(() => { rows = addTimingDiagram(circuit); });
+  if (!rows.length) return;
+  setSelection([]);
+  setLabelSelection(rows.flatMap((row) => [row.label, row.line]));
+  logLine(`added a timing diagram for ${rows.length} phase${rows.length === 1 ? '' : 's'}: drag its vertices into each phase's timing, or click one in Delete to remove it`);
+  fitView({ animate: true });
+  render();
+}
+
 /** Context-menu items for beats: show/hide, switch position. */
 function appendBeatContextItems(group, target) {
   if (target.kind === 'component' && switchState(target.value)) {
@@ -4577,6 +4762,7 @@ document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
 document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
+document.getElementById('btn-timing-diagram')?.addEventListener('click', addTimingDiagramTemplate);
 document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);
@@ -5477,16 +5663,17 @@ function renderCanvas(modelKey) {
     selection: [...multi],
     emphasis: equationEmphasis,
     diagnostic: diagnosticSelection,
-    resizeBlocks: [...multi].filter((ref) => {
+    alignTool: alignOverlay(),
+    resizeBlocks: alignTool ? [] : [...multi].filter((ref) => {
       const component = circuit.components.get(ref);
       return component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY;
     }),
-    resizeBoxes: [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box'),
-    hoverAnnotation: drag ? null : hoverAnnotationId,
-    handleScale: (() => { const p = paneSize(); return p ? view.w / p.w : 1; })(),
+    resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box'),
+    hoverAnnotation: drag || alignTool ? null : hoverAnnotationId,
+    handleScale: worldPerPixel(),
     ghostTwin,
     symmetryAxis,
-    centerGuides: placementGuide?.guides.length ? null : selectionCenterBounds(),
+    centerGuides: placementGuide?.guides.length || alignTool ? null : selectionCenterBounds(),
     layoutPreviewRects,
     placementGuide,
     wireSegments: (() => {
@@ -5621,6 +5808,10 @@ function bindHoverPreview(row, target) {
 
 function updateCanvasHover(w) {
   if (hoverFromPanel) return;
+  if (alignTool) {
+    updateAlignHover(w);
+    return;
+  }
   const quiet = mode === 'insert' || (labelMode && labelMode !== 'highlight') || visual || quickAdd;
   const selecting = !quiet && !wire && !directWire && !moveMode && !copyMode && !deleteMode;
   const hit = selecting ? pickAt(w) : null;
@@ -5632,7 +5823,10 @@ function updateCanvasHover(w) {
   // Mirror canvasMouseDown's order: annotation drag points and outlines are
   // picked before labels and components.
   const annotation = selecting ? annotationEndpointAt(w)?.label || annotationGeometryAt(w) : null;
-  const annotationId = annotation && ['arrow', 'line'].includes(annotation.kind) ? annotation.id : null;
+  // Delete shows a line's vertices while the pointer rests on one it can
+  // remove alone.
+  const deleteVertex = deleteMode && !quiet ? removableVertexAt(w)?.label : null;
+  const annotationId = deleteVertex?.id || (annotation && ['arrow', 'line'].includes(annotation.kind) ? annotation.id : null);
   if (pinsRef !== hoverPinsRef || annotationId !== hoverAnnotationId) {
     hoverPinsRef = pinsRef;
     hoverAnnotationId = annotationId;
@@ -7194,6 +7388,10 @@ function canvasMouseDown(ev) {
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
     return;
   }
+  if (alignTool && b === 0) {
+    alignMouseDown(startWorld, startClient, ev);
+    return;
+  }
   if (b !== 0) return;
   const handle = ev.target.closest?.('[data-resize-handle]');
   const handleOwner = handle?.closest?.('[data-resize-id]');
@@ -7455,6 +7653,7 @@ function canvasMouseDown(ev) {
   const endpointHit = annotationEndpointAt(startWorld);
   const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
   const pickedLine = endpointHit?.label || annotationSegment?.label;
+  if (pickedLine && armLabelCopyGrab(pickedLine, startWorld, startClient, ev)) return;
   if (pickedLine && isSelectionModifier(ev)) {
     applyEditorSelection({ kind: 'label', id: pickedLine.id }, true);
     render();
@@ -7468,6 +7667,7 @@ function canvasMouseDown(ev) {
   }
   const annotationText = annotationTextAt(startWorld);
   if (annotationText) {
+    if (armLabelCopyGrab(annotationText, startWorld, startClient, ev)) return;
     if (!isSelectionModifier(ev)) {
       setSelection([]);
       setLabelSelection([annotationText.id]);
@@ -8205,8 +8405,23 @@ function beginCopySource(startWorld, startClient) {
   if (!copySelection()) return false;
   return startCopyGhost(startWorld, startClient);
 }
+/** A line or arrow vertex under `world` that Delete can remove on its own,
+ * leaving the rest of the annotation: { label, index } or null. */
+function removableVertexAt(world) {
+  const hit = annotationEndpointAt(world);
+  const index = hit?.endpoint.startsWith('vertex:') ? Number(hit.endpoint.slice(7)) : -1;
+  return index >= 0 && hit.label.canRemoveVertex(index) ? { label: hit.label, index } : null;
+}
+
 function deleteAtPoint(world) {
   noteTip('delete-click');
+  const vertex = removableVertexAt(world);
+  if (vertex) {
+    commit(() => vertex.label.removeVertex(vertex.index));
+    clearCheckReport();
+    render();
+    return true;
+  }
   const label = pickLabel(world) || annotationGeometryAt(world);
   const hitWire = pickWire(world);
   const hitComp = pickAt(world);
@@ -12106,8 +12321,13 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === 'i' || key === 'I' || key === 'A') {
+  if (key === 'i' || key === 'I') {
     activatePlace();
+    return;
+  }
+
+  if (key === 'A') {
+    activateAlign();
     return;
   }
 
@@ -12164,6 +12384,19 @@ function onNormalKey(key, shiftKey = false) {
     } else {
       activateDelete();
     }
+    return;
+  }
+
+  // Escape in Align to drops a picked source first, then leaves the tool with
+  // the selection intact.
+  if (key === 'Escape' && alignTool) {
+    if (alignTool.source) {
+      alignTool = { source: null, hover: null };
+      hintLine(ALIGN_SOURCE_HINT);
+    } else {
+      alignTool = null;
+    }
+    render();
     return;
   }
 
@@ -12760,7 +12993,7 @@ const TOOLBAR_IDS = {
 };
 
 function interactionState() {
-  return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, movePending, copyPending, routeMode });
+  return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, alignMode: !!alignTool, movePending, copyPending, routeMode });
 }
 
 /** Elements matched by `selectors`, cached: the toolbars are static markup and
@@ -13569,6 +13802,7 @@ function leaveActiveInteraction() {
   insertQuery = '';
   mode = 'normal';
   visual = null;
+  alignTool = null;
 }
 
 /** A letter that picks a terminal in Wire mode: one the part under the cursor
@@ -13597,6 +13831,7 @@ function toolSwitchForKey(key, shiftKey = false) {
     m: () => activateMove('connected'),
     M: () => activateMove('detached'),
     c: activateCopy,
+    A: activateAlign,
     9: activateHighlight,
     a: () => activateShapeAnnotation('arrow'),
     b: () => activateShapeAnnotation('box'),
@@ -13779,6 +14014,21 @@ function activateCopy() {
   annotationPoints = [];
   copyMode = true; // source click and placement are handled by the canvas
   hintLine('COPY: click an object, or use the existing selection; move the copy, then click/Enter (Esc exits)');
+  render();
+}
+
+function activateAlign() {
+  leaveActiveInteraction();
+  terminalSnap = false;
+  moveMode = null;
+  copyMode = false;
+  deleteMode = false;
+  movePending = false;
+  copyPending = false;
+  labelMode = null;
+  annotationPoints = [];
+  alignTool = { source: null, hover: null };
+  hintLine(ALIGN_SOURCE_HINT);
   render();
 }
 
@@ -14145,6 +14395,7 @@ function bindInteractionControls() {
     'detach-move': () => activateMove('detached'),
     copy: activateCopy,
     delete: activateDelete,
+    align: activateAlign,
     'send-back': () => restackSelected('back'),
     'bring-front': () => restackSelected('front'),
     'net-label': activateNetLabel,

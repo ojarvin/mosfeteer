@@ -8,6 +8,7 @@ import { svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
+import { addTimingDiagram } from './timing-diagram.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -504,6 +505,7 @@ export function commandHelp() {
     '  netlabel list [NET]             - list net labels',
     '  annotation (label/annotate) add [ID] TEXT X Y [--align ALIGN --right-edge X] - place a free annotation',
     '  annotation rename|move|align|rm ... - edit/remove an annotation label',
+    '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
@@ -522,6 +524,7 @@ export function commandHelp() {
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per switch phase: what it connects shown, the rest dimmed',
+    '  timing                         - add a timing diagram template under the drawing, one waveform per switch phase',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -846,6 +849,10 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
+  if (cmd === 'timing') {
+    const rows = addTimingDiagram(circuit);
+    return result(`added a timing diagram template: ${rows.map((row) => `${row.phase} ${row.line}`).join(', ')}`, rows, true);
+  }
   if (cmd === 'switch') {
     const [ref, state] = pos;
     if (!ref || !state) throw new Error('usage: switch REF|PHASE open|closed');
@@ -1013,7 +1020,15 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     circuit.removeLabel(label);
     return result(`removed annotation ${label.id}`, null, true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|list ...');
+  if (op === 'vertex-rm') {
+    const label = circuit.labels.get(pos[1]);
+    if (!label || !['arrow', 'line'].includes(label.kind)) throw new Error(`unknown line or arrow "${pos[1]}"`);
+    const index = Number(pos[2]);
+    if (!Number.isInteger(index)) throw new Error('usage: annotation vertex-rm ID N');
+    if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
+    return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
+  }
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */

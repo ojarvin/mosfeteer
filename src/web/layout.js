@@ -107,6 +107,79 @@ export function distributionPlan(items, axis, measure = 'gaps', grid = GRID) {
   return { ok: true, deltas, exact: nearGrid(pitch, grid) };
 }
 
+// Align to: the selected set moves as one rigid piece so that a feature of its
+// outline lands on a matching feature of another object. Edges align along
+// their own axis only. An edge's midpoint centres along that edge (the middle
+// of the top edge moves only in x), and a corner or the centre moves in both.
+
+const EDGES = [
+  ['left', 'x', (r) => r.x, (r) => [{ x: r.x, y: r.y }, { x: r.x, y: r.y + r.h }]],
+  ['right', 'x', (r) => r.x + r.w, (r) => [{ x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }]],
+  ['top', 'y', (r) => r.y, (r) => [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }]],
+  ['bottom', 'y', (r) => r.y + r.h, (r) => [{ x: r.x, y: r.y + r.h }, { x: r.x + r.w, y: r.y + r.h }]],
+];
+const POINTS = [
+  ['top-left', 0, 0, ['x', 'y']], ['top', 0.5, 0, ['x']], ['top-right', 1, 0, ['x', 'y']],
+  ['left', 0, 0.5, ['y']], ['center', 0.5, 0.5, ['x', 'y']], ['right', 1, 0.5, ['y']],
+  ['bottom-left', 0, 1, ['x', 'y']], ['bottom', 0.5, 1, ['x']], ['bottom-right', 1, 1, ['x', 'y']],
+];
+
+/** The edges and points of a rectangle that Align to can pick. */
+export function alignFeatures(rect, owner = null) {
+  return [
+    ...EDGES.map(([name, axis, value, ends]) => ({ kind: 'edge', name, axis, value: value(rect), ends: ends(rect), owner })),
+    ...POINTS.map(([name, fx, fy, axes]) => ({ kind: 'point', name, x: rect.x + rect.w * fx, y: rect.y + rect.h * fy, axes, owner })),
+  ];
+}
+
+/** Union outline of a set of layout items, or null for an empty set. */
+export function outlineOf(items) {
+  if (!items.length) return null;
+  const x = Math.min(...items.map((item) => item.bbox.x));
+  const y = Math.min(...items.map((item) => item.bbox.y));
+  const x1 = Math.max(...items.map((item) => item.bbox.x + item.bbox.w));
+  const y1 = Math.max(...items.map((item) => item.bbox.y + item.bbox.h));
+  return { x, y, w: x1 - x, h: y1 - y };
+}
+
+/** A target feature a picked source can align to: an edge to an edge that
+ * runs the same way, a point to any point. */
+export function alignCompatible(source, target) {
+  if (!source) return true;
+  return source.kind === target.kind && (source.kind === 'point' || source.axis === target.axis);
+}
+
+function segmentDistance(p, [a, b]) {
+  const dx = b.x - a.x; const dy = b.y - a.y;
+  const t = dx || dy ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy))) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** The feature under `p`: the nearest point within `tolerance`, else the
+ * nearest edge within it. Points win so a corner is never read as its edge. */
+export function alignFeatureAt(features, p, tolerance) {
+  let best = null;
+  for (const kind of ['point', 'edge']) {
+    for (const feature of features) {
+      if (feature.kind !== kind) continue;
+      const d = kind === 'point' ? Math.hypot(p.x - feature.x, p.y - feature.y) : segmentDistance(p, feature.ends);
+      if (d <= tolerance && (!best || d < best.d)) best = { feature, d };
+    }
+    if (best) return best.feature;
+  }
+  return null;
+}
+
+/** The whole-cell move that lands `source` on `target`. A target between grid
+ * points rounds to the nearest one and reports `exact: false`. */
+export function alignToDelta(source, target, grid = GRID) {
+  const raw = { x: 0, y: 0 };
+  if (source.kind === 'edge') raw[source.axis] = target.value - source.value;
+  else for (const axis of source.axes) raw[axis] = target[axis] - source[axis];
+  const round = (value) => (nearGrid(value, grid) ? value : Math.round(value / grid) * grid) || 0;
+  return { dx: round(raw.x), dy: round(raw.y), exact: nearGrid(raw.x, grid) && nearGrid(raw.y, grid) };
+}
+
 // Live placement guides. They are advisory only: the grid stays authoritative
 // and nothing ever snaps. Every number drawn is measured between two real
 // anchors and the position the guide points at, never between an anchor and

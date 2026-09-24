@@ -63,6 +63,15 @@ so the whole circuit stays readable. Switches without a phase keep their
 drawn position. The beats are ordinary beats, inserted after the one on
 screen as one undoable edit.
 
+**Timing diagram from switch phases** (More menu; `timing`) draws a template
+under the drawing, one row per phase in the same order: the phase's name as
+a free label, right-aligned in a column flush with the drawing's left edge,
+and a line annotation two cells tall with vertical edges, 4 cells low, 8
+high, 8 low, 4 high. Every row starts identical; drag, add, or remove
+vertices to draw each phase's real timing (in Delete, clicking a vertex of a
+line with more than two points removes just that vertex). The rows are plain
+annotations: they carry no link to the switches afterwards.
+
 Placeholders fall out of rule 4: to stand in for a bias transistor until it
 appears, put a net label (or a port) on the gate net, hide it from the beat
 where the transistor appears, and the wire to it disappears with it.

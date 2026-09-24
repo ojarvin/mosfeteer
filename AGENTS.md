@@ -263,12 +263,12 @@ Core keyboard vocabulary:
 
 | Context | Keys |
 | --- | --- |
-| normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
+| normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `Shift+A` align to (selection outline edge/point, then another object's), `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
 | view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `?` help, `:` command line (log drawer) |
 | editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `9` net highlight tool, `8` remove all highlights |
 | beats | `Shift+B` beat strip, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or nearest-terminal cursor snapping while wiring |
-| pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
+| pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part, label, or annotation, or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
 
 View toggles are handled before mode-specific keys, except printable insert
 query text before a ghost exists. Any tool can be picked straight from another

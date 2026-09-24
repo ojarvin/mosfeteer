@@ -1005,6 +1005,38 @@ const SELECT = 'var(--accent, #2563eb)';
 const WARN = 'var(--warn, #b45309)';
 const DANGER = 'var(--danger, #c53030)';
 const NEUTRAL = 'var(--svg-faint, #7a7d85)';
+// Align to has its own ink and shapes (diamonds, edge bars) so its picks never
+// read as a resize handle, an annotation vertex, or a terminal.
+const ALIGN = 'var(--align, #c026d3)';
+
+/** Align to: the selection's outline with its pickable points, the matching
+ * features of the object under the pointer, and where the set would land. */
+function alignToolSvg({ outline, source, hover, features, focus, preview, target }, unit) {
+  const same = (a, b) => !!a && !!b && a.kind === b.kind && a.name === b.name && a.owner === b.owner;
+  const rect = (r, attrs) => `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" ${attrs} vector-effect="non-scaling-stroke"/>`;
+  const diamond = (p, solid) => {
+    const r = 6 * unit;
+    return `<path class="align-point${solid ? ' active' : ''}" d="M ${fmt(p.x)} ${fmt(p.y - r)} L ${fmt(p.x + r)} ${fmt(p.y)} L ${fmt(p.x)} ${fmt(p.y + r)} L ${fmt(p.x - r)} ${fmt(p.y)} Z" fill="${solid ? ALIGN : 'var(--paper, #fff)'}" stroke="${solid ? 'var(--paper, #fff)' : ALIGN}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  };
+  const bar = (edge, width, opacity) => `<path class="align-edge" d="M ${fmt(edge.ends[0].x)} ${fmt(edge.ends[0].y)} L ${fmt(edge.ends[1].x)} ${fmt(edge.ends[1].y)}" stroke="${ALIGN}" stroke-width="${width}" stroke-opacity="${opacity}" stroke-linecap="square" vector-effect="non-scaling-stroke"/>`;
+  const out = [`<g class="align-tool" pointer-events="none" fill="none">`];
+  out.push(rect(outline, `class="align-outline" stroke="${ALIGN}" stroke-width="1.5" stroke-dasharray="2 4"`));
+  if (focus) out.push(rect(focus, `class="align-focus" stroke="${ALIGN}" stroke-width="1" stroke-opacity="0.5" stroke-dasharray="2 4"`));
+  if (preview) out.push(rect(preview, `class="align-preview" fill="${ALIGN}" fill-opacity="0.06" stroke="${ALIGN}" stroke-width="2" stroke-dasharray="7 5"`));
+  if (source && target) {
+    const from = source.kind === 'point' ? source : { x: (source.ends[0].x + source.ends[1].x) / 2, y: (source.ends[0].y + source.ends[1].y) / 2 };
+    const to = target.kind === 'point' ? target : { x: (target.ends[0].x + target.ends[1].x) / 2, y: (target.ends[0].y + target.ends[1].y) / 2 };
+    out.push(`<path class="align-link" d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" stroke="${ALIGN}" stroke-width="1.5" stroke-dasharray="7 5" vector-effect="non-scaling-stroke"/>`);
+  }
+  for (const edge of [source, hover].filter((feature) => feature?.kind === 'edge')) out.push(bar(edge, 6, 0.55));
+  for (const feature of features.filter((feature) => feature.kind === 'edge' && !same(feature, hover))) out.push(bar(feature, 3, 0.35));
+  for (const feature of features.filter((feature) => feature.kind === 'point')) {
+    out.push(diamond(feature, same(feature, source) || same(feature, hover)));
+  }
+  for (const feature of [source, hover].filter((feature) => feature?.kind === 'point' && !features.some((f) => same(f, feature)))) out.push(diamond(feature, true));
+  out.push('</g>');
+  return out.join('');
+}
 
 export function editorOverlay(circuit, opts = {}) {
   const parts = [];
@@ -1292,7 +1324,8 @@ export function editorOverlay(circuit, opts = {}) {
       const b = label.bbox();
       const a = label.anchorWorld();
       parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
-      if (label.points) parts.push(vertexHandles(label, true));
+      // Align to draws its own picks; vertex drag points would compete.
+      if (label.points && !opts.alignTool) parts.push(vertexHandles(label, true));
       else if (label.kind !== 'box') parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
     }
   } else if (opts.selLabel) {
@@ -1519,6 +1552,7 @@ export function editorOverlay(circuit, opts = {}) {
     }
   }
 
+  if (opts.alignTool) parts.push(alignToolSvg(opts.alignTool, unit));
   parts.push(...handleParts);
   return parts.join('\n');
 }

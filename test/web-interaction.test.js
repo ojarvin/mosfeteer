@@ -821,7 +821,7 @@ test('tools switch straight from inside another tool, dropping its uncommitted w
     get wire() { return state.wire; }, get directWire() { return null; }, get mode() { return state.mode; },
     get pendingPlace() { return state.pendingPlace; }, get visual() { return null; }, get drag() { return null; },
     hasModalPlacement: () => false, wireTerminalLetter: (key) => state.terminals.includes(key),
-    activatePlace: 'place', activateWire: 'wire', activateMove: () => {}, activateCopy: 'copy', activateHighlight: 'hl',
+    activatePlace: 'place', activateWire: 'wire', activateMove: () => {}, activateCopy: 'copy', activateAlign: 'align', activateHighlight: 'hl',
     activateShapeAnnotation: () => {}, activateNetLabel: 'netlabel', activateEquation: 'eq', activateVisual: 'visual', activateAnnotation: 'note',
   });
   let state = { mode: 'insert', pendingPlace: null, wire: null, terminals: [] };
@@ -834,6 +834,7 @@ test('tools switch straight from inside another tool, dropping its uncommitted w
   assert.equal(pick('w'), null); // re-picking Wire keeps the draft
   assert.equal(pick('c'), null); // pointing at a BJT, c is still its collector
   assert.equal(pick('L'), 'netlabel');
+  assert.equal(pick('A'), 'align');
   state = { mode: 'normal', pendingPlace: null, wire: null, terminals: [] };
   assert.equal(pick('w'), null); // idle normal mode is onNormalKey's
 });
@@ -1004,4 +1005,17 @@ test('9 arms net highlighting and 8 clears it unless they continue a count', () 
   assert.match(main, /dot\.className = 'net-highlight-dot';/);
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-mode-highlight" class="mode-control"[^>]*data-action="highlight"/);
+});
+
+test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const down = main.slice(main.indexOf('const pickedLine = endpointHit?.label'), main.indexOf("mode: 'labelmove', labelId: annotationGeometry.id"));
+  // Lines and arrows (grabbed by a vertex or segment), shape captions, and
+  // box outlines each try the copy grab first; a click without a drag still
+  // toggles the selection when the grab is released.
+  for (const target of ['pickedLine', 'annotationText', 'annotationGeometry']) {
+    const arm = down.indexOf(`armLabelCopyGrab(${target}, startWorld, startClient, ev)`);
+    assert.ok(arm >= 0, `${target} arms a copy`);
+    assert.ok(arm < down.indexOf(`isSelectionModifier(ev)`, down.indexOf(target)), `${target} copies before it toggles`);
+  }
 });

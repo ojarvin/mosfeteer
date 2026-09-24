@@ -280,6 +280,7 @@ beat show|dim|hide N ID ...    show, dim, or hide parts/labels from beat N on
 beat switch N REF|PHASE open|closed
                                set a switch (its whole phase) from beat N on
 beat phases [--after N]        add a beat per switch phase: what it connects shown, the rest dimmed
+timing                         add a timing diagram template under the drawing, one waveform per switch phase
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list
 ```
@@ -334,7 +335,7 @@ geometry; the rules for how to lay them out are in `style-guide.md`.
   while the current design has unsaved changes; save first, or the selection is
   restored and an unsaved-changes warning is logged.
 - In armed Move or Copy mode, drag from empty space to box-select the complete set before clicking to enter ghost mode; labels remain part of mixed selections.
-- `l` starts a non-connectivity multi-point line annotation and `a` a multi-point arrow; click successive points, then press Enter to end at the cursor (as for a wire) or double-click the last point. Backspace removes the last point, and holding Shift locks the leg from the previous point horizontal or vertical. Either tool places one annotation and returns to selection. Selected segments and vertices can be dragged; Shift squares a dragged end vertex against its neighbor. Shift/Ctrl-click adds a line or arrow to the selection or removes it.
+- `l` starts a non-connectivity multi-point line annotation and `a` a multi-point arrow; click successive points, then press Enter to end at the cursor (as for a wire) or double-click the last point. Backspace removes the last point, and holding Shift locks the leg from the previous point horizontal or vertical. Either tool places one annotation and returns to selection. Selected segments and vertices can be dragged; Shift squares a dragged end vertex against its neighbor. In Delete, clicking a vertex of a line or arrow with more than two points removes only that vertex (`annotation vertex-rm ID N`). Shift/Ctrl-click adds a line or arrow to the selection or removes it, and Ctrl/Cmd-drag drags a copy of it (with the rest of the selection when it is selected).
 - `w` is the single managed Wire command. It supports orthogonal or diagonal
   routes and can start at a terminal, an existing wire, or any grid point.
   Clicking a terminal commits immediately; clicking elsewhere adds a route

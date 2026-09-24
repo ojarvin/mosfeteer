@@ -147,7 +147,7 @@ export const naturalCompare = new Intl.Collator(undefined, { numeric: true, sens
 // the dialog. Keep this registry alongside the keyboard-facing toolbar.
 export const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
-    ['i / Shift+I / Shift+A', 'insert mode (fuzzy-search component and label placement)'],
+    ['i / Shift+I', 'insert mode (fuzzy-search component and label placement)'],
     ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal; Enter commits'],
     ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
     ['/ (wire)', 'flip which way the corner under the cursor turns'],
@@ -180,6 +180,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['dd', 'delete the selected object set'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
+    ['Shift+A', 'align to: click an edge or point of the selection, then a matching one of another object; the set moves as one'],
     ['9', 'highlight nets: each click cycles a net group\'s color'],
     ['8', 'remove every net highlight'],
     ['t', 'edit the primary selected label (no-op otherwise)'],

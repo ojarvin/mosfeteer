@@ -6,6 +6,7 @@ import {
   alignmentPlan, describeGuides, distributionPlan, ghostLayoutItem, layoutAnchor,
   layoutSuggestions, placementGuides,
 } from '../src/web/layout.js';
+import { alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, outlineOf } from '../src/web/layout.js';
 
 const item = (id, x, y, w = 80, h = 80, type = 'resistor') => ({
   id, kind: 'component', type, rotation: 0,
@@ -421,4 +422,48 @@ test('align lives in the Selection inspector and lines up box child labels', asy
   assert.match(main, /const children = plan\.deltas\.filter\(isChild\);/);
   assert.match(main, /\[\.\.\.moves\.filter\(\(move\) => !isChild\(move\)\), \.\.\.children\]/);
   assert.match(main, /label\.moveTo\(origin\.x \+ dx, origin\.y \+ dy\)/);
+});
+
+test('align to: a rectangle offers four edges, four corners, four edge midpoints, and its centre', () => {
+  const features = alignFeatures({ x: 0, y: 0, w: 160, h: 80 });
+  assert.deepEqual(features.filter((f) => f.kind === 'edge').map((f) => [f.name, f.axis, f.value]),
+    [['left', 'x', 0], ['right', 'x', 160], ['top', 'y', 0], ['bottom', 'y', 80]]);
+  const point = (name) => features.find((f) => f.kind === 'point' && f.name === name);
+  assert.deepEqual([point('top').x, point('top').y, point('top').axes], [80, 0, ['x']]);
+  assert.deepEqual(point('left').axes, ['y']);
+  assert.deepEqual(point('bottom-right').axes, ['x', 'y']);
+  assert.deepEqual([point('center').x, point('center').y], [80, 40]);
+});
+
+test('align to: points win over edges under the pointer, within tolerance only', () => {
+  const features = alignFeatures({ x: 0, y: 0, w: 160, h: 80 });
+  assert.equal(alignFeatureAt(features, { x: 3, y: 2 }, 10).name, 'top-left');
+  const edge = alignFeatureAt(features, { x: 4, y: 40 + 20 }, 10);
+  assert.deepEqual([edge.kind, edge.name], ['edge', 'left']);
+  assert.equal(alignFeatureAt(features, { x: 40, y: 30 }, 10), null);
+});
+
+test('align to: edges match edges that run the same way, points match points', () => {
+  const [left, , top] = alignFeatures({ x: 0, y: 0, w: 80, h: 80 });
+  const other = alignFeatures({ x: 400, y: 200, w: 80, h: 80 });
+  const point = other.find((f) => f.kind === 'point');
+  assert.equal(alignCompatible(left, other[1]), true);
+  assert.equal(alignCompatible(left, other[2]), false);
+  assert.equal(alignCompatible(top, other[3]), true);
+  assert.equal(alignCompatible(left, point), false);
+  assert.equal(alignCompatible(null, point), true, 'anything is a source');
+});
+
+test('align to: the set moves on the axes its source picks, in whole cells', () => {
+  const set = alignFeatures(outlineOf([{ bbox: { x: 0, y: 0, w: 80, h: 80 } }, { bbox: { x: 120, y: 40, w: 80, h: 120 } }]));
+  const target = alignFeatures({ x: 400, y: 400, w: 120, h: 40 });
+  const pick = (features, kind, name) => features.find((f) => f.kind === kind && f.name === name);
+  assert.deepEqual(alignToDelta(pick(set, 'edge', 'left'), pick(target, 'edge', 'right')), { dx: 520, dy: 0, exact: true });
+  assert.deepEqual(alignToDelta(pick(set, 'edge', 'bottom'), pick(target, 'edge', 'top')), { dx: 0, dy: 240, exact: true });
+  // The middle of a top edge centres horizontally and never moves vertically.
+  assert.deepEqual(alignToDelta(pick(set, 'point', 'top'), pick(target, 'point', 'top')), { dx: 360, dy: 0, exact: true });
+  assert.deepEqual(alignToDelta(pick(set, 'point', 'top-left'), pick(target, 'point', 'bottom-right')), { dx: 520, dy: 440, exact: true });
+  // A centre between grid points rounds to one and says so.
+  const odd = alignFeatures({ x: 0, y: 0, w: 120, h: 40 });
+  assert.deepEqual(alignToDelta(pick(set, 'point', 'left'), pick(odd, 'point', 'center')), { dx: 0, dy: -40, exact: false });
 });

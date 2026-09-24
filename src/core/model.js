@@ -990,6 +990,27 @@ export class LabelInstance {
     return true;
   }
 
+  /** True when vertex `index` can go: the path keeps two distinct points,
+   * and an arrow keeps its two-cell minimum length. */
+  canRemoveVertex(index) {
+    if (!['arrow', 'line'].includes(this.kind) || !Number.isInteger(index) || index < 0 || index >= this.points.length) return false;
+    const rest = this.points.filter((_, i) => i !== index);
+    if (rest.length < 2 || rest.every((p) => p.x === rest[0].x && p.y === rest[0].y)) return false;
+    if (this.kind !== 'arrow') return true;
+    return rest.reduce((sum, p, i) => (i ? sum + Math.hypot(p.x - rest[i - 1].x, p.y - rest[i - 1].y) : 0), 0) >= GRID * 2;
+  }
+
+  /** Drop vertex `index`; its neighbors join with one straight segment. */
+  removeVertex(index) {
+    if (!this.canRemoveVertex(index)) return false;
+    this.points = this.points.filter((_, i) => i !== index)
+      .filter((p, i, all) => !i || p.x !== all[i - 1].x || p.y !== all[i - 1].y);
+    this.anchor = { ...this.points[0] };
+    this.end = { ...this.points.at(-1) };
+    this.circuit.invalidateRoutingCache();
+    return true;
+  }
+
   toJSON() {
     return {
       id: this.id,
