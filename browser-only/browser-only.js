@@ -8591,7 +8591,6 @@ __exports.buildTopologyIdentities = buildTopologyIdentities;
 
 __modules["src/core/beats.js"] = function (__require, __exports) {
 const { getSymbol } = __require("src/core/components/index.js");
-const { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName } = __require("src/core/model.js");
 const { steinerBranches } = __require("src/core/router.js");
 /**
  * Beats: an ordered list of view states over one drawing, so a figure can be
@@ -8602,7 +8601,8 @@ const { steinerBranches } = __require("src/core/router.js");
  * first beat is relative to the drawing itself:
  *
  *   show / dim / hide  object ids: component refdes, free and net label ids
- *   switches     { refdes: 'open' | 'closed' }
+ *   switches     { phase: 'open' | 'closed' }, or a refdes for a switch
+ *                without a phase
  *   highlights   { netGroupKey: color | null }
  *
  * An object nobody mentions is shown in every beat, so an edit to the
@@ -8619,13 +8619,36 @@ const { steinerBranches } = __require("src/core/router.js");
 
 
 
-
 const SWITCH_TYPES = Object.freeze({ open: 'switch_open', closed: 'switch_closed' });
 const SWITCH_STATE_OF_TYPE = { switch_open: 'open', switch_closed: 'closed' };
 
 /** 'open' or 'closed' for a switch component, otherwise null. */
 function switchState(component) {
   return SWITCH_STATE_OF_TYPE[component?.type] || null;
+}
+
+/** The signal (clock phase) that controls a switch: its value, shown as its
+ * label. Switches with one phase form a group that opens and closes as one. */
+function switchPhase(component) {
+  return switchState(component) ? String(component.value ?? '').trim() : '';
+}
+
+/** What beats and groups know a switch by: its phase, or its own refdes. */
+function switchGroupKey(component) {
+  return switchPhase(component) || component.refdes;
+}
+
+/** Every switch sharing `key` (a phase or a lone switch's refdes). */
+function switchesOf(circuit, key) {
+  return [...circuit.components.values()].filter((c) => switchState(c) && switchGroupKey(c) === key);
+}
+
+/** The group key a command names: a switch's refdes or a phase. */
+function switchKeyFor(circuit, refOrPhase) {
+  const component = circuit.components.get(refOrPhase);
+  if (switchState(component)) return switchGroupKey(component);
+  if (switchesOf(circuit, String(refOrPhase).trim()).length) return String(refOrPhase).trim();
+  throw new Error(`"${refOrPhase}" is not a switch or a switch phase`);
 }
 
 // ----- stored form ------------------------------------------------------
@@ -8676,7 +8699,7 @@ function beatsToJSON(circuit) {
       const ids = beat[presence].filter(live);
       if (ids.length) out[presence] = ids;
     }
-    const switches = Object.entries(beat.switches).filter(([ref]) => switchState(circuit.components.get(ref)));
+    const switches = Object.entries(beat.switches).filter(([key]) => switchesOf(circuit, key).length);
     const highlights = Object.entries(beat.highlights);
     if (switches.length) out.switches = Object.fromEntries(switches);
     if (highlights.length) out.highlights = Object.fromEntries(highlights);
@@ -8763,7 +8786,8 @@ function writeValueTrack(beats, field, key, track, base) {
   });
 }
 
-const switchBase = (circuit, ref) => switchState(circuit.components.get(ref)) || 'open';
+// A group's drawn position; its switches are kept alike (Circuit#setSwitchState).
+const switchBase = (circuit, key) => switchState(switchesOf(circuit, key)[0]) || 'open';
 const highlightBase = (circuit, key) => circuit.netHighlights.get(key) || null;
 
 /** Change a track at `index` and at the following beats that looked the same,
@@ -8909,20 +8933,23 @@ function visibleBeats(circuit, id) {
   return visibilityTrack(circuit.beats, target).flatMap((presence, index) => (presence === 'hide' ? [] : [index]));
 }
 
-function switchStateAt(circuit, ref, index) {
-  const base = switchBase(circuit, ref);
-  return valueTrack(circuit.beats, 'switches', ref, base)[index] ?? base;
+/** A switch's position in beat `index`, given its refdes or its phase. */
+function switchStateAt(circuit, refOrPhase, index) {
+  const key = switchKeyFor(circuit, refOrPhase);
+  const base = switchBase(circuit, key);
+  return valueTrack(circuit.beats, 'switches', key, base)[index] ?? base;
 }
 
-/** Set a switch open or closed from beat `index` on. */
-function setSwitchFrom(circuit, index, ref, state) {
+/** Set a switch -- and the rest of its phase -- open or closed from beat
+ * `index` on. Takes a refdes or a phase. */
+function setSwitchFrom(circuit, index, refOrPhase, state) {
   checkIndex(circuit, index);
-  if (!switchState(circuit.components.get(ref))) throw new Error(`"${ref}" is not a switch`);
+  const key = switchKeyFor(circuit, refOrPhase);
   if (state !== 'open' && state !== 'closed') throw new Error('a switch is open or closed');
-  const base = switchBase(circuit, ref);
-  const track = valueTrack(circuit.beats, 'switches', ref, base);
+  const base = switchBase(circuit, key);
+  const track = valueTrack(circuit.beats, 'switches', key, base);
   carryForward(track, index, state);
-  writeValueTrack(circuit.beats, 'switches', ref, track, base);
+  writeValueTrack(circuit.beats, 'switches', key, track, base);
 }
 
 /** Highlight colors in beat `index`, keyed by net group. */
@@ -8961,307 +8988,6 @@ function cycleBeatHighlight(circuit, index, net, colors) {
   return next;
 }
 
-// ----- growing a build from a starting point -----------------------------------
-
-const isMarker = (component) => REFERENCE_MARKER_TYPES.includes(component?.type);
-const isAttachment = (component) => isMarker(component) || INTERFACE_PIN_TYPES.has(component?.type);
-// Terminals a signal enters by: it leaves a part through its other terminals.
-const CONTROL_TERMINALS = new Set(['gate', 'bulk', 'base', 'input']);
-// The way DC current runs through a transistor: [in, out]. Other parts
-// conduct either way.
-const CURRENT_FLOW = {
-  nmos: ['d', 's'], nmosb: ['d', 's'], npn: ['c', 'e'],
-  pmos: ['s', 'd'], pmosb: ['s', 'd'], pnp: ['e', 'c'],
-};
-// The shared terminal that makes two transistors a differential pair.
-const PAIR_TERMINAL = { nmos: 's', nmosb: 's', pmos: 's', pmosb: 's', npn: 'e', pnp: 'e' };
-const SOURCE_TYPES = new Set(['current_source', 'voltage_source']);
-const MAX_BRANCH_PATHS = 20000;
-
-/** Nets and rails as seen by growOrder: each part's terminals by net group,
- * split into conducting and control terminals, with rails left out. */
-function circuitGraph(circuit) {
-  const railGroups = new Set();
-  for (const net of circuit.nets.values()) {
-    const rail = net.terminals.some(({ comp }) => isMarker(circuit.components.get(comp)))
-      || (net.name && REFERENCE_MARKER_TYPES.some((type) => isReferenceMarkerGlobalName(type, net.name)));
-    if (rail) railGroups.add(circuit.netGroupKey(net));
-  }
-  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c)).map((c) => c.refdes);
-  const terminals = new Map(parts.map((ref) => [ref, []])); // ref -> [{ term, key, control, rail }]
-  for (const net of circuit.nets.values()) {
-    const key = circuit.netGroupKey(net);
-    for (const { comp, term } of net.terminals) {
-      if (!terminals.has(comp)) continue;
-      const direction = circuit.components.get(comp).terminalDefs.find((t) => t.name === term)?.direction;
-      terminals.get(comp).push({ term, key, control: CONTROL_TERMINALS.has(direction), rail: railGroups.has(key) });
-    }
-  }
-  const nodesOf = (ref, control) => [...new Set(terminals.get(ref).filter((t) => t.control === control && !t.rail).map((t) => t.key))];
-  return { railGroups, parts, terminals, nodesOf };
-}
-
-/**
- * Split the parts into sections, the units a build reveals whole:
- *
- * - current branches: runs from one rail to another in the direction current
- *   flows (into a PMOS source, out of an NMOS source), covered greedily by the
- *   longest runs, so a stack like M7-M6-M5-M4 is one section;
- * - a differential pair joins its two branches and their tail;
- * - a passive from a rail to a node of exactly one branch joins that branch
- *   (a load capacitor, a drain resistor);
- * - everything else joins what it conducts to, away from the branches.
- */
-function growSections(circuit, graph) {
-  const { railGroups, parts, terminals } = graph;
-  const type = (ref) => circuit.components.get(ref).type;
-  const active = (ref) => CURRENT_FLOW[type(ref)] || SOURCE_TYPES.has(type(ref));
-  const nodeOf = (ref, term) => terminals.get(ref).find((t) => t.term === term)?.key;
-  const conducting = (ref) => terminals.get(ref).filter((t) => !t.control);
-  // Where current can go from `key` through `ref`.
-  const through = (ref, key) => {
-    const flow = CURRENT_FLOW[type(ref)];
-    if (flow) return nodeOf(ref, flow[0]) === key && nodeOf(ref, flow[1]) ? [nodeOf(ref, flow[1])] : [];
-    const ends = conducting(ref).map((t) => t.key);
-    return ends.length === 2 && ends.includes(key) ? ends.filter((end) => end !== key) : [];
-  };
-  const twoTerminal = parts.filter((ref) => CURRENT_FLOW[type(ref)] || conducting(ref).length === 2);
-  const paths = [];
-  const walk = (key, from, used, path) => {
-    if (paths.length > MAX_BRANCH_PATHS) return;
-    if (railGroups.has(key) && key !== from && path.length) {
-      if (path.some(active)) paths.push(path.slice());
-      return;
-    }
-    for (const ref of twoTerminal) {
-      if (used.has(ref)) continue;
-      for (const next of through(ref, key)) {
-        if (next === from) continue;
-        used.add(ref);
-        path.push(ref);
-        walk(next, from, used, path);
-        path.pop();
-        used.delete(ref);
-      }
-    }
-  };
-  for (const rail of railGroups) walk(rail, rail, new Set(), []);
-
-  const sectionOf = new Map();
-  const sections = [];
-  const place = (refs) => {
-    const section = new Set(refs);
-    for (const ref of refs) sectionOf.set(ref, section);
-    sections.push(section);
-    return section;
-  };
-  // Longest runs of new active parts first; runs that add only passives are
-  // not branches of their own.
-  const fresh = (path) => path.filter((ref) => !sectionOf.has(ref));
-  for (;;) {
-    let best = null;
-    let bestScore = 0;
-    for (const path of paths) {
-      const refs = fresh(path);
-      const score = refs.filter(active).length * 100 - refs.length;
-      if (refs.some(active) && score > bestScore) { best = refs; bestScore = score; }
-    }
-    if (!best) break;
-    place(best);
-  }
-  const merge = (a, b) => {
-    if (a === b) return;
-    for (const ref of b) { a.add(ref); sectionOf.set(ref, a); }
-    sections.splice(sections.indexOf(b), 1);
-  };
-  for (const a of parts) {
-    for (const b of parts) {
-      if (a >= b || !sectionOf.has(a) || !sectionOf.has(b) || type(a) !== type(b) || !PAIR_TERMINAL[type(a)]) continue;
-      const shared = nodeOf(a, PAIR_TERMINAL[type(a)]);
-      if (shared && !railGroups.has(shared) && shared === nodeOf(b, PAIR_TERMINAL[type(b)])) merge(sectionOf.get(a), sectionOf.get(b));
-    }
-  }
-  const branchNodes = new Map(); // node -> sections conducting on it
-  for (const section of sections) {
-    for (const ref of section) {
-      for (const { key, rail } of conducting(ref)) {
-        if (rail) continue;
-        if (!branchNodes.has(key)) branchNodes.set(key, new Set());
-        branchNodes.get(key).add(section);
-      }
-    }
-  }
-  const leftover = parts.filter((ref) => !sectionOf.has(ref));
-  for (const ref of leftover) {
-    const ends = conducting(ref);
-    const inner = ends.filter((t) => !t.rail).map((t) => t.key);
-    const owners = inner.length === 1 ? branchNodes.get(inner[0]) : null;
-    if (!active(ref) && ends.length === 2 && owners?.size === 1) {
-      const [section] = owners;
-      section.add(ref);
-      sectionOf.set(ref, section);
-    }
-  }
-  // The rest: whatever conducts together away from the branches.
-  for (const ref of parts) {
-    if (sectionOf.has(ref)) continue;
-    const section = place([ref]);
-    const queue = [ref];
-    while (queue.length) {
-      const current = queue.pop();
-      for (const { key, rail } of conducting(current)) {
-        if (rail || branchNodes.has(key)) continue;
-        for (const other of parts) {
-          if (sectionOf.has(other) || !conducting(other).some((t) => t.key === key)) continue;
-          section.add(other);
-          sectionOf.set(other, section);
-          queue.push(other);
-        }
-      }
-    }
-  }
-  return sections.map((section) => [...section].sort());
-}
-
-/**
- * The parts a build reveals, beat by beat, as [{ refs, name }]:
- *
- * 1. Stages, from the input to the output. Stage 1 is the section the input
- *    pins drive (or the sections of the given parts); each next stage is the
- *    sections on the nodes the previous stage drives. Parallel sections at
- *    the same depth, such as both halves of a folded cascode, share a stage.
- * 2. Feedback: a section that would drive an earlier stage's gate or join
- *    an earlier stage's node is held back and gets a beat of its own, whole.
- * 3. Bias: one beat per control line the shown parts hang from, in the order
- *    they appeared, with the sections that drive it.
- * 4. Anything else, together.
- *
- * Sections are growSections' current branches. Nets join by name, as they do
- * electrically, but supply and ground rails (a rail marker, or a net named
- * VDD, VSS, GND, or VCM) join nothing. Pins and rail markers are not listed;
- * growBeats shows them with the parts on their wire.
- */
-function growOrder(circuit, startIds = []) {
-  const graph = circuitGraph(circuit);
-  const sections = growSections(circuit, graph).map((refs) => ({
-    refs,
-    signal: [...new Set(refs.flatMap((ref) => graph.nodesOf(ref, false)))],
-    control: [...new Set(refs.flatMap((ref) => graph.nodesOf(ref, true)))],
-  }));
-  const sectionOf = new Map(sections.flatMap((section) => section.refs.map((ref) => [ref, section])));
-  const netKeysOf = (id) => [...circuit.nets.values()]
-    .filter((net) => net.terminals.some(({ comp }) => comp === id))
-    .map((net) => circuit.netGroupKey(net));
-  const depth = new Map(); // signal node -> stage that drives it (0: an input)
-  const controlStage = new Map(); // control node -> first stage hanging from it
-  let first;
-  if (startIds.length) {
-    const pins = startIds.filter((id) => INTERFACE_PIN_TYPES.has(circuit.components.get(id)?.type));
-    for (const key of pins.flatMap(netKeysOf)) depth.set(key, 0);
-    first = new Set(startIds.map((id) => sectionOf.get(beatTargetId(circuit, id))).filter(Boolean));
-  } else {
-    const inputs = [...circuit.components.values()].filter((c) => c.type === 'input').map((c) => c.refdes);
-    for (const key of inputs.flatMap(netKeysOf)) depth.set(key, 0);
-    first = new Set();
-  }
-  for (const section of sections) {
-    if ([...section.signal, ...section.control].some((key) => depth.get(key) === 0)) first.add(section);
-  }
-  if (!first.size) throw new Error(startIds.length ? 'grow from a part or a pin (not a rail marker or junction dot)' : 'there are no input pins to grow from; pick a part to start at');
-
-  const placed = new Set();
-  const steps = [];
-  const feedback = [];
-  const show = (group, name) => {
-    for (const section of group) placed.add(section);
-    steps.push({ refs: group.flatMap((section) => section.refs).sort(), name });
-  };
-  const enter = (group, stage) => {
-    for (const section of group) {
-      for (const key of section.signal) if (!depth.has(key)) depth.set(key, stage);
-      for (const key of section.control) if (!controlStage.has(key)) controlStage.set(key, stage);
-    }
-  };
-  // Feedback reaches back: it joins a node of an earlier stage, or drives
-  // (conducts onto) the gate line of one. Bias lines are driven by parts no
-  // signal node reaches, so they never come up here.
-  const reachesBack = (section, stage) => section.signal.some((key) => depth.get(key) < stage - 1 || controlStage.get(key) < stage);
-  // Passive parts are judged once the stage's transistors hold their nodes,
-  // so a capacitor from one stage's output to the next is feedback.
-  const spansStages = (section) => {
-    const depths = section.signal.filter((key) => depth.has(key)).map((key) => depth.get(key));
-    return depths.length > 1 && Math.min(...depths) < Math.max(...depths);
-  };
-  const isPassive = (section) => !section.refs.some((ref) => {
-    const type = circuit.components.get(ref).type;
-    return CURRENT_FLOW[type] || SOURCE_TYPES.has(type);
-  });
-  let stage = 1;
-  let group = [...first];
-  enter(group, stage);
-  while (group.length) {
-    show(group, `Stage ${stage}`);
-    stage += 1;
-    const frontier = new Set([...depth].filter(([, d]) => d === stage - 1).map(([key]) => key));
-    const reached = sections.filter((section) => !placed.has(section) && !feedback.includes(section)
-      && [...section.signal, ...section.control].some((key) => frontier.has(key)));
-    const active = reached.filter((section) => !isPassive(section));
-    feedback.push(...active.filter((section) => reachesBack(section, stage)));
-    group = active.filter((section) => !reachesBack(section, stage));
-    enter(group, stage);
-    for (const section of reached.filter(isPassive)) {
-      if (reachesBack(section, stage) || spansStages(section)) feedback.push(section);
-      else group.push(section);
-    }
-    enter(group, stage);
-  }
-  for (const section of feedback) show([section], 'Feedback');
-  // Bias lines in the order the shown parts hang from them.
-  for (let i = 0; i < steps.length; i += 1) {
-    const shown = sections.filter((section) => section.refs.some((ref) => steps[i].refs.includes(ref)));
-    for (const key of [...new Set(shown.flatMap((section) => section.control))].sort()) {
-      const drivers = sections.filter((section) => !placed.has(section) && section.signal.includes(key));
-      if (!drivers.length) continue;
-      const name = [...circuit.nets.values()].find((net) => circuit.netGroupKey(net) === key)?.name;
-      show(drivers, name ? `Bias ${name}` : 'Bias');
-    }
-  }
-  const rest = sections.filter((section) => !placed.has(section));
-  if (rest.length) show(rest, '');
-  return steps;
-}
-
-/**
- * Insert one beat per growOrder step at `index`, each showing the parts
- * reached so far. A pin or rail marker appears with the first part on its wire, and
- * equation labels wait for the last beat. Anything else keeps its look.
- * Returns the number of beats added.
- */
-function growBeats(circuit, startIds = [], { index = circuit.beats.length } = {}) {
-  const steps = growOrder(circuit, startIds);
-  const stepOf = new Map(steps.flatMap(({ refs }, step) => refs.map((ref) => [ref, step])));
-  const last = steps.length - 1;
-  // A pin or rail marker shows with the first part on its own wire; a rail's
-  // name would tie every marker on it to the first part anywhere.
-  for (const marker of [...circuit.components.values()].filter(isAttachment)) {
-    const partSteps = [...circuit.nets.values()]
-      .filter((net) => net.terminals.some(({ comp }) => comp === marker.refdes))
-      .flatMap((net) => net.terminals.map(({ comp }) => stepOf.get(comp)))
-      .filter((step) => step !== undefined);
-    stepOf.set(marker.refdes, partSteps.length ? Math.min(...partSteps) : last);
-  }
-  for (const label of circuit.labels.values()) {
-    if (label.math && beatObjectKind(circuit, label.id) === 'label') stepOf.set(label.id, last);
-  }
-  steps.forEach(({ name }, step) => addBeat(circuit, { index: index + step, name }));
-  for (const [id, first] of stepOf) {
-    for (let step = 0; step < steps.length; step += 1) {
-      setPresenceAt(circuit, index + step, [id], step >= first ? 'show' : 'hide');
-    }
-  }
-  return steps.length;
-}
-
 // ----- model maintenance -----------------------------------------------------
 
 /** A renamed component keeps its place in every beat. */
@@ -9272,6 +8998,17 @@ function renameBeatObject(circuit, from, to) {
       beat.switches[to] = beat.switches[from];
       delete beat.switches[from];
     }
+  }
+}
+
+/** A switch starting a new phase brings its old phase's per-beat positions,
+ * so relabelling a phase one switch at a time keeps its beats. `move` drops
+ * them from the old phase, once no switch is left on it. */
+function carryBeatSwitchKey(circuit, from, to, { move = false } = {}) {
+  for (const beat of circuit.beats || []) {
+    if (!Object.hasOwn(beat.switches, from) || Object.hasOwn(beat.switches, to)) continue;
+    beat.switches[to] = beat.switches[from];
+    if (move) delete beat.switches[from];
   }
 }
 
@@ -9435,11 +9172,11 @@ function resolveBeat(circuit, index) {
   const dimRefs = new Set([...presence].filter(([, look]) => look === 'dim').map(([ref]) => ref));
 
   const switchTypes = new Map();
-  for (const ref of new Set(beats.flatMap((beat) => Object.keys(beat.switches)))) {
-    const component = circuit.components.get(ref);
-    if (!switchState(component)) continue;
-    const type = SWITCH_TYPES[switchStateAt(circuit, ref, index)];
-    if (type !== component.type) switchTypes.set(ref, type);
+  const listedKeys = new Set(beats.flatMap((beat) => Object.keys(beat.switches)));
+  for (const component of circuit.components.values()) {
+    if (!switchState(component) || !listedKeys.has(switchGroupKey(component))) continue;
+    const type = SWITCH_TYPES[switchStateAt(circuit, component.refdes, index)];
+    if (type !== component.type) switchTypes.set(component.refdes, type);
   }
 
   const solders = [...circuit.components.values()].filter((c) => c.type === 'solder');
@@ -9506,6 +9243,10 @@ function resolveBeat(circuit, index) {
 }
 
 __exports.switchState = switchState;
+__exports.switchPhase = switchPhase;
+__exports.switchGroupKey = switchGroupKey;
+__exports.switchesOf = switchesOf;
+__exports.switchKeyFor = switchKeyFor;
 __exports.beatsFromJSON = beatsFromJSON;
 __exports.beatsToJSON = beatsToJSON;
 __exports.nextBeatId = nextBeatId;
@@ -9527,9 +9268,8 @@ __exports.setSwitchFrom = setSwitchFrom;
 __exports.highlightsAt = highlightsAt;
 __exports.setHighlightFrom = setHighlightFrom;
 __exports.cycleBeatHighlight = cycleBeatHighlight;
-__exports.growOrder = growOrder;
-__exports.growBeats = growBeats;
 __exports.renameBeatObject = renameBeatObject;
+__exports.carryBeatSwitchKey = carryBeatSwitchKey;
 __exports.renameBeatHighlightKey = renameBeatHighlightKey;
 __exports.drawnNetPaths = drawnNetPaths;
 __exports.resolveBeat = resolveBeat;
@@ -9547,7 +9287,7 @@ const { crossNetOverlaps } = __require("src/core/wiring.js");
 const { svgString } = __require("src/core/render.js");
 const { hiddenSupplyBarLabels } = __require("src/core/supply-bars.js");
 const { analyzeSmallSignal } = __require("src/core/analysis/index.js");
-const { addBeat, beatTitle, growBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js");
+const { addBeat, beatTitle, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js");
 
 
 
@@ -10064,13 +9804,13 @@ function commandHelp() {
     '    --ignore-channel-length-modulation --dominant-pole',
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
-    '  switch <refdes> open|closed    - draw a switch open or closed',
+    '  switch REF|PHASE open|closed   - draw a switch, and all of its phase, open or closed',
+    '  value <switch> PHASE           - set the phase (control signal) a switch shows as its label',
     '  beat list                      - list beats (presentation steps; see docs/beats.md)',
     '  beat add [NAME] [--after N]    - add a beat that looks like the one before it',
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
-    '  beat switch N REF open|closed  - set a switch position from beat N on',
-    '  beat grow [ID ...] [--after N] - add beats stage by stage from the inputs (or these parts)',
+    '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -10397,9 +10137,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
   if (cmd === 'switch') {
     const [ref, state] = pos;
-    if (!ref || !state) throw new Error('usage: switch <refdes> open|closed');
-    circuit.setSwitchState(ref, state);
-    return result(`${ref} drawn ${state}`, null, true);
+    if (!ref || !state) throw new Error('usage: switch REF|PHASE open|closed');
+    const group = circuit.setSwitchState(ref, state);
+    return result(`${group.map((c) => c.refdes).join(' ')} drawn ${state}`, null, true);
   }
 
   // ---------- files / render ----------
@@ -10618,19 +10358,14 @@ function beatCommand(circuit, pos, flags, result) {
     const listed = setPresenceFrom(circuit, index, ids, sub);
     return result(`${{ show: 'shown', dim: 'dimmed', hide: 'hidden' }[sub]} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
   }
-  if (sub === 'grow') {
-    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
-    const count = growBeats(circuit, pos.slice(1), { index });
-    return result(`added beats ${index + 1}..${index + count} growing from ${pos.slice(1).join(' ') || 'the input pins'}`, { index: index + 1, count }, true);
-  }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);
     const [ref, state] = pos.slice(2);
-    if (!ref || !state) throw new Error('usage: beat switch N REF open|closed');
+    if (!ref || !state) throw new Error('usage: beat switch N REF|PHASE open|closed');
     setSwitchFrom(circuit, index, ref, state);
     return result(`${ref} ${state} from beat ${index + 1}`, null, true);
   }
-  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch|grow`);
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch`);
 }
 
 function netCommand(circuit, pos, result) {
@@ -12545,7 +12280,7 @@ const { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCross
 const { collapseCollinear } = __require("src/core/wireedit.js");
 const { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js");
 const { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js");
-const { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, switchState } = __require("src/core/beats.js");
+const { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js");
 
 
 
@@ -14185,15 +13920,50 @@ class Circuit {
     return inst;
   }
 
-  /** Draw a switch open or closed. Both symbols share one footprint and
-   * terminals, so connectivity and routing are untouched. */
-  setSwitchState(refdes, state) {
-    const component = this.getComponent(refdes);
-    if (!switchState(component)) throw new Error(`"${refdes}" is not a switch`);
+  /** Draw a switch -- and every switch on its phase -- open or closed.
+   * Takes a refdes or a phase. Both symbols share one footprint and
+   * terminals, so connectivity and routing are untouched. Returns the
+   * switches drawn. */
+  setSwitchState(refOrPhase, state) {
     if (!SWITCH_TYPES[state]) throw new Error('a switch is open or closed');
-    component.type = SWITCH_TYPES[state];
-    component.def = getSymbol(component.type);
-    return component;
+    const group = switchesOf(this, switchKeyFor(this, refOrPhase));
+    for (const component of group) {
+      component.type = SWITCH_TYPES[state];
+      component.def = getSymbol(component.type);
+    }
+    return group;
+  }
+
+  /** A switch's label names the signal (clock phase) that controls it, as a
+   * rail marker's names its rail; the refdes stays its unique identity. The
+   * phase is kept as the switch's value. Text naming the switch itself
+   * clears the phase. A switch joining a phase takes the phase's position;
+   * one starting a new phase brings its old phase's beats. */
+  _syncSwitchLabel(refdes, text) {
+    const component = this.components.get(refdes);
+    if (!switchState(component)) return false;
+    const before = switchGroupKey(component);
+    const source = String(text ?? '').trim();
+    const phase = !source || labelMatchesRefdes(source, refdes) ? '' : source;
+    component.value = phase;
+    const label = this.labelOf(refdes);
+    const display = phase || componentLabelText(refdes, source || undefined);
+    if (label && label._text !== display) {
+      label._text = display;
+      label.clearRenderedTextBounds();
+    }
+    const after = switchGroupKey(component);
+    if (after !== before) {
+      const peers = switchesOf(this, after).filter((other) => other !== component);
+      if (peers.length) {
+        component.type = peers[0].type;
+        component.def = peers[0].def;
+      } else {
+        carryBeatSwitchKey(this, before, after, { move: !switchesOf(this, before).length });
+      }
+    }
+    this.invalidateRoutingCache();
+    return true;
   }
 
   getComponent(refdes) {
@@ -14305,7 +14075,7 @@ class Circuit {
       return existing;
     }
     return this.addLabel({
-      text: componentLabelText(component.refdes),
+      text: switchState(component) && component.value ? component.value : componentLabelText(component.refdes),
       owner: component.refdes,
       offset: component.def.labelOffset,
       align: 'center',
@@ -14652,6 +14422,7 @@ class Circuit {
 
   setValue(refdes, value) {
     const c = this.getComponent(refdes);
+    if (this._syncSwitchLabel(refdes, value)) return c;
     c.value = String(value);
     if (isReferenceMarker(c) && this.labelOf(refdes)) this._syncReferenceMarkerLabel(refdes, c.value);
     return c;
@@ -15080,6 +14851,7 @@ class Circuit {
   _syncComponentLabel(refdes, text) {
     const component = this.components.get(refdes);
     if (!component || isReferenceMarker(component)) return false;
+    if (this._syncSwitchLabel(refdes, text)) return true;
     const next = normalizeComponentRefdes(text);
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) throw new Error(`invalid component name "${String(text).trim()}"`);
     this.renameComponent(refdes, next, { displayLabel: text });
@@ -18408,6 +18180,10 @@ class Circuit {
       try { circuit._ensureComponentInstanceLabel(component); } catch { /* label id in use */ }
     }
     for (const component of circuit.components.values()) circuit._syncSignalInputLabels(component);
+    // A switch's value is its phase, shown as its label.
+    for (const component of circuit.components.values()) {
+      if (switchState(component) && component.value) circuit._syncSwitchLabel(component.refdes, component.value);
+    }
     // Restore direct pin contacts that are not represented by wire geometry.
     if (!data.topologyOnly) circuit.connectCoincident();
     // Migrate legacy owned instance labels that persisted a compact trailing
@@ -18574,7 +18350,7 @@ const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs
 const { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
 const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
 const { hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js");
-const { drawnNetPaths } = __require("src/core/beats.js");
+const { drawnNetPaths, switchState } = __require("src/core/beats.js");
 const { normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js");
 
 
@@ -19089,12 +18865,14 @@ function shapeAnnotationSvg(label, opacity = '') {
  * without ids, labels, or accessibility wrappers. Editor effects restyle it
  * with CSS, e.g. the commit-feedback glow that traces the symbol itself.
  */
-function componentShapeSvg(c) {
+/** `def` draws another symbol in the part's place, such as a switch in the
+ * position a beat gives it. */
+function componentShapeSvg(c, def = c.def) {
   const t = c.transform;
   const body = c.type === 'block'
     ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
-    : c.def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
-  const text = c.def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
+    : def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
+  const text = def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
   return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
 }
 
@@ -19468,7 +19246,8 @@ function svgString(circuit, opts = {}) {
       );
     }
     const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
-    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
+    // A switch's value is its phase, which its owned label already shows.
+    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel && !switchState(c)) {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
       const valueText = def.textPos.font
         ? symbolTextSvg({ ...def.textPos, text: c.value }, c.transform, c.style?.color || '#333')
@@ -19511,7 +19290,8 @@ function svgString(circuit, opts = {}) {
 
 /**
  * Editor-only overlays rendered on top of svgString output.
- * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
+ * opts.beatView: the beat on screen (beats.js resolveBeat), so glows trace the
+ * switch positions it draws. opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
  * halos around each selected component's bbox. opts.nets [net]: highlight
  * (select) net routes. opts.netMarkers [refdes]: reference markers and ports on
  * those nets, glowing like their wires. opts.netSolder [{x,y}]: solder halos
@@ -19552,7 +19332,7 @@ function editorOverlay(circuit, opts = {}) {
     if (!c) continue;
     const r = c.bboxWorld();
     const pad = 6;
-    parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c)}</g>`);
+    parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c, opts.beatView?.defOf(c))}</g>`);
     parts.push(`<rect class="selection-outline" x="${fmt(r.x - pad)}" y="${fmt(r.y - pad)}" width="${fmt(r.w + pad * 2)}" height="${fmt(r.h + pad * 2)}" fill="none" stroke="${SELECT}" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" rx="6" pointer-events="none"/>`);
   }
 
@@ -19837,7 +19617,7 @@ function editorOverlay(circuit, opts = {}) {
   // linework, in the net highlight's color.
   for (const ref of new Set(opts.netMarkers || [])) {
     const c = circuit.components.get(ref);
-    if (c) parts.push(`<g class="selection-glow net-marker-glow" pointer-events="none">${componentShapeSvg(c)}</g>`);
+    if (c) parts.push(`<g class="selection-glow net-marker-glow" pointer-events="none">${componentShapeSvg(c, opts.beatView?.defOf(c))}</g>`);
   }
 
   for (const net of opts.nets || []) {
@@ -24398,7 +24178,7 @@ const { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, com
 const { getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js");
 const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
 const { hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js");
-const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, growBeats, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchState, switchStateAt } = __require("src/core/beats.js");
+const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt } = __require("src/core/beats.js");
 const { TipBook } = __require("src/web/tips.js");
 const { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js");
 const { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js");
@@ -28649,24 +28429,33 @@ function toggleSelectionInBeat(target = 'hide') {
   render();
 }
 
-/** s: open or close the selected switches -- in the drawing, or from the
- * beat on screen on. */
+/** The selected switches' groups: each phase once, or a lone switch. */
+function selectedSwitchGroups() {
+  return [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
+}
+
+// Plain text for messages: φ_{1} reads φ1.
+const plainMarkup = (text) => String(text).replace(/[_^]\{([^}]*)\}/g, '$1');
+const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))} switches` : c.refdes);
+
+/** s: open or close the selected switches, with the rest of their phases --
+ * in the drawing, or from the beat on screen on. */
 function flipSelectedSwitches() {
-  const switches = selectedComps().filter((c) => switchState(c));
-  if (!switches.length) {
-    hintLine('SWITCH: select a switch to open or close it');
+  const groups = selectedSwitchGroups();
+  if (!groups.length) {
+    hintLine('SWITCH: select a switch to open or close it (with every switch on its phase)');
     return;
   }
   const index = activeBeatIndex();
   const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(circuit, c.refdes, index));
-  const next = switches.every((c) => stateOf(c) === 'closed') ? 'open' : 'closed';
+  const next = groups.every((c) => stateOf(c) === 'closed') ? 'open' : 'closed';
   commit(() => {
-    for (const c of switches) {
+    for (const c of groups) {
       if (index === null) circuit.setSwitchState(c.refdes, next);
       else setSwitchFrom(circuit, index, c.refdes, next);
     }
   });
-  logLine(`${switches.map((c) => c.refdes).join(', ')} ${next}${index === null ? '' : ` from beat ${index + 1}`}`);
+  logLine(`${groups.map(switchGroupName).join(', ')} ${next}${index === null ? '' : ` from beat ${index + 1}`}`);
   render();
 }
 
@@ -28819,34 +28608,13 @@ function openBeatMenu(index, x, y) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 
-/** Add beats that build the drawing up stage by stage from the selected
- * parts, or from the input pins when nothing is selected: the stages, then
- * each feedback path, then each bias line (core/beats.js growOrder). */
-function growBeatsFrom(ids) {
-  const current = activeBeatIndex();
-  const index = current === null ? circuit.beats.length : current + 1;
-  let count = 0;
-  commit(() => { count = growBeats(circuit, ids, { index }); });
-  if (!count) return;
-  const from = ids.length ? selectedComps().map((c) => c.refdes).join(', ') : 'the input pins';
-  logLine(`added ${count} beats from ${from}: stage by stage, then feedback, then bias`);
-  setActiveBeat(index);
-}
-
-function growBeatsFromSelection() {
-  growBeatsFrom([...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)]);
-}
-
-/** Context-menu items for beats: grow, show/hide, switch position. */
+/** Context-menu items for beats: show/hide, switch position. */
 function appendBeatContextItems(group, target) {
-  if (target.kind === 'component' && target.value.type !== 'solder') {
-    appendContextItem(group, 'Grow beats from here', growBeatsFromSelection);
-  }
   if (target.kind === 'component' && switchState(target.value)) {
     const index = activeBeatIndex();
     const state = index === null ? switchState(target.value) : switchStateAt(circuit, target.value.refdes, index);
     const where = index === null ? '' : ' from this beat';
-    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} switch${where}`, flipSelectedSwitches, { shortcut: 's' });
+    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} ${switchPhase(target.value) ? switchGroupName(target.value) : 'switch'}${where}`, flipSelectedSwitches, { shortcut: 's' });
   }
   const index = activeBeatIndex();
   if (index === null || (target.kind !== 'component' && target.kind !== 'label')) return;
@@ -28954,7 +28722,6 @@ document.addEventListener('fullscreenchange', () => {
 document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
 document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
-document.getElementById('btn-grow-beats')?.addEventListener('click', () => growBeatsFrom([]));
 document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);
@@ -29848,6 +29615,7 @@ function renderCanvas(modelKey) {
     };
   }
   const overlay = editorOverlay(circuit, {
+    beatView: activeBeatView(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision),
     tutorialTargets: tutorialTargetRects(),
     pageGuide: pageGuide ? { frame: circuitPageGuideFrame(circuit, pageGuide), view, caption: pageGuideCaption(pageGuide) } : null,
     cursor,
@@ -35438,6 +35206,8 @@ function setPanelCount(id, shown, total) {
 
 function componentDisplayName(comp) {
   if (isReferenceMarker(comp)) return comp.refdes;
+  // A switch's label is its phase; the panel names the switch itself.
+  if (switchPhase(comp)) return componentLabelText(comp.refdes);
   return circuit.labelOf(comp.refdes)?.text || componentLabelText(comp.refdes);
 }
 
@@ -35522,6 +35292,7 @@ function renderComponents() {
     if (comp.analysis?.gmroLarge === false) analysisTags.push('finite g_mr_o');
     if (comp.analysis?.ignoreBodyEffect === true) analysisTags.push('V_BS=0');
     if (comp.analysis?.ignoreBodyEffect === false) analysisTags.push('body effect');
+    if (switchPhase(comp)) analysisTags.unshift(plainMarkup(switchPhase(comp)));
     meta.textContent = `${comp.type}${analysisTags.map((tag) => ` · ${tag}`).join('')}`;
 
     row.appendChild(ref);
@@ -35718,7 +35489,8 @@ function startComponentRename(comp, ref) {
   input.type = 'text';
   input.className = 'rename-input';
   const ordinaryInstance = !isReferenceMarker(comp);
-  const currentLabel = ordinaryInstance ? circuit.labelOf(comp.refdes) : null;
+  // A switch's label is its phase; renaming here renames the switch.
+  const currentLabel = ordinaryInstance && !switchPhase(comp) ? circuit.labelOf(comp.refdes) : null;
   input.value = currentLabel?.text || (ordinaryInstance ? componentLabelText(comp.refdes) : comp.refdes);
   input.placeholder = input.value;
   input.spellcheck = false;
@@ -35876,7 +35648,7 @@ function renderDetail() {
     return;
   }
 
-  detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${comp.type} · ${comp.value}` : comp.type));
+  detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${comp.type} · ${switchPhase(comp) ? `phase ${plainMarkup(comp.value)}` : comp.value}` : comp.type));
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   thead.innerHTML = '<tr><th>Pin</th><th>Net</th><th>Position</th></tr>';
@@ -40640,7 +40412,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Alt+→ / Alt+←', 'next / previous beat (also PageDown / PageUp); before the first is the whole drawing'],
     ['h (on a beat)', 'hide the selection from this beat on, or show it when hidden'],
     ['Shift+H (on a beat)', 'dim the selection from this beat on, or show it when dimmed'],
-    ['s', 'open or close the selected switches (on a beat: from that beat on)'],
+    ['s', 'open or close the selected switches with their whole phase (on a beat: from that beat on)'],
     ['9 / 8 (on a beat)', 'highlights belong to the beat on screen and the ones after it'],
     ['Shift+F5', 'present the beats full screen; arrows or Space step, . blanks, Esc ends'],
   ]],
