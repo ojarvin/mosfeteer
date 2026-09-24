@@ -4320,7 +4320,7 @@ function renderBeatStrip() {
     }
     if (beatHintEl) {
       beatHintEl.textContent = selectedBeatIds.size > 1
-        ? `${selectedBeatIds.size} beats picked — Delete removes them (undo brings them back)`
+        ? `${selectedBeatIds.size} beats picked — Delete removes them (undoable) · Esc lets go`
         : beatHintText(index);
     }
   };
@@ -12167,6 +12167,15 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  // Escape first lets go of beats picked in the strip; the beat on screen stays.
+  if (key === 'Escape' && selectedBeatIds.size > 1) {
+    const active = circuit.beats[activeBeatIndex()];
+    selectedBeatIds = new Set(active ? [active.id] : []);
+    beatAnchorId = active?.id || null;
+    beatStripActive = false;
+    render();
+    return;
+  }
   if (key === 'Escape') {
     pendingKey = null;
     moveMode = null;
