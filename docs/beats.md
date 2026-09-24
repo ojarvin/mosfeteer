@@ -38,18 +38,29 @@ where the transistor appears, and the wire to it disappears with it.
 
 ## Growing a build
 
-"Grow beats from here" (a part's context menu; `beat grow ID ...`) drafts
-beats from a starting part or pin (`growOrder`/`growBeats` in `beats.js`):
+"Grow beats from the inputs" (More menu; `beat grow`) or "Grow beats from
+here" (a part's context menu; `beat grow ID ...`) drafts beats that build the
+drawing up (`growOrder`/`growBeats` in `beats.js`). The units are
+**sections**, each revealed whole:
 
-1. **Signal path.** The start, then everything one connection further out.
-   A connection leaves a part through a drain, source, output, or two-terminal
-   lead, never back out of a gate, base, or input: a drain reaches the next
-   stage's gate, but a gate does not reach its bias generator.
-2. **Bias.** One beat per control line the shown parts hang from, in the
-   order they were reached, named after the line (`Bias V_{BN}`). It brings
-   what drives the line: the parts conducting on it and the stacks in series
-   with them.
-3. **The rest**, if anything is still unreached, together.
+- a current branch: a run from one rail to another in the direction current
+  flows (into a PMOS source, out of an NMOS source), longest runs first;
+- a differential pair, joined with its tail;
+- series passives from a rail to one branch join it (a load capacitor);
+  other parts group with what they conduct to.
+
+The beats, in order:
+
+1. **Stages.** Stage 1 is what the input pins (or the chosen parts) drive;
+   each next stage is what the previous stage's nodes feed. Sections at the
+   same depth, such as both halves of a folded cascode, share a stage.
+2. **Feedback.** A section that would join an earlier stage's node or drive
+   an earlier stage's gate -- a Miller capacitor, a feedback divider -- gets
+   a beat of its own, whole, after the stages.
+3. **Bias.** One beat per control line the shown parts hang from, in the
+   order they appeared, named after it (`Bias V_{BN}`), with the sections
+   that drive it.
+4. **Anything else**, together.
 
 Supply and ground rails (a rail marker, or a net named VDD, VSS, GND, or VCM)
 never count as connections. A pin or rail marker appears with the first part

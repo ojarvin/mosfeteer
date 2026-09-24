@@ -256,28 +256,64 @@ function twoStage() {
   const circuit = new Circuit();
   run(circuit,
     'add nmos M1 --at 0 0', 'add nmos M2 --at 480 0', 'add nmos M3 --at 0 400', 'add nmos M4 --at -480 400',
-    'add port VI --at -320 0', 'add ground G1 --at 0 640',
+    'add input VI --at -320 0', 'add ground G1 --at 0 640',
     'connect VI.p M1.g', 'connect M1.d M2.g', 'connect M1.s M3.d', 'connect M3.g M4.g M4.d --name VB', 'connect M3.s M4.s G1.gnd');
   return circuit;
 }
 
-test('growing a build follows the signal path first, then each bias line', () => {
+/** A closed-loop two-stage amplifier: a five-transistor first stage, a
+ * common-source second stage, Miller capacitor CC, feedback divider R1/R2 to
+ * the inverting gate, and bias line VB from IB and diode M8. */
+function closedLoop() {
+  const circuit = new Circuit();
+  run(circuit,
+    'add nmos M1 --at 0 400', 'add nmos M2 --at 480 400', 'add pmos M3 --at 0 0', 'add pmos M4 --at 480 0', 'add nmos M5 --at 240 800',
+    'add pmos M6 --at 960 0', 'add nmos M7 --at 960 800', 'add nmos M8 --at -480 800', 'add current_source IB --at -480 400',
+    'add capacitor CC --at 720 240', 'add resistor R1 --at 1200 400 --rot 90', 'add resistor R2 --at 1200 800 --rot 90',
+    'add input VIN --at -400 400', 'add supply V1 --at 240 -240', 'add ground G1 --at 240 1040',
+    'connect VIN.p M1.g', 'connect M1.d M3.d M3.g M4.g', 'connect M2.d M4.d M6.g CC.a --name X',
+    'connect M1.s M2.s M5.d', 'connect M5.g M7.g M8.g M8.d IB.b --name VB',
+    'connect M6.d M7.d CC.b R1.a --name OUT', 'connect R1.b R2.a M2.g --name FB',
+    'connect V1.p M3.s M4.s M6.s IB.a', 'connect G1.gnd M5.s M7.s M8.s R2.b');
+  return circuit;
+}
+
+const steps = (circuit, start) => growOrder(circuit, start).map(({ refs, name }) => `${name}: ${refs.join(' ')}`);
+
+test('a build goes stage by stage from the input, then feedback, then bias', () => {
+  // Branches are units: the whole first stage, then the whole second.
+  assert.deepEqual(steps(closedLoop(), []), [
+    'Stage 1: M1 M2 M3 M4 M5',
+    'Stage 2: M6 M7',
+    // Each feedback path whole, in its own beat: the Miller capacitor
+    // spans two stages, and the divider drives the first stage's gate.
+    'Feedback: CC',
+    'Feedback: R1 R2',
+    'Bias VB: IB M8',
+  ]);
+  // Starting at a part starts at its branch.
+  assert.equal(steps(closedLoop(), ['M6'])[0], 'Stage 1: M6 M7');
+});
+
+test('without rails a drain still reaches the next gate, never back to a bias line', () => {
   const circuit = twoStage();
-  const order = (start) => growOrder(circuit, start).map(({ refs, name }) => [name, refs]);
-  // The drain reaches the next gate; a gate never reaches its bias.
-  assert.deepEqual(order(['M1']), [['', ['M1']], ['', ['M2', 'M3']], ['Bias VB', ['M4']]]);
-  // A pin stands for the parts on its net; the rail joins nothing.
-  assert.deepEqual(order(['VI']), order(['M1']));
+  assert.deepEqual(steps(circuit, ['M1']), ['Stage 1: M1 M3', 'Stage 2: M2', 'Bias VB: M4']);
+  // The input pins are the default start; a pin stands for its net.
+  assert.deepEqual(steps(circuit, []), steps(circuit, ['M1']));
+  assert.deepEqual(steps(circuit, ['VI']), steps(circuit, ['M1']));
   assert.throws(() => growOrder(circuit, ['G1']), /grow from a part or a pin/);
+  const noInputs = new Circuit();
+  run(noInputs, 'add resistor R1 --at 0 0');
+  assert.throws(() => growOrder(noInputs, []), /no input pins/);
 });
 
 test('grown beats show each step, pins and rails with their parts, equations last', () => {
   const circuit = twoStage();
   const eq = circuit.addLabel({ text: '$$A = g_{m} r_{o}$$', math: true, x: 800, y: 400 });
   assert.equal(growBeats(circuit, ['M1']), 3);
-  assert.deepEqual(circuit.beats.map((beat) => beat.name), ['', '', 'Bias VB']);
+  assert.deepEqual(circuit.beats.map((beat) => beat.name), ['Stage 1', 'Stage 2', 'Bias VB']);
   const hiddenIn = (index) => [...resolveBeat(circuit, index).hiddenRefs].filter((ref) => !ref.startsWith('J')).sort();
-  assert.deepEqual(hiddenIn(0), ['G1', 'M2', 'M3', 'M4']);
+  assert.deepEqual(hiddenIn(0), ['M2', 'M4']);
   assert.deepEqual(hiddenIn(1), ['M4']);
   assert.deepEqual(hiddenIn(2), []);
   assert.deepEqual(visibleBeats(circuit, eq.id), [2]);

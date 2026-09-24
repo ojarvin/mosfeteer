@@ -4384,17 +4384,22 @@ function openBeatMenu(index, x, y) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 
-/** Add beats that build the drawing up from the selected parts: the signal
- * path first, then each bias line (core/beats.js growOrder). */
-function growBeatsFromSelection() {
-  const ids = [...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)];
+/** Add beats that build the drawing up stage by stage from the selected
+ * parts, or from the input pins when nothing is selected: the stages, then
+ * each feedback path, then each bias line (core/beats.js growOrder). */
+function growBeatsFrom(ids) {
   const current = activeBeatIndex();
   const index = current === null ? circuit.beats.length : current + 1;
   let count = 0;
   commit(() => { count = growBeats(circuit, ids, { index }); });
   if (!count) return;
-  logLine(`added ${count} beats growing from ${selectedComps().map((c) => c.refdes).join(', ')}: the signal path, then the bias lines`);
+  const from = ids.length ? selectedComps().map((c) => c.refdes).join(', ') : 'the input pins';
+  logLine(`added ${count} beats from ${from}: stage by stage, then feedback, then bias`);
   setActiveBeat(index);
+}
+
+function growBeatsFromSelection() {
+  growBeatsFrom([...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)]);
 }
 
 /** Context-menu items for beats: grow, show/hide, switch position. */
@@ -4514,6 +4519,7 @@ document.addEventListener('fullscreenchange', () => {
 document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
 document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
+document.getElementById('btn-grow-beats')?.addEventListener('click', () => growBeatsFrom([]));
 document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);

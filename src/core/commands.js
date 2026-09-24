@@ -520,7 +520,7 @@ export function commandHelp() {
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF open|closed  - set a switch position from beat N on',
-    '  beat grow ID ... [--after N]   - add beats that build the drawing up from these parts',
+    '  beat grow [ID ...] [--after N] - add beats stage by stage from the inputs (or these parts)',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -1070,9 +1070,8 @@ function beatCommand(circuit, pos, flags, result) {
   }
   if (sub === 'grow') {
     const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
-    if (pos.length < 2) throw new Error('usage: beat grow ID ... [--after N]');
     const count = growBeats(circuit, pos.slice(1), { index });
-    return result(`added beats ${index + 1}..${index + count} growing from ${pos.slice(1).join(' ')}`, { index: index + 1, count }, true);
+    return result(`added beats ${index + 1}..${index + count} growing from ${pos.slice(1).join(' ') || 'the input pins'}`, { index: index + 1, count }, true);
   }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);

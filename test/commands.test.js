@@ -882,7 +882,7 @@ test('beat commands add, edit, list, and draw presentation steps', () => {
   assert.throws(() => runCommand(circuit, 'beat rm 5'), /no beat 5/);
   assert.throws(() => runCommand(circuit, 'beat switch 1 R1 closed'), /not a switch/);
   assert.equal(runCommand(circuit, 'beat grow R1 --after 1').json.index, 2);
-  assert.throws(() => runCommand(circuit, 'beat grow'), /usage: beat grow/);
+  assert.throws(() => runCommand(circuit, 'beat grow'), /no input pins/);
   runCommand(circuit, 'switch S1 closed');
   assert.equal(circuit.components.get('S1').type, 'switch_closed');
   assert.throws(() => runCommand(circuit, 'switch R1 open'), /not a switch/);
