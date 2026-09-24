@@ -18676,6 +18676,9 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
 const BEAT_DIM_INK = '#b8b8b8';
 const BEAT_FADE_INK = '#e2e2e2';
 
+/** Outline that gives drawing math the weight of the other labels. */
+const MATH_LABEL_STROKE = '0.03em';
+
 const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
 
 function mathMlAtom(value, kind = 'mi', attrs = '') {
@@ -18999,7 +19002,9 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   const aria = escapeSvg(`Math label ${label.text}`);
   const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
   const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
-  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;pointer-events:none;`;
+  // Latin Modern Math has one weight, too light beside the drawing's strokes
+  // and bold labels; a thin outline in the text color thickens every glyph.
+  const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;-webkit-text-stroke:${MATH_LABEL_STROKE} currentColor;pointer-events:none;`;
   const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
   const lines = stripMathDelimiters(label.text).split(/\r?\n/)
     .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
@@ -31436,8 +31441,28 @@ function beginBranchWire(segDrag, w) {
 }
 
 /** Ctrl/Cmd-drag on an object drags a copy; a plain Ctrl/Cmd-click still toggles selection. */
+/** Ctrl/Cmd on a label arms a copy, as it does on a part: dragging copies
+ * the label (with the rest of the selection it belongs to), and a click
+ * without a drag toggles it in the selection. An owned label copies its part. */
+function armLabelCopyGrab(label, startWorld, startClient, ev) {
+  if (!(ev.ctrlKey || ev.metaKey) || ev.shiftKey) return false;
+  cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  const owner = label.owner ? circuit.components.get(label.owner) : null;
+  drag = owner
+    ? { mode: 'copygrab', hit: { refdes: owner.refdes }, startWorld, startClient }
+    : { mode: 'copygrab', label: { id: label.id }, startWorld, startClient };
+  return true;
+}
+
 function beginCopyDrag(grab, ev) {
   const { hit, startWorld, startClient } = grab;
+  if (grab.label) {
+    const member = selLabels.has(grab.label.id);
+    drag = null;
+    beginObjectMove(member ? [...multi] : [], member ? [...selLabels] : [grab.label.id], startWorld, startClient, { duplicate: true });
+    canvasMouseMove(ev);
+    return;
+  }
   // A joined supply bar moves (or copies) as one part.
   const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
   const labels = multi.has(hit.refdes) ? [...selLabels] : [];
@@ -31838,6 +31863,7 @@ function canvasMouseDown(ev) {
   }
   const annotationGeometry = annotationGeometryAt(startWorld);
   if (annotationGeometry) {
+    if (armLabelCopyGrab(annotationGeometry, startWorld, startClient, ev)) return;
     if (isSelectionModifier(ev)) {
       applyEditorSelection({ kind: 'label', id: annotationGeometry.id }, true);
       render();
@@ -31893,6 +31919,7 @@ function canvasMouseDown(ev) {
       setTimeout(() => inlineEditLabel(labelHit), 0);
       return;
     }
+    if (armLabelCopyGrab(labelHit, startWorld, startClient, ev)) return;
     if (isSelectionModifier(ev)) {
       applyEditorSelection({ kind: 'label', id: labelHit.id }, true);
       render();
@@ -33063,7 +33090,7 @@ function canvasMouseUp(ev) {
     return;
   }
   if (drag.mode === 'copygrab') {
-    applyEditorSelection({ kind: 'component', id: drag.hit.refdes }, true);
+    applyEditorSelection(drag.label ? { kind: 'label', id: drag.label.id } : { kind: 'component', id: drag.hit.refdes }, true);
     drag = null;
     render();
     return;
@@ -36674,6 +36701,8 @@ function copySelection({ quiet = false } = {}) {
       negativeInputs: c.negativeInputs ? [...c.negativeInputs] : [],
       joinBar: !!c.joinBar,
       style: { ...(c.style || {}) },
+      // The value: a resistance, a switch's phase.
+      value: c.value,
     })),
     labels: freeLabels.map(copyableLabelPayload),
     nets,
@@ -36939,6 +36968,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           negativeInputs: c.negativeInputs,
           joinBar: c.joinBar,
           style: c.style,
+          value: c.value,
         });
         refMap.set(c.origRef, comp.refdes);
         addedComps.push(comp.refdes);
@@ -36953,7 +36983,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         addedLabels.push(shape.id);
       }
       for (const l of clipboard.labels.filter((label) => label.kind === 'label')) {
-        const nl = circuit.addLabel({ text: l.text, align: l.align, parent: l.parent ? labelMap.get(l.parent) : null, x: l.x + dx, y: l.y + dy, style: l.style });
+        const nl = circuit.addLabel({ text: l.text, align: l.align, parent: l.parent ? labelMap.get(l.parent) : null, x: l.x + dx, y: l.y + dy, style: l.style, math: l.math, mathBox: l.mathBox || undefined });
         addedLabels.push(nl.id);
       }
       const netMap = new Map();
@@ -40118,6 +40148,9 @@ function copyableLabelPayload(label) {
     end: label.kind === 'label' ? null : { ...label.end },
     points: label.kind === 'line' ? label.points.map((point) => ({ ...point })) : null,
     style: { ...(label.style || {}) },
+    // An equation stays an equation, with its measured box until it renders.
+    math: !!label.math,
+    mathBox: (label.math && typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
   };
 }
 
