@@ -728,6 +728,11 @@ let beatViewCache = null; // { circuit, key, view }
 let beatViewsCache = null; // every beat, for the strip's visibility dots
 let beatKnown = { circuit: null, objects: new WeakSet(), ids: new Set() };
 let beatStripKey = '';
+// Beats picked in the strip (ids), for Delete; the anchor for Shift-ranges.
+// Delete acts on them while the strip was the last thing clicked.
+let selectedBeatIds = new Set();
+let beatAnchorId = null;
+let beatStripActive = false;
 let presenter = null; // { index, blank, fullscreen }
 const beatStripEl = document.getElementById('beat-strip');
 const beatListEl = document.getElementById('beat-list');
@@ -4125,9 +4130,13 @@ function beatStripVisible() {
 }
 
 /** Show one beat (an index), or the whole drawing (null). */
-function setActiveBeat(index) {
+function setActiveBeat(index, { keepSelection = false } = {}) {
   const beat = index === null ? null : circuit.beats[index];
   activeBeatId = beat?.id || null;
+  if (!keepSelection) {
+    selectedBeatIds = new Set(beat ? [beat.id] : []);
+    beatAnchorId = beat?.id || null;
+  }
   if (beat) beatStripOpen = true;
   rememberBeatObjects();
   render();
@@ -4162,13 +4171,48 @@ function addBeatHere() {
   setActiveBeat(index);
 }
 
-function deleteBeat(index) {
-  const title = beatLabel(index);
-  const wasActive = activeBeatIndex() === index;
-  commit(() => removeBeat(circuit, index));
+/** Remove beats (indices) as one edit; the others keep their look. */
+function deleteBeats(indices) {
+  const doomed = [...new Set(indices)].filter((i) => circuit.beats[i]).sort((a, b) => b - a);
+  if (!doomed.length) return;
+  const title = doomed.length === 1 ? beatLabel(doomed[0]) : `${doomed.length} beats`;
+  const active = activeBeatIndex();
+  const keep = active !== null && !doomed.includes(active) ? circuit.beats[active].id : null;
+  commit(() => { for (const i of doomed) removeBeat(circuit, i); });
   logLine(`removed ${title}; the other beats look as before`);
-  if (wasActive) setActiveBeat(circuit.beats.length ? Math.min(index, circuit.beats.length - 1) : null);
-  else render();
+  beatStripActive = false;
+  const next = keep ? circuit.beats.findIndex((beat) => beat.id === keep) : Math.min(doomed.at(-1), circuit.beats.length - 1);
+  setActiveBeat(circuit.beats.length && next >= 0 ? next : null);
+}
+
+function deleteBeat(index) {
+  deleteBeats(selectedBeatIds.has(circuit.beats[index]?.id) ? selectedBeatIndices() : [index]);
+}
+
+function selectedBeatIndices() {
+  return circuit.beats.flatMap((beat, i) => (selectedBeatIds.has(beat.id) ? [i] : []));
+}
+
+/** A click on a beat chip: plain shows it (and picks it alone); Ctrl/Cmd
+ * toggles it in the picked set and Shift picks the range from the anchor,
+ * leaving the beat on screen as it was. */
+function clickBeatChip(i, ev) {
+  const beat = circuit.beats[i];
+  if (!beat) return;
+  beatStripActive = true;
+  if (ev.shiftKey) {
+    const anchor = circuit.beats.findIndex((b) => b.id === beatAnchorId);
+    const from = anchor === -1 ? (activeBeatIndex() ?? i) : anchor;
+    selectedBeatIds = new Set(circuit.beats.slice(Math.min(from, i), Math.max(from, i) + 1).map((b) => b.id));
+  } else if (ev.ctrlKey || ev.metaKey) {
+    if (selectedBeatIds.has(beat.id)) selectedBeatIds.delete(beat.id);
+    else selectedBeatIds.add(beat.id);
+    beatAnchorId = beat.id;
+  } else {
+    setActiveBeat(i);
+    return;
+  }
+  render();
 }
 
 function moveBeatBy(index, delta) {
@@ -4266,10 +4310,19 @@ function renderBeatStrip() {
   const ids = visible ? beatSelectionIds() : [];
   // Stepping between beats only moves the pressed chip: rebuilding the chips
   // under a click would swallow a double-click on the same chip.
+  for (const id of [...selectedBeatIds]) if (!circuit.beats.some((beat) => beat.id === id)) selectedBeatIds.delete(id);
   const syncPressed = () => {
     beatListEl.querySelector('.beat-chip-all')?.setAttribute('aria-pressed', String(index === null));
-    for (const chip of beatListEl.querySelectorAll('[data-beat-index]')) chip.setAttribute('aria-pressed', String(Number(chip.dataset.beatIndex) === index));
-    if (beatHintEl) beatHintEl.textContent = beatHintText(index);
+    for (const chip of beatListEl.querySelectorAll('[data-beat-index]')) {
+      const i = Number(chip.dataset.beatIndex);
+      chip.setAttribute('aria-pressed', String(i === index));
+      chip.classList.toggle('picked', selectedBeatIds.size > 1 && selectedBeatIds.has(circuit.beats[i]?.id));
+    }
+    if (beatHintEl) {
+      beatHintEl.textContent = selectedBeatIds.size > 1
+        ? `${selectedBeatIds.size} beats picked — Delete removes them (undo brings them back)`
+        : beatHintText(index);
+    }
   };
   const key = `${visible}|${modelRevision}|${circuit.beats.length}|${ids.join(',')}|${circuit.beats.map((beat) => beat.name).join('|')}`;
   if (key === beatStripKey && beatStripEl.hidden === !visible) {
@@ -4298,7 +4351,7 @@ function renderBeatStrip() {
     button.className = 'beat-chip';
     button.dataset.beatIndex = String(i);
     button.setAttribute('aria-pressed', String(i === index));
-    button.title = `${beatLabel(i)} — click to show, double-click to rename, right-click for more`;
+    button.title = `${beatLabel(i)} — click to show, Ctrl/Shift-click to pick several, double-click to rename, right-click for more`;
     const number = document.createElement('span');
     number.className = 'beat-chip-number';
     number.textContent = String(i + 1);
@@ -4309,7 +4362,9 @@ function renderBeatStrip() {
       appendMarkupText(name, texToLabelMarkup(beat.name));
       button.appendChild(name);
     }
-    button.addEventListener('click', () => setActiveBeat(i));
+    // The canvas keeps the keyboard, so h, s, and friends still work.
+    button.addEventListener('mousedown', (ev) => ev.preventDefault());
+    button.addEventListener('click', (ev) => clickBeatChip(i, ev));
     button.addEventListener('dblclick', () => startBeatRename(i, button));
     button.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
@@ -4387,7 +4442,8 @@ function openBeatMenu(index, x, y) {
   appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
   appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === circuit.beats.length - 1 });
   appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
-  appendContextItem(group, 'Delete beat', () => deleteBeat(index), { danger: true });
+  const picked = selectedBeatIds.has(circuit.beats[index]?.id) ? selectedBeatIds.size : 1;
+  appendContextItem(group, picked > 1 ? `Delete ${picked} beats` : 'Delete beat', () => deleteBeat(index), { danger: true, shortcut: 'Del' });
   menu.appendChild(group);
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
@@ -9118,6 +9174,7 @@ canvasEl.addEventListener('keydown', (ev) => {
 // Pointer Events provide capture and cancellation for pen/touch.  Mouse
 // compatibility events continue to support existing automation and browsers.
 canvasEl.addEventListener('pointerdown', (ev) => {
+  beatStripActive = false;
   if (ev.pointerType === 'mouse' || !isPrimaryPointerEvent(ev)) return;
   if (shouldPanTouch({ pointerType: ev.pointerType, hasHit: hasSelectableObjectAt(clientToWorld(ev.clientX, ev.clientY)), mode })) {
     const startClient = { x: ev.clientX, y: ev.clientY };
@@ -12093,6 +12150,11 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  // Delete right after picking beats in the strip removes those beats.
+  if (key === 'Delete' && beatStripActive && selectedBeatIds.size) {
+    deleteBeats(selectedBeatIndices());
+    return;
+  }
   if (key === 'Delete') {
     if (deleteMode) {
       if (deleteSelection()) render();

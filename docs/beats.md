@@ -95,6 +95,8 @@ renaming a part renames its references.
   this beat on, or in the drawing when no beat is shown), and the highlight
   tool colors nets for this beat on. The dot beside each beat says how the
   selection looks there; clicking it shows or hides it in that beat alone.
+  Ctrl/Cmd-click or Shift-click beats to pick several; Delete (or the chip's
+  menu) then removes them as one undoable edit.
 - **Presenting.** `Shift+F5` shows the beats full screen from the current one,
   in the editor's light or dark theme. Every beat keeps the whole drawing's
   frame, so only what changes moves.

@@ -212,6 +212,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Shift+H (on a beat)', 'dim the selection from this beat on, or show it when dimmed'],
     ['s', 'open or close the selected switches with their whole phase (on a beat: from that beat on)'],
     ['9 / 8 (on a beat)', 'highlights belong to the beat on screen and the ones after it'],
+    ['Ctrl/Shift+click a beat', 'pick several beats in the strip; Delete then removes them (undoable)'],
     ['Shift+F5', 'present the beats full screen; arrows or Space step, . blanks, Esc ends'],
   ]],
   ['file and console', [
