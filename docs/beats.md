@@ -32,40 +32,21 @@ drawing fixes every beat. Code: `src/core/beats.js`; tests:
 5. **Switches and highlights are per beat** on top of the drawing's own
    positions and highlights, with the same carry-forward rule.
 
+## Switch phases
+
+A switch's label names its **phase**, the signal that controls it (for
+example `φ_{1}`): edit the label, or run `value S1 φ_{1}`. The refdes stays the
+switch's unique identity. Switches with the same phase are one group: flipping
+one (`s`, or `switch φ_{1} closed`) flips them all, in the drawing and in
+beats. Beats store positions per phase, so a switch added to a phase later
+follows its beats without edits. A switch joining a phase takes the phase's
+position; a switch starting a new phase brings its old phase's beats, so a
+phase can be renamed one switch at a time. Labelling a switch with its own
+name (`S_{3}`) takes it out of any phase.
+
 Placeholders fall out of rule 4: to stand in for a bias transistor until it
 appears, put a net label (or a port) on the gate net, hide it from the beat
 where the transistor appears, and the wire to it disappears with it.
-
-## Growing a build
-
-"Grow beats from the inputs" (More menu; `beat grow`) or "Grow beats from
-here" (a part's context menu; `beat grow ID ...`) drafts beats that build the
-drawing up (`growOrder`/`growBeats` in `beats.js`). The units are
-**sections**, each revealed whole:
-
-- a current branch: a run from one rail to another in the direction current
-  flows (into a PMOS source, out of an NMOS source), longest runs first;
-- a differential pair, joined with its tail;
-- series passives from a rail to one branch join it (a load capacitor);
-  other parts group with what they conduct to.
-
-The beats, in order:
-
-1. **Stages.** Stage 1 is what the input pins (or the chosen parts) drive;
-   each next stage is what the previous stage's nodes feed. Sections at the
-   same depth, such as both halves of a folded cascode, share a stage.
-2. **Feedback.** A section that would join an earlier stage's node or drive
-   an earlier stage's gate -- a Miller capacitor, a feedback divider -- gets
-   a beat of its own, whole, after the stages.
-3. **Bias.** One beat per control line the shown parts hang from, in the
-   order they appeared, named after it (`Bias V_{BN}`), with the sections
-   that drive it.
-4. **Anything else**, together.
-
-Supply and ground rails (a rail marker, or a net named VDD, VSS, GND, or VCM)
-never count as connections. A pin or rail marker appears with the first part
-on its own wire, and equation labels wait for the last beat. The result is a
-set of ordinary beats, inserted after the one on screen as one undoable edit.
 
 ## Stored form
 
@@ -76,7 +57,7 @@ relative to the beat before (the first beat is relative to the drawing):
 "beats": [
   { "id": "b1", "name": "Signal path", "hide": ["M3", "M4"] },
   { "id": "b2", "name": "Bias", "show": ["M3", "M4"], "dim": ["M1"], "hide": ["L2"] },
-  { "id": "b3", "name": "Phase 2", "switches": { "S1": "closed" }, "highlights": { "name:VX": "red" } }
+  { "id": "b3", "name": "Phase 2", "switches": { "φ_{2}": "closed", "S5": "open" }, "highlights": { "name:VX": "red" } }
 ]
 ```
 

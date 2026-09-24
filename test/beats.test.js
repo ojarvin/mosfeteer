@@ -5,7 +5,7 @@ import { loadDocument } from '../src/core/document.js';
 import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
 import {
-  addBeat, cycleBeatHighlight, growBeats, growOrder, introduceAt, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
+  addBeat, cycleBeatHighlight, introduceAt, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
   setPresenceAt, setPresenceFrom, switchStateAt, visibleBeats,
 } from '../src/core/beats.js';
 
@@ -250,74 +250,61 @@ test('an open-ended labelled stub keeps its tip beyond the label', () => {
   assert.equal(resolveBeat(circuit, 0).wires.get(net.id), 'none');
 });
 
-/** Input M1 drives second stage M2 and sits on tail source M3, which is
- * biased from diode M4 through line VB. VI is the input pin. */
-function twoStage() {
+/** Two φ1 switches and one φ2 switch, all drawn open. */
+function phases(beats = 2) {
   const circuit = new Circuit();
-  run(circuit,
-    'add nmos M1 --at 0 0', 'add nmos M2 --at 480 0', 'add nmos M3 --at 0 400', 'add nmos M4 --at -480 400',
-    'add input VI --at -320 0', 'add ground G1 --at 0 640',
-    'connect VI.p M1.g', 'connect M1.d M2.g', 'connect M1.s M3.d', 'connect M3.g M4.g M4.d --name VB', 'connect M3.s M4.s G1.gnd');
+  run(circuit, 'add switch_open S1 --at 0 0', 'add switch_open S2 --at 400 0', 'add switch_open S3 --at 800 0',
+    'value S1 φ_{1}', 'value S2 φ_{1}', 'value S3 φ_{2}');
+  for (let i = 0; i < beats; i += 1) addBeat(circuit);
   return circuit;
 }
 
-/** A closed-loop two-stage amplifier: a five-transistor first stage, a
- * common-source second stage, Miller capacitor CC, feedback divider R1/R2 to
- * the inverting gate, and bias line VB from IB and diode M8. */
-function closedLoop() {
+test('a switch label names its phase, and a phase opens and closes as one', () => {
+  const circuit = phases(0);
+  // The refdes stays the identity; the label shows the phase.
+  assert.equal(circuit.labelOf('S1').text, 'φ_{1}');
+  assert.equal(circuit.components.get('S1').value, 'φ_{1}');
+  run(circuit, 'switch S1 closed');
+  assert.deepEqual([...circuit.components.values()].map((c) => c.type), ['switch_closed', 'switch_closed', 'switch_open']);
+  run(circuit, 'switch φ_{2} closed');
+  assert.equal(circuit.components.get('S3').type, 'switch_closed');
+  // Joining a phase takes its position; editing the label is the way in.
+  run(circuit, 'add switch_open S4 --at 0 400');
+  circuit.labelOf('S4').text = 'φ_{1}';
+  assert.equal(circuit.components.get('S4').type, 'switch_closed');
+  // Naming the switch itself leaves the phase.
+  circuit.labelOf('S4').text = 'S4';
+  assert.equal(circuit.components.get('S4').value, '');
+  assert.equal(circuit.labelOf('S4').text, 'S_{4}');
+  // Renaming the part keeps the phase label.
+  run(circuit, 'rename S1 SA');
+  assert.equal(circuit.labelOf('SA').text, 'φ_{1}');
+  // The phase is drawn once, as the label, not again as value text.
+  assert.equal((svgString(circuit).match(/>φ</g) || []).length, 3);
+  assert.throws(() => run(circuit, 'switch φ_{9} open'), /not a switch or a switch phase/);
+});
+
+test('beats set switch positions per phase, so new switches on a phase follow', () => {
+  const circuit = phases();
+  setSwitchFrom(circuit, 0, 'S1', 'closed');
+  setSwitchFrom(circuit, 1, 'φ_{1}', 'open');
+  setSwitchFrom(circuit, 1, 'φ_{2}', 'closed');
+  assert.deepEqual(circuit.toJSON().beats.map((beat) => beat.switches), [{ 'φ_{1}': 'closed' }, { 'φ_{1}': 'open', 'φ_{2}': 'closed' }]);
+  assert.deepEqual([...resolveBeat(circuit, 0).switchTypes].sort(), [['S1', 'switch_closed'], ['S2', 'switch_closed']]);
+  run(circuit, 'add switch_open S5 --at 0 400', 'value S5 φ_{1}');
+  assert.equal(switchStateAt(circuit, 'S5', 0), 'closed');
+  assert.equal(resolveBeat(circuit, 0).switchTypes.get('S5'), 'switch_closed');
+  // Renaming a whole phase keeps its beats.
+  for (const ref of ['S1', 'S2', 'S5']) circuit.labelOf(ref).text = 'φ_{a}';
+  assert.equal(switchStateAt(circuit, 'φ_{a}', 0), 'closed');
+  assert.deepEqual(circuit.toJSON().beats[0].switches, { 'φ_{a}': 'closed' });
+});
+
+test('a saved switch value becomes its phase label on load', () => {
   const circuit = new Circuit();
-  run(circuit,
-    'add nmos M1 --at 0 400', 'add nmos M2 --at 480 400', 'add pmos M3 --at 0 0', 'add pmos M4 --at 480 0', 'add nmos M5 --at 240 800',
-    'add pmos M6 --at 960 0', 'add nmos M7 --at 960 800', 'add nmos M8 --at -480 800', 'add current_source IB --at -480 400',
-    'add capacitor CC --at 720 240', 'add resistor R1 --at 1200 400 --rot 90', 'add resistor R2 --at 1200 800 --rot 90',
-    'add input VIN --at -400 400', 'add supply V1 --at 240 -240', 'add ground G1 --at 240 1040',
-    'connect VIN.p M1.g', 'connect M1.d M3.d M3.g M4.g', 'connect M2.d M4.d M6.g CC.a --name X',
-    'connect M1.s M2.s M5.d', 'connect M5.g M7.g M8.g M8.d IB.b --name VB',
-    'connect M6.d M7.d CC.b R1.a --name OUT', 'connect R1.b R2.a M2.g --name FB',
-    'connect V1.p M3.s M4.s M6.s IB.a', 'connect G1.gnd M5.s M7.s M8.s R2.b');
-  return circuit;
-}
-
-const steps = (circuit, start) => growOrder(circuit, start).map(({ refs, name }) => `${name}: ${refs.join(' ')}`);
-
-test('a build goes stage by stage from the input, then feedback, then bias', () => {
-  // Branches are units: the whole first stage, then the whole second.
-  assert.deepEqual(steps(closedLoop(), []), [
-    'Stage 1: M1 M2 M3 M4 M5',
-    'Stage 2: M6 M7',
-    // Each feedback path whole, in its own beat: the Miller capacitor
-    // spans two stages, and the divider drives the first stage's gate.
-    'Feedback: CC',
-    'Feedback: R1 R2',
-    'Bias VB: IB M8',
-  ]);
-  // Starting at a part starts at its branch.
-  assert.equal(steps(closedLoop(), ['M6'])[0], 'Stage 1: M6 M7');
-});
-
-test('without rails a drain still reaches the next gate, never back to a bias line', () => {
-  const circuit = twoStage();
-  assert.deepEqual(steps(circuit, ['M1']), ['Stage 1: M1 M3', 'Stage 2: M2', 'Bias VB: M4']);
-  // The input pins are the default start; a pin stands for its net.
-  assert.deepEqual(steps(circuit, []), steps(circuit, ['M1']));
-  assert.deepEqual(steps(circuit, ['VI']), steps(circuit, ['M1']));
-  assert.throws(() => growOrder(circuit, ['G1']), /grow from a part or a pin/);
-  const noInputs = new Circuit();
-  run(noInputs, 'add resistor R1 --at 0 0');
-  assert.throws(() => growOrder(noInputs, []), /no input pins/);
-});
-
-test('grown beats show each step, pins and rails with their parts, equations last', () => {
-  const circuit = twoStage();
-  const eq = circuit.addLabel({ text: '$$A = g_{m} r_{o}$$', math: true, x: 800, y: 400 });
-  assert.equal(growBeats(circuit, ['M1']), 3);
-  assert.deepEqual(circuit.beats.map((beat) => beat.name), ['Stage 1', 'Stage 2', 'Bias VB']);
-  const hiddenIn = (index) => [...resolveBeat(circuit, index).hiddenRefs].filter((ref) => !ref.startsWith('J')).sort();
-  assert.deepEqual(hiddenIn(0), ['M2', 'M4']);
-  assert.deepEqual(hiddenIn(1), ['M4']);
-  assert.deepEqual(hiddenIn(2), []);
-  assert.deepEqual(visibleBeats(circuit, eq.id), [2]);
-  // Grown beats are ordinary beats, editable like any other.
-  setPresenceFrom(circuit, 1, ['M3'], 'dim');
-  assert.equal(resolveBeat(circuit, 2).dimRefs.has('M3'), true);
+  run(circuit, 'add switch_open S1 --at 0 0');
+  const data = circuit.toJSON();
+  data.components[0].value = 'clk';
+  const loaded = roundTrip({ toJSON: () => data });
+  assert.equal(loaded.labelOf('S1').text, 'clk');
 });

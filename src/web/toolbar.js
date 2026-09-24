@@ -210,7 +210,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Alt+→ / Alt+←', 'next / previous beat (also PageDown / PageUp); before the first is the whole drawing'],
     ['h (on a beat)', 'hide the selection from this beat on, or show it when hidden'],
     ['Shift+H (on a beat)', 'dim the selection from this beat on, or show it when dimmed'],
-    ['s', 'open or close the selected switches (on a beat: from that beat on)'],
+    ['s', 'open or close the selected switches with their whole phase (on a beat: from that beat on)'],
     ['9 / 8 (on a beat)', 'highlights belong to the beat on screen and the ones after it'],
     ['Shift+F5', 'present the beats full screen; arrows or Space step, . blanks, Esc ends'],
   ]],

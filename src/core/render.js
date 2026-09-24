@@ -5,7 +5,7 @@ import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttr
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
-import { drawnNetPaths } from './beats.js';
+import { drawnNetPaths, switchState } from './beats.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 
 function pt(x, y) {
@@ -511,12 +511,14 @@ function shapeAnnotationSvg(label, opacity = '') {
  * without ids, labels, or accessibility wrappers. Editor effects restyle it
  * with CSS, e.g. the commit-feedback glow that traces the symbol itself.
  */
-export function componentShapeSvg(c) {
+/** `def` draws another symbol in the part's place, such as a switch in the
+ * position a beat gives it. */
+export function componentShapeSvg(c, def = c.def) {
   const t = c.transform;
   const body = c.type === 'block'
     ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
-    : c.def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
-  const text = c.def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
+    : def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
+  const text = def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
   return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
 }
 
@@ -890,7 +892,8 @@ export function svgString(circuit, opts = {}) {
       );
     }
     const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
-    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel) {
+    // A switch's value is its phase, which its owned label already shows.
+    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel && !switchState(c)) {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
       const valueText = def.textPos.font
         ? symbolTextSvg({ ...def.textPos, text: c.value }, c.transform, c.style?.color || '#333')
@@ -933,7 +936,8 @@ export function svgString(circuit, opts = {}) {
 
 /**
  * Editor-only overlays rendered on top of svgString output.
- * opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
+ * opts.beatView: the beat on screen (beats.js resolveBeat), so glows trace the
+ * switch positions it draws. opts.cursor {x,y}: grid cursor (small gray circle). opts.selection [refdes]:
  * halos around each selected component's bbox. opts.nets [net]: highlight
  * (select) net routes. opts.netMarkers [refdes]: reference markers and ports on
  * those nets, glowing like their wires. opts.netSolder [{x,y}]: solder halos
@@ -974,7 +978,7 @@ export function editorOverlay(circuit, opts = {}) {
     if (!c) continue;
     const r = c.bboxWorld();
     const pad = 6;
-    parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c)}</g>`);
+    parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c, opts.beatView?.defOf(c))}</g>`);
     parts.push(`<rect class="selection-outline" x="${fmt(r.x - pad)}" y="${fmt(r.y - pad)}" width="${fmt(r.w + pad * 2)}" height="${fmt(r.h + pad * 2)}" fill="none" stroke="${SELECT}" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" rx="6" pointer-events="none"/>`);
   }
 
@@ -1259,7 +1263,7 @@ export function editorOverlay(circuit, opts = {}) {
   // linework, in the net highlight's color.
   for (const ref of new Set(opts.netMarkers || [])) {
     const c = circuit.components.get(ref);
-    if (c) parts.push(`<g class="selection-glow net-marker-glow" pointer-events="none">${componentShapeSvg(c)}</g>`);
+    if (c) parts.push(`<g class="selection-glow net-marker-glow" pointer-events="none">${componentShapeSvg(c, opts.beatView?.defOf(c))}</g>`);
   }
 
   for (const net of opts.nets || []) {

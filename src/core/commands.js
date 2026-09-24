@@ -7,7 +7,7 @@ import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
-import { addBeat, beatTitle, growBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
+import { addBeat, beatTitle, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -514,13 +514,13 @@ export function commandHelp() {
     '    --ignore-channel-length-modulation --dominant-pole',
     '  explain eval                   - grouped diagnostics with plain-language repair hints',
     '  explain connect REF.TERM REF.TERM - dry-run route with path, bends, and pin escapes',
-    '  switch <refdes> open|closed    - draw a switch open or closed',
+    '  switch REF|PHASE open|closed   - draw a switch, and all of its phase, open or closed',
+    '  value <switch> PHASE           - set the phase (control signal) a switch shows as its label',
     '  beat list                      - list beats (presentation steps; see docs/beats.md)',
     '  beat add [NAME] [--after N]    - add a beat that looks like the one before it',
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
-    '  beat switch N REF open|closed  - set a switch position from beat N on',
-    '  beat grow [ID ...] [--after N] - add beats stage by stage from the inputs (or these parts)',
+    '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -847,9 +847,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
   if (cmd === 'switch') {
     const [ref, state] = pos;
-    if (!ref || !state) throw new Error('usage: switch <refdes> open|closed');
-    circuit.setSwitchState(ref, state);
-    return result(`${ref} drawn ${state}`, null, true);
+    if (!ref || !state) throw new Error('usage: switch REF|PHASE open|closed');
+    const group = circuit.setSwitchState(ref, state);
+    return result(`${group.map((c) => c.refdes).join(' ')} drawn ${state}`, null, true);
   }
 
   // ---------- files / render ----------
@@ -1068,19 +1068,14 @@ function beatCommand(circuit, pos, flags, result) {
     const listed = setPresenceFrom(circuit, index, ids, sub);
     return result(`${{ show: 'shown', dim: 'dimmed', hide: 'hidden' }[sub]} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
   }
-  if (sub === 'grow') {
-    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
-    const count = growBeats(circuit, pos.slice(1), { index });
-    return result(`added beats ${index + 1}..${index + count} growing from ${pos.slice(1).join(' ') || 'the input pins'}`, { index: index + 1, count }, true);
-  }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);
     const [ref, state] = pos.slice(2);
-    if (!ref || !state) throw new Error('usage: beat switch N REF open|closed');
+    if (!ref || !state) throw new Error('usage: beat switch N REF|PHASE open|closed');
     setSwitchFrom(circuit, index, ref, state);
     return result(`${ref} ${state} from beat ${index + 1}`, null, true);
   }
-  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch|grow`);
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch`);
 }
 
 function netCommand(circuit, pos, result) {

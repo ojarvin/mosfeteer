@@ -5,7 +5,7 @@ import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCros
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
-import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, switchState } from './beats.js';
+import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, switchGroupKey, switchKeyFor, switchState, switchesOf } from './beats.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -1637,15 +1637,50 @@ export class Circuit {
     return inst;
   }
 
-  /** Draw a switch open or closed. Both symbols share one footprint and
-   * terminals, so connectivity and routing are untouched. */
-  setSwitchState(refdes, state) {
-    const component = this.getComponent(refdes);
-    if (!switchState(component)) throw new Error(`"${refdes}" is not a switch`);
+  /** Draw a switch -- and every switch on its phase -- open or closed.
+   * Takes a refdes or a phase. Both symbols share one footprint and
+   * terminals, so connectivity and routing are untouched. Returns the
+   * switches drawn. */
+  setSwitchState(refOrPhase, state) {
     if (!SWITCH_TYPES[state]) throw new Error('a switch is open or closed');
-    component.type = SWITCH_TYPES[state];
-    component.def = getSymbol(component.type);
-    return component;
+    const group = switchesOf(this, switchKeyFor(this, refOrPhase));
+    for (const component of group) {
+      component.type = SWITCH_TYPES[state];
+      component.def = getSymbol(component.type);
+    }
+    return group;
+  }
+
+  /** A switch's label names the signal (clock phase) that controls it, as a
+   * rail marker's names its rail; the refdes stays its unique identity. The
+   * phase is kept as the switch's value. Text naming the switch itself
+   * clears the phase. A switch joining a phase takes the phase's position;
+   * one starting a new phase brings its old phase's beats. */
+  _syncSwitchLabel(refdes, text) {
+    const component = this.components.get(refdes);
+    if (!switchState(component)) return false;
+    const before = switchGroupKey(component);
+    const source = String(text ?? '').trim();
+    const phase = !source || labelMatchesRefdes(source, refdes) ? '' : source;
+    component.value = phase;
+    const label = this.labelOf(refdes);
+    const display = phase || componentLabelText(refdes, source || undefined);
+    if (label && label._text !== display) {
+      label._text = display;
+      label.clearRenderedTextBounds();
+    }
+    const after = switchGroupKey(component);
+    if (after !== before) {
+      const peers = switchesOf(this, after).filter((other) => other !== component);
+      if (peers.length) {
+        component.type = peers[0].type;
+        component.def = peers[0].def;
+      } else {
+        carryBeatSwitchKey(this, before, after, { move: !switchesOf(this, before).length });
+      }
+    }
+    this.invalidateRoutingCache();
+    return true;
   }
 
   getComponent(refdes) {
@@ -1757,7 +1792,7 @@ export class Circuit {
       return existing;
     }
     return this.addLabel({
-      text: componentLabelText(component.refdes),
+      text: switchState(component) && component.value ? component.value : componentLabelText(component.refdes),
       owner: component.refdes,
       offset: component.def.labelOffset,
       align: 'center',
@@ -2104,6 +2139,7 @@ export class Circuit {
 
   setValue(refdes, value) {
     const c = this.getComponent(refdes);
+    if (this._syncSwitchLabel(refdes, value)) return c;
     c.value = String(value);
     if (isReferenceMarker(c) && this.labelOf(refdes)) this._syncReferenceMarkerLabel(refdes, c.value);
     return c;
@@ -2532,6 +2568,7 @@ export class Circuit {
   _syncComponentLabel(refdes, text) {
     const component = this.components.get(refdes);
     if (!component || isReferenceMarker(component)) return false;
+    if (this._syncSwitchLabel(refdes, text)) return true;
     const next = normalizeComponentRefdes(text);
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) throw new Error(`invalid component name "${String(text).trim()}"`);
     this.renameComponent(refdes, next, { displayLabel: text });
@@ -5860,6 +5897,10 @@ export class Circuit {
       try { circuit._ensureComponentInstanceLabel(component); } catch { /* label id in use */ }
     }
     for (const component of circuit.components.values()) circuit._syncSignalInputLabels(component);
+    // A switch's value is its phase, shown as its label.
+    for (const component of circuit.components.values()) {
+      if (switchState(component) && component.value) circuit._syncSwitchLabel(component.refdes, component.value);
+    }
     // Restore direct pin contacts that are not represented by wire geometry.
     if (!data.topologyOnly) circuit.connectCoincident();
     // Migrate legacy owned instance labels that persisted a compact trailing

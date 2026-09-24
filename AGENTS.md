@@ -120,6 +120,13 @@ marker label is distinct from the global rail name; deleting it clears the
 marker value and restores the global behavior. `GND` remains a compatibility
 alias for an unnamed ground marker.
 
+Switches (`switch_open`, `switch_closed`) are the other role-labelled parts:
+a switch's owned label names its phase (the controlling signal, stored as its
+value), not its identity, so several switches may share it. Switches on one
+phase form a group that opens and closes together, in the drawing
+(`setSwitchState`) and in beats. Label text naming the switch's own refdes
+clears the phase.
+
 Supplies may join their bars (`joinBar`, `src/core/supply-bars.js`). A joined
 bar is visual only: it never adds connectivity, and it breaks between
 differently named supplies, across other parts, and across wires. Every supply
@@ -169,7 +176,8 @@ hover glows) in that color without changing their own styles.
 ([`docs/beats.md`](docs/beats.md), `src/core/beats.js`). Beats are view state
 only: they list parts and labels to show, dim, or hide, switch positions, and
 highlights as changes relative to the previous beat, and never copy or move
-geometry. Unmentioned objects show in every beat; wires, junction dots, and
+geometry; switch positions are kept per phase, so a switch added to a phase
+follows its beats. Unmentioned objects show in every beat; wires, junction dots, and
 owned labels follow what they join. Edit beats through the `beats.js` helpers,
 which keep every other beat's look unchanged. The renderer takes one resolved
 beat as `opts.beat`; the beat on screen is editor state and is never saved.
