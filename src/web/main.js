@@ -2,7 +2,7 @@
  * Mosfeteer — keyboard-driven schematic editor.
  *
  * Modes:
- *   NORMAL   arrows move (selected comp or cursor), l line annotation, r rotate, Shift+r mirror,
+ *   NORMAL   arrows move (selected comp or cursor), l line annotation, r rotate, Shift+R mirror,
  *            Shift+Up/Down layer, dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
  *            toggle italic/bold on selected labels, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
@@ -14,7 +14,7 @@ import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, co
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
-import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setSwitchFrom, setVisibleAt, setVisibleFrom, switchState, switchStateAt } from '../core/beats.js';
+import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchState, switchStateAt } from '../core/beats.js';
 import { TipBook } from './tips.js';
 import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
@@ -1727,7 +1727,7 @@ function renderSaveState() {
   if (saveButton) {
     saveButton.disabled = !dirty || saveInFlight > 0;
     saveButton.title = dirty
-      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+x)'
+      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
       : currentDocumentPath ? `All changes saved to ${currentDocumentPath}` : 'Nothing to save yet';
   }
 }
@@ -4068,8 +4068,8 @@ function removeAllNetHighlights() {
 // A beat is a view of the one drawing (core/beats.js). The editor shows one
 // beat at a time: what it hides is faded but still selectable, and drawing
 // edits still change the drawing, in every beat. View changes made on a beat
-// -- h (show/hide), s (switch position), the highlight tool -- belong to that
-// beat and carry on to the following beats that looked the same.
+// -- h (show/hide), Shift+H (dim), s (switch position), the highlight tool --
+// belong to that beat and carry on to the following beats that looked the same.
 
 function activeBeatIndex() {
   if (!activeBeatId) return null;
@@ -4133,15 +4133,23 @@ function setActiveBeat(index) {
   render();
 }
 
+/** Step through All, beat 1, ..., the last beat, stopping at both ends. */
 function stepBeat(delta) {
   if (!circuit.beats.length) {
-    hintLine('BEATS: there are no beats yet; B adds one');
+    hintLine('BEATS: there are no beats yet; + adds one');
     return;
   }
-  const index = activeBeatIndex();
-  const last = circuit.beats.length - 1;
-  const next = index === null ? (delta > 0 ? 0 : last) : index + delta;
-  setActiveBeat(next < 0 ? null : Math.min(next, last));
+  const index = activeBeatIndex() ?? -1;
+  const next = Math.max(-1, Math.min(index + delta, circuit.beats.length - 1));
+  if (next !== index) setActiveBeat(next < 0 ? null : next);
+}
+
+/** Shift+B: open or close the beat strip. Closing it shows the whole drawing. */
+function toggleBeatStrip() {
+  const open = !beatStripVisible();
+  beatStripOpen = open;
+  if (!open) setActiveBeat(null);
+  else render();
 }
 
 /** Add a beat after the one on screen (or at the end) and show it. It starts
@@ -4150,7 +4158,7 @@ function addBeatHere() {
   const current = activeBeatIndex();
   const index = current === null ? circuit.beats.length : current + 1;
   commit(() => addBeat(circuit, { index }));
-  logLine(`added beat ${index + 1}${circuit.beats.length === 1 ? ' — hide what should come later with h' : ''}`);
+  logLine(`added beat ${index + 1}${circuit.beats.length === 1 ? ' — hide what comes later with h, or dim it with Shift+H' : ''}`);
   setActiveBeat(index);
 }
 
@@ -4179,26 +4187,30 @@ function beatSelectionIds() {
   return [...new Set(ids)];
 }
 
-function beatShows(view, id) {
-  return !view.hiddenRefs.has(id) && !view.hiddenLabels.has(id);
+function beatPresence(view, id) {
+  if (view.hiddenRefs.has(id) || view.hiddenLabels.has(id)) return 'hide';
+  return view.dimRefs.has(id) || view.dimLabels.has(id) ? 'dim' : 'show';
 }
 
-/** h: hide the selection from this beat on, or show it when all of it is hidden. */
-function toggleSelectionInBeat() {
+const PRESENCE_DONE = { show: 'shown', dim: 'dimmed', hide: 'hidden' };
+
+/** h hides the selection from this beat on, or shows it when all of it is
+ * hidden; Shift+H dims it, or shows it when all of it is dimmed. */
+function toggleSelectionInBeat(target = 'hide') {
   const index = activeBeatIndex();
   if (index === null) {
-    hintLine(circuit.beats.length ? 'BEATS: pick a beat first — ] steps into them' : 'BEATS: B adds a beat; then h hides or shows the selection in it');
+    hintLine(circuit.beats.length ? 'BEATS: pick a beat first — Alt+→ steps into them' : 'BEATS: + adds a beat; then h hides or Shift+H dims the selection in it');
     return;
   }
   const ids = beatSelectionIds();
   if (!ids.length) {
-    hintLine('BEATS: select parts or labels to show or hide — wires follow the parts they join');
+    hintLine('BEATS: select parts or labels to show, dim, or hide — wires follow the parts they join');
     return;
   }
   const view = resolveBeat(circuit, index);
-  const show = !ids.some((id) => beatShows(view, id));
-  commit(() => setVisibleFrom(circuit, index, ids, show));
-  logLine(`${show ? 'shown' : 'hidden'} from beat ${index + 1}: ${ids.join(', ')}`);
+  const presence = ids.every((id) => beatPresence(view, id) === target) ? 'show' : target;
+  commit(() => setPresenceFrom(circuit, index, ids, presence));
+  logLine(`${PRESENCE_DONE[presence]} from beat ${index + 1}: ${ids.join(', ')}`);
   render();
 }
 
@@ -4224,15 +4236,16 @@ function flipSelectedSwitches() {
 }
 
 function beatHintText(index) {
-  if (!circuit.beats.length) return 'B adds a beat; it starts as a copy of the one before.';
-  if (index === null) return 'Whole drawing. ] steps into the beats.';
-  return 'Faded: hidden here. h shows/hides from this beat on · s flips a switch · drawing edits reach every beat.';
+  if (!circuit.beats.length) return '+ adds a beat; it starts as a copy of the one before.';
+  if (index === null) return 'Whole drawing. Alt+→ steps into the beats.';
+  return 'Faintest: hidden here. h hides · Shift+H dims · from this beat on · s flips a switch · drawing edits reach every beat.';
 }
 
-/** The strip's dot for one beat: does the selection show in it? */
+/** The strip's dot for one beat: how does the selection look in it? */
 function beatDotState(view, ids) {
-  const shown = ids.filter((id) => beatShows(view, id)).length;
-  return shown === ids.length ? 'shown' : shown ? 'mixed' : 'hidden';
+  const looks = new Set(ids.map((id) => beatPresence(view, id)));
+  if (looks.size > 1) return 'mixed';
+  return { show: 'shown', dim: 'dimmed', hide: 'hidden' }[[...looks][0]];
 }
 
 function renderBeatStrip() {
@@ -4300,11 +4313,11 @@ function renderBeatStrip() {
       dot.className = 'beat-dot';
       dot.dataset.state = state;
       const what = ids.length === 1 ? ids[0] : 'the selection';
-      dot.title = `${state === 'shown' ? 'Shown' : state === 'mixed' ? 'Partly shown' : 'Hidden'} in beat ${i + 1} — click to ${state === 'shown' ? 'hide' : 'show'} ${what} in this beat only`;
+      const show = state === 'hidden';
+      dot.title = `${{ shown: 'Shown', dimmed: 'Dimmed', hidden: 'Hidden', mixed: 'Mixed' }[state]} in beat ${i + 1} — click to ${show ? 'show' : 'hide'} ${what} in this beat only`;
       dot.setAttribute('aria-label', dot.title);
       dot.addEventListener('click', () => {
-        const show = state !== 'shown';
-        commit(() => setVisibleAt(circuit, i, ids, show));
+        commit(() => setPresenceAt(circuit, i, ids, show ? 'show' : 'hide'));
         logLine(`${show ? 'shown' : 'hidden'} in beat ${i + 1} only: ${ids.join(', ')}`);
         render();
       });
@@ -4360,7 +4373,7 @@ function openBeatMenu(index, x, y) {
   group.className = 'context-menu-group';
   const chip = () => beatListEl.querySelector(`[data-beat-index="${index}"]`);
   appendContextItem(group, 'Rename…', () => setTimeout(() => { if (chip()) startBeatRename(index, chip()); }, 0), { shortcut: 'dbl-click' });
-  appendContextItem(group, 'Add beat after', () => { setActiveBeat(index); addBeatHere(); }, { shortcut: 'B' });
+  appendContextItem(group, 'Add beat after', () => { setActiveBeat(index); addBeatHere(); }, { shortcut: '+' });
   appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
   appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === circuit.beats.length - 1 });
   appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
@@ -4377,15 +4390,16 @@ function appendBeatContextItems(group, target) {
     const index = activeBeatIndex();
     const state = index === null ? switchState(target.value) : switchStateAt(circuit, target.value.refdes, index);
     const where = index === null ? '' : ' from this beat';
-    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} switch${where}`, flipSelectedSwitches, { shortcut: 'S' });
+    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} switch${where}`, flipSelectedSwitches, { shortcut: 's' });
   }
   const index = activeBeatIndex();
   if (index === null || (target.kind !== 'component' && target.kind !== 'label')) return;
   const ids = beatSelectionIds();
   if (!ids.length) return;
   const view = resolveBeat(circuit, index);
-  const show = !ids.some((id) => beatShows(view, id));
-  appendContextItem(group, show ? 'Show from this beat' : 'Hide from this beat', toggleSelectionInBeat, { shortcut: 'H' });
+  const all = (presence) => ids.every((id) => beatPresence(view, id) === presence);
+  appendContextItem(group, all('hide') ? 'Show from this beat' : 'Hide from this beat', () => toggleSelectionInBeat('hide'), { shortcut: 'h' });
+  appendContextItem(group, all('dim') ? 'Undim from this beat' : 'Dim from this beat', () => toggleSelectionInBeat('dim'), { shortcut: 'Shift+H' });
 }
 
 // ----- presenting --------------------------------------------------------------
@@ -4393,7 +4407,7 @@ function appendBeatContextItems(group, target) {
 function openPresenter(start = activeBeatIndex() ?? 0) {
   if (!presenterEl) return;
   if (!circuit.beats.length) {
-    logLine('Nothing to present: add a beat first (B).', 'status');
+    logLine('Nothing to present: add a beat first (+).', 'status');
     return;
   }
   closeComponentContextMenu();
@@ -4422,7 +4436,8 @@ function showPresenterFrame(animate = true) {
   const frame = document.createElement('div');
   frame.className = 'presenter-frame';
   if (!presenter.blank) {
-    frame.innerHTML = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, pageGuide: null, beat: { view: resolveBeat(circuit, presenter.index) } });
+    // Theme ink, like the canvas: the presentation follows light or dark mode.
+    frame.innerHTML = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(circuit, presenter.index) } });
     const svg = frame.querySelector('svg');
     svg?.removeAttribute('width');
     svg?.removeAttribute('height');
@@ -4484,12 +4499,7 @@ document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);
 });
-document.getElementById('btn-beats')?.addEventListener('click', () => {
-  const open = !beatStripVisible();
-  beatStripOpen = open;
-  if (!open) setActiveBeat(null);
-  else render();
-});
+document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
 
 /** Right-click on the highlight tool: its one bulk action. */
 function openHighlightToolMenu(x, y) {
@@ -4821,8 +4831,8 @@ function syncDocumentSurface() {
   const placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
   if (cmdInput && cmdInput.placeholder !== placeholder) cmdInput.placeholder = placeholder;
   const netLabelButton = document.getElementById('btn-mode-net-label');
-  if (netLabelButton && netLabelButton.title !== 'Place a label on a physical wire (L)') {
-    netLabelButton.title = 'Place a label on a physical wire (L)';
+  if (netLabelButton && netLabelButton.title !== 'Place a label on a physical wire (Shift+L)') {
+    netLabelButton.title = 'Place a label on a physical wire (Shift+L)';
     netLabelButton.setAttribute('aria-label', 'Place a label on a physical wire');
   }
 }
@@ -10432,22 +10442,22 @@ function appendContextActions(menu, target) {
     if (renamable) {
       appendContextItem(group, 'Rename…', later(() => renameFromPanel(componentsListEl, `[data-refdes="${CSS.escape(comp.refdes)}"]`, (ref) => startComponentRename(comp, ref))), { shortcut: 'dbl-click' });
     }
-    appendContextItem(group, 'Rotate', () => selectedTransform('rotate'), { shortcut: 'R' });
+    appendContextItem(group, 'Rotate', () => selectedTransform('rotate'), { shortcut: 'r' });
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
-    appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl+R' });
+    appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl/Cmd+R' });
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
-    if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 'T' });
+    if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
     appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
     appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
   }
   if (target.kind !== 'net' && target.kind !== 'wire') {
-    appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'M' });
+    appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'm' });
     appendContextItem(group, 'Detached move', () => activateMove('detached'), { shortcut: 'Shift+M' });
-    appendContextItem(group, 'Copy', activateCopy, { shortcut: 'C' });
+    appendContextItem(group, 'Copy', activateCopy, { shortcut: 'c' });
     appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
     appendContextItem(group, 'Bring to front', () => restackSelected('front'), { shortcut: 'Shift+↑' });
     appendContextItem(group, 'Send to back', () => restackSelected('back'), { shortcut: 'Shift+↓' });
@@ -11719,8 +11729,6 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'D') toggleTheme();
   else if (key === 'P') toggleSidePanel();
   else if (key === '?') showHelp();
-  else if (key === ']') stepBeat(1);
-  else if (key === '[') stepBeat(-1);
   else return false;
   return true;
 }
@@ -11777,8 +11785,8 @@ function onNormalKey(key, shiftKey = false) {
     removeAllNetHighlights();
     return;
   }
-  if (key === 'h') {
-    toggleSelectionInBeat();
+  if (key === 'h' || key === 'H') {
+    toggleSelectionInBeat(key === 'H' ? 'dim' : 'hide');
     return;
   }
   if (key === 's') {
@@ -11786,6 +11794,10 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
   if (key === 'B') {
+    toggleBeatStrip();
+    return;
+  }
+  if (key === '+') {
     addBeatHere();
     return;
   }
@@ -14498,7 +14510,7 @@ function syncSidePanelToggle() {
   const visible = sidePanelVisible();
   sidePanelToggleEl?.setAttribute('aria-expanded', String(visible));
   sidePanelToggleEl?.setAttribute('aria-pressed', String(visible));
-  if (sidePanelToggleEl) sidePanelToggleEl.title = `${visible ? 'Hide' : 'Show'} the components, nets, and selection panel (P)`;
+  if (sidePanelToggleEl) sidePanelToggleEl.title = `${visible ? 'Hide' : 'Show'} the components, nets, and selection panel (Shift+P)`;
   if (sidePanelEl) sidePanelEl.inert = !visible;
 }
 
@@ -14677,7 +14689,7 @@ function applyTheme(dark) {
   syncToolCursor();
   if (themeBtn) {
     themeBtn.setAttribute('aria-pressed', String(dark));
-    themeBtn.title = dark ? 'Switch to light theme (D)' : 'Switch to dark theme (D)';
+    themeBtn.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
     const icon = themeBtn.querySelector('.button-icon');
     if (icon) icon.innerHTML = ICON_PATHS[dark ? 'sun' : 'moon'];
   }
@@ -14732,7 +14744,7 @@ function setCrosshair(on, announce = true) {
 
   if (crosshairBtn) {
     crosshairBtn.setAttribute('aria-pressed', String(crosshairVisible));
-    crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
+    crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (Shift+C)' : 'Show the crosshair (Shift+C)';
   }
   render();
   if (announce) hintLine(crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
@@ -14744,7 +14756,7 @@ function setGuides(on, announce = true) {
   guidesVisible = !!on;
   if (guidesBtn) {
     guidesBtn.setAttribute('aria-pressed', String(guidesVisible));
-    guidesBtn.title = guidesVisible ? 'Hide the spacing and alignment guides (G)' : 'Show the spacing and alignment guides (G)';
+    guidesBtn.title = guidesVisible ? 'Hide the spacing and alignment guides (Shift+G)' : 'Show the spacing and alignment guides (Shift+G)';
   }
   render();
   if (announce) hintLine(guidesVisible ? 'placement guides shown' : 'placement guides hidden');
@@ -14780,7 +14792,7 @@ syncPageGuideControls();
 if (crosshairBtn) {
   crosshairBtn.addEventListener('click', () => setCrosshair(!crosshairVisible));
   crosshairBtn.setAttribute('aria-pressed', String(crosshairVisible));
-  crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
+  crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (Shift+C)' : 'Show the crosshair (Shift+C)';
 }
 
 // ----- keyboard -------------------------------------------------------------
@@ -14794,6 +14806,16 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === 'F5' && ev.shiftKey && !inlineInput) {
     ev.preventDefault();
     openPresenter();
+    return;
+  }
+  // Alt+Left/Right (or PageUp/PageDown, as a presentation clicker sends)
+  // steps through the beats. Alt+Left must not become browser Back.
+  const beatStep = !ev.ctrlKey && !ev.metaKey && !ev.shiftKey && !inlineInput && !['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)
+    ? (ev.altKey ? { ArrowRight: 1, ArrowLeft: -1 } : { PageDown: 1, PageUp: -1 })[ev.key]
+    : undefined;
+  if (beatStep && !drag && !wire && !directWire) {
+    ev.preventDefault();
+    stepBeat(beatStep);
     return;
   }
   if (ev.key === 'F5') {

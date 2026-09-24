@@ -575,8 +575,9 @@ export function viewportGridSvg(vp) {
  * opts.underlay: emit an empty editor-underlay group above the grid for effects.
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
- * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it hides
- * is left out, or with `fade` drawn faint so the editor can still reach it.
+ * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it dims
+ * is drawn faint; what it hides is left out, or with `fade` drawn fainter
+ * still so the editor can reach it.
  * The frame stays the whole drawing's, so every beat lines up.
  */
 export function svgString(circuit, opts = {}) {
@@ -591,9 +592,10 @@ export function svgString(circuit, opts = {}) {
   const defOf = (c) => (beat ? beat.defOf(c) : c.def);
   const netHighlightOf = (net) => (beat ? beat.netHighlight(net) : circuit.netHighlight?.(net) || null);
   const GHOST = ' opacity="0.34"';
-  const FADED = ' opacity="0.2"';
-  const refOpacity = (ref) => (ghostRefs.has(ref) ? GHOST : beatHiddenRef(ref) ? FADED : '');
-  const labelOpacity = (id) => (ghostLabels.has(id) ? GHOST : beatHiddenLabel(id) ? FADED : '');
+  const DIMMED = ' opacity="0.3"';
+  const FADED = ' opacity="0.12"';
+  const refOpacity = (ref) => (ghostRefs.has(ref) ? GHOST : beatHiddenRef(ref) ? FADED : beat?.dimRefs.has(ref) ? DIMMED : '');
+  const labelOpacity = (id) => (ghostLabels.has(id) ? GHOST : beatHiddenLabel(id) ? FADED : beat?.dimLabels.has(id) ? DIMMED : '');
   const b = circuit.bounds(o.grid || o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
@@ -744,13 +746,23 @@ export function svgString(circuit, opts = {}) {
     if (shown === 'none' && !beatFade) continue;
     const highlight = netHighlightOf(net);
     const netStyle = withHighlight(net.style, highlight);
-    if (Array.isArray(shown)) {
-      for (const { a, b, branch, segment } of shown) {
+    if (typeof shown === 'object') {
+      // Faint pieces of one style share a path, so their joints are not
+      // painted twice.
+      const faint = new Map();
+      const piece = ({ a, b, branch, segment }, opacity) => {
         const style = withHighlight({ ...(net.style || {}), ...(net.wireStyles?.[`${branch}:${segment}`] || {}) }, highlight);
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
-        if (solidStyle(style) && !ghostNets.has(net.id)) addInk(inkAttrs(style), d);
-        else parts.push(`<path class="wire-beat" d="${d}" fill="none"${ghostNets.has(net.id) ? GHOST : ''} ${styleAttrs(style, 'wire')} pointer-events="none"/>`);
-      }
+        if (!opacity && solidStyle(style)) addInk(inkAttrs(style), d);
+        else {
+          const attrs = `fill="none"${opacity} ${styleAttrs(style, 'wire')}`;
+          faint.set(attrs, [...(faint.get(attrs) || []), d]);
+        }
+      };
+      const ghost = ghostNets.has(net.id) ? GHOST : '';
+      for (const p of shown.shown) piece(p, ghost);
+      for (const p of shown.dimmed) piece(p, ghost || DIMMED);
+      for (const [attrs, ds] of faint) parts.push(`<path class="wire-beat" d="${ds.join(' ')}" ${attrs} pointer-events="none"/>`);
       // The editor keeps the whole net, faded, as the thing to click.
       if (!beatFade) continue;
     }

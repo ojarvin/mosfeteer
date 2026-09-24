@@ -1,7 +1,8 @@
 # Beats
 
 A beat is one step of a figure that builds itself up: which parts and labels
-it shows, which way its switches point, and which nets are highlighted. Beats
+it shows, dims, or hides, which way its switches point, and which nets are
+highlighted. Beats
 are view state over **one** drawing. They never copy geometry, so fixing the
 drawing fixes every beat. Code: `src/core/beats.js`; tests:
 `test/beats.test.js`.
@@ -22,9 +23,12 @@ drawing fixes every beat. Code: `src/core/beats.js`; tests:
    copy of the one before it.
 4. **Wires, dots, and owned labels follow.** A beat draws only the wire
    needed to join what it shows: dangling ends are trimmed back to a shown
-   terminal or a shown net label. A junction dot shows while three or more
-   arms meet at it. An owned label shows with its part. A net label that no
-   beat mentions shows while any part on its net shows.
+   terminal or a shown net label. A stub the drawing leaves open-ended stays
+   whole while the wire or pin it hangs from shows, unless it runs through
+   something hidden, such as the placeholder label it carried. A junction dot
+   shows while three or more arms meet at it. An owned label shows with its
+   part. A net label that no beat mentions follows the parts on its net.
+   Wire that joins only dimmed parts is dimmed too.
 5. **Switches and highlights are per beat** on top of the drawing's own
    positions and highlights, with the same carry-forward rule.
 
@@ -40,7 +44,7 @@ relative to the beat before (the first beat is relative to the drawing):
 ```json
 "beats": [
   { "id": "b1", "name": "Signal path", "hide": ["M3", "M4"] },
-  { "id": "b2", "name": "Bias", "show": ["M3", "M4"], "hide": ["L2"] },
+  { "id": "b2", "name": "Bias", "show": ["M3", "M4"], "dim": ["M1"], "hide": ["L2"] },
   { "id": "b3", "name": "Phase 2", "switches": { "S1": "closed" }, "highlights": { "name:VX": "red" } }
 ]
 ```
@@ -51,15 +55,19 @@ renaming a part renames its references.
 
 ## Where beats appear
 
-- **Editor.** The beat strip (More → Beats, or `B`) lists the beats. The beat
-  on screen fades what it hides; faded objects stay selectable. `h` shows or
-  hides the selection from this beat on, `s` flips selected switches (from
+- **Editor.** `Shift+B` (or More → Beats) shows the beat strip; `+` adds a
+  beat after the one on screen. `Alt+→`/`Alt+←` or PageDown/PageUp step
+  through them, stopping at either end; before the first is the whole
+  drawing. The beat on screen draws what it dims faint and what it hides
+  fainter still; both stay selectable. `h` hides the selection from this beat
+  on (or shows it again), `Shift+H` dims it, `s` flips selected switches (from
   this beat on, or in the drawing when no beat is shown), and the highlight
-  tool colors nets for this beat on. The dot beside each beat says whether the
-  selection shows there; clicking it changes that beat alone. `]`/`[` step.
-- **Presenting.** `Shift+F5` shows the beats full screen from the current one.
-  Every beat keeps the whole drawing's frame, so only what changes moves.
+  tool colors nets for this beat on. The dot beside each beat says how the
+  selection looks there; clicking it shows or hides it in that beat alone.
+- **Presenting.** `Shift+F5` shows the beats full screen from the current one,
+  in the editor's light or dark theme. Every beat keeps the whole drawing's
+  frame, so only what changes moves.
 - **Export.** The export dialog exports the whole drawing, one beat, or every
   beat as numbered files (`name-1.svg`, `name-2.svg`, ...) that line up.
-- **Commands.** `beat list|add|rm|rename|move|show|hide|switch` and
+- **Commands.** `beat list|add|rm|rename|move|show|dim|hide|switch` and
   `svg --beat N`; see `help`.

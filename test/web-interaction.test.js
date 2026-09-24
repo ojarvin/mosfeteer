@@ -718,7 +718,7 @@ test('the placement guides are a view toggle beside the grid', () => {
   assert.doesNotMatch(main, /guidesVisible[\s\S]{0,80}symmetryAxis/);
 
   const keymap = readFileSync(new URL('../src/web/toolbar.js', import.meta.url), 'utf8');
-  assert.match(keymap, /\['G', 'toggle the spacing and alignment guides'\]/);
+  assert.match(keymap, /\['Shift\+G', 'toggle the spacing and alignment guides'\]/);
 });
 
 test('the style menu exposes one shared arrowhead as independent start/end toggle buttons', () => {

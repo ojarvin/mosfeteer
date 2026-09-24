@@ -134,7 +134,7 @@ common readability failure — they look "correct but busy".
   follow.
 - **Reserve corridors**: after placing devices, mentally walk each wire;
   every net should need only short straight segments through open lanes.
-- Verify the result is airy by reviewing the fitted view (`F`), not just by
+- Verify the result is airy by reviewing the fitted view (`f`), not just by
   a clean `eval`.
 
 ### 2.2 Placement planning before wiring
@@ -500,7 +500,7 @@ paths; net labels belong on drawable wire paths.
 Use the canonical `addNetLabel`, `renameNet`, and `renameNetLabel` APIs for
 electrical labels and net names. Net-label text follows the physical net name;
 removing one label occurrence does not remove or rename its net. In the editor,
-`L` persistently places a net label only on an unambiguous physical wire; at a
+`Shift+L` persistently places a net label only on an unambiguous physical wire; at a
 crossing, select/highlight the intended net first. `Shift+N` places one free
 annotation and then returns to selection; `a` places a multi-point arrow by
 clicking vertices, while `b` places one box. The generic insert-menu entry is
@@ -629,7 +629,7 @@ not as extra prose on the drawing.
 ## 10. Verified micro-examples
 
 These short command sequences build the core patterns. Verify with
-`eval` after each, then fit the view (`F`).
+`eval` after each, then fit the view (`f`).
 
 ### Mirrored differential pair (shared sources on the center column)
 

@@ -148,7 +148,7 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: 'label',
     title: 'Name a net',
-    text: 'Press **L** and click a wire to place a net label, then type a name, for example **X** for the mirror node.',
+    text: 'Press **Shift+L** and click a wire to place a net label, then type a name, for example **X** for the mirror node.',
     done: (circuit) => [...circuit.labels.values()].some((label) => label.netId),
   },
   {

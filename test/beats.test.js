@@ -6,7 +6,7 @@ import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
 import {
   addBeat, cycleBeatHighlight, introduceAt, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
-  setVisibleAt, setVisibleFrom, switchStateAt, visibleBeats,
+  setPresenceAt, setPresenceFrom, switchStateAt, visibleBeats,
 } from '../src/core/beats.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
@@ -35,7 +35,7 @@ test('a document without beats saves no beats key and draws as before', () => {
 
 test('beats store only changes and survive a save and load', () => {
   const circuit = tee();
-  setVisibleFrom(circuit, 1, ['R3'], false);
+  setPresenceFrom(circuit, 1, ['R3'], 'hide');
   assert.deepEqual(circuit.toJSON().beats, [{ id: 'b1', name: '' }, { id: 'b2', name: '', hide: ['R3'] }, { id: 'b3', name: '' }]);
   const loaded = roundTrip(circuit);
   assert.deepEqual(loaded.toJSON().beats, circuit.toJSON().beats);
@@ -44,23 +44,23 @@ test('beats store only changes and survive a save and load', () => {
 
 test('a change carries forward until the next beat that already differed', () => {
   const circuit = tee(4);
-  setVisibleFrom(circuit, 0, ['R3'], false);
+  setPresenceFrom(circuit, 0, ['R3'], 'hide');
   assert.deepEqual(visibleBeats(circuit, 'R3'), []);
-  setVisibleFrom(circuit, 2, ['R3'], true);
+  setPresenceFrom(circuit, 2, ['R3'], 'show');
   assert.deepEqual(visibleBeats(circuit, 'R3'), [2, 3]);
   // An object whose first change is a show is hidden before it, on its own.
   assert.deepEqual(circuit.toJSON().beats[2].show, ['R3']);
   assert.equal(circuit.toJSON().beats[0].hide, undefined);
   // Hiding at beat 3 also reaches beat 4, which looked the same.
-  setVisibleFrom(circuit, 2, ['R3'], false);
+  setPresenceFrom(circuit, 2, ['R3'], 'hide');
   assert.deepEqual(visibleBeats(circuit, 'R3'), []);
-  setVisibleAt(circuit, 1, ['R3'], true);
+  setPresenceAt(circuit, 1, ['R3'], 'show');
   assert.deepEqual(visibleBeats(circuit, 'R3'), [1]);
 });
 
 test('unlisted objects, including ones drawn later, show in every beat', () => {
   const circuit = tee();
-  setVisibleFrom(circuit, 1, ['R3'], false);
+  setPresenceFrom(circuit, 1, ['R3'], 'hide');
   run(circuit, 'add resistor R4 --at 0 400');
   assert.deepEqual(visibleBeats(circuit, 'R4'), [0, 1, 2]);
   // Drawn while a beat is shown: it appears from that beat on.
@@ -72,8 +72,8 @@ test('unlisted objects, including ones drawn later, show in every beat', () => {
 test('inserting, deleting, and moving beats leaves every other beat looking the same', () => {
   const circuit = tee(3);
   run(circuit, 'add switch_open S1 --at 0 400');
-  setVisibleFrom(circuit, 1, ['R3'], false);
-  setVisibleFrom(circuit, 2, ['R2'], false);
+  setPresenceFrom(circuit, 1, ['R3'], 'hide');
+  setPresenceFrom(circuit, 2, ['R2'], 'hide');
   setSwitchFrom(circuit, 2, 'S1', 'closed');
   cycleBeatHighlight(circuit, 1, circuit.nets.values().next().value, COLORS);
   const before = looks(circuit);
@@ -86,9 +86,9 @@ test('inserting, deleting, and moving beats leaves every other beat looking the 
   assert.deepEqual(looks(circuit), before.slice(0, 2));
 
   const three = tee(3);
-  setVisibleFrom(three, 2, ['R3'], true);
-  setVisibleFrom(three, 0, ['R3'], false);
-  setVisibleFrom(three, 2, ['R3'], true);
+  setPresenceFrom(three, 2, ['R3'], 'show');
+  setPresenceFrom(three, 0, ['R3'], 'hide');
+  setPresenceFrom(three, 2, ['R3'], 'show');
   const order = looks(three);
   moveBeat(three, 2, 0);
   assert.deepEqual(looks(three), [order[2], order[0], order[1]]);
@@ -99,15 +99,15 @@ test('inserting, deleting, and moving beats leaves every other beat looking the 
 
 test('wires keep only what joins the shown terminals, and a dot needs three arms', () => {
   const circuit = tee();
-  setVisibleFrom(circuit, 1, ['R3'], false);
-  setVisibleFrom(circuit, 2, ['R2'], false);
+  setPresenceFrom(circuit, 1, ['R3'], 'hide');
+  setPresenceFrom(circuit, 2, ['R2'], 'hide');
   assert.deepEqual(hidden(circuit, 0), []);
   assert.equal(resolveBeat(circuit, 0).wires.get('N1'), 'all');
   // Without R3 the stub down to it goes, and so does the junction dot.
   const second = resolveBeat(circuit, 1);
   assert.deepEqual([...second.hiddenRefs].sort(), ['J1', 'R3']);
-  const pieces = second.wires.get('N1');
-  assert.ok(Array.isArray(pieces));
+  const pieces = second.wires.get('N1').shown;
+  assert.deepEqual(second.wires.get('N1').dimmed, []);
   assert.deepEqual(pieces.map(({ a, b }) => [a, b]), [[{ x: 80, y: 0 }, { x: 200, y: 0 }], [{ x: 320, y: 0 }, { x: 200, y: 0 }]]);
   // With only R1 left there is nothing to join.
   assert.equal(resolveBeat(circuit, 2).wires.get('N1'), 'none');
@@ -117,24 +117,24 @@ test('a placeholder net label keeps its wire until the part that replaces it app
   const circuit = tee(2);
   const net = circuit.nets.get('N1');
   const label = circuit.addNetLabel(net, 'V_{B}', { x: 200, y: 80 });
-  setVisibleFrom(circuit, 0, ['R2', 'R3'], false);
-  setVisibleFrom(circuit, 1, ['R3'], true);
-  setVisibleFrom(circuit, 1, [label.id], false);
+  setPresenceFrom(circuit, 0, ['R2', 'R3'], 'hide');
+  setPresenceFrom(circuit, 1, ['R3'], 'show');
+  setPresenceFrom(circuit, 1, [label.id], 'hide');
   // Beat 1: R1 alone, its wire runs on to the label.
   const first = resolveBeat(circuit, 0);
   assert.equal(first.hiddenLabels.has(label.id), false);
-  assert.deepEqual(first.wires.get('N1').map(({ a, b }) => [a, b]), [[{ x: 80, y: 0 }, { x: 200, y: 0 }], [{ x: 200, y: 80 }, { x: 200, y: 0 }]]);
+  assert.deepEqual(first.wires.get('N1').shown.map(({ a, b }) => [a, b]), [[{ x: 80, y: 0 }, { x: 200, y: 0 }], [{ x: 200, y: 80 }, { x: 200, y: 0 }]]);
   // Beat 2: R3 replaces the label.
   const second = resolveBeat(circuit, 1);
   assert.equal(second.hiddenLabels.has(label.id), true);
   // R1 to R3, still through the label's point, which cuts R3's wire in two.
-  assert.deepEqual(second.wires.get('N1').map(({ a, b }) => [a, b]), [[{ x: 80, y: 0 }, { x: 200, y: 0 }], [{ x: 200, y: 160 }, { x: 200, y: 80 }], [{ x: 200, y: 80 }, { x: 200, y: 0 }]]);
+  assert.deepEqual(second.wires.get('N1').shown.map(({ a, b }) => [a, b]), [[{ x: 80, y: 0 }, { x: 200, y: 0 }], [{ x: 200, y: 160 }, { x: 200, y: 80 }], [{ x: 200, y: 80 }, { x: 200, y: 0 }]]);
 });
 
 test('an unlisted net label follows the parts on its net', () => {
   const circuit = tee(1);
   const label = circuit.addNetLabel(circuit.nets.get('N1'), 'X', { x: 200, y: 80 });
-  setVisibleFrom(circuit, 0, ['R1', 'R2', 'R3'], false);
+  setPresenceFrom(circuit, 0, ['R1', 'R2', 'R3'], 'hide');
   assert.equal(resolveBeat(circuit, 0).hiddenLabels.has(label.id), true);
   assert.equal(resolveBeat(circuit, 0).hiddenRefs.has('J1'), true);
 });
@@ -142,10 +142,10 @@ test('an unlisted net label follows the parts on its net', () => {
 test('owned labels follow their part and cannot be listed on their own', () => {
   const circuit = tee(1);
   const owned = circuit.labelOf('R3');
-  setVisibleFrom(circuit, 0, [owned.id], false);
+  setPresenceFrom(circuit, 0, [owned.id], 'hide');
   assert.deepEqual(circuit.toJSON().beats[0].hide, ['R3']);
   assert.equal(resolveBeat(circuit, 0).hiddenLabels.has(owned.id), true);
-  assert.throws(() => setVisibleFrom(circuit, 0, ['J1'], false), /cannot be shown or hidden/);
+  assert.throws(() => setPresenceFrom(circuit, 0, ['J1'], 'hide'), /cannot be shown or hidden/);
 });
 
 test('switch positions are per beat and never change the drawing', () => {
@@ -184,7 +184,7 @@ test('highlights are per beat over the drawing\'s own highlights', () => {
 test('renaming a part keeps its place in the beats; deleting it drops it from them', () => {
   const circuit = tee(2);
   run(circuit, 'add switch_open S1 --at 0 400');
-  setVisibleFrom(circuit, 1, ['R3'], false);
+  setPresenceFrom(circuit, 1, ['R3'], 'hide');
   setSwitchFrom(circuit, 1, 'S1', 'closed');
   run(circuit, 'rename R3 RB', 'rename S1 SA');
   assert.deepEqual(circuit.toJSON().beats[1], { id: 'b2', name: '', hide: ['RB'], switches: { SA: 'closed' } });
@@ -194,16 +194,58 @@ test('renaming a part keeps its place in the beats; deleting it drops it from th
 
 test('a beat drawing leaves hidden objects out, or fades them for the editor', () => {
   const circuit = tee(1);
-  setVisibleFrom(circuit, 0, ['R3'], false);
+  setPresenceFrom(circuit, 0, ['R3'], 'hide');
   const view = resolveBeat(circuit, 0);
   const omitted = svgString(circuit, { beat: { view } });
   assert.ok(!omitted.includes('data-ref="R3"'));
   assert.ok(omitted.includes('data-ref="R1"'));
   assert.ok(!omitted.includes('data-net-id="N1"'), 'a partial net is drawn as plain ink');
   const faded = svgString(circuit, { beat: { view, fade: true } });
-  assert.match(faded, /opacity="0.2" data-ref="R3"/);
+  assert.match(faded, /opacity="0.12" data-ref="R3"/);
   assert.ok(faded.includes('data-net-id="N1"'), 'the editor keeps the net to click');
   // Every beat keeps the whole drawing's frame.
   const box = (svg) => svg.match(/viewBox="([^"]+)"/)[1];
   assert.equal(box(omitted), box(svgString(circuit)));
+});
+
+test('a dimmed part stays on the page, faint, with the wire that joins it', () => {
+  const circuit = tee(3);
+  setPresenceFrom(circuit, 0, ['R3'], 'dim');
+  setPresenceFrom(circuit, 1, ['R3'], 'show');
+  setPresenceFrom(circuit, 2, ['R3'], 'hide');
+  assert.deepEqual(circuit.toJSON().beats.map((beat) => [beat.show, beat.dim, beat.hide]), [
+    [undefined, ['R3'], undefined], [['R3'], undefined, undefined], [undefined, undefined, ['R3']],
+  ]);
+  const first = resolveBeat(circuit, 0);
+  assert.deepEqual([...first.dimRefs].sort(), ['J1', 'R3'], 'the dot has only two shown arms');
+  assert.deepEqual(first.wires.get('N1').dimmed.map(({ a, b }) => [a, b]), [[{ x: 200, y: 160 }, { x: 200, y: 0 }]]);
+  assert.equal(first.wires.get('N1').shown.length, 2);
+  assert.match(svgString(circuit, { beat: { view: first } }), /opacity="0.3" data-ref="R3"/);
+  assert.deepEqual(visibleBeats(circuit, 'R3'), [0, 1]);
+  // Hidden before a leading dim needs saying: it is not implied.
+  const later = tee(2);
+  setPresenceAt(later, 0, ['R3'], 'hide');
+  setPresenceAt(later, 1, ['R3'], 'dim');
+  assert.deepEqual(later.toJSON().beats.map((beat) => [beat.dim, beat.hide]), [[undefined, ['R3']], [['R3'], undefined]]);
+  assert.throws(() => setPresenceFrom(later, 0, ['R3'], 'blink'), /shown, dimmed, or hidden/);
+});
+
+test('an open-ended labelled stub keeps its tip beyond the label', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0', 'connect M1.g M2.g');
+  const net = circuit.netOfTerminal({ comp: 'M1', term: 'g' });
+  // Carry the gate wire on past M1 to an open end at x=-320.
+  const gate = circuit.components.get('M1').terminalWorld('g');
+  assert.equal(gate.x, -120);
+  net.branches = [...net.paths(), [{ x: -120, y: 0 }, { x: -320, y: 0 }]];
+  const label = circuit.addNetLabel(net, 'V_{BN}', { x: -240, y: 0 });
+  addBeat(circuit);
+  setPresenceFrom(circuit, 0, ['M2'], 'hide');
+  const wires = resolveBeat(circuit, 0).wires.get(net.id);
+  const xs = wires.shown.flatMap(({ a, b }) => [a.x, b.x]);
+  assert.equal(Math.min(...xs), -320, 'the tip past the label stays');
+  assert.ok(Math.max(...xs) <= -120, 'the run over to hidden M2 goes');
+  // Hiding the label drops the stub it carried.
+  setPresenceFrom(circuit, 0, [label.id], 'hide');
+  assert.equal(resolveBeat(circuit, 0).wires.get(net.id), 'none');
 });

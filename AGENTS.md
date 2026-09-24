@@ -167,7 +167,7 @@ hover glows) in that color without changing their own styles.
 
 `circuit.beats` holds presentation steps over the one drawing
 ([`docs/beats.md`](docs/beats.md), `src/core/beats.js`). Beats are view state
-only: they list parts and labels to show or hide, switch positions, and
+only: they list parts and labels to show, dim, or hide, switch positions, and
 highlights as changes relative to the previous beat, and never copy or move
 geometry. Unmentioned objects show in every beat; wires, junction dots, and
 owned labels follow what they join. Edit beats through the `beats.js` helpers,
@@ -254,10 +254,10 @@ Core keyboard vocabulary:
 
 | Context | Keys |
 | --- | --- |
-| normal | `i` insert, `w` wire, `m` move, `Shift+m` detached move, `c` copy, `r` rotate, `Shift+r`/`Ctrl+r` mirrors, `x` check, `u`/`U` undo/redo |
-| view | `F` fit, `#` grid, `C` crosshair, `G` guides, `D` theme, `P` side panel, `?` help, `:` command line (log drawer) |
+| normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
+| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `?` help, `:` command line (log drawer) |
 | editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `9` net highlight tool, `8` remove all highlights |
-| beats | `B` add a beat, `]`/`[` step, `h` show/hide the selection from this beat on, `s` flip switches, `Shift+F5` present |
+| beats | `Shift+B` beat strip, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or nearest-terminal cursor snapping while wiring |
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
 
@@ -266,7 +266,7 @@ query text before a ghost exists. Any tool can be picked straight from another
 (key or toolbar), dropping the old tool's uncommitted work as Escape would;
 re-picking Wire keeps a half-drawn wire, and in Wire mode a letter naming a
 terminal of the part being pointed at still picks that terminal.
-`Ctrl+Shift+r` is intentionally unbound.
+`Ctrl+Shift+R` is intentionally unbound.
 Selection is role-aware across components, labels, nets, annotations, and wire
 runs; component/managed-wire transactions are one undo entry.
 

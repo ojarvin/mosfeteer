@@ -4141,12 +4141,15 @@ button.off {
   display: none;
 }
 
-/* Presenting: the figure alone, fitted, on paper white. */
+/* Presenting: the figure alone, fitted, on the theme's paper and ink.
+   Equation labels take their color from --svg-ink, so the ink must be set
+   here as it is on the canvas. */
 .presenter {
   position: fixed;
   z-index: 100;
   inset: 0;
-  background: #fff;
+  background: var(--paper);
+  color: var(--svg-ink);
   cursor: pointer;
   outline: none;
 }
@@ -4163,8 +4166,10 @@ button.off {
 
 .presenter-frame {
   padding: 4vmin;
-  background: #fff;
+  background: var(--paper);
 }
+
+html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 
 .presenter-frame svg {
   display: block;
@@ -4191,7 +4196,7 @@ button.off {
   position: absolute;
   right: 14px;
   bottom: 10px;
-  color: #8a8f98;
+  color: var(--svg-faint);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   pointer-events: none;

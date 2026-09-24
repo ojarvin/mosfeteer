@@ -865,6 +865,9 @@ test('beat commands add, edit, list, and draw presentation steps', () => {
   runCommand(circuit, 'beat hide 1 S1');
   runCommand(circuit, 'beat show 2 S1');
   runCommand(circuit, 'beat switch 3 S1 closed');
+  runCommand(circuit, 'beat dim 3 R1');
+  assert.deepEqual(circuit.toJSON().beats[2].dim, ['R1']);
+  assert.throws(() => runCommand(circuit, 'beat dim 3'), /usage: beat dim/);
   runCommand(circuit, 'beat rename 3 Closed');
   assert.equal(runCommand(circuit, 'beat list').text.split('\n').length, 3);
   assert.deepEqual(circuit.toJSON().beats.map((beat) => beat.name), ['Bias', 'Phase', 'Closed']);

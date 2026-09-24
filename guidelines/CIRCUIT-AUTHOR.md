@@ -275,7 +275,7 @@ switch <refdes> open|closed    draw a switch open or closed
 beat list                      list beats (presentation steps; docs/beats.md)
 beat add [NAME] [--after N]    add a beat that looks like the one before it
 beat rm|rename|move N ...      remove, name, or reorder a beat (1-based)
-beat show|hide N ID ...        show or hide parts/labels from beat N on
+beat show|dim|hide N ID ...    show, dim, or hide parts/labels from beat N on
 beat switch N REF open|closed  set a switch position from beat N on
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list
@@ -342,7 +342,7 @@ geometry; the rules for how to lay them out are in `style-guide.md`.
   toggles the route choice for new wires. There is no separate uppercase-`W`
   editor mode.
 - While placing a component or copying a selection, hold `Alt` to pin a mirror
-  axis and place the mirrored pair in one gesture. `Ctrl/Cmd+r` remains the
+  axis and place the mirrored pair in one gesture. `Ctrl/Cmd+R` remains the
   explicit vertical-mirror transform; `Alt` is not a wire-symmetry mode.
 - Persisted nets with `routingMode: "fixed"` remain loadable, including
   diagonal paths. Use the `net` command's fixed-path operations when inspecting

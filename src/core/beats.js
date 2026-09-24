@@ -6,14 +6,15 @@
  * A beat stores only what changes at it, relative to the beat before; the
  * first beat is relative to the drawing itself:
  *
- *   show / hide  object ids: component refdes, free and net label ids
+ *   show / dim / hide  object ids: component refdes, free and net label ids
  *   switches     { refdes: 'open' | 'closed' }
  *   highlights   { netGroupKey: color | null }
  *
- * An object nobody mentions is visible in every beat, so an edit to the
+ * An object nobody mentions is shown in every beat, so an edit to the
  * drawing shows up everywhere without touching the beats. An object whose
- * first change is a `show` is hidden before it. Wires, owned labels, and
- * junction dots are never listed: they follow what they connect or belong to.
+ * first change is a `show` is hidden before it. A dimmed object stays in
+ * place, faint. Wires, owned labels, and junction dots are never listed: they
+ * follow what they connect or belong to.
  *
  * Every edit decodes the per-beat states of an object (its "track"), changes
  * the track, and encodes it back. Inserting, deleting, or moving a beat
@@ -33,9 +34,15 @@ export function switchState(component) {
 
 // ----- stored form ------------------------------------------------------
 
+/** An object's look in one beat, and the list each look is stored in. */
+export const PRESENCES = Object.freeze(['show', 'dim', 'hide']);
+
 function emptyBeat(id, name = '') {
-  return { id, name, show: [], hide: [], switches: {}, highlights: {} };
+  return { id, name, show: [], dim: [], hide: [], switches: {}, highlights: {} };
 }
+
+const listed = (beat, id) => PRESENCES.find((presence) => beat[presence].includes(id)) || null;
+const mentionedIds = (beats) => new Set(beats.flatMap((beat) => PRESENCES.flatMap((presence) => beat[presence])));
 
 /** Beats read from a document. Anything malformed is dropped, never guessed. */
 export function beatsFromJSON(data) {
@@ -50,7 +57,8 @@ export function beatsFromJSON(data) {
     const beat = emptyBeat(id, typeof entry.name === 'string' ? entry.name : '');
     const ids = (list) => [...new Set((Array.isArray(list) ? list : []).filter((value) => typeof value === 'string' && value))];
     beat.show = ids(entry.show);
-    beat.hide = ids(entry.hide).filter((value) => !beat.show.includes(value));
+    beat.dim = ids(entry.dim).filter((value) => !beat.show.includes(value));
+    beat.hide = ids(entry.hide).filter((value) => !beat.show.includes(value) && !beat.dim.includes(value));
     for (const [ref, state] of Object.entries(entry.switches || {})) {
       if (state === 'open' || state === 'closed') beat.switches[ref] = state;
     }
@@ -68,12 +76,12 @@ export function beatsToJSON(circuit) {
   const live = (id) => beatObjectKind(circuit, id) !== null;
   return (circuit.beats || []).map((beat) => {
     const out = { id: beat.id, name: beat.name || '' };
-    const show = beat.show.filter(live);
-    const hide = beat.hide.filter(live);
+    for (const presence of PRESENCES) {
+      const ids = beat[presence].filter(live);
+      if (ids.length) out[presence] = ids;
+    }
     const switches = Object.entries(beat.switches).filter(([ref]) => switchState(circuit.components.get(ref)));
     const highlights = Object.entries(beat.highlights);
-    if (show.length) out.show = show;
-    if (hide.length) out.hide = hide;
     if (switches.length) out.switches = Object.fromEntries(switches);
     if (highlights.length) out.highlights = Object.fromEntries(highlights);
     return out;
@@ -118,33 +126,25 @@ export function beatTargetId(circuit, id) {
 
 // ----- tracks -----------------------------------------------------------------
 
-/** Per-beat visibility of one object. */
+/** Per-beat presence ('show' | 'dim' | 'hide') of one object. */
 export function visibilityTrack(beats, id) {
-  const first = beats.find((beat) => beat.show.includes(id) || beat.hide.includes(id));
-  let visible = !first?.show.includes(id);
+  const first = beats.map((beat) => listed(beat, id)).find(Boolean);
+  let presence = first === 'show' ? 'hide' : 'show';
   return beats.map((beat) => {
-    if (beat.show.includes(id)) visible = true;
-    else if (beat.hide.includes(id)) visible = false;
-    return visible;
+    presence = listed(beat, id) || presence;
+    return presence;
   });
 }
 
 function writeVisibilityTrack(beats, id, track) {
-  for (const beat of beats) {
-    beat.show = beat.show.filter((value) => value !== id);
-    beat.hide = beat.hide.filter((value) => value !== id);
-  }
-  const firstVisible = track.indexOf(true);
-  if (firstVisible === -1) {
-    if (beats.length) beats[0].hide.push(id);
-    return;
-  }
+  for (const beat of beats) for (const presence of PRESENCES) beat[presence] = beat[presence].filter((value) => value !== id);
   // Hidden before its first appearance: a leading `show` says so on its own.
-  let visible = firstVisible === 0;
+  const firstSeen = track.findIndex((presence) => presence !== 'hide');
+  let presence = firstSeen > 0 && track[firstSeen] === 'show' ? 'hide' : 'show';
   track.forEach((value, index) => {
-    if (value === visible) return;
-    (value ? beats[index].show : beats[index].hide).push(id);
-    visible = value;
+    if (value === presence) return;
+    beats[index][value].push(id);
+    presence = value;
   });
 }
 
@@ -180,18 +180,17 @@ function carryForward(track, index, value) {
 /** Apply a structural edit to every track, then store the result. */
 function editAllTracks(circuit, edit) {
   const beats = circuit.beats;
-  const ids = new Set(beats.flatMap((beat) => [...beat.show, ...beat.hide]));
+  const ids = mentionedIds(beats);
   const refs = new Set(beats.flatMap((beat) => Object.keys(beat.switches)));
   const keys = new Set(beats.flatMap((beat) => Object.keys(beat.highlights)));
   const tracks = [
-    ...[...ids].map((id) => ({ kind: 'visible', key: id, track: visibilityTrack(beats, id), base: true })),
+    ...[...ids].map((id) => ({ kind: 'visible', key: id, track: visibilityTrack(beats, id), base: 'show' })),
     ...[...refs].map((ref) => ({ kind: 'switches', key: ref, track: valueTrack(beats, 'switches', ref, switchBase(circuit, ref)), base: switchBase(circuit, ref) })),
     ...[...keys].map((key) => ({ kind: 'highlights', key, track: valueTrack(beats, 'highlights', key, highlightBase(circuit, key)), base: highlightBase(circuit, key) })),
   ];
   edit(tracks);
   for (const beat of beats) {
-    beat.show = [];
-    beat.hide = [];
+    for (const presence of PRESENCES) beat[presence] = [];
     beat.switches = {};
     beat.highlights = {};
   }
@@ -261,30 +260,37 @@ function targetIds(circuit, ids) {
   return out;
 }
 
-export function visibleAt(circuit, id, index) {
-  return visibilityTrack(circuit.beats, id)[index] ?? true;
+function checkPresence(presence) {
+  if (!PRESENCES.includes(presence)) throw new Error(`an object is shown, dimmed, or hidden, not "${presence}"`);
 }
 
-/** Show or hide objects from beat `index` on, until the next beat where they
- * already looked different. Returns the listed ids. */
-export function setVisibleFrom(circuit, index, ids, visible) {
+/** 'show', 'dim', or 'hide' for a listable object in beat `index`. */
+export function presenceAt(circuit, id, index) {
+  return visibilityTrack(circuit.beats, id)[index] ?? 'show';
+}
+
+/** Show, dim, or hide objects from beat `index` on, until the next beat
+ * where they already looked different. Returns the listed ids. */
+export function setPresenceFrom(circuit, index, ids, presence) {
   checkIndex(circuit, index);
+  checkPresence(presence);
   const targets = targetIds(circuit, ids);
   for (const id of targets) {
     const track = visibilityTrack(circuit.beats, id);
-    carryForward(track, index, !!visible);
+    carryForward(track, index, presence);
     writeVisibilityTrack(circuit.beats, id, track);
   }
   return targets;
 }
 
-/** Show or hide objects in beat `index` alone. */
-export function setVisibleAt(circuit, index, ids, visible) {
+/** Show, dim, or hide objects in beat `index` alone. */
+export function setPresenceAt(circuit, index, ids, presence) {
   checkIndex(circuit, index);
+  checkPresence(presence);
   const targets = targetIds(circuit, ids);
   for (const id of targets) {
     const track = visibilityTrack(circuit.beats, id);
-    track[index] = !!visible;
+    track[index] = presence;
     writeVisibilityTrack(circuit.beats, id, track);
   }
   return targets;
@@ -293,17 +299,18 @@ export function setVisibleAt(circuit, index, ids, visible) {
 /** New objects drawn while a beat is shown appear from that beat on. */
 export function introduceAt(circuit, index, ids) {
   checkIndex(circuit, index);
+  const mentioned = mentionedIds(circuit.beats);
   for (const id of ids) {
-    if (!beatObjectKind(circuit, id) || circuit.beats.some((beat) => beat.show.includes(id) || beat.hide.includes(id))) continue;
-    writeVisibilityTrack(circuit.beats, id, circuit.beats.map((_, i) => i >= index));
+    if (!beatObjectKind(circuit, id) || mentioned.has(id)) continue;
+    writeVisibilityTrack(circuit.beats, id, circuit.beats.map((_, i) => (i >= index ? 'show' : 'hide')));
   }
 }
 
-/** Beats (0-based) in which an object is visible. */
+/** Beats (0-based) in which an object is on the page, dimmed or not. */
 export function visibleBeats(circuit, id) {
   const target = beatTargetId(circuit, id);
   if (!target) return [];
-  return visibilityTrack(circuit.beats, target).flatMap((visible, index) => (visible ? [index] : []));
+  return visibilityTrack(circuit.beats, target).flatMap((presence, index) => (presence === 'hide' ? [] : [index]));
 }
 
 export function switchStateAt(circuit, ref, index) {
@@ -363,8 +370,7 @@ export function cycleBeatHighlight(circuit, index, net, colors) {
 /** A renamed component keeps its place in every beat. */
 export function renameBeatObject(circuit, from, to) {
   for (const beat of circuit.beats || []) {
-    beat.show = beat.show.map((id) => (id === from ? to : id));
-    beat.hide = beat.hide.map((id) => (id === from ? to : id));
+    for (const presence of PRESENCES) beat[presence] = beat[presence].map((id) => (id === from ? to : id));
     if (Object.hasOwn(beat.switches, from)) {
       beat.switches[to] = beat.switches[from];
       delete beat.switches[from];
@@ -424,10 +430,8 @@ function cutSegments(paths, cuts) {
   return edges;
 }
 
-/** The wire needed to join the anchors: every dangling end that is not an
- * anchor is trimmed back, so a lone anchor keeps no wire at all. */
-function joiningEdges(edges, anchors) {
-  const alive = new Set(edges.map((_, i) => i));
+/** Which edges meet at each point. */
+function edgesAt(edges) {
   const at = new Map();
   edges.forEach((edge, i) => {
     for (const key of [pointKey(edge.a), pointKey(edge.b)]) {
@@ -435,56 +439,103 @@ function joiningEdges(edges, anchors) {
       at.get(key).add(i);
     }
   });
-  const queue = [...at.keys()].filter((key) => at.get(key).size === 1 && !anchors.has(key));
+  return at;
+}
+
+const otherEnd = (edge, key) => (pointKey(edge.a) === key ? pointKey(edge.b) : pointKey(edge.a));
+
+/**
+ * Indices of the wire a beat keeps for a set of shown anchors:
+ *
+ * 1. the wire joining the anchors -- every dangling end that is not an
+ *    anchor is trimmed back, so a lone anchor keeps no wire of its own; and
+ * 2. every stub the drawing leaves open-ended, whole, while it hangs from
+ *    that wire or from an anchor. A stub stops at a junction and is dropped
+ *    where it passes something not shown (`blocked`), such as the
+ *    placeholder label it carried.
+ */
+function keptEdges(edges, at, anchors, freeEnds, blocked) {
+  const alive = new Set(edges.map((_, i) => i));
+  const degree = new Map([...at].map(([key, set]) => [key, set.size]));
+  const queue = [...degree.keys()].filter((key) => degree.get(key) === 1 && !anchors.has(key));
   while (queue.length) {
     const key = queue.pop();
-    const touching = at.get(key);
-    if (touching.size !== 1 || anchors.has(key)) continue;
-    const [i] = touching;
+    if (degree.get(key) !== 1 || anchors.has(key)) continue;
+    const i = [...at.get(key)].find((edge) => alive.has(edge));
     alive.delete(i);
-    const edge = edges[i];
-    for (const end of [pointKey(edge.a), pointKey(edge.b)]) {
-      at.get(end).delete(i);
-      if (end !== key && at.get(end).size === 1 && !anchors.has(end)) queue.push(end);
+    degree.set(key, 0);
+    const end = otherEnd(edges[i], key);
+    degree.set(end, degree.get(end) - 1);
+    if (degree.get(end) === 1 && !anchors.has(end)) queue.push(end);
+  }
+  const reached = new Set(anchors);
+  for (const i of alive) for (const p of [edges[i].a, edges[i].b]) reached.add(pointKey(p));
+  for (const start of freeEnds) {
+    if (reached.has(start) || blocked.has(start)) continue;
+    const chain = [];
+    let key = start;
+    let previous = null;
+    for (let step = 0; step <= edges.length; step += 1) {
+      const next = [...at.get(key)].filter((i) => i !== previous);
+      if (next.length !== 1) break;
+      const [i] = next;
+      chain.push(i);
+      key = otherEnd(edges[i], key);
+      if (reached.has(key)) {
+        for (const edge of chain) alive.add(edge);
+        break;
+      }
+      if (blocked.has(key)) break;
+      previous = i;
     }
   }
-  return edges.filter((_, i) => alive.has(i));
+  return alive;
 }
 
 /**
  * What beat `index` shows. Returns null when there is no such beat.
  *
  *   hiddenRefs / hiddenLabels  objects left out (or faded in the editor)
+ *   dimRefs / dimLabels        objects drawn faint
  *   switchTypes                refdes -> symbol type drawn in this beat
  *   highlights                 net group key -> color
- *   wires                      net id -> 'all' | 'none' | visible pieces
- *                              [{ a, b, branch, segment }]
+ *   wires                      net id -> 'all' | 'none' | { shown, dimmed }
+ *                              pieces [{ a, b, branch, segment }]
  */
 export function resolveBeat(circuit, index) {
   const beats = circuit.beats || [];
   if (!Number.isInteger(index) || index < 0 || index >= beats.length) return null;
-  const mentioned = new Set(beats.flatMap((beat) => [...beat.show, ...beat.hide]));
-  const listedVisible = (id) => !mentioned.has(id) || visibilityTrack(beats, id)[index];
+  const mentioned = mentionedIds(beats);
+  const listedPresence = (id) => (mentioned.has(id) ? visibilityTrack(beats, id)[index] : 'show');
 
-  const hiddenRefs = new Set();
+  const presence = new Map();
   for (const component of circuit.components.values()) {
-    if (component.type !== 'solder' && !listedVisible(component.refdes)) hiddenRefs.add(component.refdes);
+    if (component.type !== 'solder') presence.set(component.refdes, listedPresence(component.refdes));
   }
-  const terminalVisible = (net) => net.terminals.some(({ comp }) => circuit.components.has(comp) && !hiddenRefs.has(comp));
-
-  const hiddenLabels = new Set();
-  const labelHidden = (label) => {
-    if (label.owner) return hiddenRefs.has(label.owner);
-    if (label.parent && circuit.labels.has(label.parent)) return labelHidden(circuit.labels.get(label.parent));
-    if (mentioned.has(label.id)) return !listedVisible(label.id);
-    // An unlisted net label stays while anything it names is on show.
-    if (label.netId) {
-      const net = circuit.nets.get(label.netId);
-      return !!net && net.terminals.length > 0 && !terminalVisible(net);
-    }
-    return false;
+  const refPresence = (ref) => presence.get(ref) || 'show';
+  // The strongest look among a net's parts: shown beats dimmed beats hidden.
+  const netPresence = (net) => {
+    const looks = net.terminals.filter(({ comp }) => circuit.components.has(comp)).map(({ comp }) => refPresence(comp));
+    if (!looks.length || looks.includes('show')) return 'show';
+    return looks.includes('dim') ? 'dim' : 'hide';
   };
-  for (const label of circuit.labels.values()) if (labelHidden(label)) hiddenLabels.add(label.id);
+  const labelPresence = (label) => {
+    if (label.owner) return refPresence(label.owner);
+    if (label.parent && circuit.labels.has(label.parent)) return labelPresence(circuit.labels.get(label.parent));
+    if (mentioned.has(label.id)) return listedPresence(label.id);
+    // An unlisted net label goes with what it names.
+    if (label.netId && circuit.nets.has(label.netId)) return netPresence(circuit.nets.get(label.netId));
+    return 'show';
+  };
+  const hiddenLabels = new Set();
+  const dimLabels = new Set();
+  for (const label of circuit.labels.values()) {
+    const look = labelPresence(label);
+    if (look === 'hide') hiddenLabels.add(label.id);
+    else if (look === 'dim') dimLabels.add(label.id);
+  }
+  const hiddenRefs = new Set([...presence].filter(([, look]) => look === 'hide').map(([ref]) => ref));
+  const dimRefs = new Set([...presence].filter(([, look]) => look === 'dim').map(([ref]) => ref));
 
   const switchTypes = new Map();
   for (const ref of new Set(beats.flatMap((beat) => Object.keys(beat.switches)))) {
@@ -497,34 +548,48 @@ export function resolveBeat(circuit, index) {
   const solders = [...circuit.components.values()].filter((c) => c.type === 'solder');
   const solderPoints = solders.map((c) => ({ x: c.transform.x, y: c.transform.y }));
   const wires = new Map();
-  const visibleArms = new Map();
-  const allArms = new Map();
-  const countArm = (arms, key) => arms.set(key, (arms.get(key) || 0) + 1);
+  // Arms at each point: in the drawing, on the page (shown or dimmed), shown.
+  const arms = { all: new Map(), page: new Map(), shown: new Map() };
+  const countArm = (map, key) => map.set(key, (map.get(key) || 0) + 1);
   for (const net of circuit.nets.values()) {
     const terminals = net.terminals
-      .map(({ comp, term }) => ({ comp, point: circuit.components.get(comp)?.terminalWorld(term) }))
+      .map(({ comp, term }) => ({ look: refPresence(comp), point: circuit.components.get(comp)?.terminalWorld(term) }))
       .filter(({ point }) => point);
-    const labels = [...circuit.labels.values()].filter((label) => label.netId === net.id);
-    const anchors = [
-      ...terminals.filter(({ comp }) => !hiddenRefs.has(comp)).map(({ point }) => point),
-      ...labels.filter((label) => !hiddenLabels.has(label.id)).map((label) => label.anchorWorld()),
-    ];
-    const cuts = [...terminals.map(({ point }) => point), ...labels.map((label) => label.anchorWorld()), ...solderPoints];
-    const edges = cutSegments(drawnNetPaths(net), cuts);
-    const kept = joiningEdges(edges, new Set(anchors.map(pointKey)));
-    wires.set(net.id, kept.length === edges.length ? 'all' : kept.length ? kept : 'none');
-    for (const edge of edges) for (const p of [edge.a, edge.b]) countArm(allArms, pointKey(p));
-    for (const edge of kept) for (const p of [edge.a, edge.b]) countArm(visibleArms, pointKey(p));
-    for (const { comp, point } of terminals) {
-      countArm(allArms, pointKey(point));
-      if (!hiddenRefs.has(comp)) countArm(visibleArms, pointKey(point));
+    const labels = [...circuit.labels.values()]
+      .filter((label) => label.netId === net.id)
+      .map((label) => ({ look: labelPresence(label), point: label.anchorWorld() }));
+    const marks = [...terminals, ...labels];
+    const edges = cutSegments(drawnNetPaths(net), [...marks.map(({ point }) => point), ...solderPoints]);
+    const at = edgesAt(edges);
+    const terminalKeys = new Set(terminals.map(({ point }) => pointKey(point)));
+    const freeEnds = [...at.keys()].filter((key) => at.get(key).size === 1 && !terminalKeys.has(key));
+    const keysWhere = (test) => new Set(marks.filter(({ look }) => test(look)).map(({ point }) => pointKey(point)));
+    const onPage = keptEdges(edges, at, keysWhere((look) => look !== 'hide'), freeEnds, keysWhere((look) => look === 'hide'));
+    const shown = keptEdges(edges, at, keysWhere((look) => look === 'show'), freeEnds, keysWhere((look) => look !== 'show'));
+    const pieces = (set) => edges.filter((_, i) => set.has(i));
+    wires.set(net.id, shown.size === edges.length ? 'all'
+      : onPage.size === 0 ? 'none'
+        : { shown: pieces(shown), dimmed: edges.filter((_, i) => onPage.has(i) && !shown.has(i)) });
+    edges.forEach((edge, i) => {
+      for (const p of [edge.a, edge.b]) {
+        countArm(arms.all, pointKey(p));
+        if (onPage.has(i)) countArm(arms.page, pointKey(p));
+        if (shown.has(i)) countArm(arms.shown, pointKey(p));
+      }
+    });
+    for (const { look, point } of terminals) {
+      countArm(arms.all, pointKey(point));
+      if (look !== 'hide') countArm(arms.page, pointKey(point));
+      if (look === 'show') countArm(arms.shown, pointKey(point));
     }
   }
-  // A junction dot marks three or more arms; it goes when the beat leaves fewer.
+  // A junction dot marks three or more arms; it goes (or dims) with fewer.
   for (const solder of solders) {
     const key = pointKey(solder.transform);
-    const arms = visibleArms.get(key) || 0;
-    if (arms < 3 && arms < (allArms.get(key) || 0)) hiddenRefs.add(solder.refdes);
+    const all = arms.all.get(key) || 0;
+    const fewer = (map) => (map.get(key) || 0) < 3 && (map.get(key) || 0) < all;
+    if (fewer(arms.page)) hiddenRefs.add(solder.refdes);
+    else if (fewer(arms.shown)) dimRefs.add(solder.refdes);
   }
 
   const highlights = highlightsAt(circuit, index);
@@ -532,6 +597,8 @@ export function resolveBeat(circuit, index) {
     index,
     hiddenRefs,
     hiddenLabels,
+    dimRefs,
+    dimLabels,
     switchTypes,
     highlights,
     wires,
