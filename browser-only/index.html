@@ -27,7 +27,7 @@
 
     <div class="toolbar-cluster file-cluster" role="group" aria-label="File actions">
       <button id="btn-new-document" data-icon="file-plus" title="Start a new schematic">New</button>
-      <button id="btn-save" class="save-action" data-icon="save" data-action="save" title="Save the current document, including designs with issues (Ctrl/Cmd+S or Shift+x)">Save</button>
+      <button id="btn-save" class="save-action" data-icon="save" data-action="save" title="Save the current document, including designs with issues (Ctrl/Cmd+S or Shift+X)">Save</button>
       <button id="btn-export" data-icon="download" title="Export the current document as SVG, PDF, or high-resolution PNG (Ctrl/Cmd+E)">Export</button>
       <div class="toolbar-popover">
         <button id="btn-document-menu" class="icon-button" data-icon="more" aria-haspopup="menu" aria-expanded="false" aria-controls="document-menu" aria-label="More document actions" title="More document actions">More</button>
@@ -38,16 +38,16 @@
           <button type="button" role="menuitem" class="fold-only" data-icon="download" data-proxy-for="btn-export">Export…</button>
           <span class="toolbar-menu-separator fold-only" role="separator"></span>
           <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="grid" data-proxy-for="btn-grid">Grid <kbd>#</kbd></button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="guides" data-proxy-for="btn-guides">Guides <kbd>G</kbd></button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="crosshair" data-proxy-for="btn-crosshair">Crosshair <kbd>C</kbd></button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="moon" data-proxy-for="btn-theme">Dark theme <kbd>D</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="guides" data-proxy-for="btn-guides">Guides <kbd>Shift+G</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="crosshair" data-proxy-for="btn-crosshair">Crosshair <kbd>Shift+C</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="moon" data-proxy-for="btn-theme">Dark theme <kbd>Shift+D</kbd></button>
           <span class="toolbar-menu-separator fold-only" role="separator"></span>
           <button id="btn-open-file" type="button" role="menuitem" data-icon="folder-open" title="Open a document file from any folder (Ctrl/Cmd+O)">Open file…</button>
           <button id="btn-save-as" type="button" role="menuitem" data-icon="save" title="Save a copy in any folder under any name (Ctrl/Cmd+Shift+S)">Save as…</button>
           <button id="btn-reveal-document" type="button" role="menuitem" data-icon="folder" title="Show the document file in your file manager" disabled>Show in folder</button>
           <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace" title="Choose the folder the document list shows and new documents are saved into">Change workspace folder…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
-          <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats" title="Show the beat strip: steps that build the drawing up for a talk or a paper (B adds a beat)">Beats</button>
+          <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats" title="Show the beat strip: steps that build the drawing up for a talk or a paper (Shift+B; + adds a beat)">Beats</button>
           <button id="btn-present" type="button" role="menuitem" data-icon="play" title="Present the beats full screen, from the current one (Shift+F5)">Present <kbd>Shift+F5</kbd></button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Permanently delete the current document file" disabled>Delete document…</button>
@@ -63,9 +63,9 @@
 
     <div class="toolbar-cluster view-cluster" role="group" aria-label="View">
       <button id="btn-grid" class="icon-button" data-icon="grid" aria-pressed="true" aria-label="Grid" title="Show or hide the placement grid (#)">Grid</button>
-      <button id="btn-guides" class="icon-button" data-icon="guides" aria-pressed="true" aria-label="Placement guides" title="Show or hide the spacing and alignment guides (G)">Guides</button>
-      <button id="btn-crosshair" class="icon-button" data-icon="crosshair" aria-pressed="true" aria-label="Crosshair" title="Show or hide the crosshair (C)">Crosshair</button>
-      <button id="btn-theme" class="icon-button" data-icon="moon" aria-pressed="false" aria-label="Dark theme" title="Switch between light and dark themes (D)">Dark</button>
+      <button id="btn-guides" class="icon-button" data-icon="guides" aria-pressed="true" aria-label="Placement guides" title="Show or hide the spacing and alignment guides (Shift+G)">Guides</button>
+      <button id="btn-crosshair" class="icon-button" data-icon="crosshair" aria-pressed="true" aria-label="Crosshair" title="Show or hide the crosshair (Shift+C)">Crosshair</button>
+      <button id="btn-theme" class="icon-button" data-icon="moon" aria-pressed="false" aria-label="Dark theme" title="Switch between light and dark themes (Shift+D)">Dark</button>
     </div>
 
     <!-- Settings: choices that are set once rather than toggled while drawing.
@@ -196,11 +196,11 @@
         <button id="btn-mode-wire" class="mode-control rail-flyout-proxy" data-icon="wire" data-mode="wire" data-doc-kind="schematic" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="wire-flyout" title="Draw an electrical wire (w) · hold Alt to snap to the nearest terminal · orthogonal shape · F3 to toggle; hover or right-click for both shapes" aria-label="Draw an electrical wire">Wire <kbd>w</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
         <button id="btn-mode-move" class="mode-control" data-icon="move" data-action="move" aria-pressed="false" title="Move selected objects with their connectivity; stays active until Esc (m)" aria-label="Move selected objects">Move <kbd>m</kbd></button>
-        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Move selected objects without carrying connected nets; stays active until Esc (Shift+m)" aria-label="Detach move">Detach move <kbd>Shift+m</kbd></button>
+        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Move selected objects without carrying connected nets; stays active until Esc (Shift+M)" aria-label="Detach move">Detach move <kbd>Shift+M</kbd></button>
         <button id="btn-mode-copy" class="mode-control" data-icon="copy" data-action="copy" aria-pressed="false" title="Copy a selected object or set; stays active for repeated copies (c)" aria-label="Copy selected objects">Copy <kbd>c</kbd></button>
         <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete selected objects and stay in Delete mode until Esc (Delete)" aria-label="Delete selected objects">Delete <kbd>Delete</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
-        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a label on a physical wire (L)" aria-label="Place a label on a physical wire">Net label <kbd>L</kbd></button>
+        <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Place a label on a physical wire (Shift+L)" aria-label="Place a label on a physical wire">Net label <kbd>Shift+L</kbd></button>
         <button id="btn-mode-highlight" class="mode-control" data-icon="highlight" data-action="highlight" aria-pressed="false" aria-haspopup="menu" title="Highlight nets: each click cycles a net's color (9) · right-click to remove all (8)" aria-label="Highlight nets">Highlight <kbd>9</kbd></button>
         <button id="btn-rail-annotate" class="mode-control annotation-control rail-flyout-proxy" data-icon="text" data-flyout-proxy="annotate" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="rail-flyout" title="Annotation tools: text, arrow, box, line (hover or right-click for all)" aria-label="Annotation tools">Annotate</button>
       </div>
@@ -218,7 +218,7 @@
         <div class="empty-state-head"><span class="app-mark empty-state-mark" aria-hidden="true"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></span><div class="empty-state-title">Empty schematic</div></div>
         <button type="button" data-empty-action="place"><kbd>i</kbd><span class="empty-state-text">Insert a component</span></button>
         <button type="button" data-empty-action="wire"><kbd>w</kbd><span class="empty-state-text">Draw a wire</span></button>
-        <button type="button" data-empty-action="open"><kbd>Ctrl+O</kbd><span class="empty-state-text">Open a document</span></button>
+        <button type="button" data-empty-action="open"><kbd>Ctrl/Cmd+O</kbd><span class="empty-state-text">Open a document</span></button>
         <button type="button" data-empty-action="help"><kbd>?</kbd><span class="empty-state-text">All shortcuts</span></button>
         <button type="button" data-empty-action="tutorial"><kbd>5 min</kbd><span class="empty-state-text">Learn by drawing a 5T OTA</span></button>
       </div>
@@ -244,7 +244,7 @@
         <div class="beat-strip-row">
           <span class="beat-strip-title">Beats</span>
           <div id="beat-list" class="beat-list" role="toolbar" aria-label="Beats"></div>
-          <button type="button" id="beat-add" class="beat-strip-button" data-icon="plus" title="Add a beat after this one; it starts out looking the same (B)" aria-label="Add a beat">Add</button>
+          <button type="button" id="beat-add" class="beat-strip-button" data-icon="plus" title="Add a beat after this one; it starts out looking the same (+)" aria-label="Add a beat">Add</button>
           <button type="button" id="beat-present" class="beat-strip-button" data-icon="play" title="Present full screen from this beat (Shift+F5)" aria-label="Present">Present</button>
           <button type="button" id="beat-strip-close" class="beat-strip-button icon-button" data-icon="x-circle" title="Hide the beat strip and show the whole drawing" aria-label="Hide the beat strip">Close</button>
         </div>
@@ -478,7 +478,7 @@
       <button id="status-message" type="button" class="status-chip status-message" aria-expanded="false" aria-controls="log-drawer" title="Last message; click to open the log and command line (:)"></button>
       <span id="status-selection" class="status-chip status-selection" title="Current selection" hidden></span>
       <span id="status-cursor" class="status-chip status-cursor" title="Cursor position (world units)"></span>
-      <button id="status-zoom" type="button" class="status-chip status-zoom" title="Zoom level; click to fit the drawing (F)">100%</button>
+      <button id="status-zoom" type="button" class="status-chip status-zoom" title="Zoom level; click to fit the drawing (f)">100%</button>
       <button id="status-check" type="button" class="status-chip status-check pending" title="Check the current schematic (x)">Check</button>
       <button id="btn-help" type="button" class="status-chip status-help" title="Show keyboard and command help (?)" aria-label="Help">?</button>
     </div>

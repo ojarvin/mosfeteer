@@ -8600,14 +8600,15 @@ const { steinerBranches } = __require("src/core/router.js");
  * A beat stores only what changes at it, relative to the beat before; the
  * first beat is relative to the drawing itself:
  *
- *   show / hide  object ids: component refdes, free and net label ids
+ *   show / dim / hide  object ids: component refdes, free and net label ids
  *   switches     { refdes: 'open' | 'closed' }
  *   highlights   { netGroupKey: color | null }
  *
- * An object nobody mentions is visible in every beat, so an edit to the
+ * An object nobody mentions is shown in every beat, so an edit to the
  * drawing shows up everywhere without touching the beats. An object whose
- * first change is a `show` is hidden before it. Wires, owned labels, and
- * junction dots are never listed: they follow what they connect or belong to.
+ * first change is a `show` is hidden before it. A dimmed object stays in
+ * place, faint. Wires, owned labels, and junction dots are never listed: they
+ * follow what they connect or belong to.
  *
  * Every edit decodes the per-beat states of an object (its "track"), changes
  * the track, and encodes it back. Inserting, deleting, or moving a beat
@@ -8627,9 +8628,15 @@ function switchState(component) {
 
 // ----- stored form ------------------------------------------------------
 
+/** An object's look in one beat, and the list each look is stored in. */
+const PRESENCES = Object.freeze(['show', 'dim', 'hide']);
+
 function emptyBeat(id, name = '') {
-  return { id, name, show: [], hide: [], switches: {}, highlights: {} };
+  return { id, name, show: [], dim: [], hide: [], switches: {}, highlights: {} };
 }
+
+const listed = (beat, id) => PRESENCES.find((presence) => beat[presence].includes(id)) || null;
+const mentionedIds = (beats) => new Set(beats.flatMap((beat) => PRESENCES.flatMap((presence) => beat[presence])));
 
 /** Beats read from a document. Anything malformed is dropped, never guessed. */
 function beatsFromJSON(data) {
@@ -8644,7 +8651,8 @@ function beatsFromJSON(data) {
     const beat = emptyBeat(id, typeof entry.name === 'string' ? entry.name : '');
     const ids = (list) => [...new Set((Array.isArray(list) ? list : []).filter((value) => typeof value === 'string' && value))];
     beat.show = ids(entry.show);
-    beat.hide = ids(entry.hide).filter((value) => !beat.show.includes(value));
+    beat.dim = ids(entry.dim).filter((value) => !beat.show.includes(value));
+    beat.hide = ids(entry.hide).filter((value) => !beat.show.includes(value) && !beat.dim.includes(value));
     for (const [ref, state] of Object.entries(entry.switches || {})) {
       if (state === 'open' || state === 'closed') beat.switches[ref] = state;
     }
@@ -8662,12 +8670,12 @@ function beatsToJSON(circuit) {
   const live = (id) => beatObjectKind(circuit, id) !== null;
   return (circuit.beats || []).map((beat) => {
     const out = { id: beat.id, name: beat.name || '' };
-    const show = beat.show.filter(live);
-    const hide = beat.hide.filter(live);
+    for (const presence of PRESENCES) {
+      const ids = beat[presence].filter(live);
+      if (ids.length) out[presence] = ids;
+    }
     const switches = Object.entries(beat.switches).filter(([ref]) => switchState(circuit.components.get(ref)));
     const highlights = Object.entries(beat.highlights);
-    if (show.length) out.show = show;
-    if (hide.length) out.hide = hide;
     if (switches.length) out.switches = Object.fromEntries(switches);
     if (highlights.length) out.highlights = Object.fromEntries(highlights);
     return out;
@@ -8712,33 +8720,25 @@ function beatTargetId(circuit, id) {
 
 // ----- tracks -----------------------------------------------------------------
 
-/** Per-beat visibility of one object. */
+/** Per-beat presence ('show' | 'dim' | 'hide') of one object. */
 function visibilityTrack(beats, id) {
-  const first = beats.find((beat) => beat.show.includes(id) || beat.hide.includes(id));
-  let visible = !first?.show.includes(id);
+  const first = beats.map((beat) => listed(beat, id)).find(Boolean);
+  let presence = first === 'show' ? 'hide' : 'show';
   return beats.map((beat) => {
-    if (beat.show.includes(id)) visible = true;
-    else if (beat.hide.includes(id)) visible = false;
-    return visible;
+    presence = listed(beat, id) || presence;
+    return presence;
   });
 }
 
 function writeVisibilityTrack(beats, id, track) {
-  for (const beat of beats) {
-    beat.show = beat.show.filter((value) => value !== id);
-    beat.hide = beat.hide.filter((value) => value !== id);
-  }
-  const firstVisible = track.indexOf(true);
-  if (firstVisible === -1) {
-    if (beats.length) beats[0].hide.push(id);
-    return;
-  }
+  for (const beat of beats) for (const presence of PRESENCES) beat[presence] = beat[presence].filter((value) => value !== id);
   // Hidden before its first appearance: a leading `show` says so on its own.
-  let visible = firstVisible === 0;
+  const firstSeen = track.findIndex((presence) => presence !== 'hide');
+  let presence = firstSeen > 0 && track[firstSeen] === 'show' ? 'hide' : 'show';
   track.forEach((value, index) => {
-    if (value === visible) return;
-    (value ? beats[index].show : beats[index].hide).push(id);
-    visible = value;
+    if (value === presence) return;
+    beats[index][value].push(id);
+    presence = value;
   });
 }
 
@@ -8774,18 +8774,17 @@ function carryForward(track, index, value) {
 /** Apply a structural edit to every track, then store the result. */
 function editAllTracks(circuit, edit) {
   const beats = circuit.beats;
-  const ids = new Set(beats.flatMap((beat) => [...beat.show, ...beat.hide]));
+  const ids = mentionedIds(beats);
   const refs = new Set(beats.flatMap((beat) => Object.keys(beat.switches)));
   const keys = new Set(beats.flatMap((beat) => Object.keys(beat.highlights)));
   const tracks = [
-    ...[...ids].map((id) => ({ kind: 'visible', key: id, track: visibilityTrack(beats, id), base: true })),
+    ...[...ids].map((id) => ({ kind: 'visible', key: id, track: visibilityTrack(beats, id), base: 'show' })),
     ...[...refs].map((ref) => ({ kind: 'switches', key: ref, track: valueTrack(beats, 'switches', ref, switchBase(circuit, ref)), base: switchBase(circuit, ref) })),
     ...[...keys].map((key) => ({ kind: 'highlights', key, track: valueTrack(beats, 'highlights', key, highlightBase(circuit, key)), base: highlightBase(circuit, key) })),
   ];
   edit(tracks);
   for (const beat of beats) {
-    beat.show = [];
-    beat.hide = [];
+    for (const presence of PRESENCES) beat[presence] = [];
     beat.switches = {};
     beat.highlights = {};
   }
@@ -8855,30 +8854,37 @@ function targetIds(circuit, ids) {
   return out;
 }
 
-function visibleAt(circuit, id, index) {
-  return visibilityTrack(circuit.beats, id)[index] ?? true;
+function checkPresence(presence) {
+  if (!PRESENCES.includes(presence)) throw new Error(`an object is shown, dimmed, or hidden, not "${presence}"`);
 }
 
-/** Show or hide objects from beat `index` on, until the next beat where they
- * already looked different. Returns the listed ids. */
-function setVisibleFrom(circuit, index, ids, visible) {
+/** 'show', 'dim', or 'hide' for a listable object in beat `index`. */
+function presenceAt(circuit, id, index) {
+  return visibilityTrack(circuit.beats, id)[index] ?? 'show';
+}
+
+/** Show, dim, or hide objects from beat `index` on, until the next beat
+ * where they already looked different. Returns the listed ids. */
+function setPresenceFrom(circuit, index, ids, presence) {
   checkIndex(circuit, index);
+  checkPresence(presence);
   const targets = targetIds(circuit, ids);
   for (const id of targets) {
     const track = visibilityTrack(circuit.beats, id);
-    carryForward(track, index, !!visible);
+    carryForward(track, index, presence);
     writeVisibilityTrack(circuit.beats, id, track);
   }
   return targets;
 }
 
-/** Show or hide objects in beat `index` alone. */
-function setVisibleAt(circuit, index, ids, visible) {
+/** Show, dim, or hide objects in beat `index` alone. */
+function setPresenceAt(circuit, index, ids, presence) {
   checkIndex(circuit, index);
+  checkPresence(presence);
   const targets = targetIds(circuit, ids);
   for (const id of targets) {
     const track = visibilityTrack(circuit.beats, id);
-    track[index] = !!visible;
+    track[index] = presence;
     writeVisibilityTrack(circuit.beats, id, track);
   }
   return targets;
@@ -8887,17 +8893,18 @@ function setVisibleAt(circuit, index, ids, visible) {
 /** New objects drawn while a beat is shown appear from that beat on. */
 function introduceAt(circuit, index, ids) {
   checkIndex(circuit, index);
+  const mentioned = mentionedIds(circuit.beats);
   for (const id of ids) {
-    if (!beatObjectKind(circuit, id) || circuit.beats.some((beat) => beat.show.includes(id) || beat.hide.includes(id))) continue;
-    writeVisibilityTrack(circuit.beats, id, circuit.beats.map((_, i) => i >= index));
+    if (!beatObjectKind(circuit, id) || mentioned.has(id)) continue;
+    writeVisibilityTrack(circuit.beats, id, circuit.beats.map((_, i) => (i >= index ? 'show' : 'hide')));
   }
 }
 
-/** Beats (0-based) in which an object is visible. */
+/** Beats (0-based) in which an object is on the page, dimmed or not. */
 function visibleBeats(circuit, id) {
   const target = beatTargetId(circuit, id);
   if (!target) return [];
-  return visibilityTrack(circuit.beats, target).flatMap((visible, index) => (visible ? [index] : []));
+  return visibilityTrack(circuit.beats, target).flatMap((presence, index) => (presence === 'hide' ? [] : [index]));
 }
 
 function switchStateAt(circuit, ref, index) {
@@ -8957,8 +8964,7 @@ function cycleBeatHighlight(circuit, index, net, colors) {
 /** A renamed component keeps its place in every beat. */
 function renameBeatObject(circuit, from, to) {
   for (const beat of circuit.beats || []) {
-    beat.show = beat.show.map((id) => (id === from ? to : id));
-    beat.hide = beat.hide.map((id) => (id === from ? to : id));
+    for (const presence of PRESENCES) beat[presence] = beat[presence].map((id) => (id === from ? to : id));
     if (Object.hasOwn(beat.switches, from)) {
       beat.switches[to] = beat.switches[from];
       delete beat.switches[from];
@@ -9018,10 +9024,8 @@ function cutSegments(paths, cuts) {
   return edges;
 }
 
-/** The wire needed to join the anchors: every dangling end that is not an
- * anchor is trimmed back, so a lone anchor keeps no wire at all. */
-function joiningEdges(edges, anchors) {
-  const alive = new Set(edges.map((_, i) => i));
+/** Which edges meet at each point. */
+function edgesAt(edges) {
   const at = new Map();
   edges.forEach((edge, i) => {
     for (const key of [pointKey(edge.a), pointKey(edge.b)]) {
@@ -9029,56 +9033,103 @@ function joiningEdges(edges, anchors) {
       at.get(key).add(i);
     }
   });
-  const queue = [...at.keys()].filter((key) => at.get(key).size === 1 && !anchors.has(key));
+  return at;
+}
+
+const otherEnd = (edge, key) => (pointKey(edge.a) === key ? pointKey(edge.b) : pointKey(edge.a));
+
+/**
+ * Indices of the wire a beat keeps for a set of shown anchors:
+ *
+ * 1. the wire joining the anchors -- every dangling end that is not an
+ *    anchor is trimmed back, so a lone anchor keeps no wire of its own; and
+ * 2. every stub the drawing leaves open-ended, whole, while it hangs from
+ *    that wire or from an anchor. A stub stops at a junction and is dropped
+ *    where it passes something not shown (`blocked`), such as the
+ *    placeholder label it carried.
+ */
+function keptEdges(edges, at, anchors, freeEnds, blocked) {
+  const alive = new Set(edges.map((_, i) => i));
+  const degree = new Map([...at].map(([key, set]) => [key, set.size]));
+  const queue = [...degree.keys()].filter((key) => degree.get(key) === 1 && !anchors.has(key));
   while (queue.length) {
     const key = queue.pop();
-    const touching = at.get(key);
-    if (touching.size !== 1 || anchors.has(key)) continue;
-    const [i] = touching;
+    if (degree.get(key) !== 1 || anchors.has(key)) continue;
+    const i = [...at.get(key)].find((edge) => alive.has(edge));
     alive.delete(i);
-    const edge = edges[i];
-    for (const end of [pointKey(edge.a), pointKey(edge.b)]) {
-      at.get(end).delete(i);
-      if (end !== key && at.get(end).size === 1 && !anchors.has(end)) queue.push(end);
+    degree.set(key, 0);
+    const end = otherEnd(edges[i], key);
+    degree.set(end, degree.get(end) - 1);
+    if (degree.get(end) === 1 && !anchors.has(end)) queue.push(end);
+  }
+  const reached = new Set(anchors);
+  for (const i of alive) for (const p of [edges[i].a, edges[i].b]) reached.add(pointKey(p));
+  for (const start of freeEnds) {
+    if (reached.has(start) || blocked.has(start)) continue;
+    const chain = [];
+    let key = start;
+    let previous = null;
+    for (let step = 0; step <= edges.length; step += 1) {
+      const next = [...at.get(key)].filter((i) => i !== previous);
+      if (next.length !== 1) break;
+      const [i] = next;
+      chain.push(i);
+      key = otherEnd(edges[i], key);
+      if (reached.has(key)) {
+        for (const edge of chain) alive.add(edge);
+        break;
+      }
+      if (blocked.has(key)) break;
+      previous = i;
     }
   }
-  return edges.filter((_, i) => alive.has(i));
+  return alive;
 }
 
 /**
  * What beat `index` shows. Returns null when there is no such beat.
  *
  *   hiddenRefs / hiddenLabels  objects left out (or faded in the editor)
+ *   dimRefs / dimLabels        objects drawn faint
  *   switchTypes                refdes -> symbol type drawn in this beat
  *   highlights                 net group key -> color
- *   wires                      net id -> 'all' | 'none' | visible pieces
- *                              [{ a, b, branch, segment }]
+ *   wires                      net id -> 'all' | 'none' | { shown, dimmed }
+ *                              pieces [{ a, b, branch, segment }]
  */
 function resolveBeat(circuit, index) {
   const beats = circuit.beats || [];
   if (!Number.isInteger(index) || index < 0 || index >= beats.length) return null;
-  const mentioned = new Set(beats.flatMap((beat) => [...beat.show, ...beat.hide]));
-  const listedVisible = (id) => !mentioned.has(id) || visibilityTrack(beats, id)[index];
+  const mentioned = mentionedIds(beats);
+  const listedPresence = (id) => (mentioned.has(id) ? visibilityTrack(beats, id)[index] : 'show');
 
-  const hiddenRefs = new Set();
+  const presence = new Map();
   for (const component of circuit.components.values()) {
-    if (component.type !== 'solder' && !listedVisible(component.refdes)) hiddenRefs.add(component.refdes);
+    if (component.type !== 'solder') presence.set(component.refdes, listedPresence(component.refdes));
   }
-  const terminalVisible = (net) => net.terminals.some(({ comp }) => circuit.components.has(comp) && !hiddenRefs.has(comp));
-
-  const hiddenLabels = new Set();
-  const labelHidden = (label) => {
-    if (label.owner) return hiddenRefs.has(label.owner);
-    if (label.parent && circuit.labels.has(label.parent)) return labelHidden(circuit.labels.get(label.parent));
-    if (mentioned.has(label.id)) return !listedVisible(label.id);
-    // An unlisted net label stays while anything it names is on show.
-    if (label.netId) {
-      const net = circuit.nets.get(label.netId);
-      return !!net && net.terminals.length > 0 && !terminalVisible(net);
-    }
-    return false;
+  const refPresence = (ref) => presence.get(ref) || 'show';
+  // The strongest look among a net's parts: shown beats dimmed beats hidden.
+  const netPresence = (net) => {
+    const looks = net.terminals.filter(({ comp }) => circuit.components.has(comp)).map(({ comp }) => refPresence(comp));
+    if (!looks.length || looks.includes('show')) return 'show';
+    return looks.includes('dim') ? 'dim' : 'hide';
   };
-  for (const label of circuit.labels.values()) if (labelHidden(label)) hiddenLabels.add(label.id);
+  const labelPresence = (label) => {
+    if (label.owner) return refPresence(label.owner);
+    if (label.parent && circuit.labels.has(label.parent)) return labelPresence(circuit.labels.get(label.parent));
+    if (mentioned.has(label.id)) return listedPresence(label.id);
+    // An unlisted net label goes with what it names.
+    if (label.netId && circuit.nets.has(label.netId)) return netPresence(circuit.nets.get(label.netId));
+    return 'show';
+  };
+  const hiddenLabels = new Set();
+  const dimLabels = new Set();
+  for (const label of circuit.labels.values()) {
+    const look = labelPresence(label);
+    if (look === 'hide') hiddenLabels.add(label.id);
+    else if (look === 'dim') dimLabels.add(label.id);
+  }
+  const hiddenRefs = new Set([...presence].filter(([, look]) => look === 'hide').map(([ref]) => ref));
+  const dimRefs = new Set([...presence].filter(([, look]) => look === 'dim').map(([ref]) => ref));
 
   const switchTypes = new Map();
   for (const ref of new Set(beats.flatMap((beat) => Object.keys(beat.switches)))) {
@@ -9091,34 +9142,48 @@ function resolveBeat(circuit, index) {
   const solders = [...circuit.components.values()].filter((c) => c.type === 'solder');
   const solderPoints = solders.map((c) => ({ x: c.transform.x, y: c.transform.y }));
   const wires = new Map();
-  const visibleArms = new Map();
-  const allArms = new Map();
-  const countArm = (arms, key) => arms.set(key, (arms.get(key) || 0) + 1);
+  // Arms at each point: in the drawing, on the page (shown or dimmed), shown.
+  const arms = { all: new Map(), page: new Map(), shown: new Map() };
+  const countArm = (map, key) => map.set(key, (map.get(key) || 0) + 1);
   for (const net of circuit.nets.values()) {
     const terminals = net.terminals
-      .map(({ comp, term }) => ({ comp, point: circuit.components.get(comp)?.terminalWorld(term) }))
+      .map(({ comp, term }) => ({ look: refPresence(comp), point: circuit.components.get(comp)?.terminalWorld(term) }))
       .filter(({ point }) => point);
-    const labels = [...circuit.labels.values()].filter((label) => label.netId === net.id);
-    const anchors = [
-      ...terminals.filter(({ comp }) => !hiddenRefs.has(comp)).map(({ point }) => point),
-      ...labels.filter((label) => !hiddenLabels.has(label.id)).map((label) => label.anchorWorld()),
-    ];
-    const cuts = [...terminals.map(({ point }) => point), ...labels.map((label) => label.anchorWorld()), ...solderPoints];
-    const edges = cutSegments(drawnNetPaths(net), cuts);
-    const kept = joiningEdges(edges, new Set(anchors.map(pointKey)));
-    wires.set(net.id, kept.length === edges.length ? 'all' : kept.length ? kept : 'none');
-    for (const edge of edges) for (const p of [edge.a, edge.b]) countArm(allArms, pointKey(p));
-    for (const edge of kept) for (const p of [edge.a, edge.b]) countArm(visibleArms, pointKey(p));
-    for (const { comp, point } of terminals) {
-      countArm(allArms, pointKey(point));
-      if (!hiddenRefs.has(comp)) countArm(visibleArms, pointKey(point));
+    const labels = [...circuit.labels.values()]
+      .filter((label) => label.netId === net.id)
+      .map((label) => ({ look: labelPresence(label), point: label.anchorWorld() }));
+    const marks = [...terminals, ...labels];
+    const edges = cutSegments(drawnNetPaths(net), [...marks.map(({ point }) => point), ...solderPoints]);
+    const at = edgesAt(edges);
+    const terminalKeys = new Set(terminals.map(({ point }) => pointKey(point)));
+    const freeEnds = [...at.keys()].filter((key) => at.get(key).size === 1 && !terminalKeys.has(key));
+    const keysWhere = (test) => new Set(marks.filter(({ look }) => test(look)).map(({ point }) => pointKey(point)));
+    const onPage = keptEdges(edges, at, keysWhere((look) => look !== 'hide'), freeEnds, keysWhere((look) => look === 'hide'));
+    const shown = keptEdges(edges, at, keysWhere((look) => look === 'show'), freeEnds, keysWhere((look) => look !== 'show'));
+    const pieces = (set) => edges.filter((_, i) => set.has(i));
+    wires.set(net.id, shown.size === edges.length ? 'all'
+      : onPage.size === 0 ? 'none'
+        : { shown: pieces(shown), dimmed: edges.filter((_, i) => onPage.has(i) && !shown.has(i)) });
+    edges.forEach((edge, i) => {
+      for (const p of [edge.a, edge.b]) {
+        countArm(arms.all, pointKey(p));
+        if (onPage.has(i)) countArm(arms.page, pointKey(p));
+        if (shown.has(i)) countArm(arms.shown, pointKey(p));
+      }
+    });
+    for (const { look, point } of terminals) {
+      countArm(arms.all, pointKey(point));
+      if (look !== 'hide') countArm(arms.page, pointKey(point));
+      if (look === 'show') countArm(arms.shown, pointKey(point));
     }
   }
-  // A junction dot marks three or more arms; it goes when the beat leaves fewer.
+  // A junction dot marks three or more arms; it goes (or dims) with fewer.
   for (const solder of solders) {
     const key = pointKey(solder.transform);
-    const arms = visibleArms.get(key) || 0;
-    if (arms < 3 && arms < (allArms.get(key) || 0)) hiddenRefs.add(solder.refdes);
+    const all = arms.all.get(key) || 0;
+    const fewer = (map) => (map.get(key) || 0) < 3 && (map.get(key) || 0) < all;
+    if (fewer(arms.page)) hiddenRefs.add(solder.refdes);
+    else if (fewer(arms.shown)) dimRefs.add(solder.refdes);
   }
 
   const highlights = highlightsAt(circuit, index);
@@ -9126,6 +9191,8 @@ function resolveBeat(circuit, index) {
     index,
     hiddenRefs,
     hiddenLabels,
+    dimRefs,
+    dimLabels,
     switchTypes,
     highlights,
     wires,
@@ -9147,9 +9214,9 @@ __exports.addBeat = addBeat;
 __exports.removeBeat = removeBeat;
 __exports.moveBeat = moveBeat;
 __exports.renameBeat = renameBeat;
-__exports.visibleAt = visibleAt;
-__exports.setVisibleFrom = setVisibleFrom;
-__exports.setVisibleAt = setVisibleAt;
+__exports.presenceAt = presenceAt;
+__exports.setPresenceFrom = setPresenceFrom;
+__exports.setPresenceAt = setPresenceAt;
 __exports.introduceAt = introduceAt;
 __exports.visibleBeats = visibleBeats;
 __exports.switchStateAt = switchStateAt;
@@ -9162,6 +9229,7 @@ __exports.renameBeatHighlightKey = renameBeatHighlightKey;
 __exports.drawnNetPaths = drawnNetPaths;
 __exports.resolveBeat = resolveBeat;
 __exports.SWITCH_TYPES = SWITCH_TYPES;
+__exports.PRESENCES = PRESENCES;
 };
 
 __modules["src/core/commands.js"] = function (__require, __exports) {
@@ -9174,7 +9242,7 @@ const { crossNetOverlaps } = __require("src/core/wiring.js");
 const { svgString } = __require("src/core/render.js");
 const { hiddenSupplyBarLabels } = __require("src/core/supply-bars.js");
 const { analyzeSmallSignal } = __require("src/core/analysis/index.js");
-const { addBeat, beatTitle, moveBeat, removeBeat, renameBeat, resolveBeat, setSwitchFrom, setVisibleFrom } = __require("src/core/beats.js");
+const { addBeat, beatTitle, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js");
 
 
 
@@ -9695,7 +9763,7 @@ function commandHelp() {
     '  beat list                      - list beats (presentation steps; see docs/beats.md)',
     '  beat add [NAME] [--after N]    - add a beat that looks like the one before it',
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
-    '  beat show|hide N ID ...        - show or hide parts and labels from beat N on',
+    '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF open|closed  - set a switch position from beat N on',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
@@ -10203,8 +10271,7 @@ function beatIndex(circuit, value) {
 function beatList(circuit) {
   return circuit.beats.map((beat, index) => {
     const parts = [beatTitle(circuit, index).padEnd(18)];
-    if (beat.show.length) parts.push(`show ${beat.show.join(' ')}`);
-    if (beat.hide.length) parts.push(`hide ${beat.hide.join(' ')}`);
+    for (const presence of ['show', 'dim', 'hide']) if (beat[presence].length) parts.push(`${presence} ${beat[presence].join(' ')}`);
     const switches = Object.entries(beat.switches);
     if (switches.length) parts.push(`switches ${switches.map(([ref, state]) => `${ref}=${state}`).join(' ')}`);
     const highlights = Object.entries(beat.highlights);
@@ -10238,12 +10305,12 @@ function beatCommand(circuit, pos, flags, result) {
     moveBeat(circuit, from, to);
     return result(`moved beat ${from + 1} to ${to + 1}`, null, true);
   }
-  if (sub === 'show' || sub === 'hide') {
+  if (sub === 'show' || sub === 'dim' || sub === 'hide') {
     const index = beatIndex(circuit, pos[1]);
     const ids = pos.slice(2);
     if (!ids.length) throw new Error(`usage: beat ${sub} N ID ...`);
-    const listed = setVisibleFrom(circuit, index, ids, sub === 'show');
-    return result(`${sub === 'show' ? 'shown' : 'hidden'} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
+    const listed = setPresenceFrom(circuit, index, ids, sub);
+    return result(`${{ show: 'shown', dim: 'dimmed', hide: 'hidden' }[sub]} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
   }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);
@@ -10252,7 +10319,7 @@ function beatCommand(circuit, pos, flags, result) {
     setSwitchFrom(circuit, index, ref, state);
     return result(`${ref} ${state} from beat ${index + 1}`, null, true);
   }
-  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|hide|switch`);
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch`);
 }
 
 function netCommand(circuit, pos, result) {
@@ -18775,8 +18842,9 @@ function viewportGridSvg(vp) {
  * opts.underlay: emit an empty editor-underlay group above the grid for effects.
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
- * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it hides
- * is left out, or with `fade` drawn faint so the editor can still reach it.
+ * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it dims
+ * is drawn faint; what it hides is left out, or with `fade` drawn fainter
+ * still so the editor can reach it.
  * The frame stays the whole drawing's, so every beat lines up.
  */
 function svgString(circuit, opts = {}) {
@@ -18791,9 +18859,10 @@ function svgString(circuit, opts = {}) {
   const defOf = (c) => (beat ? beat.defOf(c) : c.def);
   const netHighlightOf = (net) => (beat ? beat.netHighlight(net) : circuit.netHighlight?.(net) || null);
   const GHOST = ' opacity="0.34"';
-  const FADED = ' opacity="0.2"';
-  const refOpacity = (ref) => (ghostRefs.has(ref) ? GHOST : beatHiddenRef(ref) ? FADED : '');
-  const labelOpacity = (id) => (ghostLabels.has(id) ? GHOST : beatHiddenLabel(id) ? FADED : '');
+  const DIMMED = ' opacity="0.3"';
+  const FADED = ' opacity="0.12"';
+  const refOpacity = (ref) => (ghostRefs.has(ref) ? GHOST : beatHiddenRef(ref) ? FADED : beat?.dimRefs.has(ref) ? DIMMED : '');
+  const labelOpacity = (id) => (ghostLabels.has(id) ? GHOST : beatHiddenLabel(id) ? FADED : beat?.dimLabels.has(id) ? DIMMED : '');
   const b = circuit.bounds(o.grid || o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
@@ -18944,13 +19013,23 @@ function svgString(circuit, opts = {}) {
     if (shown === 'none' && !beatFade) continue;
     const highlight = netHighlightOf(net);
     const netStyle = withHighlight(net.style, highlight);
-    if (Array.isArray(shown)) {
-      for (const { a, b, branch, segment } of shown) {
+    if (typeof shown === 'object') {
+      // Faint pieces of one style share a path, so their joints are not
+      // painted twice.
+      const faint = new Map();
+      const piece = ({ a, b, branch, segment }, opacity) => {
         const style = withHighlight({ ...(net.style || {}), ...(net.wireStyles?.[`${branch}:${segment}`] || {}) }, highlight);
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
-        if (solidStyle(style) && !ghostNets.has(net.id)) addInk(inkAttrs(style), d);
-        else parts.push(`<path class="wire-beat" d="${d}" fill="none"${ghostNets.has(net.id) ? GHOST : ''} ${styleAttrs(style, 'wire')} pointer-events="none"/>`);
-      }
+        if (!opacity && solidStyle(style)) addInk(inkAttrs(style), d);
+        else {
+          const attrs = `fill="none"${opacity} ${styleAttrs(style, 'wire')}`;
+          faint.set(attrs, [...(faint.get(attrs) || []), d]);
+        }
+      };
+      const ghost = ghostNets.has(net.id) ? GHOST : '';
+      for (const p of shown.shown) piece(p, ghost);
+      for (const p of shown.dimmed) piece(p, ghost || DIMMED);
+      for (const [attrs, ds] of faint) parts.push(`<path class="wire-beat" d="${ds.join(' ')}" ${attrs} pointer-events="none"/>`);
       // The editor keeps the whole net, faded, as the thing to click.
       if (!beatFade) continue;
     }
@@ -24008,7 +24087,7 @@ const { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, com
 const { getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js");
 const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
 const { hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js");
-const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setSwitchFrom, setVisibleAt, setVisibleFrom, switchState, switchStateAt } = __require("src/core/beats.js");
+const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchState, switchStateAt } = __require("src/core/beats.js");
 const { TipBook } = __require("src/web/tips.js");
 const { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js");
 const { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js");
@@ -24047,7 +24126,7 @@ const { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, gh
  * Mosfeteer — keyboard-driven schematic editor.
  *
  * Modes:
- *   NORMAL   arrows move (selected comp or cursor), l line annotation, r rotate, Shift+r mirror,
+ *   NORMAL   arrows move (selected comp or cursor), l line annotation, r rotate, Shift+R mirror,
  *            Shift+Up/Down layer, dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
  *            toggle italic/bold on selected labels, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
@@ -25772,7 +25851,7 @@ function renderSaveState() {
   if (saveButton) {
     saveButton.disabled = !dirty || saveInFlight > 0;
     saveButton.title = dirty
-      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+x)'
+      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
       : currentDocumentPath ? `All changes saved to ${currentDocumentPath}` : 'Nothing to save yet';
   }
 }
@@ -28113,8 +28192,8 @@ function removeAllNetHighlights() {
 // A beat is a view of the one drawing (core/beats.js). The editor shows one
 // beat at a time: what it hides is faded but still selectable, and drawing
 // edits still change the drawing, in every beat. View changes made on a beat
-// -- h (show/hide), s (switch position), the highlight tool -- belong to that
-// beat and carry on to the following beats that looked the same.
+// -- h (show/hide), Shift+H (dim), s (switch position), the highlight tool --
+// belong to that beat and carry on to the following beats that looked the same.
 
 function activeBeatIndex() {
   if (!activeBeatId) return null;
@@ -28178,15 +28257,23 @@ function setActiveBeat(index) {
   render();
 }
 
+/** Step through All, beat 1, ..., the last beat, stopping at both ends. */
 function stepBeat(delta) {
   if (!circuit.beats.length) {
-    hintLine('BEATS: there are no beats yet; B adds one');
+    hintLine('BEATS: there are no beats yet; + adds one');
     return;
   }
-  const index = activeBeatIndex();
-  const last = circuit.beats.length - 1;
-  const next = index === null ? (delta > 0 ? 0 : last) : index + delta;
-  setActiveBeat(next < 0 ? null : Math.min(next, last));
+  const index = activeBeatIndex() ?? -1;
+  const next = Math.max(-1, Math.min(index + delta, circuit.beats.length - 1));
+  if (next !== index) setActiveBeat(next < 0 ? null : next);
+}
+
+/** Shift+B: open or close the beat strip. Closing it shows the whole drawing. */
+function toggleBeatStrip() {
+  const open = !beatStripVisible();
+  beatStripOpen = open;
+  if (!open) setActiveBeat(null);
+  else render();
 }
 
 /** Add a beat after the one on screen (or at the end) and show it. It starts
@@ -28195,7 +28282,7 @@ function addBeatHere() {
   const current = activeBeatIndex();
   const index = current === null ? circuit.beats.length : current + 1;
   commit(() => addBeat(circuit, { index }));
-  logLine(`added beat ${index + 1}${circuit.beats.length === 1 ? ' — hide what should come later with h' : ''}`);
+  logLine(`added beat ${index + 1}${circuit.beats.length === 1 ? ' — hide what comes later with h, or dim it with Shift+H' : ''}`);
   setActiveBeat(index);
 }
 
@@ -28224,26 +28311,30 @@ function beatSelectionIds() {
   return [...new Set(ids)];
 }
 
-function beatShows(view, id) {
-  return !view.hiddenRefs.has(id) && !view.hiddenLabels.has(id);
+function beatPresence(view, id) {
+  if (view.hiddenRefs.has(id) || view.hiddenLabels.has(id)) return 'hide';
+  return view.dimRefs.has(id) || view.dimLabels.has(id) ? 'dim' : 'show';
 }
 
-/** h: hide the selection from this beat on, or show it when all of it is hidden. */
-function toggleSelectionInBeat() {
+const PRESENCE_DONE = { show: 'shown', dim: 'dimmed', hide: 'hidden' };
+
+/** h hides the selection from this beat on, or shows it when all of it is
+ * hidden; Shift+H dims it, or shows it when all of it is dimmed. */
+function toggleSelectionInBeat(target = 'hide') {
   const index = activeBeatIndex();
   if (index === null) {
-    hintLine(circuit.beats.length ? 'BEATS: pick a beat first — ] steps into them' : 'BEATS: B adds a beat; then h hides or shows the selection in it');
+    hintLine(circuit.beats.length ? 'BEATS: pick a beat first — Alt+→ steps into them' : 'BEATS: + adds a beat; then h hides or Shift+H dims the selection in it');
     return;
   }
   const ids = beatSelectionIds();
   if (!ids.length) {
-    hintLine('BEATS: select parts or labels to show or hide — wires follow the parts they join');
+    hintLine('BEATS: select parts or labels to show, dim, or hide — wires follow the parts they join');
     return;
   }
   const view = resolveBeat(circuit, index);
-  const show = !ids.some((id) => beatShows(view, id));
-  commit(() => setVisibleFrom(circuit, index, ids, show));
-  logLine(`${show ? 'shown' : 'hidden'} from beat ${index + 1}: ${ids.join(', ')}`);
+  const presence = ids.every((id) => beatPresence(view, id) === target) ? 'show' : target;
+  commit(() => setPresenceFrom(circuit, index, ids, presence));
+  logLine(`${PRESENCE_DONE[presence]} from beat ${index + 1}: ${ids.join(', ')}`);
   render();
 }
 
@@ -28269,15 +28360,16 @@ function flipSelectedSwitches() {
 }
 
 function beatHintText(index) {
-  if (!circuit.beats.length) return 'B adds a beat; it starts as a copy of the one before.';
-  if (index === null) return 'Whole drawing. ] steps into the beats.';
-  return 'Faded: hidden here. h shows/hides from this beat on · s flips a switch · drawing edits reach every beat.';
+  if (!circuit.beats.length) return '+ adds a beat; it starts as a copy of the one before.';
+  if (index === null) return 'Whole drawing. Alt+→ steps into the beats.';
+  return 'Faintest: hidden here. h hides · Shift+H dims · from this beat on · s flips a switch · drawing edits reach every beat.';
 }
 
-/** The strip's dot for one beat: does the selection show in it? */
+/** The strip's dot for one beat: how does the selection look in it? */
 function beatDotState(view, ids) {
-  const shown = ids.filter((id) => beatShows(view, id)).length;
-  return shown === ids.length ? 'shown' : shown ? 'mixed' : 'hidden';
+  const looks = new Set(ids.map((id) => beatPresence(view, id)));
+  if (looks.size > 1) return 'mixed';
+  return { show: 'shown', dim: 'dimmed', hide: 'hidden' }[[...looks][0]];
 }
 
 function renderBeatStrip() {
@@ -28345,11 +28437,11 @@ function renderBeatStrip() {
       dot.className = 'beat-dot';
       dot.dataset.state = state;
       const what = ids.length === 1 ? ids[0] : 'the selection';
-      dot.title = `${state === 'shown' ? 'Shown' : state === 'mixed' ? 'Partly shown' : 'Hidden'} in beat ${i + 1} — click to ${state === 'shown' ? 'hide' : 'show'} ${what} in this beat only`;
+      const show = state === 'hidden';
+      dot.title = `${{ shown: 'Shown', dimmed: 'Dimmed', hidden: 'Hidden', mixed: 'Mixed' }[state]} in beat ${i + 1} — click to ${show ? 'show' : 'hide'} ${what} in this beat only`;
       dot.setAttribute('aria-label', dot.title);
       dot.addEventListener('click', () => {
-        const show = state !== 'shown';
-        commit(() => setVisibleAt(circuit, i, ids, show));
+        commit(() => setPresenceAt(circuit, i, ids, show ? 'show' : 'hide'));
         logLine(`${show ? 'shown' : 'hidden'} in beat ${i + 1} only: ${ids.join(', ')}`);
         render();
       });
@@ -28405,7 +28497,7 @@ function openBeatMenu(index, x, y) {
   group.className = 'context-menu-group';
   const chip = () => beatListEl.querySelector(`[data-beat-index="${index}"]`);
   appendContextItem(group, 'Rename…', () => setTimeout(() => { if (chip()) startBeatRename(index, chip()); }, 0), { shortcut: 'dbl-click' });
-  appendContextItem(group, 'Add beat after', () => { setActiveBeat(index); addBeatHere(); }, { shortcut: 'B' });
+  appendContextItem(group, 'Add beat after', () => { setActiveBeat(index); addBeatHere(); }, { shortcut: '+' });
   appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
   appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === circuit.beats.length - 1 });
   appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
@@ -28422,15 +28514,16 @@ function appendBeatContextItems(group, target) {
     const index = activeBeatIndex();
     const state = index === null ? switchState(target.value) : switchStateAt(circuit, target.value.refdes, index);
     const where = index === null ? '' : ' from this beat';
-    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} switch${where}`, flipSelectedSwitches, { shortcut: 'S' });
+    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} switch${where}`, flipSelectedSwitches, { shortcut: 's' });
   }
   const index = activeBeatIndex();
   if (index === null || (target.kind !== 'component' && target.kind !== 'label')) return;
   const ids = beatSelectionIds();
   if (!ids.length) return;
   const view = resolveBeat(circuit, index);
-  const show = !ids.some((id) => beatShows(view, id));
-  appendContextItem(group, show ? 'Show from this beat' : 'Hide from this beat', toggleSelectionInBeat, { shortcut: 'H' });
+  const all = (presence) => ids.every((id) => beatPresence(view, id) === presence);
+  appendContextItem(group, all('hide') ? 'Show from this beat' : 'Hide from this beat', () => toggleSelectionInBeat('hide'), { shortcut: 'h' });
+  appendContextItem(group, all('dim') ? 'Undim from this beat' : 'Dim from this beat', () => toggleSelectionInBeat('dim'), { shortcut: 'Shift+H' });
 }
 
 // ----- presenting --------------------------------------------------------------
@@ -28438,7 +28531,7 @@ function appendBeatContextItems(group, target) {
 function openPresenter(start = activeBeatIndex() ?? 0) {
   if (!presenterEl) return;
   if (!circuit.beats.length) {
-    logLine('Nothing to present: add a beat first (B).', 'status');
+    logLine('Nothing to present: add a beat first (+).', 'status');
     return;
   }
   closeComponentContextMenu();
@@ -28467,7 +28560,8 @@ function showPresenterFrame(animate = true) {
   const frame = document.createElement('div');
   frame.className = 'presenter-frame';
   if (!presenter.blank) {
-    frame.innerHTML = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, pageGuide: null, beat: { view: resolveBeat(circuit, presenter.index) } });
+    // Theme ink, like the canvas: the presentation follows light or dark mode.
+    frame.innerHTML = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(circuit, presenter.index) } });
     const svg = frame.querySelector('svg');
     svg?.removeAttribute('width');
     svg?.removeAttribute('height');
@@ -28529,12 +28623,7 @@ document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);
 });
-document.getElementById('btn-beats')?.addEventListener('click', () => {
-  const open = !beatStripVisible();
-  beatStripOpen = open;
-  if (!open) setActiveBeat(null);
-  else render();
-});
+document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
 
 /** Right-click on the highlight tool: its one bulk action. */
 function openHighlightToolMenu(x, y) {
@@ -28866,8 +28955,8 @@ function syncDocumentSurface() {
   const placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
   if (cmdInput && cmdInput.placeholder !== placeholder) cmdInput.placeholder = placeholder;
   const netLabelButton = document.getElementById('btn-mode-net-label');
-  if (netLabelButton && netLabelButton.title !== 'Place a label on a physical wire (L)') {
-    netLabelButton.title = 'Place a label on a physical wire (L)';
+  if (netLabelButton && netLabelButton.title !== 'Place a label on a physical wire (Shift+L)') {
+    netLabelButton.title = 'Place a label on a physical wire (Shift+L)';
     netLabelButton.setAttribute('aria-label', 'Place a label on a physical wire');
   }
 }
@@ -34477,22 +34566,22 @@ function appendContextActions(menu, target) {
     if (renamable) {
       appendContextItem(group, 'Rename…', later(() => renameFromPanel(componentsListEl, `[data-refdes="${CSS.escape(comp.refdes)}"]`, (ref) => startComponentRename(comp, ref))), { shortcut: 'dbl-click' });
     }
-    appendContextItem(group, 'Rotate', () => selectedTransform('rotate'), { shortcut: 'R' });
+    appendContextItem(group, 'Rotate', () => selectedTransform('rotate'), { shortcut: 'r' });
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
-    appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl+R' });
+    appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl/Cmd+R' });
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
-    if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 'T' });
+    if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
     appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
     appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
   }
   if (target.kind !== 'net' && target.kind !== 'wire') {
-    appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'M' });
+    appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'm' });
     appendContextItem(group, 'Detached move', () => activateMove('detached'), { shortcut: 'Shift+M' });
-    appendContextItem(group, 'Copy', activateCopy, { shortcut: 'C' });
+    appendContextItem(group, 'Copy', activateCopy, { shortcut: 'c' });
     appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
     appendContextItem(group, 'Bring to front', () => restackSelected('front'), { shortcut: 'Shift+↑' });
     appendContextItem(group, 'Send to back', () => restackSelected('back'), { shortcut: 'Shift+↓' });
@@ -35764,8 +35853,6 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'D') toggleTheme();
   else if (key === 'P') toggleSidePanel();
   else if (key === '?') showHelp();
-  else if (key === ']') stepBeat(1);
-  else if (key === '[') stepBeat(-1);
   else return false;
   return true;
 }
@@ -35822,8 +35909,8 @@ function onNormalKey(key, shiftKey = false) {
     removeAllNetHighlights();
     return;
   }
-  if (key === 'h') {
-    toggleSelectionInBeat();
+  if (key === 'h' || key === 'H') {
+    toggleSelectionInBeat(key === 'H' ? 'dim' : 'hide');
     return;
   }
   if (key === 's') {
@@ -35831,6 +35918,10 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
   if (key === 'B') {
+    toggleBeatStrip();
+    return;
+  }
+  if (key === '+') {
     addBeatHere();
     return;
   }
@@ -38543,7 +38634,7 @@ function syncSidePanelToggle() {
   const visible = sidePanelVisible();
   sidePanelToggleEl?.setAttribute('aria-expanded', String(visible));
   sidePanelToggleEl?.setAttribute('aria-pressed', String(visible));
-  if (sidePanelToggleEl) sidePanelToggleEl.title = `${visible ? 'Hide' : 'Show'} the components, nets, and selection panel (P)`;
+  if (sidePanelToggleEl) sidePanelToggleEl.title = `${visible ? 'Hide' : 'Show'} the components, nets, and selection panel (Shift+P)`;
   if (sidePanelEl) sidePanelEl.inert = !visible;
 }
 
@@ -38722,7 +38813,7 @@ function applyTheme(dark) {
   syncToolCursor();
   if (themeBtn) {
     themeBtn.setAttribute('aria-pressed', String(dark));
-    themeBtn.title = dark ? 'Switch to light theme (D)' : 'Switch to dark theme (D)';
+    themeBtn.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
     const icon = themeBtn.querySelector('.button-icon');
     if (icon) icon.innerHTML = ICON_PATHS[dark ? 'sun' : 'moon'];
   }
@@ -38777,7 +38868,7 @@ function setCrosshair(on, announce = true) {
 
   if (crosshairBtn) {
     crosshairBtn.setAttribute('aria-pressed', String(crosshairVisible));
-    crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
+    crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (Shift+C)' : 'Show the crosshair (Shift+C)';
   }
   render();
   if (announce) hintLine(crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
@@ -38789,7 +38880,7 @@ function setGuides(on, announce = true) {
   guidesVisible = !!on;
   if (guidesBtn) {
     guidesBtn.setAttribute('aria-pressed', String(guidesVisible));
-    guidesBtn.title = guidesVisible ? 'Hide the spacing and alignment guides (G)' : 'Show the spacing and alignment guides (G)';
+    guidesBtn.title = guidesVisible ? 'Hide the spacing and alignment guides (Shift+G)' : 'Show the spacing and alignment guides (Shift+G)';
   }
   render();
   if (announce) hintLine(guidesVisible ? 'placement guides shown' : 'placement guides hidden');
@@ -38825,7 +38916,7 @@ syncPageGuideControls();
 if (crosshairBtn) {
   crosshairBtn.addEventListener('click', () => setCrosshair(!crosshairVisible));
   crosshairBtn.setAttribute('aria-pressed', String(crosshairVisible));
-  crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (C)' : 'Show the crosshair (C)';
+  crosshairBtn.title = crosshairVisible ? 'Hide the crosshair (Shift+C)' : 'Show the crosshair (Shift+C)';
 }
 
 // ----- keyboard -------------------------------------------------------------
@@ -38839,6 +38930,16 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === 'F5' && ev.shiftKey && !inlineInput) {
     ev.preventDefault();
     openPresenter();
+    return;
+  }
+  // Alt+Left/Right (or PageUp/PageDown, as a presentation clicker sends)
+  // steps through the beats. Alt+Left must not become browser Back.
+  const beatStep = !ev.ctrlKey && !ev.metaKey && !ev.shiftKey && !inlineInput && !['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)
+    ? (ev.altKey ? { ArrowRight: 1, ArrowLeft: -1 } : { PageDown: 1, PageUp: -1 })[ev.key]
+    : undefined;
+  if (beatStep && !drag && !wire && !directWire) {
+    ev.preventDefault();
+    stepBeat(beatStep);
     return;
   }
   if (ev.key === 'F5') {
@@ -40140,14 +40241,14 @@ const naturalCompare = new Intl.Collator(undefined, { numeric: true, sensitivity
 // the dialog. Keep this registry alongside the keyboard-facing toolbar.
 const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
-    ['i / I / A', 'insert mode (fuzzy-search component and label placement)'],
+    ['i / Shift+I / Shift+A', 'insert mode (fuzzy-search component and label placement)'],
     ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal; Enter commits'],
     ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
     ['/ (wire)', 'flip which way the corner under the cursor turns'],
     ['drag from a pin', 'draw a wire without Wire mode; drop on a pin or wire, or in space to add a part'],
     ['terminal letters', 'pick or complete a terminal connection while wiring'],
     ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
-    ['L', 'persistent electrical net-label placement'],
+    ['Shift+L', 'persistent electrical net-label placement'],
     ['Shift+N', 'place one free annotation, then return to selection'],
     ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place a multi-point arrow; click vertices and press Enter'],
@@ -40156,14 +40257,14 @@ const EDITOR_KEYMAP = Object.freeze([
   ]],
   ['edit', [
     ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
-    ['U / Ctrl/Cmd+Y', 'redo'],
+    ['Shift+U / Ctrl/Cmd+Y', 'redo'],
     ['Arrow keys', 'nudge selected objects or move the cursor (counts apply)'],
     ['r', 'rotate selected objects 90° clockwise'],
-    ['Shift+r', 'mirror selected horizontally'],
-    ['Ctrl/Cmd+r', 'mirror selected vertically'],
-    ['r / Shift+r / Ctrl+r (dragging)', 'rotate or mirror a part while it is being dragged'],
+    ['Shift+R', 'mirror selected horizontally'],
+    ['Ctrl/Cmd+R', 'mirror selected vertically'],
+    ['r / Shift+R / Ctrl+R (dragging)', 'rotate or mirror a part while it is being dragged'],
     ['m', 'move selected objects with connectivity; stays armed'],
-    ['Shift+m', 'move selected objects without connected nets; stays armed'],
+    ['Shift+M', 'move selected objects without connected nets; stays armed'],
     ['c', 'copy a selected object or set; stays armed'],
     ['y / Ctrl/Cmd+C', 'copy the selected objects'],
     ['Ctrl/Cmd+Shift+C', 'copy selection (or whole drawing) as an image for other apps'],
@@ -40176,8 +40277,8 @@ const EDITOR_KEYMAP = Object.freeze([
     ['9', 'highlight nets: each click cycles a net group\'s color'],
     ['8', 'remove every net highlight'],
     ['t', 'edit the primary selected label (no-op otherwise)'],
-    ['Ctrl/Cmd+i', 'toggle italic on selected labels'],
-    ['Ctrl/Cmd+b', 'toggle bold on selected labels'],
+    ['Ctrl/Cmd+I', 'toggle italic on selected labels'],
+    ['Ctrl/Cmd+B', 'toggle bold on selected labels'],
   ]],
   ['select', [
     ['Enter', 'select the label or component under the cursor'],
@@ -40188,19 +40289,21 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Esc', 'cancel the active interaction'],
   ]],
   ['view', [
-    ['F / f', 'fit view to contents'],
+    ['f', 'fit view to contents'],
     ['#', 'toggle the placement grid'],
-    ['C', 'toggle crosshair visibility'],
-    ['G', 'toggle the spacing and alignment guides'],
-    ['D', 'toggle dark mode'],
-    ['P', 'show or hide the components, nets, and selection panel'],
+    ['Shift+C', 'toggle crosshair visibility'],
+    ['Shift+G', 'toggle the spacing and alignment guides'],
+    ['Shift+D', 'toggle dark mode'],
+    ['Shift+P', 'show or hide the components, nets, and selection panel'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],
   ['beats', [
-    ['B', 'add a beat after the one on screen; it starts out looking the same'],
-    ['] / [', 'step to the next / previous beat; before the first is the whole drawing'],
+    ['Shift+B', 'show or hide the beat strip (hiding it shows the whole drawing)'],
+    ['+', 'add a beat after the one on screen; it starts out looking the same'],
+    ['Alt+→ / Alt+←', 'next / previous beat (also PageDown / PageUp); before the first is the whole drawing'],
     ['h (on a beat)', 'hide the selection from this beat on, or show it when hidden'],
+    ['Shift+H (on a beat)', 'dim the selection from this beat on, or show it when dimmed'],
     ['s', 'open or close the selected switches (on a beat: from that beat on)'],
     ['9 / 8 (on a beat)', 'highlights belong to the beat on screen and the ones after it'],
     ['Shift+F5', 'present the beats full screen; arrows or Space step, . blanks, Esc ends'],
@@ -40211,7 +40314,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+O', 'open a document file from any folder'],
     ['Ctrl/Cmd+E', 'open the export dialog'],
     ['drop a file', 'drop a .json file on the window to open a copy'],
-    ['x / Shift+x', 'check / save without checking'],
+    ['x / Shift+X', 'check / save without checking'],
     ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],
     [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
@@ -40227,21 +40330,21 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Enter / click', 'place the ghost at the cursor'],
     ['Arrow keys (ghost)', 'move the cursor and placement ghost'],
     ['Shift while moving', 'lock a drag or ghost to the dominant horizontal or vertical direction'],
-    ['r / Shift+r', 'rotate / mirror the component ghost'],
-    ['Ctrl/Cmd+r', 'mirror the component ghost vertically'],
+    ['r / Shift+R', 'rotate / mirror the component ghost'],
+    ['Ctrl/Cmd+R', 'mirror the component ghost vertically'],
     ['hold Alt', 'symmetric placement/copy: pin a mirror axis, move off it, and place both halves'],
     ['hold Alt (wire)', 'snap the cursor to the nearest terminal while wiring'],
     ['Backspace', 'edit the search string or drop the ghost'],
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],
   ['labels', [
-    ['L', 'click an unambiguous wire to place a net label; Esc exits'],
+    ['Shift+L', 'click an unambiguous wire to place a net label; Esc exits'],
     ['Shift+N', 'click anywhere to place one annotation; returns to selection'],
     ['t', 'edit the primary selected label'],
     ['Shift+Left / Shift+Right', 'align left / right (centre default)'],
     ['dd / Delete', 'delete the selected label'],
     ['double-click', 'edit the label text inline'],
-    ['Tab / S-Tab', 'commit label edit, then select next / previous label'],
+    ['Tab / Shift+Tab', 'commit label edit, then select next / previous label'],
     ['Ctrl/Cmd+, / Ctrl/Cmd+.', 'in the label editor, subscript / superscript the selection'],
     ['Enter / blur', 'commit label edits; Esc cancels'],
   ]],
@@ -40489,7 +40592,7 @@ const TUTORIAL_STEPS = Object.freeze([
   {
     id: 'label',
     title: 'Name a net',
-    text: 'Press **L** and click a wire to place a net label, then type a name, for example **X** for the mirror node.',
+    text: 'Press **Shift+L** and click a wire to place a net label, then type a name, for example **X** for the mirror node.',
     done: (circuit) => [...circuit.labels.values()].some((label) => label.netId),
   },
   {
