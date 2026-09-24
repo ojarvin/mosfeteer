@@ -122,7 +122,8 @@ alias for an unnamed ground marker.
 
 Switches (`switch_open`, `switch_closed`) are the other role-labelled parts:
 a switch's owned label names its phase (the controlling signal, stored as its
-value), not its identity, so several switches may share it. Switches on one
+value; `$...$` is TeX drawn as math, compared by `phaseKey`), not its
+identity, so several switches may share it. Switches on one
 phase form a group that opens and closes together, in the drawing
 (`setSwitchState`) and in beats. Label text naming the switch's own refdes
 clears the phase.

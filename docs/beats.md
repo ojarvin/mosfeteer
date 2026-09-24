@@ -34,8 +34,11 @@ drawing fixes every beat. Code: `src/core/beats.js`; tests:
 
 ## Switch phases
 
-A switch's label names its **phase**, the signal that controls it (for
-example `φ_{1}`): edit the label, or run `value S1 φ_{1}`. The refdes stays the
+A switch's label names its **phase**, the signal that controls it: edit the
+label, or run `value S1 $\phi_1$`. A phase in `$...$` is TeX and draws as math,
+like an equation; plain text such as `φ_{1}` works too. TeX phases compare
+by what they draw, so `$\phi_1$`, `$\phi_{1}$`, and `$ \phi_1 $` are one
+phase (but `$\phi_1$` and `$\varphi_1$` are two). The refdes stays the
 switch's unique identity. Switches with the same phase are one group: flipping
 one (`s`, or `switch φ_{1} closed`) flips them all, in the drawing and in
 beats. Beats store positions per phase, so a switch added to a phase later

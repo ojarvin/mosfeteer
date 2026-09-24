@@ -39,9 +39,30 @@ export function switchPhase(component) {
   return switchState(component) ? String(component.value ?? '').trim() : '';
 }
 
+/** True for TeX source in `$...$` (or `$$...$$`), drawn as math. */
+export function isTexSource(text) {
+  const source = String(text ?? '').trim();
+  return source.length >= 2 && source.startsWith('$') && source.endsWith('$');
+}
+
+/** A phase as groups and beats compare it. Spelling differences that draw
+ * the same TeX -- spacing, delimiters, braces around a one-character
+ * subscript -- are one phase: $\phi_1$, $\phi_{1}$, and $ \phi_1 $ agree.
+ * Plain text compares as written. */
+export function phaseKey(text) {
+  const source = String(text ?? '').trim();
+  if (!isTexSource(source)) return source;
+  const tex = source.replace(/^\$+|\$+$/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/ ?([_^{}]) ?/g, '$1')
+    .trim()
+    .replace(/([_^])(\\[A-Za-z]+|[^{\\])/g, '$1{$2}');
+  return `$${tex}$`;
+}
+
 /** What beats and groups know a switch by: its phase, or its own refdes. */
 export function switchGroupKey(component) {
-  return switchPhase(component) || component.refdes;
+  return phaseKey(switchPhase(component)) || component.refdes;
 }
 
 /** Every switch sharing `key` (a phase or a lone switch's refdes). */
@@ -53,7 +74,7 @@ export function switchesOf(circuit, key) {
 export function switchKeyFor(circuit, refOrPhase) {
   const component = circuit.components.get(refOrPhase);
   if (switchState(component)) return switchGroupKey(component);
-  if (switchesOf(circuit, String(refOrPhase).trim()).length) return String(refOrPhase).trim();
+  if (switchesOf(circuit, phaseKey(refOrPhase)).length) return phaseKey(refOrPhase);
   throw new Error(`"${refOrPhase}" is not a switch or a switch phase`);
 }
 

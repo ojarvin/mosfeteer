@@ -199,6 +199,15 @@ const GREEK_UPPER = {
   Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
 };
 
+/** Short TeX or label markup as readable plain text, for menus and
+ * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
+export function plainTexText(source) {
+  return stripMathDelimiters(source)
+    .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
+    .replace(/[_^]\{([^}]*)\}/g, '$1')
+    .replace(/[_^{}]/g, '');
+}
+
 // TeX Appendix G rule 18a: when the nucleus is a single character, the script
 // shift ignores that character's own height and depth, so `g_m` and `r_o` set
 // their subscripts on one line. MathML instead drops a subscript clear of a

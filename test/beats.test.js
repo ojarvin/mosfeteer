@@ -308,3 +308,32 @@ test('a saved switch value becomes its phase label on load', () => {
   const loaded = roundTrip({ toJSON: () => data });
   assert.equal(loaded.labelOf('S1').text, 'clk');
 });
+
+test('a TeX phase draws as math and groups however it is spelled', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add switch_open S1 --at 0 0', 'add switch_open S2 --at 400 0', 'add switch_open S3 --at 800 0');
+  circuit.labelOf('S1').text = '$\\phi_1$';
+  circuit.labelOf('S2').text = '$\\phi_{1}$';
+  run(circuit, 'value S3 "$ \\phi_1 $"');
+  // One phase, three spellings: each label keeps its own source.
+  assert.equal(circuit.labelOf('S2').text, '$\\phi_{1}$');
+  assert.deepEqual([...circuit.components.values()].map((c) => circuit.labelOf(c.refdes).math), [true, true, true]);
+  run(circuit, 'switch S2 closed');
+  assert.deepEqual([...circuit.components.values()].map((c) => c.type), ['switch_closed', 'switch_closed', 'switch_closed']);
+  addBeat(circuit);
+  setSwitchFrom(circuit, 0, '$\\phi_1$', 'open');
+  assert.deepEqual(circuit.toJSON().beats[0].switches, { '$\\phi_{1}$': 'open' });
+  assert.equal((svgString(circuit).match(/schematic-math-label/g) || []).length, 3);
+  // $\phi$ and $\varphi$ are different symbols, so different phases.
+  circuit.labelOf('S3').text = '$\\varphi_1$';
+  assert.equal(circuit.components.get('S3').type, 'switch_closed', 'a new phase keeps the drawn position');
+  assert.equal(switchStateAt(circuit, 'S3', 0), 'open', 'and brings its old phase\'s beats');
+  // Naming the switch itself returns it to a plain part label.
+  circuit.labelOf('S3').text = 'S3';
+  assert.equal(circuit.labelOf('S3').math, false);
+  assert.equal(circuit.labelOf('S3').text, 'S_{3}');
+  // Saved and loaded, the math label and the grouping survive.
+  const loaded = roundTrip(circuit);
+  assert.equal(loaded.labelOf('S1').math, true);
+  assert.equal(switchStateAt(loaded, '$\\phi_{1}$', 0), 'open');
+});

@@ -5,7 +5,7 @@ import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCros
 import { collapseCollinear } from './wireedit.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
-import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, switchGroupKey, switchKeyFor, switchState, switchesOf } from './beats.js';
+import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } from './beats.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -664,6 +664,8 @@ export class LabelInstance {
     }
     else {
       const next = this.math ? normalizeMathSource(value) : String(value);
+      // A switch's label is its phase, math or not.
+      if (this.owner && !this.role && this.circuit._syncSwitchLabel(this.owner, next)) return;
       if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
@@ -875,6 +877,7 @@ export class LabelInstance {
       this.circuit._markReferenceLabelsLocal?.(net);
     } else {
       const next = this.math ? normalizeMathSource(text) : String(text);
+      if (this.owner && !this.role && this.circuit._syncSwitchLabel(this.owner, next)) return;
       if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
@@ -1665,8 +1668,11 @@ export class Circuit {
     component.value = phase;
     const label = this.labelOf(refdes);
     const display = phase || componentLabelText(refdes, source || undefined);
-    if (label && label._text !== display) {
+    // A phase in $...$ is TeX and draws as math, like an equation.
+    const math = isTexSource(phase);
+    if (label && (label._text !== display || label.math !== math)) {
       label._text = display;
+      label.math = math;
       label.clearRenderedTextBounds();
     }
     const after = switchGroupKey(component);
@@ -1793,6 +1799,7 @@ export class Circuit {
     }
     return this.addLabel({
       text: switchState(component) && component.value ? component.value : componentLabelText(component.refdes),
+      math: switchState(component) && isTexSource(component.value),
       owner: component.refdes,
       offset: component.def.labelOffset,
       align: 'center',

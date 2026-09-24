@@ -21,7 +21,7 @@ import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
-import { componentShapeSvg, editorOverlay, svgString, texToMathML, viewportFrame, viewportGridPath } from '../core/render.js';
+import { componentShapeSvg, editorOverlay, plainTexText, svgString, texToMathML, viewportFrame, viewportGridPath } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { resolveColor, themeInkSvg } from '../core/style.js';
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
@@ -4219,8 +4219,8 @@ function selectedSwitchGroups() {
   return [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
 }
 
-// Plain text for messages: φ_{1} reads φ1.
-const plainMarkup = (text) => String(text).replace(/[_^]\{([^}]*)\}/g, '$1');
+// Plain text for messages: φ_{1} reads φ1, $\phi_1$ reads ϕ1.
+const plainMarkup = plainTexText;
 const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))} switches` : c.refdes);
 
 /** s: open or close the selected switches, with the rest of their phases --
@@ -10886,8 +10886,8 @@ function inlineEditLabel(label, options = {}) {
       const owner = label.owner ? circuit.components.get(label.owner) : null;
       // Interface pins validate exactly like every other instance label: the
       // label is the component's identity, and a port additionally names its
-      // net through the same rename.
-      const ordinaryOwner = owner && !isReferenceMarker(owner) && !label.math;
+      // net through the same rename. A switch's label is its phase instead.
+      const ordinaryOwner = owner && !isReferenceMarker(owner) && !switchState(owner) && !label.math;
       if (ordinaryOwner) {
         const canonical = normalizeComponentRefdes(v);
         if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(canonical)) {
