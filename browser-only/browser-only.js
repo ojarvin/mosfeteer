@@ -8967,97 +8967,267 @@ const isMarker = (component) => REFERENCE_MARKER_TYPES.includes(component?.type)
 const isAttachment = (component) => isMarker(component) || INTERFACE_PIN_TYPES.has(component?.type);
 // Terminals a signal enters by: it leaves a part through its other terminals.
 const CONTROL_TERMINALS = new Set(['gate', 'bulk', 'base', 'input']);
+// The way DC current runs through a transistor: [in, out]. Other parts
+// conduct either way.
+const CURRENT_FLOW = {
+  nmos: ['d', 's'], nmosb: ['d', 's'], npn: ['c', 'e'],
+  pmos: ['s', 'd'], pmosb: ['s', 'd'], pnp: ['e', 'c'],
+};
+// The shared terminal that makes two transistors a differential pair.
+const PAIR_TERMINAL = { nmos: 's', nmosb: 's', pmos: 's', pmosb: 's', npn: 'e', pnp: 'e' };
+const SOURCE_TYPES = new Set(['current_source', 'voltage_source']);
+const MAX_BRANCH_PATHS = 20000;
 
-/**
- * The parts a build started at `startIds` reveals, step by step, as
- * [{ refs, name }]:
- *
- * 1. The signal path: the start, then everything one connection further
- *    out, where a connection leaves a part through a drain, source, output,
- *    or passive terminal -- never back out of a gate. A drain still reaches
- *    the next stage's gate; a gate does not reach its bias generator.
- * 2. The bias: one step per gate (or base, or input) line that shown parts
- *    hang from, bringing what drives it -- the parts conducting on it and
- *    the stacks in series with them.
- * 3. Anything still unreached, together.
- *
- * Nets join by name, as they do electrically, but supply and ground rails
- * (nets with a rail marker, or named VDD, VSS, GND, or VCM) join nothing: through them everything would be one step away. Pins and
- * rail markers are not listed; growBeats shows them with their net's parts.
- */
-function growOrder(circuit, startIds) {
-  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c));
+/** Nets and rails as seen by growOrder: each part's terminals by net group,
+ * split into conducting and control terminals, with rails left out. */
+function circuitGraph(circuit) {
   const railGroups = new Set();
   for (const net of circuit.nets.values()) {
     const rail = net.terminals.some(({ comp }) => isMarker(circuit.components.get(comp)))
       || (net.name && REFERENCE_MARKER_TYPES.some((type) => isReferenceMarkerGlobalName(type, net.name)));
     if (rail) railGroups.add(circuit.netGroupKey(net));
   }
-  // group key -> [{ ref, control }] for every part terminal on it
-  const members = new Map();
-  const groupsOf = new Map(parts.map((c) => [c.refdes, []]));
+  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c)).map((c) => c.refdes);
+  const terminals = new Map(parts.map((ref) => [ref, []])); // ref -> [{ term, key, control, rail }]
   for (const net of circuit.nets.values()) {
     const key = circuit.netGroupKey(net);
-    if (railGroups.has(key)) continue;
     for (const { comp, term } of net.terminals) {
-      if (!groupsOf.has(comp)) continue;
+      if (!terminals.has(comp)) continue;
       const direction = circuit.components.get(comp).terminalDefs.find((t) => t.name === term)?.direction;
-      const control = CONTROL_TERMINALS.has(direction);
-      groupsOf.get(comp).push({ key, control });
-      if (!members.has(key)) members.set(key, new Map());
-      // A part is conducting on a net if any of its terminals there is.
-      members.get(key).set(comp, (members.get(key).get(comp) ?? true) && control);
+      terminals.get(comp).push({ term, key, control: CONTROL_TERMINALS.has(direction), rail: railGroups.has(key) });
     }
   }
-  // A pin as a start stands for the parts on its net.
-  const starts = startIds.flatMap((id) => {
-    const component = circuit.components.get(id);
-    if (!INTERFACE_PIN_TYPES.has(component?.type)) return [beatTargetId(circuit, id)];
-    return [...circuit.nets.values()].filter((net) => net.terminals.some(({ comp }) => comp === id))
-      .flatMap((net) => [...(members.get(circuit.netGroupKey(net))?.keys() || [])]);
-  });
-  const start = [...new Set(starts.filter((ref) => groupsOf.has(ref)))];
-  if (!start.length) throw new Error('grow from a part or a pin (not a rail marker or junction dot)');
-  const seen = new Set(start);
-  const steps = [{ refs: start.sort(), name: '' }];
-  // Unseen parts one connection out from `frontier`, leaving through a
-  // conducting terminal; `stackOnly` also enters only through one.
-  const outward = (frontier, stackOnly = false) => {
-    const next = new Set();
-    for (const ref of frontier) {
-      for (const { key, control } of groupsOf.get(ref)) {
-        if (control) continue;
-        for (const [other, onlyControl] of members.get(key)) {
-          if (!seen.has(other) && !(stackOnly && onlyControl)) next.add(other);
+  const nodesOf = (ref, control) => [...new Set(terminals.get(ref).filter((t) => t.control === control && !t.rail).map((t) => t.key))];
+  return { railGroups, parts, terminals, nodesOf };
+}
+
+/**
+ * Split the parts into sections, the units a build reveals whole:
+ *
+ * - current branches: runs from one rail to another in the direction current
+ *   flows (into a PMOS source, out of an NMOS source), covered greedily by the
+ *   longest runs, so a stack like M7-M6-M5-M4 is one section;
+ * - a differential pair joins its two branches and their tail;
+ * - a passive from a rail to a node of exactly one branch joins that branch
+ *   (a load capacitor, a drain resistor);
+ * - everything else joins what it conducts to, away from the branches.
+ */
+function growSections(circuit, graph) {
+  const { railGroups, parts, terminals } = graph;
+  const type = (ref) => circuit.components.get(ref).type;
+  const active = (ref) => CURRENT_FLOW[type(ref)] || SOURCE_TYPES.has(type(ref));
+  const nodeOf = (ref, term) => terminals.get(ref).find((t) => t.term === term)?.key;
+  const conducting = (ref) => terminals.get(ref).filter((t) => !t.control);
+  // Where current can go from `key` through `ref`.
+  const through = (ref, key) => {
+    const flow = CURRENT_FLOW[type(ref)];
+    if (flow) return nodeOf(ref, flow[0]) === key && nodeOf(ref, flow[1]) ? [nodeOf(ref, flow[1])] : [];
+    const ends = conducting(ref).map((t) => t.key);
+    return ends.length === 2 && ends.includes(key) ? ends.filter((end) => end !== key) : [];
+  };
+  const twoTerminal = parts.filter((ref) => CURRENT_FLOW[type(ref)] || conducting(ref).length === 2);
+  const paths = [];
+  const walk = (key, from, used, path) => {
+    if (paths.length > MAX_BRANCH_PATHS) return;
+    if (railGroups.has(key) && key !== from && path.length) {
+      if (path.some(active)) paths.push(path.slice());
+      return;
+    }
+    for (const ref of twoTerminal) {
+      if (used.has(ref)) continue;
+      for (const next of through(ref, key)) {
+        if (next === from) continue;
+        used.add(ref);
+        path.push(ref);
+        walk(next, from, used, path);
+        path.pop();
+        used.delete(ref);
+      }
+    }
+  };
+  for (const rail of railGroups) walk(rail, rail, new Set(), []);
+
+  const sectionOf = new Map();
+  const sections = [];
+  const place = (refs) => {
+    const section = new Set(refs);
+    for (const ref of refs) sectionOf.set(ref, section);
+    sections.push(section);
+    return section;
+  };
+  // Longest runs of new active parts first; runs that add only passives are
+  // not branches of their own.
+  const fresh = (path) => path.filter((ref) => !sectionOf.has(ref));
+  for (;;) {
+    let best = null;
+    let bestScore = 0;
+    for (const path of paths) {
+      const refs = fresh(path);
+      const score = refs.filter(active).length * 100 - refs.length;
+      if (refs.some(active) && score > bestScore) { best = refs; bestScore = score; }
+    }
+    if (!best) break;
+    place(best);
+  }
+  const merge = (a, b) => {
+    if (a === b) return;
+    for (const ref of b) { a.add(ref); sectionOf.set(ref, a); }
+    sections.splice(sections.indexOf(b), 1);
+  };
+  for (const a of parts) {
+    for (const b of parts) {
+      if (a >= b || !sectionOf.has(a) || !sectionOf.has(b) || type(a) !== type(b) || !PAIR_TERMINAL[type(a)]) continue;
+      const shared = nodeOf(a, PAIR_TERMINAL[type(a)]);
+      if (shared && !railGroups.has(shared) && shared === nodeOf(b, PAIR_TERMINAL[type(b)])) merge(sectionOf.get(a), sectionOf.get(b));
+    }
+  }
+  const branchNodes = new Map(); // node -> sections conducting on it
+  for (const section of sections) {
+    for (const ref of section) {
+      for (const { key, rail } of conducting(ref)) {
+        if (rail) continue;
+        if (!branchNodes.has(key)) branchNodes.set(key, new Set());
+        branchNodes.get(key).add(section);
+      }
+    }
+  }
+  const leftover = parts.filter((ref) => !sectionOf.has(ref));
+  for (const ref of leftover) {
+    const ends = conducting(ref);
+    const inner = ends.filter((t) => !t.rail).map((t) => t.key);
+    const owners = inner.length === 1 ? branchNodes.get(inner[0]) : null;
+    if (!active(ref) && ends.length === 2 && owners?.size === 1) {
+      const [section] = owners;
+      section.add(ref);
+      sectionOf.set(ref, section);
+    }
+  }
+  // The rest: whatever conducts together away from the branches.
+  for (const ref of parts) {
+    if (sectionOf.has(ref)) continue;
+    const section = place([ref]);
+    const queue = [ref];
+    while (queue.length) {
+      const current = queue.pop();
+      for (const { key, rail } of conducting(current)) {
+        if (rail || branchNodes.has(key)) continue;
+        for (const other of parts) {
+          if (sectionOf.has(other) || !conducting(other).some((t) => t.key === key)) continue;
+          section.add(other);
+          sectionOf.set(other, section);
+          queue.push(other);
         }
       }
     }
-    for (const ref of next) seen.add(ref);
-    return [...next];
-  };
-  for (let frontier = start; frontier.length;) {
-    frontier = outward(frontier);
-    if (frontier.length) steps.push({ refs: frontier.sort(), name: '' });
   }
-  // Bias: one step per control line that shown parts hang from, in the
-  // order they were reached, with what drives it: the parts conducting on it
-  // and the stacks in series with them. Their own control lines follow later.
-  for (let step = 0; step < steps.length; step += 1) {
-    const controls = [...new Set(steps[step].refs.flatMap((ref) => groupsOf.get(ref).filter(({ control }) => control).map(({ key }) => key)))].sort();
-    for (const key of controls) {
-      const reached = [...members.get(key)].filter(([ref, onlyControl]) => !onlyControl && !seen.has(ref)).map(([ref]) => ref);
-      for (const ref of reached) seen.add(ref);
-      for (let frontier = reached; frontier.length;) {
-        frontier = outward(frontier, true);
-        reached.push(...frontier);
-      }
-      // Named lines name their beat; an unnamed one is known by its net id.
+  return sections.map((section) => [...section].sort());
+}
+
+/**
+ * The parts a build reveals, beat by beat, as [{ refs, name }]:
+ *
+ * 1. Stages, from the input to the output. Stage 1 is the section the input
+ *    pins drive (or the sections of the given parts); each next stage is the
+ *    sections on the nodes the previous stage drives. Parallel sections at
+ *    the same depth, such as both halves of a folded cascode, share a stage.
+ * 2. Feedback: a section that would drive an earlier stage's gate or join
+ *    an earlier stage's node is held back and gets a beat of its own, whole.
+ * 3. Bias: one beat per control line the shown parts hang from, in the order
+ *    they appeared, with the sections that drive it.
+ * 4. Anything else, together.
+ *
+ * Sections are growSections' current branches. Nets join by name, as they do
+ * electrically, but supply and ground rails (a rail marker, or a net named
+ * VDD, VSS, GND, or VCM) join nothing. Pins and rail markers are not listed;
+ * growBeats shows them with the parts on their wire.
+ */
+function growOrder(circuit, startIds = []) {
+  const graph = circuitGraph(circuit);
+  const sections = growSections(circuit, graph).map((refs) => ({
+    refs,
+    signal: [...new Set(refs.flatMap((ref) => graph.nodesOf(ref, false)))],
+    control: [...new Set(refs.flatMap((ref) => graph.nodesOf(ref, true)))],
+  }));
+  const sectionOf = new Map(sections.flatMap((section) => section.refs.map((ref) => [ref, section])));
+  const netKeysOf = (id) => [...circuit.nets.values()]
+    .filter((net) => net.terminals.some(({ comp }) => comp === id))
+    .map((net) => circuit.netGroupKey(net));
+  const depth = new Map(); // signal node -> stage that drives it (0: an input)
+  const controlStage = new Map(); // control node -> first stage hanging from it
+  let first;
+  if (startIds.length) {
+    const pins = startIds.filter((id) => INTERFACE_PIN_TYPES.has(circuit.components.get(id)?.type));
+    for (const key of pins.flatMap(netKeysOf)) depth.set(key, 0);
+    first = new Set(startIds.map((id) => sectionOf.get(beatTargetId(circuit, id))).filter(Boolean));
+  } else {
+    const inputs = [...circuit.components.values()].filter((c) => c.type === 'input').map((c) => c.refdes);
+    for (const key of inputs.flatMap(netKeysOf)) depth.set(key, 0);
+    first = new Set();
+  }
+  for (const section of sections) {
+    if ([...section.signal, ...section.control].some((key) => depth.get(key) === 0)) first.add(section);
+  }
+  if (!first.size) throw new Error(startIds.length ? 'grow from a part or a pin (not a rail marker or junction dot)' : 'there are no input pins to grow from; pick a part to start at');
+
+  const placed = new Set();
+  const steps = [];
+  const feedback = [];
+  const show = (group, name) => {
+    for (const section of group) placed.add(section);
+    steps.push({ refs: group.flatMap((section) => section.refs).sort(), name });
+  };
+  const enter = (group, stage) => {
+    for (const section of group) {
+      for (const key of section.signal) if (!depth.has(key)) depth.set(key, stage);
+      for (const key of section.control) if (!controlStage.has(key)) controlStage.set(key, stage);
+    }
+  };
+  // Feedback reaches back: it joins a node of an earlier stage, or drives
+  // (conducts onto) the gate line of one. Bias lines are driven by parts no
+  // signal node reaches, so they never come up here.
+  const reachesBack = (section, stage) => section.signal.some((key) => depth.get(key) < stage - 1 || controlStage.get(key) < stage);
+  // Passive parts are judged once the stage's transistors hold their nodes,
+  // so a capacitor from one stage's output to the next is feedback.
+  const spansStages = (section) => {
+    const depths = section.signal.filter((key) => depth.has(key)).map((key) => depth.get(key));
+    return depths.length > 1 && Math.min(...depths) < Math.max(...depths);
+  };
+  const isPassive = (section) => !section.refs.some((ref) => {
+    const type = circuit.components.get(ref).type;
+    return CURRENT_FLOW[type] || SOURCE_TYPES.has(type);
+  });
+  let stage = 1;
+  let group = [...first];
+  enter(group, stage);
+  while (group.length) {
+    show(group, `Stage ${stage}`);
+    stage += 1;
+    const frontier = new Set([...depth].filter(([, d]) => d === stage - 1).map(([key]) => key));
+    const reached = sections.filter((section) => !placed.has(section) && !feedback.includes(section)
+      && [...section.signal, ...section.control].some((key) => frontier.has(key)));
+    const active = reached.filter((section) => !isPassive(section));
+    feedback.push(...active.filter((section) => reachesBack(section, stage)));
+    group = active.filter((section) => !reachesBack(section, stage));
+    enter(group, stage);
+    for (const section of reached.filter(isPassive)) {
+      if (reachesBack(section, stage) || spansStages(section)) feedback.push(section);
+      else group.push(section);
+    }
+    enter(group, stage);
+  }
+  for (const section of feedback) show([section], 'Feedback');
+  // Bias lines in the order the shown parts hang from them.
+  for (let i = 0; i < steps.length; i += 1) {
+    const shown = sections.filter((section) => section.refs.some((ref) => steps[i].refs.includes(ref)));
+    for (const key of [...new Set(shown.flatMap((section) => section.control))].sort()) {
+      const drivers = sections.filter((section) => !placed.has(section) && section.signal.includes(key));
+      if (!drivers.length) continue;
       const name = [...circuit.nets.values()].find((net) => circuit.netGroupKey(net) === key)?.name;
-      if (reached.length) steps.push({ refs: [...new Set(reached)].sort(), name: name ? `Bias ${name}` : 'Bias' });
+      show(drivers, name ? `Bias ${name}` : 'Bias');
     }
   }
-  const rest = parts.map((c) => c.refdes).filter((ref) => !seen.has(ref)).sort();
-  if (rest.length) steps.push({ refs: rest, name: '' });
+  const rest = sections.filter((section) => !placed.has(section));
+  if (rest.length) show(rest, '');
   return steps;
 }
 
@@ -9067,7 +9237,7 @@ function growOrder(circuit, startIds) {
  * equation labels wait for the last beat. Anything else keeps its look.
  * Returns the number of beats added.
  */
-function growBeats(circuit, startIds, { index = circuit.beats.length } = {}) {
+function growBeats(circuit, startIds = [], { index = circuit.beats.length } = {}) {
   const steps = growOrder(circuit, startIds);
   const stepOf = new Map(steps.flatMap(({ refs }, step) => refs.map((ref) => [ref, step])));
   const last = steps.length - 1;
@@ -9900,7 +10070,7 @@ function commandHelp() {
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF open|closed  - set a switch position from beat N on',
-    '  beat grow ID ... [--after N]   - add beats that build the drawing up from these parts',
+    '  beat grow [ID ...] [--after N] - add beats stage by stage from the inputs (or these parts)',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -10450,9 +10620,8 @@ function beatCommand(circuit, pos, flags, result) {
   }
   if (sub === 'grow') {
     const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
-    if (pos.length < 2) throw new Error('usage: beat grow ID ... [--after N]');
     const count = growBeats(circuit, pos.slice(1), { index });
-    return result(`added beats ${index + 1}..${index + count} growing from ${pos.slice(1).join(' ')}`, { index: index + 1, count }, true);
+    return result(`added beats ${index + 1}..${index + count} growing from ${pos.slice(1).join(' ') || 'the input pins'}`, { index: index + 1, count }, true);
   }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);
@@ -28650,17 +28819,22 @@ function openBeatMenu(index, x, y) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 
-/** Add beats that build the drawing up from the selected parts: the signal
- * path first, then each bias line (core/beats.js growOrder). */
-function growBeatsFromSelection() {
-  const ids = [...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)];
+/** Add beats that build the drawing up stage by stage from the selected
+ * parts, or from the input pins when nothing is selected: the stages, then
+ * each feedback path, then each bias line (core/beats.js growOrder). */
+function growBeatsFrom(ids) {
   const current = activeBeatIndex();
   const index = current === null ? circuit.beats.length : current + 1;
   let count = 0;
   commit(() => { count = growBeats(circuit, ids, { index }); });
   if (!count) return;
-  logLine(`added ${count} beats growing from ${selectedComps().map((c) => c.refdes).join(', ')}: the signal path, then the bias lines`);
+  const from = ids.length ? selectedComps().map((c) => c.refdes).join(', ') : 'the input pins';
+  logLine(`added ${count} beats from ${from}: stage by stage, then feedback, then bias`);
   setActiveBeat(index);
+}
+
+function growBeatsFromSelection() {
+  growBeatsFrom([...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)]);
 }
 
 /** Context-menu items for beats: grow, show/hide, switch position. */
@@ -28780,6 +28954,7 @@ document.addEventListener('fullscreenchange', () => {
 document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
 document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
+document.getElementById('btn-grow-beats')?.addEventListener('click', () => growBeatsFrom([]));
 document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);
