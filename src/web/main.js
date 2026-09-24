@@ -14,14 +14,14 @@ import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, co
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
-import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt } from '../core/beats.js';
+import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } from '../core/beats.js';
 import { TipBook } from './tips.js';
 import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
-import { componentShapeSvg, editorOverlay, plainTexText, svgString, texToMathML, viewportFrame, viewportGridPath } from '../core/render.js';
+import { componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { resolveColor, themeInkSvg } from '../core/style.js';
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
@@ -1448,7 +1448,7 @@ function syncExportBeatChoice() {
     select.appendChild(el);
   };
   option('', 'Whole drawing');
-  circuit.beats.forEach((_, index) => option(String(index), beatTitle(circuit, index)));
+  circuit.beats.forEach((_, index) => option(String(index), beatLabel(index)));
   if (circuit.beats.length) option('all', `Every beat (${circuit.beats.length} numbered files)`);
   const active = activeBeatIndex();
   select.value = active === null ? '' : String(active);
@@ -4163,7 +4163,7 @@ function addBeatHere() {
 }
 
 function deleteBeat(index) {
-  const title = beatTitle(circuit, index);
+  const title = beatLabel(index);
   const wasActive = activeBeatIndex() === index;
   commit(() => removeBeat(circuit, index));
   logLine(`removed ${title}; the other beats look as before`);
@@ -4221,6 +4221,7 @@ function selectedSwitchGroups() {
 
 // Plain text for messages: φ_{1} reads φ1, $\phi_1$ reads ϕ1.
 const plainMarkup = plainTexText;
+const beatLabel = (index) => plainMarkup(beatTitle(circuit, index));
 const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))} switches` : c.refdes);
 
 /** s: open or close the selected switches, with the rest of their phases --
@@ -4297,7 +4298,7 @@ function renderBeatStrip() {
     button.className = 'beat-chip';
     button.dataset.beatIndex = String(i);
     button.setAttribute('aria-pressed', String(i === index));
-    button.title = `${beatTitle(circuit, i)} — click to show, double-click to rename, right-click for more`;
+    button.title = `${beatLabel(i)} — click to show, double-click to rename, right-click for more`;
     const number = document.createElement('span');
     number.className = 'beat-chip-number';
     number.textContent = String(i + 1);
@@ -4305,7 +4306,7 @@ function renderBeatStrip() {
     if (beat.name) {
       const name = document.createElement('span');
       name.className = 'beat-chip-name';
-      appendMarkupText(name, beat.name);
+      appendMarkupText(name, texToLabelMarkup(beat.name));
       button.appendChild(name);
     }
     button.addEventListener('click', () => setActiveBeat(i));
@@ -4376,7 +4377,7 @@ function openBeatMenu(index, x, y) {
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
   const heading = document.createElement('div');
   heading.className = 'context-menu-heading';
-  heading.textContent = beatTitle(circuit, index);
+  heading.textContent = beatLabel(index);
   menu.appendChild(heading);
   const group = document.createElement('div');
   group.className = 'context-menu-group';
@@ -4391,6 +4392,18 @@ function openBeatMenu(index, x, y) {
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
   menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+/** One beat per switch phase, after the beat on screen: what the phase
+ * connects shown, the rest dimmed (core/beats.js phaseBeats). */
+function addPhaseBeats() {
+  const current = activeBeatIndex();
+  const index = current === null ? circuit.beats.length : current + 1;
+  let count = 0;
+  commit(() => { count = phaseBeats(circuit, { index }); });
+  if (!count) return;
+  logLine(`added ${count} phase beats: each shows what its phase connects and dims the rest`);
+  setActiveBeat(index);
 }
 
 /** Context-menu items for beats: show/hide, switch position. */
@@ -4451,7 +4464,7 @@ function showPresenterFrame(animate = true) {
     svg?.removeAttribute('width');
     svg?.removeAttribute('height');
     svg?.setAttribute('role', 'img');
-    svg?.setAttribute('aria-label', beatTitle(circuit, presenter.index));
+    svg?.setAttribute('aria-label', beatLabel(presenter.index));
   }
   // The new frame fades in over the old one, which then goes; every beat
   // shares the drawing's frame, so only what changed appears to move.
@@ -4466,7 +4479,7 @@ function showPresenterFrame(animate = true) {
   const beat = circuit.beats[presenter.index];
   if (presenterCountEl) {
     presenterCountEl.replaceChildren(presenter.blank ? '' : `${presenter.index + 1} / ${circuit.beats.length}${beat?.name ? ' · ' : ''}`);
-    if (!presenter.blank && beat?.name) appendMarkupText(presenterCountEl, beat.name);
+    if (!presenter.blank && beat?.name) appendMarkupText(presenterCountEl, texToLabelMarkup(beat.name));
   }
 }
 
@@ -4507,6 +4520,7 @@ document.addEventListener('fullscreenchange', () => {
 document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
 document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
 document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
+document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
 document.getElementById('beat-strip-close')?.addEventListener('click', () => {
   beatStripOpen = false;
   setActiveBeat(null);
@@ -10188,6 +10202,13 @@ function appendContextSelectionMenu(menu, target) {
         appendContextItem(submenu, 'Select same named nets', () => selectContextNet(target, { namedGroup: true }), { disabled: !net?.name });
       }
     }
+    const phase = target.kind === 'component' ? switchPhase(target.value) : '';
+    if (phase) {
+      appendContextItem(submenu, 'Same switch phase', () => {
+        setSelection(switchesOf(circuit, switchGroupKey(target.value)).map((c) => c.refdes));
+        setLabelSelection([], null, true);
+      });
+    }
     const typeLabel = target.kind === 'component' ? 'Same component type'
       : target.kind === 'wire' ? 'Same wire type'
         : target.kind === 'net' ? 'Same net name' : 'Same label type';
@@ -10198,6 +10219,29 @@ function appendContextSelectionMenu(menu, target) {
       if (target.kind === 'net' && !target.value.name) continue;
       appendContextItem(submenu, label, () => selectSameTarget(criterion));
     }
+  });
+}
+
+/** Put the selected switches on a phase: one already in the drawing, none
+ * (each switch its own), or a new one typed into the label. */
+function appendSwitchPhaseMenu(menu, target) {
+  if (target.kind !== 'component' || !switchState(target.value)) return;
+  const switches = selectedComps().filter((c) => switchState(c));
+  const scope = switches.length ? switches : [target.value];
+  const all = (test) => scope.every(test);
+  const setPhase = (source) => {
+    commit(() => { for (const c of scope) circuit.setValue(c.refdes, source); });
+    logLine(`${scope.map((c) => c.refdes).join(', ')} ${source ? `on phase ${plainMarkup(source)}` : 'on no phase'}`);
+  };
+  appendContextSubmenu(menu, 'Phase', (submenu) => {
+    for (const { key, source } of switchPhases(circuit)) {
+      appendContextItem(submenu, plainMarkup(source), () => setPhase(source), { active: all((c) => switchGroupKey(c) === key) });
+    }
+    appendContextItem(submenu, 'None', () => setPhase(''), { active: all((c) => !switchPhase(c)) });
+    appendContextItem(submenu, 'New phase…', () => setTimeout(() => {
+      const label = circuit.labelOf(target.value.refdes);
+      if (label) inlineEditLabel(label);
+    }, 0), { shortcut: 'dbl-click label' });
   });
 }
 
@@ -10382,6 +10426,7 @@ function openComponentContextMenu(target, x, y) {
   appendContextActions(menu, target);
   appendContextSelectionMenu(menu, target);
   appendSignalFlowPolarityMenu(menu, target);
+  appendSwitchPhaseMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(menu, 'Close', closeComponentContextMenu);

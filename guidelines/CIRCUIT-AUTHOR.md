@@ -279,6 +279,7 @@ beat rm|rename|move N ...      remove, name, or reorder a beat (1-based)
 beat show|dim|hide N ID ...    show, dim, or hide parts/labels from beat N on
 beat switch N REF|PHASE open|closed
                                set a switch (its whole phase) from beat N on
+beat phases [--after N]        add a beat per switch phase: what it connects shown, the rest dimmed
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list
 ```

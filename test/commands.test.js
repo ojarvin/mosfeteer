@@ -881,6 +881,11 @@ test('beat commands add, edit, list, and draw presentation steps', () => {
   assert.equal(circuit.beats.length, 2);
   assert.throws(() => runCommand(circuit, 'beat rm 5'), /no beat 5/);
   assert.throws(() => runCommand(circuit, 'beat switch 1 R1 closed'), /not a switch/);
+  assert.throws(() => runCommand(circuit, 'beat phases'), /no switch has a phase/);
+  runCommand(circuit, 'value S1 $\\phi_1$');
+  assert.deepEqual(runCommand(circuit, 'beat phases --after 1').json, { index: 2, count: 1 });
+  assert.equal(circuit.beats[1].name, '$\\phi_1$');
+  runCommand(circuit, 'value S1 S1');
   runCommand(circuit, 'switch S1 closed');
   assert.equal(circuit.components.get('S1').type, 'switch_closed');
   assert.throws(() => runCommand(circuit, 'switch R1 open'), /not a switch/);

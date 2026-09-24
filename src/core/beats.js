@@ -23,6 +23,7 @@
  */
 
 import { getSymbol } from './components/index.js';
+import { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName } from './model.js';
 import { steinerBranches } from './router.js';
 
 export const SWITCH_TYPES = Object.freeze({ open: 'switch_open', closed: 'switch_closed' });
@@ -413,6 +414,112 @@ export function cycleBeatHighlight(circuit, index, net, colors) {
   if (!now && !next) throw new Error('every highlight color is already in use');
   setHighlightFrom(circuit, index, key, next);
   return next;
+}
+
+// ----- beats from switch phases -------------------------------------------------
+
+/** The phases in the drawing, in the order their first switch was placed:
+ * [{ key, source }], where source is that switch's own spelling. */
+export function switchPhases(circuit) {
+  const phases = new Map();
+  for (const component of circuit.components.values()) {
+    const source = switchPhase(component);
+    if (source && !phases.has(phaseKey(source))) phases.set(phaseKey(source), { key: phaseKey(source), source });
+  }
+  return [...phases.values()];
+}
+
+const isAttachment = (component) => REFERENCE_MARKER_TYPES.includes(component?.type) || INTERFACE_PIN_TYPES.has(component?.type);
+
+/** Net groups that are supply or ground rails: they join everything, so they
+ * never count as a connection. */
+function railGroups(circuit) {
+  const rails = new Set();
+  for (const net of circuit.nets.values()) {
+    const marker = net.terminals.some(({ comp }) => REFERENCE_MARKER_TYPES.includes(circuit.components.get(comp)?.type));
+    const named = net.name && REFERENCE_MARKER_TYPES.some((type) => isReferenceMarkerGlobalName(type, net.name));
+    if (marker || named) rails.add(circuit.netGroupKey(net));
+  }
+  return rails;
+}
+
+/**
+ * Which parts one phase connects: with its switches closed and every other
+ * phase's open, the parts joined -- through anything but a rail or an open
+ * switch -- to one of its switches. Returns a Set of refdes, pins and rail
+ * markers included when a connected part shares their wire.
+ */
+export function phaseConnected(circuit, key) {
+  const rails = railGroups(circuit);
+  const closed = (component) => {
+    if (!switchState(component)) return true;
+    const phase = phaseKey(switchPhase(component));
+    return phase ? phase === key : switchState(component) === 'closed';
+  };
+  const netsOf = new Map();
+  for (const net of circuit.nets.values()) {
+    const group = circuit.netGroupKey(net);
+    for (const { comp } of net.terminals) {
+      if (!netsOf.has(comp)) netsOf.set(comp, new Set());
+      if (!rails.has(group)) netsOf.get(comp).add(group);
+    }
+  }
+  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c));
+  const reached = new Set();
+  const reachedNets = new Set();
+  const queue = parts.filter((c) => switchState(c) && phaseKey(switchPhase(c)) === key);
+  for (const c of queue) reached.add(c.refdes);
+  while (queue.length) {
+    const component = queue.pop();
+    if (!closed(component)) continue;
+    for (const net of netsOf.get(component.refdes) || []) {
+      if (reachedNets.has(net)) continue;
+      reachedNets.add(net);
+      for (const other of parts) {
+        // An open switch is cut off even where it touches: it dims.
+        if (!reached.has(other.refdes) && closed(other) && netsOf.get(other.refdes)?.has(net)) {
+          reached.add(other.refdes);
+          queue.push(other);
+        }
+      }
+    }
+  }
+  // A pin or rail marker goes with the parts on its own wire.
+  for (const component of circuit.components.values()) {
+    if (!isAttachment(component)) continue;
+    const wires = [...circuit.nets.values()].filter((net) => net.terminals.some(({ comp }) => comp === component.refdes));
+    if (wires.some((net) => net.terminals.some(({ comp }) => reached.has(comp)))) reached.add(component.refdes);
+  }
+  return reached;
+}
+
+/** Set a switch's phase open or closed in beat `index` alone. */
+function setSwitchAt(circuit, index, key, state) {
+  const base = switchBase(circuit, key);
+  const track = valueTrack(circuit.beats, 'switches', key, base);
+  track[index] = state;
+  writeValueTrack(circuit.beats, 'switches', key, track, base);
+}
+
+/**
+ * Insert one beat per switch phase at `index`, named after the phase: its
+ * switches closed and every other phase's open, what it connects shown and
+ * the rest -- open switches included -- dimmed. Returns how many beats.
+ */
+export function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
+  const phases = switchPhases(circuit);
+  if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
+  const listable = [...circuit.components.values()].filter((c) => beatObjectKind(circuit, c.refdes) === 'component');
+  phases.forEach(({ key, source }, step) => {
+    const at = index + step;
+    addBeat(circuit, { index: at, name: source });
+    for (const other of phases) setSwitchAt(circuit, at, other.key, other.key === key ? 'closed' : 'open');
+    const connected = phaseConnected(circuit, key);
+    for (const component of listable) {
+      setPresenceAt(circuit, at, [component.refdes], connected.has(component.refdes) ? 'show' : 'dim');
+    }
+  });
+  return phases.length;
 }
 
 // ----- model maintenance -----------------------------------------------------

@@ -47,6 +47,19 @@ position; a switch starting a new phase brings its old phase's beats, so a
 phase can be renamed one switch at a time. Labelling a switch with its own
 name (`S_{3}`) takes it out of any phase.
 
+A switch's right-click menu has **Phase**, to put the selected switches on an
+existing phase, on none, or on a new one, and **Select → Same switch phase**.
+
+**Beats from switch phases** (More menu; `beat phases`) adds one beat per
+phase, in the order the phases were first drawn, named after the phase. Each
+closes that phase's switches and opens every other phase's. What the phase
+connects stays shown: every part joined to one of its switches through
+anything but a rail or an open switch, with the pins and rail markers on
+those parts' wires. Everything else, the open switches included, is dimmed,
+so the whole circuit stays readable. Switches without a phase keep their
+drawn position. The beats are ordinary beats, inserted after the one on
+screen as one undoable edit.
+
 Placeholders fall out of rule 4: to stand in for a bias transistor until it
 appears, put a net label (or a port) on the gate net, hide it from the beat
 where the transistor appears, and the wire to it disappears with it.

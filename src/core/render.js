@@ -199,6 +199,16 @@ const GREEK_UPPER = {
   Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
 };
 
+/** A short TeX phrase as label markup, for places that draw labels but not
+ * math: $\phi_1$ becomes ϕ_{1}. Anything else is returned as it is. */
+export function texToLabelMarkup(source) {
+  const text = String(source ?? '').trim();
+  if (!(text.length >= 2 && text.startsWith('$') && text.endsWith('$'))) return text;
+  return stripMathDelimiters(text)
+    .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
+    .replace(/([_^])([^{])/g, '$1{$2}');
+}
+
 /** Short TeX or label markup as readable plain text, for menus and
  * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
 export function plainTexText(source) {

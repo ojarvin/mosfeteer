@@ -5,7 +5,7 @@ import { loadDocument } from '../src/core/document.js';
 import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
 import {
-  addBeat, cycleBeatHighlight, introduceAt, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
+  addBeat, cycleBeatHighlight, introduceAt, phaseBeats, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
   setPresenceAt, setPresenceFrom, switchStateAt, visibleBeats,
 } from '../src/core/beats.js';
 
@@ -336,4 +336,35 @@ test('a TeX phase draws as math and groups however it is spelled', () => {
   const loaded = roundTrip(circuit);
   assert.equal(loaded.labelOf('S1').math, true);
   assert.equal(switchStateAt(loaded, '$\\phi_{1}$', 0), 'open');
+});
+
+/** A switched-capacitor integrator: on ϕ1, S1 and S2 charge CS from VIN; on
+ * ϕ2, S3 and S4 dump it into the integrating capacitor CF around OA. */
+function integrator() {
+  const circuit = new Circuit();
+  run(circuit,
+    'add input VIN --at -560 0', 'add switch_open S1 --at -320 0', 'add capacitor CS --at 0 0',
+    'add switch_open S2 --at 320 0', 'add switch_open S3 --at -160 320 --rot 90', 'add switch_open S4 --at 160 320 --rot 90',
+    'add opamp OA --at 800 40', 'add capacitor CF --at 800 -320', 'add output VOUT --at 1200 40',
+    'add ground G1 --at -160 560', 'add ground G2 --at 160 560', 'add ground G3 --at 560 240',
+    'connect VIN.p S1.a', 'connect S1.b CS.a S3.a', 'connect CS.b S2.a S4.a', 'connect S2.b OA.im CF.a --name X',
+    'connect S3.b G1.gnd', 'connect S4.b G2.gnd', 'connect OA.ip G3.gnd', 'connect OA.o CF.b VOUT.p',
+    'value S1 $\\phi_1$', 'value S4 $\\phi_1$', 'value S3 $\\phi_2$', 'value S2 $\\phi_2$');
+  return circuit;
+}
+
+test('phase beats close one phase each, show what it connects, and dim the rest', () => {
+  const circuit = integrator();
+  assert.equal(phaseBeats(circuit), 2);
+  assert.deepEqual(circuit.beats.map((beat) => beat.name), ['$\\phi_1$', '$\\phi_2$']);
+  const look = (index) => {
+    const view = resolveBeat(circuit, index);
+    const refs = (set) => [...set].filter((ref) => !ref.startsWith('J')).sort();
+    return { dim: refs(view.dimRefs), hidden: refs(view.hiddenRefs), closed: [...view.switchTypes].filter(([, type]) => type === 'switch_closed').map(([ref]) => ref).sort() };
+  };
+  // ϕ1 samples VIN onto CS through S1 and S4; the integrator waits, dimmed.
+  assert.deepEqual(look(0), { dim: ['CF', 'G1', 'G3', 'OA', 'S2', 'S3', 'VOUT'], hidden: [], closed: ['S1', 'S4'] });
+  // ϕ2 moves the charge through S3 and S2 into CF; the input is cut off.
+  assert.deepEqual(look(1), { dim: ['G2', 'S1', 'S4', 'VIN'], hidden: [], closed: ['S2', 'S3'] });
+  assert.throws(() => phaseBeats(tee(0)), /no switch has a phase/);
 });
