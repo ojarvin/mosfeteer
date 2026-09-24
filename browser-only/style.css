@@ -531,6 +531,14 @@ button:focus-visible {
   visibility: visible;
 }
 
+/* Plain items keep the same empty slot, so every key hint in a menu lines
+   up with the checkable ones. */
+.toolbar-menu [role="menuitem"]:has(kbd)::after {
+  content: '';
+  width: 1em;
+  margin-left: 8px;
+}
+
 .toolbar[data-compact~="fold"] {
   gap: 6px;
   padding: 6px 8px;
@@ -1660,7 +1668,7 @@ button:disabled {
 
 .empty-state button {
   display: grid;
-  grid-template-columns: 3.6rem minmax(0, 1fr);
+  grid-template-columns: 5.6rem minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   height: 32px;
