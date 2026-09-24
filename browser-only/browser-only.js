@@ -8633,9 +8633,30 @@ function switchPhase(component) {
   return switchState(component) ? String(component.value ?? '').trim() : '';
 }
 
+/** True for TeX source in `$...$` (or `$$...$$`), drawn as math. */
+function isTexSource(text) {
+  const source = String(text ?? '').trim();
+  return source.length >= 2 && source.startsWith('$') && source.endsWith('$');
+}
+
+/** A phase as groups and beats compare it. Spelling differences that draw
+ * the same TeX -- spacing, delimiters, braces around a one-character
+ * subscript -- are one phase: $\phi_1$, $\phi_{1}$, and $ \phi_1 $ agree.
+ * Plain text compares as written. */
+function phaseKey(text) {
+  const source = String(text ?? '').trim();
+  if (!isTexSource(source)) return source;
+  const tex = source.replace(/^\$+|\$+$/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/ ?([_^{}]) ?/g, '$1')
+    .trim()
+    .replace(/([_^])(\\[A-Za-z]+|[^{\\])/g, '$1{$2}');
+  return `$${tex}$`;
+}
+
 /** What beats and groups know a switch by: its phase, or its own refdes. */
 function switchGroupKey(component) {
-  return switchPhase(component) || component.refdes;
+  return phaseKey(switchPhase(component)) || component.refdes;
 }
 
 /** Every switch sharing `key` (a phase or a lone switch's refdes). */
@@ -8647,7 +8668,7 @@ function switchesOf(circuit, key) {
 function switchKeyFor(circuit, refOrPhase) {
   const component = circuit.components.get(refOrPhase);
   if (switchState(component)) return switchGroupKey(component);
-  if (switchesOf(circuit, String(refOrPhase).trim()).length) return String(refOrPhase).trim();
+  if (switchesOf(circuit, phaseKey(refOrPhase)).length) return phaseKey(refOrPhase);
   throw new Error(`"${refOrPhase}" is not a switch or a switch phase`);
 }
 
@@ -9244,6 +9265,8 @@ function resolveBeat(circuit, index) {
 
 __exports.switchState = switchState;
 __exports.switchPhase = switchPhase;
+__exports.isTexSource = isTexSource;
+__exports.phaseKey = phaseKey;
 __exports.switchGroupKey = switchGroupKey;
 __exports.switchesOf = switchesOf;
 __exports.switchKeyFor = switchKeyFor;
@@ -12280,7 +12303,7 @@ const { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCross
 const { collapseCollinear } = __require("src/core/wireedit.js");
 const { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js");
 const { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js");
-const { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js");
+const { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js");
 
 
 
@@ -12947,6 +12970,8 @@ class LabelInstance {
     }
     else {
       const next = this.math ? normalizeMathSource(value) : String(value);
+      // A switch's label is its phase, math or not.
+      if (this.owner && !this.role && this.circuit._syncSwitchLabel(this.owner, next)) return;
       if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
@@ -13158,6 +13183,7 @@ class LabelInstance {
       this.circuit._markReferenceLabelsLocal?.(net);
     } else {
       const next = this.math ? normalizeMathSource(text) : String(text);
+      if (this.owner && !this.role && this.circuit._syncSwitchLabel(this.owner, next)) return;
       if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
@@ -13948,8 +13974,11 @@ class Circuit {
     component.value = phase;
     const label = this.labelOf(refdes);
     const display = phase || componentLabelText(refdes, source || undefined);
-    if (label && label._text !== display) {
+    // A phase in $...$ is TeX and draws as math, like an equation.
+    const math = isTexSource(phase);
+    if (label && (label._text !== display || label.math !== math)) {
       label._text = display;
+      label.math = math;
       label.clearRenderedTextBounds();
     }
     const after = switchGroupKey(component);
@@ -14076,6 +14105,7 @@ class Circuit {
     }
     return this.addLabel({
       text: switchState(component) && component.value ? component.value : componentLabelText(component.refdes),
+      math: switchState(component) && isTexSource(component.value),
       owner: component.refdes,
       offset: component.def.labelOffset,
       align: 'center',
@@ -18553,6 +18583,15 @@ const GREEK_UPPER = {
   Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
 };
 
+/** Short TeX or label markup as readable plain text, for menus and
+ * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
+function plainTexText(source) {
+  return stripMathDelimiters(source)
+    .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
+    .replace(/[_^]\{([^}]*)\}/g, '$1')
+    .replace(/[_^{}]/g, '');
+}
+
 // TeX Appendix G rule 18a: when the nucleus is a single character, the script
 // shift ignores that character's own height and depth, so `g_m` and `r_o` set
 // their subscripts on one line. MathML instead drops a subscript clear of a
@@ -19831,6 +19870,7 @@ function editorOverlay(circuit, opts = {}) {
   return parts.join('\n');
 }
 
+__exports.plainTexText = plainTexText;
 __exports.svgPixelSize = svgPixelSize;
 __exports.texToMathML = texToMathML;
 __exports.componentShapeSvg = componentShapeSvg;
@@ -24185,7 +24225,7 @@ const { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __requir
 const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
 const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
 const { smallSignalSchematic } = __require("src/core/analysis/model-schematic.js");
-const { componentShapeSvg, editorOverlay, svgString, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js");
+const { componentShapeSvg, editorOverlay, plainTexText, svgString, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js");
 const { componentsOfSymbols } = __require("src/core/analysis/provenance.js");
 const { resolveColor, themeInkSvg } = __require("src/core/style.js");
 const { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js");
@@ -28434,8 +28474,8 @@ function selectedSwitchGroups() {
   return [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
 }
 
-// Plain text for messages: φ_{1} reads φ1.
-const plainMarkup = (text) => String(text).replace(/[_^]\{([^}]*)\}/g, '$1');
+// Plain text for messages: φ_{1} reads φ1, $\phi_1$ reads ϕ1.
+const plainMarkup = plainTexText;
 const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))} switches` : c.refdes);
 
 /** s: open or close the selected switches, with the rest of their phases --
@@ -35101,8 +35141,8 @@ function inlineEditLabel(label, options = {}) {
       const owner = label.owner ? circuit.components.get(label.owner) : null;
       // Interface pins validate exactly like every other instance label: the
       // label is the component's identity, and a port additionally names its
-      // net through the same rename.
-      const ordinaryOwner = owner && !isReferenceMarker(owner) && !label.math;
+      // net through the same rename. A switch's label is its phase instead.
+      const ordinaryOwner = owner && !isReferenceMarker(owner) && !switchState(owner) && !label.math;
       if (ordinaryOwner) {
         const canonical = normalizeComponentRefdes(v);
         if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(canonical)) {
