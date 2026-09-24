@@ -36,6 +36,9 @@
   --svg-ink: #111111;
   --svg-mid: #292929;
   --svg-faint: #666666;
+  /* Beats: dimmed parts, and hidden parts in the editor (ink over paper). */
+  --svg-dim: #b8b8b8;
+  --svg-faded: #e2e2e2;
   --grid: #e9e9e9;
   --label-edit-bg: rgba(255, 255, 255, 0.9);
   --logo-blade: var(--text);
@@ -2859,6 +2862,8 @@ html.dark {
   --svg-ink: #dde1e8;
   --svg-mid: #dde1e8;
   --svg-faint: #9aa3b2;
+  --svg-dim: #515459;
+  --svg-faded: #2d2f34;
   --grid: #22262e;
   --label-edit-bg: rgba(25, 28, 36, 0.94);
   --logo-blade: var(--text);
