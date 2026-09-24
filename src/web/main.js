@@ -14,7 +14,7 @@ import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, co
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
-import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchState, switchStateAt } from '../core/beats.js';
+import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, growBeats, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchState, switchStateAt } from '../core/beats.js';
 import { TipBook } from './tips.js';
 import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
@@ -4296,7 +4296,7 @@ function renderBeatStrip() {
     if (beat.name) {
       const name = document.createElement('span');
       name.className = 'beat-chip-name';
-      name.textContent = beat.name;
+      appendMarkupText(name, beat.name);
       button.appendChild(name);
     }
     button.addEventListener('click', () => setActiveBeat(i));
@@ -4384,8 +4384,24 @@ function openBeatMenu(index, x, y) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 
-/** Context-menu items for the beat on screen: show/hide, switch position. */
+/** Add beats that build the drawing up from the selected parts: the signal
+ * path first, then each bias line (core/beats.js growOrder). */
+function growBeatsFromSelection() {
+  const ids = [...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)];
+  const current = activeBeatIndex();
+  const index = current === null ? circuit.beats.length : current + 1;
+  let count = 0;
+  commit(() => { count = growBeats(circuit, ids, { index }); });
+  if (!count) return;
+  logLine(`added ${count} beats growing from ${selectedComps().map((c) => c.refdes).join(', ')}: the signal path, then the bias lines`);
+  setActiveBeat(index);
+}
+
+/** Context-menu items for beats: grow, show/hide, switch position. */
 function appendBeatContextItems(group, target) {
+  if (target.kind === 'component' && target.value.type !== 'solder') {
+    appendContextItem(group, 'Grow beats from here', growBeatsFromSelection);
+  }
   if (target.kind === 'component' && switchState(target.value)) {
     const index = activeBeatIndex();
     const state = index === null ? switchState(target.value) : switchStateAt(circuit, target.value.refdes, index);
@@ -4455,7 +4471,10 @@ function showPresenterFrame(animate = true) {
   }
   presenterStageEl.appendChild(frame);
   const beat = circuit.beats[presenter.index];
-  if (presenterCountEl) presenterCountEl.textContent = presenter.blank ? '' : `${presenter.index + 1} / ${circuit.beats.length}${beat?.name ? ` · ${beat.name}` : ''}`;
+  if (presenterCountEl) {
+    presenterCountEl.replaceChildren(presenter.blank ? '' : `${presenter.index + 1} / ${circuit.beats.length}${beat?.name ? ' · ' : ''}`);
+    if (!presenter.blank && beat?.name) appendMarkupText(presenterCountEl, beat.name);
+  }
 }
 
 function presenterStep(delta) {

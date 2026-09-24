@@ -5,7 +5,7 @@ import { loadDocument } from '../src/core/document.js';
 import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
 import {
-  addBeat, cycleBeatHighlight, introduceAt, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
+  addBeat, cycleBeatHighlight, growBeats, growOrder, introduceAt, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
   setPresenceAt, setPresenceFrom, switchStateAt, visibleBeats,
 } from '../src/core/beats.js';
 
@@ -248,4 +248,40 @@ test('an open-ended labelled stub keeps its tip beyond the label', () => {
   // Hiding the label drops the stub it carried.
   setPresenceFrom(circuit, 0, [label.id], 'hide');
   assert.equal(resolveBeat(circuit, 0).wires.get(net.id), 'none');
+});
+
+/** Input M1 drives second stage M2 and sits on tail source M3, which is
+ * biased from diode M4 through line VB. VI is the input pin. */
+function twoStage() {
+  const circuit = new Circuit();
+  run(circuit,
+    'add nmos M1 --at 0 0', 'add nmos M2 --at 480 0', 'add nmos M3 --at 0 400', 'add nmos M4 --at -480 400',
+    'add port VI --at -320 0', 'add ground G1 --at 0 640',
+    'connect VI.p M1.g', 'connect M1.d M2.g', 'connect M1.s M3.d', 'connect M3.g M4.g M4.d --name VB', 'connect M3.s M4.s G1.gnd');
+  return circuit;
+}
+
+test('growing a build follows the signal path first, then each bias line', () => {
+  const circuit = twoStage();
+  const order = (start) => growOrder(circuit, start).map(({ refs, name }) => [name, refs]);
+  // The drain reaches the next gate; a gate never reaches its bias.
+  assert.deepEqual(order(['M1']), [['', ['M1']], ['', ['M2', 'M3']], ['Bias VB', ['M4']]]);
+  // A pin stands for the parts on its net; the rail joins nothing.
+  assert.deepEqual(order(['VI']), order(['M1']));
+  assert.throws(() => growOrder(circuit, ['G1']), /grow from a part or a pin/);
+});
+
+test('grown beats show each step, pins and rails with their parts, equations last', () => {
+  const circuit = twoStage();
+  const eq = circuit.addLabel({ text: '$$A = g_{m} r_{o}$$', math: true, x: 800, y: 400 });
+  assert.equal(growBeats(circuit, ['M1']), 3);
+  assert.deepEqual(circuit.beats.map((beat) => beat.name), ['', '', 'Bias VB']);
+  const hiddenIn = (index) => [...resolveBeat(circuit, index).hiddenRefs].filter((ref) => !ref.startsWith('J')).sort();
+  assert.deepEqual(hiddenIn(0), ['G1', 'M2', 'M3', 'M4']);
+  assert.deepEqual(hiddenIn(1), ['M4']);
+  assert.deepEqual(hiddenIn(2), []);
+  assert.deepEqual(visibleBeats(circuit, eq.id), [2]);
+  // Grown beats are ordinary beats, editable like any other.
+  setPresenceFrom(circuit, 1, ['M3'], 'dim');
+  assert.equal(resolveBeat(circuit, 2).dimRefs.has('M3'), true);
 });

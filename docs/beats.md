@@ -36,6 +36,26 @@ Placeholders fall out of rule 4: to stand in for a bias transistor until it
 appears, put a net label (or a port) on the gate net, hide it from the beat
 where the transistor appears, and the wire to it disappears with it.
 
+## Growing a build
+
+"Grow beats from here" (a part's context menu; `beat grow ID ...`) drafts
+beats from a starting part or pin (`growOrder`/`growBeats` in `beats.js`):
+
+1. **Signal path.** The start, then everything one connection further out.
+   A connection leaves a part through a drain, source, output, or two-terminal
+   lead, never back out of a gate, base, or input: a drain reaches the next
+   stage's gate, but a gate does not reach its bias generator.
+2. **Bias.** One beat per control line the shown parts hang from, in the
+   order they were reached, named after the line (`Bias V_{BN}`). It brings
+   what drives the line: the parts conducting on it and the stacks in series
+   with them.
+3. **The rest**, if anything is still unreached, together.
+
+Supply and ground rails (a rail marker, or a net named VDD, VSS, GND, or VCM)
+never count as connections. A pin or rail marker appears with the first part
+on its own wire, and equation labels wait for the last beat. The result is a
+set of ordinary beats, inserted after the one on screen as one undoable edit.
+
 ## Stored form
 
 `circuit.beats` is an ordered list. Each beat stores only its changes

@@ -277,6 +277,7 @@ beat add [NAME] [--after N]    add a beat that looks like the one before it
 beat rm|rename|move N ...      remove, name, or reorder a beat (1-based)
 beat show|dim|hide N ID ...    show, dim, or hide parts/labels from beat N on
 beat switch N REF open|closed  set a switch position from beat N on
+beat grow ID ... [--after N]   add beats that build the drawing up from these parts
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list
 ```

@@ -22,6 +22,7 @@
  */
 
 import { getSymbol } from './components/index.js';
+import { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName } from './model.js';
 import { steinerBranches } from './router.js';
 
 export const SWITCH_TYPES = Object.freeze({ open: 'switch_open', closed: 'switch_closed' });
@@ -363,6 +364,137 @@ export function cycleBeatHighlight(circuit, index, net, colors) {
   if (!now && !next) throw new Error('every highlight color is already in use');
   setHighlightFrom(circuit, index, key, next);
   return next;
+}
+
+// ----- growing a build from a starting point -----------------------------------
+
+const isMarker = (component) => REFERENCE_MARKER_TYPES.includes(component?.type);
+const isAttachment = (component) => isMarker(component) || INTERFACE_PIN_TYPES.has(component?.type);
+// Terminals a signal enters by: it leaves a part through its other terminals.
+const CONTROL_TERMINALS = new Set(['gate', 'bulk', 'base', 'input']);
+
+/**
+ * The parts a build started at `startIds` reveals, step by step, as
+ * [{ refs, name }]:
+ *
+ * 1. The signal path: the start, then everything one connection further
+ *    out, where a connection leaves a part through a drain, source, output,
+ *    or passive terminal -- never back out of a gate. A drain still reaches
+ *    the next stage's gate; a gate does not reach its bias generator.
+ * 2. The bias: one step per gate (or base, or input) line that shown parts
+ *    hang from, bringing what drives it -- the parts conducting on it and
+ *    the stacks in series with them.
+ * 3. Anything still unreached, together.
+ *
+ * Nets join by name, as they do electrically, but supply and ground rails
+ * (nets with a rail marker, or named VDD, VSS, GND, or VCM) join nothing: through them everything would be one step away. Pins and
+ * rail markers are not listed; growBeats shows them with their net's parts.
+ */
+export function growOrder(circuit, startIds) {
+  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c));
+  const railGroups = new Set();
+  for (const net of circuit.nets.values()) {
+    const rail = net.terminals.some(({ comp }) => isMarker(circuit.components.get(comp)))
+      || (net.name && REFERENCE_MARKER_TYPES.some((type) => isReferenceMarkerGlobalName(type, net.name)));
+    if (rail) railGroups.add(circuit.netGroupKey(net));
+  }
+  // group key -> [{ ref, control }] for every part terminal on it
+  const members = new Map();
+  const groupsOf = new Map(parts.map((c) => [c.refdes, []]));
+  for (const net of circuit.nets.values()) {
+    const key = circuit.netGroupKey(net);
+    if (railGroups.has(key)) continue;
+    for (const { comp, term } of net.terminals) {
+      if (!groupsOf.has(comp)) continue;
+      const direction = circuit.components.get(comp).terminalDefs.find((t) => t.name === term)?.direction;
+      const control = CONTROL_TERMINALS.has(direction);
+      groupsOf.get(comp).push({ key, control });
+      if (!members.has(key)) members.set(key, new Map());
+      // A part is conducting on a net if any of its terminals there is.
+      members.get(key).set(comp, (members.get(key).get(comp) ?? true) && control);
+    }
+  }
+  // A pin as a start stands for the parts on its net.
+  const starts = startIds.flatMap((id) => {
+    const component = circuit.components.get(id);
+    if (!INTERFACE_PIN_TYPES.has(component?.type)) return [beatTargetId(circuit, id)];
+    return [...circuit.nets.values()].filter((net) => net.terminals.some(({ comp }) => comp === id))
+      .flatMap((net) => [...(members.get(circuit.netGroupKey(net))?.keys() || [])]);
+  });
+  const start = [...new Set(starts.filter((ref) => groupsOf.has(ref)))];
+  if (!start.length) throw new Error('grow from a part or a pin (not a rail marker or junction dot)');
+  const seen = new Set(start);
+  const steps = [{ refs: start.sort(), name: '' }];
+  // Unseen parts one connection out from `frontier`, leaving through a
+  // conducting terminal; `stackOnly` also enters only through one.
+  const outward = (frontier, stackOnly = false) => {
+    const next = new Set();
+    for (const ref of frontier) {
+      for (const { key, control } of groupsOf.get(ref)) {
+        if (control) continue;
+        for (const [other, onlyControl] of members.get(key)) {
+          if (!seen.has(other) && !(stackOnly && onlyControl)) next.add(other);
+        }
+      }
+    }
+    for (const ref of next) seen.add(ref);
+    return [...next];
+  };
+  for (let frontier = start; frontier.length;) {
+    frontier = outward(frontier);
+    if (frontier.length) steps.push({ refs: frontier.sort(), name: '' });
+  }
+  // Bias: one step per control line that shown parts hang from, in the
+  // order they were reached, with what drives it: the parts conducting on it
+  // and the stacks in series with them. Their own control lines follow later.
+  for (let step = 0; step < steps.length; step += 1) {
+    const controls = [...new Set(steps[step].refs.flatMap((ref) => groupsOf.get(ref).filter(({ control }) => control).map(({ key }) => key)))].sort();
+    for (const key of controls) {
+      const reached = [...members.get(key)].filter(([ref, onlyControl]) => !onlyControl && !seen.has(ref)).map(([ref]) => ref);
+      for (const ref of reached) seen.add(ref);
+      for (let frontier = reached; frontier.length;) {
+        frontier = outward(frontier, true);
+        reached.push(...frontier);
+      }
+      // Named lines name their beat; an unnamed one is known by its net id.
+      const name = [...circuit.nets.values()].find((net) => circuit.netGroupKey(net) === key)?.name;
+      if (reached.length) steps.push({ refs: [...new Set(reached)].sort(), name: name ? `Bias ${name}` : 'Bias' });
+    }
+  }
+  const rest = parts.map((c) => c.refdes).filter((ref) => !seen.has(ref)).sort();
+  if (rest.length) steps.push({ refs: rest, name: '' });
+  return steps;
+}
+
+/**
+ * Insert one beat per growOrder step at `index`, each showing the parts
+ * reached so far. A pin or rail marker appears with the first part on its wire, and
+ * equation labels wait for the last beat. Anything else keeps its look.
+ * Returns the number of beats added.
+ */
+export function growBeats(circuit, startIds, { index = circuit.beats.length } = {}) {
+  const steps = growOrder(circuit, startIds);
+  const stepOf = new Map(steps.flatMap(({ refs }, step) => refs.map((ref) => [ref, step])));
+  const last = steps.length - 1;
+  // A pin or rail marker shows with the first part on its own wire; a rail's
+  // name would tie every marker on it to the first part anywhere.
+  for (const marker of [...circuit.components.values()].filter(isAttachment)) {
+    const partSteps = [...circuit.nets.values()]
+      .filter((net) => net.terminals.some(({ comp }) => comp === marker.refdes))
+      .flatMap((net) => net.terminals.map(({ comp }) => stepOf.get(comp)))
+      .filter((step) => step !== undefined);
+    stepOf.set(marker.refdes, partSteps.length ? Math.min(...partSteps) : last);
+  }
+  for (const label of circuit.labels.values()) {
+    if (label.math && beatObjectKind(circuit, label.id) === 'label') stepOf.set(label.id, last);
+  }
+  steps.forEach(({ name }, step) => addBeat(circuit, { index: index + step, name }));
+  for (const [id, first] of stepOf) {
+    for (let step = 0; step < steps.length; step += 1) {
+      setPresenceAt(circuit, index + step, [id], step >= first ? 'show' : 'hide');
+    }
+  }
+  return steps.length;
 }
 
 // ----- model maintenance -----------------------------------------------------

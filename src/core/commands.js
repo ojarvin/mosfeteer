@@ -7,7 +7,7 @@ import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
-import { addBeat, beatTitle, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
+import { addBeat, beatTitle, growBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -520,6 +520,7 @@ export function commandHelp() {
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF open|closed  - set a switch position from beat N on',
+    '  beat grow ID ... [--after N]   - add beats that build the drawing up from these parts',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -1067,6 +1068,12 @@ function beatCommand(circuit, pos, flags, result) {
     const listed = setPresenceFrom(circuit, index, ids, sub);
     return result(`${{ show: 'shown', dim: 'dimmed', hide: 'hidden' }[sub]} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
   }
+  if (sub === 'grow') {
+    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
+    if (pos.length < 2) throw new Error('usage: beat grow ID ... [--after N]');
+    const count = growBeats(circuit, pos.slice(1), { index });
+    return result(`added beats ${index + 1}..${index + count} growing from ${pos.slice(1).join(' ')}`, { index: index + 1, count }, true);
+  }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);
     const [ref, state] = pos.slice(2);
@@ -1074,7 +1081,7 @@ function beatCommand(circuit, pos, flags, result) {
     setSwitchFrom(circuit, index, ref, state);
     return result(`${ref} ${state} from beat ${index + 1}`, null, true);
   }
-  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch`);
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch|grow`);
 }
 
 function netCommand(circuit, pos, result) {
