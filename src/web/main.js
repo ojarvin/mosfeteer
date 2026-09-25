@@ -12,7 +12,7 @@
 
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
-import { runCommand, commandHelp, evaluate } from '../core/commands.js';
+import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
 import { addTimingDiagram } from '../core/timing-diagram.js';
 import { addTerminalStubs } from '../core/stubs.js';
@@ -41,7 +41,7 @@ import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
-import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
+import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
 import { createPersistenceAdapter, defaultExportDirectory, validDocumentName } from './persistence.js';
 import { createWindowSession } from './window-session.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
@@ -90,7 +90,6 @@ import {
   checkSummaryBodyEl,
   clearCheckButtonEl,
   helpDialog,
-  helpDialogContent,
   helpSearch,
   analysisDialog,
   analysisForm,
@@ -143,6 +142,7 @@ import {
 import { ICON_PATHS, syncToolCursor, installIcons } from './icons.js';
 import { noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding } from './onboarding.js';
 import { ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } from './align-tool.js';
+import { renderHelpSearch, showHelp, installHelp } from './help.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -12131,100 +12131,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 }
 
-let helpCommandText = '';
-
-function helpKeyNodes(keys) {
-  const container = document.createElement('span');
-  container.className = 'help-keys';
-  keys.split(' / ').forEach((alternative, index) => {
-    if (index) container.append(document.createTextNode(' / '));
-    const note = alternative.match(/^(.*?)\s+(\([^)]*\))$/);
-    const combo = note ? note[1] : alternative;
-    // Named gestures and console commands read as text; key combinations get caps.
-    if (/\s/.test(combo) && !/^(Arrow keys)$/.test(combo)) {
-      const code = document.createElement('code');
-      code.textContent = combo;
-      container.append(code);
-    } else {
-      combo.split(/\+(?=.)/).forEach((part, partIndex) => {
-        if (partIndex) container.append(document.createTextNode('+'));
-        const kbd = document.createElement('kbd');
-        kbd.textContent = part;
-        container.append(kbd);
-      });
-    }
-    if (note) container.append(document.createTextNode(` ${note[2]}`));
-  });
-  return container;
-}
-
-function renderHelpSearch() {
-  if (!helpDialogContent) return;
-  const query = helpSearch?.value.trim().toLowerCase() || '';
-  const matches = (...parts) => !query || parts.some((part) => part.toLowerCase().includes(query));
-  helpDialogContent.replaceChildren();
-  const grid = document.createElement('div');
-  grid.className = 'help-sections';
-  let count = 0;
-  for (const [section, entries] of editorKeymap()) {
-    const rows = entries.filter(([keys, description]) => matches(keys, description, section));
-    if (!rows.length) continue;
-    const block = document.createElement('section');
-    block.className = 'help-section';
-    const title = document.createElement('h3');
-    title.textContent = section;
-    block.appendChild(title);
-    for (const [keys, description] of rows) {
-      const row = document.createElement('div');
-      row.className = 'help-row';
-      const text = document.createElement('span');
-      text.className = 'help-description';
-      text.textContent = description;
-      row.append(helpKeyNodes(keys), text);
-      block.appendChild(row);
-      count++;
-    }
-    grid.appendChild(block);
-  }
-  if (grid.childElementCount) helpDialogContent.appendChild(grid);
-  const commandLines = helpCommandText.split('\n').filter((line) => matches(line));
-  if (commandLines.length) {
-    const commands = document.createElement('details');
-    commands.className = 'help-commands';
-    commands.open = !!query;
-    const summary = document.createElement('summary');
-    summary.textContent = 'Console commands';
-    const pre = document.createElement('pre');
-    pre.textContent = commandLines.join('\n');
-    commands.append(summary, pre);
-    helpDialogContent.appendChild(commands);
-    count += commandLines.length;
-  }
-  if (!count) {
-    const empty = document.createElement('p');
-    empty.className = 'help-empty';
-    empty.textContent = `Nothing matches "${helpSearch.value.trim()}".`;
-    helpDialogContent.appendChild(empty);
-  }
-}
-
-function showHelp() {
-  if (!helpDialog) return;
-  try {
-    helpCommandText = commandHelp();
-  } catch (err) {
-    helpCommandText = String(err.message || err);
-  }
-  if (helpSearch) helpSearch.value = '';
-  renderHelpSearch();
-  if (!helpDialog.open) helpDialog.showModal();
-  helpSearch?.focus();
-}
-
-helpSearch?.addEventListener('input', renderHelpSearch);
-helpSearch?.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') ev.preventDefault();
-});
+installHelp();
 
 // ----- command console ---------------------------------------------------
 
