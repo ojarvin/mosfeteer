@@ -10,7 +10,7 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerInfo, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
@@ -30,7 +30,6 @@ import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { layerActionForKey, layoutAlignKey, naturalCompare } from './toolbar.js';
-import { confirmChoice } from './file-dialog.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } from './interaction.js';
 import { isPinDragCandidate, knifeCrossings, pinHandleRadius, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED } from './status-bar.js';
@@ -38,7 +37,6 @@ import { alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, 
 import { editor } from './editor-state.js';
 import {
   canvasEl,
-  componentContextMenuEl,
   componentsListEl,
   netsListEl,
   cmdInput,
@@ -58,16 +56,17 @@ import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSum
 import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi } from './analysis-ui.js';
 import { installModelFigure } from './model-figure.js';
-import { closeComponentContextMenu, appendContextItem, openContextMenuAt, installContextMenu } from './context-menu.js';
+import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
 import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
 import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi } from './beats-ui.js';
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
-import { queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback } from './commit-flash.js';
-import { appendMarkupText, renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } from './side-panel.js';
+import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
+import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } from './side-panel.js';
 import { toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
+import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -136,6 +135,7 @@ Object.defineProperties(editor, {
   pageGuide: { get: () => pageGuide, set: (value) => { pageGuide = value; } },
   panelStateKey: { get: () => panelStateKey, set: (value) => { panelStateKey = value; } },
   pendingFeedbackSnapshot: { get: () => pendingFeedbackSnapshot, set: (value) => { pendingFeedbackSnapshot = value; } },
+  pendingNetNameChoice: { get: () => pendingNetNameChoice, set: (value) => { pendingNetNameChoice = value; } },
   pendingPlace: { get: () => pendingPlace, set: (value) => { pendingPlace = value; } },
   presenter: { get: () => presenter, set: (value) => { presenter = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
@@ -156,6 +156,7 @@ Object.defineProperties(editor, {
   selectedWires: { get: () => selectedWires, set: (value) => { selectedWires = value; } },
   showGrid: { get: () => showGrid, set: (value) => { showGrid = value; } },
   suppressContextMenuUntil: { get: () => suppressContextMenuUntil, set: (value) => { suppressContextMenuUntil = value; } },
+  suppressNetNameChoice: { get: () => suppressNetNameChoice, set: (value) => { suppressNetNameChoice = value; } },
   symmetry: { get: () => symmetry, set: (value) => { symmetry = value; } },
   syncGeneration: { get: () => syncGeneration, set: (value) => { syncGeneration = value; } },
   syncInFlight: { get: () => syncInFlight, set: (value) => { syncInFlight = value; } },
@@ -1914,89 +1915,6 @@ function netLabelTargetAt(world) {
   const selected = candidates.filter(({ net }) => highlighted.has(net.id));
   if (selected.length === 1) return selected[0];
   return { ambiguous: true, candidates };
-}
-
-export function renameLabelThroughModel(label, text) {
-  if (label?.isNetLabel?.()) return circuit.renameNetLabel(label, text);
-  return label.setText(text);
-}
-
-export function interfacePortNet(component) {
-  if (!component || !INTERFACE_PIN_TYPES.has(component.type)) return null;
-  try { return circuit.netOfTerminal({ comp: component.refdes, term: 'p' }); }
-  catch { return null; }
-}
-
-function sameNamedConnection(left, right) {
-  const a = String(left ?? '').trim();
-  const b = String(right ?? '').trim();
-  return !!a && !!b && (a === b || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
-}
-
-/** Find named nets or interface ports that a new name would virtually join. */
-export function namedConnectionConflicts(name, { netId = null, ownerRefdes = null } = {}) {
-  const wanted = String(name ?? '').trim();
-  if (!wanted) return [];
-  const owner = ownerRefdes ? circuit.components.get(ownerRefdes) : null;
-  const targetNet = netId ? circuit.nets.get(netId) : interfacePortNet(owner);
-  const targetMembers = new Set(targetNet?.terminals?.map((terminal) => terminal.comp) || []);
-  const conflicts = [];
-  const seen = new Set();
-  for (const component of circuit.components.values()) {
-    if (!INTERFACE_PIN_TYPES.has(component.type) || component.refdes === ownerRefdes) continue;
-    const label = circuit.labelOf(component.refdes);
-    const portName = label?.text || component.refdes;
-    if (!sameNamedConnection(portName, wanted)) continue;
-    const portNet = interfacePortNet(component);
-    if (targetNet && portNet?.id === targetNet.id) continue;
-    const key = `port:${component.refdes}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    conflicts.push({ kind: 'port', component, net: portNet });
-  }
-  for (const net of circuit.nets.values()) {
-    if (net.id === targetNet?.id || !net.name || !sameNamedConnection(net.name, wanted)) continue;
-    if (net.terminals.some((terminal) => targetMembers.has(terminal.comp))) continue;
-    const key = `net:${net.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    conflicts.push({ kind: 'net', net });
-  }
-  return conflicts;
-}
-
-/** A port's label is its identity, exactly like every other component's, so a
- * name another port already carries is a collision rather than a connection.
- * Nets are joined virtually by naming the NET, not by repeating a port name. */
-export function portNameConflict(conflicts, ownerRefdes) {
-  const owner = ownerRefdes ? circuit.components.get(ownerRefdes) : null;
-  if (!owner || !INTERFACE_PIN_TYPES.has(owner.type)) return null;
-  return conflicts.find((conflict) => conflict.kind === 'port' && conflict.component) || null;
-}
-
-export function reportPortNameConflict(conflict, name) {
-  logLine(`Port name "${name}" is already used by ${conflict.component.refdes}. `
-    + 'Draw a stub and name that net instead of repeating a port name.', 'error');
-}
-
-export async function confirmNamedConnection(name, conflicts) {
-  const port = conflicts.find((conflict) => conflict.kind === 'port')?.component;
-  const target = port ? `port ${port.refdes}` : 'an existing named net';
-  return confirmChoice({
-    title: 'Connect named nets?',
-    message: `The name ${name} is already used by ${target}. Connect this net virtually to the existing name?`,
-    confirmLabel: 'Connect',
-    cancelLabel: 'Keep separate',
-  });
-}
-
-export function restoreProvisionalLabel(label, initialName = '') {
-  const net = label?.netId ? circuit.nets.get(label.netId) : null;
-  if (label && circuit.labels.has(label.id)) circuit.removeLabel(label.id);
-  if (net && net.name !== initialName) {
-    try { circuit.renameNet(net.id, initialName); }
-    catch (err) { logLine(`could not restore provisional net: ${err.message}`, 'error'); }
-  }
 }
 
 function moveLabelSafely(label, x, y) {
@@ -7878,169 +7796,7 @@ export function interactionState() {
   return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, alignMode: !!alignTool, movePending, copyPending, routeMode });
 }
 
-/** Short the nets crossing at a just-placed solder dot. Returns true when the
- * short is waiting for a net-name choice (the picker opens after render). */
-function shortNetsAtPlacedSolder(comp) {
-  const point = { x: comp.transform.x, y: comp.transform.y };
-  try {
-    const net = circuit.shortNetsAt(point);
-    if (net) logLine(`solder joined nets at (${point.x},${point.y}) into ${net.name || net.id}`);
-    return false;
-  } catch (err) {
-    if (err.code !== 'net-name-choice') throw err;
-    const historyLength = history.length;
-    askNetNameChoice({
-      point,
-      names: err.names,
-      pick(name) {
-        const before = snapshot();
-        const net = circuit.shortNetsAt(point, { name });
-        markModelChanged();
-        playCommitFeedback(before);
-        logLine(`solder joined nets at (${point.x},${point.y}) into ${net?.name || net?.id}`);
-      },
-      cancel() {
-        if (history.length === historyLength) {
-          // The placement was the latest commit: undo it without a redo entry.
-          circuit = Circuit.fromJSON(JSON.parse(history.pop()));
-        } else {
-          circuit.components.delete(comp.refdes);
-          circuit.syncJunctionSolders();
-        }
-        markModelChanged();
-        logLine('solder cancelled: no net name chosen');
-      },
-    });
-    return true;
-  }
-}
-
 let contextMenuDismiss = null;
-
-/** Every edit that shorts nets carrying different given names (a solder dot
- * on a crossing, a wire or pin drag onto another named net, a splice, a move
- * onto a pin) asks which name the merged net keeps. The question is one menu
- * at the short: a pick applies the name, Escape or an outside click cancels
- * the whole edit. `choice` is { point, names, pick(name), cancel(), heading? }. */
-function askNetNameChoice(choice) {
-  pendingNetNameChoice = choice;
-  requestAnimationFrame(openNetNameChoiceMenu);
-}
-
-/** A commit that shorts two given names asks which one survives; a cancel
- * restores the pre-commit document. */
-function askNameForNewNetNameConflict(startSnapshot) {
-  if (pendingNetNameChoice || suppressNetNameChoice) return;
-  if (askForNewNetNameWarning(startSnapshot)) return;
-  askForNewReferenceShort(startSnapshot);
-}
-
-/** Model merges that allow name conflicts keep one name and leave a
- * netNameWarnings entry. A commit that adds one asks the user instead: the
- * pick renames the merged net. */
-function askForNewNetNameWarning(startSnapshot) {
-  const warnings = circuit.netNameWarnings || [];
-  if (!warnings.length) return false;
-  let previous = [];
-  try { previous = JSON.parse(startSnapshot).netNameWarnings || []; } catch { return false; }
-  const key = (warning) => `${warning.netId}:${warning.names.join('|')}`;
-  const known = new Set(previous.map(key));
-  const warning = warnings.find((entry) => !known.has(key(entry)) && circuit.nets.has(entry.netId));
-  if (!warning) return false;
-  const historyLength = history.length;
-  const netId = warning.netId;
-  askNetNameChoice({
-    point: { ...cursor },
-    names: [...warning.names],
-    pick(name) {
-      const net = circuit.nets.get(netId);
-      if (!net) return;
-      circuit.renameNet(net, name);
-      markModelChanged();
-      logLine(`merged net ${net.id} keeps the name ${name}`);
-    },
-    cancel() {
-      if (history.length === historyLength) history.pop();
-      applyJson(startSnapshot);
-      logLine('connection cancelled: no net name chosen');
-    },
-  });
-  return true;
-}
-
-/** An unnamed ground, supply, or VCM marker joined to a named net ties that
- * name into the shared rail without any model warning. A commit that makes
- * such a join asks to rename the net to the rail; a cancel reverts the edit. */
-function askForNewReferenceShort(startSnapshot) {
-  const conflicts = referenceMarkerNameConflicts(circuit);
-  if (!conflicts.length) return false;
-  let known;
-  try {
-    known = new Set(referenceMarkerNameConflicts(loadDocument(JSON.parse(startSnapshot)))
-      .map((entry) => `${entry.refdes}:${entry.name}`));
-  } catch { return false; }
-  const conflict = conflicts.find((entry) => !known.has(`${entry.refdes}:${entry.name}`));
-  if (!conflict) return false;
-  const historyLength = history.length;
-  const marker = circuit.components.get(conflict.refdes);
-  askNetNameChoice({
-    point: marker ? { x: marker.transform.x, y: marker.transform.y } : { ...cursor },
-    heading: 'Rename net to',
-    names: [conflict.railName],
-    pick(name) {
-      const net = circuit.nets.get(conflict.netId);
-      if (!net) return;
-      circuit.renameNet(net, name);
-      markModelChanged();
-      logLine(`net ${conflict.name} joins ${conflict.refdes} and is renamed ${name}`);
-    },
-    cancel() {
-      if (history.length === historyLength) history.pop();
-      applyJson(startSnapshot);
-      logLine(`connection cancelled: ${conflict.name} stays off the ${conflict.railName} rail`);
-    },
-  });
-  return true;
-}
-
-function openNetNameChoiceMenu() {
-  const choice = pendingNetNameChoice;
-  if (!choice || !componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  const at = worldToClient(choice.point.x, choice.point.y);
-  menu.style.left = `${Math.max(4, Math.min(at.x + 18, window.innerWidth - 220))}px`;
-  menu.style.top = `${Math.max(4, at.y - 12)}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = choice.heading || 'Keep net name';
-  menu.appendChild(heading);
-  for (const name of choice.names) {
-    const item = appendContextItem(menu, '', () => {
-      contextMenuDismiss = null;
-      pendingNetNameChoice = null;
-      try {
-        choice.pick(name);
-      } catch (err) {
-        logLine(`net name choice failed: ${err.message}`, 'error');
-        choice.cancel();
-      }
-      render();
-    });
-    const text = document.createElement('span');
-    appendMarkupText(text, name);
-    item.prepend(text);
-  }
-  contextMenuDismiss = () => {
-    pendingNetNameChoice = null;
-    choice.cancel();
-    render();
-  };
-  const rect = menu.getBoundingClientRect();
-  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
-  menu.querySelector('button')?.focus();
-}
 
 // ----- annotation flyout ----------------------------------------------------
 

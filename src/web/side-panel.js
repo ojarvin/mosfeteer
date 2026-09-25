@@ -16,7 +16,8 @@ import { openComponentContextMenu, selectContextTarget } from './context-menu.js
 import { bindInlineEditorKeys, inlineEditSchematicBlock, openReferenceMarkerEditor } from './label-editor.js';
 import { plainMarkup } from './beats-ui.js';
 import { editor } from './editor-state.js';
-import { bindHoverPreview, commit, confirmNamedConnection, isTransientCopyGhostRef, namedConnectionConflicts, namedGroupNets, portNameConflict, rangeValues, render, reportPortNameConflict, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets } from './main.js';
+import { confirmNamedConnection, namedConnectionConflicts, portNameConflict, reportPortNameConflict } from './net-names.js';
+import { bindHoverPreview, commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets } from './main.js';
 
 let panelFilter = '';
 

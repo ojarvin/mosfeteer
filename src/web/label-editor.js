@@ -11,7 +11,8 @@ import { labelFontSize } from '../core/style.js';
 import { snap } from '../core/grid.js';
 import { logLine } from './status-bar-ui.js';
 import { editor } from './editor-state.js';
-import { commit, confirmNamedConnection, cycleLabelSelection, interfacePortNet, markModelChanged, namedConnectionConflicts, portNameConflict, recordHistoryEntry, renameLabelThroughModel, render, reportPortNameConflict, restoreProvisionalLabel, snapshot, supplyBarGroup } from './main.js';
+import { confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel } from './net-names.js';
+import { commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, snapshot, supplyBarGroup } from './main.js';
 
 /** Standard inline-editor keys: Enter or blur commits, Escape cancels, and
  *  Shift+Enter inserts a line break where the field accepts one. Extra keys

@@ -30210,12 +30210,14 @@ let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let commit, confirmNamedConnection, cycleLabelSelection, interfacePortNet, markModelChanged, namedConnectionConflicts, portNameConflict, recordHistoryEntry, renameLabelThroughModel, render, reportPortNameConflict, restoreProvisionalLabel, snapshot, supplyBarGroup; __bind(() => { ({ commit, confirmNamedConnection, cycleLabelSelection, interfacePortNet, markModelChanged, namedConnectionConflicts, portNameConflict, recordHistoryEntry, renameLabelThroughModel, render, reportPortNameConflict, restoreProvisionalLabel, snapshot, supplyBarGroup } = __require("src/web/main.js")); });
+let confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel; __bind(() => { ({ confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel } = __require("src/web/net-names.js")); });
+let commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, snapshot, supplyBarGroup; __bind(() => { ({ commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, snapshot, supplyBarGroup } = __require("src/web/main.js")); });
 /**
  * The inline editors that open over the canvas: label and annotation text,
  * a part's name and child labels, a supply bar's rail name, a reference
  * marker's value, and a schematic block's caption.
  */
+
 
 
 
@@ -31188,13 +31190,6 @@ __exports.deleteSelection = deleteSelection;
 __exports.stubSelection = stubSelection;
 __exports.moveCursor = moveCursor;
 __exports.cycleLabelSelection = cycleLabelSelection;
-__exports.renameLabelThroughModel = renameLabelThroughModel;
-__exports.interfacePortNet = interfacePortNet;
-__exports.namedConnectionConflicts = namedConnectionConflicts;
-__exports.portNameConflict = portNameConflict;
-__exports.reportPortNameConflict = reportPortNameConflict;
-__exports.confirmNamedConnection = confirmNamedConnection;
-__exports.restoreProvisionalLabel = restoreProvisionalLabel;
 __exports.removeAllNetHighlights = removeAllNetHighlights;
 __exports.placeNetLabelAt = placeNetLabelAt;
 __exports.symmetryAxisText = symmetryAxisText;
@@ -31236,7 +31231,7 @@ __exports.activateMove = activateMove;
 __exports.activateCopy = activateCopy;
 __exports.activateAlign = activateAlign;
 __exports.selectedTransform = selectedTransform;
-let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
+let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerInfo, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerInfo, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
@@ -31256,13 +31251,12 @@ let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPa
 let copyableLabelPayload, selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection; __bind(() => { ({ copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } = __require("src/web/selection.js")); });
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
 let layerActionForKey, layoutAlignKey, naturalCompare; __bind(() => { ({ layerActionForKey, layoutAlignKey, naturalCompare } = __require("src/web/toolbar.js")); });
-let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
 let isPinDragCandidate, knifeCrossings, pinHandleRadius, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ isPinDragCandidate, knifeCrossings, pinHandleRadius, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
 let LOG_DRAWER_CLOSED; __bind(() => { ({ LOG_DRAWER_CLOSED } = __require("src/web/status-bar.js")); });
 let alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, cmdInput, statusZoomEl, clearCheckButtonEl, helpDialog, helpSearch, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, cmdInput, statusZoomEl, clearCheckButtonEl, helpDialog, helpSearch, paneEl } = __require("src/web/elements.js")); });
+let canvasEl, componentsListEl, netsListEl, cmdInput, statusZoomEl, clearCheckButtonEl, helpDialog, helpSearch, paneEl; __bind(() => { ({ canvasEl, componentsListEl, netsListEl, cmdInput, statusZoomEl, clearCheckButtonEl, helpDialog, helpSearch, paneEl } = __require("src/web/elements.js")); });
 let installIcons; __bind(() => { ({ installIcons } = __require("src/web/icons.js")); });
 let noteTip, tutorialTargetRects, syncTutorial, offerTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, offerTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
 let ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel; __bind(() => { ({ ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } = __require("src/web/align-tool.js")); });
@@ -31273,16 +31267,17 @@ let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary,
 let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi } = __require("src/web/analysis-ui.js")); });
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
-let closeComponentContextMenu, appendContextItem, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, appendContextItem, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
+let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; __bind(() => { ({ boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
 let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
-let queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
-let appendMarkupText, renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel; __bind(() => { ({ appendMarkupText, renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } = __require("src/web/side-panel.js")); });
+let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
+let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } = __require("src/web/side-panel.js")); });
 let toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
+let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -31410,6 +31405,7 @@ Object.defineProperties(editor, {
   pageGuide: { get: () => pageGuide, set: (value) => { pageGuide = value; } },
   panelStateKey: { get: () => panelStateKey, set: (value) => { panelStateKey = value; } },
   pendingFeedbackSnapshot: { get: () => pendingFeedbackSnapshot, set: (value) => { pendingFeedbackSnapshot = value; } },
+  pendingNetNameChoice: { get: () => pendingNetNameChoice, set: (value) => { pendingNetNameChoice = value; } },
   pendingPlace: { get: () => pendingPlace, set: (value) => { pendingPlace = value; } },
   presenter: { get: () => presenter, set: (value) => { presenter = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
@@ -31430,6 +31426,7 @@ Object.defineProperties(editor, {
   selectedWires: { get: () => selectedWires, set: (value) => { selectedWires = value; } },
   showGrid: { get: () => showGrid, set: (value) => { showGrid = value; } },
   suppressContextMenuUntil: { get: () => suppressContextMenuUntil, set: (value) => { suppressContextMenuUntil = value; } },
+  suppressNetNameChoice: { get: () => suppressNetNameChoice, set: (value) => { suppressNetNameChoice = value; } },
   symmetry: { get: () => symmetry, set: (value) => { symmetry = value; } },
   syncGeneration: { get: () => syncGeneration, set: (value) => { syncGeneration = value; } },
   syncInFlight: { get: () => syncInFlight, set: (value) => { syncInFlight = value; } },
@@ -33188,89 +33185,6 @@ function netLabelTargetAt(world) {
   const selected = candidates.filter(({ net }) => highlighted.has(net.id));
   if (selected.length === 1) return selected[0];
   return { ambiguous: true, candidates };
-}
-
-function renameLabelThroughModel(label, text) {
-  if (label?.isNetLabel?.()) return circuit.renameNetLabel(label, text);
-  return label.setText(text);
-}
-
-function interfacePortNet(component) {
-  if (!component || !INTERFACE_PIN_TYPES.has(component.type)) return null;
-  try { return circuit.netOfTerminal({ comp: component.refdes, term: 'p' }); }
-  catch { return null; }
-}
-
-function sameNamedConnection(left, right) {
-  const a = String(left ?? '').trim();
-  const b = String(right ?? '').trim();
-  return !!a && !!b && (a === b || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
-}
-
-/** Find named nets or interface ports that a new name would virtually join. */
-function namedConnectionConflicts(name, { netId = null, ownerRefdes = null } = {}) {
-  const wanted = String(name ?? '').trim();
-  if (!wanted) return [];
-  const owner = ownerRefdes ? circuit.components.get(ownerRefdes) : null;
-  const targetNet = netId ? circuit.nets.get(netId) : interfacePortNet(owner);
-  const targetMembers = new Set(targetNet?.terminals?.map((terminal) => terminal.comp) || []);
-  const conflicts = [];
-  const seen = new Set();
-  for (const component of circuit.components.values()) {
-    if (!INTERFACE_PIN_TYPES.has(component.type) || component.refdes === ownerRefdes) continue;
-    const label = circuit.labelOf(component.refdes);
-    const portName = label?.text || component.refdes;
-    if (!sameNamedConnection(portName, wanted)) continue;
-    const portNet = interfacePortNet(component);
-    if (targetNet && portNet?.id === targetNet.id) continue;
-    const key = `port:${component.refdes}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    conflicts.push({ kind: 'port', component, net: portNet });
-  }
-  for (const net of circuit.nets.values()) {
-    if (net.id === targetNet?.id || !net.name || !sameNamedConnection(net.name, wanted)) continue;
-    if (net.terminals.some((terminal) => targetMembers.has(terminal.comp))) continue;
-    const key = `net:${net.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    conflicts.push({ kind: 'net', net });
-  }
-  return conflicts;
-}
-
-/** A port's label is its identity, exactly like every other component's, so a
- * name another port already carries is a collision rather than a connection.
- * Nets are joined virtually by naming the NET, not by repeating a port name. */
-function portNameConflict(conflicts, ownerRefdes) {
-  const owner = ownerRefdes ? circuit.components.get(ownerRefdes) : null;
-  if (!owner || !INTERFACE_PIN_TYPES.has(owner.type)) return null;
-  return conflicts.find((conflict) => conflict.kind === 'port' && conflict.component) || null;
-}
-
-function reportPortNameConflict(conflict, name) {
-  logLine(`Port name "${name}" is already used by ${conflict.component.refdes}. `
-    + 'Draw a stub and name that net instead of repeating a port name.', 'error');
-}
-
-async function confirmNamedConnection(name, conflicts) {
-  const port = conflicts.find((conflict) => conflict.kind === 'port')?.component;
-  const target = port ? `port ${port.refdes}` : 'an existing named net';
-  return confirmChoice({
-    title: 'Connect named nets?',
-    message: `The name ${name} is already used by ${target}. Connect this net virtually to the existing name?`,
-    confirmLabel: 'Connect',
-    cancelLabel: 'Keep separate',
-  });
-}
-
-function restoreProvisionalLabel(label, initialName = '') {
-  const net = label?.netId ? circuit.nets.get(label.netId) : null;
-  if (label && circuit.labels.has(label.id)) circuit.removeLabel(label.id);
-  if (net && net.name !== initialName) {
-    try { circuit.renameNet(net.id, initialName); }
-    catch (err) { logLine(`could not restore provisional net: ${err.message}`, 'error'); }
-  }
 }
 
 function moveLabelSafely(label, x, y) {
@@ -39152,169 +39066,7 @@ function interactionState() {
   return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, alignMode: !!alignTool, movePending, copyPending, routeMode });
 }
 
-/** Short the nets crossing at a just-placed solder dot. Returns true when the
- * short is waiting for a net-name choice (the picker opens after render). */
-function shortNetsAtPlacedSolder(comp) {
-  const point = { x: comp.transform.x, y: comp.transform.y };
-  try {
-    const net = circuit.shortNetsAt(point);
-    if (net) logLine(`solder joined nets at (${point.x},${point.y}) into ${net.name || net.id}`);
-    return false;
-  } catch (err) {
-    if (err.code !== 'net-name-choice') throw err;
-    const historyLength = history.length;
-    askNetNameChoice({
-      point,
-      names: err.names,
-      pick(name) {
-        const before = snapshot();
-        const net = circuit.shortNetsAt(point, { name });
-        markModelChanged();
-        playCommitFeedback(before);
-        logLine(`solder joined nets at (${point.x},${point.y}) into ${net?.name || net?.id}`);
-      },
-      cancel() {
-        if (history.length === historyLength) {
-          // The placement was the latest commit: undo it without a redo entry.
-          circuit = Circuit.fromJSON(JSON.parse(history.pop()));
-        } else {
-          circuit.components.delete(comp.refdes);
-          circuit.syncJunctionSolders();
-        }
-        markModelChanged();
-        logLine('solder cancelled: no net name chosen');
-      },
-    });
-    return true;
-  }
-}
-
 let contextMenuDismiss = null;
-
-/** Every edit that shorts nets carrying different given names (a solder dot
- * on a crossing, a wire or pin drag onto another named net, a splice, a move
- * onto a pin) asks which name the merged net keeps. The question is one menu
- * at the short: a pick applies the name, Escape or an outside click cancels
- * the whole edit. `choice` is { point, names, pick(name), cancel(), heading? }. */
-function askNetNameChoice(choice) {
-  pendingNetNameChoice = choice;
-  requestAnimationFrame(openNetNameChoiceMenu);
-}
-
-/** A commit that shorts two given names asks which one survives; a cancel
- * restores the pre-commit document. */
-function askNameForNewNetNameConflict(startSnapshot) {
-  if (pendingNetNameChoice || suppressNetNameChoice) return;
-  if (askForNewNetNameWarning(startSnapshot)) return;
-  askForNewReferenceShort(startSnapshot);
-}
-
-/** Model merges that allow name conflicts keep one name and leave a
- * netNameWarnings entry. A commit that adds one asks the user instead: the
- * pick renames the merged net. */
-function askForNewNetNameWarning(startSnapshot) {
-  const warnings = circuit.netNameWarnings || [];
-  if (!warnings.length) return false;
-  let previous = [];
-  try { previous = JSON.parse(startSnapshot).netNameWarnings || []; } catch { return false; }
-  const key = (warning) => `${warning.netId}:${warning.names.join('|')}`;
-  const known = new Set(previous.map(key));
-  const warning = warnings.find((entry) => !known.has(key(entry)) && circuit.nets.has(entry.netId));
-  if (!warning) return false;
-  const historyLength = history.length;
-  const netId = warning.netId;
-  askNetNameChoice({
-    point: { ...cursor },
-    names: [...warning.names],
-    pick(name) {
-      const net = circuit.nets.get(netId);
-      if (!net) return;
-      circuit.renameNet(net, name);
-      markModelChanged();
-      logLine(`merged net ${net.id} keeps the name ${name}`);
-    },
-    cancel() {
-      if (history.length === historyLength) history.pop();
-      applyJson(startSnapshot);
-      logLine('connection cancelled: no net name chosen');
-    },
-  });
-  return true;
-}
-
-/** An unnamed ground, supply, or VCM marker joined to a named net ties that
- * name into the shared rail without any model warning. A commit that makes
- * such a join asks to rename the net to the rail; a cancel reverts the edit. */
-function askForNewReferenceShort(startSnapshot) {
-  const conflicts = referenceMarkerNameConflicts(circuit);
-  if (!conflicts.length) return false;
-  let known;
-  try {
-    known = new Set(referenceMarkerNameConflicts(loadDocument(JSON.parse(startSnapshot)))
-      .map((entry) => `${entry.refdes}:${entry.name}`));
-  } catch { return false; }
-  const conflict = conflicts.find((entry) => !known.has(`${entry.refdes}:${entry.name}`));
-  if (!conflict) return false;
-  const historyLength = history.length;
-  const marker = circuit.components.get(conflict.refdes);
-  askNetNameChoice({
-    point: marker ? { x: marker.transform.x, y: marker.transform.y } : { ...cursor },
-    heading: 'Rename net to',
-    names: [conflict.railName],
-    pick(name) {
-      const net = circuit.nets.get(conflict.netId);
-      if (!net) return;
-      circuit.renameNet(net, name);
-      markModelChanged();
-      logLine(`net ${conflict.name} joins ${conflict.refdes} and is renamed ${name}`);
-    },
-    cancel() {
-      if (history.length === historyLength) history.pop();
-      applyJson(startSnapshot);
-      logLine(`connection cancelled: ${conflict.name} stays off the ${conflict.railName} rail`);
-    },
-  });
-  return true;
-}
-
-function openNetNameChoiceMenu() {
-  const choice = pendingNetNameChoice;
-  if (!choice || !componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  const at = worldToClient(choice.point.x, choice.point.y);
-  menu.style.left = `${Math.max(4, Math.min(at.x + 18, window.innerWidth - 220))}px`;
-  menu.style.top = `${Math.max(4, at.y - 12)}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = choice.heading || 'Keep net name';
-  menu.appendChild(heading);
-  for (const name of choice.names) {
-    const item = appendContextItem(menu, '', () => {
-      contextMenuDismiss = null;
-      pendingNetNameChoice = null;
-      try {
-        choice.pick(name);
-      } catch (err) {
-        logLine(`net name choice failed: ${err.message}`, 'error');
-        choice.cancel();
-      }
-      render();
-    });
-    const text = document.createElement('span');
-    appendMarkupText(text, name);
-    item.prepend(text);
-  }
-  contextMenuDismiss = () => {
-    pendingNetNameChoice = null;
-    choice.cancel();
-    render();
-  };
-  const rect = menu.getBoundingClientRect();
-  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
-  menu.querySelector('button')?.focus();
-}
 
 // ----- annotation flyout ----------------------------------------------------
 
@@ -40287,6 +40039,293 @@ function installModelFigure() {
 
 };
 
+__modules["src/web/net-names.js"] = function (__require, __exports) {
+__exports.renameLabelThroughModel = renameLabelThroughModel;
+__exports.interfacePortNet = interfacePortNet;
+__exports.namedConnectionConflicts = namedConnectionConflicts;
+__exports.portNameConflict = portNameConflict;
+__exports.reportPortNameConflict = reportPortNameConflict;
+__exports.confirmNamedConnection = confirmNamedConnection;
+__exports.restoreProvisionalLabel = restoreProvisionalLabel;
+__exports.shortNetsAtPlacedSolder = shortNetsAtPlacedSolder;
+__exports.askNameForNewNetNameConflict = askNameForNewNetNameConflict;
+let Circuit, INTERFACE_PIN_TYPES, normalizeComponentRefdes, referenceMarkerNameConflicts; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, normalizeComponentRefdes, referenceMarkerNameConflicts } = __require("src/core/model.js")); });
+let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
+let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
+let componentContextMenuEl; __bind(() => { ({ componentContextMenuEl } = __require("src/web/elements.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let worldToClient; __bind(() => { ({ worldToClient } = __require("src/web/canvas-view.js")); });
+let closeComponentContextMenu, appendContextItem; __bind(() => { ({ closeComponentContextMenu, appendContextItem } = __require("src/web/context-menu.js")); });
+let playCommitFeedback; __bind(() => { ({ playCommitFeedback } = __require("src/web/commit-flash.js")); });
+let appendMarkupText; __bind(() => { ({ appendMarkupText } = __require("src/web/side-panel.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let applyJson, markModelChanged, render, snapshot; __bind(() => { ({ applyJson, markModelChanged, render, snapshot } = __require("src/web/main.js")); });
+/**
+ * Naming nets in the editor: the picker that asks which name a short between
+ * differently named nets keeps (and whether a rail marker renames its net),
+ * and the checks that keep a label or port name from silently joining or
+ * clashing with another net or part.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+function renameLabelThroughModel(label, text) {
+  if (label?.isNetLabel?.()) return editor.circuit.renameNetLabel(label, text);
+  return label.setText(text);
+}
+
+function interfacePortNet(component) {
+  if (!component || !INTERFACE_PIN_TYPES.has(component.type)) return null;
+  try { return editor.circuit.netOfTerminal({ comp: component.refdes, term: 'p' }); }
+  catch { return null; }
+}
+
+function sameNamedConnection(left, right) {
+  const a = String(left ?? '').trim();
+  const b = String(right ?? '').trim();
+  return !!a && !!b && (a === b || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
+}
+
+/** Find named nets or interface ports that a new name would virtually join. */
+function namedConnectionConflicts(name, { netId = null, ownerRefdes = null } = {}) {
+  const wanted = String(name ?? '').trim();
+  if (!wanted) return [];
+  const owner = ownerRefdes ? editor.circuit.components.get(ownerRefdes) : null;
+  const targetNet = netId ? editor.circuit.nets.get(netId) : interfacePortNet(owner);
+  const targetMembers = new Set(targetNet?.terminals?.map((terminal) => terminal.comp) || []);
+  const conflicts = [];
+  const seen = new Set();
+  for (const component of editor.circuit.components.values()) {
+    if (!INTERFACE_PIN_TYPES.has(component.type) || component.refdes === ownerRefdes) continue;
+    const label = editor.circuit.labelOf(component.refdes);
+    const portName = label?.text || component.refdes;
+    if (!sameNamedConnection(portName, wanted)) continue;
+    const portNet = interfacePortNet(component);
+    if (targetNet && portNet?.id === targetNet.id) continue;
+    const key = `port:${component.refdes}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    conflicts.push({ kind: 'port', component, net: portNet });
+  }
+  for (const net of editor.circuit.nets.values()) {
+    if (net.id === targetNet?.id || !net.name || !sameNamedConnection(net.name, wanted)) continue;
+    if (net.terminals.some((terminal) => targetMembers.has(terminal.comp))) continue;
+    const key = `net:${net.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    conflicts.push({ kind: 'net', net });
+  }
+  return conflicts;
+}
+
+/** A port's label is its identity, exactly like every other component's, so a
+ * name another port already carries is a collision rather than a connection.
+ * Nets are joined virtually by naming the NET, not by repeating a port name. */
+function portNameConflict(conflicts, ownerRefdes) {
+  const owner = ownerRefdes ? editor.circuit.components.get(ownerRefdes) : null;
+  if (!owner || !INTERFACE_PIN_TYPES.has(owner.type)) return null;
+  return conflicts.find((conflict) => conflict.kind === 'port' && conflict.component) || null;
+}
+
+function reportPortNameConflict(conflict, name) {
+  logLine(`Port name "${name}" is already used by ${conflict.component.refdes}. `
+    + 'Draw a stub and name that net instead of repeating a port name.', 'error');
+}
+
+async function confirmNamedConnection(name, conflicts) {
+  const port = conflicts.find((conflict) => conflict.kind === 'port')?.component;
+  const target = port ? `port ${port.refdes}` : 'an existing named net';
+  return confirmChoice({
+    title: 'Connect named nets?',
+    message: `The name ${name} is already used by ${target}. Connect this net virtually to the existing name?`,
+    confirmLabel: 'Connect',
+    cancelLabel: 'Keep separate',
+  });
+}
+
+function restoreProvisionalLabel(label, initialName = '') {
+  const net = label?.netId ? editor.circuit.nets.get(label.netId) : null;
+  if (label && editor.circuit.labels.has(label.id)) editor.circuit.removeLabel(label.id);
+  if (net && net.name !== initialName) {
+    try { editor.circuit.renameNet(net.id, initialName); }
+    catch (err) { logLine(`could not restore provisional net: ${err.message}`, 'error'); }
+  }
+}
+
+/** Short the nets crossing at a just-placed solder dot. Returns true when the
+ * short is waiting for a net-name choice (the picker opens after render). */
+function shortNetsAtPlacedSolder(comp) {
+  const point = { x: comp.transform.x, y: comp.transform.y };
+  try {
+    const net = editor.circuit.shortNetsAt(point);
+    if (net) logLine(`solder joined nets at (${point.x},${point.y}) into ${net.name || net.id}`);
+    return false;
+  } catch (err) {
+    if (err.code !== 'net-name-choice') throw err;
+    const historyLength = editor.history.length;
+    askNetNameChoice({
+      point,
+      names: err.names,
+      pick(name) {
+        const before = snapshot();
+        const net = editor.circuit.shortNetsAt(point, { name });
+        markModelChanged();
+        playCommitFeedback(before);
+        logLine(`solder joined nets at (${point.x},${point.y}) into ${net?.name || net?.id}`);
+      },
+      cancel() {
+        if (editor.history.length === historyLength) {
+          // The placement was the latest commit: undo it without a redo entry.
+          editor.circuit = Circuit.fromJSON(JSON.parse(editor.history.pop()));
+        } else {
+          editor.circuit.components.delete(comp.refdes);
+          editor.circuit.syncJunctionSolders();
+        }
+        markModelChanged();
+        logLine('solder cancelled: no net name chosen');
+      },
+    });
+    return true;
+  }
+}
+
+/** Every edit that shorts nets carrying different given names (a solder dot
+ * on a crossing, a wire or pin drag onto another named net, a splice, a move
+ * onto a pin) asks which name the merged net keeps. The question is one menu
+ * at the short: a pick applies the name, Escape or an outside click cancels
+ * the whole edit. `choice` is { point, names, pick(name), cancel(), heading? }. */
+function askNetNameChoice(choice) {
+  editor.pendingNetNameChoice = choice;
+  requestAnimationFrame(openNetNameChoiceMenu);
+}
+
+/** A commit that shorts two given names asks which one survives; a cancel
+ * restores the pre-commit document. */
+function askNameForNewNetNameConflict(startSnapshot) {
+  if (editor.pendingNetNameChoice || editor.suppressNetNameChoice) return;
+  if (askForNewNetNameWarning(startSnapshot)) return;
+  askForNewReferenceShort(startSnapshot);
+}
+
+/** Model merges that allow name conflicts keep one name and leave a
+ * netNameWarnings entry. A commit that adds one asks the user instead: the
+ * pick renames the merged net. */
+function askForNewNetNameWarning(startSnapshot) {
+  const warnings = editor.circuit.netNameWarnings || [];
+  if (!warnings.length) return false;
+  let previous = [];
+  try { previous = JSON.parse(startSnapshot).netNameWarnings || []; } catch { return false; }
+  const key = (warning) => `${warning.netId}:${warning.names.join('|')}`;
+  const known = new Set(previous.map(key));
+  const warning = warnings.find((entry) => !known.has(key(entry)) && editor.circuit.nets.has(entry.netId));
+  if (!warning) return false;
+  const historyLength = editor.history.length;
+  const netId = warning.netId;
+  askNetNameChoice({
+    point: { ...editor.cursor },
+    names: [...warning.names],
+    pick(name) {
+      const net = editor.circuit.nets.get(netId);
+      if (!net) return;
+      editor.circuit.renameNet(net, name);
+      markModelChanged();
+      logLine(`merged net ${net.id} keeps the name ${name}`);
+    },
+    cancel() {
+      if (editor.history.length === historyLength) editor.history.pop();
+      applyJson(startSnapshot);
+      logLine('connection cancelled: no net name chosen');
+    },
+  });
+  return true;
+}
+
+/** An unnamed ground, supply, or VCM marker joined to a named net ties that
+ * name into the shared rail without any model warning. A commit that makes
+ * such a join asks to rename the net to the rail; a cancel reverts the edit. */
+function askForNewReferenceShort(startSnapshot) {
+  const conflicts = referenceMarkerNameConflicts(editor.circuit);
+  if (!conflicts.length) return false;
+  let known;
+  try {
+    known = new Set(referenceMarkerNameConflicts(loadDocument(JSON.parse(startSnapshot)))
+      .map((entry) => `${entry.refdes}:${entry.name}`));
+  } catch { return false; }
+  const conflict = conflicts.find((entry) => !known.has(`${entry.refdes}:${entry.name}`));
+  if (!conflict) return false;
+  const historyLength = editor.history.length;
+  const marker = editor.circuit.components.get(conflict.refdes);
+  askNetNameChoice({
+    point: marker ? { x: marker.transform.x, y: marker.transform.y } : { ...editor.cursor },
+    heading: 'Rename net to',
+    names: [conflict.railName],
+    pick(name) {
+      const net = editor.circuit.nets.get(conflict.netId);
+      if (!net) return;
+      editor.circuit.renameNet(net, name);
+      markModelChanged();
+      logLine(`net ${conflict.name} joins ${conflict.refdes} and is renamed ${name}`);
+    },
+    cancel() {
+      if (editor.history.length === historyLength) editor.history.pop();
+      applyJson(startSnapshot);
+      logLine(`connection cancelled: ${conflict.name} stays off the ${conflict.railName} rail`);
+    },
+  });
+  return true;
+}
+
+function openNetNameChoiceMenu() {
+  const choice = editor.pendingNetNameChoice;
+  if (!choice || !componentContextMenuEl) return;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  const at = worldToClient(choice.point.x, choice.point.y);
+  menu.style.left = `${Math.max(4, Math.min(at.x + 18, window.innerWidth - 220))}px`;
+  menu.style.top = `${Math.max(4, at.y - 12)}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  heading.textContent = choice.heading || 'Keep net name';
+  menu.appendChild(heading);
+  for (const name of choice.names) {
+    const item = appendContextItem(menu, '', () => {
+      editor.contextMenuDismiss = null;
+      editor.pendingNetNameChoice = null;
+      try {
+        choice.pick(name);
+      } catch (err) {
+        logLine(`net name choice failed: ${err.message}`, 'error');
+        choice.cancel();
+      }
+      render();
+    });
+    const text = document.createElement('span');
+    appendMarkupText(text, name);
+    item.prepend(text);
+  }
+  editor.contextMenuDismiss = () => {
+    editor.pendingNetNameChoice = null;
+    choice.cancel();
+    render();
+  };
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
+  menu.querySelector('button')?.focus();
+}
+
+};
+
 __modules["src/web/onboarding.js"] = function (__require, __exports) {
 __exports.noteTip = noteTip;
 __exports.tutorialTargetRects = tutorialTargetRects;
@@ -41139,12 +41178,14 @@ let openComponentContextMenu, selectContextTarget; __bind(() => { ({ openCompone
 let bindInlineEditorKeys, inlineEditSchematicBlock, openReferenceMarkerEditor; __bind(() => { ({ bindInlineEditorKeys, inlineEditSchematicBlock, openReferenceMarkerEditor } = __require("src/web/label-editor.js")); });
 let plainMarkup; __bind(() => { ({ plainMarkup } = __require("src/web/beats-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let bindHoverPreview, commit, confirmNamedConnection, isTransientCopyGhostRef, namedConnectionConflicts, namedGroupNets, portNameConflict, rangeValues, render, reportPortNameConflict, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets; __bind(() => { ({ bindHoverPreview, commit, confirmNamedConnection, isTransientCopyGhostRef, namedConnectionConflicts, namedGroupNets, portNameConflict, rangeValues, render, reportPortNameConflict, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets } = __require("src/web/main.js")); });
+let confirmNamedConnection, namedConnectionConflicts, portNameConflict, reportPortNameConflict; __bind(() => { ({ confirmNamedConnection, namedConnectionConflicts, portNameConflict, reportPortNameConflict } = __require("src/web/net-names.js")); });
+let bindHoverPreview, commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets; __bind(() => { ({ bindHoverPreview, commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets } = __require("src/web/main.js")); });
 /**
  * The side panel: the component and net lists with their filter and renames,
  * the selection detail, collapsible sections, the resizable width, and
  * showing or hiding the panel (a drawer on narrow windows).
  */
+
 
 
 
