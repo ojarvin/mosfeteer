@@ -48,7 +48,7 @@
           <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace" title="Choose the folder the document list shows and new documents are saved into">Change workspace folder…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats" title="Show the beat strip: steps that build the drawing up for a talk or a paper (Shift+B; + adds a beat)">Beats <kbd>Shift+B</kbd></button>
-          <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats" title="Add one beat per switch phase: the phase's switches closed, the others open, what it connects shown and the rest dimmed">Beats from switch phases</button>
+          <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats" title="Add one beat per switch phase: the phase's switches closed, the others open, what still works shown, open switches and cut-off parts dimmed">Beats from switch phases</button>
           <button id="btn-timing-diagram" type="button" role="menuitem" data-icon="timing" title="Draw a timing diagram template under the drawing: each switch phase's name and a waveform to edit into its timing">Timing diagram from switch phases</button>
           <button id="btn-present" type="button" role="menuitem" data-icon="play" title="Present the beats full screen, from the current one (Shift+F5)">Present <kbd>Shift+F5</kbd></button>
           <span class="toolbar-menu-separator" role="separator"></span>
@@ -402,6 +402,7 @@
                 <button type="button" class="icon-button" data-icon="align-left" data-style-align="left" aria-pressed="false" aria-label="Align left" title="Align left (Shift+Left)">Left</button>
                 <button type="button" class="icon-button" data-icon="align-center" data-style-align="center" aria-pressed="false" aria-label="Align center" title="Align center">Center</button>
                 <button type="button" class="icon-button" data-icon="align-right" data-style-align="right" aria-pressed="false" aria-label="Align right" title="Align right (Shift+Right)">Right</button>
+                <button type="button" class="icon-button" data-icon="align-parent" data-style-align="parent" aria-pressed="false" aria-label="Align toward the part" title="Toward the part: beside its part, text aligns to it and the box stays against it (the default for part labels)" hidden>Toward part</button>
               </div>
               <div class="segmented" role="group" aria-label="Font style">
                 <button type="button" class="text-toggle text-toggle-bold" data-style-font="bold" aria-pressed="false" aria-label="Bold" title="Bold (Ctrl/Cmd+B)">B</button>

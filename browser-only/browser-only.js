@@ -9039,12 +9039,17 @@ function railGroups(circuit) {
 }
 
 /**
- * Which parts one phase connects: with its switches closed and every other
- * phase's open, the parts joined -- through anything but a rail or an open
- * switch -- to one of its switches. Returns a Set of refdes, pins and rail
- * markers included when a connected part shares their wire.
+ * What still works in one phase: the phase's equivalent circuit. With its
+ * switches closed and every other phase's open, the open switches drop out
+ * and the rest splits into islands joined through anything but a rail. An
+ * island keeps working when it has a device in it -- anything but switches,
+ * pins, and rail markers (an integrator holding its charge, say) -- or when
+ * its closed switches join two ends, pins or rails (an output reset to VCM).
+ * Anything else is cut off. Returns a Set of the refdes
+ * that stay shown, pins and rail markers included with the parts on their
+ * wire; the open switches are never in it.
  */
-function phaseConnected(circuit, key) {
+function phaseLive(circuit, key) {
   const rails = railGroups(circuit);
   const closed = (component) => {
     if (!switchState(component)) return true;
@@ -9052,40 +9057,49 @@ function phaseConnected(circuit, key) {
     return phase ? phase === key : switchState(component) === 'closed';
   };
   const netsOf = new Map();
+  // The ends a part touches: the rails it is on, and the pins on its wires.
+  const endsOf = new Map();
   for (const net of circuit.nets.values()) {
     const group = circuit.netGroupKey(net);
+    const pins = net.terminals.filter(({ comp }) => INTERFACE_PIN_TYPES.has(circuit.components.get(comp)?.type)).map(({ comp }) => comp);
     for (const { comp } of net.terminals) {
-      if (!netsOf.has(comp)) netsOf.set(comp, new Set());
-      if (!rails.has(group)) netsOf.get(comp).add(group);
+      if (!netsOf.has(comp)) { netsOf.set(comp, new Set()); endsOf.set(comp, new Set()); }
+      if (rails.has(group)) endsOf.get(comp).add(`rail:${group}`);
+      else netsOf.get(comp).add(group);
+      for (const pin of pins) endsOf.get(comp).add(`pin:${pin}`);
     }
   }
-  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c));
-  const reached = new Set();
-  const reachedNets = new Set();
-  const queue = parts.filter((c) => switchState(c) && phaseKey(switchPhase(c)) === key);
-  for (const c of queue) reached.add(c.refdes);
-  while (queue.length) {
-    const component = queue.pop();
-    if (!closed(component)) continue;
-    for (const net of netsOf.get(component.refdes) || []) {
-      if (reachedNets.has(net)) continue;
-      reachedNets.add(net);
-      for (const other of parts) {
-        // An open switch is cut off even where it touches: it dims.
-        if (!reached.has(other.refdes) && closed(other) && netsOf.get(other.refdes)?.has(net)) {
-          reached.add(other.refdes);
-          queue.push(other);
+  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c) && closed(c));
+  const live = new Set();
+  const seen = new Set();
+  for (const start of parts) {
+    if (seen.has(start.refdes)) continue;
+    // One island: every closed part reachable over non-rail nets.
+    const island = [start];
+    seen.add(start.refdes);
+    const nets = new Set();
+    for (let i = 0; i < island.length; i += 1) {
+      for (const net of netsOf.get(island[i].refdes) || []) {
+        if (nets.has(net)) continue;
+        nets.add(net);
+        for (const other of parts) {
+          if (!seen.has(other.refdes) && netsOf.get(other.refdes)?.has(net)) {
+            seen.add(other.refdes);
+            island.push(other);
+          }
         }
       }
     }
+    const ends = new Set(island.flatMap((c) => [...(endsOf.get(c.refdes) || [])]));
+    if (island.some((c) => !switchState(c)) || ends.size >= 2) for (const c of island) live.add(c.refdes);
   }
   // A pin or rail marker goes with the parts on its own wire.
   for (const component of circuit.components.values()) {
     if (!isAttachment(component)) continue;
     const wires = [...circuit.nets.values()].filter((net) => net.terminals.some(({ comp }) => comp === component.refdes));
-    if (wires.some((net) => net.terminals.some(({ comp }) => reached.has(comp)))) reached.add(component.refdes);
+    if (wires.some((net) => net.terminals.some(({ comp }) => live.has(comp)))) live.add(component.refdes);
   }
-  return reached;
+  return live;
 }
 
 /** Set a switch's phase open or closed in beat `index` alone. */
@@ -9098,8 +9112,9 @@ function setSwitchAt(circuit, index, key, state) {
 
 /**
  * Insert one beat per switch phase at `index`, named after the phase: its
- * switches closed and every other phase's open, what it connects shown and
- * the rest -- open switches included -- dimmed. Returns how many beats.
+ * switches closed and every other phase's open, what still works in that
+ * phase shown and the rest -- open switches included -- dimmed (phaseLive).
+ * Returns how many beats.
  */
 function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
   const phases = switchPhases(circuit);
@@ -9109,9 +9124,9 @@ function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
     const at = index + step;
     addBeat(circuit, { index: at, name: source });
     for (const other of phases) setSwitchAt(circuit, at, other.key, other.key === key ? 'closed' : 'open');
-    const connected = phaseConnected(circuit, key);
+    const live = phaseLive(circuit, key);
     for (const component of listable) {
-      setPresenceAt(circuit, at, [component.refdes], connected.has(component.refdes) ? 'show' : 'dim');
+      setPresenceAt(circuit, at, [component.refdes], live.has(component.refdes) ? 'show' : 'dim');
     }
   });
   return phases.length;
@@ -9402,7 +9417,7 @@ __exports.highlightsAt = highlightsAt;
 __exports.setHighlightFrom = setHighlightFrom;
 __exports.cycleBeatHighlight = cycleBeatHighlight;
 __exports.switchPhases = switchPhases;
-__exports.phaseConnected = phaseConnected;
+__exports.phaseLive = phaseLive;
 __exports.phaseBeats = phaseBeats;
 __exports.renameBeatObject = renameBeatObject;
 __exports.carryBeatSwitchKey = carryBeatSwitchKey;
@@ -9950,7 +9965,7 @@ function commandHelp() {
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
-    '  beat phases [--after N]        - add a beat per switch phase: what it connects shown, the rest dimmed',
+    '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
     '  timing                         - add a timing diagram template under the drawing, one waveform per switch phase',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
@@ -11234,21 +11249,21 @@ const opamp = defineSymbol({
   description: 'Operational Amplifier',
   refPrefix: 'U',
   terminals: [
-    { name: 'ip', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'im', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
     { name: 'o', x: 160, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
   ],
   bbox: { x: -200, y: -120, w: 360, h: 240 },
   graphics: [
-    { kind: 'path', d: 'M -200 -40 L -107.81 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -200 40 L -107.19 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 40 L -107.81 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 -40 L -107.19 -40', style: 'symbol' },
     { kind: 'path', d: 'M 92.81 0 L 160 0', style: 'symbol' },
-    { kind: 'path', d: 'M -107.19 -99.99 L -107.19 100 L 92.81 0 Z', style: 'emph' },
-    // Input polarity (im - top, ip + bottom), centered on the input rows y=+-40
+    { kind: 'path', d: 'M -107.19 99.99 L -107.19 -100 L 92.81 0 Z', style: 'emph' },
+    // Input polarity (ip + top, im - bottom), centered on the input rows y=+-40
     // to match the opamp_diff's output marks.
-    { kind: 'path', d: 'M -76 26 L -76 54', style: 'symbol' },
-    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+    { kind: 'path', d: 'M -76 -54 L -76 -26', style: 'symbol' },
     { kind: 'path', d: 'M -90 -40 L -62 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
   ],
   textPos: null,
   refPos: null,
@@ -11261,31 +11276,31 @@ const opampDiff = defineSymbol({
   description: 'Fully Differential Op-Amp',
   refPrefix: 'U',
   terminals: [
-    { name: 'ip', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'im', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'op', x: 160, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
-    { name: 'om', x: 160, y: 40, direction: 'output', dir: { x: 1, y: 0 } },
+    { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'op', x: 160, y: 40, direction: 'output', dir: { x: 1, y: 0 } },
+    { name: 'om', x: 160, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
   ],
   bbox: { x: -200, y: -120, w: 360, h: 240 },
   graphics: [
-    { kind: 'path', d: 'M -200 -40 L -107.81 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -200 40 L -107.19 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 40 L -107.81 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 -40 L -107.19 -40', style: 'symbol' },
     // Two output leads exit the triangle's slanted edges at the input rows and
     // run out to the same x=160 as the plain opamp's single output.
-    { kind: 'path', d: 'M 12.8 -40 L 160 -40', style: 'symbol' },
-    { kind: 'path', d: 'M 12.81 40 L 160 40', style: 'symbol' },
-    { kind: 'path', d: 'M -107.19 -99.99 L -107.19 100 L 92.81 0 Z', style: 'emph' },
+    { kind: 'path', d: 'M 12.8 40 L 160 40', style: 'symbol' },
+    { kind: 'path', d: 'M 12.81 -40 L 160 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -107.19 99.99 L -107.19 -100 L 92.81 0 Z', style: 'emph' },
     // Polarity marks: all four the same 28-unit size, centered on the input/
     // output rows (y=+-40) so the pairs line up. They sit clear of the body's
     // slanted edges (inputs at x=-76, outputs at x=-38, away from the apex).
-    // The outputs are FLIPPED relative to the inputs: im (-) top / ip (+)
-    // bottom, but op (+) top / om (-) bottom (crossed-output convention).
-    { kind: 'path', d: 'M -76 26 L -76 54', style: 'symbol' },
-    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+    // The outputs are FLIPPED relative to the inputs: ip (+) top / im (-)
+    // bottom, but om (-) top / op (+) bottom (crossed-output convention).
+    { kind: 'path', d: 'M -76 -54 L -76 -26', style: 'symbol' },
     { kind: 'path', d: 'M -90 -40 L -62 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -38 -54 L -38 -26', style: 'symbol' },
-    { kind: 'path', d: 'M -52 -40 L -24 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+    { kind: 'path', d: 'M -38 26 L -38 54', style: 'symbol' },
     { kind: 'path', d: 'M -52 40 L -24 40', style: 'symbol' },
+    { kind: 'path', d: 'M -52 -40 L -24 -40', style: 'symbol' },
   ],
   textPos: null,
   refPos: null,
@@ -12436,9 +12451,11 @@ const { snap, snapPoint, GRID } = __require("src/core/grid.js");
 const { getSymbol, seriesTerminalNames } = __require("src/core/components/index.js");
 const { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js");
 const { collapseCollinear } = __require("src/core/wireedit.js");
+const { LABEL_FONT_SIZES } = __require("src/core/style.js");
 const { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js");
 const { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js");
 const { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js");
+
 
 
 
@@ -12517,6 +12534,10 @@ const LEGACY_SEQUENTIAL_RESET_TYPES = Object.freeze({
   latch: 'latch_rst', latch_qb: 'latch_rst_qb',
   latch_enb: 'latch_enb_rst', latch_enb_qb: 'latch_enb_rst_qb',
 });
+
+// Op-amps drew + below - until opampPolarityVersion 2 put + on top. An older
+// document's op-amps load flipped in their own frame, so they draw as saved.
+const OPAMP_TYPES = new Set(['opamp', 'opamp_diff']);
 
 function serializedComponentType(type, sequentialVariantVersion) {
   const normalized = LEGACY_COMPONENT_TYPE_RENAMES[type] || type;
@@ -12614,14 +12635,13 @@ function automaticMovePathSafe(path, env) {
  *  face. */
 const LABEL_CHAR_W = 8;
 
-/** Font-size (world units) used for every label; both label kinds render at this
- *  (style.js INSTANCE_FONT / LABEL_FONT size). */
-const LABEL_FONT_SIZE = 38;
+/** Font-size (world units) of a normal-weight label (style.js LABEL_FONT_SIZES). */
+const LABEL_FONT_SIZE = LABEL_FONT_SIZES.normal;
 
 // Per-glyph width model for a label line (no DOM in the core model, so we use
 // narrow / default / wide buckets scaled to the label font size) to give a
 // "tight" text bounding box.
-const _UNIT = LABEL_FONT_SIZE * (LABEL_CHAR_W / 12); // ~23.33 per default char
+const _UNIT = LABEL_FONT_SIZE * (LABEL_CHAR_W / 12); // ~30.7 per default char
 const _NARROW = new Set(`i l I t f r j 1 2 3 . , : ; ' " ! | ( ) [ ] - / * ~ ^ \` _ space-empty`);
 const _WIDE = new Set(`m w M W @ # $ % & 0 6 8 9`);
 
@@ -12686,6 +12706,11 @@ const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
 /** Gap between left/right aligned text and its box edge: a quarter grid cell. */
 const LABEL_ALIGN_INSET = GRID / 4;
+
+/** Label alignments. 'parent' is the owned-label default: text beside its
+ * part aligns toward it, and the box keeps the edge facing the part fixed
+ * however wide the text grows; above or below the part it is centered. */
+const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
 
 /**
  * Toggle subscript ('_') or superscript ('^') markup on the selected range of a
@@ -13060,7 +13085,7 @@ class LabelInstance {
     this._text = opts.text !== undefined
       ? (this.math ? normalizeMathSource(opts.text) : String(opts.text))
       : 'label';
-    this.align = ['center', 'left', 'right'].includes(opts.align) ? opts.align : 'center';
+    this.align = LABEL_ALIGNS.includes(opts.align) ? opts.align : 'center';
     this.style = {
       color: opts.style?.color || '#111',
       lineStyle: opts.style?.lineStyle || 'solid',
@@ -13197,7 +13222,11 @@ class LabelInstance {
     // Screen-to-world transforms may return 320.00001 for a 320-unit box.
     // Avoid adding two whole cells for sub-pixel measurement noise.
     const tolerance = this._renderedTextBounds ? 0.001 : 0;
-    let n = Math.ceil((this.textWidth() - tolerance) / GRID);
+    // Aligned text keeps its full inset from the aligned edge: the box grows
+    // rather than squeezing the gap, so the gap looks the same on every label.
+    // (Math labels carry their own padding.)
+    const inset = this.math || this.textAlign() === 'center' ? 0 : LABEL_ALIGN_INSET;
+    let n = Math.ceil((this.textWidth() + inset - tolerance) / GRID);
     // MathML font metrics are not available in the model layer.  Reserve one
     // grid cell on each side of math labels so wide glyphs, stretchy
     // delimiters, and browser-specific font shaping do not hit the box edge.
@@ -13281,7 +13310,32 @@ class LabelInstance {
       if (this.netSide === 'right') return { x: a.x, y: a.y - h / 2, w, h };
       return { x: a.x - w / 2, y: a.y - h, w, h };
     }
+    // Beside its part, a 'parent' label keeps the edge a two-cell box would
+    // have against the part, and grows away from it.
+    const side = this.align === 'parent' ? this.besideOwner() : null;
+    if (side === 'left') return { x: a.x + GRID - w, y: a.y - h / 2, w, h };
+    if (side === 'right') return { x: a.x - GRID, y: a.y - h / 2, w, h };
     return { x: a.x - w / 2, y: a.y - h / 2, w, h };
+  }
+
+  /** 'left' or 'right' when this owned label sits beside its part: its anchor
+   * is past that side of the part's box and within its height. Else null. */
+  besideOwner() {
+    const component = this.owner ? this.circuit.components.get(this.owner) : null;
+    if (!component) return null;
+    const a = this.anchorWorld();
+    const b = component.bboxWorld();
+    if (!(a.y > b.y && a.y < b.y + b.h)) return null;
+    if (a.x < b.x) return 'left';
+    if (a.x > b.x + b.w) return 'right';
+    return null;
+  }
+
+  /** The alignment the text is drawn with: 'parent' resolved toward the part. */
+  textAlign() {
+    if (this.align !== 'parent') return this.align;
+    const side = this.besideOwner();
+    return side === 'left' ? 'right' : side === 'right' ? 'left' : 'center';
   }
 
   /**
@@ -13294,11 +13348,12 @@ class LabelInstance {
     const centerX = b.x + b.w / 2;
     const centerY = b.y + b.h / 2;
     const inset = this.alignInset();
+    const align = this.textAlign();
     let x, anchor;
-    if (this.align === 'left') {
+    if (align === 'left') {
       x = b.x + inset;
       anchor = 'start';
-    } else if (this.align === 'right') {
+    } else if (align === 'right') {
       x = b.x + b.w - inset;
       anchor = 'end';
     } else {
@@ -13338,12 +13393,18 @@ class LabelInstance {
 
   /** Side gap for left/right text: a quarter cell, never pushing text past the far box edge. */
   alignInset() {
-    if (this.align === 'center') return 0;
+    if (this.textAlign() === 'center') return 0;
     return Math.max(0, Math.min(LABEL_ALIGN_INSET, this.bbox().w - this.textWidth()));
   }
 
   setAlign(a) {
-    if (['center', 'left', 'right'].includes(a)) this.align = a;
+    if (a === 'parent' && !this.owner) return;
+    if (LABEL_ALIGNS.includes(a)) this.align = a;
+  }
+
+  /** The alignment a label starts with, and returns to when cycled. */
+  defaultAlign() {
+    return this.owner && !this.role ? 'parent' : 'center';
   }
 
   moveTo(wx, wy) {
@@ -14264,7 +14325,7 @@ class Circuit {
       math: switchState(component) && isTexSource(component.value),
       owner: component.refdes,
       offset: component.def.labelOffset,
-      align: 'center',
+      align: 'parent',
       style: { color: component.style.color },
     });
   }
@@ -14356,7 +14417,7 @@ class Circuit {
           text: '',
           owner: component.refdes,
           offset: offsets[component.refdes] || info.labelOffset,
-          align: 'center',
+          align: 'parent',
           style: { color: component.style.color },
         });
       }
@@ -14875,7 +14936,7 @@ class Circuit {
           owner: component.refdes,
           referenceLocal: false,
           offset: info.labelOffset,
-          align: 'center',
+          align: 'parent',
           style: { color: component.style.color },
         });
       }
@@ -18215,6 +18276,8 @@ class Circuit {
     return {
       version: 2,
       sequentialVariantVersion: 2,
+      opampPolarityVersion: 2,
+      ownedLabelAlignVersion: 2,
       grid: 40,
       components: [...this.components.values()].map((c) => c.toJSON()),
       nets: [...this.nets.values()].map((n) => n.toJSON()),
@@ -18245,16 +18308,20 @@ class Circuit {
       if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
     }
     circuit._loading = true;
+    const flippedOpamps = new Set();
     for (const c of data.components) {
+      const type = serializedComponentType(c.type === 'port_filled' ? 'port' : c.type, data.sequentialVariantVersion);
+      const flip = OPAMP_TYPES.has(type) && !(data.opampPolarityVersion >= 2);
+      if (flip) flippedOpamps.add(c.refdes);
       // The filled terminal marker was folded into the one labelled port.
-      circuit.addComponent(serializedComponentType(c.type === 'port_filled' ? 'port' : c.type, data.sequentialVariantVersion), {
+      circuit.addComponent(type, {
         refdes: c.refdes,
         value: c.value,
         x: c.transform.x,
         y: c.transform.y,
         rotation: c.transform.rotation,
         mirrorX: c.transform.mirrorX,
-        mirrorY: c.transform.mirrorY,
+        mirrorY: flip ? !c.transform.mirrorY : c.transform.mirrorY,
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
         negativeInputs: c.negativeInputs,
@@ -18334,7 +18401,8 @@ class Circuit {
           id: l.id,
           kind: l.kind,
           text: l.text,
-          align: l.align,
+          // Owned labels were all centered until they could align toward their part.
+          align: l.owner && !l.role && l.align === 'center' && !(data.ownedLabelAlignVersion >= 2) ? 'parent' : l.align,
           owner: l.owner || null,
           role: l.role || null,
           signalTerminal: l.signalTerminal || null,
@@ -18345,7 +18413,7 @@ class Circuit {
           math: !!l.math,
           mathBox: l.mathBox,
           netSide: l.netSide,
-          offset: l.offset || null,
+          offset: l.offset && flippedOpamps.has(l.owner) ? { x: l.offset.x, y: -l.offset.y } : l.offset || null,
           x: l.anchor ? l.anchor.x : 0,
           y: l.anchor ? l.anchor.y : 0,
           end: l.end || null,
@@ -18428,6 +18496,7 @@ __exports.LABEL_CHAR_W = LABEL_CHAR_W;
 __exports.LABEL_FONT_SIZE = LABEL_FONT_SIZE;
 __exports.LABEL_CAP_H = LABEL_CAP_H;
 __exports.LABEL_ALIGN_INSET = LABEL_ALIGN_INSET;
+__exports.LABEL_ALIGNS = LABEL_ALIGNS;
 __exports.INTERFACE_PIN_TYPES = INTERFACE_PIN_TYPES;
 __exports.MOS_ANALYSIS_TYPES = MOS_ANALYSIS_TYPES;
 __exports.LabelInstance = LabelInstance;
@@ -18532,7 +18601,7 @@ __modules["src/core/render.js"] = function (__require, __exports) {
 const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
 const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
 const { autoRoute } = __require("src/core/router.js");
-const { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
+const { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
 const { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
 const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
 const { hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js");
@@ -18680,7 +18749,7 @@ function textEl(x, y, text, anchor, size, fill) {
 function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
   let font = fontAttrs(kind)
     .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`)
-    .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
+    .replace(/font-size="[^"]+"/, `font-size="${labelFontSize(width)}"`)
     .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
   if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
   const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
@@ -18813,6 +18882,11 @@ function mathMlEvaluationBar(tall = false, requestedSize = null) {
   return mathMlAtom('|', 'mo', attrs);
 }
 
+// The sized bars (evaluation bar and parallel) are the only operators with a
+// minimum size; the depth drops their subscript to the bar's foot.
+const STRETCHY_BAR = /^<mo [^>]*\bstretchy="true"[^>]*\bminsize=/;
+const BAR_SCRIPT_DEPTH = '0.6em';
+
 function mathMlParallel(tall = false, requestedSize = null) {
   // Use the same single double-bar operator as LaTeX `\Vert`, rather than
   // two independent bars whose MathML operator spacing creates a large gap.
@@ -18857,6 +18931,13 @@ function texToMathML(source) {
         index += 1;
         const script = parseArgument();
         const base = atoms.pop() || mathMlAtom('', 'mi');
+        if (token === '_' && STRETCHY_BAR.test(base)) {
+          // A sized bar does not stretch as a script base, so it stays in the
+          // row at its full height and the script hangs from an empty base at
+          // its foot, as TeX sets `\Big\vert_{v=0}`.
+          atoms.push(base, `<msub><mspace depth="${BAR_SCRIPT_DEPTH}"></mspace>${script}</msub>`);
+          continue;
+        }
         atoms.push(token === '_'
           ? `<msub>${mathMlNucleus(base, 'depth')}${script}</msub>`
           : `<msup>${mathMlNucleus(base, 'height')}${script}</msup>`);
@@ -19034,11 +19115,12 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   // <text> labels do not reach their inline `color` declaration.  Explicit
   // user colors remain literal and therefore are not changed by dark mode.
   const colorCss = color.toLowerCase() === '#111' ? 'var(--svg-ink, #111)' : color;
-  const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
-  const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
+  const fontSize = labelFontSize(label.style?.width);
+  const align = label.textAlign();
+  const justify = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
   const aria = escapeSvg(`Math label ${label.text}`);
   const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
-  const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
+  const padding = `6px ${align === 'right' ? sidePadding : 6}px 6px ${align === 'left' ? sidePadding : 6}px`;
   // Latin Modern Math has one weight, too light beside the drawing's strokes
   // and bold labels; a thin outline in the text color thickens every glyph.
   const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;-webkit-text-stroke:${MATH_LABEL_STROKE} currentColor;pointer-events:none;`;
@@ -21478,10 +21560,15 @@ function strokeWidth(style = {}, base = 'line') {
   return STROKES[base]?.width ?? STROKES.line.width;
 }
 
+/** Label text size (world units) by label `style.width`. A capital with a
+ * subscript (V_{IN}) sits comfortably in the two-cell minimum label box. */
+const LABEL_FONT_SIZES = Object.freeze({ thin: 40, normal: 46, thick: 52 });
+const labelFontSize = (width) => LABEL_FONT_SIZES[width] || LABEL_FONT_SIZES.normal;
+
 /** Text styles for schematic labels, keyed by `fontAttrs` kind. */
 const FONTS = {
-  instance: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
-  label: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
+  instance: { size: LABEL_FONT_SIZES.normal, fill: DEFAULT_INK, weight: 'bold', italic: true },
+  label: { size: LABEL_FONT_SIZES.normal, fill: DEFAULT_INK, weight: 'bold', italic: true },
 };
 
 function fontAttrs(kind) {
@@ -21511,6 +21598,8 @@ __exports.fontAttrs = fontAttrs;
 __exports.styleAttrs = styleAttrs;
 __exports.COLOR_PALETTE = COLOR_PALETTE;
 __exports.escapeSvg = escapeSvg;
+__exports.LABEL_FONT_SIZES = LABEL_FONT_SIZES;
+__exports.labelFontSize = labelFontSize;
 };
 
 __modules["src/core/supply-bars.js"] = function (__require, __exports) {
@@ -24820,6 +24909,7 @@ const ICON_PATHS = {
   'align-left': '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>',
   'align-center': '<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>',
   'align-right': '<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>',
+  'align-parent': '<path d="M3 7h11M7 12h7M3 17h11"/><path d="M18 4v16" stroke-width="3"/>',
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
   rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M20 4v5h-5"/>',
@@ -25359,7 +25449,7 @@ let wiresDirty = true; // set when wire geometry may have changed; recomputes ne
 // Beats (see core/beats.js and the beats section below). The beat on screen
 // is editor state, never saved: the document holds only the beats.
 let activeBeatId = null;
-let beatStripOpen = null; // null: open exactly when the document has beats
+let beatStripOpen = false; // closed at start; Shift+B, More → Beats, or picking a beat opens it
 let beatViewCache = null; // { circuit, key, view }
 let beatViewsCache = null; // every beat, for the strip's visibility dots
 let beatKnown = { circuit: null, objects: new WeakSet(), ids: new Set() };
@@ -27331,6 +27421,7 @@ function selectionStyleState() {
     supportsArrowhead: hasWireSelection || objects.some(supportsArrowhead),
     text: labels.length ? {
       align: labels.every((label) => label.align === labels[0].align) ? labels[0].align : null,
+      towardPart: labels.every((label) => label.owner),
       bold: selectedFontState('bold'),
       italic: selectedFontState('italic'),
     } : null,
@@ -27353,7 +27444,10 @@ function syncStyleControls(root, state) {
   for (const button of root.querySelectorAll('[data-line-style]')) pressed(button, button.dataset.lineStyle === state.lineStyle);
   for (const button of root.querySelectorAll('[data-width]')) pressed(button, button.dataset.width === state.width);
   for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(swatch.dataset.value === state.color));
-  for (const button of root.querySelectorAll('[data-style-align]')) pressed(button, button.dataset.styleAlign === state.text?.align);
+  for (const button of root.querySelectorAll('[data-style-align]')) {
+    if (button.dataset.styleAlign === 'parent') button.hidden = button.disabled = !state.text?.towardPart;
+    pressed(button, button.dataset.styleAlign === state.text?.align);
+  }
   for (const button of root.querySelectorAll('[data-style-font]')) pressed(button, !!state.text?.[button.dataset.styleFont]);
 }
 
@@ -28929,7 +29023,7 @@ function introduceNewBeatObjects() {
 }
 
 function beatStripVisible() {
-  return beatStripOpen ?? circuit.beats.length > 0;
+  return beatStripOpen;
 }
 
 /** Show one beat (an index), or the whole drawing (null). */
@@ -29253,15 +29347,15 @@ function openBeatMenu(index, x, y) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 
-/** One beat per switch phase, after the beat on screen: what the phase
- * connects shown, the rest dimmed (core/beats.js phaseBeats). */
+/** One beat per switch phase, after the beat on screen: what still works in
+ * the phase shown, the rest dimmed (core/beats.js phaseBeats). */
 function addPhaseBeats() {
   const current = activeBeatIndex();
   const index = current === null ? circuit.beats.length : current + 1;
   let count = 0;
   commit(() => { count = phaseBeats(circuit, { index }); });
   if (!count) return;
-  logLine(`added ${count} phase beats: each shows what its phase connects and dims the rest`);
+  logLine(`added ${count} phase beats: each dims its open switches and whatever they cut off`);
   setActiveBeat(index);
 }
 
@@ -35703,7 +35797,7 @@ function openReferenceMarkerEditor(component) {
     text: component.value || '',
     owner: component.refdes,
     offset: info.labelOffset,
-    align: 'center',
+    align: 'parent',
     style: { color: component.style.color },
   });
   inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
@@ -35744,7 +35838,7 @@ function inlineEditLabel(label, options = {}) {
   input.style.width = `${sw}px`;
   input.style.height = `${sh}px`;
   input.style.fontSize = `${Math.max(12, LABEL_FONT_SIZE * r.width / view.w)}px`;
-  input.style.textAlign = label.align;
+  input.style.textAlign = label.textAlign();
   input.style.resize = 'none';
   input.style.whiteSpace = 'pre-wrap';
   input.style.overflow = 'hidden';
@@ -40088,17 +40182,16 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
 
-  // Shift+Left/Right set every selected label's alignment (cycle through
-  // center).  The primary label determines the next target when the set is
-  // mixed, while an already-uniform set cycles back to center.
+  // Shift+Left/Right set every selected label's alignment. A set already at
+  // that alignment cycles back to each label's default: toward its part for
+  // a part's label, center otherwise.
   if (ev.shiftKey && !wire && mode === 'normal' && (key === 'ArrowLeft' || key === 'ArrowRight')) {
     const labels = selectedLabels();
     const primary = selectedLabel() || labels[0];
     if (primary && labels.length) {
       const align = key === 'ArrowRight' ? 'right' : 'left';
       const allAtTarget = labels.every((label) => label.align === align);
-      const want = allAtTarget ? 'center' : align;
-      commit(() => labels.forEach((label) => label.setAlign(want)));
+      commit(() => labels.forEach((label) => label.setAlign(allAtTarget ? label.defaultAlign() : align)));
       render();
       ev.preventDefault();
       return;
