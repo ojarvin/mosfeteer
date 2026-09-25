@@ -9,7 +9,7 @@ const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
 
 test('tool cursors badge the select arrow per tool, theme, and danger', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = readFileSync(new URL('../src/web/icons.js', import.meta.url), 'utf8');
   const start = main.indexOf('function toolCursorValue(');
   const end = main.indexOf('\nfunction cursorIconFor(', start);
   const build = vm.runInNewContext(`(${main.slice(start, end)})`, {
@@ -183,7 +183,7 @@ test('component drag snapshots restore segment styles with route geometry', () =
 });
 
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = readFileSync(new URL('../src/web/icons.js', import.meta.url), 'utf8');
   const start = main.indexOf('function preloadToolCursors(');
   const end = main.indexOf('\nfunction installButtonIcons(', start);
   const built = [];

@@ -515,6 +515,8 @@
     </section>
   </footer>
 
-  <script type="module" src="main.js?v=41"></script>
+  <!-- Modules split out of main.js import it as ./main.js, so the page must
+       load it by that exact URL (a query string would load a second copy). -->
+  <script type="module" src="main.js"></script>
 </body>
 </html>

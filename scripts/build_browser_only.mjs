@@ -161,7 +161,7 @@ const CONTENT_SECURITY_POLICY = [
 const sourceHtml = await readFile(join(ROOT, 'src', 'web', 'index.html'), 'utf8');
 const html = sourceHtml
   .replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />\n  <meta http-equiv="Content-Security-Policy" content="${CONTENT_SECURITY_POLICY}" />`)
-  .replace('<script type="module" src="main.js?v=41"></script>', '<script src="browser-only.js"></script>');
+  .replace('<script type="module" src="main.js"></script>', '<script src="browser-only.js"></script>');
 for (const marker of ['http-equiv="Content-Security-Policy"', 'src="browser-only.js"']) {
   if (!html.includes(marker)) throw new Error(`browser-only build: src/web/index.html no longer matches (${marker})`);
 }
