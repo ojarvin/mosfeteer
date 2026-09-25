@@ -277,7 +277,10 @@ The server serializes load/run/save per document and writes atomically. The
 browser synchronizes the active document by revision/ETag and pauses polling
 while hidden. Save invalidates stale sync responses. `src/server/documents.js`
 and `src/web/persistence.js` are the persistence boundary; `data/` is not a
-fixture directory.
+fixture directory. Each browser window keeps its own local draft
+(`src/web/window-session.js`); when the CLI switches the active document, only
+the most recently focused window follows, and none does while another window
+already shows it.
 
 Core keyboard vocabulary:
 

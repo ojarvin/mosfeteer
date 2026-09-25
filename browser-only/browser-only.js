@@ -25502,6 +25502,7 @@ let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, q
 let commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback; __bind(() => { ({ commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js")); });
 let INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType; __bind(() => { ({ INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js")); });
 let createPersistenceAdapter, defaultExportDirectory, validDocumentName; __bind(() => { ({ createPersistenceAdapter, defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js")); });
+let createWindowSession; __bind(() => { ({ createWindowSession } = __require("src/web/window-session.js")); });
 let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
 let analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
@@ -25521,6 +25522,7 @@ let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan,
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -26211,7 +26213,15 @@ let lastSavedSnapshot = '';
 let draftReady = false;
 let draftRestored = false;
 let deleteInFlight = false;
-const DRAFT_KEY = 'mosfeteer:draft';
+// Each window keeps its own draft and says which document it shows, so two
+// windows edit two documents side by side (see window-session.js).
+const windowSession = (() => {
+  let local = null;
+  let session = null;
+  try { local = window.localStorage; } catch { /* storage unavailable */ }
+  try { session = window.sessionStorage; } catch { /* storage unavailable */ }
+  return createWindowSession({ local, session });
+})();
 let restoredDraftPath = null;
 let remoteConflictLogged = false;
 let lastSeenRevision = null;
@@ -26655,7 +26665,7 @@ function flushDraft() {
     // A tab can close during a pointer gesture. Persist only the committed
     // document, never the disposable preview clone.
     const committed = previewTransaction?.baseCircuit || circuit;
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+    windowSession.writeDraft({
       name: currentCircuitName,
       path: currentDocumentPath,
       dir: currentDocumentDir,
@@ -26663,7 +26673,7 @@ function flushDraft() {
       state: committed.toJSON(),
       savedSnapshot: lastSavedSnapshot,
       view: { x: view.x, y: view.y, w: view.w, h: view.h },
-    }));
+    });
   } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
 }
 function scheduleInteractionRender() {
@@ -26675,7 +26685,7 @@ function scheduleInteractionRender() {
 }
 function restoreDraft() {
   try {
-    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    const draft = JSON.parse(windowSession.draft || 'null');
     if (!draft || !draft.state) {
       lastSavedSnapshot = snapshot();
       return;
@@ -27330,7 +27340,7 @@ async function deleteSavedCircuit() {
     lastCircuitTag = null;
     restoredDraftPath = null;
     remoteConflictLogged = false;
-    try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
+    windowSession.clearDraft();
     render();
     await refreshCircuitList();
     logLine(`${persistence.browserOnly ? 'Forgot' : 'Deleted'} "${name}" (${displayPath(path)}).`);
@@ -27361,6 +27371,7 @@ let lastSeenActive = null;
 let lastFailedActive = null; // active circuit path whose load failed (retry silently)
 async function syncActiveCircuitOnce() {
   if (!persistence.liveSync) return;
+  windowSession.touch({ path: currentDocumentPath, hidden: document.hidden });
   const generation = syncGeneration;
   // First, follow the server's "active circuit" — the CLI drives it, the
   // browser mirrors it. Only auto-load on a CHANGE of the server's active
@@ -27405,6 +27416,14 @@ async function syncActiveCircuitOnce() {
     restoredDraftPath = null;
   }
 
+  // With several windows open, the CLI's new active document goes to one of
+  // them: none when a window already shows it, else the most recently
+  // focused. The others keep their documents.
+  if (active !== lastSeenActive && active && active !== currentDocumentPath
+    && (windowSession.otherWindowShows(active) || !windowSession.leadsActiveSync())) {
+    lastSeenActive = active;
+    lastFailedActive = null;
+  }
   if (active !== lastSeenActive) {
     // The server only sends a revision for an active circuit whose file exists.
     // Wait silently for a missing one (not yet written, or deleted) instead of
@@ -41367,12 +41386,22 @@ window.__circuit = () => ({
 /** Tell the local server this window is open; the launcher stops the server after the last one closes. */
 function startSessionHeartbeat() {
   const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-  const beat = () => persistence.heartbeat(id);
+  const beat = () => {
+    persistence.heartbeat(id);
+    windowSession.touch({ path: currentDocumentPath, hidden: document.hidden });
+  };
   beat();
   // Runs while hidden too; browsers throttle background timers to about once a minute.
   window.setInterval(beat, 20_000);
-  window.addEventListener('pageshow', (ev) => { if (ev.persisted) beat(); });
+  window.addEventListener('pageshow', (ev) => {
+    if (!ev.persisted) return;
+    windowSession.reopen();
+    beat();
+  });
+  window.addEventListener('focus', () => windowSession.touch({ path: currentDocumentPath, hidden: document.hidden, focused: true }));
+  document.addEventListener('visibilitychange', () => windowSession.touch({ path: currentDocumentPath, hidden: document.hidden }));
   window.addEventListener('pagehide', () => {
+    windowSession.close();
     if (persistence.liveSync) {
       navigator.sendBeacon?.('/api/session', new Blob([JSON.stringify({ id, closing: true })], { type: 'application/json' }));
     }
@@ -42753,6 +42782,220 @@ __exports.openTutorialTargets = openTutorialTargets;
 __exports.tutorialRuns = tutorialRuns;
 __exports.TUTORIAL_TARGETS = TUTORIAL_TARGETS;
 __exports.TUTORIAL_STEPS = TUTORIAL_STEPS;
+};
+
+__modules["src/web/window-session.js"] = function (__require, __exports) {
+/**
+ * One editor window among several open on the same origin.
+ *
+ * Each window keeps its own local draft and publishes a small status record
+ * (the document it shows, when it was last focused, whether it is still
+ * open), so two windows can edit two documents side by side without
+ * restoring each other's draft or both jumping to the CLI's active document.
+ *
+ * Records live in localStorage under one key per window, so windows never
+ * rewrite each other's entries. The window id lives in sessionStorage, which
+ * survives a reload of the same tab but not a new window. A duplicated tab
+ * inherits the id while its original is still open; it then takes a new id
+ * and a copy of the draft.
+ */
+
+const LEGACY_DRAFT_KEY = 'mosfeteer:draft';
+const DRAFT_PREFIX = 'mosfeteer:draft:';
+const STATUS_PREFIX = 'mosfeteer:window:';
+const WINDOW_ID_KEY = 'mosfeteer:window-id';
+// Background tabs run timers about once a minute, so a window that has not
+// checked in for this long without saying it closed has crashed or been killed.
+const WINDOW_STALE_MS = 3 * 60_000;
+// A draft no window has touched for this long is dropped at startup.
+const ORPHAN_DRAFT_MS = 30 * 24 * 60 * 60_000;
+// An unchanged status is rewritten at most this often.
+const TOUCH_MS = 10_000;
+
+function read(storage, key) {
+  try { return storage?.getItem(key) ?? null; } catch { return null; }
+}
+function write(storage, key, value) {
+  try { storage?.setItem(key, value); return true; } catch { return false; }
+}
+function remove(storage, key) {
+  try { storage?.removeItem(key); } catch { /* storage unavailable */ }
+}
+function keys(storage) {
+  const out = [];
+  try {
+    for (let i = 0; i < storage.length; i += 1) {
+      const key = storage.key(i);
+      if (key !== null) out.push(key);
+    }
+  } catch { /* storage unavailable */ }
+  return out;
+}
+function parse(text) {
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Claim this window's identity and pick the draft it should restore.
+ *
+ * `local`/`session` are Storage-like objects (either may be missing or
+ * throw). Returns the session; `session.draft` is the draft text to restore,
+ * or null.
+ */
+function createWindowSession({ local, session, now = () => Date.now(), randomId = defaultRandomId } = {}) {
+  const statusOf = (id) => parse(read(local, STATUS_PREFIX + id));
+  const alive = (status, at = now()) => !!status && !status.closed && at - (status.seenAt || 0) < WINDOW_STALE_MS;
+
+  let id = read(session, WINDOW_ID_KEY);
+  let copyFrom = null;
+  if (id && alive(statusOf(id))) {
+    // Duplicated tab: the original still owns this id and its draft.
+    copyFrom = id;
+    id = null;
+  }
+  if (!id) {
+    id = randomId();
+    write(session, WINDOW_ID_KEY, id);
+  }
+  const draftKey = DRAFT_PREFIX + id;
+
+  let draft = read(local, draftKey);
+  if (draft === null && copyFrom) {
+    draft = read(local, DRAFT_PREFIX + copyFrom);
+    if (draft !== null) write(local, draftKey, draft);
+  }
+  if (draft === null) draft = adoptOrphanDraft();
+  pruneOrphans();
+
+  let status = { path: null, seenAt: 0, focusedAt: now(), hidden: false, closed: false };
+  publish();
+
+  /** Take over the newest draft whose window is gone (a new window or a restarted browser). */
+  function adoptOrphanDraft() {
+    const at = now();
+    let best = null;
+    for (const key of keys(local)) {
+      if (key === draftKey) continue;
+      let owner;
+      if (key === LEGACY_DRAFT_KEY) owner = null;
+      else if (key.startsWith(DRAFT_PREFIX)) owner = key.slice(DRAFT_PREFIX.length);
+      else continue;
+      if (owner && alive(statusOf(owner), at)) continue;
+      const text = read(local, key);
+      if (text === null) continue;
+      const savedAt = parse(text)?.savedAt || 0;
+      if (!best || savedAt > best.savedAt) best = { key, owner, text, savedAt };
+    }
+    if (!best) return null;
+    if (!write(local, draftKey, best.text)) return best.text;
+    remove(local, best.key);
+    if (best.owner) remove(local, STATUS_PREFIX + best.owner);
+    return best.text;
+  }
+
+  /** Forget closed windows' records, and drafts nobody has touched in a long time. */
+  function pruneOrphans() {
+    const at = now();
+    for (const key of keys(local)) {
+      if (key.startsWith(STATUS_PREFIX)) {
+        const owner = key.slice(STATUS_PREFIX.length);
+        if (owner === id || alive(statusOf(owner), at)) continue;
+        if (read(local, DRAFT_PREFIX + owner) === null) remove(local, key);
+      } else if (key.startsWith(DRAFT_PREFIX) && key !== draftKey) {
+        const owner = key.slice(DRAFT_PREFIX.length);
+        if (alive(statusOf(owner), at)) continue;
+        const savedAt = parse(read(local, key))?.savedAt || 0;
+        if (at - savedAt > ORPHAN_DRAFT_MS) {
+          remove(local, key);
+          remove(local, STATUS_PREFIX + owner);
+        }
+      }
+    }
+  }
+
+  function publish() {
+    status.seenAt = now();
+    write(local, STATUS_PREFIX + id, JSON.stringify(status));
+  }
+
+  /** The other open windows' status records. */
+  function others() {
+    const at = now();
+    const out = [];
+    for (const key of keys(local)) {
+      if (!key.startsWith(STATUS_PREFIX)) continue;
+      const owner = key.slice(STATUS_PREFIX.length);
+      if (owner === id) continue;
+      const other = statusOf(owner);
+      if (alive(other, at)) out.push(other);
+    }
+    return out;
+  }
+
+  return {
+    id,
+    draft,
+    readDraft: () => read(local, draftKey),
+    /** Store this window's draft; `state` gains a `savedAt` so orphans can be ranked. */
+    writeDraft(state) {
+      if (!write(local, draftKey, JSON.stringify({ ...state, savedAt: now() }))) {
+        throw new Error('browser storage is unavailable or full');
+      }
+    },
+    clearDraft: () => remove(local, draftKey),
+    /**
+     * Record what this window shows. Cheap to call often: an unchanged status
+     * is rewritten every few seconds only. A closed window stays closed (the
+     * page fires visibilitychange after pagehide) until `reopen`.
+     */
+    touch({ path = status.path, hidden = status.hidden, focused = false } = {}) {
+      if (status.closed) return;
+      const nextPath = path || null;
+      const changed = nextPath !== status.path || !!hidden !== status.hidden || focused;
+      status.path = nextPath;
+      status.hidden = !!hidden;
+      if (focused) status.focusedAt = now();
+      if (changed || now() - status.seenAt >= TOUCH_MS) publish();
+    },
+    /** Mark this window closed (pagehide). A reload of the same tab reclaims the id. */
+    close() {
+      status.closed = true;
+      write(local, STATUS_PREFIX + id, JSON.stringify(status));
+    },
+    /** Undo `close` when the page comes back from the back/forward cache. */
+    reopen() {
+      status.closed = false;
+      publish();
+    },
+    /** Whether another open window already shows the document at `path`. */
+    otherWindowShows: (path) => !!path && others().some((other) => other.path === path),
+    /**
+     * Whether this window should follow the CLI's active document: the most
+     * recently focused of the visible windows, or of all of them when none is
+     * visible.
+     */
+    leadsActiveSync() {
+      const rest = others();
+      const pool = status.hidden ? rest : rest.filter((other) => !other.hidden);
+      if (status.hidden && rest.some((other) => !other.hidden)) return false;
+      return pool.every((other) => (other.focusedAt || 0) <= status.focusedAt);
+    },
+  };
+}
+
+function defaultRandomId() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+__exports.createWindowSession = createWindowSession;
+__exports.LEGACY_DRAFT_KEY = LEGACY_DRAFT_KEY;
+__exports.WINDOW_STALE_MS = WINDOW_STALE_MS;
+__exports.ORPHAN_DRAFT_MS = ORPHAN_DRAFT_MS;
 };
 
 __modules["src/web/wire-index.js"] = function (__require, __exports) {

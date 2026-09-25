@@ -45,6 +45,7 @@ import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
 import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
 import { createPersistenceAdapter, defaultExportDirectory, validDocumentName } from './persistence.js';
+import { createWindowSession } from './window-session.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
@@ -699,7 +700,15 @@ let lastSavedSnapshot = '';
 let draftReady = false;
 let draftRestored = false;
 let deleteInFlight = false;
-const DRAFT_KEY = 'mosfeteer:draft';
+// Each window keeps its own draft and says which document it shows, so two
+// windows edit two documents side by side (see window-session.js).
+const windowSession = (() => {
+  let local = null;
+  let session = null;
+  try { local = window.localStorage; } catch { /* storage unavailable */ }
+  try { session = window.sessionStorage; } catch { /* storage unavailable */ }
+  return createWindowSession({ local, session });
+})();
 let restoredDraftPath = null;
 let remoteConflictLogged = false;
 let lastSeenRevision = null;
@@ -1143,7 +1152,7 @@ function flushDraft() {
     // A tab can close during a pointer gesture. Persist only the committed
     // document, never the disposable preview clone.
     const committed = previewTransaction?.baseCircuit || circuit;
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+    windowSession.writeDraft({
       name: currentCircuitName,
       path: currentDocumentPath,
       dir: currentDocumentDir,
@@ -1151,7 +1160,7 @@ function flushDraft() {
       state: committed.toJSON(),
       savedSnapshot: lastSavedSnapshot,
       view: { x: view.x, y: view.y, w: view.w, h: view.h },
-    }));
+    });
   } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
 }
 function scheduleInteractionRender() {
@@ -1163,7 +1172,7 @@ function scheduleInteractionRender() {
 }
 function restoreDraft() {
   try {
-    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    const draft = JSON.parse(windowSession.draft || 'null');
     if (!draft || !draft.state) {
       lastSavedSnapshot = snapshot();
       return;
@@ -1818,7 +1827,7 @@ async function deleteSavedCircuit() {
     lastCircuitTag = null;
     restoredDraftPath = null;
     remoteConflictLogged = false;
-    try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
+    windowSession.clearDraft();
     render();
     await refreshCircuitList();
     logLine(`${persistence.browserOnly ? 'Forgot' : 'Deleted'} "${name}" (${displayPath(path)}).`);
@@ -1849,6 +1858,7 @@ let lastSeenActive = null;
 let lastFailedActive = null; // active circuit path whose load failed (retry silently)
 async function syncActiveCircuitOnce() {
   if (!persistence.liveSync) return;
+  windowSession.touch({ path: currentDocumentPath, hidden: document.hidden });
   const generation = syncGeneration;
   // First, follow the server's "active circuit" — the CLI drives it, the
   // browser mirrors it. Only auto-load on a CHANGE of the server's active
@@ -1893,6 +1903,14 @@ async function syncActiveCircuitOnce() {
     restoredDraftPath = null;
   }
 
+  // With several windows open, the CLI's new active document goes to one of
+  // them: none when a window already shows it, else the most recently
+  // focused. The others keep their documents.
+  if (active !== lastSeenActive && active && active !== currentDocumentPath
+    && (windowSession.otherWindowShows(active) || !windowSession.leadsActiveSync())) {
+    lastSeenActive = active;
+    lastFailedActive = null;
+  }
   if (active !== lastSeenActive) {
     // The server only sends a revision for an active circuit whose file exists.
     // Wait silently for a missing one (not yet written, or deleted) instead of
@@ -15855,12 +15873,22 @@ window.__circuit = () => ({
 /** Tell the local server this window is open; the launcher stops the server after the last one closes. */
 function startSessionHeartbeat() {
   const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-  const beat = () => persistence.heartbeat(id);
+  const beat = () => {
+    persistence.heartbeat(id);
+    windowSession.touch({ path: currentDocumentPath, hidden: document.hidden });
+  };
   beat();
   // Runs while hidden too; browsers throttle background timers to about once a minute.
   window.setInterval(beat, 20_000);
-  window.addEventListener('pageshow', (ev) => { if (ev.persisted) beat(); });
+  window.addEventListener('pageshow', (ev) => {
+    if (!ev.persisted) return;
+    windowSession.reopen();
+    beat();
+  });
+  window.addEventListener('focus', () => windowSession.touch({ path: currentDocumentPath, hidden: document.hidden, focused: true }));
+  document.addEventListener('visibilitychange', () => windowSession.touch({ path: currentDocumentPath, hidden: document.hidden }));
   window.addEventListener('pagehide', () => {
+    windowSession.close();
     if (persistence.liveSync) {
       navigator.sendBeacon?.('/api/session', new Blob([JSON.stringify({ id, closing: true })], { type: 'application/json' }));
     }
