@@ -1030,3 +1030,14 @@ test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () =>
     assert.ok(arm < down.indexOf(`isSelectionModifier(ev)`, down.indexOf(target)), `${target} copies before it toggles`);
   }
 });
+
+test('a still click on a selected object cycles to the next one stacked under it, and a press drags the selected one', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const up = main.slice(main.indexOf('function canvasMouseUp('), main.indexOf('\nfunction finishCanvasMouseUp('));
+  assert.match(up, /const still = !!drag && !dragMoved\(/);
+  assert.match(up, /nextStackedSelection\(click\.candidates, click\.pressKey\)/);
+  const down = main.slice(main.indexOf('function canvasMouseDown('), main.indexOf('\n/** Arm one translation drag'));
+  assert.match(down, /stackedClick = !isSelectionModifier\(ev\) && ev\.detail < 2/);
+  assert.match(down, /beginComponentDrag\(\{ refdes: preferred\.slice\('component:'\.length\) \}/);
+  assert.match(down, /const wireHit = preferredWire \|\| pickWire\(startWorld\);/);
+});

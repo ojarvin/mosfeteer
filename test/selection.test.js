@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseWireHitCandidate, completeSelectedNetIds, copySelectionParts, copyableLabelPayload, selectedSetMoveSource } from '../src/web/selection.js';
+import { chooseWireHitCandidate, completeSelectedNetIds, copySelectionParts, copyableLabelPayload, nextStackedSelection, selectedSetMoveSource } from '../src/web/selection.js';
 
 const components = new Map([
   ['R1', { type: 'resistor' }],
@@ -144,4 +144,15 @@ test('diagnostic preference deduplicates tied segments from one net', () => {
   const diagnosticA = candidate('N2', 1, { seg: 2 });
   const diagnosticB = candidate('N2', 1, { seg: 3 });
   assert.equal(pick([first, diagnosticA, diagnosticB], [], ['N2']), diagnosticA);
+});
+
+test('clicking a selected object in a stack moves on to the next one under it, wrapping', () => {
+  const stack = ['component:M1', 'wire:N1:0:1', 'component:J1'];
+  assert.equal(nextStackedSelection(stack, 'component:M1'), 'wire:N1:0:1');
+  assert.equal(nextStackedSelection(stack, 'wire:N1:0:1'), 'component:J1');
+  assert.equal(nextStackedSelection(stack, 'component:J1'), 'component:M1');
+  // Nothing selected here, or nothing stacked: the ordinary topmost pick stands.
+  assert.equal(nextStackedSelection(stack, 'component:R9'), null);
+  assert.equal(nextStackedSelection(stack, null), null);
+  assert.equal(nextStackedSelection(['component:M1'], 'component:M1'), null);
 });

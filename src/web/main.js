@@ -38,7 +38,7 @@ import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
-import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate } from './selection.js';
+import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
 import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
@@ -669,6 +669,7 @@ let wirePreview = null;
 let wirePreviewStale = false;
 let terminalSnap = false; // Alt-held wiring cursor: snap to the nearest terminal
 let spaceHeld = false; // Space turns a left drag into a pan
+let stackedClick = null; // { candidates, pressKey } for the press in progress: a still click cycles
 let spaceTap = false; // Space went down and nothing used it yet: its release stubs the selection
 // 'mouse': the wheel zooms. 'trackpad': two-finger scroll pans, pinch zooms.
 // A per-machine preference, so it lives in browser storage, not the document.
@@ -6315,21 +6316,81 @@ function supplyBarHit(w) {
   return bar ? { refdes: bar.refs[0] } : null;
 }
 
-/** Pick the nearest net route within a forgiving screen-sized hit area.
- *  Considers EVERY drawn branch of a multi-way net, so a joined/connected wire
- *  is selectable and draggable anywhere along it. */
-function pickWire(w) {
+/** Every wire segment within the screen-sized hit area of a point. */
+function wireHitsAt(w) {
   const p = paneSize();
-  const pxPerUnit = p ? view.w / p.w : 1;
-  const tol = 12 / pxPerUnit;
-  const snapped = { x: snap(w.x), y: snap(w.y) };
+  const tol = 12 / (p ? view.w / p.w : 1);
   if (wireHitIndexRevision !== modelRevision) {
     wireHitIndex = buildWireHitIndex(circuit.nets.values());
     wireHitIndexRevision = modelRevision;
   }
-  const candidates = queryWireHitIndex(wireHitIndex, w, snapped, tol);
+  return queryWireHitIndex(wireHitIndex, w, { x: snap(w.x), y: snap(w.y) }, tol);
+}
+
+// ----- click-to-cycle through stacked objects ----------------------------------
+// Parts' boxes often meet along an edge where a wire or junction dot also
+// sits. The first click there picks the topmost object as always; clicking
+// the selected object again selects the next one under it.
+
+/** Selection keys under a point, topmost first, in the order a click picks:
+ * a label, a part with a pin there, the wires (one per net), junction dots,
+ * then the parts whose box holds the point. */
+function stackedSelectionCandidates(w) {
+  const keys = [];
+  const add = (key) => { if (!keys.includes(key)) keys.push(key); };
+  const label = pickLabel(w);
+  if (label) add(`label:${label.id}`);
+  const p = { x: snap(w.x), y: snap(w.y) };
+  for (const c of sortedComps()) {
+    if (c.worldTerminals().some((t) => t.x === p.x && t.y === p.y)) add(`component:${c.refdes}`);
+  }
+  const first = pickWire(w);
+  const wires = first ? [first, ...wireHitsAt(w).sort((a, b) => a.distance - b.distance)] : [];
+  const nets = new Set();
+  for (const hit of wires) {
+    if (nets.has(hit.net.id)) continue;
+    nets.add(hit.net.id);
+    add(`wire:${hit.net.id}:${hit.branch}:${hit.seg}`);
+  }
+  for (const c of sortedComps()) {
+    if (c.type === 'solder' && c.transform.x === p.x && c.transform.y === p.y) add(`component:${c.refdes}`);
+  }
+  for (const c of sortedComps()) {
+    const r = c.bboxWorld();
+    if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) add(`component:${c.refdes}`);
+  }
+  return keys;
+}
+
+/** The selection as one stacked-selection key, or null when it is not a
+ * single object (a joined supply bar counts as its clicked supply). */
+function currentSelectionKey() {
+  const wires = new Set(selectedWires);
+  if (selectedWire) wires.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
+  if (multi.size && !selLabels.size && !wires.size) {
+    const group = supplyBarGroup(selected);
+    const single = multi.size === 1 || (group.length === multi.size && group.every((ref) => multi.has(ref)));
+    return single && selected ? `component:${selected}` : null;
+  }
+  if (selLabels.size === 1 && !multi.size && !wires.size) return `label:${selLabel}`;
+  if (wires.size === 1 && !multi.size && !selLabels.size) return `wire:${[...wires][0]}`;
+  return null;
+}
+
+function selectStackedKey(key) {
+  const [kind, ...rest] = key.split(':');
+  const id = rest.join(':');
+  selectedNets.clear();
+  if (kind === 'component') setSelection(supplyBarGroup(id), id);
+  else applyEditorSelection({ kind, id });
+}
+
+/** Pick the nearest net route within a forgiving screen-sized hit area.
+ *  Considers EVERY drawn branch of a multi-way net, so a joined/connected wire
+ *  is selectable and draggable anywhere along it. */
+function pickWire(w) {
   return chooseWireHitCandidate({
-    candidates,
+    candidates: wireHitsAt(w),
     selectedNets,
     diagnosticNets: diagnosticSelection.nets,
   });
@@ -7778,8 +7839,27 @@ function canvasMouseDown(ev) {
     return;
   }
 
+  // A press on a selected object under the topmost one acts on the selected
+  // object; a click that does not move then cycles to the next (canvasMouseUp).
+  const stacked = stackedSelectionCandidates(startWorld);
+  const pressKey = currentSelectionKey();
+  stackedClick = !isSelectionModifier(ev) && ev.detail < 2 && stacked.length > 1
+    ? { candidates: stacked, pressKey }
+    : null;
+  const preferred = stackedClick && stacked.indexOf(pressKey) > 0 ? pressKey : null;
+  if (preferred?.startsWith('component:')) {
+    lastLabelClick = null;
+    lastWireClick = null;
+    lastSchematicComponentClick = null;
+    beginComponentDrag({ refdes: preferred.slice('component:'.length) }, startWorld, startClient, ev);
+    return;
+  }
+  const preferredWire = preferred?.startsWith('wire:')
+    ? wireHitsAt(startWorld).find((hit) => `wire:${hit.net.id}:${hit.branch}:${hit.seg}` === preferred) || null
+    : null;
+
   // Labels draw on top of everything: picking one selects/drags it first.
-  const labelHit = pickLabel(startWorld);
+  const labelHit = preferredWire ? null : pickLabel(startWorld);
   if (labelHit) {
     const a = labelHit.anchorWorld();
     cursor = { x: snap(a.x), y: snap(a.y) };
@@ -7864,7 +7944,7 @@ function canvasMouseDown(ev) {
   // Wires render behind component bodies, but remain selectable inside or
   // along them. Hit order: exact TERMINAL, then WIRE, then component bbox,
   // then empty space.
-  const hit = pickAt(startWorld) || (pickWire(startWorld) ? null : supplyBarHit(startWorld));
+  const hit = preferredWire ? null : pickAt(startWorld) || (pickWire(startWorld) ? null : supplyBarHit(startWorld));
   const termHit = hit && hit.term ? hit : null;
   const componentHit = hit?.refdes ? circuit.components.get(hit.refdes) : null;
   if (componentHit && !termHit) {
@@ -7899,7 +7979,7 @@ function canvasMouseDown(ev) {
   }
 
   // Click/drag a wire: clicking selects its net, dragging edits a route run.
-  const wireHit = pickWire(startWorld);
+  const wireHit = preferredWire || pickWire(startWorld);
   if (wireHit) {
     const net = wireHit.net;
     if (net.terminals.length === 0 && net.routingMode !== 'fixed') {
@@ -8976,6 +9056,19 @@ function canvasMouseMove(ev) {
 }
 
 function canvasMouseUp(ev) {
+  const click = stackedClick;
+  stackedClick = null;
+  const still = !!drag && !dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
+  finishCanvasMouseUp(ev);
+  if (!click || !still || ev.button !== 0 || drag) return;
+  const next = nextStackedSelection(click.candidates, click.pressKey);
+  if (!next) return;
+  selectStackedKey(next);
+  hintLine(`selected ${next.split(':').slice(0, 2).join(' ')} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next object here`);
+  render();
+}
+
+function finishCanvasMouseUp(ev) {
   if (!drag) return;
   const releaseWorld = clientToWorld(ev.clientX, ev.clientY);
   const movedOut = dragMoved(drag.startWorld, drag.startClient, releaseWorld, ev);

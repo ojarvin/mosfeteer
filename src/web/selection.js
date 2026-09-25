@@ -93,3 +93,16 @@ export function chooseWireHitCandidate({
   if (diagnosticNetsInTie.size === 1) return diagnostic[0];
   return tied[0];
 }
+
+/**
+ * Click-to-cycle through stacked objects. `candidates` are the selection keys
+ * under a click in pick order (topmost first); `current` is the key of what
+ * is selected now. A click on the selected object moves on to the next one
+ * under it, wrapping around; anything else keeps the ordinary topmost pick.
+ * Returns the key to select instead, or null to keep the ordinary pick.
+ */
+export function nextStackedSelection(candidates = [], current = null) {
+  const index = current ? candidates.indexOf(current) : -1;
+  if (index < 0 || candidates.length < 2) return null;
+  return candidates[(index + 1) % candidates.length];
+}

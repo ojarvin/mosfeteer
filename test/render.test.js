@@ -937,3 +937,13 @@ test('a net highlight colors the interface ports on that net and their labels', 
   assert.ok(!group('IN').includes(purple), 'a port on another net');
   assert.match(svg, new RegExp(`<text[^>]*fill="${purple}"[^>]*>[^<]*out`));
 });
+
+test('a selected part is outlined by its own grid box, unpadded', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  const overlay = editorOverlay(circuit, { selection: ['R1'] });
+  const r = circuit.components.get('R1').bboxWorld();
+  const outline = overlay.match(/<rect class="selection-outline" x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/);
+  assert.ok(outline, 'selection outline drawn');
+  assert.deepEqual(outline.slice(1).map(Number), [r.x, r.y, r.w, r.h]);
+});

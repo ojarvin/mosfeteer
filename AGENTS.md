@@ -295,7 +295,9 @@ re-picking Wire keeps a half-drawn wire, and in Wire mode a letter naming a
 terminal of the part being pointed at still picks that terminal.
 `Ctrl+Shift+R` is intentionally unbound.
 Selection is role-aware across components, labels, nets, annotations, and wire
-runs; component/managed-wire transactions are one undo entry.
+runs; clicking a selected object again selects the next object stacked at that
+point (`nextStackedSelection`), and a press there drags the selected one.
+Component/managed-wire transactions are one undo entry.
 
 The browser exposes `window.__circuit()`, `window.__run(command)`, and
 `window.__load(state)` for isolated verification. Headless browser tests must

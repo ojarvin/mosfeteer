@@ -190,6 +190,7 @@ export const EDITOR_KEYMAP = Object.freeze([
   ]],
   ['select', [
     ['Enter', 'select the label or component under the cursor'],
+    ['click a selected object', 'select the next object stacked at that point (pins, wires, dots, part boxes); a press there drags the selected one'],
     ['Ctrl/Cmd+A', 'select all components, labels, and non-empty nets'],
     ['v', 'visual mode: arrow keys grow a box; Enter selects; Esc cancels'],
     ['Tab / Shift+Tab (selection)', 'cycle a selected component or label forward / backward'],
