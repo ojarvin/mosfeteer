@@ -38,7 +38,7 @@ export async function startServer({ env = {} } = {}) {
   const port = await unusedPort();
   const child = spawn(process.execPath, [SERVER], {
     cwd: ROOT,
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), SCHEMATIC_WORKSPACE: workspace, DATA_ROOT: data, ...env },
+    env: { ...process.env, PORT: String(port), SCHEMATIC_WORKSPACE: workspace, DATA_ROOT: data, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';

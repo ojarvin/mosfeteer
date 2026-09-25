@@ -2,7 +2,7 @@
  * Development entry point: `npm run serve` (Node watch mode) or
  * `node src/server/serve.js`. End users start the app with `launch.mjs`.
  *
- * Environment: HOST, PORT, DATA_ROOT (settings and active circuit, default
+ * Environment: PORT, DATA_ROOT (settings and active circuit, default
  * `data/`), SCHEMATIC_WORKSPACE (workspace folder override).
  */
 
@@ -13,7 +13,6 @@ const workspace = process.env.SCHEMATIC_WORKSPACE ? resolve(process.env.SCHEMATI
 
 try {
   const app = await startApp({
-    host: process.env.HOST || '127.0.0.1',
     port: process.env.PORT === undefined ? DEFAULT_PORT : Number(process.env.PORT),
     dataRoot: resolve(process.env.DATA_ROOT || join(APP_ROOT, 'data')),
     workspace,

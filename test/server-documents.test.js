@@ -289,6 +289,22 @@ serverTest('PDF export is vector output when a Chromium-family browser is instal
   assert.doesNotMatch(pdf, /\/Subtype\s*\/Image/, 'vector PDF does not embed the PNG');
 });
 
+serverTest('the server listens on loopback only, whatever HOST says', async (t) => {
+  // 192.0.2.1 is a documentation address no machine owns: listening there
+  // would fail, and listening on a real interface would expose the file API.
+  const app = await startServer({ env: { HOST: '192.0.2.1' } });
+  t.after(() => app.stop());
+  const response = await app.request('/api/health');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+
+  const root = await mkdtemp(join(tmpdir(), 'mosfeteer-listen-'));
+  const direct = await startApp({ port: 0, dataRoot: join(root, 'data'), workspace: join(root, 'workspace'), log: () => {} });
+  t.after(async () => { await direct.close(); await rm(root, { recursive: true, force: true }); });
+  assert.equal(direct.server.address().address, '127.0.0.1');
+  assert.ok(direct.url.startsWith('http://127.0.0.1:'));
+});
+
 serverTest('a server whose code changed on disk refuses to write documents', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'mosfeteer-stale-'));
   let code = 'v1';

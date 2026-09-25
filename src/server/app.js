@@ -68,7 +68,7 @@ function httpError(message, status = 400, code) {
 }
 
 function json(res, status, value, headers = {}) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store, max-age=0', ...headers });
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store, max-age=0', ...headers });
   res.end(JSON.stringify(value));
 }
 
@@ -108,8 +108,11 @@ function openInFileManager(path) {
   child.unref();
 }
 
+// The API reads and writes any file the user can, so it is reachable from
+// this machine only. There is deliberately no option to listen elsewhere.
+const LISTEN_HOST = '127.0.0.1';
+
 export async function startApp({
-  host = '127.0.0.1',
   port = DEFAULT_PORT,
   dataRoot = join(APP_ROOT, 'data'),
   workspace: workspaceOverride = null,
@@ -554,14 +557,14 @@ export async function startApp({
     res.end(data);
   }
 
-  let hosts = allowedHosts(port, host);
+  let hosts = allowedHosts(port);
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
       const api = url.pathname.startsWith('/api/');
       const refused = checkRequest({ headers: req.headers, api }, hosts);
       if (refused) {
-        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
         res.end(`Forbidden: ${refused}`);
         return;
       }
@@ -580,15 +583,14 @@ export async function startApp({
 
   await new Promise((resolveListen, rejectListen) => {
     server.once('error', rejectListen);
-    server.listen(port, host, () => {
+    server.listen(port, LISTEN_HOST, () => {
       server.off('error', rejectListen);
       resolveListen();
     });
   });
   const actualPort = server.address().port;
-  hosts = allowedHosts(actualPort, host);
-  const urlHost = ['0.0.0.0', '::'].includes(host) ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host;
-  const url = `http://${urlHost}:${actualPort}/`;
+  hosts = allowedHosts(actualPort);
+  const url = `http://${LISTEN_HOST}:${actualPort}/`;
   return {
     server,
     url,

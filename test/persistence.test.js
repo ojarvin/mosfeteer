@@ -107,7 +107,7 @@ test('browser discovery honors an explicit executable and ignores the launcher-o
 });
 
 test('request guard accepts loopback editor requests only', () => {
-  const hosts = allowedHosts(47280, '127.0.0.1');
+  const hosts = allowedHosts(47280);
   const ok = (headers, api = true) => checkRequest({ headers, api }, hosts) === null;
   assert.equal(ok({ host: '127.0.0.1:47280' }), true);
   assert.equal(ok({ host: 'localhost:47280', origin: 'http://localhost:47280', 'sec-fetch-site': 'same-origin' }), true);

@@ -6,16 +6,14 @@
  *   - Cross-site requests: any web page can send (but not read) requests to
  *     localhost. API calls with a foreign `Origin` or `Sec-Fetch-Site` are refused.
  * Non-browser clients (the CLI, tests) send neither header and are allowed.
+ * The server listens on 127.0.0.1 only; this guard is no defense against
+ * another machine, which can send any headers it likes.
  */
 
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '[::1]'];
 
-export function allowedHosts(port, extraHost) {
-  const hosts = new Set(LOOPBACK_HOSTS.map((host) => `${host}:${port}`));
-  if (extraHost && !['0.0.0.0', '::'].includes(extraHost)) {
-    hosts.add(`${extraHost.includes(':') && !extraHost.startsWith('[') ? `[${extraHost}]` : extraHost}:${port}`.toLowerCase());
-  }
-  return hosts;
+export function allowedHosts(port) {
+  return new Set(LOOPBACK_HOSTS.map((host) => `${host}:${port}`));
 }
 
 export function checkRequest({ headers = {}, api = false }, hosts) {
