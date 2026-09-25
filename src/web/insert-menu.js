@@ -14,7 +14,8 @@ import { ICON_PATHS } from './icons.js';
 import { logLine } from './status-bar-ui.js';
 import { worldToClient } from './canvas-view.js';
 import { editor } from './editor-state.js';
-import { applyJson, clearSymmetry, commit, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placeNetLabelAt, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, undo } from './main.js';
+import { placeNetLabelAt } from './annotation-tools.js';
+import { applyJson, clearSymmetry, commit, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, undo } from './main.js';
 
 const PLACEMENT = {
   r: 'resistor',

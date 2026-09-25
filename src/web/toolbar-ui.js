@@ -16,7 +16,8 @@ import { prefersReducedMotion } from './canvas-view.js';
 import { closeComponentContextMenu, appendContextItem } from './context-menu.js';
 import { saveCircuit } from './document-session.js';
 import { editor } from './editor-state.js';
-import { activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateVisual, activateWire, hasWireDraft, interactionState, removeAllNetHighlights, render, restackSelected, selectedTransform } from './main.js';
+import { removeAllNetHighlights } from './annotation-tools.js';
+import { activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateVisual, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } from './main.js';
 
 // The top toolbar drops button text in stages as its row runs out of space (see
 // toolbar-fit.js). Refit when the bar resizes or the document title changes.

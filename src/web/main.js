@@ -10,12 +10,11 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerInfo, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
 import { addTerminalStubs } from '../core/stubs.js';
-import { cycleBeatHighlight, highlightsAt, setHighlightFrom } from '../core/beats.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { componentShapeSvg, editorOverlay, svgString } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
@@ -67,6 +66,7 @@ import { toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleCo
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
+import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt } from './annotation-tools.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -78,6 +78,7 @@ Object.defineProperties(editor, {
   altHeld: { get: () => altHeld, set: (value) => { altHeld = value; } },
   analysisPick: { get: () => analysisPick, set: (value) => { analysisPick = value; } },
   annotationPoints: { get: () => annotationPoints, set: (value) => { annotationPoints = value; } },
+  annotationStart: { get: () => annotationStart, set: (value) => { annotationStart = value; } },
   beatAnchorId: { get: () => beatAnchorId, set: (value) => { beatAnchorId = value; } },
   beatKnown: { get: () => beatKnown, set: (value) => { beatKnown = value; } },
   beatStripActive: { get: () => beatStripActive, set: (value) => { beatStripActive = value; } },
@@ -119,6 +120,7 @@ Object.defineProperties(editor, {
   lastCircuitTag: { get: () => lastCircuitTag, set: (value) => { lastCircuitTag = value; } },
   lastComponentClick: { get: () => lastComponentClick, set: (value) => { lastComponentClick = value; } },
   lastLabelClick: { get: () => lastLabelClick, set: (value) => { lastLabelClick = value; } },
+  lastLineClick: { get: () => lastLineClick, set: (value) => { lastLineClick = value; } },
   lastNetClick: { get: () => lastNetClick, set: (value) => { lastNetClick = value; } },
   lastSavedSnapshot: { get: () => lastSavedSnapshot, set: (value) => { lastSavedSnapshot = value; } },
   lastSeenRevision: { get: () => lastSeenRevision, set: (value) => { lastSeenRevision = value; } },
@@ -1885,254 +1887,6 @@ export function cycleLabelSelection(dir, fromId = selectedLabel()?.id) {
   render();
 }
 
-/** Return the drawable wire candidates under a label-placement click.  A
- * snapped crossing may belong to several physical nets; keep those identities
- * separate so the selected/highlighted-net rule below can resolve it without
- * relying on render order. */
-function netLabelCandidatesAt(world) {
-  const point = { x: snap(world.x), y: snap(world.y) };
-  const candidates = new Map();
-  const onSegment = (a, b) => pointOnPath(point, [a, b]);
-  for (const net of circuit.nets.values()) {
-    for (const path of net.paths()) {
-      for (let i = 1; i < path.length; i++) {
-        const a = path[i - 1];
-        const b = path[i];
-        if ((a.x === b.x && a.y === b.y) || !onSegment(a, b)) continue;
-        candidates.set(net.id, { net, point });
-        break;
-      }
-      if (candidates.has(net.id)) break;
-    }
-  }
-  return [...candidates.values()];
-}
-
-function netLabelTargetAt(world) {
-  const candidates = netLabelCandidatesAt(world);
-  if (candidates.length <= 1) return candidates[0] || null;
-  const highlighted = new Set([...selectedNets, ...diagnosticSelection.nets]);
-  const selected = candidates.filter(({ net }) => highlighted.has(net.id));
-  if (selected.length === 1) return selected[0];
-  return { ambiguous: true, candidates };
-}
-
-function moveLabelSafely(label, x, y) {
-  try {
-    if (label?.isNetLabel?.()) {
-      const net = circuit.nets.get(label.netId);
-      const attachment = net ? circuit._nearestNetPathAttachment(net, { x, y }) : null;
-      if (!attachment) throw new Error('net label has no drawable path');
-      x = attachment.point.x;
-      y = attachment.point.y;
-      label.netSide = attachment.side;
-    }
-    label.moveTo(x, y);
-    label._moveErrorShown = false;
-    return true;
-  } catch (err) {
-    if (!label._moveErrorShown) {
-      logLine(`cannot move label: ${err.message}`, 'error');
-      label._moveErrorShown = true;
-    }
-    return false;
-  }
-}
-
-/** Place a label through the persistent Virtuoso label tools. */
-function placeAnnotationAt(world) {
-  let label;
-  const point = { x: snap(world.x), y: snap(world.y) };
-  commit(() => { label = circuit.addLabel({ text: 'label', x: point.x, y: point.y, align: 'center' }); });
-  setSelection([]);
-  setLabelSelection([label.id]);
-  labelMode = null;
-  logLine(`placed annotation @ (${point.x},${point.y})`);
-  render();
-  inlineEditLabel(label);
-}
-
-/** Place a math-capable ordinary label and open its editor with the caret
- * between the two dollar delimiters. The persisted object remains a normal
- * LabelInstance, with only `math:true` changing its renderer. */
-function placeEquationAt(world) {
-  const point = { x: snap(world.x), y: snap(world.y) };
-  let label;
-  commit(() => { label = circuit.addLabel({ text: '$$', x: point.x, y: point.y, align: 'center', math: true }); });
-  setSelection([]);
-  setLabelSelection([label.id]);
-  labelMode = null;
-  logLine(`placed equation @ (${point.x},${point.y})`);
-  render();
-  inlineEditLabel(label, { equationDraft: true });
-}
-
-/** The next point of a line or arrow draft under `world`. Shift locks the
- * leg from the previous point to horizontal or vertical, as it locks a move. */
-function draftPointAt(world, shiftKey) {
-  const point = snappedWorld(world);
-  const previous = annotationPoints.at(-1) || annotationStart;
-  return shiftKey && previous && (labelMode === 'line' || labelMode === 'arrow') ? constrainAxis(previous, point) : point;
-}
-
-/** A drafted line or arrow's points. Enter commits at the cursor, as it does
- * for wires, so the cursor is the final point unless it repeats the last
- * click (a double-click has already added it). */
-function draftAnnotationPoints(includeCursor) {
-  const points = annotationPoints.map((point) => ({ ...point }));
-  const tail = points.at(-1);
-  if (includeCursor && tail && (tail.x !== cursor.x || tail.y !== cursor.y)) points.push({ ...cursor });
-  return points;
-}
-
-function commitLineAnnotation(includeCursor = true) {
-  const points = draftAnnotationPoints(includeCursor);
-  if (points.length < 2) return false;
-  let annotation;
-  commit(() => { annotation = circuit.addAnnotation('line', { points }); });
-  if (!annotation) return false; // rejected (too short); keep drafting
-  setSelection([]);
-  setLabelSelection([annotation.id]);
-  logLine(`placed line annotation with ${points.length} points`);
-  annotationPoints = [];
-  lastLineClick = null;
-  // Like every annotation tool, a line is placed once, then back to selection.
-  labelMode = null;
-  render();
-  return true;
-}
-
-function commitArrowAnnotation(includeCursor = true) {
-  const points = draftAnnotationPoints(includeCursor);
-  if (points.length < 2) return false;
-  let annotation;
-  commit(() => { annotation = circuit.addAnnotation('arrow', { points, text: 'label' }); });
-  if (!annotation) return false; // rejected (too short); keep drafting
-  setSelection([]);
-  setLabelSelection([annotation.id]);
-  logLine(`placed arrow with ${points.length} points`);
-  annotationPoints = [];
-  annotationStart = null;
-  labelMode = null;
-  render();
-  const annotationLabel = [...circuit.labels.values()].find((label) => label.parent === annotation.id);
-  inlineEditLabel(annotationLabel, { removeOnEmpty: true });
-  return true;
-}
-
-function placeShapeAnnotation(world, endOverride = null) {
-  const point = { x: snap(world.x), y: snap(world.y) };
-  let annotation;
-  let annotationLabel;
-  if (labelMode === 'arrow') {
-    if (!annotationStart) {
-      annotationStart = point;
-      annotationPoints = [point];
-      hintLine('ARROW: click intermediate points; Enter ends at the cursor');
-      render();
-      return false;
-    }
-    if (!annotationPoints.length) annotationPoints = [annotationStart];
-    const next = endOverride || point;
-    const previous = annotationPoints.at(-1);
-    if (!previous || previous.x !== next.x || previous.y !== next.y) annotationPoints.push(next);
-    hintLine(`arrow point ${annotationPoints.length}; Enter ends at the cursor, Backspace removes a point`);
-    render();
-    return false;
-  }
-  if (!annotationStart) {
-    annotationStart = point;
-    hintLine(`${labelMode.toUpperCase()}: choose the end point`);
-    render();
-    return;
-  }
-  const end = endOverride || point;
-  commit(() => {
-    annotation = circuit.addAnnotation(labelMode, {
-      x: annotationStart.x,
-      y: annotationStart.y,
-      end,
-      text: 'label',
-    });
-    annotationLabel = [...circuit.labels.values()].find((label) => label.parent === annotation.id);
-  });
-  setSelection([]);
-  setLabelSelection([annotation.id]);
-  logLine(`placed ${labelMode} from (${annotationStart.x},${annotationStart.y}) to (${end.x},${end.y})`);
-  annotationStart = null;
-  labelMode = null;
-  render();
-  inlineEditLabel(annotationLabel, { removeOnEmpty: true });
-  return true;
-}
-
-/** The net under a highlight click: a pin, a wire, a net label, or a part
- * that stands for a net (ground/supply/VCM marker or interface port). */
-function highlightTargetAt(world) {
-  const terminal = nearestTerminal(world);
-  if (terminal) {
-    const net = circuit.netOfTerminal({ comp: terminal.refdes, term: terminal.term });
-    if (net) return net;
-  }
-  const wireNet = pickWire(world)?.net;
-  if (wireNet) return wireNet;
-  const label = pickLabel(world);
-  if (label?.netId) return circuit.nets.get(label.netId) || null;
-  const hit = pickAt(world);
-  const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
-  if (isReferenceMarker(component)) {
-    const info = referenceMarkerInfo(component.type);
-    return circuit.netOfTerminal({ comp: component.refdes, term: info.terminal });
-  }
-  if (INTERFACE_PIN_TYPES.has(component?.type)) {
-    return circuit.netOfTerminal({ comp: component.refdes, term: component.terminalDefs[0]?.name });
-  }
-  return null;
-}
-
-/** Cycle the clicked net's electrical group to its next free highlight color. */
-function highlightNetAt(world) {
-  const net = highlightTargetAt(world);
-  if (!net) {
-    hintLine('HIGHLIGHT: click a wire, pin, net label, rail marker, or port');
-    return false;
-  }
-  let color = null;
-  // On a beat, the highlight belongs to that beat and the ones after it.
-  const beatIndex = activeBeatIndex();
-  try {
-    commit(() => {
-      color = beatIndex === null ? circuit.cycleNetHighlight(net) : cycleBeatHighlight(circuit, beatIndex, net, NET_HIGHLIGHT_COLORS);
-    });
-    noteTip('net-highlight');
-  } catch (err) {
-    logLine(`HIGHLIGHT: ${err.message}`, 'error');
-    return false;
-  }
-  const name = net.name || net.id;
-  const where = beatIndex === null ? '' : ` from beat ${beatIndex + 1}`;
-  logLine(color ? `net ${name} highlighted ${color}${where}` : `net ${name} highlight removed${where}`);
-  render();
-  return true;
-}
-
-export function removeAllNetHighlights() {
-  let count = 0;
-  const beatIndex = activeBeatIndex();
-  commit(() => {
-    if (beatIndex === null) {
-      count = circuit.clearNetHighlights();
-      return;
-    }
-    for (const key of highlightsAt(circuit, beatIndex).keys()) {
-      setHighlightFrom(circuit, beatIndex, key, null);
-      count += 1;
-    }
-  });
-  logLine(count ? `removed ${count} net highlight${count === 1 ? '' : 's'}` : 'no net highlights to remove');
-  render();
-}
-
 // ----- beats ---------------------------------------------------------------------
 // A beat is a view of the one drawing (core/beats.js). The editor shows one
 // beat at a time: what it hides is faded but still selectable, and drawing
@@ -2141,46 +1895,6 @@ export function removeAllNetHighlights() {
 // belong to that beat and carry on to the following beats that looked the same.
 
 installBeatsUi();
-
-export function placeNetLabelAt(world) {
-  const target = netLabelTargetAt(world);
-  if (!target) {
-    hintLine('NET LABEL: click a physical wire');
-    return false;
-  }
-  if (target.ambiguous) {
-    logLine('NET LABEL: wire crossing is ambiguous — select/highlight one net first');
-    return false;
-  }
-  const point = target.point;
-  const net = target.net;
-  let label;
-  const provisional = !net.name;
-  try {
-    if (provisional) {
-      // Keep the provisional editor state out of undo history.  The original
-      // snapshot is recorded here and becomes the one atomic history entry if
-      // the user eventually supplies a name.
-      const initialSnapshot = snapshot();
-      label = circuit.addLabel({ text: '', netId: net.id, x: point.x, y: point.y });
-      label._provisionalInitialName = net.name || '';
-      label._provisionalInitialSnapshot = initialSnapshot;
-      markModelChanged(false);
-    } else {
-      commit(() => { label = circuit.addNetLabel(net.id, { anchor: point }); });
-    }
-  } catch (err) {
-    logLine(`NET LABEL: ${err.message}`, 'error');
-    return false;
-  }
-  setSelection([]);
-  setLabelSelection([label.id]);
-  selectedNets = new Set([net.id]);
-  logLine(`${provisional ? 'provisional net label' : `placed net label "${net.name}"`} on ${net.id} @ (${point.x},${point.y})`);
-  render();
-  if (provisional) inlineEditLabel(label, { provisional: true, initialSnapshot: label._provisionalInitialSnapshot, initialName: label._provisionalInitialName });
-  return true;
-}
 
 /**
  * Commit the current insert-mode ghost at the cursor. Stays on the same
@@ -5787,7 +5501,7 @@ function constrainedWorld(start, current, shiftKey) {
   return constrainAxis(start, current, shiftKey);
 }
 
-function snappedWorld(point) {
+export function snappedWorld(point) {
   return { x: snap(point.x), y: snap(point.y) };
 }
 
