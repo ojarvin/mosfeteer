@@ -24980,6 +24980,577 @@ __exports.SMALL_SIGNAL_RESISTOR_TYPES = SMALL_SIGNAL_RESISTOR_TYPES;
 __exports.SMALL_SIGNAL_PORT_TYPES = SMALL_SIGNAL_PORT_TYPES;
 };
 
+__modules["src/web/beats-ui.js"] = function (__require, __exports) {
+__exports.activeBeatIndex = activeBeatIndex;
+__exports.activeBeatView = activeBeatView;
+__exports.rememberBeatObjects = rememberBeatObjects;
+__exports.introduceNewBeatObjects = introduceNewBeatObjects;
+__exports.stepBeat = stepBeat;
+__exports.toggleBeatStrip = toggleBeatStrip;
+__exports.addBeatHere = addBeatHere;
+__exports.deleteBeats = deleteBeats;
+__exports.selectedBeatIndices = selectedBeatIndices;
+__exports.toggleSelectionInBeat = toggleSelectionInBeat;
+__exports.flipSelectedSwitches = flipSelectedSwitches;
+__exports.renderBeatStrip = renderBeatStrip;
+__exports.appendBeatContextItems = appendBeatContextItems;
+__exports.openPresenter = openPresenter;
+__exports.onPresenterKey = onPresenterKey;
+__exports.installBeatsUi = installBeatsUi;
+let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
+let addBeat, beatTargetId, beatTitle, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats } = __require("src/core/beats.js")); });
+let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
+let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
+let canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl; __bind(() => { ({ canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } = __require("src/web/elements.js")); });
+let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
+let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
+let closeComponentContextMenu, appendContextItem; __bind(() => { ({ closeComponentContextMenu, appendContextItem } = __require("src/web/context-menu.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let appendMarkupText, commit, render, selectedComps, selectedLabels, setLabelSelection, setSelection; __bind(() => { ({ appendMarkupText, commit, render, selectedComps, selectedLabels, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+/**
+ * Beats in the editor: the beat strip, stepping and editing beats, hiding
+ * or dimming the selection from a beat on, switch flips, and the full-screen
+ * presenter. The beat model is core/beats.js.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+function activeBeatIndex() {
+  if (!editor.activeBeatId) return null;
+  const index = editor.circuit.beats.findIndex((beat) => beat.id === editor.activeBeatId);
+  return index === -1 ? null : index;
+}
+
+function activeBeatView(modelKey) {
+  const index = activeBeatIndex();
+  if (index === null) return null;
+  const key = `${modelKey}|${index}`;
+  if (editor.beatViewCache?.circuit !== editor.circuit || editor.beatViewCache.key !== key) {
+    editor.beatViewCache = { circuit: editor.circuit, key, view: resolveBeat(editor.circuit, index) };
+  }
+  return editor.beatViewCache.view;
+}
+
+function allBeatViews() {
+  const key = `${editor.modelRevision}|${editor.circuit.beats.length}`;
+  if (editor.beatViewsCache?.circuit !== editor.circuit || editor.beatViewsCache.key !== key) {
+    editor.beatViewsCache = { circuit: editor.circuit, key, views: editor.circuit.beats.map((_, index) => resolveBeat(editor.circuit, index)) };
+  }
+  return editor.beatViewsCache.views;
+}
+
+function rememberBeatObjects() {
+  const objects = new WeakSet();
+  const ids = new Set();
+  for (const component of editor.circuit.components.values()) { objects.add(component); ids.add(component.refdes); }
+  for (const label of editor.circuit.labels.values()) { objects.add(label); ids.add(label.id); }
+  editor.beatKnown = { circuit: editor.circuit, objects, ids };
+}
+
+/** Parts and labels drawn while a beat is shown appear from that beat on.
+ * An object is new when both its id and its instance are: a rename keeps
+ * the instance, and a document reload (undo, sync) keeps the ids. */
+function introduceNewBeatObjects() {
+  const index = activeBeatIndex();
+  if (index !== null) {
+    const { circuit: knownCircuit, objects, ids } = editor.beatKnown;
+    const isNew = (object, id) => !ids.has(id) && (knownCircuit !== editor.circuit || !objects.has(object));
+    const fresh = [
+      ...[...editor.circuit.components.values()].filter((c) => isNew(c, c.refdes)).map((c) => c.refdes),
+      ...[...editor.circuit.labels.values()].filter((label) => isNew(label, label.id)).map((label) => label.id),
+    ];
+    if (fresh.length) introduceAt(editor.circuit, index, fresh);
+  }
+  rememberBeatObjects();
+}
+
+function beatStripVisible() {
+  return editor.beatStripOpen;
+}
+
+/** Show one beat (an index), or the whole drawing (null). */
+function setActiveBeat(index, { keepSelection = false } = {}) {
+  const beat = index === null ? null : editor.circuit.beats[index];
+  editor.activeBeatId = beat?.id || null;
+  if (!keepSelection) {
+    editor.selectedBeatIds = new Set(beat ? [beat.id] : []);
+    editor.beatAnchorId = beat?.id || null;
+  }
+  if (beat) editor.beatStripOpen = true;
+  rememberBeatObjects();
+  render();
+}
+
+/** Step through All, beat 1, ..., the last beat, stopping at both ends. */
+function stepBeat(delta) {
+  if (!editor.circuit.beats.length) {
+    hintLine('BEATS: there are no beats yet; + adds one');
+    return;
+  }
+  const index = activeBeatIndex() ?? -1;
+  const next = Math.max(-1, Math.min(index + delta, editor.circuit.beats.length - 1));
+  if (next !== index) setActiveBeat(next < 0 ? null : next);
+}
+
+/** Shift+B: open or close the beat strip. Closing it shows the whole drawing. */
+function toggleBeatStrip() {
+  const open = !beatStripVisible();
+  editor.beatStripOpen = open;
+  if (!open) setActiveBeat(null);
+  else render();
+}
+
+/** Add a beat after the one on screen (or at the end) and show it. It starts
+ * out looking like the beat before it. */
+function addBeatHere() {
+  const current = activeBeatIndex();
+  const index = current === null ? editor.circuit.beats.length : current + 1;
+  commit(() => addBeat(editor.circuit, { index }));
+  logLine(`added beat ${index + 1}${editor.circuit.beats.length === 1 ? ' — hide what comes later with h, or dim it with Shift+H' : ''}`);
+  setActiveBeat(index);
+}
+
+/** Remove beats (indices) as one edit; the others keep their look. */
+function deleteBeats(indices) {
+  const doomed = [...new Set(indices)].filter((i) => editor.circuit.beats[i]).sort((a, b) => b - a);
+  if (!doomed.length) return;
+  const title = doomed.length === 1 ? beatLabel(doomed[0]) : `${doomed.length} beats`;
+  const active = activeBeatIndex();
+  const keep = active !== null && !doomed.includes(active) ? editor.circuit.beats[active].id : null;
+  commit(() => { for (const i of doomed) removeBeat(editor.circuit, i); });
+  logLine(`removed ${title}; the other beats look as before`);
+  editor.beatStripActive = false;
+  const next = keep ? editor.circuit.beats.findIndex((beat) => beat.id === keep) : Math.min(doomed.at(-1), editor.circuit.beats.length - 1);
+  setActiveBeat(editor.circuit.beats.length && next >= 0 ? next : null);
+}
+
+function deleteBeat(index) {
+  deleteBeats(editor.selectedBeatIds.has(editor.circuit.beats[index]?.id) ? selectedBeatIndices() : [index]);
+}
+
+function selectedBeatIndices() {
+  return editor.circuit.beats.flatMap((beat, i) => (editor.selectedBeatIds.has(beat.id) ? [i] : []));
+}
+
+/** A click on a beat chip: plain shows it (and picks it alone); Ctrl/Cmd
+ * toggles it in the picked set and Shift picks the range from the anchor,
+ * leaving the beat on screen as it was. */
+function clickBeatChip(i, ev) {
+  const beat = editor.circuit.beats[i];
+  if (!beat) return;
+  editor.beatStripActive = true;
+  if (ev.shiftKey) {
+    const anchor = editor.circuit.beats.findIndex((b) => b.id === editor.beatAnchorId);
+    const from = anchor === -1 ? (activeBeatIndex() ?? i) : anchor;
+    editor.selectedBeatIds = new Set(editor.circuit.beats.slice(Math.min(from, i), Math.max(from, i) + 1).map((b) => b.id));
+  } else if (ev.ctrlKey || ev.metaKey) {
+    if (editor.selectedBeatIds.has(beat.id)) editor.selectedBeatIds.delete(beat.id);
+    else editor.selectedBeatIds.add(beat.id);
+    editor.beatAnchorId = beat.id;
+  } else {
+    setActiveBeat(i);
+    return;
+  }
+  render();
+}
+
+function moveBeatBy(index, delta) {
+  const to = index + delta;
+  if (to < 0 || to >= editor.circuit.beats.length) return;
+  commit(() => moveBeat(editor.circuit, index, to));
+  render();
+}
+
+/** Beat-listable ids of the selection: parts and labels (an owned label
+ * stands for its part). Wires follow what they join. */
+function beatSelectionIds() {
+  const ids = [...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)]
+    .map((id) => beatTargetId(editor.circuit, id))
+    .filter(Boolean);
+  return [...new Set(ids)];
+}
+
+function beatPresence(view, id) {
+  if (view.hiddenRefs.has(id) || view.hiddenLabels.has(id)) return 'hide';
+  return view.dimRefs.has(id) || view.dimLabels.has(id) ? 'dim' : 'show';
+}
+
+const PRESENCE_DONE = { show: 'shown', dim: 'dimmed', hide: 'hidden' };
+
+/** h hides the selection from this beat on, or shows it when all of it is
+ * hidden; Shift+H dims it, or shows it when all of it is dimmed. */
+function toggleSelectionInBeat(target = 'hide') {
+  const index = activeBeatIndex();
+  if (index === null) {
+    hintLine(editor.circuit.beats.length ? 'BEATS: pick a beat first — Alt+→ steps into them' : 'BEATS: + adds a beat; then h hides or Shift+H dims the selection in it');
+    return;
+  }
+  const ids = beatSelectionIds();
+  if (!ids.length) {
+    hintLine('BEATS: select parts or labels to show, dim, or hide — wires follow the parts they join');
+    return;
+  }
+  const view = resolveBeat(editor.circuit, index);
+  const presence = ids.every((id) => beatPresence(view, id) === target) ? 'show' : target;
+  commit(() => setPresenceFrom(editor.circuit, index, ids, presence));
+  logLine(`${PRESENCE_DONE[presence]} from beat ${index + 1}: ${ids.join(', ')}`);
+  render();
+}
+
+/** The selected switches' groups: each phase once, or a lone switch. */
+function selectedSwitchGroups() {
+  return [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
+}
+
+// Plain text for messages: φ_{1} reads φ1, $\phi_1$ reads ϕ1.
+const plainMarkup = plainTexText;
+const beatLabel = (index) => plainMarkup(beatTitle(editor.circuit, index));
+const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))} switches` : c.refdes);
+
+/** s: open or close the selected switches, with the rest of their phases --
+ * in the drawing, or from the beat on screen on. */
+function flipSelectedSwitches() {
+  const groups = selectedSwitchGroups();
+  if (!groups.length) {
+    hintLine('SWITCH: select a switch to open or close it (with every switch on its phase)');
+    return;
+  }
+  const index = activeBeatIndex();
+  const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(editor.circuit, c.refdes, index));
+  const next = groups.every((c) => stateOf(c) === 'closed') ? 'open' : 'closed';
+  commit(() => {
+    for (const c of groups) {
+      if (index === null) editor.circuit.setSwitchState(c.refdes, next);
+      else setSwitchFrom(editor.circuit, index, c.refdes, next);
+    }
+  });
+  logLine(`${groups.map(switchGroupName).join(', ')} ${next}${index === null ? '' : ` from beat ${index + 1}`}`);
+  render();
+}
+
+function beatHintText(index) {
+  if (!editor.circuit.beats.length) return '+ adds a beat; it starts as a copy of the one before.';
+  if (index === null) return 'Whole drawing. Alt+→ steps into the beats.';
+  return 'Faintest: hidden here. h hides · Shift+H dims · from this beat on · s flips a switch · drawing edits reach every beat.';
+}
+
+/** The strip's dot for one beat: how does the selection look in it? */
+function beatDotState(view, ids) {
+  const looks = new Set(ids.map((id) => beatPresence(view, id)));
+  if (looks.size > 1) return 'mixed';
+  return { show: 'shown', dim: 'dimmed', hide: 'hidden' }[[...looks][0]];
+}
+
+function renderBeatStrip() {
+  if (!beatStripEl || !beatListEl) return;
+  const visible = beatStripVisible();
+  const index = activeBeatIndex();
+  if (editor.activeBeatId && index === null) editor.activeBeatId = null;
+  const ids = visible ? beatSelectionIds() : [];
+  // Stepping between beats only moves the pressed chip: rebuilding the chips
+  // under a click would swallow a double-click on the same chip.
+  for (const id of [...editor.selectedBeatIds]) if (!editor.circuit.beats.some((beat) => beat.id === id)) editor.selectedBeatIds.delete(id);
+  const syncPressed = () => {
+    beatListEl.querySelector('.beat-chip-all')?.setAttribute('aria-pressed', String(index === null));
+    for (const chip of beatListEl.querySelectorAll('[data-beat-index]')) {
+      const i = Number(chip.dataset.beatIndex);
+      chip.setAttribute('aria-pressed', String(i === index));
+      chip.classList.toggle('picked', editor.selectedBeatIds.size > 1 && editor.selectedBeatIds.has(editor.circuit.beats[i]?.id));
+    }
+    if (beatHintEl) {
+      beatHintEl.textContent = editor.selectedBeatIds.size > 1
+        ? `${editor.selectedBeatIds.size} beats picked — Delete removes them (undoable) · Esc lets go`
+        : beatHintText(index);
+    }
+  };
+  const key = `${visible}|${editor.modelRevision}|${editor.circuit.beats.length}|${ids.join(',')}|${editor.circuit.beats.map((beat) => beat.name).join('|')}`;
+  if (key === editor.beatStripKey && beatStripEl.hidden === !visible) {
+    syncPressed();
+    return;
+  }
+  editor.beatStripKey = key;
+  beatStripEl.hidden = !visible;
+  document.getElementById('btn-beats')?.setAttribute('aria-checked', String(visible));
+  if (!visible) return;
+  const views = ids.length ? allBeatViews() : [];
+  const chips = [];
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'beat-chip beat-chip-all';
+  all.textContent = 'All';
+  all.title = 'Show and edit the whole drawing';
+  all.setAttribute('aria-pressed', String(index === null));
+  all.addEventListener('click', () => setActiveBeat(null));
+  chips.push(all);
+  editor.circuit.beats.forEach((beat, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'beat-chip-group';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'beat-chip';
+    button.dataset.beatIndex = String(i);
+    button.setAttribute('aria-pressed', String(i === index));
+    button.title = `${beatLabel(i)} — click to show, Ctrl/Shift-click to pick several, double-click to rename, right-click for more`;
+    const number = document.createElement('span');
+    number.className = 'beat-chip-number';
+    number.textContent = String(i + 1);
+    button.appendChild(number);
+    if (beat.name) {
+      const name = document.createElement('span');
+      name.className = 'beat-chip-name';
+      appendMarkupText(name, texToLabelMarkup(beat.name));
+      button.appendChild(name);
+    }
+    // The canvas keeps the keyboard, so h, s, and friends still work.
+    button.addEventListener('mousedown', (ev) => ev.preventDefault());
+    button.addEventListener('click', (ev) => clickBeatChip(i, ev));
+    button.addEventListener('dblclick', () => startBeatRename(i, button));
+    button.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      openBeatMenu(i, ev.clientX, ev.clientY);
+    });
+    chip.appendChild(button);
+    if (ids.length) {
+      const state = beatDotState(views[i], ids);
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'beat-dot';
+      dot.dataset.state = state;
+      const what = ids.length === 1 ? ids[0] : 'the selection';
+      const show = state === 'hidden';
+      dot.title = `${{ shown: 'Shown', dimmed: 'Dimmed', hidden: 'Hidden', mixed: 'Mixed' }[state]} in beat ${i + 1} — click to ${show ? 'show' : 'hide'} ${what} in this beat only`;
+      dot.setAttribute('aria-label', dot.title);
+      dot.addEventListener('click', () => {
+        commit(() => setPresenceAt(editor.circuit, i, ids, show ? 'show' : 'hide'));
+        logLine(`${show ? 'shown' : 'hidden'} in beat ${i + 1} only: ${ids.join(', ')}`);
+        render();
+      });
+      chip.appendChild(dot);
+    }
+    chips.push(chip);
+  });
+  beatListEl.replaceChildren(...chips);
+  syncPressed();
+}
+
+function startBeatRename(index, button) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'beat-rename';
+  input.value = editor.circuit.beats[index]?.name || '';
+  input.placeholder = `Beat ${index + 1}`;
+  input.setAttribute('aria-label', `Name of beat ${index + 1}`);
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (save && editor.circuit.beats[index] && input.value.trim() !== editor.circuit.beats[index].name) {
+      commit(() => renameBeat(editor.circuit, index, input.value));
+    }
+    editor.beatStripKey = '';
+    render();
+    canvasEl.focus({ preventScroll: true });
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') finish(true);
+    else if (ev.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  button.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function openBeatMenu(index, x, y) {
+  if (!componentContextMenuEl) return;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  const heading = document.createElement('div');
+  heading.className = 'context-menu-heading';
+  heading.textContent = beatLabel(index);
+  menu.appendChild(heading);
+  const group = document.createElement('div');
+  group.className = 'context-menu-group';
+  const chip = () => beatListEl.querySelector(`[data-beat-index="${index}"]`);
+  appendContextItem(group, 'Rename…', () => setTimeout(() => { if (chip()) startBeatRename(index, chip()); }, 0), { shortcut: 'dbl-click' });
+  appendContextItem(group, 'Add beat after', () => { setActiveBeat(index); addBeatHere(); }, { shortcut: '+' });
+  appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
+  appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === editor.circuit.beats.length - 1 });
+  appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
+  const picked = editor.selectedBeatIds.has(editor.circuit.beats[index]?.id) ? editor.selectedBeatIds.size : 1;
+  appendContextItem(group, picked > 1 ? `Delete ${picked} beats` : 'Delete beat', () => deleteBeat(index), { danger: true, shortcut: 'Del' });
+  menu.appendChild(group);
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
+/** One beat per switch phase, after the beat on screen: what still works in
+ * the phase shown, the rest dimmed (core/beats.js phaseBeats). */
+function addPhaseBeats() {
+  const current = activeBeatIndex();
+  const index = current === null ? editor.circuit.beats.length : current + 1;
+  let count = 0;
+  commit(() => { count = phaseBeats(editor.circuit, { index }); });
+  if (!count) return;
+  logLine(`added ${count} phase beats: each dims its open switches and whatever they cut off`);
+  setActiveBeat(index);
+}
+
+/** A timing diagram template under the drawing: each phase's name and a
+ * waveform line to edit into its timing (core/timing-diagram.js). */
+function addTimingDiagramTemplate() {
+  let rows = [];
+  commit(() => { rows = addTimingDiagram(editor.circuit); });
+  if (!rows.length) return;
+  setSelection([]);
+  setLabelSelection(rows.flatMap((row) => [row.label, row.line]));
+  logLine(`added a timing diagram for ${rows.length} phase${rows.length === 1 ? '' : 's'}: drag its vertices into each phase's timing, or click one in Delete to remove it`);
+  fitView({ animate: true });
+  render();
+}
+
+/** Context-menu items for beats: show/hide, switch position. */
+function appendBeatContextItems(group, target) {
+  if (target.kind === 'component' && switchState(target.value)) {
+    const index = activeBeatIndex();
+    const state = index === null ? switchState(target.value) : switchStateAt(editor.circuit, target.value.refdes, index);
+    const where = index === null ? '' : ' from this beat';
+    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} ${switchPhase(target.value) ? switchGroupName(target.value) : 'switch'}${where}`, flipSelectedSwitches, { shortcut: 's' });
+  }
+  const index = activeBeatIndex();
+  if (index === null || (target.kind !== 'component' && target.kind !== 'label')) return;
+  const ids = beatSelectionIds();
+  if (!ids.length) return;
+  const view = resolveBeat(editor.circuit, index);
+  const all = (presence) => ids.every((id) => beatPresence(view, id) === presence);
+  appendContextItem(group, all('hide') ? 'Show from this beat' : 'Hide from this beat', () => toggleSelectionInBeat('hide'), { shortcut: 'h' });
+  appendContextItem(group, all('dim') ? 'Undim from this beat' : 'Dim from this beat', () => toggleSelectionInBeat('dim'), { shortcut: 'Shift+H' });
+}
+
+// ----- presenting --------------------------------------------------------------
+
+function openPresenter(start = activeBeatIndex() ?? 0) {
+  if (!presenterEl) return;
+  if (!editor.circuit.beats.length) {
+    logLine('Nothing to present: add a beat first (+).', 'status');
+    return;
+  }
+  closeComponentContextMenu();
+  editor.presenter = { index: Math.max(0, Math.min(start, editor.circuit.beats.length - 1)), blank: false, fullscreen: false };
+  presenterEl.hidden = false;
+  presenterEl.focus({ preventScroll: true });
+  const request = presenterEl.requestFullscreen?.();
+  request?.then(() => { if (editor.presenter) editor.presenter.fullscreen = true; }).catch(() => {});
+  showPresenterFrame(false);
+}
+
+function closePresenter() {
+  if (!editor.presenter) return;
+  const { index } = editor.presenter;
+  editor.presenter = null;
+  presenterEl.hidden = true;
+  presenterStageEl.replaceChildren();
+  if (document.fullscreenElement === presenterEl) document.exitFullscreen?.().catch(() => {});
+  // Come back to the beat the talk stopped at.
+  setActiveBeat(index < editor.circuit.beats.length ? index : null);
+  canvasEl.focus({ preventScroll: true });
+}
+
+function showPresenterFrame(animate = true) {
+  if (!editor.presenter) return;
+  const frame = document.createElement('div');
+  frame.className = 'presenter-frame';
+  if (!editor.presenter.blank) {
+    // Theme ink, like the canvas: the presentation follows light or dark mode.
+    frame.innerHTML = svgString(editor.circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(editor.circuit, editor.presenter.index) } });
+    const svg = frame.querySelector('svg');
+    svg?.removeAttribute('width');
+    svg?.removeAttribute('height');
+    svg?.setAttribute('role', 'img');
+    svg?.setAttribute('aria-label', beatLabel(editor.presenter.index));
+  }
+  // The new frame fades in over the old one, which then goes; every beat
+  // shares the drawing's frame, so only what changed appears to move.
+  const previous = [...presenterStageEl.children];
+  const still = !animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still) previous.forEach((el) => el.remove());
+  else {
+    frame.classList.add('entering');
+    frame.addEventListener('animationend', () => previous.forEach((el) => el.remove()), { once: true });
+  }
+  presenterStageEl.appendChild(frame);
+  const beat = editor.circuit.beats[editor.presenter.index];
+  if (presenterCountEl) {
+    presenterCountEl.replaceChildren(editor.presenter.blank ? '' : `${editor.presenter.index + 1} / ${editor.circuit.beats.length}${beat?.name ? ' · ' : ''}`);
+    if (!editor.presenter.blank && beat?.name) appendMarkupText(presenterCountEl, texToLabelMarkup(beat.name));
+  }
+}
+
+function presenterStep(delta) {
+  if (!editor.presenter) return;
+  const next = Math.max(0, Math.min(editor.presenter.index + delta, editor.circuit.beats.length - 1));
+  if (next === editor.presenter.index && !editor.presenter.blank) return;
+  editor.presenter.index = next;
+  editor.presenter.blank = false;
+  showPresenterFrame();
+}
+
+function onPresenterKey(ev) {
+  const key = ev.key;
+  const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n'];
+  const back = ['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p'];
+  if (forward.includes(key)) presenterStep(1);
+  else if (back.includes(key)) presenterStep(-1);
+  else if (key === 'Home') presenterStep(-editor.circuit.beats.length);
+  else if (key === 'End') presenterStep(editor.circuit.beats.length);
+  else if (key === '.' || key === 'b') {
+    editor.presenter.blank = !editor.presenter.blank;
+    showPresenterFrame(false);
+  } else if (key === 'Escape') closePresenter();
+  else return;
+  ev.preventDefault();
+}
+
+function installBeatsUi() {
+  presenterEl?.addEventListener('click', () => presenterStep(1));
+  presenterEl?.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    presenterStep(-1);
+  });
+  // Leaving full screen (the browser owns Escape there) ends the presentation.
+  document.addEventListener('fullscreenchange', () => {
+    if (editor.presenter?.fullscreen && document.fullscreenElement !== presenterEl) closePresenter();
+  });
+  document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
+  document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
+  document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
+  document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
+  document.getElementById('btn-timing-diagram')?.addEventListener('click', addTimingDiagramTemplate);
+  document.getElementById('beat-strip-close')?.addEventListener('click', () => {
+    editor.beatStripOpen = false;
+    setActiveBeat(null);
+  });
+  document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
+}
+
+__exports.plainMarkup = plainMarkup;
+__exports.beatLabel = beatLabel;
+};
+
 __modules["src/web/canvas-view.js"] = function (__require, __exports) {
 __exports.paneSize = paneSize;
 __exports.viewFromCenter = viewFromCenter;
@@ -25546,12 +26117,14 @@ let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas
 let SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis; __bind(() => { ({ SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } = __require("src/web/analysis-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let inlineEditLabel; __bind(() => { ({ inlineEditLabel } = __require("src/web/label-editor.js")); });
-let activateCopy, activateMove, annotationGeometryAt, appendBeatContextItems, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, plainMarkup, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, appendBeatContextItems, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, plainMarkup, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } = __require("src/web/main.js")); });
+let appendBeatContextItems, plainMarkup; __bind(() => { ({ appendBeatContextItems, plainMarkup } = __require("src/web/beats-ui.js")); });
+let activateCopy, activateMove, annotationGeometryAt, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } = __require("src/web/main.js")); });
 /**
  * The right-click context menu on parts, wires, labels, and nets: its
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -28857,6 +29430,7 @@ __exports.updateAlignControls = updateAlignControls;
 __exports.applyLayoutPlan = applyLayoutPlan;
 __exports.restackSelected = restackSelected;
 __exports.deleteSelection = deleteSelection;
+__exports.stubSelection = stubSelection;
 __exports.cycleLabelSelection = cycleLabelSelection;
 __exports.renameLabelThroughModel = renameLabelThroughModel;
 __exports.interfacePortNet = interfacePortNet;
@@ -28865,8 +29439,6 @@ __exports.portNameConflict = portNameConflict;
 __exports.reportPortNameConflict = reportPortNameConflict;
 __exports.confirmNamedConnection = confirmNamedConnection;
 __exports.restoreProvisionalLabel = restoreProvisionalLabel;
-__exports.stubSelection = stubSelection;
-__exports.appendBeatContextItems = appendBeatContextItems;
 __exports.symmetryAxisText = symmetryAxisText;
 __exports.symmetryTwin = symmetryTwin;
 __exports.render = render;
@@ -28899,12 +29471,11 @@ let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, compone
 let getSymbol, seriesTerminalNames, symbolTypeNames; __bind(() => { ({ getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js")); });
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
-let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
-let addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats; __bind(() => { ({ addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats } = __require("src/core/beats.js")); });
+let cycleBeatHighlight, highlightsAt, resolveBeat, setHighlightFrom, switchPhase; __bind(() => { ({ cycleBeatHighlight, highlightsAt, resolveBeat, setHighlightFrom, switchPhase } = __require("src/core/beats.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale; __bind(() => { ({ DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } = __require("src/core/png-export.js")); });
-let componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
+let componentShapeSvg, editorOverlay, svgString; __bind(() => { ({ componentShapeSvg, editorOverlay, svgString } = __require("src/core/render.js")); });
 let resolveColor, themeInkSvg; __bind(() => { ({ resolveColor, themeInkSvg } = __require("src/core/style.js")); });
 let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
 let createDocument, loadDocument, renderDocument; __bind(() => { ({ createDocument, loadDocument, renderDocument } = __require("src/core/document.js")); });
@@ -28933,7 +29504,7 @@ let arrivalDirection, isPinDragCandidate, knifeCrossings, pinHandleRadius, quick
 let LOG_DRAWER_CLOSED; __bind(() => { ({ LOG_DRAWER_CLOSED } = __require("src/web/status-bar.js")); });
 let alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
+let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
 let ICON_PATHS, syncToolCursor, installIcons; __bind(() => { ({ ICON_PATHS, syncToolCursor, installIcons } = __require("src/web/icons.js")); });
 let noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
 let ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel; __bind(() => { ({ ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } = __require("src/web/align-tool.js")); });
@@ -28946,6 +29517,7 @@ let clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope, sy
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
 let closeComponentContextMenu, appendContextItem, openComponentContextMenu, selectContextTarget, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, appendContextItem, openComponentContextMenu, selectContextTarget, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, openComponentChildLabelEditor, openReferenceMarkerEditor, inlineEditLabel; __bind(() => { ({ bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, openComponentChildLabelEditor, openReferenceMarkerEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
+let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, plainMarkup, beatLabel, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, plainMarkup, beatLabel, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -29012,10 +29584,18 @@ let bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, o
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
+  activeBeatId: { get: () => activeBeatId, set: (value) => { activeBeatId = value; } },
   activePlacementGuides: { get: () => activePlacementGuides, set: (value) => { activePlacementGuides = value; } },
   activeSymmetryCells: { get: () => activeSymmetryCells, set: (value) => { activeSymmetryCells = value; } },
   alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
   analysisPick: { get: () => analysisPick, set: (value) => { analysisPick = value; } },
+  beatAnchorId: { get: () => beatAnchorId, set: (value) => { beatAnchorId = value; } },
+  beatKnown: { get: () => beatKnown, set: (value) => { beatKnown = value; } },
+  beatStripActive: { get: () => beatStripActive, set: (value) => { beatStripActive = value; } },
+  beatStripKey: { get: () => beatStripKey, set: (value) => { beatStripKey = value; } },
+  beatStripOpen: { get: () => beatStripOpen, set: (value) => { beatStripOpen = value; } },
+  beatViewCache: { get: () => beatViewCache, set: (value) => { beatViewCache = value; } },
+  beatViewsCache: { get: () => beatViewsCache, set: (value) => { beatViewsCache = value; } },
   canvasSvgEl: { get: () => canvasSvgEl, set: (value) => { canvasSvgEl = value; } },
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
   clipboardNotice: { get: () => clipboardNotice, set: (value) => { clipboardNotice = value; } },
@@ -29044,12 +29624,14 @@ Object.defineProperties(editor, {
   netWarnings: { get: () => netWarnings, set: (value) => { netWarnings = value; } },
   pageGuide: { get: () => pageGuide, set: (value) => { pageGuide = value; } },
   pendingPlace: { get: () => pendingPlace, set: (value) => { pendingPlace = value; } },
+  presenter: { get: () => presenter, set: (value) => { presenter = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
   previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
   radialMenuEl: { get: () => radialMenuEl, set: (value) => { radialMenuEl = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
   selLabels: { get: () => selLabels, set: (value) => { selLabels = value; } },
   selected: { get: () => selected, set: (value) => { selected = value; } },
+  selectedBeatIds: { get: () => selectedBeatIds, set: (value) => { selectedBeatIds = value; } },
   selectedNets: { get: () => selectedNets, set: (value) => { selectedNets = value; } },
   selectedWire: { get: () => selectedWire, set: (value) => { selectedWire = value; } },
   selectedWires: { get: () => selectedWires, set: (value) => { selectedWires = value; } },
@@ -31985,6 +32567,21 @@ function deleteSelection() {
   return true;
 }
 
+/** A tap of Space: a labelled wire stub on every unconnected terminal of the
+ * selected parts, skipping any that would short (core/stubs.js). */
+function stubSelection() {
+  if (mode !== 'normal' || drag || hasWireDraft() || labelMode || moveMode || copyMode || deleteMode || visual) return;
+  const refs = selectedComps().map((c) => c.refdes);
+  if (!refs.length) {
+    hintLine('Space: select parts to add wire stubs to their unconnected terminals');
+    return;
+  }
+  const out = commit(() => addTerminalStubs(circuit, refs));
+  if (!out) return;
+  const added = out.stubs.length ? `added ${out.stubs.length} wire stub${out.stubs.length === 1 ? '' : 's'}` : 'no unconnected terminals to stub';
+  logLine(`${added}${out.skipped.length ? `; skipped ${out.skipped.join(', ')} (would short)` : ''}`);
+  render();
+}
 function moveCursor(cellsX, cellsY) {
   const next = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
   cursor = wire && terminalSnap ? terminalSnapWorld(next) : next;
@@ -32361,542 +32958,7 @@ function removeAllNetHighlights() {
 // -- h (show/hide), Shift+H (dim), s (switch position), the highlight tool --
 // belong to that beat and carry on to the following beats that looked the same.
 
-function activeBeatIndex() {
-  if (!activeBeatId) return null;
-  const index = circuit.beats.findIndex((beat) => beat.id === activeBeatId);
-  return index === -1 ? null : index;
-}
-
-function activeBeatView(modelKey) {
-  const index = activeBeatIndex();
-  if (index === null) return null;
-  const key = `${modelKey}|${index}`;
-  if (beatViewCache?.circuit !== circuit || beatViewCache.key !== key) {
-    beatViewCache = { circuit, key, view: resolveBeat(circuit, index) };
-  }
-  return beatViewCache.view;
-}
-
-function allBeatViews() {
-  const key = `${modelRevision}|${circuit.beats.length}`;
-  if (beatViewsCache?.circuit !== circuit || beatViewsCache.key !== key) {
-    beatViewsCache = { circuit, key, views: circuit.beats.map((_, index) => resolveBeat(circuit, index)) };
-  }
-  return beatViewsCache.views;
-}
-
-function rememberBeatObjects() {
-  const objects = new WeakSet();
-  const ids = new Set();
-  for (const component of circuit.components.values()) { objects.add(component); ids.add(component.refdes); }
-  for (const label of circuit.labels.values()) { objects.add(label); ids.add(label.id); }
-  beatKnown = { circuit, objects, ids };
-}
-
-/** Parts and labels drawn while a beat is shown appear from that beat on.
- * An object is new when both its id and its instance are: a rename keeps
- * the instance, and a document reload (undo, sync) keeps the ids. */
-function introduceNewBeatObjects() {
-  const index = activeBeatIndex();
-  if (index !== null) {
-    const { circuit: knownCircuit, objects, ids } = beatKnown;
-    const isNew = (object, id) => !ids.has(id) && (knownCircuit !== circuit || !objects.has(object));
-    const fresh = [
-      ...[...circuit.components.values()].filter((c) => isNew(c, c.refdes)).map((c) => c.refdes),
-      ...[...circuit.labels.values()].filter((label) => isNew(label, label.id)).map((label) => label.id),
-    ];
-    if (fresh.length) introduceAt(circuit, index, fresh);
-  }
-  rememberBeatObjects();
-}
-
-function beatStripVisible() {
-  return beatStripOpen;
-}
-
-/** Show one beat (an index), or the whole drawing (null). */
-function setActiveBeat(index, { keepSelection = false } = {}) {
-  const beat = index === null ? null : circuit.beats[index];
-  activeBeatId = beat?.id || null;
-  if (!keepSelection) {
-    selectedBeatIds = new Set(beat ? [beat.id] : []);
-    beatAnchorId = beat?.id || null;
-  }
-  if (beat) beatStripOpen = true;
-  rememberBeatObjects();
-  render();
-}
-
-/** Step through All, beat 1, ..., the last beat, stopping at both ends. */
-function stepBeat(delta) {
-  if (!circuit.beats.length) {
-    hintLine('BEATS: there are no beats yet; + adds one');
-    return;
-  }
-  const index = activeBeatIndex() ?? -1;
-  const next = Math.max(-1, Math.min(index + delta, circuit.beats.length - 1));
-  if (next !== index) setActiveBeat(next < 0 ? null : next);
-}
-
-/** Shift+B: open or close the beat strip. Closing it shows the whole drawing. */
-function toggleBeatStrip() {
-  const open = !beatStripVisible();
-  beatStripOpen = open;
-  if (!open) setActiveBeat(null);
-  else render();
-}
-
-/** Add a beat after the one on screen (or at the end) and show it. It starts
- * out looking like the beat before it. */
-function addBeatHere() {
-  const current = activeBeatIndex();
-  const index = current === null ? circuit.beats.length : current + 1;
-  commit(() => addBeat(circuit, { index }));
-  logLine(`added beat ${index + 1}${circuit.beats.length === 1 ? ' — hide what comes later with h, or dim it with Shift+H' : ''}`);
-  setActiveBeat(index);
-}
-
-/** Remove beats (indices) as one edit; the others keep their look. */
-function deleteBeats(indices) {
-  const doomed = [...new Set(indices)].filter((i) => circuit.beats[i]).sort((a, b) => b - a);
-  if (!doomed.length) return;
-  const title = doomed.length === 1 ? beatLabel(doomed[0]) : `${doomed.length} beats`;
-  const active = activeBeatIndex();
-  const keep = active !== null && !doomed.includes(active) ? circuit.beats[active].id : null;
-  commit(() => { for (const i of doomed) removeBeat(circuit, i); });
-  logLine(`removed ${title}; the other beats look as before`);
-  beatStripActive = false;
-  const next = keep ? circuit.beats.findIndex((beat) => beat.id === keep) : Math.min(doomed.at(-1), circuit.beats.length - 1);
-  setActiveBeat(circuit.beats.length && next >= 0 ? next : null);
-}
-
-function deleteBeat(index) {
-  deleteBeats(selectedBeatIds.has(circuit.beats[index]?.id) ? selectedBeatIndices() : [index]);
-}
-
-function selectedBeatIndices() {
-  return circuit.beats.flatMap((beat, i) => (selectedBeatIds.has(beat.id) ? [i] : []));
-}
-
-/** A click on a beat chip: plain shows it (and picks it alone); Ctrl/Cmd
- * toggles it in the picked set and Shift picks the range from the anchor,
- * leaving the beat on screen as it was. */
-function clickBeatChip(i, ev) {
-  const beat = circuit.beats[i];
-  if (!beat) return;
-  beatStripActive = true;
-  if (ev.shiftKey) {
-    const anchor = circuit.beats.findIndex((b) => b.id === beatAnchorId);
-    const from = anchor === -1 ? (activeBeatIndex() ?? i) : anchor;
-    selectedBeatIds = new Set(circuit.beats.slice(Math.min(from, i), Math.max(from, i) + 1).map((b) => b.id));
-  } else if (ev.ctrlKey || ev.metaKey) {
-    if (selectedBeatIds.has(beat.id)) selectedBeatIds.delete(beat.id);
-    else selectedBeatIds.add(beat.id);
-    beatAnchorId = beat.id;
-  } else {
-    setActiveBeat(i);
-    return;
-  }
-  render();
-}
-
-function moveBeatBy(index, delta) {
-  const to = index + delta;
-  if (to < 0 || to >= circuit.beats.length) return;
-  commit(() => moveBeat(circuit, index, to));
-  render();
-}
-
-/** Beat-listable ids of the selection: parts and labels (an owned label
- * stands for its part). Wires follow what they join. */
-function beatSelectionIds() {
-  const ids = [...selectedComps().map((c) => c.refdes), ...selectedLabels().map((label) => label.id)]
-    .map((id) => beatTargetId(circuit, id))
-    .filter(Boolean);
-  return [...new Set(ids)];
-}
-
-function beatPresence(view, id) {
-  if (view.hiddenRefs.has(id) || view.hiddenLabels.has(id)) return 'hide';
-  return view.dimRefs.has(id) || view.dimLabels.has(id) ? 'dim' : 'show';
-}
-
-const PRESENCE_DONE = { show: 'shown', dim: 'dimmed', hide: 'hidden' };
-
-/** h hides the selection from this beat on, or shows it when all of it is
- * hidden; Shift+H dims it, or shows it when all of it is dimmed. */
-function toggleSelectionInBeat(target = 'hide') {
-  const index = activeBeatIndex();
-  if (index === null) {
-    hintLine(circuit.beats.length ? 'BEATS: pick a beat first — Alt+→ steps into them' : 'BEATS: + adds a beat; then h hides or Shift+H dims the selection in it');
-    return;
-  }
-  const ids = beatSelectionIds();
-  if (!ids.length) {
-    hintLine('BEATS: select parts or labels to show, dim, or hide — wires follow the parts they join');
-    return;
-  }
-  const view = resolveBeat(circuit, index);
-  const presence = ids.every((id) => beatPresence(view, id) === target) ? 'show' : target;
-  commit(() => setPresenceFrom(circuit, index, ids, presence));
-  logLine(`${PRESENCE_DONE[presence]} from beat ${index + 1}: ${ids.join(', ')}`);
-  render();
-}
-
-/** The selected switches' groups: each phase once, or a lone switch. */
-function selectedSwitchGroups() {
-  return [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
-}
-
-// Plain text for messages: φ_{1} reads φ1, $\phi_1$ reads ϕ1.
-const plainMarkup = plainTexText;
-const beatLabel = (index) => plainMarkup(beatTitle(circuit, index));
-const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))} switches` : c.refdes);
-
-/** s: open or close the selected switches, with the rest of their phases --
- * in the drawing, or from the beat on screen on. */
-function flipSelectedSwitches() {
-  const groups = selectedSwitchGroups();
-  if (!groups.length) {
-    hintLine('SWITCH: select a switch to open or close it (with every switch on its phase)');
-    return;
-  }
-  const index = activeBeatIndex();
-  const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(circuit, c.refdes, index));
-  const next = groups.every((c) => stateOf(c) === 'closed') ? 'open' : 'closed';
-  commit(() => {
-    for (const c of groups) {
-      if (index === null) circuit.setSwitchState(c.refdes, next);
-      else setSwitchFrom(circuit, index, c.refdes, next);
-    }
-  });
-  logLine(`${groups.map(switchGroupName).join(', ')} ${next}${index === null ? '' : ` from beat ${index + 1}`}`);
-  render();
-}
-
-function beatHintText(index) {
-  if (!circuit.beats.length) return '+ adds a beat; it starts as a copy of the one before.';
-  if (index === null) return 'Whole drawing. Alt+→ steps into the beats.';
-  return 'Faintest: hidden here. h hides · Shift+H dims · from this beat on · s flips a switch · drawing edits reach every beat.';
-}
-
-/** The strip's dot for one beat: how does the selection look in it? */
-function beatDotState(view, ids) {
-  const looks = new Set(ids.map((id) => beatPresence(view, id)));
-  if (looks.size > 1) return 'mixed';
-  return { show: 'shown', dim: 'dimmed', hide: 'hidden' }[[...looks][0]];
-}
-
-function renderBeatStrip() {
-  if (!beatStripEl || !beatListEl) return;
-  const visible = beatStripVisible();
-  const index = activeBeatIndex();
-  if (activeBeatId && index === null) activeBeatId = null;
-  const ids = visible ? beatSelectionIds() : [];
-  // Stepping between beats only moves the pressed chip: rebuilding the chips
-  // under a click would swallow a double-click on the same chip.
-  for (const id of [...selectedBeatIds]) if (!circuit.beats.some((beat) => beat.id === id)) selectedBeatIds.delete(id);
-  const syncPressed = () => {
-    beatListEl.querySelector('.beat-chip-all')?.setAttribute('aria-pressed', String(index === null));
-    for (const chip of beatListEl.querySelectorAll('[data-beat-index]')) {
-      const i = Number(chip.dataset.beatIndex);
-      chip.setAttribute('aria-pressed', String(i === index));
-      chip.classList.toggle('picked', selectedBeatIds.size > 1 && selectedBeatIds.has(circuit.beats[i]?.id));
-    }
-    if (beatHintEl) {
-      beatHintEl.textContent = selectedBeatIds.size > 1
-        ? `${selectedBeatIds.size} beats picked — Delete removes them (undoable) · Esc lets go`
-        : beatHintText(index);
-    }
-  };
-  const key = `${visible}|${modelRevision}|${circuit.beats.length}|${ids.join(',')}|${circuit.beats.map((beat) => beat.name).join('|')}`;
-  if (key === beatStripKey && beatStripEl.hidden === !visible) {
-    syncPressed();
-    return;
-  }
-  beatStripKey = key;
-  beatStripEl.hidden = !visible;
-  document.getElementById('btn-beats')?.setAttribute('aria-checked', String(visible));
-  if (!visible) return;
-  const views = ids.length ? allBeatViews() : [];
-  const chips = [];
-  const all = document.createElement('button');
-  all.type = 'button';
-  all.className = 'beat-chip beat-chip-all';
-  all.textContent = 'All';
-  all.title = 'Show and edit the whole drawing';
-  all.setAttribute('aria-pressed', String(index === null));
-  all.addEventListener('click', () => setActiveBeat(null));
-  chips.push(all);
-  circuit.beats.forEach((beat, i) => {
-    const chip = document.createElement('span');
-    chip.className = 'beat-chip-group';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'beat-chip';
-    button.dataset.beatIndex = String(i);
-    button.setAttribute('aria-pressed', String(i === index));
-    button.title = `${beatLabel(i)} — click to show, Ctrl/Shift-click to pick several, double-click to rename, right-click for more`;
-    const number = document.createElement('span');
-    number.className = 'beat-chip-number';
-    number.textContent = String(i + 1);
-    button.appendChild(number);
-    if (beat.name) {
-      const name = document.createElement('span');
-      name.className = 'beat-chip-name';
-      appendMarkupText(name, texToLabelMarkup(beat.name));
-      button.appendChild(name);
-    }
-    // The canvas keeps the keyboard, so h, s, and friends still work.
-    button.addEventListener('mousedown', (ev) => ev.preventDefault());
-    button.addEventListener('click', (ev) => clickBeatChip(i, ev));
-    button.addEventListener('dblclick', () => startBeatRename(i, button));
-    button.addEventListener('contextmenu', (ev) => {
-      ev.preventDefault();
-      openBeatMenu(i, ev.clientX, ev.clientY);
-    });
-    chip.appendChild(button);
-    if (ids.length) {
-      const state = beatDotState(views[i], ids);
-      const dot = document.createElement('button');
-      dot.type = 'button';
-      dot.className = 'beat-dot';
-      dot.dataset.state = state;
-      const what = ids.length === 1 ? ids[0] : 'the selection';
-      const show = state === 'hidden';
-      dot.title = `${{ shown: 'Shown', dimmed: 'Dimmed', hidden: 'Hidden', mixed: 'Mixed' }[state]} in beat ${i + 1} — click to ${show ? 'show' : 'hide'} ${what} in this beat only`;
-      dot.setAttribute('aria-label', dot.title);
-      dot.addEventListener('click', () => {
-        commit(() => setPresenceAt(circuit, i, ids, show ? 'show' : 'hide'));
-        logLine(`${show ? 'shown' : 'hidden'} in beat ${i + 1} only: ${ids.join(', ')}`);
-        render();
-      });
-      chip.appendChild(dot);
-    }
-    chips.push(chip);
-  });
-  beatListEl.replaceChildren(...chips);
-  syncPressed();
-}
-
-function startBeatRename(index, button) {
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'beat-rename';
-  input.value = circuit.beats[index]?.name || '';
-  input.placeholder = `Beat ${index + 1}`;
-  input.setAttribute('aria-label', `Name of beat ${index + 1}`);
-  let done = false;
-  const finish = (save) => {
-    if (done) return;
-    done = true;
-    if (save && circuit.beats[index] && input.value.trim() !== circuit.beats[index].name) {
-      commit(() => renameBeat(circuit, index, input.value));
-    }
-    beatStripKey = '';
-    render();
-    canvasEl.focus({ preventScroll: true });
-  };
-  input.addEventListener('keydown', (ev) => {
-    ev.stopPropagation();
-    if (ev.key === 'Enter') finish(true);
-    else if (ev.key === 'Escape') finish(false);
-  });
-  input.addEventListener('blur', () => finish(true));
-  button.replaceWith(input);
-  input.focus();
-  input.select();
-}
-
-function openBeatMenu(index, x, y) {
-  if (!componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = beatLabel(index);
-  menu.appendChild(heading);
-  const group = document.createElement('div');
-  group.className = 'context-menu-group';
-  const chip = () => beatListEl.querySelector(`[data-beat-index="${index}"]`);
-  appendContextItem(group, 'Rename…', () => setTimeout(() => { if (chip()) startBeatRename(index, chip()); }, 0), { shortcut: 'dbl-click' });
-  appendContextItem(group, 'Add beat after', () => { setActiveBeat(index); addBeatHere(); }, { shortcut: '+' });
-  appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
-  appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === circuit.beats.length - 1 });
-  appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
-  const picked = selectedBeatIds.has(circuit.beats[index]?.id) ? selectedBeatIds.size : 1;
-  appendContextItem(group, picked > 1 ? `Delete ${picked} beats` : 'Delete beat', () => deleteBeat(index), { danger: true, shortcut: 'Del' });
-  menu.appendChild(group);
-  const rect = menu.getBoundingClientRect();
-  if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
-  menu.querySelector('button:not(:disabled)')?.focus();
-}
-
-/** One beat per switch phase, after the beat on screen: what still works in
- * the phase shown, the rest dimmed (core/beats.js phaseBeats). */
-function addPhaseBeats() {
-  const current = activeBeatIndex();
-  const index = current === null ? circuit.beats.length : current + 1;
-  let count = 0;
-  commit(() => { count = phaseBeats(circuit, { index }); });
-  if (!count) return;
-  logLine(`added ${count} phase beats: each dims its open switches and whatever they cut off`);
-  setActiveBeat(index);
-}
-
-/** A tap of Space: a labelled wire stub on every unconnected terminal of the
- * selected parts, skipping any that would short (core/stubs.js). */
-function stubSelection() {
-  if (mode !== 'normal' || drag || hasWireDraft() || labelMode || moveMode || copyMode || deleteMode || visual) return;
-  const refs = selectedComps().map((c) => c.refdes);
-  if (!refs.length) {
-    hintLine('Space: select parts to add wire stubs to their unconnected terminals');
-    return;
-  }
-  const out = commit(() => addTerminalStubs(circuit, refs));
-  if (!out) return;
-  const added = out.stubs.length ? `added ${out.stubs.length} wire stub${out.stubs.length === 1 ? '' : 's'}` : 'no unconnected terminals to stub';
-  logLine(`${added}${out.skipped.length ? `; skipped ${out.skipped.join(', ')} (would short)` : ''}`);
-  render();
-}
-
-/** A timing diagram template under the drawing: each phase's name and a
- * waveform line to edit into its timing (core/timing-diagram.js). */
-function addTimingDiagramTemplate() {
-  let rows = [];
-  commit(() => { rows = addTimingDiagram(circuit); });
-  if (!rows.length) return;
-  setSelection([]);
-  setLabelSelection(rows.flatMap((row) => [row.label, row.line]));
-  logLine(`added a timing diagram for ${rows.length} phase${rows.length === 1 ? '' : 's'}: drag its vertices into each phase's timing, or click one in Delete to remove it`);
-  fitView({ animate: true });
-  render();
-}
-
-/** Context-menu items for beats: show/hide, switch position. */
-function appendBeatContextItems(group, target) {
-  if (target.kind === 'component' && switchState(target.value)) {
-    const index = activeBeatIndex();
-    const state = index === null ? switchState(target.value) : switchStateAt(circuit, target.value.refdes, index);
-    const where = index === null ? '' : ' from this beat';
-    appendContextItem(group, `${state === 'closed' ? 'Open' : 'Close'} ${switchPhase(target.value) ? switchGroupName(target.value) : 'switch'}${where}`, flipSelectedSwitches, { shortcut: 's' });
-  }
-  const index = activeBeatIndex();
-  if (index === null || (target.kind !== 'component' && target.kind !== 'label')) return;
-  const ids = beatSelectionIds();
-  if (!ids.length) return;
-  const view = resolveBeat(circuit, index);
-  const all = (presence) => ids.every((id) => beatPresence(view, id) === presence);
-  appendContextItem(group, all('hide') ? 'Show from this beat' : 'Hide from this beat', () => toggleSelectionInBeat('hide'), { shortcut: 'h' });
-  appendContextItem(group, all('dim') ? 'Undim from this beat' : 'Dim from this beat', () => toggleSelectionInBeat('dim'), { shortcut: 'Shift+H' });
-}
-
-// ----- presenting --------------------------------------------------------------
-
-function openPresenter(start = activeBeatIndex() ?? 0) {
-  if (!presenterEl) return;
-  if (!circuit.beats.length) {
-    logLine('Nothing to present: add a beat first (+).', 'status');
-    return;
-  }
-  closeComponentContextMenu();
-  presenter = { index: Math.max(0, Math.min(start, circuit.beats.length - 1)), blank: false, fullscreen: false };
-  presenterEl.hidden = false;
-  presenterEl.focus({ preventScroll: true });
-  const request = presenterEl.requestFullscreen?.();
-  request?.then(() => { if (presenter) presenter.fullscreen = true; }).catch(() => {});
-  showPresenterFrame(false);
-}
-
-function closePresenter() {
-  if (!presenter) return;
-  const { index } = presenter;
-  presenter = null;
-  presenterEl.hidden = true;
-  presenterStageEl.replaceChildren();
-  if (document.fullscreenElement === presenterEl) document.exitFullscreen?.().catch(() => {});
-  // Come back to the beat the talk stopped at.
-  setActiveBeat(index < circuit.beats.length ? index : null);
-  canvasEl.focus({ preventScroll: true });
-}
-
-function showPresenterFrame(animate = true) {
-  if (!presenter) return;
-  const frame = document.createElement('div');
-  frame.className = 'presenter-frame';
-  if (!presenter.blank) {
-    // Theme ink, like the canvas: the presentation follows light or dark mode.
-    frame.innerHTML = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(circuit, presenter.index) } });
-    const svg = frame.querySelector('svg');
-    svg?.removeAttribute('width');
-    svg?.removeAttribute('height');
-    svg?.setAttribute('role', 'img');
-    svg?.setAttribute('aria-label', beatLabel(presenter.index));
-  }
-  // The new frame fades in over the old one, which then goes; every beat
-  // shares the drawing's frame, so only what changed appears to move.
-  const previous = [...presenterStageEl.children];
-  const still = !animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (still) previous.forEach((el) => el.remove());
-  else {
-    frame.classList.add('entering');
-    frame.addEventListener('animationend', () => previous.forEach((el) => el.remove()), { once: true });
-  }
-  presenterStageEl.appendChild(frame);
-  const beat = circuit.beats[presenter.index];
-  if (presenterCountEl) {
-    presenterCountEl.replaceChildren(presenter.blank ? '' : `${presenter.index + 1} / ${circuit.beats.length}${beat?.name ? ' · ' : ''}`);
-    if (!presenter.blank && beat?.name) appendMarkupText(presenterCountEl, texToLabelMarkup(beat.name));
-  }
-}
-
-function presenterStep(delta) {
-  if (!presenter) return;
-  const next = Math.max(0, Math.min(presenter.index + delta, circuit.beats.length - 1));
-  if (next === presenter.index && !presenter.blank) return;
-  presenter.index = next;
-  presenter.blank = false;
-  showPresenterFrame();
-}
-
-function onPresenterKey(ev) {
-  const key = ev.key;
-  const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n'];
-  const back = ['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p'];
-  if (forward.includes(key)) presenterStep(1);
-  else if (back.includes(key)) presenterStep(-1);
-  else if (key === 'Home') presenterStep(-circuit.beats.length);
-  else if (key === 'End') presenterStep(circuit.beats.length);
-  else if (key === '.' || key === 'b') {
-    presenter.blank = !presenter.blank;
-    showPresenterFrame(false);
-  } else if (key === 'Escape') closePresenter();
-  else return;
-  ev.preventDefault();
-}
-
-presenterEl?.addEventListener('click', () => presenterStep(1));
-presenterEl?.addEventListener('contextmenu', (ev) => {
-  ev.preventDefault();
-  presenterStep(-1);
-});
-// Leaving full screen (the browser owns Escape there) ends the presentation.
-document.addEventListener('fullscreenchange', () => {
-  if (presenter?.fullscreen && document.fullscreenElement !== presenterEl) closePresenter();
-});
-document.getElementById('beat-add')?.addEventListener('click', addBeatHere);
-document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
-document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
-document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
-document.getElementById('btn-timing-diagram')?.addEventListener('click', addTimingDiagramTemplate);
-document.getElementById('beat-strip-close')?.addEventListener('click', () => {
-  beatStripOpen = false;
-  setActiveBeat(null);
-});
-document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
+installBeatsUi();
 
 /** Right-click on the highlight tool: its one bulk action. */
 function openHighlightToolMenu(x, y) {
@@ -41379,7 +41441,6 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
 
 
-__exports.plainMarkup = plainMarkup;
 };
 
 __modules["src/web/model-figure.js"] = function (__require, __exports) {
