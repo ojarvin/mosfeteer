@@ -14,7 +14,8 @@ import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNA
 import { editor } from './editor-state.js';
 import { inlineEditLabel } from './label-editor.js';
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
-import { activateCopy, activateMove, annotationGeometryAt, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } from './main.js';
+import { copyAsImage } from './export-ui.js';
+import { activateCopy, activateMove, annotationGeometryAt, appendMarkupText, commit, componentDisplayName, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } from './main.js';
 
 function contextStyleValue(target, field) {
   if (target?.kind === 'wire') {
