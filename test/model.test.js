@@ -2931,6 +2931,24 @@ test('conflicting net names merge with a reconciliation warning', () => {
   assert.deepEqual(c.netNameWarnings, []);
 });
 
+test('deleting the last wire into a terminal leaves that terminal unconnected', () => {
+  const c = new Circuit();
+  c.addComponent('opamp', { refdes: 'U1', x: 400, y: 200 });
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 400 });
+  const net = c.connect('R1.b', 'U1.im');
+  const last = net.paths()[0].length - 1;
+  c.deleteWireSegments(net.id, [{ branch: 0, segment: last }]);
+  assert.equal(c.netOfTerminal({ comp: 'U1', term: 'im' }), null);
+  assert.deepEqual(c.netOfTerminal({ comp: 'R1', term: 'b' }).terminals, [{ comp: 'R1', term: 'b' }]);
+
+  // A one-terminal stub cut at its terminal keeps the rest as bare wire.
+  const stub = c.createWireNet({ branches: [[{ x: 560, y: 200 }, { x: 640, y: 200 }, { x: 640, y: 280 }]] });
+  c.connectTo(stub.id, 'U1.o');
+  c.deleteWireSegments(stub.id, [{ branch: 0, segment: 1 }]);
+  assert.equal(c.netOfTerminal({ comp: 'U1', term: 'o' }), null);
+  assert.deepEqual([...c.nets.values()].find((n) => !n.terminals.length).paths(), [[{ x: 640, y: 200 }, { x: 640, y: 280 }]]);
+});
+
 test('splitting a merged net clears its stale name warning', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });

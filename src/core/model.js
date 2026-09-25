@@ -5683,10 +5683,20 @@ export class Circuit {
    * geometry, each preserving its remaining branches. */
   _splitDisconnectedNet(net) {
     const paths = net.branches && net.branches.length ? net.branches : [];
-    if (!paths.length || net.terminals.length < 2) return;
+    if (!paths.length || !net.terminals.length) return;
     const terminals = net.terminals.map((t) => ({ ...t, point: this.components.get(t.comp)?.terminalWorld(t.term) }));
-    const components = splitByComponent(paths, terminals.filter((t) => t.point));
-    if (components.length < 2) return;
+    // A terminal left with no wire at all is unconnected again, not a
+    // one-terminal net of its own.
+    const components = splitByComponent(paths, terminals.filter((t) => t.point))
+      .filter((piece) => piece.paths.length);
+    if (!components.length) {
+      // Only wire no terminal reaches is left: each piece stays a bare wire island.
+      const ends = paths.map((path, i) => ({ comp: '', term: String(i), point: path[0] }));
+      components.push(...splitByComponent(paths, ends).map((piece) => ({ terminals: [], paths: piece.paths })));
+    }
+    if (components.length < 2 && components[0].terminals.length === net.terminals.length) return;
+    // The net's terminals are regrouped, so a name clash from merging them is gone.
+    this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     const apply = (n, comp) => {
       n.terminals = comp.terminals.map(({ comp, term }) => ({ comp, term }));
       n.branches = comp.paths.length ? comp.paths.map((p) => clonePath(p, n.allowDiagonal)) : null;
