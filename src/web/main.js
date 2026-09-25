@@ -224,6 +224,7 @@ const ICON_PATHS = {
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
   timing: '<path d="M3 16h4V8h6v8h6V8h2"/>',
+  stub: '<path d="M4.5 12h6"/><circle cx="4" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M11 8.5h6.5l3 3.5-3 3.5H11z" fill="currentColor" fill-opacity=".16"/>',
   align: '<path d="M4 3v18"/><rect x="7" y="6" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/><path d="m20 12-2-2m2 2-2 2"/>',
   play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor" fill-opacity=".18"/>',
   'x-circle': '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
@@ -7309,6 +7310,7 @@ const RADIAL_ITEMS = [
   { label: 'Move', icon: 'move', run: (radial, at) => radialMove(radial, at, 'connected') },
   // The part is selected; pick its edge or point to align, then the target's.
   { label: 'Align', icon: 'align', run: () => activateAlign() },
+  { label: 'Wire stubs', icon: 'stub', run: () => stubSelection() },
 ];
 
 function radialMove(radial, at, kind) {
