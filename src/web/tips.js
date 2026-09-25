@@ -11,7 +11,7 @@ export const TIPS = Object.freeze([
     trigger: 'wire-start',
     after: 2,
     retiredBy: 'terminal-snap',
-    text: 'Hold Alt while wiring: the cursor jumps to the nearest terminal, so there is no need to aim.',
+    text: 'Hold Alt while wiring: the cursor jumps to the nearest terminal or free wire end, so there is no need to aim.',
   },
   {
     id: 'pin-drag',

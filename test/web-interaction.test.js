@@ -509,7 +509,7 @@ test('arrow-key nudging moves mixed selections atomically', () => {
 test('wire previews exclude the destination net and transformed nets keep terminal moves', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const preview = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview(', main.indexOf('function draftRoutePath(')));
-  assert.match(preview, /const excludedNets = new Set\(sourceNetId \? \[sourceNetId\] : \[\]\)/);
+  assert.match(preview, /const excludedNets = new Set\(sourceNetId && !isOpenEnd\(endpoints\[0\], sourceNetId\) \? \[sourceNetId\] : \[\]\)/);
   assert.match(preview, /circuit\._netEnv\(excludedNets\)/);
   const transform = main.slice(main.indexOf('function transformMixedSelection('), main.indexOf('/** Re-route every net', main.indexOf('function transformMixedSelection(')));
   assert.match(transform, /componentTerminalMoves\(refs, beforeComponents\)/);
@@ -861,11 +861,15 @@ test('view toggles answer in every mode but the insert search', () => {
 test('wiring uses Alt for nearest-terminal snapping instead of symmetric routing', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   assert.match(main, /function terminalSnapWorld\(point\)/);
-  assert.match(main, /nearestTerminal\(point, \{ anyDistance: true \}\)/);
+  assert.match(main, /function nearestSnapTarget\(point\)[\s\S]*?circuit\.openWireEnds\(\)[\s\S]*?nearestTerminal\(point, \{ anyDistance: true \}\)/);
+  assert.match(main, /const hit = nearestSnapTarget\(point\);/);
   assert.match(main, /return wire && terminalSnap \? terminalSnapWorld\(point\) : snappedWorld\(point\);/);
   assert.match(main, /if \(wire\) setTerminalSnap\(true\)/);
   assert.match(main, /if \(terminalSnap\) \{\s*terminalSnap = false;/);
-  assert.match(main, /terminalSnapTarget: terminalSnap \? nearestTerminal\(cursor, \{ anyDistance: true \}\) : null/);
+  assert.match(main, /terminalSnapTarget: terminalSnap \? nearestSnapTarget\(cursor\) : null/);
+  // A click on a free wire end finishes the draft there, like a terminal.
+  const click = main.slice(main.indexOf('function doWireClick('), main.indexOf('\nfunction noteWireToolStart'));
+  assert.match(click, /circuit\.openWireEnds\(\)\.find\([\s\S]*?joinWireToNet\(/);
   assert.doesNotMatch(main, /withMirroredWire|mirroredWireDraft|mirrorWirePreview/);
   const toolbar = readFileSync(new URL('../src/web/toolbar.js', import.meta.url), 'utf8');
   assert.match(toolbar, /hold Alt \(wire\).*nearest terminal/);
@@ -876,6 +880,13 @@ test('wire previews prefer a centered equivalent route', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const draft = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview', main.indexOf('function draftRoutePath(')));
   assert.match(draft, /allowDiagonal: false, preferMidpoint: true/);
+});
+
+test('wire drafts meet a free wire end at its tip instead of running along that wire', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const draft = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview', main.indexOf('function draftRoutePath(')));
+  assert.match(draft, /circuit\.openWireEnds\(\)/);
+  assert.match(draft, /if \(isOpenEnd\(endpoints\.at\(-1\), net\.id\)\) continue;/);
 });
 
 test('terminal commits preserve the routed preview without manual waypoints', () => {

@@ -282,7 +282,7 @@ Core keyboard vocabulary:
 | view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `?` help, `:` command line (log drawer) |
 | editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `9` net highlight tool, `8` remove all highlights, `Space` tap labelled wire stubs on the selected parts' unconnected terminals (`src/core/stubs.js`; a stub that would short is skipped) |
 | beats | `Shift+B` beat strip, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
-| wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or nearest-terminal cursor snapping while wiring |
+| wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or cursor snapping to the nearest terminal or free wire end while wiring; a click on a free wire end (`Circuit#openWireEnds`) finishes a draft there like a terminal |
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part, label, or annotation, or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
 
 View toggles are handled before mode-specific keys, except printable insert

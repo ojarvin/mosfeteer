@@ -2949,6 +2949,20 @@ test('deleting the last wire into a terminal leaves that terminal unconnected', 
   assert.deepEqual([...c.nets.values()].find((n) => !n.terminals.length).paths(), [[{ x: 640, y: 200 }, { x: 640, y: 280 }]]);
 });
 
+test('openWireEnds lists free ends of floating wires and stubs, not terminals or joins', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  const floating = c.createWireNet({ branches: [[{ x: 400, y: 0 }, { x: 480, y: 0 }, { x: 480, y: 80 }]] });
+  const stub = c.createWireNet({ branches: [[{ x: 80, y: 0 }, { x: 160, y: 0 }]] });
+  c.connectTo(stub.id, 'R1.b');
+  // A tee: the branch ending on the trunk is joined there, not free.
+  const tee = c.createWireNet({ branches: [[{ x: 0, y: 200 }, { x: 160, y: 200 }], [{ x: 80, y: 200 }, { x: 80, y: 280 }]] });
+  const endsOf = (net) => c.openWireEnds().filter((end) => end.netId === net.id).map((end) => `${end.point.x},${end.point.y}`).sort();
+  assert.deepEqual(endsOf(floating), ['400,0', '480,80']);
+  assert.deepEqual(endsOf(stub), ['160,0']);
+  assert.deepEqual(endsOf(tee), ['0,200', '160,200', '80,280']);
+});
+
 test('splitting a merged net clears its stale name warning', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });

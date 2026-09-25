@@ -5235,7 +5235,11 @@ function draftRoutePath(draft, to = cursor) {
   // path will splice it at the selected terminal/wire target. Without this,
   // the preview treats the destination net as an obstacle and rejects valid
   // terminal orders such as M3 -> M1 after M2 -> M1.
-  const excludedNets = new Set(sourceNetId ? [sourceNetId] : []);
+  // A free wire end is met at its tip, never along its wire, so a draft
+  // from or to one keeps that wire as an obstacle.
+  const openEnds = circuit.openWireEnds();
+  const isOpenEnd = (p, netId) => openEnds.some((end) => end.netId === netId && end.point.x === p.x && end.point.y === p.y);
+  const excludedNets = new Set(sourceNetId && !isOpenEnd(endpoints[0], sourceNetId) ? [sourceNetId] : []);
   for (const component of circuit.components.values()) {
     for (const terminal of component.worldTerminals()) {
       if (terminal.x !== endpoints.at(-1).x || terminal.y !== endpoints.at(-1).y) continue;
@@ -5244,6 +5248,7 @@ function draftRoutePath(draft, to = cursor) {
     }
   }
   for (const net of circuit.nets.values()) {
+    if (isOpenEnd(endpoints.at(-1), net.id)) continue;
     if (net.paths().some((path) => pointOnPath(endpoints.at(-1), path))) excludedNets.add(net.id);
   }
   const env = circuit._netEnv(excludedNets);
@@ -5749,7 +5754,7 @@ function renderCanvas(modelKey) {
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
-    terminalSnapTarget: terminalSnap ? nearestTerminal(cursor, { anyDistance: true }) : null,
+    terminalSnapTarget: terminalSnap ? nearestSnapTarget(cursor) : null,
     ghost,
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
@@ -6650,8 +6655,16 @@ function newWireDraft() {
   };
 }
 
+/** What the Alt-held wiring cursor snaps to: the nearest component terminal
+ * or free wire end, so a floating wire or a stub continues like a pin. */
+function nearestSnapTarget(point) {
+  const ends = circuit.openWireEnds().map((end) => ({ x: end.point.x, y: end.point.y, wireEnd: end }));
+  const terminal = nearestTerminal(point, { anyDistance: true });
+  return nearestPoint(point, terminal ? [terminal, ...ends] : ends);
+}
+
 function terminalSnapWorld(point) {
-  const hit = nearestTerminal(point, { anyDistance: true });
+  const hit = nearestSnapTarget(point);
   return hit ? { x: hit.x, y: hit.y } : snappedWorld(point);
 }
 
@@ -6834,6 +6847,21 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
       }
     }
   } else if (wire.source) {
+    // A free wire end finishes the draft like a terminal: the wire joins it.
+    const end = circuit.openWireEnds().find((e) => e.point.x === x && e.point.y === y);
+    if (end && !(wire.source.x === x && wire.source.y === y)) {
+      const net = circuit.nets.get(end.netId);
+      const path = net.paths()[end.pathIndex];
+      cursor = { x, y };
+      joinWireToNet({ net, branch: end.pathIndex }, {
+        netId: end.netId,
+        pathIndex: end.pathIndex,
+        segmentIndex: end.endpointIndex === 0 ? 1 : path.length - 1,
+        point: { x, y },
+      });
+      render();
+      return;
+    }
     const wireHit = pickWire({ x, y });
     if (wire.routeStyle === 'diagonal' && wireHit) {
       const target = exactWireTargetAt({ x, y });

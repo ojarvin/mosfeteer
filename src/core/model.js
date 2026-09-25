@@ -4462,6 +4462,32 @@ export class Circuit {
     return result;
   }
 
+  /** The free ends of managed wires: path ends that meet no terminal, no
+   * other path of their net, and no junction -- where a floating wire or a
+   * stub stops. [{ netId, pathIndex, endpointIndex, point }] */
+  openWireEnds() {
+    const terminalPoints = new Set();
+    for (const component of this.components.values()) {
+      for (const t of component.worldTerminals()) terminalPoints.add(`${t.x},${t.y}`);
+    }
+    const ends = [];
+    for (const net of this.nets.values()) {
+      if (net.routingMode === 'fixed') continue;
+      const paths = net.paths();
+      paths.forEach((path, pathIndex) => {
+        if (path.length < 2) return;
+        for (const endpointIndex of [0, path.length - 1]) {
+          const point = path[endpointIndex];
+          if (terminalPoints.has(`${point.x},${point.y}`)) continue;
+          if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) continue;
+          if (paths.some((other, i) => i !== pathIndex && pointOnPath(point, other))) continue;
+          ends.push({ netId: net.id, pathIndex, endpointIndex, point: { x: point.x, y: point.y } });
+        }
+      });
+    }
+    return ends;
+  }
+
   _fixedOpenEndpoint(net, pathIndex, endpointIndex, endpointCount = null) {
     if (!net || net.routingMode !== 'fixed') return null;
     const entry = net.fixedPaths[pathIndex];
