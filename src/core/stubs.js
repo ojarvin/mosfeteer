@@ -71,11 +71,24 @@ function stubShorts(circuit, component, terminalName, points) {
 }
 
 /**
+ * The side of a vertical stub its label goes on: toward the part's body (a
+ * MOSFET's drain and source labels sit on its gate side), or, for a stub on
+ * the part's centre line, away from the part's own label; right otherwise.
+ */
+function verticalStubSide(circuit, component, x) {
+  const box = component.bboxWorld();
+  const centre = box.x + box.w / 2;
+  if (centre !== x) return centre < x ? 'left' : 'right';
+  const own = circuit.labelOf(component.refdes)?.anchorWorld();
+  return own && own.x > x ? 'left' : 'right';
+}
+
+/**
  * Add a stub and a named net label to every unconnected terminal of the parts
  * `refdes`. A stub leaves its terminal along the terminal's outward direction,
  * STUB_CELLS long; its label sits at the middle of the stub, above a
  * horizontal stub with its text aligned toward the terminal, and beside a
- * vertical one aligned toward the wire. A stub that would join anything else
+ * vertical one, on its part's side (verticalStubSide), aligned toward the wire. A stub that would join anything else
  * is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
  */
 export function addTerminalStubs(circuit, refdes) {
@@ -106,7 +119,7 @@ export function addTerminalStubs(circuit, refdes) {
       const middle = points[Math.floor(points.length / 2)];
       const labelOpts = dir.y === 0
         ? { netSide: 'above', align: dir.x < 0 ? 'right' : 'left' }
-        : { netSide: 'right', align: 'parent' };
+        : { netSide: verticalStubSide(circuit, component, from.x), align: 'parent' };
       const label = circuit.addNetLabel(net, { anchor: middle, ...labelOpts });
       stubs.push({ ref: termRef, netId: net.id, name, labelId: label.id });
     }

@@ -2308,14 +2308,14 @@ test('label align keeps stable centered bounds and positions text inside them', 
   assert.equal(left.x + left.w / 2, 400, 'left: box remains centered on anchor');
   t = l.textPos();
   assert.equal(t.anchor, 'start');
-  assert.equal(t.x, left.x + GRID / 4, 'left: text starts a quarter cell inside the box left edge');
+  assert.equal(t.x, left.x + GRID / 2, 'left: text starts half a cell inside the box left edge');
   l.setAlign('right');
   const right = l.bbox();
   assert.deepEqual(right, center, 'right: alignment does not move or resize the bbox');
   assert.equal(right.x + right.w / 2, 400, 'right: box remains centered on anchor');
   t = l.textPos();
   assert.equal(t.anchor, 'end');
-  assert.equal(t.x, right.x + right.w - GRID / 4, 'right: text ends a quarter cell inside the box right edge');
+  assert.equal(t.x, right.x + right.w - GRID / 2, 'right: text ends half a cell inside the box right edge');
 });
 test('arrow and box annotations persist geometry and move as selected labels', () => {
   const c = new Circuit();
@@ -2460,8 +2460,8 @@ test('a part label beside its part aligns toward it and keeps its box against it
     const outBox = vout.bbox();
     assert.equal(portRight(inBox), portLeft, `input label box against the port (${width})`);
     assert.equal(outBox.x, portRight(c.getComponent('VOUT').bboxWorld()), `output label box against the port (${width})`);
-    assert.equal(vin.textPos().x, portLeft - GRID / 4);
-    assert.equal(vout.textPos().x, outBox.x + GRID / 4);
+    assert.equal(vin.textPos().x, portLeft - GRID / 2);
+    assert.equal(vout.textPos().x, outBox.x + GRID / 2);
   }
   // Text that fills two cells gets four rather than losing its gap.
   vin.setRenderedTextBounds(75, 40);
@@ -2484,7 +2484,7 @@ test('older documents align their centered part and net labels toward what they 
   const side = c.addNetLabel(net, { x: 800, y: 0, netSide: 'right' });
   const note = c.addLabel({ text: 'note', x: 0, y: 400 });
   assert.deepEqual([side.align, side.textAlign()], ['parent', 'left'], 'a new side net label faces its wire');
-  assert.equal(side.textPos().x, 800 + GRID / 4, 'one inset from the wire end');
+  assert.equal(side.textPos().x, 800 + GRID / 2, 'one inset from the wire end');
   const centered = () => {
     const data = c.toJSON();
     for (const label of data.labels) label.align = 'center';

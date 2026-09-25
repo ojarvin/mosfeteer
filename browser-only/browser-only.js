@@ -12749,8 +12749,8 @@ function labelRunLines(text, opts = {}) {
 /** Tight height (world units) of a rendered label line (cap height). */
 const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
-/** Gap between left/right aligned text and its box edge: a quarter grid cell. */
-const LABEL_ALIGN_INSET = GRID / 4;
+/** Gap between left/right aligned text and its box edge: half a grid cell. */
+const LABEL_ALIGN_INSET = GRID / 2;
 
 const symbolInk = new WeakMap();
 const symbolInkPieces = new WeakMap();
@@ -13570,7 +13570,7 @@ class LabelInstance {
   }
 
 
-  /** Side gap for left/right text: a quarter cell, never pushing text past the far box edge. */
+  /** Side gap for left/right text: half a cell, never pushing text past the far box edge. */
   alignInset() {
     if (this.textAlign() === 'center') return 0;
     return Math.max(0, Math.min(LABEL_ALIGN_INSET, this.bbox().w - this.textWidth()));
@@ -21828,11 +21828,24 @@ function stubShorts(circuit, component, terminalName, points) {
 }
 
 /**
+ * The side of a vertical stub its label goes on: toward the part's body (a
+ * MOSFET's drain and source labels sit on its gate side), or, for a stub on
+ * the part's centre line, away from the part's own label; right otherwise.
+ */
+function verticalStubSide(circuit, component, x) {
+  const box = component.bboxWorld();
+  const centre = box.x + box.w / 2;
+  if (centre !== x) return centre < x ? 'left' : 'right';
+  const own = circuit.labelOf(component.refdes)?.anchorWorld();
+  return own && own.x > x ? 'left' : 'right';
+}
+
+/**
  * Add a stub and a named net label to every unconnected terminal of the parts
  * `refdes`. A stub leaves its terminal along the terminal's outward direction,
  * STUB_CELLS long; its label sits at the middle of the stub, above a
  * horizontal stub with its text aligned toward the terminal, and beside a
- * vertical one aligned toward the wire. A stub that would join anything else
+ * vertical one, on its part's side (verticalStubSide), aligned toward the wire. A stub that would join anything else
  * is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
  */
 function addTerminalStubs(circuit, refdes) {
@@ -21863,7 +21876,7 @@ function addTerminalStubs(circuit, refdes) {
       const middle = points[Math.floor(points.length / 2)];
       const labelOpts = dir.y === 0
         ? { netSide: 'above', align: dir.x < 0 ? 'right' : 'left' }
-        : { netSide: 'right', align: 'parent' };
+        : { netSide: verticalStubSide(circuit, component, from.x), align: 'parent' };
       const label = circuit.addNetLabel(net, { anchor: middle, ...labelOpts });
       stubs.push({ ref: termRef, netId: net.id, name, labelId: label.id });
     }
@@ -27906,16 +27919,30 @@ function updateStyleControls() {
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
 function pickLabel(w) {
+  return labelsAt(w)[0] || null;
+}
+
+/** Every text label whose box holds a point. A label whose visible text is
+ * under the pointer comes first: an aligned label's box reaches past its text,
+ * over a neighbour's text, and the text is what the user aims at. */
+function labelsAt(w) {
   const x = snap(w.x);
   const y = snap(w.y);
+  const p = paneSize();
+  const tol = 4 / (p ? view.w / p.w : 1);
   const barHidden = hiddenSupplyBarLabels(circuit);
+  const onText = [];
+  const inBox = [];
   for (const label of labels()) {
     if (label.selectable === false || barHidden.has(label.id)) continue;
     if (['arrow', 'box', 'line'].includes(label.kind)) continue;
     const r = label.bbox();
-    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
+    if (!(x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)) continue;
+    const ink = label.inkRect();
+    const inked = w.x >= ink.x - tol && w.x <= ink.x + ink.w + tol && w.y >= ink.y - tol && w.y <= ink.y + ink.h + tol;
+    (inked ? onText : inBox).push(label);
   }
-  return null;
+  return [...onText, ...inBox];
 }
 
 function annotationTextAt(world) {
@@ -31460,13 +31487,13 @@ function wireHitsAt(w) {
 // the selected object again selects the next one under it.
 
 /** Selection keys under a point, topmost first, in the order a click picks:
- * a label, a part with a pin there, the wires (one per net), junction dots,
- * then the parts whose box holds the point. */
+ * the labels (text under the pointer first), a part with a pin there, the
+ * wires (one per net), junction dots, then the parts whose box holds the
+ * point. */
 function stackedSelectionCandidates(w) {
   const keys = [];
   const add = (key) => { if (!keys.includes(key)) keys.push(key); };
-  const label = pickLabel(w);
-  if (label) add(`label:${label.id}`);
+  for (const label of labelsAt(w)) add(`label:${label.id}`);
   const p = { x: snap(w.x), y: snap(w.y) };
   for (const c of sortedComps()) {
     if (c.worldTerminals().some((t) => t.x === p.x && t.y === p.y)) add(`component:${c.refdes}`);
@@ -31502,6 +31529,15 @@ function currentSelectionKey() {
   if (selLabels.size === 1 && !multi.size && !wires.size) return `label:${selLabel}`;
   if (wires.size === 1 && !multi.size && !selLabels.size) return `wire:${[...wires][0]}`;
   return null;
+}
+
+function stackedKeyName(key) {
+  const [kind, id] = key.split(':');
+  if (kind === 'label') {
+    const label = circuit.labels.get(key.slice('label:'.length));
+    return label ? `${label.owner ? `${label.owner} label` : label.netId ? 'net label' : 'label'} "${label.text}"` : 'label';
+  }
+  return kind === 'wire' ? `wire of net ${id}` : `component ${id}`;
 }
 
 function selectStackedKey(key) {
@@ -34191,7 +34227,7 @@ function canvasMouseUp(ev) {
   const next = nextStackedSelection(click.candidates, click.pressKey);
   if (!next) return;
   selectStackedKey(next);
-  hintLine(`selected ${next.split(':').slice(0, 2).join(' ')} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next object here`);
+  hintLine(`selected ${stackedKeyName(next)} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next object here`);
   render();
 }
 

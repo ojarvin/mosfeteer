@@ -1041,3 +1041,12 @@ test('a still click on a selected object cycles to the next one stacked under it
   assert.match(down, /beginComponentDrag\(\{ refdes: preferred\.slice\('component:'\.length\) \}/);
   assert.match(down, /const wireHit = preferredWire \|\| pickWire\(startWorld\);/);
 });
+
+test('a click picks the label whose text is under the pointer before one whose box merely reaches there, and cycles through every label', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const at = main.slice(main.indexOf('function labelsAt('), main.indexOf('\nfunction annotationTextAt('));
+  assert.match(at, /const ink = label\.inkRect\(\);/);
+  assert.match(at, /return \[\.\.\.onText, \.\.\.inBox\];/);
+  assert.match(main, /function pickLabel\(w\) \{\s*return labelsAt\(w\)\[0\] \|\| null;/);
+  assert.match(main, /for \(const label of labelsAt\(w\)\) add\(`label:\$\{label\.id\}`\);/);
+});

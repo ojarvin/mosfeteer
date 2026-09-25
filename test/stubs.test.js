@@ -23,11 +23,23 @@ test('every unconnected terminal gets a two-cell stub along its outward directio
   assert.equal(gate.labels.length, 1);
   assert.deepEqual([gate.labels[0].text, gate.labels[0].netSide, gate.labels[0].align], ['net1', 'above', 'right']);
   assert.deepEqual(gate.labels[0].anchorWorld(), { x: 40, y: 200 });
-  // Vertical: beside the stub, aligned toward it.
+  // Vertical: beside the stub on the gate side, aligned toward it.
   const drain = stubOf(circuit, 'M1.d');
   assert.deepEqual(drain.paths, [[{ x: 200, y: 120 }, { x: 200, y: 40 }]]);
-  assert.deepEqual([drain.labels[0].netSide, drain.labels[0].textAlign()], ['right', 'left']);
+  assert.deepEqual([drain.labels[0].netSide, drain.labels[0].textAlign()], ['left', 'right']);
   assert.deepEqual(evaluate(circuit).issues, []);
+});
+
+test('a vertical stub label sits on its part\'s side: the gate side of a MOSFET, away from a centred part\'s label', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0 --mirrorX', 'add resistor R1 --at 800 0 --rot 90');
+  addTerminalStubs(circuit, ['M1', 'M2', 'R1']);
+  const side = (ref) => stubOf(circuit, ref).labels[0].netSide;
+  assert.deepEqual([side('M1.d'), side('M1.s')], ['left', 'left']);
+  assert.deepEqual([side('M2.d'), side('M2.s')], ['right', 'right']);
+  // R1's own label sits to its right, so its stub labels go left.
+  assert.ok(circuit.labelOf('R1').anchorWorld().x > 800);
+  assert.deepEqual([side('R1.a'), side('R1.b')], ['left', 'left']);
 });
 
 test('a horizontal stub to the right aligns its text left, toward the terminal', () => {

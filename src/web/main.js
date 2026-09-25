@@ -2779,16 +2779,30 @@ function updateStyleControls() {
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
 function pickLabel(w) {
+  return labelsAt(w)[0] || null;
+}
+
+/** Every text label whose box holds a point. A label whose visible text is
+ * under the pointer comes first: an aligned label's box reaches past its text,
+ * over a neighbour's text, and the text is what the user aims at. */
+function labelsAt(w) {
   const x = snap(w.x);
   const y = snap(w.y);
+  const p = paneSize();
+  const tol = 4 / (p ? view.w / p.w : 1);
   const barHidden = hiddenSupplyBarLabels(circuit);
+  const onText = [];
+  const inBox = [];
   for (const label of labels()) {
     if (label.selectable === false || barHidden.has(label.id)) continue;
     if (['arrow', 'box', 'line'].includes(label.kind)) continue;
     const r = label.bbox();
-    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return label;
+    if (!(x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)) continue;
+    const ink = label.inkRect();
+    const inked = w.x >= ink.x - tol && w.x <= ink.x + ink.w + tol && w.y >= ink.y - tol && w.y <= ink.y + ink.h + tol;
+    (inked ? onText : inBox).push(label);
   }
-  return null;
+  return [...onText, ...inBox];
 }
 
 function annotationTextAt(world) {
@@ -6333,13 +6347,13 @@ function wireHitsAt(w) {
 // the selected object again selects the next one under it.
 
 /** Selection keys under a point, topmost first, in the order a click picks:
- * a label, a part with a pin there, the wires (one per net), junction dots,
- * then the parts whose box holds the point. */
+ * the labels (text under the pointer first), a part with a pin there, the
+ * wires (one per net), junction dots, then the parts whose box holds the
+ * point. */
 function stackedSelectionCandidates(w) {
   const keys = [];
   const add = (key) => { if (!keys.includes(key)) keys.push(key); };
-  const label = pickLabel(w);
-  if (label) add(`label:${label.id}`);
+  for (const label of labelsAt(w)) add(`label:${label.id}`);
   const p = { x: snap(w.x), y: snap(w.y) };
   for (const c of sortedComps()) {
     if (c.worldTerminals().some((t) => t.x === p.x && t.y === p.y)) add(`component:${c.refdes}`);
@@ -6375,6 +6389,15 @@ function currentSelectionKey() {
   if (selLabels.size === 1 && !multi.size && !wires.size) return `label:${selLabel}`;
   if (wires.size === 1 && !multi.size && !selLabels.size) return `wire:${[...wires][0]}`;
   return null;
+}
+
+function stackedKeyName(key) {
+  const [kind, id] = key.split(':');
+  if (kind === 'label') {
+    const label = circuit.labels.get(key.slice('label:'.length));
+    return label ? `${label.owner ? `${label.owner} label` : label.netId ? 'net label' : 'label'} "${label.text}"` : 'label';
+  }
+  return kind === 'wire' ? `wire of net ${id}` : `component ${id}`;
 }
 
 function selectStackedKey(key) {
@@ -9064,7 +9087,7 @@ function canvasMouseUp(ev) {
   const next = nextStackedSelection(click.candidates, click.pressKey);
   if (!next) return;
   selectStackedKey(next);
-  hintLine(`selected ${next.split(':').slice(0, 2).join(' ')} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next object here`);
+  hintLine(`selected ${stackedKeyName(next)} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next object here`);
   render();
 }
 

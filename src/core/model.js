@@ -272,8 +272,8 @@ export function labelRunLines(text, opts = {}) {
 /** Tight height (world units) of a rendered label line (cap height). */
 export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
-/** Gap between left/right aligned text and its box edge: a quarter grid cell. */
-export const LABEL_ALIGN_INSET = GRID / 4;
+/** Gap between left/right aligned text and its box edge: half a grid cell. */
+export const LABEL_ALIGN_INSET = GRID / 2;
 
 const symbolInk = new WeakMap();
 const symbolInkPieces = new WeakMap();
@@ -1093,7 +1093,7 @@ export class LabelInstance {
   }
 
 
-  /** Side gap for left/right text: a quarter cell, never pushing text past the far box edge. */
+  /** Side gap for left/right text: half a cell, never pushing text past the far box edge. */
   alignInset() {
     if (this.textAlign() === 'center') return 0;
     return Math.max(0, Math.min(LABEL_ALIGN_INSET, this.bbox().w - this.textWidth()));
