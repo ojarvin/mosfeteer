@@ -63,7 +63,7 @@ test('named net edits confirm virtual connections, and port names never repeat',
   assert.match(main, /function confirmNamedConnection\(/);
   assert.match(main, /cancelLabel: 'Keep separate'/);
   assert.match(main, /namedConnectionConflicts\(v, \{ netId: net\.id \}\)/);
-  assert.match(main, /input\.focus\(\);\s*input\.select\(\);\s*return false;/);
+  assert.match(main, /input\.focus\((\{ preventScroll: true \})?\);\s*input\.select\(\);\s*return false;/);
   // A port's label is its identity: a name another port carries is reported
   // as a collision instead of being offered as a virtual connection.
   assert.match(main, /function portNameConflict\(/);
@@ -1049,4 +1049,34 @@ test('a click picks the label whose text is under the pointer before one whose b
   assert.match(at, /return \[\.\.\.onText, \.\.\.inBox\];/);
   assert.match(main, /function pickLabel\(w\) \{\s*return labelsAt\(w\)\[0\] \|\| null;/);
   assert.match(main, /for \(const label of labelsAt\(w\)\) add\(`label:\$\{label\.id\}`\);/);
+});
+
+test('the inline label editor covers the text, not the label\'s grid box, and follows zoom', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const edit = main.slice(main.indexOf('function inlineEditLabel('), main.indexOf('  resize();', main.indexOf('function inlineEditLabel(')));
+  // The label's own size, one line tall per line, centred where the text is drawn.
+  assert.match(edit, /labelFontSize\(label\.style\?\.width\) \* scale/);
+  assert.match(edit, /const lines = input\.value\.split\('\\n'\)\.length \* fontPx \* 1\.2 \+ 4;/);
+  assert.match(edit, /const centre = r\.top \+ \(b\.y \+ b\.h \/ 2 - view\.y\) \* scale;/);
+  // Long text wraps and scrolls inside the visible canvas instead of running off it.
+  assert.match(edit, /const width = Math\.min\(r\.width - 2 \* margin,/);
+  assert.match(edit, /Math\.min\(Math\.max\(wanted, r\.left \+ margin\), r\.right - margin - width\)/);
+  assert.match(edit, /const height = Math\.min\(r\.height - 2 \* margin, Math\.max\(lines, input\.scrollHeight \+ 2\)\);/);
+  assert.match(edit, /input\.style\.overflowY = input\.scrollHeight > height \+ 1 \? 'auto' : 'hidden';/);
+  assert.match(edit, /input\.style\.overflowWrap = 'anywhere';/);
+  // It is laid out again on every repaint, so it follows zoom and pan.
+  assert.match(edit, /input\.relayout = resize;/);
+  assert.match(main, /syncViewToPane\(\);\s*\/\/ An open inline editor sits over its text at the current zoom and pan\.\s*inlineInput\?\.relayout\?\.\(\);/);
+  // Aligned text grows from its aligned edge, as the drawn text does.
+  assert.match(edit, /align === 'left' \? screenX\(b\.x \+ inset\) - editorPad/);
+  assert.doesNotMatch(edit, /const sh = /);
+});
+
+test('canvas text editors never scroll the page when they run past the window', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  for (const name of ['function inlineEditLabel(', 'function inlineEditSchematicBlock(']) {
+    const body = main.slice(main.indexOf(name), main.indexOf('\n}\n', main.indexOf(name)));
+    assert.match(body, /input\.style\.position = 'fixed';/, name);
+    assert.doesNotMatch(body, /input\.focus\(\);/, name);
+  }
 });

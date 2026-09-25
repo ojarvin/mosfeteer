@@ -597,9 +597,17 @@ button:focus-visible {
   background-color: var(--bg-hover);
 }
 
+/* The closed select hides its own text (color: transparent) behind the arrow
+   icon; the popup's options and group headings take their colors back. */
 #circuit-select option {
   color: var(--text);
   background: var(--bg-panel);
+}
+
+#circuit-select optgroup {
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  font-weight: 600;
 }
 
 .danger-action {
@@ -2832,7 +2840,7 @@ button.status-chip:hover {
   font-family: sans-serif;
   font-weight: 700;
   font-style: italic;
-  line-height: 1;
+  line-height: 1.2;
   caret-color: var(--accent);
 }
 
@@ -2844,7 +2852,7 @@ button.status-chip:hover {
   font-family: sans-serif;
   font-weight: 700;
   font-style: italic;
-  line-height: 1;
+  line-height: 1.2;
   pointer-events: none;
 }
 

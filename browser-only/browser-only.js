@@ -25121,7 +25121,7 @@ let adaptCombinedReport; __bind(() => { ({ adaptCombinedReport } = __require("sr
 let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
 let componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath; __bind(() => { ({ componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js")); });
 let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("src/core/analysis/provenance.js")); });
-let resolveColor, themeInkSvg; __bind(() => { ({ resolveColor, themeInkSvg } = __require("src/core/style.js")); });
+let labelFontSize, resolveColor, themeInkSvg; __bind(() => { ({ labelFontSize, resolveColor, themeInkSvg } = __require("src/core/style.js")); });
 let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
 let createDocument, loadDocument, renderDocument; __bind(() => { ({ createDocument, loadDocument, renderDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
@@ -30353,6 +30353,8 @@ function render() {
   syncEmptyState();
   syncTutorial();
   syncViewToPane();
+  // An open inline editor sits over its text at the current zoom and pan.
+  inlineInput?.relayout?.();
   // A context menu is independent of canvas repainting. Closing it here made
   // it vanish on the first pointer move after opening it.
   syncSelectedNetSolders();
@@ -36277,25 +36279,29 @@ function restoreBoxState(label, state) {
 function inlineEditSchematicBlock(component) {
   if (!component || component.type !== 'block' || inlineInput) return;
   const pane = document.querySelector('.canvas-pane');
-  const paneRect = pane.getBoundingClientRect();
-  const box = component.bboxWorld();
   const input = document.createElement('textarea');
   input.value = component.value || '';
   input.spellcheck = false;
   input.className = 'label-inline-editor block-inline-editor';
-  input.style.position = 'absolute';
+  input.style.position = 'fixed';
   input.style.zIndex = '30';
-  input.style.left = `${paneRect.left + ((box.x - view.x) / view.w) * paneRect.width}px`;
-  input.style.top = `${paneRect.top + ((box.y - view.y) / view.h) * paneRect.height}px`;
-  input.style.width = `${(box.w / view.w) * paneRect.width}px`;
-  input.style.height = `${(box.h / view.h) * paneRect.height}px`;
+  // Covers the block at the current zoom and pan, repositioned on every repaint.
+  input.relayout = () => {
+    const paneRect = pane.getBoundingClientRect();
+    const box = component.bboxWorld();
+    input.style.left = `${paneRect.left + ((box.x - view.x) / view.w) * paneRect.width}px`;
+    input.style.top = `${paneRect.top + ((box.y - view.y) / view.h) * paneRect.height}px`;
+    input.style.width = `${(box.w / view.w) * paneRect.width}px`;
+    input.style.height = `${(box.h / view.h) * paneRect.height}px`;
+  };
+  input.relayout();
   input.style.textAlign = 'center';
   input.style.resize = 'none';
   input.style.whiteSpace = 'pre-wrap';
   input.style.overflow = 'hidden';
   document.body.appendChild(input);
   inlineInput = input;
-  input.focus();
+  input.focus({ preventScroll: true });
   input.select();
   let closed = false;
   const done = (apply) => {
@@ -36420,15 +36426,9 @@ function inlineEditLabel(label, options = {}) {
     if (barRefs.length > 1) circuit.nameSupplyBar(barRefs, text);
   };
   lastLabelClick = null; // starting an edit clears any pending double-click state
-  const b = label.bbox();
   const pane = document.querySelector('.canvas-pane');
-  const r = pane.getBoundingClientRect();
-  const sy = r.top + ((b.y - view.y) / view.h) * r.height;
-  const sw = (b.w / view.w) * r.width;
-  const sh = (b.h / view.h) * r.height;
-  // The persistent label box is centered on its anchor regardless of text
-  // alignment. Keep the editor centered on that same box as it grows.
-  const boxCenterX = r.left + (((b.x + b.w / 2) - view.x) / view.w) * r.width;
+  const align = label.textAlign();
+  const editorPad = 4;
   // Ordinary Enter commits. Shift+Enter is reserved for inserting a newline
   // and is shared by every LabelInstance editor, including connector labels.
   const input = document.createElement('textarea');
@@ -36436,37 +36436,62 @@ function inlineEditLabel(label, options = {}) {
   input.spellcheck = false;
   input.className = 'label-inline-editor';
   input.dataset.labelId = label.id;
-  input.style.position = 'absolute';
+  // Fixed, in viewport coordinates, and focused without scrolling: a long
+  // label's editor may run past the window, and an absolute element there
+  // would widen the page and scroll the whole editor sideways on focus.
+  input.style.position = 'fixed';
   input.style.zIndex = '30';
-  input.style.left = `${boxCenterX - sw / 2}px`;
-  input.style.top = `${sy}px`;
-  input.style.width = `${sw}px`;
-  input.style.height = `${sh}px`;
-  input.style.fontSize = `${Math.max(12, LABEL_FONT_SIZE * r.width / view.w)}px`;
-  input.style.textAlign = label.textAlign();
+  input.style.textAlign = align;
   input.style.resize = 'none';
   input.style.whiteSpace = 'pre-wrap';
+  input.style.overflowWrap = 'anywhere';
   input.style.overflow = 'hidden';
   // Measure the live editor text in the same face as the rendered label. The
   // The box grows from the actual text anchor while keeping alignment stable.
   const measure = document.createElement('span');
   measure.className = 'label-inline-editor-measure';
   document.body.appendChild(measure);
+  // The editor covers the text, not the label's grid box: the label's own
+  // font at the current zoom, one line tall per line, centred where the text
+  // is drawn, and growing from the text's aligned edge (or its centre) just
+  // as the drawn text does. Laid out again on every repaint, so it follows
+  // zooming and panning like the drawing.
   const resize = () => {
+    const b = label.bbox();
+    const r = pane.getBoundingClientRect();
+    const scale = r.width / view.w;
+    const screenX = (x) => r.left + (x - view.x) * scale;
+    const inset = label.math ? 0 : label.alignInset();
+    const alignedEdge = align === 'left' ? screenX(b.x + inset) - editorPad
+      : align === 'right' ? screenX(b.x + b.w - inset) + editorPad
+        : screenX(b.x + b.w / 2);
+    const fontPx = Math.max(6, labelFontSize(label.style?.width) * scale);
+    input.style.fontSize = `${fontPx}px`;
     measure.textContent = input.value || ' ';
     measure.style.fontSize = input.style.fontSize;
-    const minWidth = Math.max(60, sw);
-    const width = Math.max(minWidth, measure.getBoundingClientRect().width + 12);
+    // Long text wraps inside the visible canvas instead of running off it,
+    // and scrolls within the editor once even that is taller than the pane.
+    const margin = 8;
+    const width = Math.min(r.width - 2 * margin, Math.max(2 * fontPx, measure.getBoundingClientRect().width + 4));
+    const wanted = align === 'left' ? alignedEdge : align === 'right' ? alignedEdge - width : alignedEdge - width / 2;
+    const left = Math.min(Math.max(wanted, r.left + margin), r.right - margin - width);
     input.style.width = `${width}px`;
-    input.style.left = `${boxCenterX - width / 2}px`;
-    input.style.height = `${Math.max(sh, input.value.split('\n').length * parseFloat(input.style.fontSize || '12') * 1.2 + 8)}px`;
+    input.style.left = `${left}px`;
+    input.style.height = '0px';
+    const lines = input.value.split('\n').length * fontPx * 1.2 + 4;
+    const height = Math.min(r.height - 2 * margin, Math.max(lines, input.scrollHeight + 2));
+    input.style.height = `${height}px`;
+    input.style.overflowY = input.scrollHeight > height + 1 ? 'auto' : 'hidden';
+    const centre = r.top + (b.y + b.h / 2 - view.y) * scale;
+    input.style.top = `${Math.min(Math.max(centre - height / 2, r.top + margin), r.bottom - margin - height)}px`;
   };
+  input.relayout = resize;
   resize();
   input.addEventListener('input', resize);
   document.body.appendChild(input);
   inlineInput = input;
   render();
-  input.focus();
+  input.focus({ preventScroll: true });
   if (equationDraft) input.setSelectionRange(Math.min(1, input.value.length), Math.min(1, input.value.length));
   else input.select();
   let closed = false;
@@ -36485,7 +36510,7 @@ function inlineEditLabel(label, options = {}) {
       const portConflict = portNameConflict(conflicts, owner?.refdes);
       if (portConflict) {
         reportPortNameConflict(portConflict, v);
-        input.focus();
+        input.focus({ preventScroll: true });
         input.select();
         return false;
       }
@@ -36494,7 +36519,7 @@ function inlineEditLabel(label, options = {}) {
         const connect = await confirmNamedConnection(v, conflicts);
         prompting = false;
         if (!connect) {
-          input.focus();
+          input.focus({ preventScroll: true });
           input.select();
           return false;
         }
