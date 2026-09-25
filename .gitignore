@@ -3,3 +3,5 @@ dist/
 data/
 circuits/
 *.local.json
+# Local plans and to-dos; never published.
+notes/
