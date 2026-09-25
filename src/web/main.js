@@ -19,11 +19,7 @@ import { addTerminalStubs } from '../core/stubs.js';
 import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } from '../core/beats.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } from '../core/png-export.js';
-import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
-import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
-import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
-import { componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML } from '../core/render.js';
-import { componentsOfSymbols } from '../core/analysis/provenance.js';
+import { componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { labelFontSize, resolveColor, themeInkSvg } from '../core/style.js';
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
 import { createDocument, loadDocument, renderDocument } from '../core/document.js';
@@ -45,8 +41,7 @@ import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScor
 import { createPersistenceAdapter, defaultExportDirectory, validDocumentName } from './persistence.js';
 import { createWindowSession } from './window-session.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
-import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
-import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
+import { analysisFormStorageKey } from './analysis-state.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } from './interaction.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
 import { arrivalDirection, isPinDragCandidate, knifeCrossings, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
@@ -67,7 +62,6 @@ import {
   deleteCircuitBtn,
   revealDocumentBtn,
   exportCircuitBtn,
-  analysisButton,
   deleteDialog,
   deleteDialogMessage,
   switchDialog,
@@ -79,33 +73,12 @@ import {
   helpDialog,
   helpSearch,
   analysisDialog,
-  analysisForm,
-  analysisTarget,
-  analysisReference,
-  analysisInput,
-  analysisAcGrounds,
-  analysisDeviceRegions,
-  analysisApproxRo,
-  analysisApproxBody,
-  analysisApproxMiller,
-  analysisParasitics,
-  analysisApproxGmRo,
-  analysisApproxDominantPole,
-  analysisResult,
-  analysisEquation,
-  analysisDetails,
-  analysisNetlistPanel,
-  analysisNetlist,
-  analysisModelPanel,
-  analysisModelEl,
   analysisModelOpen,
   modelDialog,
   modelDialogTitle,
   modelDialogFigure,
   modelDialogNotes,
   modelDialogRubber,
-  analysisCancel,
-  analysisAnnotate,
   modeToolbarEl,
   beatStripEl,
   beatListEl,
@@ -134,6 +107,7 @@ import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } fr
 import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } from './status-bar-ui.js';
 import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } from './design-check-ui.js';
 import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, prefersReducedMotion, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
+import { clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope, syncAnalysisDock, setAnalysisPick, completeAnalysisPick, SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis, installAnalysisUi } from './analysis-ui.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -145,13 +119,17 @@ Object.defineProperties(editor, {
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
   clipboardNotice: { get: () => clipboardNotice, set: (value) => { clipboardNotice = value; } },
   copyMode: { get: () => copyMode, set: (value) => { copyMode = value; } },
+  currentDocumentPath: { get: () => currentDocumentPath, set: (value) => { currentDocumentPath = value; } },
   cursor: { get: () => cursor, set: (value) => { cursor = value; } },
   diagnosticSelection: { get: () => diagnosticSelection, set: (value) => { diagnosticSelection = value; } },
   directWire: { get: () => directWire, set: (value) => { directWire = value; } },
   drag: { get: () => drag, set: (value) => { drag = value; } },
+  equationAnnotationLayout: { get: () => equationAnnotationLayout, set: (value) => { equationAnnotationLayout = value; } },
+  equationEmphasis: { get: () => equationEmphasis, set: (value) => { equationEmphasis = value; } },
   insertQuery: { get: () => insertQuery, set: (value) => { insertQuery = value; } },
   labelMode: { get: () => labelMode, set: (value) => { labelMode = value; } },
   lastCheckReport: { get: () => lastCheckReport, set: (value) => { lastCheckReport = value; } },
+  latestSmallSignalModel: { get: () => latestSmallSignalModel, set: (value) => { latestSmallSignalModel = value; } },
   layoutPreviewRects: { get: () => layoutPreviewRects, set: (value) => { layoutPreviewRects = value; } },
   logDrawerState: { get: () => logDrawerState, set: (value) => { logDrawerState = value; } },
   mode: { get: () => mode, set: (value) => { mode = value; } },
@@ -166,6 +144,7 @@ Object.defineProperties(editor, {
   radialMenuEl: { get: () => radialMenuEl, set: (value) => { radialMenuEl = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
   selLabels: { get: () => selLabels, set: (value) => { selLabels = value; } },
+  selected: { get: () => selected, set: (value) => { selected = value; } },
   selectedNets: { get: () => selectedNets, set: (value) => { selectedNets = value; } },
   symmetry: { get: () => symmetry, set: (value) => { symmetry = value; } },
   terminalSnap: { get: () => terminalSnap, set: (value) => { terminalSnap = value; } },
@@ -197,37 +176,19 @@ const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
 const exportSelectionInput = exportForm?.querySelector('input[name="selection"]');
 // The selection as it stood when the export dialog opened.
 let exportSelection = null;
-const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
-const analysisTabButtons = [...document.querySelectorAll('[data-analysis-tab]')];
-const analysisTabPanels = new Map([...document.querySelectorAll('.analysis-tab-panel')]
-  .map((panel) => [panel.id.replace(/^analysis-panel-/, ''), panel]));
+/**
+ * Equation to schematic highlighting. Hovering a term lights the devices it
+ * came from; clicking locks that highlight, and clicking the locked term again
+ * widens the selection to the enclosing sub-expression, so a term buried inside
+ * a fraction can still be grabbed whole.
+ */
+let equationEmphasis = [];
 
-function setAnalysisResultTab(name = 'equations') {
-  const requested = analysisTabPanels.has(name) ? name : 'equations';
-  for (const button of analysisTabButtons) {
-    const active = button.dataset.analysisTab === requested;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-selected', String(active));
-    button.tabIndex = active ? 0 : -1;
-  }
-  for (const [key, panel] of analysisTabPanels) panel.hidden = key !== requested;
-}
+let latestSmallSignalModel = null;
 
-for (const button of analysisTabButtons) {
-  button.addEventListener('click', () => setAnalysisResultTab(button.dataset.analysisTab));
-  button.addEventListener('keydown', (ev) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) return;
-    ev.preventDefault();
-    const enabled = analysisTabButtons.filter((tab) => !tab.disabled);
-    const index = enabled.indexOf(button);
-    const next = ev.key === 'Home' ? 0
-      : ev.key === 'End' ? enabled.length - 1
-        : (index + (ev.key === 'ArrowRight' ? 1 : -1) + enabled.length) % enabled.length;
-    enabled[next]?.focus();
-    if (enabled[next]) setAnalysisResultTab(enabled[next].dataset.analysisTab);
-  });
-}
-setAnalysisResultTab();
+let analysisPick = null;
+installAnalysisUi();
+
 installIcons();
 // The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.
 let tutorial = null;
@@ -484,7 +445,7 @@ function markModelChanged(wires = true) {
   persistDraft();
 }
 
-function commit(fn) {
+export function commit(fn) {
   const before = snapshot();
   let result;
   try {
@@ -1604,7 +1565,7 @@ function captureRouteGeometry(net, move = clonePoint) {
   };
 }
 
-function sortedComps() {
+export function sortedComps() {
   if (!sortedCompsCache || sortedCompsCache.revision !== modelRevision) {
     sortedCompsCache = { revision: modelRevision, value: [...circuit.components.values()].sort((a, b) => naturalCompare(a.refdes, b.refdes)) };
   }
@@ -1644,13 +1605,13 @@ function namedNetGroupKey(net) {
   return circuit.netGroupKey(net);
 }
 
-function namedGroupNets(net) {
+export function namedGroupNets(net) {
   if (!net?.id) return referenceGroupNets(net);
   const key = namedNetGroupKey(net);
   return [...circuit.nets.values()].filter((candidate) => namedNetGroupKey(candidate) === key);
 }
 
-function visibleNets() {
+export function visibleNets() {
   if (!visibleNetsCache || visibleNetsCache.revision !== modelRevision) {
     const grouped = new Map();
     const nets = [...circuit.nets.values()]
@@ -1706,7 +1667,7 @@ function matchAt(x, y) {
  * tolerance but at least half a grid cell, so genuine wire-interior clicks
  * (far from any pin) keep working for segment dragging.
  */
-function nearestTerminal(w, { anyDistance = false } = {}) {
+export function nearestTerminal(w, { anyDistance = false } = {}) {
   const p = paneSize();
   const pxPerUnit = p ? view.w / p.w : 1;
   const tol = Math.max(GRID / 2, 12 / pxPerUnit);
@@ -5592,7 +5553,7 @@ function selectStackedKey(key) {
 /** Pick the nearest net route within a forgiving screen-sized hit area.
  *  Considers EVERY drawn branch of a multi-way net, so a joined/connected wire
  *  is selectable and draggable anywhere along it. */
-function pickWire(w) {
+export function pickWire(w) {
   return chooseWireHitCandidate({
     candidates: wireHitsAt(w),
     selectedNets,
@@ -8791,827 +8752,6 @@ function selectSameTarget(criterion) {
   closeComponentContextMenu();
   render();
 }
-
-function portNetIds(nets, type, role) {
-  return nets
-    .filter((net) => net.terminals?.some((terminal) => {
-      const component = circuit.components.get(terminal.comp);
-      return component?.type === type || component?.analysis?.role === role;
-    }))
-    .map((net) => net.id);
-}
-
-function fillAnalysisDialog(targetNetId) {
-  if (!analysisTarget || !analysisReference) return;
-  const nets = visibleNets();
-  const defaults = analysisFormDefaults(nets, {
-    targetNetId,
-    componentInputNetIds: portNetIds(nets, 'input', 'input'),
-    componentOutputNetIds: portNetIds(nets, 'output', 'output'),
-  });
-  analysisTarget.replaceChildren();
-  for (const net of nets) {
-    const option = document.createElement('option');
-    option.value = net.id;
-    option.textContent = analysisNetOptionText(net);
-    analysisTarget.appendChild(option);
-  }
-  if (defaults.target) analysisTarget.value = defaults.target;
-
-  analysisReference.replaceChildren();
-  const automatic = document.createElement('option');
-  automatic.value = '';
-  automatic.textContent = 'Automatic AC reference (marker group)';
-  analysisReference.appendChild(automatic);
-  for (const net of nets) {
-    const option = document.createElement('option');
-    option.value = net.id;
-    option.textContent = analysisNetOptionText(net);
-    analysisReference.appendChild(option);
-  }
-
-  if (analysisInput) {
-    analysisInput.replaceChildren();
-    for (const net of nets) {
-      const option = document.createElement('option');
-      option.value = net.id;
-      option.textContent = analysisNetOptionText(net);
-      analysisInput.appendChild(option);
-    }
-    if (defaults.input) analysisInput.value = defaults.input;
-  }
-  return defaults;
-}
-
-function parseAnalysisList(value) {
-  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
-}
-
-let latestAnalysisReport = null;
-
-function clearLatestAnalysisResult() {
-  latestAnalysisReport = null;
-  if (analysisResult) {
-    analysisResult.hidden = true;
-    if (analysisEquation) analysisEquation.replaceChildren();
-    if (analysisDetails) analysisDetails.textContent = '';
-    if (analysisNetlist) analysisNetlist.textContent = '';
-    if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
-  }
-  if (analysisAnnotate) analysisAnnotate.hidden = true;
-}
-
-function analysisFormOptions() {
-  return normalizeAnalysisOptions({
-    neglectBodyEffect: !!analysisApproxBody?.checked,
-    millerApproximation: !!analysisApproxMiller?.checked,
-    parasitics: !!analysisParasitics?.checked,
-    highIntrinsicGain: !!analysisApproxGmRo?.checked,
-    neglectChannelLengthModulation: !!analysisApproxRo?.checked,
-    dominantPole: !!analysisApproxDominantPole?.checked,
-    transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
-    deviceRegions: analysisDeviceRegions?.value || '',
-  });
-}
-
-function analysisFormValues() {
-  const { deviceRegions = {}, ...options } = analysisFormOptions();
-  return {
-    input: analysisInput?.value || '',
-    output: analysisTarget?.value || '',
-    reference: analysisReference?.value || '',
-    acGrounds: analysisAcGrounds?.value || '',
-    deviceRegions,
-    options,
-  };
-}
-
-function analysisDeviceOptions() {
-  const devices = {};
-  for (const component of sortedComps()) {
-    if (!['nmos', 'pmos', 'nmosb', 'pmosb'].includes(component.type)) continue;
-    const source = component.analysis || {};
-    const options = {};
-    if (typeof source.ignoreBodyEffect === 'boolean') options.neglectBodyEffect = source.ignoreBodyEffect;
-    if (typeof source.gmroLarge === 'boolean') options.highIntrinsicGain = source.gmroLarge;
-    if (source.channelLengthModulation === 'ignore') options.neglectChannelLengthModulation = true;
-    if (source.channelLengthModulation === 'finite') options.neglectChannelLengthModulation = false;
-    if (Object.keys(options).length) devices[component.refdes] = options;
-  }
-  return devices;
-}
-
-function migrateAnalysisFormStorage(previousName, nextName) {
-  if (previousName === nextName) return;
-  try {
-    const fromKey = analysisFormStorageKey(previousName);
-    const toKey = analysisFormStorageKey(nextName);
-    const saved = localStorage.getItem(fromKey);
-    if (saved && !localStorage.getItem(toKey)) localStorage.setItem(toKey, saved);
-    if (saved) localStorage.removeItem(fromKey);
-  } catch { /* storage unavailable */ }
-}
-
-/** Analysis settings belong to one document file; an unsaved document uses the "new" scope. */
-function analysisFormScope() {
-  return currentDocumentPath || '';
-}
-
-function persistAnalysisForm() {
-  try { localStorage.setItem(analysisFormStorageKey(analysisFormScope()), JSON.stringify(analysisFormValues())); } catch { /* storage unavailable */ }
-}
-
-function restoreAnalysisForm(defaults = {}) {
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(analysisFormScope())) || 'null'); } catch { /* storage unavailable */ }
-  if (!saved) {
-    const options = analysisOptionDefaults();
-    if (analysisReference) analysisReference.value = '';
-    if (analysisAcGrounds) analysisAcGrounds.value = '';
-    if (analysisDeviceRegions) analysisDeviceRegions.value = '';
-    if (analysisApproxRo) analysisApproxRo.checked = options.neglectChannelLengthModulation;
-    if (analysisApproxBody) analysisApproxBody.checked = options.neglectBodyEffect;
-    if (analysisApproxMiller) analysisApproxMiller.checked = options.millerApproximation;
-    if (analysisParasitics) analysisParasitics.checked = options.parasitics;
-    if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
-    if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
-    setAnalysisTransferInputs(options.transferFunctions);
-    return false;
-  }
-  const { state, diagnostics } = migrateAnalysisFormState(saved);
-  for (const diagnostic of diagnostics) logLine(diagnostic.message, diagnostic.severity === 'error' ? 'error' : 'status');
-  const setSelect = (el, value, force = false) => {
-    if (!el || !value || ![...el.options].some((option) => option.value === value)) return;
-    if (!force && value === '') return;
-    el.value = value;
-  };
-  setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
-  setSelect(analysisReference, state.reference);
-  setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
-  if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
-  if (analysisDeviceRegions) {
-    analysisDeviceRegions.value = formatAnalysisDeviceRegions(pruneAnalysisDeviceRegions(
-      state.deviceRegions,
-      sortedComps().map((component) => component.refdes),
-    ));
-  }
-  if (analysisApproxRo) analysisApproxRo.checked = state.options.neglectChannelLengthModulation;
-  if (analysisApproxBody) analysisApproxBody.checked = state.options.neglectBodyEffect;
-  if (analysisApproxMiller) analysisApproxMiller.checked = state.options.millerApproximation;
-  if (analysisParasitics) analysisParasitics.checked = state.options.parasitics;
-  if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
-  if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
-  setAnalysisTransferInputs(state.options.transferFunctions);
-  return true;
-}
-
-function setAnalysisTransferInputs(names) {
-  for (const input of analysisTransferInputs) input.checked = names.includes(input.dataset.transferFunction);
-}
-
-function prefillAnalysisAttributes() {
-  const markedGrounds = visibleNets()
-    .filter((net) => net.analysis?.acGround || net.analysis?.role === 'dc-bias')
-    .map((net) => net.name || net.id);
-  const groundValues = parseAnalysisList(analysisAcGrounds?.value);
-  for (const value of markedGrounds) if (!groundValues.includes(value)) groundValues.push(value);
-  if (analysisAcGrounds && groundValues.length) analysisAcGrounds.value = groundValues.join(', ');
-  const regions = analysisFormOptions().deviceRegions || {};
-  for (const component of sortedComps()) {
-    if (component.analysis?.model === 'triode') regions[component.refdes] = { region: 'triode' };
-  }
-  if (analysisDeviceRegions) analysisDeviceRegions.value = formatAnalysisDeviceRegions(regions);
-}
-
-function analysisReportText(report) {
-  const lines = [report?.complete ? 'All equations derived.' : report?.error || 'Some equations are unavailable.'];
-  for (const { title, result } of report?.equationEntries || []) {
-    if (result?.equation) lines.push(`${title}: ${result.equation}`);
-    if (result?.exactEquation && result.exactEquation !== result.equation) {
-      lines.push(`${title}, exact: ${result.exactEquation}`);
-    }
-  }
-  for (const assumption of report?.assumptions || []) lines.push(`Assumption: ${assumption}`);
-  const log = Array.isArray(report?.log) ? report.log.join('\n') : String(report?.log || '').trim();
-  if (log) lines.push(log);
-  return lines.join('\n');
-}
-
-/**
- * Solver messages name nodes by physical net id (`V(N4)`), which says nothing
- * to someone looking at a drawing. Give them back the net's own name so a
- * floating node can be found and grounded.
- */
-function analysisMessageWithNetNames(message) {
-  return String(message || '').replace(/\b([VI])\((N\d+)\)/g, (whole, quantity, id) => {
-    const net = circuit.nets.get(id);
-    const name = net?.name ? parseLabelRuns(net.name).map((run) => run.text).join('') : '';
-    return name ? `${quantity}(${name})` : whole;
-  });
-}
-
-function analysisEquationEntries(report) {
-  return Array.isArray(report?.equationEntries) ? report.equationEntries : [];
-}
-
-function analysisAnnotationEntries(report) {
-  return analysisEquationEntries(report).flatMap(({ title, result }) => (
-    result?.ok && result.equation ? [{ title, equation: result.equation }] : []
-  ));
-}
-
-/**
- * Tag each rendered sub-expression with the components it was derived from.
- *
- * `texToMathML` has already turned `present.js`'s provenance markers into
- * `data-node` attributes; this resolves each node's symbol names through the
- * report's `symbolProvenance` table. A node naming nothing on the canvas (a
- * bare number, or `s`) is left undecorated and stays inert.
- */
-function decorateEquationProvenance(container, provenance, table) {
-  if (!container || !provenance || !table) return;
-  const symbols = new Map(provenance.nodes.map((node) => [String(node.id), node.symbols]));
-  for (const element of container.querySelectorAll('[data-node]')) {
-    const components = componentsOfSymbols(symbols.get(element.dataset.node) || [], table);
-    if (components.length) element.dataset.components = components.join(' ');
-  }
-}
-
-function renderEquationMath(container, equation, provenance = null, table = null) {
-  if (!container) return;
-  container.replaceChildren();
-  const normalized = equationForDiagram(equation);
-  container.setAttribute('aria-label', normalized);
-  // The shared parser escapes literal text and emits only MathML markup. The
-  // provenance render differs from the displayed one by markers alone, which
-  // `analysis-provenance-v2.test.js` asserts against the whole golden corpus,
-  // so rendering from it cannot change what the row looks like.
-  container.innerHTML = texToMathML(provenance?.tex || equation);
-  decorateEquationProvenance(container, provenance, table);
-}
-
-/**
- * Equation to schematic highlighting. Hovering a term lights the devices it
- * came from; clicking locks that highlight, and clicking the locked term again
- * widens the selection to the enclosing sub-expression, so a term buried inside
- * a fraction can still be grabbed whole.
- */
-let equationEmphasis = [];
-let equationLockedTerm = null;
-
-function equationTermComponents(element) {
-  return element?.dataset?.components ? element.dataset.components.split(' ') : [];
-}
-
-function setEquationEmphasis(element, { locked = false } = {}) {
-  const root = analysisEquation;
-  if (!root) return;
-  if (locked) equationLockedTerm = element;
-  const active = element || equationLockedTerm;
-  for (const marked of root.querySelectorAll('.equation-term-hover, .equation-term-locked')) {
-    marked.classList.remove('equation-term-hover', 'equation-term-locked');
-  }
-  if (equationLockedTerm?.isConnected) equationLockedTerm.classList.add('equation-term-locked');
-  else equationLockedTerm = null;
-  if (active?.isConnected && active !== equationLockedTerm) active.classList.add('equation-term-hover');
-  const components = equationTermComponents(active?.isConnected ? active : equationLockedTerm);
-  const changed = components.length !== equationEmphasis.length
-    || components.some((ref, index) => ref !== equationEmphasis[index]);
-  equationEmphasis = components;
-  if (changed) render();
-}
-
-function clearEquationEmphasis() {
-  equationLockedTerm = null;
-  setEquationEmphasis(null);
-}
-
-if (analysisEquation) {
-  analysisEquation.addEventListener('pointermove', (event) => {
-    setEquationEmphasis(event.target.closest?.('[data-components]') || null);
-  });
-  analysisEquation.addEventListener('pointerleave', () => setEquationEmphasis(null));
-  analysisEquation.addEventListener('click', (event) => {
-    const term = event.target.closest?.('[data-components]');
-    if (!term) { clearEquationEmphasis(); return; }
-    // A second click on the locked term widens to the sub-expression that
-    // contains it, one level per click, up to the whole equation.
-    const next = term === equationLockedTerm
-      ? term.parentElement?.closest('[data-components]') || term
-      : term;
-    setEquationEmphasis(next, { locked: true });
-  });
-}
-
-let latestSmallSignalModel = null;
-
-/**
- * Draw the small-signal model beside its equations. The primitives come from
- * the pipeline after its pre-solve transforms, so the figure shows the circuit
- * the displayed equations describe -- Miller shunts included -- rather than
- * the schematic they were derived from.
- */
-function renderSmallSignalModel(report) {
-  latestSmallSignalModel = null;
-  if (!analysisModelEl) return false;
-  analysisModelEl.replaceChildren();
-  if (!report?.ok) return false;
-  let model;
-  try { model = smallSignalSchematic(report, { circuit }); }
-  catch (error) { model = { ok: false, error: error.message }; }
-  if (!model?.ok) {
-    const message = document.createElement('div');
-    message.className = 'analysis-equation-unavailable';
-    message.textContent = model?.error || 'No small-signal model is available.';
-    analysisModelEl.appendChild(message);
-    return false;
-  }
-  latestSmallSignalModel = model;
-  const figure = document.createElement('div');
-  figure.className = 'analysis-model-figure';
-  figure.innerHTML = svgString(model.circuit, {
-    themeInk: true,
-    grid: false,
-    terminals: false,
-    junctions: true,
-    background: false,
-    emptyHint: false,
-  });
-  const svg = figure.querySelector('svg');
-  if (svg) {
-    svg.removeAttribute('width');
-    svg.removeAttribute('height');
-    svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', 'Small-signal equivalent circuit');
-  }
-  analysisModelEl.appendChild(figure);
-  for (const entry of model.legend || []) {
-    const row = document.createElement('div');
-    row.className = 'analysis-equation-row';
-    const heading = document.createElement('div');
-    heading.className = 'analysis-equation-label';
-    heading.textContent = entry.symbol.replace(/[_^]\{([^}]*)\}/g, '$1');
-    const value = document.createElement('div');
-    value.className = 'analysis-equation-value';
-    renderEquationMath(value, `${entry.symbol} = ${entry.value}`);
-    row.append(heading, value);
-    analysisModelEl.appendChild(row);
-  }
-  const notes = [...(model.notes || [])];
-  const count = model.correspondence?.size || 0;
-  if (count > 15) notes.unshift(`${count} branches: open it full size to read the figure.`);
-  if (notes.length) {
-    const list = document.createElement('ul');
-    list.className = 'analysis-model-notes';
-    for (const note of notes) {
-      const item = document.createElement('li');
-      item.textContent = note;
-      list.appendChild(item);
-    }
-    analysisModelEl.appendChild(list);
-  }
-  return true;
-}
-
-function renderAnalysisResult(report) {
-  if (!analysisResult) return;
-  analysisResult.hidden = !report;
-  if (!report) {
-    if (analysisEquation) analysisEquation.replaceChildren();
-    if (analysisDetails) analysisDetails.textContent = '';
-    if (analysisNetlist) analysisNetlist.textContent = '';
-    if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
-    renderSmallSignalModel(null);
-    if (analysisModelPanel) analysisModelPanel.hidden = true;
-    for (const id of ['analysis-tab-netlist', 'analysis-tab-model']) {
-      const tab = document.getElementById(id);
-      if (tab) tab.disabled = true;
-    }
-    setAnalysisResultTab('equations');
-    return;
-  }
-  const text = analysisReportText(report);
-  if (analysisEquation) {
-    clearEquationEmphasis();
-    analysisEquation.replaceChildren();
-    const entries = analysisEquationEntries(report);
-    if (entries.length) {
-      for (const { title, result: child } of entries) {
-        const row = document.createElement('div');
-        row.className = 'analysis-equation-row';
-        const heading = document.createElement('div');
-        heading.className = 'analysis-equation-label';
-        heading.textContent = title;
-        row.appendChild(heading);
-        if (child?.ok && child.equation) {
-          const equation = document.createElement('div');
-          equation.className = 'analysis-equation-value';
-          // A definition row states several things at once; stack them so the
-          // row reads down instead of scrolling sideways.
-          if (child.definition && Array.isArray(child.lines) && child.lines.length > 1) {
-            equation.classList.add('analysis-equation-lines');
-            for (const line of child.lines) {
-              const item = document.createElement('div');
-              renderEquationMath(item, line);
-              equation.appendChild(item);
-            }
-          } else renderEquationMath(equation, child.equation, child.equationProvenance, report.symbolProvenance);
-          row.appendChild(equation);
-        } else {
-          const unavailable = document.createElement('div');
-          unavailable.className = 'analysis-equation-unavailable';
-          unavailable.textContent = `Unsupported: ${child?.error || 'analysis unavailable'}`;
-          row.appendChild(unavailable);
-        }
-        analysisEquation.appendChild(row);
-      }
-      analysisEquation.setAttribute('aria-label', text);
-    } else {
-      const unavailable = document.createElement('div');
-      unavailable.className = 'analysis-equation-unavailable analysis-error';
-      unavailable.textContent = analysisMessageWithNetNames(report.error) || 'Analysis unavailable.';
-      analysisEquation.appendChild(unavailable);
-      analysisEquation.removeAttribute('aria-label');
-    }
-  }
-  if (analysisDetails) analysisDetails.textContent = text;
-  const netlist = report.smallSignalNetlist || '';
-  if (analysisNetlistPanel) analysisNetlistPanel.hidden = !netlist;
-  if (analysisNetlist) analysisNetlist.textContent = netlist || '';
-  const netlistTab = document.getElementById('analysis-tab-netlist');
-  if (netlistTab) {
-    netlistTab.disabled = !netlist;
-    if (!netlist && netlistTab.getAttribute('aria-selected') === 'true') setAnalysisResultTab('equations');
-  }
-  const drawn = renderSmallSignalModel(report);
-  if (analysisModelPanel) analysisModelPanel.hidden = !drawn;
-  const modelTab = document.getElementById('analysis-tab-model');
-  if (modelTab) modelTab.disabled = !drawn;
-  if (analysisModelOpen) analysisModelOpen.disabled = !drawn;
-  const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
-  const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
-  setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
-}
-
-function analysisAnnotationAssumptions(report) {
-  const options = report?.analysisOptions || {};
-  const lines = [];
-  if (options.highIntrinsicGain) lines.push('g_{m}r_{o} \\gg 1');
-  if (options.neglectChannelLengthModulation) lines.push('r_{o} = \\infty');
-  if (options.neglectBodyEffect) lines.push('g_{mb} = 0');
-  if (options.dominantPoleApplied) lines.push('\\text{Dominant-pole approximation}');
-  for (const assumption of report?.assumptions || []) {
-    if (assumption.startsWith('Miller approximation')) lines.push(`\\text{${assumption}}`);
-  }
-  return lines;
-}
-
-function openAnalysisDialog(targetNetId) {
-  if (!analysisDialog) return;
-  const defaults = fillAnalysisDialog(targetNetId);
-  const restored = restoreAnalysisForm(defaults);
-  prefillAnalysisAttributes();
-  if (!restored) groundUnusedInputPorts(null, analysisInput?.value);
-  analysisInputPrevious = analysisInput?.value || '';
-  if (!restored && targetNetId && analysisTarget && [...analysisTarget.options].some((option) => option.value === targetNetId)) analysisTarget.value = targetNetId;
-  persistAnalysisForm();
-  renderAnalysisResult(latestAnalysisReport);
-  if (analysisAnnotate) analysisAnnotate.hidden = !latestAnalysisReport?.ok;
-  const context = document.getElementById('analysis-bias-context');
-  if (context && (analysisAcGrounds?.value || analysisDeviceRegions?.value)) context.open = true;
-  analysisDockRevision = modelRevision;
-  analysisDialog.hidden = false;
-  analysisButton?.setAttribute('aria-pressed', 'true');
-  analysisInput?.focus();
-}
-
-let analysisInputPrevious = '';
-
-/**
- * A stage is driven from one port; every other input port is held at AC
- * ground. That covers a differential pair, and it covers taking the input
- * somewhere else entirely -- a supply rail, say -- where every signal input
- * has to be quiet for the answer to mean anything.
- */
-function groundUnusedInputPorts(previousInput, nextInput) {
-  if (!analysisAcGrounds) return;
-  const nets = visibleNets();
-  const inputPorts = new Set(portNetIds(nets, 'input', 'input'));
-  if (!inputPorts.size) return;
-  const nameOf = (id) => {
-    const net = circuit.nets.get(id);
-    return net ? net.name || net.id : '';
-  };
-  let values = parseAnalysisList(analysisAcGrounds.value);
-  const next = nameOf(nextInput);
-  values = values.filter((value) => value !== next && value !== nextInput);
-  const additions = previousInput
-    ? (inputPorts.has(previousInput) ? [nameOf(previousInput)] : [])
-    : [...inputPorts].filter((id) => id !== nextInput).map(nameOf);
-  for (const value of additions) if (value && !values.includes(value)) values.push(value);
-  analysisAcGrounds.value = values.join(', ');
-}
-
-function isAnalysisDockOpen() {
-  return !!analysisDialog && !analysisDialog.hidden;
-}
-
-function closeAnalysisDock() {
-  if (!isAnalysisDockOpen()) return;
-  setAnalysisPick(null);
-  // The equation-to-schematic highlight belongs to the dock: leaving it drawn
-  // over the canvas with nothing to explain it is just a stuck selection.
-  clearEquationEmphasis();
-  analysisDialog.hidden = true;
-  analysisButton?.setAttribute('aria-pressed', 'false');
-  canvasEl.focus();
-}
-
-let analysisDockRevision = null;
-let analysisReportRevision = null;
-let analysisPick = null;
-
-/** Keep dock selects in step with model edits while it stays open. */
-function syncAnalysisDock() {
-  if (!isAnalysisDockOpen() || analysisDockRevision === modelRevision) return;
-  analysisDockRevision = modelRevision;
-  const kept = [analysisInput, analysisTarget, analysisReference].map((el) => el?.value);
-  fillAnalysisDialog();
-  [analysisInput, analysisTarget, analysisReference].forEach((el, index) => {
-    if (el && [...el.options].some((option) => option.value === kept[index])) el.value = kept[index];
-  });
-  const stale = document.getElementById('analysis-stale');
-  if (stale) stale.hidden = !latestAnalysisReport || analysisReportRevision === modelRevision;
-}
-
-function setAnalysisPick(selectId) {
-  analysisPick = selectId && document.getElementById(selectId) ? selectId : null;
-  for (const button of document.querySelectorAll('[data-analysis-pick]')) {
-    button.setAttribute('aria-pressed', String(button.dataset.analysisPick === analysisPick));
-  }
-  canvasEl.classList.toggle('mode-analysis-pick', !!analysisPick);
-  renderStatus();
-}
-
-/** Resolve a canvas click to a net for the armed analysis field. */
-function completeAnalysisPick(world) {
-  const select = document.getElementById(analysisPick);
-  if (!select) return setAnalysisPick(null);
-  const terminal = nearestTerminal(world);
-  const net = terminal
-    ? circuit.netOfTerminal(`${terminal.refdes}.${terminal.term}`)
-    : pickWire(world)?.net;
-  const optionNet = net && [...select.options].find((option) => option.value === net.id)
-    ? net
-    : net && visibleNets().find((candidate) => namedGroupNets(candidate).some((member) => member.id === net.id));
-  if (!optionNet) {
-    logLine('Click a wire or a connected pin to choose a net.', 'error');
-    return;
-  }
-  select.value = optionNet.id;
-  select.dispatchEvent(new Event('change', { bubbles: true }));
-  logLine(`${select.labels?.[0]?.textContent || 'Analysis node'}: ${optionNet.name || optionNet.id}`, 'status');
-  setAnalysisPick(null);
-  selectedNets = new Set(namedGroupNets(optionNet).map((member) => member.id));
-  render();
-}
-
-analysisForm?.addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  const output = analysisTarget?.value;
-  const input = analysisInput?.value;
-  if (!output || !input) {
-    const error = !output
-      ? 'Select an output node before deriving equations.'
-      : 'Select an input node before deriving equations.';
-    latestAnalysisReport = { query: 'combined', ok: false, complete: false, error, reports: {} };
-    renderAnalysisResult(latestAnalysisReport);
-    if (analysisAnnotate) analysisAnnotate.hidden = true;
-    logLine(error, 'error');
-    return;
-  }
-  persistAnalysisForm();
-  const formOptions = analysisFormOptions();
-  const devices = analysisDeviceOptions();
-  const request = {
-    ...formOptions,
-    ...(Object.keys(devices).length ? { devices } : {}),
-    input,
-    output,
-    reference: analysisReference?.value || undefined,
-    acGrounds: parseAnalysisList(analysisAcGrounds?.value),
-  };
-  let report;
-  try {
-    report = adaptCombinedReport(analyzeSmallSignalV2(circuit, request));
-    report.analysisOptions = {
-      ...formOptions,
-      devices,
-      dominantPoleApplied: formOptions.dominantPole
-        && report.assumptions?.includes('dominant-pole approximation'),
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
-  }
-  latestAnalysisReport = report;
-  analysisReportRevision = modelRevision;
-  const stale = document.getElementById('analysis-stale');
-  if (stale) stale.hidden = true;
-  renderAnalysisResult(report);
-  if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
-  requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-  logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
-  for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
-  for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
-});
-
-analysisInput?.addEventListener('change', () => {
-  if (analysisInput.value === analysisInputPrevious) return;
-  groundUnusedInputPorts(analysisInputPrevious, analysisInput.value);
-  analysisInputPrevious = analysisInput.value;
-});
-
-for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, ...analysisTransferInputs]) {
-  control?.addEventListener('input', persistAnalysisForm);
-  control?.addEventListener('change', persistAnalysisForm);
-}
-
-function equationForDiagram(equation) {
-  return String(equation || '')
-    .replace(/\\left|\\right/g, '')
-    .replace(/\\Big\\Vert|\\Vert/g, '||')
-    .replace(/\\\|\\\|/g, '||')
-    .replace(/\\parallel/g, '||')
-    .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1/$2)')
-    .replace(/\b([AGZ])_([imv])\b/g, '$1_{$2}')
-    .replace(/\s+/g, ' ')
-    // The live analysis preview is built from rich-text spans rather than
-    // MathML. Apply these after whitespace normalization so the em-space is
-    // not collapsed back to an ordinary space; persisted math labels are
-    // handled by texToMathML in the SVG renderer.
-    .replace(/\\qquad/g, '\u2003\u2003')
-    .replace(/\\quad/g, '\u2003')
-    .trim();
-}
-
-function equationForLabel(equation) {
-  const normalized = String(equation || '')
-    .replace(/\\parallel/g, '\\Vert')
-    .replace(/\\Big\\\|\\\|/g, '\\Big\\Vert')
-    .replace(/\\\|\\\|/g, '\\Vert')
-    // Keep labels editable as valid TeX even if a legacy report or manually
-    // entered equation still contains the plain `||` spelling.
-    .replace(/(?<!\\)\|\|/g, '\\Vert')
-    .replace(/\b([AGZ])_([imv])\b/g, '$1_{$2}')
-    .replace(/\s+/g, ' ')
-    .trim();
-  // A parallel operator sharing a line with a fraction needs the larger
-  // delimiter form to reach the fraction's numerator/denominator height.
-  return /\\frac\b/.test(normalized)
-    ? normalized.replace(/(?<!\\Big)\\Vert/g, '\\Big\\Vert')
-    : normalized;
-}
-
-function annotateAnalysisResult() {
-  const report = latestAnalysisReport;
-  if (!report?.ok) return;
-  const entries = analysisAnnotationEntries(report);
-  if (!entries.length) return;
-  // Keep generated equations below the figure. Label boxes are centered on
-  // their anchors, so place each center from the figure's left and bottom
-  // edges after learning its model dimensions.
-  const circuitBounds = circuit.bounds();
-  const leftEdge = circuitBounds.w > 0 ? circuitBounds.x : cursor.x;
-  const bottomEdge = circuitBounds.h > 0 ? circuitBounds.y + circuitBounds.h : cursor.y;
-  const topGap = 2 * GRID;
-  let nextTop = bottomEdge + topGap;
-  const labels = [];
-  const equationLabels = [];
-  let assumptionsLabel = null;
-  commit(() => {
-    for (const entry of entries) {
-      const label = circuit.addLabel({
-        text: equationForLabel(`\\text{${entry.title}: }\\;${entry.equation}`),
-        x: 0,
-        y: 0,
-        align: 'left',
-        math: true,
-      });
-      const box = label.bbox();
-      const left = snap(leftEdge);
-      const x = snap(left + box.w / 2);
-      const y = snap(nextTop + box.h / 2);
-      label.moveTo(x, y);
-      nextTop = label.bbox().y + label.bbox().h + GRID;
-      labels.push(label);
-      equationLabels.push(label);
-    }
-    const assumptions = analysisAnnotationAssumptions(report);
-    if (assumptions.length) {
-      const label = circuit.addLabel({
-        text: ['\\text{Assumptions\\:}', ...assumptions].join('\n'),
-        x: 0,
-        y: 0,
-        align: 'left',
-        math: true,
-      });
-      const box = label.bbox();
-      const left = snap(leftEdge);
-      label.moveTo(snap(left + box.w / 2), snap(nextTop + box.h / 2));
-      labels.push(label);
-      assumptionsLabel = label;
-    }
-  });
-  equationAnnotationLayout = {
-    equationIds: equationLabels.map((label) => label.id),
-    assumptionsId: assumptionsLabel?.id || null,
-    leftEdge,
-    bottomEdge,
-    topGap,
-    signature: null,
-  };
-  setLabelSelection(labels.map((label) => label.id), labels[0]?.id);
-  const equationCount = entries.length;
-  logLine(`annotated schematic with ${equationCount} equation${equationCount === 1 ? '' : 's'}${labels.length > equationCount ? ' and assumptions' : ''}`, 'status');
-  fitView();
-}
-
-analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
-
-/** An explicit selection hints the output; otherwise the form defaults decide. */
-function suggestedAnalysisTarget() {
-  const selectedNet = [...selectedNets][0];
-  if (selectedNet && circuit.nets.has(selectedNet)) return selectedNet;
-  const component = selected && circuit.components.get(selected);
-  if (component) {
-    for (const term of ['d', 'o', 'y', 'a', 'b']) {
-      const net = circuit.netOfTerminal({ comp: component.refdes, term });
-      if (net) return net.id;
-    }
-  }
-  return '';
-}
-
-analysisButton?.addEventListener('click', () => {
-  if (isAnalysisDockOpen()) closeAnalysisDock();
-  else openAnalysisDialog(suggestedAnalysisTarget());
-});
-
-const SMALL_SIGNAL_TRANSISTOR_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
-const SMALL_SIGNAL_RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
-const SMALL_SIGNAL_PORT_TYPES = INTERFACE_PIN_TYPES;
-
-/**
- * Resolve the component scope for a side-panel analysis menu. A context menu
- * opened on a selected component applies to every selected component of the
- * requested kind; opening it on an unselected row intentionally scopes the
- * action to that row so an old multi-selection cannot be changed by accident.
- */
-function analysisComponentTargets(target, predicate = () => true) {
-  const selectedRefs = new Set(selectedComps().map((comp) => comp.refdes));
-  const refs = selectedRefs.has(target.refdes) ? selectedRefs : new Set([target.refdes]);
-  return [...refs]
-    .map((refdes) => circuit.components.get(refdes))
-    .filter((component) => component && predicate(component));
-}
-
-/** Resolve the analogous scope for a side-panel net analysis menu. */
-function analysisNetTargets(target) {
-  const selectedIds = new Set(selectedNets);
-  const ids = selectedIds.has(target.id) ? selectedIds : new Set([target.id]);
-  return [...ids].map((id) => circuit.nets.get(id)).filter(Boolean);
-}
-
-function applyComponentAnalysis(target, attrs, predicate = () => true) {
-  const components = analysisComponentTargets(target, predicate);
-  if (!components.length) return;
-  commit(() => {
-    for (const component of components) circuit.setComponentAnalysis(component.refdes, attrs);
-  });
-  logLine(`applied small-signal attributes to ${components.length} component${components.length === 1 ? '' : 's'}`, 'status');
-}
-
-function applyNetAnalysis(target, attrs) {
-  const nets = analysisNetTargets(target);
-  if (!nets.length) return;
-  commit(() => {
-    for (const net of nets) circuit.setNetAnalysis(net, attrs);
-  });
-  logLine(`applied analysis attributes to ${nets.length} net${nets.length === 1 ? '' : 's'}`, 'status');
-}
-
-analysisCancel?.addEventListener('click', closeAnalysisDock);
-for (const button of document.querySelectorAll('[data-analysis-pick]')) {
-  button.addEventListener('click', () => setAnalysisPick(analysisPick === button.dataset.analysisPick ? null : button.dataset.analysisPick));
-}
-analysisDialog?.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Escape') return;
-  ev.preventDefault();
-  ev.stopPropagation();
-  if (analysisPick) setAnalysisPick(null);
-  else closeAnalysisDock();
-});
 
 function contextNet(target) {
   return target?.kind === 'wire' ? target.value.net : target?.kind === 'net' ? target.value : null;
