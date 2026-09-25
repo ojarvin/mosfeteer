@@ -1,7 +1,7 @@
 import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
-import { escapeSvg, fontAttrs, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
+import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
@@ -140,7 +140,7 @@ function textEl(x, y, text, anchor, size, fill) {
 function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal', textStyle = {}) {
   let font = fontAttrs(kind)
     .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(color))}"`)
-    .replace(/font-size="[^"]+"/, `font-size="${width === 'thin' ? 32 : width === 'thick' ? 44 : 38}"`)
+    .replace(/font-size="[^"]+"/, `font-size="${labelFontSize(width)}"`)
     .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
   if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
   const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
@@ -273,6 +273,11 @@ function mathMlEvaluationBar(tall = false, requestedSize = null) {
   return mathMlAtom('|', 'mo', attrs);
 }
 
+// The sized bars (evaluation bar and parallel) are the only operators with a
+// minimum size; the depth drops their subscript to the bar's foot.
+const STRETCHY_BAR = /^<mo [^>]*\bstretchy="true"[^>]*\bminsize=/;
+const BAR_SCRIPT_DEPTH = '0.6em';
+
 function mathMlParallel(tall = false, requestedSize = null) {
   // Use the same single double-bar operator as LaTeX `\Vert`, rather than
   // two independent bars whose MathML operator spacing creates a large gap.
@@ -317,6 +322,13 @@ export function texToMathML(source) {
         index += 1;
         const script = parseArgument();
         const base = atoms.pop() || mathMlAtom('', 'mi');
+        if (token === '_' && STRETCHY_BAR.test(base)) {
+          // A sized bar does not stretch as a script base, so it stays in the
+          // row at its full height and the script hangs from an empty base at
+          // its foot, as TeX sets `\Big\vert_{v=0}`.
+          atoms.push(base, `<msub><mspace depth="${BAR_SCRIPT_DEPTH}"></mspace>${script}</msub>`);
+          continue;
+        }
         atoms.push(token === '_'
           ? `<msub>${mathMlNucleus(base, 'depth')}${script}</msub>`
           : `<msup>${mathMlNucleus(base, 'height')}${script}</msup>`);
@@ -494,11 +506,12 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   // <text> labels do not reach their inline `color` declaration.  Explicit
   // user colors remain literal and therefore are not changed by dark mode.
   const colorCss = color.toLowerCase() === '#111' ? 'var(--svg-ink, #111)' : color;
-  const fontSize = label.style?.width === 'thin' ? 32 : label.style?.width === 'thick' ? 44 : 38;
-  const justify = label.align === 'left' ? 'flex-start' : label.align === 'right' ? 'flex-end' : 'center';
+  const fontSize = labelFontSize(label.style?.width);
+  const align = label.textAlign();
+  const justify = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
   const aria = escapeSvg(`Math label ${label.text}`);
   const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
-  const padding = `6px ${label.align === 'right' ? sidePadding : 6}px 6px ${label.align === 'left' ? sidePadding : 6}px`;
+  const padding = `6px ${align === 'right' ? sidePadding : 6}px 6px ${align === 'left' ? sidePadding : 6}px`;
   // Latin Modern Math has one weight, too light beside the drawing's strokes
   // and bold labels; a thin outline in the text color thickens every glyph.
   const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;-webkit-text-stroke:${MATH_LABEL_STROKE} currentColor;pointer-events:none;`;

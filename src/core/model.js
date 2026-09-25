@@ -3,6 +3,7 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
+import { LABEL_FONT_SIZES } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } from './beats.js';
@@ -76,6 +77,10 @@ const LEGACY_SEQUENTIAL_RESET_TYPES = Object.freeze({
   latch: 'latch_rst', latch_qb: 'latch_rst_qb',
   latch_enb: 'latch_enb_rst', latch_enb_qb: 'latch_enb_rst_qb',
 });
+
+// Op-amps drew + below - until opampPolarityVersion 2 put + on top. An older
+// document's op-amps load flipped in their own frame, so they draw as saved.
+const OPAMP_TYPES = new Set(['opamp', 'opamp_diff']);
 
 function serializedComponentType(type, sequentialVariantVersion) {
   const normalized = LEGACY_COMPONENT_TYPE_RENAMES[type] || type;
@@ -173,14 +178,13 @@ function automaticMovePathSafe(path, env) {
  *  face. */
 export const LABEL_CHAR_W = 8;
 
-/** Font-size (world units) used for every label; both label kinds render at this
- *  (style.js INSTANCE_FONT / LABEL_FONT size). */
-export const LABEL_FONT_SIZE = 38;
+/** Font-size (world units) of a normal-weight label (style.js LABEL_FONT_SIZES). */
+export const LABEL_FONT_SIZE = LABEL_FONT_SIZES.normal;
 
 // Per-glyph width model for a label line (no DOM in the core model, so we use
 // narrow / default / wide buckets scaled to the label font size) to give a
 // "tight" text bounding box.
-const _UNIT = LABEL_FONT_SIZE * (LABEL_CHAR_W / 12); // ~23.33 per default char
+const _UNIT = LABEL_FONT_SIZE * (LABEL_CHAR_W / 12); // ~30.7 per default char
 const _NARROW = new Set(`i l I t f r j 1 2 3 . , : ; ' " ! | ( ) [ ] - / * ~ ^ \` _ space-empty`);
 const _WIDE = new Set(`m w M W @ # $ % & 0 6 8 9`);
 
@@ -245,6 +249,11 @@ export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
 /** Gap between left/right aligned text and its box edge: a quarter grid cell. */
 export const LABEL_ALIGN_INSET = GRID / 4;
+
+/** Label alignments. 'parent' is the owned-label default: text beside its
+ * part aligns toward it, and the box keeps the edge facing the part fixed
+ * however wide the text grows; above or below the part it is centered. */
+export const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
 
 /**
  * Toggle subscript ('_') or superscript ('^') markup on the selected range of a
@@ -619,7 +628,7 @@ export class LabelInstance {
     this._text = opts.text !== undefined
       ? (this.math ? normalizeMathSource(opts.text) : String(opts.text))
       : 'label';
-    this.align = ['center', 'left', 'right'].includes(opts.align) ? opts.align : 'center';
+    this.align = LABEL_ALIGNS.includes(opts.align) ? opts.align : 'center';
     this.style = {
       color: opts.style?.color || '#111',
       lineStyle: opts.style?.lineStyle || 'solid',
@@ -756,7 +765,11 @@ export class LabelInstance {
     // Screen-to-world transforms may return 320.00001 for a 320-unit box.
     // Avoid adding two whole cells for sub-pixel measurement noise.
     const tolerance = this._renderedTextBounds ? 0.001 : 0;
-    let n = Math.ceil((this.textWidth() - tolerance) / GRID);
+    // Aligned text keeps its full inset from the aligned edge: the box grows
+    // rather than squeezing the gap, so the gap looks the same on every label.
+    // (Math labels carry their own padding.)
+    const inset = this.math || this.textAlign() === 'center' ? 0 : LABEL_ALIGN_INSET;
+    let n = Math.ceil((this.textWidth() + inset - tolerance) / GRID);
     // MathML font metrics are not available in the model layer.  Reserve one
     // grid cell on each side of math labels so wide glyphs, stretchy
     // delimiters, and browser-specific font shaping do not hit the box edge.
@@ -840,7 +853,32 @@ export class LabelInstance {
       if (this.netSide === 'right') return { x: a.x, y: a.y - h / 2, w, h };
       return { x: a.x - w / 2, y: a.y - h, w, h };
     }
+    // Beside its part, a 'parent' label keeps the edge a two-cell box would
+    // have against the part, and grows away from it.
+    const side = this.align === 'parent' ? this.besideOwner() : null;
+    if (side === 'left') return { x: a.x + GRID - w, y: a.y - h / 2, w, h };
+    if (side === 'right') return { x: a.x - GRID, y: a.y - h / 2, w, h };
     return { x: a.x - w / 2, y: a.y - h / 2, w, h };
+  }
+
+  /** 'left' or 'right' when this owned label sits beside its part: its anchor
+   * is past that side of the part's box and within its height. Else null. */
+  besideOwner() {
+    const component = this.owner ? this.circuit.components.get(this.owner) : null;
+    if (!component) return null;
+    const a = this.anchorWorld();
+    const b = component.bboxWorld();
+    if (!(a.y > b.y && a.y < b.y + b.h)) return null;
+    if (a.x < b.x) return 'left';
+    if (a.x > b.x + b.w) return 'right';
+    return null;
+  }
+
+  /** The alignment the text is drawn with: 'parent' resolved toward the part. */
+  textAlign() {
+    if (this.align !== 'parent') return this.align;
+    const side = this.besideOwner();
+    return side === 'left' ? 'right' : side === 'right' ? 'left' : 'center';
   }
 
   /**
@@ -853,11 +891,12 @@ export class LabelInstance {
     const centerX = b.x + b.w / 2;
     const centerY = b.y + b.h / 2;
     const inset = this.alignInset();
+    const align = this.textAlign();
     let x, anchor;
-    if (this.align === 'left') {
+    if (align === 'left') {
       x = b.x + inset;
       anchor = 'start';
-    } else if (this.align === 'right') {
+    } else if (align === 'right') {
       x = b.x + b.w - inset;
       anchor = 'end';
     } else {
@@ -897,12 +936,18 @@ export class LabelInstance {
 
   /** Side gap for left/right text: a quarter cell, never pushing text past the far box edge. */
   alignInset() {
-    if (this.align === 'center') return 0;
+    if (this.textAlign() === 'center') return 0;
     return Math.max(0, Math.min(LABEL_ALIGN_INSET, this.bbox().w - this.textWidth()));
   }
 
   setAlign(a) {
-    if (['center', 'left', 'right'].includes(a)) this.align = a;
+    if (a === 'parent' && !this.owner) return;
+    if (LABEL_ALIGNS.includes(a)) this.align = a;
+  }
+
+  /** The alignment a label starts with, and returns to when cycled. */
+  defaultAlign() {
+    return this.owner && !this.role ? 'parent' : 'center';
   }
 
   moveTo(wx, wy) {
@@ -1823,7 +1868,7 @@ export class Circuit {
       math: switchState(component) && isTexSource(component.value),
       owner: component.refdes,
       offset: component.def.labelOffset,
-      align: 'center',
+      align: 'parent',
       style: { color: component.style.color },
     });
   }
@@ -1915,7 +1960,7 @@ export class Circuit {
           text: '',
           owner: component.refdes,
           offset: offsets[component.refdes] || info.labelOffset,
-          align: 'center',
+          align: 'parent',
           style: { color: component.style.color },
         });
       }
@@ -2434,7 +2479,7 @@ export class Circuit {
           owner: component.refdes,
           referenceLocal: false,
           offset: info.labelOffset,
-          align: 'center',
+          align: 'parent',
           style: { color: component.style.color },
         });
       }
@@ -5774,6 +5819,8 @@ export class Circuit {
     return {
       version: 2,
       sequentialVariantVersion: 2,
+      opampPolarityVersion: 2,
+      ownedLabelAlignVersion: 2,
       grid: 40,
       components: [...this.components.values()].map((c) => c.toJSON()),
       nets: [...this.nets.values()].map((n) => n.toJSON()),
@@ -5804,16 +5851,20 @@ export class Circuit {
       if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
     }
     circuit._loading = true;
+    const flippedOpamps = new Set();
     for (const c of data.components) {
+      const type = serializedComponentType(c.type === 'port_filled' ? 'port' : c.type, data.sequentialVariantVersion);
+      const flip = OPAMP_TYPES.has(type) && !(data.opampPolarityVersion >= 2);
+      if (flip) flippedOpamps.add(c.refdes);
       // The filled terminal marker was folded into the one labelled port.
-      circuit.addComponent(serializedComponentType(c.type === 'port_filled' ? 'port' : c.type, data.sequentialVariantVersion), {
+      circuit.addComponent(type, {
         refdes: c.refdes,
         value: c.value,
         x: c.transform.x,
         y: c.transform.y,
         rotation: c.transform.rotation,
         mirrorX: c.transform.mirrorX,
-        mirrorY: c.transform.mirrorY,
+        mirrorY: flip ? !c.transform.mirrorY : c.transform.mirrorY,
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
         negativeInputs: c.negativeInputs,
@@ -5893,7 +5944,8 @@ export class Circuit {
           id: l.id,
           kind: l.kind,
           text: l.text,
-          align: l.align,
+          // Owned labels were all centered until they could align toward their part.
+          align: l.owner && !l.role && l.align === 'center' && !(data.ownedLabelAlignVersion >= 2) ? 'parent' : l.align,
           owner: l.owner || null,
           role: l.role || null,
           signalTerminal: l.signalTerminal || null,
@@ -5904,7 +5956,7 @@ export class Circuit {
           math: !!l.math,
           mathBox: l.mathBox,
           netSide: l.netSide,
-          offset: l.offset || null,
+          offset: l.offset && flippedOpamps.has(l.owner) ? { x: l.offset.x, y: -l.offset.y } : l.offset || null,
           x: l.anchor ? l.anchor.x : 0,
           y: l.anchor ? l.anchor.y : 0,
           end: l.end || null,

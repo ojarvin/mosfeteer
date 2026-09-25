@@ -350,7 +350,7 @@ function integrator() {
   run(circuit,
     'add input VIN --at -560 0', 'add switch_open S1 --at -320 0', 'add capacitor CS --at 0 0',
     'add switch_open S2 --at 320 0', 'add switch_open S3 --at -160 320 --rot 90', 'add switch_open S4 --at 160 320 --rot 90',
-    'add opamp OA --at 800 40', 'add capacitor CF --at 800 -320', 'add output VOUT --at 1200 40',
+    'add opamp OA --at 800 40 --mirrorY', 'add capacitor CF --at 800 -320', 'add output VOUT --at 1200 40',
     'add ground G1 --at -160 560', 'add ground G2 --at 160 560', 'add ground G3 --at 560 240',
     'connect VIN.p S1.a', 'connect S1.b CS.a S3.a', 'connect CS.b S2.a S4.a', 'connect S2.b OA.im CF.a --name X',
     'connect S3.b G1.gnd', 'connect S4.b G2.gnd', 'connect OA.ip G3.gnd', 'connect OA.o CF.b VOUT.p',
@@ -358,7 +358,7 @@ function integrator() {
   return circuit;
 }
 
-test('phase beats close one phase each, show what it connects, and dim the rest', () => {
+test('phase beats close one phase each, show what still works, and dim what is cut off', () => {
   const circuit = integrator();
   assert.equal(phaseBeats(circuit), 2);
   assert.deepEqual(circuit.beats.map((beat) => beat.name), ['$\\phi_1$', '$\\phi_2$']);
@@ -367,9 +367,30 @@ test('phase beats close one phase each, show what it connects, and dim the rest'
     const refs = (set) => [...set].filter((ref) => !ref.startsWith('J')).sort();
     return { dim: refs(view.dimRefs), hidden: refs(view.hiddenRefs), closed: [...view.switchTypes].filter(([, type]) => type === 'switch_closed').map(([ref]) => ref).sort() };
   };
-  // ϕ1 samples VIN onto CS through S1 and S4; the integrator waits, dimmed.
-  assert.deepEqual(look(0), { dim: ['CF', 'G1', 'G3', 'OA', 'S2', 'S3', 'VOUT'], hidden: [], closed: ['S1', 'S4'] });
+  // ϕ1 samples VIN onto CS through S1 and S4; the integrator keeps holding
+  // its output, so only the open ϕ2 switches and S3's ground are dimmed.
+  assert.deepEqual(look(0), { dim: ['G1', 'S2', 'S3'], hidden: [], closed: ['S1', 'S4'] });
   // ϕ2 moves the charge through S3 and S2 into CF; the input is cut off.
   assert.deepEqual(look(1), { dim: ['G2', 'S1', 'S4', 'VIN'], hidden: [], closed: ['S2', 'S3'] });
   assert.throws(() => phaseBeats(tee(0)), /no switch has a phase/);
+});
+
+test('a phase beat dims a closed switch that leads nowhere, but not one joining two ends', () => {
+  const circuit = new Circuit();
+  run(circuit,
+    'add input VA --at -400 0', 'add switch_open S1 --at -160 0', 'add switch_open S2 --at 160 0',
+    'add capacitor C1 --at 480 0', 'add ground G1 --at 720 120',
+    'connect VA.p S1.a', 'connect S1.b S2.a', 'connect S2.b C1.a', 'connect C1.b G1.gnd',
+    'value S1 φ_{1}', 'value S2 φ_{2}');
+  phaseBeats(circuit);
+  const dim = (index) => [...resolveBeat(circuit, index).dimRefs].filter((ref) => !ref.startsWith('J')).sort();
+  // ϕ1: VA and S1 reach nothing past the open S2; C1 still holds its charge.
+  assert.deepEqual(dim(0), ['S1', 'S2', 'VA']);
+  // ϕ2: C1 hangs on S2; VA is cut off behind the open S1.
+  assert.deepEqual(dim(1), ['S1', 'VA']);
+  // A closed switch joining two ends does work: here it resets VA to VCM.
+  run(circuit, 'add vcm VCM1 --at -400 -240', 'add switch_open S3 --at -160 -240', 'connect VA.p S3.a', 'connect S3.b VCM1.vcm', 'value S3 φ_{1}');
+  circuit.beats = [];
+  phaseBeats(circuit);
+  assert.deepEqual(dim(0), ['S2']);
 });

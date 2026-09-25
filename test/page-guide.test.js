@@ -59,9 +59,9 @@ test('the editor draws the guide quietly, and in red when the drawing is wider',
   assert.match(fits, /class="page-guide"/);
   assert.match(fits, /#6b7a90/);
   const wide = editorOverlay(new Circuit(), { pageGuide: { frame: pageGuideFrame(single, -1000, 1000), view, caption: 'IEEE single column' } });
-  // 38 units of text across 2000 units in a 252 pt column.
+  // 46 units of text across 2000 units in a 252 pt column.
   assert.match(wide, /#dc2626/);
-  assert.match(wide, /text would be 4\.8 pt/);
+  assert.match(wide, /text would be 5\.8 pt/);
   // The column's own width still shows, as the part to trim to.
   const trim = (2000 - pageGuideWidth(single)) / 2 / 40;
   assert.match(wide, /class="page-guide-overflow"/);

@@ -55,11 +55,14 @@ existing phase, on none, or on a new one, and **Select → Same switch phase**.
 
 **Beats from switch phases** (More menu; `beat phases`) adds one beat per
 phase, in the order the phases were first drawn, named after the phase. Each
-closes that phase's switches and opens every other phase's. What the phase
-connects stays shown: every part joined to one of its switches through
-anything but a rail or an open switch, with the pins and rail markers on
-those parts' wires. Everything else, the open switches included, is dimmed,
-so the whole circuit stays readable. Switches without a phase keep their
+closes that phase's switches and opens every other phase's, and shows the
+phase's equivalent circuit: the open switches are dimmed, and the rest splits
+into islands joined through anything but a rail. An island keeps working and
+stays shown, with the pins and rail markers on its wires, when it has a device
+in it (anything but switches, pins, and rail markers) -- an integrator holding
+its charge, say -- or when its closed switches join two ends, pins or rails,
+such as an output reset to VCM. Anything else is cut off and dimmed, so the
+whole circuit stays readable. Switches without a phase keep their
 drawn position. The beats are ordinary beats, inserted after the one on
 screen as one undoable edit.
 
@@ -95,7 +98,8 @@ renaming a part renames its references.
 
 ## Where beats appear
 
-- **Editor.** `Shift+B` (or More → Beats) shows the beat strip; `+` adds a
+- **Editor.** The beat strip starts closed, showing the whole drawing;
+  `Shift+B` (or More → Beats) shows it, and `+` adds a
   beat after the one on screen. `Alt+→`/`Alt+←` or PageDown/PageUp step
   through them, stopping at either end; before the first is the whole
   drawing. The beat on screen draws what it dims faint and what it hides

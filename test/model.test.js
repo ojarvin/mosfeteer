@@ -267,6 +267,34 @@ test('fromJSON drops obsolete MOS current-source models without reinterpreting o
   assert.equal(saved.analysis.ignoreBodyEffect, false);
 });
 
+test('op-amps put + on top, and older documents keep their drawn pins and labels', () => {
+  const fresh = new Circuit();
+  fresh.addComponent('opamp', { refdes: 'U1' });
+  const u1 = fresh.getComponent('U1');
+  assert.ok(u1.terminalWorld('ip').y < u1.terminalWorld('im').y, '+ input on top');
+  assert.ok(fresh.labelOf('U1').anchorWorld().y < u1.bboxWorld().y, 'label above');
+
+  // Saved before the flip: + at local y=40, so these opamps drew + below
+  // unless mirrored. One plain, one rotated and mirrored.
+  const legacy = fresh.toJSON();
+  delete legacy.opampPolarityVersion;
+  const [plain] = legacy.components;
+  legacy.components.push({ ...plain, refdes: 'U2', type: 'opamp_diff', transform: { x: 800, y: 0, rotation: 90, mirrorX: false, mirrorY: true } });
+  legacy.labels.push({ ...legacy.labels[0], id: 'lblU2', text: 'U_{2}', owner: 'U2', offset: { x: 0, y: 160 } });
+  const oldTerminal = { U1: { ip: { x: -200, y: 40 }, im: { x: -200, y: -40 } }, U2: { ip: { x: 800 + 40, y: -200 }, op: { x: 800 - 40, y: 160 } } };
+  const oldLabel = { U1: { x: 0, y: -160 }, U2: { x: 800 + 160, y: 0 } };
+
+  const loaded = Circuit.fromJSON(legacy);
+  for (const [ref, terminals] of Object.entries(oldTerminal)) {
+    for (const [term, at] of Object.entries(terminals)) assert.deepEqual(loaded.getComponent(ref).terminalWorld(term), at, `${ref}.${term}`);
+    assert.deepEqual(loaded.labelOf(ref).anchorWorld(), oldLabel[ref], `${ref} label`);
+  }
+  // Saved again, it carries the marker and is not flipped a second time.
+  const again = Circuit.fromJSON(loaded.toJSON());
+  assert.equal(loaded.toJSON().opampPolarityVersion, 2);
+  assert.deepEqual(again.getComponent('U2').terminalWorld('ip'), oldTerminal.U2.ip);
+});
+
 test('saved sequential symbols keep reset pins across the variant rename', () => {
   const old = new Circuit();
   old.addComponent('dff_rst', { refdes: 'U1', x: 0, y: 0 });
@@ -2406,6 +2434,61 @@ test('browser-measured label bounds round outward to even grid-cell dimensions',
   assert.deepEqual(l.toJSON().mathBox, { w: 160, h: 80 });
   restored.setText('a different mathematical label');
   assert.equal(restored._mathBox, null, 'text edits invalidate the saved footprint');
+});
+
+test('a part label beside its part aligns toward it and keeps its box against it', () => {
+  const c = new Circuit();
+  c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  c.addComponent('output', { refdes: 'VOUT', x: 800, y: 0 }); // mirrored: label on the right
+  c.addComponent('opamp', { refdes: 'U1', x: 400, y: 400 });
+  const vin = c.labelOf('VIN');
+  const vout = c.labelOf('VOUT');
+  const u1 = c.labelOf('U1');
+  assert.deepEqual([vin.align, vout.align, u1.align], ['parent', 'parent', 'parent']);
+  assert.deepEqual([vin.textAlign(), vout.textAlign(), u1.textAlign()], ['right', 'left', 'center']);
+
+  // Short or long, the box edge stays on the part and the text keeps the full
+  // inset from it, so the visible gap is the same on every label.
+  const portLeft = c.getComponent('VIN').bboxWorld().x;
+  const portRight = (b) => b.x + b.w;
+  for (const width of [60, 150]) {
+    vin.setRenderedTextBounds(width, 40);
+    vout.setRenderedTextBounds(width, 40);
+    const inBox = vin.bbox();
+    const outBox = vout.bbox();
+    assert.equal(portRight(inBox), portLeft, `input label box against the port (${width})`);
+    assert.equal(outBox.x, portRight(c.getComponent('VOUT').bboxWorld()), `output label box against the port (${width})`);
+    assert.equal(vin.textPos().x, portLeft - GRID / 4);
+    assert.equal(vout.textPos().x, outBox.x + GRID / 4);
+  }
+  // Text that fills two cells gets four rather than losing its gap.
+  vin.setRenderedTextBounds(75, 40);
+  assert.equal(vin.bbox().w, 4 * GRID);
+
+  // Above its part it is centered, as before.
+  const u1Box = u1.bbox();
+  assert.equal(u1Box.x + u1Box.w / 2, u1.anchorWorld().x);
+  // Only a part's label can align toward a part; the cycle returns to it.
+  const note = c.addLabel({ text: 'note', x: 0, y: 400 });
+  note.setAlign('parent');
+  assert.equal(note.align, 'center');
+  assert.deepEqual([vin.defaultAlign(), note.defaultAlign()], ['parent', 'center']);
+});
+
+test('older documents align their centered part labels toward the part on load', () => {
+  const c = new Circuit();
+  c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  const note = c.addLabel({ text: 'note', x: 0, y: 400 });
+  const legacy = c.toJSON();
+  delete legacy.ownedLabelAlignVersion;
+  for (const label of legacy.labels) label.align = 'center';
+  const loaded = Circuit.fromJSON(legacy);
+  assert.equal(loaded.labelOf('VIN').align, 'parent');
+  assert.equal(loaded.labels.get(note.id).align, 'center');
+  // A document that already knows the alignment keeps a centered part label.
+  const current = c.toJSON();
+  current.labels.find((label) => label.owner === 'VIN').align = 'center';
+  assert.equal(Circuit.fromJSON(current).labelOf('VIN').align, 'center');
 });
 
 test('sub-pixel measurement noise at a grid boundary does not shift aligned label edges', () => {

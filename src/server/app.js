@@ -117,8 +117,19 @@ export async function startApp({
   exitWhenIdle = false,
   onIdle = () => process.exit(0),
   log = (line) => console.log(line),
+  codeVersion = () => codeFingerprint(APP_ROOT),
 } = {}) {
-  const version = codeFingerprint(APP_ROOT);
+  const version = codeVersion();
+  // Documents pass through this process's model on every write. Once the code
+  // on disk changes, the browser runs the new code but this process still
+  // writes with the old model, which drops what it does not know (a format
+  // marker, say) and corrupts the next load. Refuse instead; the editor keeps
+  // the edit as its local draft until the app is relaunched.
+  const assertCurrentCode = () => {
+    if (codeVersion() !== version) {
+      throw httpError('Mosfeteer was updated since this server started; relaunch it (close every editor window, then start it again) and save again', 409, 'server-outdated');
+    }
+  };
   const settings = createSettingsStore(join(dataRoot, 'settings.json'));
   await settings.load();
   if (workspaceOverride) await settings.update({ workspace: resolve(workspaceOverride) });
@@ -281,6 +292,7 @@ export async function startApp({
           ? absolutePath(body.path)
           : documentPathFor(body.dir ? absolutePath(body.dir) : workspace(), body.name);
         if (!isJsonFile(path)) throw httpError('documents must be saved as .json files');
+        assertCurrentCode();
         let document;
         try {
           document = loadDocument(body.state);
@@ -440,7 +452,10 @@ export async function startApp({
           break; // stop on first error so state is consistent
         }
       }
-      if (mutated) await writeFileAtomic(path, serializeDocument(circuit));
+      if (mutated) {
+        assertCurrentCode();
+        await writeFileAtomic(path, serializeDocument(circuit));
+      }
       await setActive(name);
       return { name, path, mutated, results, state: circuit.toJSON(), revision: await fileRevision(path) };
     });
@@ -454,6 +469,7 @@ export async function startApp({
     if (mode === 'commit') {
       const preview = body.previewId ? generationPreviews.get(body.previewId) : null;
       if (!preview || preview.target !== name || !preview.state) throw httpError('previewId is missing or does not match this circuit', 409, 'preview-required');
+      assertCurrentCode();
       const committed = loadDocument(preview.state);
       if (name === activeName) throw httpError('generated circuits cannot replace the active circuit', 409, 'circuit-exists');
       const revision = await withLock(path, async () => {

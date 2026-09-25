@@ -88,10 +88,15 @@ export function strokeWidth(style = {}, base = 'line') {
   return STROKES[base]?.width ?? STROKES.line.width;
 }
 
+/** Label text size (world units) by label `style.width`. A capital with a
+ * subscript (V_{IN}) sits comfortably in the two-cell minimum label box. */
+export const LABEL_FONT_SIZES = Object.freeze({ thin: 40, normal: 46, thick: 52 });
+export const labelFontSize = (width) => LABEL_FONT_SIZES[width] || LABEL_FONT_SIZES.normal;
+
 /** Text styles for schematic labels, keyed by `fontAttrs` kind. */
 const FONTS = {
-  instance: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
-  label: { size: 38, fill: DEFAULT_INK, weight: 'bold', italic: true },
+  instance: { size: LABEL_FONT_SIZES.normal, fill: DEFAULT_INK, weight: 'bold', italic: true },
+  label: { size: LABEL_FONT_SIZES.normal, fill: DEFAULT_INK, weight: 'bold', italic: true },
 };
 
 export function fontAttrs(kind) {

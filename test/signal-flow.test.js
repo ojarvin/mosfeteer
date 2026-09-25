@@ -67,7 +67,7 @@ test('signal-flow input polarity is an option projected to entry-side owned sign
   assert.equal(circuit.labelOf('SUM1'), null);
   assert.deepEqual(circuit.toJSON().components[0].negativeInputs, ['n', 's']);
   const svg = svgString(circuit);
-  assert.match(svg, /font-size="44"[^>]*>−<\/text>/);
+  assert.match(svg, /font-size="52"[^>]*>−<\/text>/);
   assert.doesNotMatch(svg, new RegExp(`data-label-id="${signData[0].id}"`));
   assert.match(svg, /pointer-events="none"/);
 

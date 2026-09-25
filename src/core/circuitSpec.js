@@ -278,6 +278,7 @@ function topologyState(spec) {
   return {
     version: 2,
     sequentialVariantVersion: 2,
+    opampPolarityVersion: 2,
     topologyOnly: true,
     grid: 40,
     components: spec.components.map((component) => ({

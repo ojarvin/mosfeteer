@@ -523,7 +523,7 @@ export function commandHelp() {
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
-    '  beat phases [--after N]        - add a beat per switch phase: what it connects shown, the rest dimmed',
+    '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
     '  timing                         - add a timing diagram template under the drawing, one waveform per switch phase',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',

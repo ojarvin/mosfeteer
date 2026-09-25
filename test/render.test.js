@@ -18,6 +18,15 @@ test('the shared analysis MathML renderer renders fractions and escapes literal 
   assert.match(escaped, /&lt;img/);
 });
 
+test('an evaluation bar stays in the row so it stretches, with its condition at its foot', () => {
+  const markup = texToMathML('Z_{in} = \\frac{V_{IN}}{I_{IN}} \\Big\\vert_{I_{OUT} = 0}');
+  // Browsers do not stretch an operator that is a script base.
+  assert.doesNotMatch(markup, /<msub><mo [^>]*stretchy="true"/);
+  assert.match(markup, /<\/mfrac><mo [^>]*stretchy="true"[^>]*minsize="2\.0em"[^>]*>\|<\/mo><msub><mspace depth="0\.6em"><\/mspace><mrow><msub>/);
+  // Ordinary subscripts are unchanged.
+  assert.match(markup, /<msub><mpadded depth="0"><mi>Z<\/mi><\/mpadded>/);
+});
+
 test('grid lines use the ordinary style throughout', () => {
   const svg = svgString(new Circuit(), { grid: true, viewport: { x: -40, y: -40, w: 400, h: 400 } });
   assert.doesNotMatch(svg, /major-grid/);
@@ -640,25 +649,26 @@ test('fully differential opamp shares the opamp footprint with two outputs', () 
   const diff = c.components.get('U2');
   // Same footprint: identical bbox and matching input rows.
   assert.deepEqual(diff.bboxWorld(), o.bboxWorld());
-  assert.deepEqual(diff.terminalWorld('ip'), { x: -200, y: 40 });
-  assert.deepEqual(diff.terminalWorld('im'), { x: -200, y: -40 });
+  assert.deepEqual(diff.terminalWorld('ip'), { x: -200, y: -40 });
+  assert.deepEqual(diff.terminalWorld('im'), { x: -200, y: 40 });
+  assert.deepEqual(o.terminalWorld('ip'), { x: -200, y: -40 }, '+ input on top');
   // Two outputs on the grid at the same x=160 as the plain opamp's pin.
-  // Polarity is flipped vs the inputs: op (+) rides the top row, om (-) bottom.
-  assert.deepEqual(diff.terminalWorld('op'), { x: 160, y: -40 });
-  assert.deepEqual(diff.terminalWorld('om'), { x: 160, y: 40 });
+  // Polarity is flipped vs the inputs: om (-) rides the top row, op (+) bottom.
+  assert.deepEqual(diff.terminalWorld('om'), { x: 160, y: -40 });
+  assert.deepEqual(diff.terminalWorld('op'), { x: 160, y: 40 });
   const svg = svgString(c);
   assert.ok(svg.includes('data-ref="U2"'), 'differential opamp rendered');
   // Two output leads (top row and bottom row).
-  const om = svg.match(/M 15\.8 -40 L 157 -40/g);
-  const op = svg.match(/M 15\.81 40 L 157 40/g);
+  const op = svg.match(/M 15\.8 40 L 157 40/g);
+  const om = svg.match(/M 15\.81 -40 L 157 -40/g);
   assert.ok(om && op, 'both output leads rendered');
   // Polarity marks are the SAME size as the input marks (28 units), aligned on
   // the same rows, and sit clear of the slanted edges: inputs at x=-76, outputs
   // (flipped) at x=-38.
-  const inPlus = svg.match(/M -76 26 L -76 54/g);
-  const inMinus = svg.match(/M -90 -40 L -62 -40/g);
-  const outPlus = svg.match(/M -38 -54 L -38 -26/g);
-  const outMinus = svg.match(/M -52 40 L -24 40/g);
+  const inPlus = svg.match(/M -76 -54 L -76 -26/g);
+  const inMinus = svg.match(/M -90 40 L -62 40/g);
+  const outPlus = svg.match(/M -38 26 L -38 54/g);
+  const outMinus = svg.match(/M -52 -40 L -24 -40/g);
   assert.ok(inPlus && inMinus, 'input polarity marks rendered');
   assert.ok(outPlus && outMinus, 'flipped output polarity marks rendered');
   // Owned instance label (same as every component) still renders its id.

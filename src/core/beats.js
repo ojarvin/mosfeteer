@@ -444,12 +444,17 @@ function railGroups(circuit) {
 }
 
 /**
- * Which parts one phase connects: with its switches closed and every other
- * phase's open, the parts joined -- through anything but a rail or an open
- * switch -- to one of its switches. Returns a Set of refdes, pins and rail
- * markers included when a connected part shares their wire.
+ * What still works in one phase: the phase's equivalent circuit. With its
+ * switches closed and every other phase's open, the open switches drop out
+ * and the rest splits into islands joined through anything but a rail. An
+ * island keeps working when it has a device in it -- anything but switches,
+ * pins, and rail markers (an integrator holding its charge, say) -- or when
+ * its closed switches join two ends, pins or rails (an output reset to VCM).
+ * Anything else is cut off. Returns a Set of the refdes
+ * that stay shown, pins and rail markers included with the parts on their
+ * wire; the open switches are never in it.
  */
-export function phaseConnected(circuit, key) {
+export function phaseLive(circuit, key) {
   const rails = railGroups(circuit);
   const closed = (component) => {
     if (!switchState(component)) return true;
@@ -457,40 +462,49 @@ export function phaseConnected(circuit, key) {
     return phase ? phase === key : switchState(component) === 'closed';
   };
   const netsOf = new Map();
+  // The ends a part touches: the rails it is on, and the pins on its wires.
+  const endsOf = new Map();
   for (const net of circuit.nets.values()) {
     const group = circuit.netGroupKey(net);
+    const pins = net.terminals.filter(({ comp }) => INTERFACE_PIN_TYPES.has(circuit.components.get(comp)?.type)).map(({ comp }) => comp);
     for (const { comp } of net.terminals) {
-      if (!netsOf.has(comp)) netsOf.set(comp, new Set());
-      if (!rails.has(group)) netsOf.get(comp).add(group);
+      if (!netsOf.has(comp)) { netsOf.set(comp, new Set()); endsOf.set(comp, new Set()); }
+      if (rails.has(group)) endsOf.get(comp).add(`rail:${group}`);
+      else netsOf.get(comp).add(group);
+      for (const pin of pins) endsOf.get(comp).add(`pin:${pin}`);
     }
   }
-  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c));
-  const reached = new Set();
-  const reachedNets = new Set();
-  const queue = parts.filter((c) => switchState(c) && phaseKey(switchPhase(c)) === key);
-  for (const c of queue) reached.add(c.refdes);
-  while (queue.length) {
-    const component = queue.pop();
-    if (!closed(component)) continue;
-    for (const net of netsOf.get(component.refdes) || []) {
-      if (reachedNets.has(net)) continue;
-      reachedNets.add(net);
-      for (const other of parts) {
-        // An open switch is cut off even where it touches: it dims.
-        if (!reached.has(other.refdes) && closed(other) && netsOf.get(other.refdes)?.has(net)) {
-          reached.add(other.refdes);
-          queue.push(other);
+  const parts = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !isAttachment(c) && closed(c));
+  const live = new Set();
+  const seen = new Set();
+  for (const start of parts) {
+    if (seen.has(start.refdes)) continue;
+    // One island: every closed part reachable over non-rail nets.
+    const island = [start];
+    seen.add(start.refdes);
+    const nets = new Set();
+    for (let i = 0; i < island.length; i += 1) {
+      for (const net of netsOf.get(island[i].refdes) || []) {
+        if (nets.has(net)) continue;
+        nets.add(net);
+        for (const other of parts) {
+          if (!seen.has(other.refdes) && netsOf.get(other.refdes)?.has(net)) {
+            seen.add(other.refdes);
+            island.push(other);
+          }
         }
       }
     }
+    const ends = new Set(island.flatMap((c) => [...(endsOf.get(c.refdes) || [])]));
+    if (island.some((c) => !switchState(c)) || ends.size >= 2) for (const c of island) live.add(c.refdes);
   }
   // A pin or rail marker goes with the parts on its own wire.
   for (const component of circuit.components.values()) {
     if (!isAttachment(component)) continue;
     const wires = [...circuit.nets.values()].filter((net) => net.terminals.some(({ comp }) => comp === component.refdes));
-    if (wires.some((net) => net.terminals.some(({ comp }) => reached.has(comp)))) reached.add(component.refdes);
+    if (wires.some((net) => net.terminals.some(({ comp }) => live.has(comp)))) live.add(component.refdes);
   }
-  return reached;
+  return live;
 }
 
 /** Set a switch's phase open or closed in beat `index` alone. */
@@ -503,8 +517,9 @@ function setSwitchAt(circuit, index, key, state) {
 
 /**
  * Insert one beat per switch phase at `index`, named after the phase: its
- * switches closed and every other phase's open, what it connects shown and
- * the rest -- open switches included -- dimmed. Returns how many beats.
+ * switches closed and every other phase's open, what still works in that
+ * phase shown and the rest -- open switches included -- dimmed (phaseLive).
+ * Returns how many beats.
  */
 export function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
   const phases = switchPhases(circuit);
@@ -514,9 +529,9 @@ export function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
     const at = index + step;
     addBeat(circuit, { index: at, name: source });
     for (const other of phases) setSwitchAt(circuit, at, other.key, other.key === key ? 'closed' : 'open');
-    const connected = phaseConnected(circuit, key);
+    const live = phaseLive(circuit, key);
     for (const component of listable) {
-      setPresenceAt(circuit, at, [component.refdes], connected.has(component.refdes) ? 'show' : 'dim');
+      setPresenceAt(circuit, at, [component.refdes], live.has(component.refdes) ? 'show' : 'dim');
     }
   });
   return phases.length;

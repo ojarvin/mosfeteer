@@ -11,21 +11,21 @@ const opamp = defineSymbol({
   description: 'Operational Amplifier',
   refPrefix: 'U',
   terminals: [
-    { name: 'ip', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'im', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
     { name: 'o', x: 160, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
   ],
   bbox: { x: -200, y: -120, w: 360, h: 240 },
   graphics: [
-    { kind: 'path', d: 'M -200 -40 L -107.81 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -200 40 L -107.19 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 40 L -107.81 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 -40 L -107.19 -40', style: 'symbol' },
     { kind: 'path', d: 'M 92.81 0 L 160 0', style: 'symbol' },
-    { kind: 'path', d: 'M -107.19 -99.99 L -107.19 100 L 92.81 0 Z', style: 'emph' },
-    // Input polarity (im - top, ip + bottom), centered on the input rows y=+-40
+    { kind: 'path', d: 'M -107.19 99.99 L -107.19 -100 L 92.81 0 Z', style: 'emph' },
+    // Input polarity (ip + top, im - bottom), centered on the input rows y=+-40
     // to match the opamp_diff's output marks.
-    { kind: 'path', d: 'M -76 26 L -76 54', style: 'symbol' },
-    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+    { kind: 'path', d: 'M -76 -54 L -76 -26', style: 'symbol' },
     { kind: 'path', d: 'M -90 -40 L -62 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
   ],
   textPos: null,
   refPos: null,
@@ -38,31 +38,31 @@ const opampDiff = defineSymbol({
   description: 'Fully Differential Op-Amp',
   refPrefix: 'U',
   terminals: [
-    { name: 'ip', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'im', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'op', x: 160, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
-    { name: 'om', x: 160, y: 40, direction: 'output', dir: { x: 1, y: 0 } },
+    { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'op', x: 160, y: 40, direction: 'output', dir: { x: 1, y: 0 } },
+    { name: 'om', x: 160, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
   ],
   bbox: { x: -200, y: -120, w: 360, h: 240 },
   graphics: [
-    { kind: 'path', d: 'M -200 -40 L -107.81 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -200 40 L -107.19 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 40 L -107.81 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 -40 L -107.19 -40', style: 'symbol' },
     // Two output leads exit the triangle's slanted edges at the input rows and
     // run out to the same x=160 as the plain opamp's single output.
-    { kind: 'path', d: 'M 12.8 -40 L 160 -40', style: 'symbol' },
-    { kind: 'path', d: 'M 12.81 40 L 160 40', style: 'symbol' },
-    { kind: 'path', d: 'M -107.19 -99.99 L -107.19 100 L 92.81 0 Z', style: 'emph' },
+    { kind: 'path', d: 'M 12.8 40 L 160 40', style: 'symbol' },
+    { kind: 'path', d: 'M 12.81 -40 L 160 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -107.19 99.99 L -107.19 -100 L 92.81 0 Z', style: 'emph' },
     // Polarity marks: all four the same 28-unit size, centered on the input/
     // output rows (y=+-40) so the pairs line up. They sit clear of the body's
     // slanted edges (inputs at x=-76, outputs at x=-38, away from the apex).
-    // The outputs are FLIPPED relative to the inputs: im (-) top / ip (+)
-    // bottom, but op (+) top / om (-) bottom (crossed-output convention).
-    { kind: 'path', d: 'M -76 26 L -76 54', style: 'symbol' },
-    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+    // The outputs are FLIPPED relative to the inputs: ip (+) top / im (-)
+    // bottom, but om (-) top / op (+) bottom (crossed-output convention).
+    { kind: 'path', d: 'M -76 -54 L -76 -26', style: 'symbol' },
     { kind: 'path', d: 'M -90 -40 L -62 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -38 -54 L -38 -26', style: 'symbol' },
-    { kind: 'path', d: 'M -52 -40 L -24 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+    { kind: 'path', d: 'M -38 26 L -38 54', style: 'symbol' },
     { kind: 'path', d: 'M -52 40 L -24 40', style: 'symbol' },
+    { kind: 'path', d: 'M -52 -40 L -24 -40', style: 'symbol' },
   ],
   textPos: null,
   refPos: null,

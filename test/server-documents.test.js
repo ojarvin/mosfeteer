@@ -1,9 +1,11 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { evaluate } from '../src/core/commands.js';
 import { findChromium } from '../src/server/browser.js';
+import { startApp } from '../src/server/app.js';
 import { serverTest, startServer } from './helpers/server.js';
 
 async function command(app, name, cmd) {
@@ -285,4 +287,26 @@ serverTest('PDF export is vector output when a Chromium-family browser is instal
   const pdf = (await readFile(join(app.root, 'exports', 'vector.pdf'))).toString('latin1');
   assert.match(pdf, /^%PDF-/);
   assert.doesNotMatch(pdf, /\/Subtype\s*\/Image/, 'vector PDF does not embed the PNG');
+});
+
+serverTest('a server whose code changed on disk refuses to write documents', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'mosfeteer-stale-'));
+  let code = 'v1';
+  const app = await startApp({ port: 0, dataRoot: join(root, 'data'), workspace: join(root, 'workspace'), log: () => {}, codeVersion: () => code });
+  t.after(async () => { await app.close(); await rm(root, { recursive: true, force: true }); });
+  const put = (name) => fetch(`${app.url}api/document`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, state: new Circuit().toJSON() }),
+  });
+  assert.equal((await put('fresh')).status, 200);
+
+  // The checkout was updated: this process's model is now older than the editor's.
+  code = 'v2';
+  const refused = await put('stale');
+  assert.equal(refused.status, 409);
+  assert.match((await refused.json()).error, /relaunch/);
+  const cmd = await fetch(`${app.url}api/circuits/stale/cmd`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd: 'add resistor R1' }),
+  });
+  assert.equal(cmd.status, 409);
+  assert.deepEqual((await readdir(join(root, 'workspace'))).sort(), ['fresh.json']);
 });

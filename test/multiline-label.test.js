@@ -10,5 +10,5 @@ test('labels preserve multiline text and render each line', () => {
   assert.equal(label.text, 'first\nsecond');
   assert.ok(label.rowHeight() >= 2);
   const svg = svgString(circuit);
-  assert.match(svg, /<tspan x="0" dy="0">first<\/tspan><tspan x="0" dy="38">second<\/tspan>/);
+  assert.match(svg, /<tspan x="0" dy="0">first<\/tspan><tspan x="0" dy="46">second<\/tspan>/);
 });

@@ -189,6 +189,7 @@ const ICON_PATHS = {
   'align-left': '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>',
   'align-center': '<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>',
   'align-right': '<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>',
+  'align-parent': '<path d="M3 7h11M7 12h7M3 17h11"/><path d="M18 4v16" stroke-width="3"/>',
   more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
   rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M20 4v5h-5"/>',
@@ -728,7 +729,7 @@ let wiresDirty = true; // set when wire geometry may have changed; recomputes ne
 // Beats (see core/beats.js and the beats section below). The beat on screen
 // is editor state, never saved: the document holds only the beats.
 let activeBeatId = null;
-let beatStripOpen = null; // null: open exactly when the document has beats
+let beatStripOpen = false; // closed at start; Shift+B, More → Beats, or picking a beat opens it
 let beatViewCache = null; // { circuit, key, view }
 let beatViewsCache = null; // every beat, for the strip's visibility dots
 let beatKnown = { circuit: null, objects: new WeakSet(), ids: new Set() };
@@ -2700,6 +2701,7 @@ function selectionStyleState() {
     supportsArrowhead: hasWireSelection || objects.some(supportsArrowhead),
     text: labels.length ? {
       align: labels.every((label) => label.align === labels[0].align) ? labels[0].align : null,
+      towardPart: labels.every((label) => label.owner),
       bold: selectedFontState('bold'),
       italic: selectedFontState('italic'),
     } : null,
@@ -2722,7 +2724,10 @@ function syncStyleControls(root, state) {
   for (const button of root.querySelectorAll('[data-line-style]')) pressed(button, button.dataset.lineStyle === state.lineStyle);
   for (const button of root.querySelectorAll('[data-width]')) pressed(button, button.dataset.width === state.width);
   for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(swatch.dataset.value === state.color));
-  for (const button of root.querySelectorAll('[data-style-align]')) pressed(button, button.dataset.styleAlign === state.text?.align);
+  for (const button of root.querySelectorAll('[data-style-align]')) {
+    if (button.dataset.styleAlign === 'parent') button.hidden = button.disabled = !state.text?.towardPart;
+    pressed(button, button.dataset.styleAlign === state.text?.align);
+  }
   for (const button of root.querySelectorAll('[data-style-font]')) pressed(button, !!state.text?.[button.dataset.styleFont]);
 }
 
@@ -4298,7 +4303,7 @@ function introduceNewBeatObjects() {
 }
 
 function beatStripVisible() {
-  return beatStripOpen ?? circuit.beats.length > 0;
+  return beatStripOpen;
 }
 
 /** Show one beat (an index), or the whole drawing (null). */
@@ -4622,15 +4627,15 @@ function openBeatMenu(index, x, y) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 
-/** One beat per switch phase, after the beat on screen: what the phase
- * connects shown, the rest dimmed (core/beats.js phaseBeats). */
+/** One beat per switch phase, after the beat on screen: what still works in
+ * the phase shown, the rest dimmed (core/beats.js phaseBeats). */
 function addPhaseBeats() {
   const current = activeBeatIndex();
   const index = current === null ? circuit.beats.length : current + 1;
   let count = 0;
   commit(() => { count = phaseBeats(circuit, { index }); });
   if (!count) return;
-  logLine(`added ${count} phase beats: each shows what its phase connects and dims the rest`);
+  logLine(`added ${count} phase beats: each dims its open switches and whatever they cut off`);
   setActiveBeat(index);
 }
 
@@ -11072,7 +11077,7 @@ function openReferenceMarkerEditor(component) {
     text: component.value || '',
     owner: component.refdes,
     offset: info.labelOffset,
-    align: 'center',
+    align: 'parent',
     style: { color: component.style.color },
   });
   inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
@@ -11113,7 +11118,7 @@ function inlineEditLabel(label, options = {}) {
   input.style.width = `${sw}px`;
   input.style.height = `${sh}px`;
   input.style.fontSize = `${Math.max(12, LABEL_FONT_SIZE * r.width / view.w)}px`;
-  input.style.textAlign = label.align;
+  input.style.textAlign = label.textAlign();
   input.style.resize = 'none';
   input.style.whiteSpace = 'pre-wrap';
   input.style.overflow = 'hidden';
@@ -15457,17 +15462,16 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
 
-  // Shift+Left/Right set every selected label's alignment (cycle through
-  // center).  The primary label determines the next target when the set is
-  // mixed, while an already-uniform set cycles back to center.
+  // Shift+Left/Right set every selected label's alignment. A set already at
+  // that alignment cycles back to each label's default: toward its part for
+  // a part's label, center otherwise.
   if (ev.shiftKey && !wire && mode === 'normal' && (key === 'ArrowLeft' || key === 'ArrowRight')) {
     const labels = selectedLabels();
     const primary = selectedLabel() || labels[0];
     if (primary && labels.length) {
       const align = key === 'ArrowRight' ? 'right' : 'left';
       const allAtTarget = labels.every((label) => label.align === align);
-      const want = allAtTarget ? 'center' : align;
-      commit(() => labels.forEach((label) => label.setAlign(want)));
+      commit(() => labels.forEach((label) => label.setAlign(allAtTarget ? label.defaultAlign() : align)));
       render();
       ev.preventDefault();
       return;

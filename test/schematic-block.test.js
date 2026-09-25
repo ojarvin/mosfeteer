@@ -17,7 +17,7 @@ test('schematic block exposes perimeter pins, centered value text, and no dangli
   const report = evaluate(circuit);
   assert.equal(report.ok, true);
   assert.deepEqual(report.unconnectedTerminals, []);
-  assert.match(svgString(circuit), /font-size="38"[^>]*>FVF<\/text>/);
+  assert.match(svgString(circuit), /font-size="46"[^>]*>FVF<\/text>/);
   assert.doesNotMatch(svgString(circuit, { terminals: false, junctions: false }), /<circle/);
   const wireOverlay = editorOverlay(circuit, { wireMode: true });
   assert.equal((wireOverlay.match(/cx="0" cy="-80"/g) || []).length, 1);
@@ -27,8 +27,8 @@ test('schematic block captions preserve block-style multiline text', () => {
   const circuit = new Circuit();
   circuit.addComponent('block', { refdes: 'B1', value: 'Gain\nstage', x: 0, y: 0 });
   const svg = svgString(circuit);
-  assert.match(svg, /<tspan x="0" dy="-19">Gain<\/tspan>/);
-  assert.match(svg, /<tspan x="0" dy="38">stage<\/tspan>/);
+  assert.match(svg, /<tspan x="0" dy="-23">Gain<\/tspan>/);
+  assert.match(svg, /<tspan x="0" dy="46">stage<\/tspan>/);
 });
 
 test('schematic blocks remain part of component overlap checks', () => {
