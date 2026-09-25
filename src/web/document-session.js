@@ -18,7 +18,8 @@ import { resetCheckState } from './design-check-ui.js';
 import { viewFromCenter, fitView } from './canvas-view.js';
 import { clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope } from './analysis-ui.js';
 import { editor } from './editor-state.js';
-import { applyJson, cancelPreviewTransaction, clearSymmetry, closeToolbarMenu, markModelChanged, render, scheduleToolbarFit, setSelection, snapshot, toolbarMenus } from './main.js';
+import { closeToolbarMenu, scheduleToolbarFit, toolbarMenus } from './toolbar-ui.js';
+import { applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render, setSelection, snapshot } from './main.js';
 
 export const persistence = createPersistenceAdapter();
 
