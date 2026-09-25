@@ -9,7 +9,8 @@ import { ICON_PATHS } from './icons.js';
 import { noteTip } from './onboarding.js';
 import { editor } from './editor-state.js';
 import { clientToWorld } from './canvas-view.js';
-import { activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, deleteSelection, render, selectContextTarget, selectedTransform, stubSelection } from './main.js';
+import { selectContextTarget } from './context-menu.js';
+import { activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, deleteSelection, render, selectedTransform, stubSelection } from './main.js';
 
 // Right-drag (or hold) on a component opens a marking menu around the press.
 // Releasing in a sector runs it, so a practiced flick needs no reading; release

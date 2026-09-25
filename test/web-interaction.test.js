@@ -12,7 +12,7 @@ const view = { x: -80, y: -80, w: 400, h: 400 };
 test('tool cursors badge the select arrow per tool, theme, and danger', () => {
   const main = editorSource();
   const start = main.indexOf('function toolCursorValue(');
-  const end = main.indexOf('\nfunction cursorIconFor(', start);
+  const end = main.indexOf('\n}\n', start) + 2;
   const build = vm.runInNewContext(`(${main.slice(start, end)})`, {
     ICON_PATHS: { trash: '<path d="M4 6h16"/>' },
     toolCursorCache: new Map(),
@@ -35,7 +35,7 @@ test('tool cursors badge the select arrow per tool, theme, and danger', () => {
 test('component rows share the net-list layout without inline delete controls', () => {
   const main = editorSource();
   const start = main.indexOf('function renderComponents()');
-  const end = main.indexOf('\nfunction renderNets()', start);
+  const end = main.indexOf('\n}\n', start) + 2;
   assert.ok(start > 0 && end > start);
   const render = main.slice(start, end);
   assert.match(render, /row\.appendChild\(ref\);[\s\S]*row\.appendChild\(meta\);/);
@@ -87,7 +87,7 @@ test('insert categories keep switches and macros separate and include vccs with 
 test('selection style controls keep their text-target result shape', () => {
   const main = editorSource();
   const start = main.indexOf('function selectedTextTargets()');
-  const end = main.indexOf('\nfunction selectedFontState(', start);
+  const end = main.indexOf('\n}\n', start) + 2;
   assert.ok(start > 0 && end > start);
   assert.match(main.slice(start, end), /return \{ labels: \[\.\.\.labels\.values\(\)\], blocks: \[\] \};/);
 });
@@ -147,10 +147,10 @@ test('the insert menu is one scrolling column led by the recent placements', () 
 
 test('component drag snapshots restore segment styles with route geometry', () => {
   const main = editorSource();
-  const start = main.indexOf('function captureNetGeometry(');
-  const end = main.indexOf('\nfunction armModalLabelMove', start);
+  const source = ['captureNetGeometry', 'captureRunNetGeometry', 'snappedDragDelta', 'translateNetGeometry']
+    .map((name) => functionSource(name, main)).join('\n');
   const helpers = vm.runInNewContext(`(() => {
-    ${main.slice(start, end)}
+    ${source}
     return { captureNetGeometry, translateNetGeometry };
   })()`, {
     cloneFixedPaths: (entries) => entries,
@@ -186,7 +186,7 @@ test('component drag snapshots restore segment styles with route geometry', () =
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
   const main = editorSource();
   const start = main.indexOf('function preloadToolCursors(');
-  const end = main.indexOf('\nfunction installButtonIcons(', start);
+  const end = main.indexOf('\n}\n', start) + 2;
   const built = [];
   const preload = vm.runInNewContext(`(${main.slice(start, end)})`, {
     TOOL_CURSOR_ICONS: { normal: null, wire: 'wire', delete: 'trash' },
@@ -248,7 +248,7 @@ test('MathML annotation measurements are independent of zoom on reload', () => {
 test('generated category labels keep their persisted grid metrics', () => {
   const main = editorSource();
   const start = main.indexOf('function syncRenderedLabelMetrics()');
-  const end = main.indexOf('\nfunction scheduleMeasuredLabelRender()', start);
+  const end = main.indexOf('\n}\n', start) + 2;
   assert.match(main.slice(start, end), /if \(label\.id\.startsWith\('category_'\)\) continue;/);
 });
 
@@ -397,7 +397,7 @@ test('an explicit new document is protected from active-document auto-loads', ()
   assert.match(startNew, /activeSyncSuspended = true;/);
 
   const syncStart = main.indexOf('async function syncActiveCircuitOnce(');
-  const syncEnd = main.indexOf('\nasync function syncActiveCircuit()', syncStart);
+  const syncEnd = main.indexOf('\n}\n', syncStart) + 2;
   const sync = main.slice(syncStart, syncEnd);
   assert.match(sync, /if \(activeSyncSuspended\)[\s\S]*lastSeenActive = active[\s\S]*return;/);
   assert.match(main.slice(0, main.indexOf('function copySelectionSource(')), /activeSyncSuspended = false;/);
@@ -511,7 +511,7 @@ test('arrow-key nudging moves mixed selections atomically', () => {
 
 test('wire previews exclude the destination net and transformed nets keep terminal moves', () => {
   const main = editorSource();
-  const preview = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview(', main.indexOf('function draftRoutePath(')));
+  const preview = functionSource('draftRoutePath', main);
   assert.match(preview, /const excludedNets = new Set\(sourceNetId && !isOpenEnd\(endpoints\[0\], sourceNetId\) \? \[sourceNetId\] : \[\]\)/);
   assert.match(preview, /circuit\._netEnv\(excludedNets\)/);
   const transform = main.slice(main.indexOf('function transformMixedSelection('), main.indexOf('/** Re-route every net', main.indexOf('function transformMixedSelection(')));
@@ -700,7 +700,7 @@ test('Ctrl+r still mirrors vertically while Alt symmetry is held', () => {
 test('rejected actions do not create history entries and use the shared note', () => {
   const main = editorSource();
   const start = main.indexOf('function commit(fn)');
-  const end = main.indexOf('\nfunction snapshot()', start);
+  const end = main.indexOf('\n}\n', start) + 2;
   const commit = main.slice(start, end);
   assert.match(commit, /const before = snapshot\(\);/);
   assert.match(commit, /if \(snapshot\(\) === before\) return result;/);
@@ -744,17 +744,17 @@ test('the context menu carries the style panel controls and stays open while sty
   assert.match(html, /id="style-line-row" data-style-row="line"/);
   assert.match(html, /id="style-text-row" data-style-row="text"/);
   const main = editorSource();
-  const open = main.slice(main.indexOf('function openComponentContextMenu('), main.indexOf('\nfunction selectContextTarget('));
+  const open = functionSource('openComponentContextMenu', main);
   assert.match(open, /menu\.appendChild\(heading\);\s*appendContextStyleStrip\(menu\);\s*appendContextActions\(menu, target\);/);
-  const strip = main.slice(main.indexOf('function appendContextStyleStrip('), main.indexOf('\nfunction openComponentContextMenu('));
+  const strip = functionSource('appendContextStyleStrip', main);
   // Cloned panel controls must not duplicate the panel's ids.
   assert.match(strip, /removeAttribute\('id'\)/);
   assert.match(strip, /strip\.addEventListener\('click', \(ev\) => handleStyleControlClick\(strip, ev\)\)/);
   assert.doesNotMatch(strip, /closeComponentContextMenu/);
-  const handler = main.slice(main.indexOf('function handleStyleControlClick('), main.indexOf('\nfunction updateStyleControls('));
+  const handler = functionSource('handleStyleControlClick', main);
   assert.doesNotMatch(handler, /closeComponentContextMenu/);
   // The panel and an open strip reflect the same selection after every render.
-  const update = main.slice(main.indexOf('function updateStyleControls('), main.indexOf('\nfunction pickLabel('));
+  const update = functionSource('updateStyleControls', main);
   assert.match(update, /syncStyleControls\(panel, state\)/);
   assert.match(update, /syncStyleControls\(strip, state\)/);
   assert.match(main, /getElementById\('style-panel'\)\?\.addEventListener\('click', \(ev\) => handleStyleControlClick\(ev\.currentTarget, ev\)\)/);
@@ -845,7 +845,7 @@ test('tools switch straight from inside another tool, dropping its uncommitted w
 test('view toggles answer in every mode but the insert search', () => {
   const main = editorSource();
   const start = main.indexOf('function viewKey(');
-  const view = main.slice(start, main.indexOf('\nfunction onVisualKey(', start));
+  const view = main.slice(start, main.indexOf('\n}\n', start) + 2);
   // Typing a component name is the one place a printable key is not a command.
   assert.match(view, /if \(mode === 'insert' && !pendingPlace\) return false;/);
   for (const binding of [/setGrid\(!showGrid\)/, /setCrosshair\(!crosshairVisible\)/,
@@ -857,7 +857,7 @@ test('view toggles answer in every mode but the insert search', () => {
   assert.doesNotMatch(view, /key === 'c'(?! && shiftKey)/);
   // Routed before the per-mode handlers, and no longer duplicated inside one.
   assert.match(main, /if \(viewKey\(key, ev\.shiftKey\)\) \{[\s\S]{0,60}return;\s*\}\s*\n\s*const toolSwitch = toolSwitchForKey\(key, ev\.shiftKey\);[\s\S]{0,120}return;\s*\}\s*\n\s*if \(directWire\)/);
-  const normal = main.slice(main.indexOf('function onNormalKey('), main.indexOf('\nfunction onInsertKey('));
+  const normal = functionSource('onNormalKey', main);
   assert.doesNotMatch(normal, /setGrid\(!showGrid\)|toggleTheme\(\)|setCrosshair\(!crosshairVisible\)/);
 });
 
@@ -871,7 +871,7 @@ test('wiring uses Alt for nearest-terminal snapping instead of symmetric routing
   assert.match(main, /if \(terminalSnap\) \{\s*terminalSnap = false;/);
   assert.match(main, /terminalSnapTarget: terminalSnap \? nearestSnapTarget\(cursor\) : null/);
   // A click on a free wire end finishes the draft there, like a terminal.
-  const click = main.slice(main.indexOf('function doWireClick('), main.indexOf('\nfunction noteWireToolStart'));
+  const click = functionSource('doWireClick', main);
   assert.match(click, /circuit\.openWireEnds\(\)\.find\([\s\S]*?joinWireToNet\(/);
   assert.doesNotMatch(main, /withMirroredWire|mirroredWireDraft|mirrorWirePreview/);
   const toolbar = readFileSync(new URL('../src/web/toolbar.js', import.meta.url), 'utf8');
@@ -881,13 +881,13 @@ test('wiring uses Alt for nearest-terminal snapping instead of symmetric routing
 
 test('wire previews prefer a centered equivalent route', () => {
   const main = editorSource();
-  const draft = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview', main.indexOf('function draftRoutePath(')));
+  const draft = functionSource('draftRoutePath', main);
   assert.match(draft, /allowDiagonal: false, preferMidpoint: true/);
 });
 
 test('wire drafts meet a free wire end at its tip instead of running along that wire', () => {
   const main = editorSource();
-  const draft = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview', main.indexOf('function draftRoutePath(')));
+  const draft = functionSource('draftRoutePath', main);
   assert.match(draft, /circuit\.openWireEnds\(\)/);
   assert.match(draft, /if \(isOpenEnd\(endpoints\.at\(-1\), net\.id\)\) continue;/);
 });
@@ -901,10 +901,10 @@ test('terminal commits preserve the routed preview without manual waypoints', ()
 
 test('wire previews can cross neighbours but validate the final drop, and canvas menus do not promise rename by double-click', () => {
   const main = editorSource();
-  const drag = main.slice(main.indexOf('function managedWireDragAt('), main.indexOf('\nfunction canvasMouseDown', main.indexOf('function managedWireDragAt(')));
+  const drag = functionSource('managedWireDragAt', main);
   assert.match(drag, /allowPastNeighbors: true/);
   assert.match(drag, /preserveDiagonalNeighbors: true/);
-  const canvasDown = main.slice(main.indexOf('function canvasMouseDown('), main.indexOf('\nfunction beginObjectMove', main.indexOf('function canvasMouseDown(')));
+  const canvasDown = functionSource('canvasMouseDown', main);
   assert.match(canvasDown, /allowPastNeighbors: true/);
   assert.match(canvasDown, /preserveDiagonalNeighbors: true/);
   const upStart = main.indexOf('function canvasMouseUp(');
@@ -915,7 +915,7 @@ test('wire previews can cross neighbours but validate the final drop, and canvas
   const wireRename = main.match(/appendContextItem\(group, 'Rename net…',[^\n]*/)?.[0];
   assert.ok(wireRename, 'the wire context menu still offers net rename');
   assert.doesNotMatch(wireRename, /shortcut: 'dbl-click'/);
-  const netList = main.slice(main.indexOf('function renderNets('), main.indexOf('\nfunction startNetRename(', main.indexOf('function renderNets(')));
+  const netList = functionSource('renderNets', main);
   assert.match(netList, /row\.addEventListener\('dblclick', \(\) => \{[\s\S]*startNetRename\(net, ref\)/);
 });
 
@@ -1036,7 +1036,7 @@ test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () =>
 
 test('a still click on a selected object cycles to the next one stacked under it, and a press drags the selected one', () => {
   const main = editorSource();
-  const up = main.slice(main.indexOf('function canvasMouseUp('), main.indexOf('\nfunction finishCanvasMouseUp('));
+  const up = functionSource('canvasMouseUp', main);
   assert.match(up, /const still = !!drag && !dragMoved\(/);
   assert.match(up, /nextStackedSelection\(click\.candidates, click\.pressKey\)/);
   const down = main.slice(main.indexOf('function canvasMouseDown('), main.indexOf('\n/** Arm one translation drag'));
@@ -1047,7 +1047,7 @@ test('a still click on a selected object cycles to the next one stacked under it
 
 test('a click picks the label whose text is under the pointer before one whose box merely reaches there, and cycles through every label', () => {
   const main = editorSource();
-  const at = main.slice(main.indexOf('function labelsAt('), main.indexOf('\nfunction annotationTextAt('));
+  const at = functionSource('labelsAt', main);
   assert.match(at, /const ink = label\.inkRect\(\);/);
   assert.match(at, /return \[\.\.\.onText, \.\.\.inBox\];/);
   assert.match(main, /function pickLabel\(w\) \{\s*return labelsAt\(w\)\[0\] \|\| null;/);
