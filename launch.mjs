@@ -49,10 +49,11 @@ const quoteDesktopArg = (value) => `"${String(value).replace(/(["`$\\])/g, '\\$1
 const quoteShell = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
 
 async function install() {
-  // GUI sessions often lack the shell PATH that finds Node (nvm, mise, ...).
-  // Entries run start.sh with the Node binary running now as a hint; start.sh
-  // falls back to searching again if that binary is later removed by an upgrade.
-  const startScript = join(ROOT, 'start.sh');
+  // GUI sessions often lack the shell PATH that finds Node (nvm, mise, ...),
+  // so entries run the Node binary running now by its absolute path. Run
+  // --install again if a Node upgrade removes that binary.
+  const node = process.execPath;
+  const launcher = join(ROOT, 'launch.mjs');
   if (process.platform === 'linux') {
     const file = linuxDesktopFile();
     await mkdir(dirname(file), { recursive: true });
@@ -61,7 +62,7 @@ async function install() {
       'Type=Application',
       `Name=${APP_NAME}`,
       'Comment=Draw and analyze circuit schematics',
-      `Exec=env MOSFETEER_NODE=${quoteDesktopArg(process.execPath)} ${quoteDesktopArg(startScript)} %f`,
+      `Exec=${quoteDesktopArg(node)} ${quoteDesktopArg(launcher)} %f`,
       `Icon=${join(ROOT, 'src', 'web', 'icon.svg')}`,
       'Terminal=false',
       'Categories=Development;Electronics;Engineering;',
@@ -84,7 +85,7 @@ async function install() {
 </dict></plist>
 `);
     const executable = join(bundle, 'Contents', 'MacOS', 'mosfeteer');
-    await writeFile(executable, `#!/bin/sh\nMOSFETEER_NODE=${quoteShell(process.execPath)} exec ${quoteShell(startScript)} "$@"\n`);
+    await writeFile(executable, `#!/bin/sh\nexec ${quoteShell(node)} ${quoteShell(launcher)} "$@"\n`);
     await chmod(executable, 0o755);
     log(`Installed ${bundle}. Open it from Finder, Launchpad, or Spotlight.`);
   } else {

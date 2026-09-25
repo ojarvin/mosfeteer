@@ -68,7 +68,7 @@ src/
     └── index.js        Thin HTTP client over command and generation endpoints.
 test/                   Node test runner (`node --test`).
 fixtures/circuit-spec/  Topology-only CircuitSpec examples.
-launch.mjs              End-user launcher; start.sh / *.command / *.cmd wrap it.
+launch.mjs              End-user launcher; Mosfeteer.cmd wraps it on Windows.
 guidelines/             Role docs + style guide.
 AGENTS.md               Cross-cutting runtime invariants and agent context.
 ```

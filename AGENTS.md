@@ -28,7 +28,7 @@ notes here.
 - `test/` — Node test suite; `fixtures/` — CircuitSpec examples.
 - `guidelines/` — role and visual-quality instructions.
 - `docs/` — focused architecture, analysis, and generation docs.
-- `launch.mjs`, `start.sh`, `Mosfeteer.command`, `Mosfeteer.cmd` — launchers.
+- `launch.mjs`, `Mosfeteer.cmd` — launcher and its Windows double-click wrapper.
 
 Useful commands:
 

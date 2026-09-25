@@ -48,7 +48,7 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
 
 ## Headless server + browser
 
-- Users: `./start.sh` or `node launch.mjs` (opens the editor; stops when it closes).
+- Users: `node launch.mjs` (opens the editor; stops when it closes).
 - Development: `npm run serve` (watch mode, HTTP at `127.0.0.1:47280`).
 - Isolated dev sessions: `PORT=<port> SCHEMATIC_WORKSPACE=<dir> DATA_ROOT=<dir> node src/server/serve.js` plus
   `chromium --remote-debugging-port=<port>` and CDP via `Runtime.evaluate`.

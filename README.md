@@ -45,10 +45,10 @@ All you need is [Node.js](https://nodejs.org/) 18 or newer. There is nothing els
 ```sh
 git clone https://github.com/ojarvin/mosfeteer.git
 cd mosfeteer
-./start.sh                  # or: node launch.mjs
+node launch.mjs
 ```
 
-The editor opens in an app-style Chromium window, or your default browser. To get a desktop launcher, run `node launch.mjs --install` once on Linux or macOS; on Windows, double-click `Mosfeteer.cmd`.
+The editor opens in an app-style Chromium window, or your default browser. It stops by itself shortly after the last editor window closes. To add Mosfeteer to your application menu, run `node launch.mjs --install` once on Linux or macOS (run it again after a Node upgrade moves Node); on Windows, double-click `Mosfeteer.cmd`.
 
 **No Node?** Open [`browser-only/index.html`](browser-only/index.html) directly. It is the same editor, using the browser's file pickers and downloads, without the CLI or PDF export.
 
