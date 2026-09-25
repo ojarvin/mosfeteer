@@ -271,7 +271,7 @@
           <button id="analysis-cancel" type="button" class="icon-button" data-icon="x-circle" aria-label="Close analysis panel" title="Close (Esc)">Close</button>
         </header>
         <div class="analysis-scroll">
-          <p class="analysis-intro">Pick the input and output nets, then derive gain and impedances. Poles and zeros appear when reactive components matter.</p>
+          <p class="analysis-intro">Pick the input and output nets, then derive the selected transfer functions and the impedances. Poles and zeros appear when reactive components matter.</p>
           <div class="analysis-grid">
             <div class="analysis-node" id="analysis-input-row">
               <label id="analysis-input-field" for="analysis-input">Input node</label>
@@ -295,6 +295,14 @@
               </div>
             </div>
           </div>
+          <fieldset class="analysis-approximations" id="analysis-transfer-functions">
+            <legend>Transfer functions</legend>
+            <label><input id="analysis-tf-av" name="transferAv" type="checkbox" data-transfer-function="Av" checked /> <span><span class="math-inline">v<sub>out</sub>/v<sub>in</sub></span>, voltage gain <span class="math-inline">A<sub>v</sub></span></span></label>
+            <label><input id="analysis-tf-zm" name="transferZm" type="checkbox" data-transfer-function="Zm" /> <span><span class="math-inline">v<sub>out</sub>/i<sub>in</sub></span>, transimpedance <span class="math-inline">Z<sub>m</sub></span></span></label>
+            <label><input id="analysis-tf-gm" name="transferGm" type="checkbox" data-transfer-function="Gm" /> <span><span class="math-inline">i<sub>out</sub>/v<sub>in</sub></span>, transconductance <span class="math-inline">G<sub>m</sub></span></span></label>
+            <label><input id="analysis-tf-ai" name="transferAi" type="checkbox" data-transfer-function="Ai" /> <span><span class="math-inline">i<sub>out</sub>/i<sub>in</sub></span>, current gain <span class="math-inline">A<sub>i</sub></span></span></label>
+            <p class="field-hint">A current input drives the input node; a current output flows into the shorted output node, as in <span class="math-inline">Z<sub>out</sub></span>. Input and output impedances are always derived.</p>
+          </fieldset>
           <fieldset class="analysis-approximations">
             <legend>Model simplifications</legend>
             <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> <span>Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</span></label>

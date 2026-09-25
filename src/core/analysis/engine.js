@@ -3,7 +3,7 @@ import { applyApproximations } from './approximation.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { createRationalOps } from './algebra-ops.js';
 import { symbolProvenance } from './provenance.js';
-import { buildExactAnalysisPipeline } from './pipeline.js';
+import { buildExactAnalysisPipeline, transferFunctionList } from './pipeline.js';
 import { presentDiagnostics } from './diagnostics.js';
 import { describeSmallSignalNetlist } from './netlist.js';
 import { analyzeResponse } from './response.js';
@@ -25,6 +25,9 @@ import {
   renderQuantityEquation,
   renderRootEquation,
 } from './present.js';
+
+/** Report keys of the transfer functions derived beside `transfer` (A_v). */
+const DERIVED_TRANSFERS = Object.freeze({ Zm: 'transimpedance', Gm: 'transconductance', Ai: 'currentGain' });
 
 const DEFAULTS = Object.freeze({
   ignoreBodyEffect: true,
@@ -571,17 +574,25 @@ function portSymbols(name) {
   return { voltage: `v_{${flat}}`, current: `i_{${flat}}` };
 }
 
-export function portDefinitions(context) {
+export function portDefinitions(context, transferFunctions = ['Av']) {
   const input = context?.input;
   const output = context?.output;
   if (!input || !output) return [];
   const from = portSymbols(input.name || input.netId);
   const to = portSymbols(output.name || output.netId);
-  // Each impedance states the condition it was measured under, the way a
+  // Each quantity states the condition it was measured under, the way a
   // textbook writes it: the output port carries no external current while the
-  // input drives, and the input is zeroed while the output port is driven.
+  // input drives, the output is shorted for a current output, and the input is
+  // zeroed while the output port is driven. Both port currents flow into the
+  // circuit, so the output current is the one Z_out is measured with.
+  const transfers = {
+    Av: `A_v = \\frac{${to.voltage}}{${from.voltage}}`,
+    Zm: `Z_m = \\frac{${to.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}`,
+    Gm: `G_m = \\frac{${to.current}}{${from.voltage}} \\Big\\vert_{${to.voltage} = 0}`,
+    Ai: `A_i = \\frac{${to.current}}{${from.current}} \\Big\\vert_{${to.voltage} = 0}`,
+  };
   return [
-    { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
+    ...transferFunctionList(transferFunctions).map((quantity) => ({ quantity, tex: transfers[quantity] })),
     { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}` },
     { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}} \\Big\\vert_{${from.voltage} = 0}` },
   ];
@@ -635,11 +646,15 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
 
   const queries = pipeline.queries;
   if (ops.budget?.exceeded) return budgetFailureReport('query extraction', ops.budget, analysisOptions);
+  const transferFunctions = transferFunctionList(options.transferFunctions);
   const values = {
     Av: queries?.transfer?.value,
     Zin: queries?.inputImpedance?.value,
     Zout: queries?.outputImpedance?.value,
   };
+  for (const name of transferFunctions) {
+    if (name !== 'Av') values[name] = queries?.[DERIVED_TRANSFERS[name]]?.value;
+  }
   if (Object.values(values).some((value) => value === undefined)) return failureReport({
     ...pipeline,
     stage: 'queries',
@@ -714,6 +729,14 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
       ...(queries.outputImpedance.equivalence ? { equivalence: queries.outputImpedance.equivalence } : {}),
     }), approximationOptions),
   };
+  for (const name of transferFunctions) {
+    if (name === 'Av') continue;
+    displayed[DERIVED_TRANSFERS[name]] = displayResponse(name, exact[name].expression, approximations[name],
+      withEquivalences(responseOptions(analysisOptions)), approximationOptions);
+  }
+  // Only what the report shows lends it assumptions: an unselected A_v is
+  // still solved, but its reductions say nothing about the rows displayed.
+  const shown = ['Zin', 'Zout', ...transferFunctions];
   if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
   const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
   const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
@@ -728,8 +751,9 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     ...millerAssumptions,
     ...bodyEffectAssumptions,
     ...outputResistanceAssumptions,
-    ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
-    ...Object.values(displayed).flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
+    ...shown.flatMap((name) => approximations[name].assumptions),
+    ...transferFunctions.map((name) => displayed[name === 'Av' ? 'transfer' : DERIVED_TRANSFERS[name]])
+      .flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
       .flatMap((root) => root.assumptions || []),
   ]);
   const transfer = displayed.transfer.response;
@@ -763,6 +787,9 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     input: displayed.input,
     output: displayed.output,
     transfer: displayed.transfer,
+    ...Object.fromEntries(transferFunctions.filter((name) => name !== 'Av')
+      .map((name) => [DERIVED_TRANSFERS[name], displayed[DERIVED_TRANSFERS[name]]])),
+    transferFunctions,
     exact,
     approximate: approximations,
     dc: {
@@ -779,11 +806,11 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     zeros: transfer.zeros,
     roots,
     assumptions,
-    portDefinitions: portDefinitions(pipeline.context),
+    portDefinitions: portDefinitions(pipeline.context, transferFunctions),
     equations: [
       ...displayed.input.equations,
       ...displayed.output.equations,
-      ...displayed.transfer.equations,
+      ...transferFunctions.flatMap((name) => displayed[name === 'Av' ? 'transfer' : DERIVED_TRANSFERS[name]].equations),
       ...roots.map(({ equation }) => equation),
     ],
     details: {

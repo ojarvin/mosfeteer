@@ -602,6 +602,9 @@ const QUANTITY_LABELS = Object.freeze({
   zout: 'Z_{out}',
   av: 'A_v',
   gain: 'A_v',
+  zm: 'Z_m',
+  gm: 'G_m',
+  ai: 'A_i',
 });
 
 /** Return the standard analysis label for AC or DC quantities. */

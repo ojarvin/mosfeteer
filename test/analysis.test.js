@@ -66,7 +66,7 @@ test('public analysis performs one combined solve for all three quantities', () 
     'Ports',
     'DC input impedance',
     'DC output impedance',
-    'DC gain',
+    'DC voltage gain',
   ]);
   assert.strictEqual(report.reports.input.solution, report.details.solution);
   assert.strictEqual(report.reports.output.solution, report.details.solution);
@@ -94,8 +94,8 @@ test('reactive analysis exposes AC, DC, poles, and zero-based indexing', () => {
     'DC input impedance',
     'AC output impedance',
     'DC output impedance',
-    'AC gain',
-    'DC gain',
+    'AC voltage gain',
+    'DC voltage gain',
     'Poles',
   ]);
 });

@@ -233,7 +233,9 @@ and cross-net collinear overlap. Saving does not require a clean report.
 ## Small-signal analysis contract
 
 The v2 pipeline builds one exact full-RLC MNA model for `Z_in(s)`, `Z_out(s)`,
-and `A_v(s)`, then presents derived equations. The main implementation is in
+and `A_v(s)`, then presents derived equations. The optional `Z_m`, `G_m`, and
+`A_i` transfer functions (`transferFunctions`) come from the same two solve
+columns, never from another solve. The main implementation is in
 `src/core/analysis/`; the user-facing contract is summarized in
 [`docs/symbolic-analysis.md`](docs/symbolic-analysis.md).
 

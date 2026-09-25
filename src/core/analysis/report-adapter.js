@@ -13,13 +13,33 @@ const QUANTITIES = Object.freeze([
   ['input', 'Zin', 'input-impedance', 'Z_{in}'],
   ['output', 'Zout', 'output-impedance', 'Z_{out}'],
   ['transfer', 'Av', 'voltage-transfer', 'A_v'],
+  ['transimpedance', 'Zm', 'transimpedance', 'Z_m'],
+  ['transconductance', 'Gm', 'transconductance', 'G_m'],
+  ['currentGain', 'Ai', 'current-gain', 'A_i'],
+]);
+
+/** Each transfer function's report key and the name its rows go by. */
+const TRANSFERS = Object.freeze([
+  ['Av', 'transfer', 'voltage gain'],
+  ['Zm', 'transimpedance', 'transimpedance'],
+  ['Gm', 'transconductance', 'transconductance'],
+  ['Ai', 'currentGain', 'current gain'],
 ]);
 
 const SOURCE_NAMES = Object.freeze({
   Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
   Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
   Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
+  Zm: ['transimpedance'],
+  Gm: ['transconductance'],
+  Ai: ['currentGain'],
 });
+
+/** The transfer functions a report shows; one without the list shows A_v. */
+function selectedTransfers(report) {
+  const names = Array.isArray(report?.transferFunctions) ? report.transferFunctions : ['Av'];
+  return TRANSFERS.filter(([name]) => names.includes(name));
+}
 
 function asArray(value) {
   if (value === undefined || value === null) return [];
@@ -276,7 +296,7 @@ function childSource(combined, key, quantity) {
 function childMetadata(combined, source, key) {
   const context = combined?.context || {};
   const metadata = {
-    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
+    target: firstDefined(source?.target, key === 'input' ? context.input : context.output, combined?.target),
     input: firstDefined(source?.input, context.input, combined?.input),
     reference: firstDefined(source?.reference, context.reference, combined?.reference),
   };
@@ -284,7 +304,7 @@ function childMetadata(combined, source, key) {
 }
 
 function childPairs(combined) {
-  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
+  return Object.fromEntries(QUANTITIES.filter(([key]) => childKeys(combined).includes(key)).map(([key, quantity]) => {
     const source = childSource(combined, key, quantity);
     return [key, pairFor(source)];
   }));
@@ -359,6 +379,11 @@ function transferCompanions(combined, children) {
   for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
     child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
   }
+  for (const [key, , , label] of QUANTITIES.slice(3)) {
+    const child = children[key];
+    if (child) child.dcValue = dcResult(`${label}(0)`, child._selected, child._exact, child._source);
+  }
+  transfer.dcValue = dcGain;
   transfer.dcGain = dcGain;
   transfer.dcInputImpedance = dcInput;
   transfer.dcOutputImpedance = dcOutput;
@@ -414,12 +439,29 @@ function equationEntries(reports, report) {
   add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
   if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
   add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
-  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
-  add('DC gain', reports.transfer.dcGain);
-  const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
-  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
+  const transfers = selectedTransfers(report);
+  for (const [, key, name] of transfers) {
+    const child = reports[key];
+    if (!child) continue;
+    if (child.frequencyResponse?.hasFrequency) add(`AC ${name}`, child);
+    add(`DC ${name}`, child.dcValue);
+  }
+  // Each transfer function has its own poles and zeros: a current input or a
+  // shorted output terminates the circuit differently. Name whose they are
+  // once there is more than one.
+  for (const [, key, name] of transfers) {
+    const frequency = reports[key]?.frequencyResponse;
+    const suffix = transfers.length > 1 ? ` (${name})` : '';
+    if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles));
+    if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros));
+  }
   return entries;
+}
+
+/** Report keys to adapt: the three always solved, and each derived transfer requested. */
+function childKeys(report) {
+  const derived = selectedTransfers(report).map(([, key]) => key).filter((key) => key !== 'transfer');
+  return ['input', 'output', 'transfer', ...derived];
 }
 
 /** Convert one exact/selected v2 response set into the legacy child reports. */
@@ -429,7 +471,8 @@ export function adaptCombinedReport(report) {
   }
   const pairs = childPairs(report);
   const children = {};
-  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
+  for (const [key, quantity] of QUANTITIES) {
+    if (!childKeys(report).includes(key)) continue;
     const child = adaptChild(report, key, quantity);
     children[key] = child;
   }
@@ -441,7 +484,7 @@ export function adaptCombinedReport(report) {
   const companions = transferCompanions(report, children);
   const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
   const details = detailsFor(report, report);
-  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
+  const reports = { ...cleaned };
   const entries = equationEntries(reports, report);
   const successful = Object.values(reports).filter((child) => child.ok);
   const context = report.context || {};
@@ -452,7 +495,7 @@ export function adaptCombinedReport(report) {
     ...report,
     query: 'combined',
     ok: successful.length > 0,
-    complete: successful.length === 3,
+    complete: successful.length === Object.keys(reports).length,
     reports,
     // Port metadata is distinct from the solved impedance and transfer rows.
     input: inputPort,

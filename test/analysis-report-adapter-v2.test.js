@@ -41,7 +41,7 @@ test('maps an exact non-reactive response without AC rows', () => {
   assert.equal(report.reports.input.frequencyResponse, undefined);
   assert.equal(report.reports.transfer.acTransfer, undefined);
   assert.equal(report.reports.transfer.dcGain.equation, 'A_v(0) = 1');
-  assert.deepEqual(report.equationOrder, ['DC input impedance', 'DC output impedance', 'DC gain']);
+  assert.deepEqual(report.equationOrder, ['DC input impedance', 'DC output impedance', 'DC voltage gain']);
   assert.deepEqual(report.reports.transfer.equations, ['VOUT = VIN']);
   assert.deepEqual(report.reports.transfer.solution, { 'V(VOUT)': 'VIN' });
   assert.equal(report.smallSignalNetlist, '* v2 netlist');
@@ -93,7 +93,7 @@ test('maps reactive responses, DC limits, and zero-based roots', () => {
   assert.equal(report.reports.transfer.frequencyResponse.poles[0].equation, 'p_{0} = -\\frac{1}{C \\, R}');
   assert.deepEqual(report.equationOrder, [
     'AC input impedance', 'DC input impedance', 'DC output impedance',
-    'AC gain', 'DC gain', 'Poles',
+    'AC voltage gain', 'DC voltage gain', 'Poles',
   ]);
 });
 

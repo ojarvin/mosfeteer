@@ -285,7 +285,7 @@ function uniqueName(base, primitives) {
   }
 }
 
-/** Create the two compatible RHS excitations used by all three port queries. */
+/** Create the two compatible RHS excitations used by every port query. */
 export function createTestExcitations(context, primitives = [], options = {}) {
   if (!context?.input?.node || !context?.output?.node) {
     throw new TypeError('analysis context must contain input and output nodes');
@@ -318,7 +318,56 @@ function solutionValue(solution, variable, column) {
   return index < 0 ? undefined : solution.columns[column][index];
 }
 
-function queryValues(solution, system, context, excitations, ops) {
+/**
+ * The transfer functions a request may ask for, in report order. `Av` is
+ * always solved (stage factoring and its proofs build on it); the other three
+ * follow from the same two columns, which are the port's hybrid (g) parameters
+ * with both port currents flowing into the circuit:
+ *
+ *   I_in  = V_in / Z_in  + g12 I_out      (g12 = I_in per I_out at V_in = 0)
+ *   V_out = A_v V_in     + Z_out I_out
+ *
+ * so Z_m = V_out/I_in with I_out = 0, and with the output shorted (V_out = 0)
+ * G_m = I_out/V_in = -A_v/Z_out and A_i = I_out/I_in = G_m/(1/Z_in + g12 G_m).
+ */
+export const TRANSFER_FUNCTIONS = Object.freeze(['Av', 'Zm', 'Gm', 'Ai']);
+
+export function transferFunctionList(value) {
+  if (value === undefined || value === null) return ['Av'];
+  const requested = new Set((Array.isArray(value) || value instanceof Set ? [...value] : String(value).split(','))
+    .map((name) => String(name).trim()));
+  return TRANSFER_FUNCTIONS.filter((name) => requested.has(name));
+}
+
+function derivedTransferQueries(requested, values, ops) {
+  const { inputVoltage, outputVoltage, inputCurrent, outputTestVoltage, zeroedInputCurrent } = values;
+  const queries = {};
+  if (requested.includes('Zm')) {
+    queries.transimpedance = { value: queryDivide(outputVoltage, inputCurrent, ops), outputVoltage, inputCurrent, column: 0 };
+  }
+  if (requested.includes('Gm')) {
+    queries.transconductance = {
+      value: queryDivide(ops.neg(outputVoltage), ops.mul(inputVoltage, outputTestVoltage), ops),
+      outputVoltage, outputImpedance: outputTestVoltage, columns: [0, 1],
+    };
+  }
+  if (requested.includes('Ai')) {
+    // A_i = -V_out / (I_in Z_out - g12 V_out) with V_in = 1; the source
+    // current is the negative of the current into the circuit, so -g12 is
+    // the zeroed input source's own current.
+    queries.currentGain = {
+      value: queryDivide(
+        ops.neg(outputVoltage),
+        ops.add(ops.mul(inputCurrent, outputTestVoltage), ops.mul(zeroedInputCurrent, outputVoltage)),
+        ops,
+      ),
+      columns: [0, 1],
+    };
+  }
+  return queries;
+}
+
+function queryValues(solution, system, context, excitations, ops, requested = ['Av']) {
   const inputVoltage = solutionValue(solution, `V(${context.input.node})`, 0);
   const outputVoltage = solutionValue(solution, `V(${context.output.node})`, 0);
   const outputTestVoltage = solutionValue(solution, `V(${context.output.node})`, 1);
@@ -347,6 +396,9 @@ function queryValues(solution, system, context, excitations, ops) {
       inputSourceCurrent: zeroedInputCurrent,
       column: 1,
     },
+    ...derivedTransferQueries(requested, {
+      inputVoltage, outputVoltage, inputCurrent, outputTestVoltage, zeroedInputCurrent,
+    }, ops),
     unknowns: new Map(solution.variables.map((name, index) => [name, solution.columns.map((column) => column[index])])),
     systemUnknowns: [...system.unknowns],
   };
@@ -596,7 +648,7 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     system,
     solution,
     queries: refineSeparableQueries(
-      queryValues(solution, system, context, excitations, ops),
+      queryValues(solution, system, context, excitations, ops, transferFunctionList(options.transferFunctions)),
       { selectedMna, context, ops },
     ),
   };

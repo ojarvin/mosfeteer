@@ -1,10 +1,10 @@
 # Symbolic circuit analysis
 
-Symbolic analysis derives small-signal gain and impedances without evaluating
-numerical values. Choose the input and output nodes in the **Analyze** panel
-(pick them from the dropdowns or with the crosshair button, then click a wire or
-pin); optionally select a reference, additional AC-ground nets, and triode devices.
-One analysis produces the complete report.
+Symbolic analysis derives small-signal transfer functions and impedances
+without evaluating numerical values. Choose the input and output nodes in the
+**Analyze** panel (pick them from the dropdowns or with the crosshair button,
+then click a wire or pin); optionally select a reference, additional AC-ground
+nets, and triode devices. One analysis produces the complete report.
 
 ## Analysis model
 
@@ -15,6 +15,23 @@ modified nodal analysis (MNA) system. A single multi-excitation solve provides:
 - output impedance `Z_{out}(s)` with the input set to AC ground;
 - voltage transfer `A_v(s)`.
 
+The two excitations are the port's hybrid parameters, so the other transfer
+functions need no further solve. The **Transfer functions** checkboxes pick
+any of them (`transferFunctions`, default `['Av']`; an empty list leaves only
+the impedances):
+
+| Choice | Quantity | Condition |
+| --- | --- | --- |
+| `v_out/v_in` | `A_v` | output open |
+| `v_out/i_in` | `Z_m`, transimpedance | output open, current-driven input |
+| `i_out/v_in` | `G_m`, transconductance | output shorted to AC ground |
+| `i_out/i_in` | `A_i`, current gain | output shorted, current-driven input |
+
+Both port currents flow into the circuit, so `i_out` is the current `Z_{out}`
+is measured with, and `A_v = -G_m Z_{out}` (a common-source stage has
+`G_m = g_m`). `A_i` includes the reverse transmission of a bilateral stage.
+Each transfer function has its own poles and zeros, since a current input or
+a shorted output terminates the circuit differently.
 Disconnected circuitry is omitted only when it has no algebraic coupling to
 the selected ports. Controlled-source output and control nodes remain coupled.
 Singular, floating, ambiguous, or unsupported requests return a diagnostic
@@ -115,11 +132,9 @@ The report order is:
 2. `Z_{in}(0)`
 3. `Z_{out}(s)`
 4. `Z_{out}(0)`
-5. `A_v(s)`
-6. `A_v(0)`
-7. poles
-8. zeros
-9. assumptions
+5. each selected transfer function's `(s)` and `(0)` rows, in the table's order
+6. poles, then zeros, of each selected transfer function
+7. assumptions
 
 Rows that add no information are omitted.
 

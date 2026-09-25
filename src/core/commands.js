@@ -515,7 +515,7 @@ export function commandHelp() {
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
     '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
-    '  analyze <input-impedance|output-impedance|transfer-function> NET [options]',
+    '  analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [options]',
     '    --input NET --output NET --reference NET --ac-ground NET,...',
     '    --device-region REF=triode,... --ignore-body-effect --gmro-large',
     '    --ignore-channel-length-modulation --dominant-pole',
@@ -598,8 +598,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
       'input-impedance': 'input', rin: 'input', zin: 'input',
       'output-impedance': 'output', rout: 'output', zout: 'output',
       'transfer-function': 'transfer', transfer: 'transfer', gain: 'transfer',
+      transimpedance: 'transimpedance', zm: 'transimpedance',
+      transconductance: 'transconductance', gm: 'transconductance',
+      'current-gain': 'currentGain', ai: 'currentGain',
     }[subject];
-    const usage = 'usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
+    const transferFunction = { transimpedance: 'Zm', transconductance: 'Gm', currentGain: 'Ai' }[quantity];
+    const usage = 'usage: analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
     if (!quantity) throw new Error(usage);
     const target = pos.shift();
     if (!target || pos.length) throw new Error(usage);
@@ -622,14 +626,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...(flags['ignore-body-effect'] ? { neglectBodyEffect: true } : {}),
       ...(flags['gmro-large'] ? { highIntrinsicGain: true } : {}),
       ...(flags['dominant-pole'] ? { dominantPole: true } : {}),
+      ...(transferFunction ? { transferFunctions: [transferFunction] } : {}),
     };
     const combined = analyzeSmallSignal(circuit, analysisOptions);
     const report = combined.reports[quantity];
     const lines = [report.ok ? report.equation : `unsupported: ${report.error}`];
     const dc = quantity === 'input' ? combined.dcInputImpedance
-      : quantity === 'output' ? combined.dcOutputImpedance : combined.dcGain;
+      : quantity === 'output' ? combined.dcOutputImpedance : report.dcValue;
     if (report.frequencyResponse?.hasFrequency && dc?.equation) lines.push(`DC: ${dc.equation}`);
-    if (quantity === 'transfer') {
+    if (quantity !== 'input' && quantity !== 'output') {
       for (const root of report.frequencyResponse?.poles || []) lines.push(`pole: ${root.equation}`);
       for (const root of report.frequencyResponse?.zeros || []) lines.push(`zero: ${root.equation}`);
     }

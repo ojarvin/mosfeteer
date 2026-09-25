@@ -15,6 +15,7 @@ test('defaults select the concise textbook presentation', () => {
     parasitics: false,
     highIntrinsicGain: true,
     dominantPole: false,
+    transferFunctions: ['Av'],
   });
   assert.notEqual(analysisOptionDefaults(), ANALYSIS_OPTION_DEFAULTS);
 });
@@ -25,6 +26,7 @@ test('normalization accepts only canonical option names and device regions', () 
     highIntrinsicGain: false,
     neglectChannelLengthModulation: false,
     dominantPole: true,
+    transferFunctions: ['Av'],
     ignoreBodyEffect: true,
     millerApproximation: false,
     cascodeReduction: true,
@@ -39,6 +41,7 @@ test('normalization accepts only canonical option names and device regions', () 
     millerApproximation: false,
     parasitics: false,
     dominantPole: true,
+    transferFunctions: ['Av'],
     deviceRegions: { M2: { region: 'triode' } },
   });
 });
@@ -54,6 +57,7 @@ test('channel-length omission supersedes high intrinsic gain', () => {
     millerApproximation: true,
     parasitics: false,
     dominantPole: false,
+    transferFunctions: ['Av'],
   });
 });
 
@@ -71,6 +75,7 @@ test('canonical nested form state remains canonical during normalization', () =>
     millerApproximation: true,
     parasitics: false,
     dominantPole: false,
+    transferFunctions: ['Av'],
     deviceRegions: { M1: { region: 'triode' } },
   });
 });
@@ -106,6 +111,7 @@ test('persistence migration maps legacy aliases and drops removed fields', () =>
       millerApproximation: true,
       parasitics: false,
       dominantPole: true,
+      transferFunctions: ['Av'],
     },
   });
   assert.equal(diagnostics.length, 1);
@@ -118,6 +124,7 @@ test('canonical persisted values win over legacy aliases and lists', () => {
     highIntrinsicGain: false,
     neglectChannelLengthModulation: false,
     dominantPole: false,
+    transferFunctions: ['Av'],
     options: { neglectBodyEffect: true },
     approximationOptions: { ignoreRo: true },
     approximations: ['ignore-body-effect', 'gmro-large', 'dominant-pole'],
@@ -130,8 +137,18 @@ test('canonical persisted values win over legacy aliases and lists', () => {
     millerApproximation: true,
     parasitics: false,
     dominantPole: false,
+    transferFunctions: ['Av'],
   });
   assert.deepEqual(state.deviceRegions, { M1: { region: 'triode' } });
+});
+
+test('transfer functions keep a known subset in report order, empty included', () => {
+  assert.deepEqual(normalizeAnalysisOptions({ transferFunctions: ['Ai', 'bogus', 'Zm'] }).transferFunctions, ['Zm', 'Ai']);
+  assert.deepEqual(normalizeAnalysisOptions({ options: { transferFunctions: [] } }).transferFunctions, []);
+  assert.deepEqual(normalizeAnalysisOptions({ transferFunctions: 'Gm' }).transferFunctions, ['Av']);
+  const { state } = migrateAnalysisFormState({ options: { transferFunctions: ['Gm', 'Av'] } });
+  assert.deepEqual(state.options.transferFunctions, ['Av', 'Gm']);
+  assert.deepEqual(migrateAnalysisFormState({}).state.options.transferFunctions, ['Av']);
 });
 
 test('legacy model maps are reduced to triode regions only', () => {

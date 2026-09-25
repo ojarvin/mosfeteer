@@ -92,6 +92,14 @@ test('analyze selects one requested quantity from the combined solve', () => {
   assert.doesNotMatch(result.text, /DC input impedance|DC output impedance/);
 });
 
+test('analyze derives a current-output transfer function on request', () => {
+  const result = runCommand(analysisCircuit({ capacitor: true }), 'analyze transconductance VOUT --input VIN');
+  assert.equal(result.json.ok, true, result.json.error);
+  assert.equal(result.json.query, 'transconductance');
+  assert.match(result.text, /^G_m/);
+  assert.throws(() => runCommand(analysisCircuit(), 'analyze transadmittance VOUT --input VIN'), /usage: analyze/);
+});
+
 test('analyze accepts canonical ports, grounds, regions, and approximations', () => {
   const result = runCommand(
     triodeCircuit(),

@@ -1883,7 +1883,7 @@ let applyApproximations; __bind(() => { ({ applyApproximations } = __require("sr
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
 let symbolProvenance; __bind(() => { ({ symbolProvenance } = __require("src/core/analysis/provenance.js")); });
-let buildExactAnalysisPipeline; __bind(() => { ({ buildExactAnalysisPipeline } = __require("src/core/analysis/pipeline.js")); });
+let buildExactAnalysisPipeline, transferFunctionList; __bind(() => { ({ buildExactAnalysisPipeline, transferFunctionList } = __require("src/core/analysis/pipeline.js")); });
 let presentDiagnostics; __bind(() => { ({ presentDiagnostics } = __require("src/core/analysis/diagnostics.js")); });
 let describeSmallSignalNetlist; __bind(() => { ({ describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js")); });
 let analyzeResponse; __bind(() => { ({ analyzeResponse } = __require("src/core/analysis/response.js")); });
@@ -1904,6 +1904,9 @@ let equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, 
 
 
 
+
+/** Report keys of the transfer functions derived beside `transfer` (A_v). */
+const DERIVED_TRANSFERS = Object.freeze({ Zm: 'transimpedance', Gm: 'transconductance', Ai: 'currentGain' });
 
 const DEFAULTS = Object.freeze({
   ignoreBodyEffect: true,
@@ -2450,17 +2453,25 @@ function portSymbols(name) {
   return { voltage: `v_{${flat}}`, current: `i_{${flat}}` };
 }
 
-function portDefinitions(context) {
+function portDefinitions(context, transferFunctions = ['Av']) {
   const input = context?.input;
   const output = context?.output;
   if (!input || !output) return [];
   const from = portSymbols(input.name || input.netId);
   const to = portSymbols(output.name || output.netId);
-  // Each impedance states the condition it was measured under, the way a
+  // Each quantity states the condition it was measured under, the way a
   // textbook writes it: the output port carries no external current while the
-  // input drives, and the input is zeroed while the output port is driven.
+  // input drives, the output is shorted for a current output, and the input is
+  // zeroed while the output port is driven. Both port currents flow into the
+  // circuit, so the output current is the one Z_out is measured with.
+  const transfers = {
+    Av: `A_v = \\frac{${to.voltage}}{${from.voltage}}`,
+    Zm: `Z_m = \\frac{${to.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}`,
+    Gm: `G_m = \\frac{${to.current}}{${from.voltage}} \\Big\\vert_{${to.voltage} = 0}`,
+    Ai: `A_i = \\frac{${to.current}}{${from.current}} \\Big\\vert_{${to.voltage} = 0}`,
+  };
   return [
-    { quantity: 'Av', tex: `A_v = \\frac{${to.voltage}}{${from.voltage}}` },
+    ...transferFunctionList(transferFunctions).map((quantity) => ({ quantity, tex: transfers[quantity] })),
     { quantity: 'Zin', tex: `Z_{in} = \\frac{${from.voltage}}{${from.current}} \\Big\\vert_{${to.current} = 0}` },
     { quantity: 'Zout', tex: `Z_{out} = \\frac{${to.voltage}}{${to.current}} \\Big\\vert_{${from.voltage} = 0}` },
   ];
@@ -2514,11 +2525,15 @@ function analyzeSmallSignalV2(circuit, options = {}) {
 
   const queries = pipeline.queries;
   if (ops.budget?.exceeded) return budgetFailureReport('query extraction', ops.budget, analysisOptions);
+  const transferFunctions = transferFunctionList(options.transferFunctions);
   const values = {
     Av: queries?.transfer?.value,
     Zin: queries?.inputImpedance?.value,
     Zout: queries?.outputImpedance?.value,
   };
+  for (const name of transferFunctions) {
+    if (name !== 'Av') values[name] = queries?.[DERIVED_TRANSFERS[name]]?.value;
+  }
   if (Object.values(values).some((value) => value === undefined)) return failureReport({
     ...pipeline,
     stage: 'queries',
@@ -2593,6 +2608,14 @@ function analyzeSmallSignalV2(circuit, options = {}) {
       ...(queries.outputImpedance.equivalence ? { equivalence: queries.outputImpedance.equivalence } : {}),
     }), approximationOptions),
   };
+  for (const name of transferFunctions) {
+    if (name === 'Av') continue;
+    displayed[DERIVED_TRANSFERS[name]] = displayResponse(name, exact[name].expression, approximations[name],
+      withEquivalences(responseOptions(analysisOptions)), approximationOptions);
+  }
+  // Only what the report shows lends it assumptions: an unselected A_v is
+  // still solved, but its reductions say nothing about the rows displayed.
+  const shown = ['Zin', 'Zout', ...transferFunctions];
   if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
   const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
   const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
@@ -2607,8 +2630,9 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     ...millerAssumptions,
     ...bodyEffectAssumptions,
     ...outputResistanceAssumptions,
-    ...Object.values(approximations).flatMap(({ assumptions: values }) => values),
-    ...Object.values(displayed).flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
+    ...shown.flatMap((name) => approximations[name].assumptions),
+    ...transferFunctions.map((name) => displayed[name === 'Av' ? 'transfer' : DERIVED_TRANSFERS[name]])
+      .flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
       .flatMap((root) => root.assumptions || []),
   ]);
   const transfer = displayed.transfer.response;
@@ -2642,6 +2666,9 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     input: displayed.input,
     output: displayed.output,
     transfer: displayed.transfer,
+    ...Object.fromEntries(transferFunctions.filter((name) => name !== 'Av')
+      .map((name) => [DERIVED_TRANSFERS[name], displayed[DERIVED_TRANSFERS[name]]])),
+    transferFunctions,
     exact,
     approximate: approximations,
     dc: {
@@ -2658,11 +2685,11 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     zeros: transfer.zeros,
     roots,
     assumptions,
-    portDefinitions: portDefinitions(pipeline.context),
+    portDefinitions: portDefinitions(pipeline.context, transferFunctions),
     equations: [
       ...displayed.input.equations,
       ...displayed.output.equations,
-      ...displayed.transfer.equations,
+      ...transferFunctions.flatMap((name) => displayed[name === 'Av' ? 'transfer' : DERIVED_TRANSFERS[name]].equations),
       ...roots.map(({ equation }) => equation),
     ],
     details: {
@@ -2922,7 +2949,7 @@ const PASSTHROUGH_OPTIONS = Object.freeze([
   'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
   'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
   'budget', 'valueOf', 'resolveValue',
-  'topologicalSolve', 'topologicalPresentation',
+  'topologicalSolve', 'topologicalPresentation', 'transferFunctions',
 ]);
 
 function engineOptions(options) {
@@ -4634,7 +4661,7 @@ function uniqueName(base, primitives) {
   }
 }
 
-/** Create the two compatible RHS excitations used by all three port queries. */
+/** Create the two compatible RHS excitations used by every port query. */
 function createTestExcitations(context, primitives = [], options = {}) {
   if (!context?.input?.node || !context?.output?.node) {
     throw new TypeError('analysis context must contain input and output nodes');
@@ -4667,7 +4694,56 @@ function solutionValue(solution, variable, column) {
   return index < 0 ? undefined : solution.columns[column][index];
 }
 
-function queryValues(solution, system, context, excitations, ops) {
+/**
+ * The transfer functions a request may ask for, in report order. `Av` is
+ * always solved (stage factoring and its proofs build on it); the other three
+ * follow from the same two columns, which are the port's hybrid (g) parameters
+ * with both port currents flowing into the circuit:
+ *
+ *   I_in  = V_in / Z_in  + g12 I_out      (g12 = I_in per I_out at V_in = 0)
+ *   V_out = A_v V_in     + Z_out I_out
+ *
+ * so Z_m = V_out/I_in with I_out = 0, and with the output shorted (V_out = 0)
+ * G_m = I_out/V_in = -A_v/Z_out and A_i = I_out/I_in = G_m/(1/Z_in + g12 G_m).
+ */
+const TRANSFER_FUNCTIONS = Object.freeze(['Av', 'Zm', 'Gm', 'Ai']);
+
+function transferFunctionList(value) {
+  if (value === undefined || value === null) return ['Av'];
+  const requested = new Set((Array.isArray(value) || value instanceof Set ? [...value] : String(value).split(','))
+    .map((name) => String(name).trim()));
+  return TRANSFER_FUNCTIONS.filter((name) => requested.has(name));
+}
+
+function derivedTransferQueries(requested, values, ops) {
+  const { inputVoltage, outputVoltage, inputCurrent, outputTestVoltage, zeroedInputCurrent } = values;
+  const queries = {};
+  if (requested.includes('Zm')) {
+    queries.transimpedance = { value: queryDivide(outputVoltage, inputCurrent, ops), outputVoltage, inputCurrent, column: 0 };
+  }
+  if (requested.includes('Gm')) {
+    queries.transconductance = {
+      value: queryDivide(ops.neg(outputVoltage), ops.mul(inputVoltage, outputTestVoltage), ops),
+      outputVoltage, outputImpedance: outputTestVoltage, columns: [0, 1],
+    };
+  }
+  if (requested.includes('Ai')) {
+    // A_i = -V_out / (I_in Z_out - g12 V_out) with V_in = 1; the source
+    // current is the negative of the current into the circuit, so -g12 is
+    // the zeroed input source's own current.
+    queries.currentGain = {
+      value: queryDivide(
+        ops.neg(outputVoltage),
+        ops.add(ops.mul(inputCurrent, outputTestVoltage), ops.mul(zeroedInputCurrent, outputVoltage)),
+        ops,
+      ),
+      columns: [0, 1],
+    };
+  }
+  return queries;
+}
+
+function queryValues(solution, system, context, excitations, ops, requested = ['Av']) {
   const inputVoltage = solutionValue(solution, `V(${context.input.node})`, 0);
   const outputVoltage = solutionValue(solution, `V(${context.output.node})`, 0);
   const outputTestVoltage = solutionValue(solution, `V(${context.output.node})`, 1);
@@ -4696,6 +4772,9 @@ function queryValues(solution, system, context, excitations, ops) {
       inputSourceCurrent: zeroedInputCurrent,
       column: 1,
     },
+    ...derivedTransferQueries(requested, {
+      inputVoltage, outputVoltage, inputCurrent, outputTestVoltage, zeroedInputCurrent,
+    }, ops),
     unknowns: new Map(solution.variables.map((name, index) => [name, solution.columns.map((column) => column[index])])),
     systemUnknowns: [...system.unknowns],
   };
@@ -4945,7 +5024,7 @@ function buildExactAnalysisPipeline(circuit, options = {}) {
     system,
     solution,
     queries: refineSeparableQueries(
-      queryValues(solution, system, context, excitations, ops),
+      queryValues(solution, system, context, excitations, ops, transferFunctionList(options.transferFunctions)),
       { selectedMna, context, ops },
     ),
   };
@@ -4981,7 +5060,9 @@ __exports.resolveValue = resolveValue;
 __exports.adaptPrimitiveDescriptor = adaptPrimitiveDescriptor;
 __exports.adaptPrimitiveDescriptors = adaptPrimitiveDescriptors;
 __exports.createTestExcitations = createTestExcitations;
+__exports.transferFunctionList = transferFunctionList;
 __exports.buildExactAnalysisPipeline = buildExactAnalysisPipeline;
+__exports.TRANSFER_FUNCTIONS = TRANSFER_FUNCTIONS;
 };
 
 __modules["src/core/analysis/polynomial-gcd.js"] = function (__require, __exports) {
@@ -5964,6 +6045,9 @@ const QUANTITY_LABELS = Object.freeze({
   zout: 'Z_{out}',
   av: 'A_v',
   gain: 'A_v',
+  zm: 'Z_m',
+  gm: 'G_m',
+  ai: 'A_i',
 });
 
 /** Return the standard analysis label for AC or DC quantities. */
@@ -7144,13 +7228,33 @@ const QUANTITIES = Object.freeze([
   ['input', 'Zin', 'input-impedance', 'Z_{in}'],
   ['output', 'Zout', 'output-impedance', 'Z_{out}'],
   ['transfer', 'Av', 'voltage-transfer', 'A_v'],
+  ['transimpedance', 'Zm', 'transimpedance', 'Z_m'],
+  ['transconductance', 'Gm', 'transconductance', 'G_m'],
+  ['currentGain', 'Ai', 'current-gain', 'A_i'],
+]);
+
+/** Each transfer function's report key and the name its rows go by. */
+const TRANSFERS = Object.freeze([
+  ['Av', 'transfer', 'voltage gain'],
+  ['Zm', 'transimpedance', 'transimpedance'],
+  ['Gm', 'transconductance', 'transconductance'],
+  ['Ai', 'currentGain', 'current gain'],
 ]);
 
 const SOURCE_NAMES = Object.freeze({
   Av: ['Av', 'av', 'transfer', 'voltageTransfer', 'voltage-transfer'],
   Zin: ['Zin', 'zin', 'inputImpedance', 'input-impedance'],
   Zout: ['Zout', 'zout', 'outputImpedance', 'output-impedance'],
+  Zm: ['transimpedance'],
+  Gm: ['transconductance'],
+  Ai: ['currentGain'],
 });
+
+/** The transfer functions a report shows; one without the list shows A_v. */
+function selectedTransfers(report) {
+  const names = Array.isArray(report?.transferFunctions) ? report.transferFunctions : ['Av'];
+  return TRANSFERS.filter(([name]) => names.includes(name));
+}
 
 function asArray(value) {
   if (value === undefined || value === null) return [];
@@ -7407,7 +7511,7 @@ function childSource(combined, key, quantity) {
 function childMetadata(combined, source, key) {
   const context = combined?.context || {};
   const metadata = {
-    target: firstDefined(source?.target, key === 'transfer' || key === 'output' ? context.output : context.input, combined?.target),
+    target: firstDefined(source?.target, key === 'input' ? context.input : context.output, combined?.target),
     input: firstDefined(source?.input, context.input, combined?.input),
     reference: firstDefined(source?.reference, context.reference, combined?.reference),
   };
@@ -7415,7 +7519,7 @@ function childMetadata(combined, source, key) {
 }
 
 function childPairs(combined) {
-  return Object.fromEntries(QUANTITIES.map(([key, quantity]) => {
+  return Object.fromEntries(QUANTITIES.filter(([key]) => childKeys(combined).includes(key)).map(([key, quantity]) => {
     const source = childSource(combined, key, quantity);
     return [key, pairFor(source)];
   }));
@@ -7490,6 +7594,11 @@ function transferCompanions(combined, children) {
   for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
     child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
   }
+  for (const [key, , , label] of QUANTITIES.slice(3)) {
+    const child = children[key];
+    if (child) child.dcValue = dcResult(`${label}(0)`, child._selected, child._exact, child._source);
+  }
+  transfer.dcValue = dcGain;
   transfer.dcGain = dcGain;
   transfer.dcInputImpedance = dcInput;
   transfer.dcOutputImpedance = dcOutput;
@@ -7545,12 +7654,29 @@ function equationEntries(reports, report) {
   add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
   if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
   add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
-  if (reports.transfer.acTransfer) add('AC gain', reports.transfer.acTransfer);
-  add('DC gain', reports.transfer.dcGain);
-  const frequency = reports.transfer.frequencyResponse;
-  if (frequency?.poles?.length) add('Poles', rootRow(frequency.poles));
-  if (frequency?.zeros?.length) add('Zeros', rootRow(frequency.zeros));
+  const transfers = selectedTransfers(report);
+  for (const [, key, name] of transfers) {
+    const child = reports[key];
+    if (!child) continue;
+    if (child.frequencyResponse?.hasFrequency) add(`AC ${name}`, child);
+    add(`DC ${name}`, child.dcValue);
+  }
+  // Each transfer function has its own poles and zeros: a current input or a
+  // shorted output terminates the circuit differently. Name whose they are
+  // once there is more than one.
+  for (const [, key, name] of transfers) {
+    const frequency = reports[key]?.frequencyResponse;
+    const suffix = transfers.length > 1 ? ` (${name})` : '';
+    if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles));
+    if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros));
+  }
   return entries;
+}
+
+/** Report keys to adapt: the three always solved, and each derived transfer requested. */
+function childKeys(report) {
+  const derived = selectedTransfers(report).map(([, key]) => key).filter((key) => key !== 'transfer');
+  return ['input', 'output', 'transfer', ...derived];
 }
 
 /** Convert one exact/selected v2 response set into the legacy child reports. */
@@ -7560,7 +7686,8 @@ function adaptCombinedReport(report) {
   }
   const pairs = childPairs(report);
   const children = {};
-  for (const [key, quantity] of [['input', 'Zin'], ['output', 'Zout'], ['transfer', 'Av']]) {
+  for (const [key, quantity] of QUANTITIES) {
+    if (!childKeys(report).includes(key)) continue;
     const child = adaptChild(report, key, quantity);
     children[key] = child;
   }
@@ -7572,7 +7699,7 @@ function adaptCombinedReport(report) {
   const companions = transferCompanions(report, children);
   const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
   const details = detailsFor(report, report);
-  const reports = { input: cleaned.input, output: cleaned.output, transfer: cleaned.transfer };
+  const reports = { ...cleaned };
   const entries = equationEntries(reports, report);
   const successful = Object.values(reports).filter((child) => child.ok);
   const context = report.context || {};
@@ -7583,7 +7710,7 @@ function adaptCombinedReport(report) {
     ...report,
     query: 'combined',
     ok: successful.length > 0,
-    complete: successful.length === 3,
+    complete: successful.length === Object.keys(reports).length,
     reports,
     // Port metadata is distinct from the solved impedance and transfer rows.
     input: inputPort,
@@ -9965,7 +10092,7 @@ function commandHelp() {
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
     '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
-    '  analyze <input-impedance|output-impedance|transfer-function> NET [options]',
+    '  analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [options]',
     '    --input NET --output NET --reference NET --ac-ground NET,...',
     '    --device-region REF=triode,... --ignore-body-effect --gmro-large',
     '    --ignore-channel-length-modulation --dominant-pole',
@@ -10048,8 +10175,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
       'input-impedance': 'input', rin: 'input', zin: 'input',
       'output-impedance': 'output', rout: 'output', zout: 'output',
       'transfer-function': 'transfer', transfer: 'transfer', gain: 'transfer',
+      transimpedance: 'transimpedance', zm: 'transimpedance',
+      transconductance: 'transconductance', gm: 'transconductance',
+      'current-gain': 'currentGain', ai: 'currentGain',
     }[subject];
-    const usage = 'usage: analyze <input-impedance|output-impedance|transfer-function> NET [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
+    const transferFunction = { transimpedance: 'Zm', transconductance: 'Gm', currentGain: 'Ai' }[quantity];
+    const usage = 'usage: analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
     if (!quantity) throw new Error(usage);
     const target = pos.shift();
     if (!target || pos.length) throw new Error(usage);
@@ -10072,14 +10203,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...(flags['ignore-body-effect'] ? { neglectBodyEffect: true } : {}),
       ...(flags['gmro-large'] ? { highIntrinsicGain: true } : {}),
       ...(flags['dominant-pole'] ? { dominantPole: true } : {}),
+      ...(transferFunction ? { transferFunctions: [transferFunction] } : {}),
     };
     const combined = analyzeSmallSignal(circuit, analysisOptions);
     const report = combined.reports[quantity];
     const lines = [report.ok ? report.equation : `unsupported: ${report.error}`];
     const dc = quantity === 'input' ? combined.dcInputImpedance
-      : quantity === 'output' ? combined.dcOutputImpedance : combined.dcGain;
+      : quantity === 'output' ? combined.dcOutputImpedance : report.dcValue;
     if (report.frequencyResponse?.hasFrequency && dc?.equation) lines.push(`DC: ${dc.equation}`);
-    if (quantity === 'transfer') {
+    if (quantity !== 'input' && quantity !== 'output') {
       for (const root of report.frequencyResponse?.poles || []) lines.push(`pole: ${root.equation}`);
       for (const root of report.frequencyResponse?.zeros || []) lines.push(`zero: ${root.equation}`);
     }
@@ -23163,7 +23295,18 @@ const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Equation approximations: they change only the displayed expression.
   highIntrinsicGain: true,
   dominantPole: false,
+  // Which transfer functions to derive, in report order; zero or more.
+  transferFunctions: Object.freeze(['Av']),
 });
+
+const TRANSFER_FUNCTIONS = Object.freeze(['Av', 'Zm', 'Gm', 'Ai']);
+
+/** A known subset in report order, or undefined when `value` is not a list. */
+function transferFunctionValue(value) {
+  if (!Array.isArray(value)) return undefined;
+  const names = new Set(value.map((name) => String(name).trim()));
+  return TRANSFER_FUNCTIONS.filter((name) => names.has(name));
+}
 
 const OPTION_ALIASES = Object.freeze({
   neglectBodyEffect: ['ignoreBodyEffect', 'ignoreGmb', 'approxIgnoreBody', 'bodyEffectIgnored'],
@@ -23208,11 +23351,13 @@ function firstBoolean(source, key) {
 function canonicalOptions(value) {
   const root = objectValue(value);
   const nested = objectValue(root.options);
-  const options = { ...ANALYSIS_OPTION_DEFAULTS };
+  const options = analysisOptionDefaults();
   for (const name of Object.keys(ANALYSIS_OPTION_DEFAULTS)) {
     const selected = firstBoolean(root, name) ?? firstBoolean(nested, name);
     if (selected !== undefined) options[name] = selected;
   }
+  const transferFunctions = transferFunctionValue(root.transferFunctions) ?? transferFunctionValue(nested.transferFunctions);
+  if (transferFunctions) options.transferFunctions = transferFunctions;
   if (options.neglectChannelLengthModulation) options.highIntrinsicGain = false;
   return options;
 }
@@ -23329,7 +23474,7 @@ function legacyRegionSource(source) {
 
 /** Return a fresh copy of the concise default presentation options. */
 function analysisOptionDefaults() {
-  return { ...ANALYSIS_OPTION_DEFAULTS };
+  return { ...ANALYSIS_OPTION_DEFAULTS, transferFunctions: [...ANALYSIS_OPTION_DEFAULTS.transferFunctions] };
 }
 
 /** Normalize only the canonical request contract; legacy aliases are ignored. */
@@ -23343,11 +23488,13 @@ function normalizeAnalysisOptions(value = {}) {
 
 /**
  * Migrate persisted form data once at the storage boundary. The returned
- * state contains only current fields and the four canonical options.
+ * state contains only current fields and the canonical options.
  */
 function migrateAnalysisFormState(value = {}) {
   const source = objectValue(value);
   const migratedOptions = legacyOptions(source);
+  const transferFunctions = transferFunctionValue(objectValue(source.options).transferFunctions);
+  if (transferFunctions) migratedOptions.transferFunctions = transferFunctions;
   const options = canonicalOptions(migratedOptions);
   const deviceRegions = normalizeDeviceRegions(legacyRegionSource(source));
   const diagnostics = [];
@@ -25272,6 +25419,7 @@ const analysisApproxMiller = document.getElementById('analysis-approx-miller');
 const analysisParasitics = document.getElementById('analysis-parasitics');
 const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
 const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
+const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
 const analysisResult = document.getElementById('analysis-result');
 const analysisEquation = document.getElementById('analysis-equation');
 const analysisDetails = document.getElementById('analysis-details');
@@ -34937,6 +35085,7 @@ function analysisFormOptions() {
     highIntrinsicGain: !!analysisApproxGmRo?.checked,
     neglectChannelLengthModulation: !!analysisApproxRo?.checked,
     dominantPole: !!analysisApproxDominantPole?.checked,
+    transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
     deviceRegions: analysisDeviceRegions?.value || '',
   });
 }
@@ -35002,6 +35151,7 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisParasitics) analysisParasitics.checked = options.parasitics;
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
+    setAnalysisTransferInputs(options.transferFunctions);
     return false;
   }
   const { state, diagnostics } = migrateAnalysisFormState(saved);
@@ -35027,7 +35177,12 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisParasitics) analysisParasitics.checked = state.options.parasitics;
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
+  setAnalysisTransferInputs(state.options.transferFunctions);
   return true;
+}
+
+function setAnalysisTransferInputs(names) {
+  for (const input of analysisTransferInputs) input.checked = names.includes(input.dataset.transferFunction);
 }
 
 function prefillAnalysisAttributes() {
@@ -35482,7 +35637,7 @@ analysisForm?.addEventListener('submit', (ev) => {
   renderAnalysisResult(report);
   if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
   requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-  logLine(report.complete ? 'derived input impedance, output impedance, and voltage transfer' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
+  logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
   for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
   for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
 });
@@ -35493,7 +35648,7 @@ analysisInput?.addEventListener('change', () => {
   analysisInputPrevious = analysisInput.value;
 });
 
-for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole]) {
+for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, ...analysisTransferInputs]) {
   control?.addEventListener('input', persistAnalysisForm);
   control?.addEventListener('change', persistAnalysisForm);
 }
@@ -35505,7 +35660,7 @@ function equationForDiagram(equation) {
     .replace(/\\\|\\\|/g, '||')
     .replace(/\\parallel/g, '||')
     .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1/$2)')
-    .replace(/\bA_v\b/g, 'A_{v}')
+    .replace(/\b([AGZ])_([imv])\b/g, '$1_{$2}')
     .replace(/\s+/g, ' ')
     // The live analysis preview is built from rich-text spans rather than
     // MathML. Apply these after whitespace normalization so the em-space is
@@ -35524,7 +35679,7 @@ function equationForLabel(equation) {
     // Keep labels editable as valid TeX even if a legacy report or manually
     // entered equation still contains the plain `||` spelling.
     .replace(/(?<!\\)\|\|/g, '\\Vert')
-    .replace(/\bA_v\b/g, 'A_{v}')
+    .replace(/\b([AGZ])_([imv])\b/g, '$1_{$2}')
     .replace(/\s+/g, ' ')
     .trim();
   // A parallel operator sharing a line with a fraction needs the larger

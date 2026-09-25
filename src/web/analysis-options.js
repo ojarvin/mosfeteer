@@ -9,7 +9,18 @@ export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Equation approximations: they change only the displayed expression.
   highIntrinsicGain: true,
   dominantPole: false,
+  // Which transfer functions to derive, in report order; zero or more.
+  transferFunctions: Object.freeze(['Av']),
 });
+
+const TRANSFER_FUNCTIONS = Object.freeze(['Av', 'Zm', 'Gm', 'Ai']);
+
+/** A known subset in report order, or undefined when `value` is not a list. */
+function transferFunctionValue(value) {
+  if (!Array.isArray(value)) return undefined;
+  const names = new Set(value.map((name) => String(name).trim()));
+  return TRANSFER_FUNCTIONS.filter((name) => names.has(name));
+}
 
 const OPTION_ALIASES = Object.freeze({
   neglectBodyEffect: ['ignoreBodyEffect', 'ignoreGmb', 'approxIgnoreBody', 'bodyEffectIgnored'],
@@ -54,11 +65,13 @@ function firstBoolean(source, key) {
 function canonicalOptions(value) {
   const root = objectValue(value);
   const nested = objectValue(root.options);
-  const options = { ...ANALYSIS_OPTION_DEFAULTS };
+  const options = analysisOptionDefaults();
   for (const name of Object.keys(ANALYSIS_OPTION_DEFAULTS)) {
     const selected = firstBoolean(root, name) ?? firstBoolean(nested, name);
     if (selected !== undefined) options[name] = selected;
   }
+  const transferFunctions = transferFunctionValue(root.transferFunctions) ?? transferFunctionValue(nested.transferFunctions);
+  if (transferFunctions) options.transferFunctions = transferFunctions;
   if (options.neglectChannelLengthModulation) options.highIntrinsicGain = false;
   return options;
 }
@@ -175,7 +188,7 @@ function legacyRegionSource(source) {
 
 /** Return a fresh copy of the concise default presentation options. */
 export function analysisOptionDefaults() {
-  return { ...ANALYSIS_OPTION_DEFAULTS };
+  return { ...ANALYSIS_OPTION_DEFAULTS, transferFunctions: [...ANALYSIS_OPTION_DEFAULTS.transferFunctions] };
 }
 
 /** Normalize only the canonical request contract; legacy aliases are ignored. */
@@ -189,11 +202,13 @@ export function normalizeAnalysisOptions(value = {}) {
 
 /**
  * Migrate persisted form data once at the storage boundary. The returned
- * state contains only current fields and the four canonical options.
+ * state contains only current fields and the canonical options.
  */
 export function migrateAnalysisFormState(value = {}) {
   const source = objectValue(value);
   const migratedOptions = legacyOptions(source);
+  const transferFunctions = transferFunctionValue(objectValue(source.options).transferFunctions);
+  if (transferFunctions) migratedOptions.transferFunctions = transferFunctions;
   const options = canonicalOptions(migratedOptions);
   const deviceRegions = normalizeDeviceRegions(legacyRegionSource(source));
   const diagnostics = [];

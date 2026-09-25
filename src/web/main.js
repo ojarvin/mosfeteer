@@ -123,6 +123,7 @@ const analysisApproxMiller = document.getElementById('analysis-approx-miller');
 const analysisParasitics = document.getElementById('analysis-parasitics');
 const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
 const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
+const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
 const analysisResult = document.getElementById('analysis-result');
 const analysisEquation = document.getElementById('analysis-equation');
 const analysisDetails = document.getElementById('analysis-details');
@@ -9788,6 +9789,7 @@ function analysisFormOptions() {
     highIntrinsicGain: !!analysisApproxGmRo?.checked,
     neglectChannelLengthModulation: !!analysisApproxRo?.checked,
     dominantPole: !!analysisApproxDominantPole?.checked,
+    transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
     deviceRegions: analysisDeviceRegions?.value || '',
   });
 }
@@ -9853,6 +9855,7 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisParasitics) analysisParasitics.checked = options.parasitics;
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
+    setAnalysisTransferInputs(options.transferFunctions);
     return false;
   }
   const { state, diagnostics } = migrateAnalysisFormState(saved);
@@ -9878,7 +9881,12 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisParasitics) analysisParasitics.checked = state.options.parasitics;
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
+  setAnalysisTransferInputs(state.options.transferFunctions);
   return true;
+}
+
+function setAnalysisTransferInputs(names) {
+  for (const input of analysisTransferInputs) input.checked = names.includes(input.dataset.transferFunction);
 }
 
 function prefillAnalysisAttributes() {
@@ -10333,7 +10341,7 @@ analysisForm?.addEventListener('submit', (ev) => {
   renderAnalysisResult(report);
   if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
   requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-  logLine(report.complete ? 'derived input impedance, output impedance, and voltage transfer' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
+  logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
   for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
   for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
 });
@@ -10344,7 +10352,7 @@ analysisInput?.addEventListener('change', () => {
   analysisInputPrevious = analysisInput.value;
 });
 
-for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole]) {
+for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, ...analysisTransferInputs]) {
   control?.addEventListener('input', persistAnalysisForm);
   control?.addEventListener('change', persistAnalysisForm);
 }
@@ -10356,7 +10364,7 @@ function equationForDiagram(equation) {
     .replace(/\\\|\\\|/g, '||')
     .replace(/\\parallel/g, '||')
     .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1/$2)')
-    .replace(/\bA_v\b/g, 'A_{v}')
+    .replace(/\b([AGZ])_([imv])\b/g, '$1_{$2}')
     .replace(/\s+/g, ' ')
     // The live analysis preview is built from rich-text spans rather than
     // MathML. Apply these after whitespace normalization so the em-space is
@@ -10375,7 +10383,7 @@ function equationForLabel(equation) {
     // Keep labels editable as valid TeX even if a legacy report or manually
     // entered equation still contains the plain `||` spelling.
     .replace(/(?<!\\)\|\|/g, '\\Vert')
-    .replace(/\bA_v\b/g, 'A_{v}')
+    .replace(/\b([AGZ])_([imv])\b/g, '$1_{$2}')
     .replace(/\s+/g, ' ')
     .trim();
   // A parallel operator sharing a line with a fraction needs the larger
