@@ -75,13 +75,18 @@ async function loadModule(file) {
     for (const { local, publicName } of exportList(raw)) exports.push(`__exports.${publicName} = ${local};`);
     return '';
   });
-  for (const match of source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm)) exports.push(`__exports.${match[1]} = ${match[1]};`);
+  // Function declarations are hoisted, so their exports are published before
+  // the module's imports run, as native ESM does: a module in a cycle with
+  // this one can call them while this one is still loading (main.js and the
+  // editor modules split out of it).
+  const hoisted = [];
+  for (const match of source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm)) hoisted.push(`__exports.${match[1]} = ${match[1]};`);
   for (const match of source.matchAll(/^export\s+(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)/gm)) exports.push(`__exports.${match[1]} = ${match[1]};`);
   source = source.replace(/^export\s+(?=(?:async\s+)?(?:function|const|let|var|class)\b)/gm, '');
 
   // Reserve the module before walking its imports so the runtime can handle
   // the same benign cycles as native ESM (notably model/router helpers).
-  modules.set(id, { source, dependencies, exports });
+  modules.set(id, { source, dependencies, exports, hoisted });
   for (const dependency of dependencies) void dependency;
   return id;
 }
@@ -107,6 +112,7 @@ while (pending.size) {
 // rebuilds of unchanged sources byte-identical.
 const moduleSource = [...modules.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, module]) => [
   `__modules[${JSON.stringify(id)}] = function (__require, __exports) {`,
+  ...module.hoisted,
   ...module.dependencies,
   module.source,
   ...module.exports,

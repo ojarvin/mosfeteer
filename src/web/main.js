@@ -54,6 +54,109 @@ import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-f
 import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides } from './layout.js';
+import { editor } from './editor-state.js';
+import {
+  canvasEl,
+  componentContextMenuEl,
+  componentsListEl,
+  netsListEl,
+  detailEl,
+  statusEl,
+  accessibilityAnnouncementEl,
+  logEl,
+  cmdInput,
+  consoleEl,
+  statusModeEl,
+  statusSelectionEl,
+  statusCursorEl,
+  statusZoomEl,
+  statusCheckEl,
+  statusMessageEl,
+  logDrawerEl,
+  logPinEl,
+  logClearEl,
+  circuitSelectEl,
+  circuitNameEl,
+  newDocumentButton,
+  deleteCircuitBtn,
+  revealDocumentBtn,
+  exportCircuitBtn,
+  analysisButton,
+  deleteDialog,
+  deleteDialogMessage,
+  switchDialog,
+  switchDialogMessage,
+  exportDialog,
+  exportForm,
+  exportCancel,
+  checkSummaryBodyEl,
+  clearCheckButtonEl,
+  helpDialog,
+  helpDialogContent,
+  helpSearch,
+  analysisDialog,
+  analysisForm,
+  analysisTarget,
+  analysisReference,
+  analysisInput,
+  analysisAcGrounds,
+  analysisDeviceRegions,
+  analysisApproxRo,
+  analysisApproxBody,
+  analysisApproxMiller,
+  analysisParasitics,
+  analysisApproxGmRo,
+  analysisApproxDominantPole,
+  analysisResult,
+  analysisEquation,
+  analysisDetails,
+  analysisNetlistPanel,
+  analysisNetlist,
+  analysisModelPanel,
+  analysisModelEl,
+  analysisModelOpen,
+  modelDialog,
+  modelDialogTitle,
+  modelDialogFigure,
+  modelDialogNotes,
+  modelDialogRubber,
+  analysisCancel,
+  analysisAnnotate,
+  tipCardEl,
+  tipTextEl,
+  tipsButton,
+  tutorialCardEl,
+  tutorialStepEl,
+  tutorialStepsEl,
+  tutorialCountEl,
+  tutorialBarEl,
+  tutorialSkipEl,
+  tutorialStepsToggleEl,
+  modeToolbarEl,
+  beatStripEl,
+  beatListEl,
+  beatHintEl,
+  presenterEl,
+  presenterStageEl,
+  presenterCountEl,
+  toolbarEl,
+  alignPanelEl,
+  railFlyoutProxyEl,
+  railFlyoutEl,
+  panelFilterEl,
+  sidePanelEl,
+  sidePanelToggleEl,
+  scrollSchemeButton,
+  themeBtn,
+  gridBtn,
+  crosshairBtn,
+  guidesBtn,
+  paneEl,
+} from './elements.js';
+
+// Accessors for the state the split-out modules share (see editor-state.js).
+Object.defineProperties(editor, {
+});
 
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
@@ -70,81 +173,15 @@ window.addEventListener('error', (ev) => {
 
 // ----- element references -----------------------------------------
 
-const canvasEl = document.getElementById('canvas');
-const componentContextMenuEl = document.getElementById('component-context-menu');
-const componentsListEl = document.getElementById('components-list');
-const netsListEl = document.getElementById('nets-list');
-const detailEl = document.getElementById('detail');
-const statusEl = document.getElementById('status');
-const accessibilityAnnouncementEl = document.getElementById('accessibility-announcement');
-const logEl = document.getElementById('log');
-const cmdInput = document.getElementById('cmd-input');
-const consoleEl = document.getElementById('console-panel');
-const statusModeEl = document.getElementById('status-mode');
-const statusSelectionEl = document.getElementById('status-selection');
-const statusCursorEl = document.getElementById('status-cursor');
-const statusZoomEl = document.getElementById('status-zoom');
-const statusCheckEl = document.getElementById('status-check');
-const statusMessageEl = document.getElementById('status-message');
-const logDrawerEl = document.getElementById('log-drawer');
-const logPinEl = document.getElementById('log-pin');
-const logClearEl = document.getElementById('log-clear');
-const circuitSelectEl = document.getElementById('circuit-select');
-const circuitNameEl = document.getElementById('circuit-name');
-const newDocumentButton = document.getElementById('btn-new-document');
-const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
-const revealDocumentBtn = document.getElementById('btn-reveal-document');
-const exportCircuitBtn = document.getElementById('btn-export');
-const analysisButton = document.getElementById('btn-analysis');
-const deleteDialog = document.getElementById('delete-dialog');
-const deleteDialogMessage = document.getElementById('delete-dialog-message');
-const switchDialog = document.getElementById('switch-dialog');
-const switchDialogMessage = document.getElementById('switch-dialog-message');
-const exportDialog = document.getElementById('export-dialog');
-const exportForm = document.getElementById('export-form');
-const exportCancel = document.getElementById('export-cancel');
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
 const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
 const exportSelectionInput = exportForm?.querySelector('input[name="selection"]');
 // The selection as it stood when the export dialog opened.
 let exportSelection = null;
-const checkSummaryBodyEl = document.getElementById('check-summary-body');
-const clearCheckButtonEl = document.getElementById('btn-clear-check');
-const helpDialog = document.getElementById('help-dialog');
-const helpDialogContent = document.getElementById('help-dialog-content');
-const helpSearch = document.getElementById('help-search');
-const analysisDialog = document.getElementById('analysis-dialog');
-const analysisForm = document.getElementById('analysis-form');
-const analysisTarget = document.getElementById('analysis-target');
-const analysisReference = document.getElementById('analysis-reference');
-const analysisInput = document.getElementById('analysis-input');
-const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
-const analysisDeviceRegions = document.getElementById('analysis-device-regions');
-const analysisApproxRo = document.getElementById('analysis-approx-ro');
-const analysisApproxBody = document.getElementById('analysis-approx-body');
-const analysisApproxMiller = document.getElementById('analysis-approx-miller');
-const analysisParasitics = document.getElementById('analysis-parasitics');
-const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
-const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
-const analysisResult = document.getElementById('analysis-result');
-const analysisEquation = document.getElementById('analysis-equation');
-const analysisDetails = document.getElementById('analysis-details');
-const analysisNetlistPanel = document.getElementById('analysis-panel-netlist');
-const analysisNetlist = document.getElementById('analysis-netlist');
-const analysisModelPanel = document.getElementById('analysis-panel-model');
-const analysisModelEl = document.getElementById('analysis-model');
-const analysisModelOpen = document.getElementById('analysis-model-open');
-const modelDialog = document.getElementById('model-dialog');
-const modelDialogTitle = document.getElementById('model-dialog-title');
-const modelDialogFigure = document.getElementById('model-dialog-figure');
-const modelDialogNotes = document.getElementById('model-dialog-notes');
-const modelDialogRubber = document.getElementById('model-dialog-rubber');
 const analysisTabButtons = [...document.querySelectorAll('[data-analysis-tab]')];
 const analysisTabPanels = new Map([...document.querySelectorAll('.analysis-tab-panel')]
   .map((panel) => [panel.id.replace(/^analysis-panel-/, ''), panel]));
-const analysisCancel = document.getElementById('analysis-cancel');
-const analysisAnnotate = document.getElementById('analysis-annotate');
 
 function setAnalysisResultTab(name = 'equations') {
   const requested = analysisTabPanels.has(name) ? name : 'equations';
@@ -358,9 +395,6 @@ let tutorial = null;
 const tipBook = new TipBook((() => {
   try { return JSON.parse(localStorage.getItem(TIPS_KEY) || 'null'); } catch { return null; }
 })());
-const tipCardEl = document.getElementById('tip-card');
-const tipTextEl = document.getElementById('tip-card-text');
-const tipsButton = document.getElementById('btn-tips');
 const TIP_VISIBLE_MS = 14000;
 let shownTip = null;
 let tipHideTimer = 0;
@@ -422,13 +456,6 @@ syncTipsButton();
 // Optional and never offered by itself: it starts only from the More menu or
 // the empty-canvas card, and closing it leaves the drawing as it is. Steps are
 // checked from the drawing's structure in tutorial.js.
-const tutorialCardEl = document.getElementById('tutorial-card');
-const tutorialStepEl = document.getElementById('tutorial-step');
-const tutorialStepsEl = document.getElementById('tutorial-steps');
-const tutorialCountEl = document.getElementById('tutorial-count');
-const tutorialBarEl = document.getElementById('tutorial-bar-fill');
-const tutorialSkipEl = document.getElementById('tutorial-skip');
-const tutorialStepsToggleEl = document.getElementById('tutorial-steps-toggle');
 let tutorialKey = '';
 let tutorialState = null;
 let tutorialCheerTimer = 0;
@@ -563,7 +590,6 @@ tutorialSkipEl?.addEventListener('click', () => {
   render();
 });
 document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
-const modeToolbarEl = document.querySelector('.mode-toolbar');
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
@@ -756,12 +782,6 @@ let selectedBeatIds = new Set();
 let beatAnchorId = null;
 let beatStripActive = false;
 let presenter = null; // { index, blank, fullscreen }
-const beatStripEl = document.getElementById('beat-strip');
-const beatListEl = document.getElementById('beat-list');
-const beatHintEl = document.getElementById('beat-hint');
-const presenterEl = document.getElementById('presenter');
-const presenterStageEl = document.getElementById('presenter-stage');
-const presenterCountEl = document.getElementById('presenter-count');
 
 /**
  * Derive the one interaction state used by the toolbar, canvas, and status
@@ -1711,7 +1731,6 @@ async function revealCurrentDocument() {
 // ----- toolbar fitting -------------------------------------------------------------
 // The top toolbar drops button text in stages as its row runs out of space (see
 // toolbar-fit.js). Refit when the bar resizes or the document title changes.
-const toolbarEl = document.querySelector('.toolbar');
 let toolbarFitFrame = 0;
 let titleMeasureContext = null;
 
@@ -3195,7 +3214,6 @@ function previewLayoutPlan(plan) {
   renderCanvas(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision);
 }
 
-const alignPanelEl = document.getElementById('align-panel');
 alignPanelEl?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-layout-align], [data-layout-distribute]');
   if (!button || button.disabled) return;
@@ -13516,8 +13534,6 @@ function modeToolbarControlFor(state) {
 // the strip with all four. The real tool buttons live in the strip, so their
 // bindings and pressed state are unchanged.
 const RAIL_FLYOUT_TOOLS = ['annotation', 'arrow', 'box', 'line'];
-const railFlyoutProxyEl = document.getElementById('btn-rail-annotate');
-const railFlyoutEl = document.getElementById('rail-flyout');
 let railFlyoutTool = 'annotation';
 
 function railFlyoutButton(tool) {
@@ -14796,7 +14812,6 @@ for (const toggle of document.querySelectorAll('.side-panel .panel-toggle')) {
   toggle.addEventListener('click', () => setPanelCollapsed(name, !section.classList.contains('collapsed')));
 }
 
-const panelFilterEl = document.getElementById('panel-filter');
 panelFilterEl?.addEventListener('input', () => {
   panelFilter = panelFilterEl.value.trim().replace(/[_^{}]/g, '').toLowerCase();
   panelStateKey = '';
@@ -15213,8 +15228,6 @@ for (const item of document.querySelectorAll('[data-proxy-for]')) {
 // toggle collapses it, remembered per browser. A narrow window (see style.css)
 // slides it over the canvas as a drawer that starts closed and closes on a
 // canvas press or Escape.
-const sidePanelEl = document.getElementById('side-panel');
-const sidePanelToggleEl = document.getElementById('btn-side-panel');
 const narrowPanelQuery = window.matchMedia('(max-width: 600px)');
 const SIDE_PANEL_COLLAPSED_KEY = 'mosfeteer.sidePanelCollapsed';
 
@@ -15301,7 +15314,6 @@ revealDocumentBtn?.addEventListener('click', revealCurrentDocument);
 document.getElementById('btn-open-file')?.addEventListener('click', openDocumentDialog);
 document.getElementById('btn-save-as')?.addEventListener('click', () => saveCircuit({ saveAs: true }));
 document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
-const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 function syncScrollSchemeButton() {
   scrollSchemeButton?.setAttribute('aria-checked', String(scrollScheme === 'trackpad'));
 }
@@ -15404,7 +15416,6 @@ document.getElementById('btn-help').addEventListener('click', () => {
 // ----- theme (dark mode) ---------------------------------------------
 
 const THEME_KEY = 'mosfeteer:theme';
-const themeBtn = document.getElementById('btn-theme');
 
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
@@ -15437,7 +15448,6 @@ if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
 
 // ----- grid toggle button --------------------------------------------
 
-const gridBtn = document.getElementById('btn-grid');
 
 /** Turn the placement grid on/off; keeps the toolbar button and the '#'
  *  keybinding in sync. */
@@ -15460,7 +15470,6 @@ if (gridBtn) {
 // Crosshair visibility is independent from pointer presence: the pointer
 // leaving the canvas hides it, while this toggle controls whether it may
 // render when the pointer is inside.
-const crosshairBtn = document.getElementById('btn-crosshair');
 function setCrosshair(on, announce = true) {
   crosshairVisible = !!on;
 
@@ -15473,7 +15482,6 @@ function setCrosshair(on, announce = true) {
 }
 // Placement guides are advisory, so they are a view toggle like the grid and
 // the crosshair rather than anything the document carries.
-const guidesBtn = document.getElementById('btn-guides');
 function setGuides(on, announce = true) {
   guidesVisible = !!on;
   if (guidesBtn) {
@@ -15931,7 +15939,6 @@ window.addEventListener('beforeunload', (ev) => {
   ev.returnValue = 'You have unsaved schematic changes.';
 });
 
-const paneEl = document.querySelector('.canvas-pane');
 
 function syncModeToolbarOverflow() {
   if (!modeToolbarEl) return;

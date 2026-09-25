@@ -18,6 +18,7 @@ globalThis.__MOSFETEER_FONT_URL = "data:font/woff2;base64,d09GMk9UVE8ABfn8AA4AAA
     return __exports;
   }
 __modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
+__exports.createRationalOps = createRationalOps;
 let integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES; __bind(() => { ({ integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js")); });
 /**
  * Adapt rational.js to the small algebra contract used by MNA and solve.
@@ -142,10 +143,11 @@ function createRationalOps(options = {}) {
   return Object.freeze(ops);
 }
 
-__exports.createRationalOps = createRationalOps;
 };
 
 __modules["src/core/analysis/approximation.js"] = function (__require, __exports) {
+__exports.intrinsicallyDominates = intrinsicallyDominates;
+__exports.applyApproximations = applyApproximations;
 let OWN; __bind(() => { ({ OWN } = __require("src/core/analysis/shared.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let add, equals, integer, multiply, polynomialCoefficients, power, rationalFunction, substituteRational, symbol; __bind(() => { ({ add, equals, integer, multiply, polynomialCoefficients, power, rationalFunction, substituteRational, symbol } = __require("src/core/analysis/rational.js")); });
@@ -665,11 +667,10 @@ function applyApproximations(input, options = {}) {
   });
 }
 
-__exports.intrinsicallyDominates = intrinsicallyDominates;
-__exports.applyApproximations = applyApproximations;
 };
 
 __modules["src/core/analysis/compact.js"] = function (__require, __exports) {
+__exports.compactRational = compactRational;
 let add, integer, multiply, rationalFunction; __bind(() => { ({ add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js")); });
 
 
@@ -711,10 +712,14 @@ function compactRational(value, ops) {
   }
 }
 
-__exports.compactRational = compactRational;
 };
 
 __modules["src/core/analysis/context.js"] = function (__require, __exports) {
+__exports.resolveAnalysisPort = resolveAnalysisPort;
+__exports.collectAcGrounds = collectAcGrounds;
+__exports.virtualNetAliases = virtualNetAliases;
+__exports.resolveMosBulk = resolveMosBulk;
+__exports.resolveAnalysisContext = resolveAnalysisContext;
 let asList, MOS_TYPES; __bind(() => { ({ asList, MOS_TYPES } = __require("src/core/analysis/shared.js")); });
 let canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal; __bind(() => { ({ canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js")); });
 
@@ -1103,15 +1108,12 @@ function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}) {
   };
 }
 
-__exports.resolveAnalysisPort = resolveAnalysisPort;
-__exports.collectAcGrounds = collectAcGrounds;
-__exports.virtualNetAliases = virtualNetAliases;
-__exports.resolveMosBulk = resolveMosBulk;
-__exports.resolveAnalysisContext = resolveAnalysisContext;
 __exports.AC_GROUND = AC_GROUND;
 };
 
 __modules["src/core/analysis/devices.js"] = function (__require, __exports) {
+__exports.componentToPrimitives = componentToPrimitives;
+__exports.convertCircuitToPrimitives = convertCircuitToPrimitives;
 let MOS_TYPES; __bind(() => { ({ MOS_TYPES } = __require("src/core/analysis/shared.js")); });
 
 // Primitive contract: terminals.a -> terminals.b is the branch direction;
@@ -1523,11 +1525,12 @@ function convertCircuitToPrimitives(circuit, context = {}) {
   };
 }
 
-__exports.componentToPrimitives = componentToPrimitives;
-__exports.convertCircuitToPrimitives = convertCircuitToPrimitives;
 };
 
 __modules["src/core/analysis/diagnostics.js"] = function (__require, __exports) {
+__exports.normalizeDiagnostics = normalizeDiagnostics;
+__exports.presentDiagnostics = presentDiagnostics;
+__exports.formatDiagnosticLog = formatDiagnosticLog;
 let asList, firstDefined; __bind(() => { ({ asList, firstDefined } = __require("src/core/analysis/shared.js")); });
 
 const STAGES = Object.freeze([
@@ -1872,12 +1875,11 @@ function formatDiagnosticLog(source) {
   return presentDiagnostics(source).logText;
 }
 
-__exports.normalizeDiagnostics = normalizeDiagnostics;
-__exports.presentDiagnostics = presentDiagnostics;
-__exports.formatDiagnosticLog = formatDiagnosticLog;
 };
 
 __modules["src/core/analysis/engine.js"] = function (__require, __exports) {
+__exports.portDefinitions = portDefinitions;
+__exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 let MOS_TYPES, firstDefined; __bind(() => { ({ MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js")); });
 let applyApproximations; __bind(() => { ({ applyApproximations } = __require("src/core/analysis/approximation.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
@@ -2720,11 +2722,11 @@ function analyzeSmallSignalV2(circuit, options = {}) {
   };
 }
 
-__exports.portDefinitions = portDefinitions;
-__exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 };
 
 __modules["src/core/analysis/graph.js"] = function (__require, __exports) {
+__exports.splitAtNode = splitAtNode;
+__exports.coupledSubgraph = coupledSubgraph;
 let asList, PASSIVE_KINDS; __bind(() => { ({ asList, PASSIVE_KINDS } = __require("src/core/analysis/shared.js")); });
 let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
 
@@ -2935,11 +2937,14 @@ function coupledSubgraph(primitives = [], roots = [], options = {}) {
   };
 }
 
-__exports.splitAtNode = splitAtNode;
-__exports.coupledSubgraph = coupledSubgraph;
 };
 
 __modules["src/core/analysis/index.js"] = function (__require, __exports) {
+__exports.analyzeSmallSignal = analyzeSmallSignal;
+__exports.analyzeInputImpedance = analyzeInputImpedance;
+__exports.analyzeOutputImpedance = analyzeOutputImpedance;
+__exports.analyzeTransferFunction = analyzeTransferFunction;
+__exports.expressionHasFrequency = expressionHasFrequency;
 let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
 let adaptCombinedReport; __bind(() => { ({ adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
 
@@ -3038,14 +3043,10 @@ function expressionHasFrequency(value, seen = new Set()) {
   ].some((child) => expressionHasFrequency(child, seen));
 }
 
-__exports.analyzeSmallSignal = analyzeSmallSignal;
-__exports.analyzeInputImpedance = analyzeInputImpedance;
-__exports.analyzeOutputImpedance = analyzeOutputImpedance;
-__exports.analyzeTransferFunction = analyzeTransferFunction;
-__exports.expressionHasFrequency = expressionHasFrequency;
 };
 
 __modules["src/core/analysis/miller.js"] = function (__require, __exports) {
+__exports.applyMillerApproximation = applyMillerApproximation;
 let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
 let isReduciblePassive, reduceTwoTerminalNetwork; __bind(() => { ({ isReduciblePassive, reduceTwoTerminalNetwork } = __require("src/core/analysis/reduce.js")); });
 let buildMNA; __bind(() => { ({ buildMNA } = __require("src/core/analysis/mna.js")); });
@@ -3255,10 +3256,12 @@ function applyMillerApproximation(primitives, context, options, ops) {
   return { primitives: current, applied, retained };
 }
 
-__exports.applyMillerApproximation = applyMillerApproximation;
 };
 
 __modules["src/core/analysis/mna.js"] = function (__require, __exports) {
+__exports.numberOps = numberOps;
+__exports.validateMnaOps = validateMnaOps;
+__exports.buildMNA = buildMNA;
 /**
  * Topology-independent modified nodal analysis (MNA).
  *
@@ -3569,13 +3572,12 @@ function buildMNA(inputElements = [], options = {}) {
   };
 }
 
-__exports.numberOps = numberOps;
-__exports.validateMnaOps = validateMnaOps;
-__exports.buildMNA = buildMNA;
 __exports.MNA_OPS = MNA_OPS;
 };
 
 __modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
+__exports.textbookSymbol = textbookSymbol;
+__exports.smallSignalSchematic = smallSignalSchematic;
 let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
 let rectsOverlap; __bind(() => { ({ rectsOverlap } = __require("src/core/geometry.js")); });
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
@@ -4049,12 +4051,12 @@ function smallSignalSchematic(report, options = {}) {
   return { ok: true, circuit, correspondence, notes, legend, failures };
 }
 
-__exports.textbookSymbol = textbookSymbol;
-__exports.smallSignalSchematic = smallSignalSchematic;
 __exports.AC_GROUND_NODE = AC_GROUND_NODE;
 };
 
 __modules["src/core/analysis/netlist.js"] = function (__require, __exports) {
+__exports.formatSmallSignalNetlist = formatSmallSignalNetlist;
+__exports.describeSmallSignalNetlist = describeSmallSignalNetlist;
 let firstDefined; __bind(() => { ({ firstDefined } = __require("src/core/analysis/shared.js")); });
 let formatExpression; __bind(() => { ({ formatExpression } = __require("src/core/analysis/rational.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
@@ -4363,11 +4365,15 @@ function describeSmallSignalNetlist(primitives, options = {}) {
   return formatDetails(primitives, options);
 }
 
-__exports.formatSmallSignalNetlist = formatSmallSignalNetlist;
-__exports.describeSmallSignalNetlist = describeSmallSignalNetlist;
 };
 
 __modules["src/core/analysis/pipeline.js"] = function (__require, __exports) {
+__exports.resolveValue = resolveValue;
+__exports.adaptPrimitiveDescriptor = adaptPrimitiveDescriptor;
+__exports.adaptPrimitiveDescriptors = adaptPrimitiveDescriptors;
+__exports.createTestExcitations = createTestExcitations;
+__exports.transferFunctionList = transferFunctionList;
+__exports.buildExactAnalysisPipeline = buildExactAnalysisPipeline;
 let firstDefined; __bind(() => { ({ firstDefined } = __require("src/core/analysis/shared.js")); });
 let AC_GROUND, resolveAnalysisContext; __bind(() => { ({ AC_GROUND, resolveAnalysisContext } = __require("src/core/analysis/context.js")); });
 let convertCircuitToPrimitives; __bind(() => { ({ convertCircuitToPrimitives } = __require("src/core/analysis/devices.js")); });
@@ -5056,16 +5062,11 @@ function refineSeparableQueries(queries, solveContext) {
 
 __exports.toMnaPrimitive = toMnaPrimitive;
 __exports.toMnaPrimitives = toMnaPrimitives;
-__exports.resolveValue = resolveValue;
-__exports.adaptPrimitiveDescriptor = adaptPrimitiveDescriptor;
-__exports.adaptPrimitiveDescriptors = adaptPrimitiveDescriptors;
-__exports.createTestExcitations = createTestExcitations;
-__exports.transferFunctionList = transferFunctionList;
-__exports.buildExactAnalysisPipeline = buildExactAnalysisPipeline;
 __exports.TRANSFER_FUNCTIONS = TRANSFER_FUNCTIONS;
 };
 
 __modules["src/core/analysis/polynomial-gcd.js"] = function (__require, __exports) {
+__exports.cancelCommonPolynomialFactor = cancelCommonPolynomialFactor;
 let add, integer, multiply, power, rationalFunction, symbol; __bind(() => { ({ add, integer, multiply, power, rationalFunction, symbol } = __require("src/core/analysis/rational.js")); });
 /**
  * Cancel a common polynomial factor from a rational function's numerator and
@@ -5436,10 +5437,24 @@ function cancelCommonPolynomialFactor(value, options = {}) {
   }
 }
 
-__exports.cancelCommonPolynomialFactor = cancelCommonPolynomialFactor;
 };
 
 __modules["src/core/analysis/present.js"] = function (__require, __exports) {
+__exports.stripProvenanceMarkers = stripProvenanceMarkers;
+__exports.renderExpression = renderExpression;
+__exports.renderExpressionWithProvenance = renderExpressionWithProvenance;
+__exports.renderEquationWithProvenance = renderEquationWithProvenance;
+__exports.renderRootEquationWithProvenance = renderRootEquationWithProvenance;
+__exports.joinProvenanceRenders = joinProvenanceRenders;
+__exports.renderEquation = renderEquation;
+__exports.quantityLabel = quantityLabel;
+__exports.renderQuantityEquation = renderQuantityEquation;
+__exports.renderRootEquation = renderRootEquation;
+__exports.equivalenceTable = equivalenceTable;
+__exports.provenParallel = provenParallel;
+__exports.provenProduct = provenProduct;
+__exports.provenQuotient = provenQuotient;
+__exports.provenSum = provenSum;
 let INFINITY_NAMES, ONE, isNumber, isZero, keyOf; __bind(() => { ({ INFINITY_NAMES, ONE, isNumber, isZero, keyOf } = __require("src/core/analysis/rational.js")); });
 
 
@@ -6105,24 +6120,11 @@ function provenSum(equivalent, ...operands) {
 }
 
 
-__exports.stripProvenanceMarkers = stripProvenanceMarkers;
-__exports.renderExpression = renderExpression;
-__exports.renderExpressionWithProvenance = renderExpressionWithProvenance;
-__exports.renderEquationWithProvenance = renderEquationWithProvenance;
-__exports.renderRootEquationWithProvenance = renderRootEquationWithProvenance;
-__exports.joinProvenanceRenders = joinProvenanceRenders;
-__exports.renderEquation = renderEquation;
-__exports.quantityLabel = quantityLabel;
-__exports.renderQuantityEquation = renderQuantityEquation;
-__exports.renderRootEquation = renderRootEquation;
-__exports.equivalenceTable = equivalenceTable;
-__exports.provenParallel = provenParallel;
-__exports.provenProduct = provenProduct;
-__exports.provenQuotient = provenQuotient;
-__exports.provenSum = provenSum;
 };
 
 __modules["src/core/analysis/provenance.js"] = function (__require, __exports) {
+__exports.symbolProvenance = symbolProvenance;
+__exports.componentsOfSymbols = componentsOfSymbols;
 /**
  * Where each symbol in a displayed equation came from.
  *
@@ -6200,11 +6202,33 @@ function componentsOfSymbols(names, table) {
   return seen;
 }
 
-__exports.symbolProvenance = symbolProvenance;
-__exports.componentsOfSymbols = componentsOfSymbols;
 };
 
 __modules["src/core/analysis/rational.js"] = function (__require, __exports) {
+__exports.isNumber = isNumber;
+__exports.isZero = isZero;
+__exports.rational = rational;
+__exports.integer = integer;
+__exports.symbol = symbol;
+__exports.add = add;
+__exports.multiply = multiply;
+__exports.power = power;
+__exports.negate = negate;
+__exports.substitute = substitute;
+__exports.equals = equals;
+__exports.polynomialCoefficients = polynomialCoefficients;
+__exports.rationalFunction = rationalFunction;
+__exports.rationalAdd = rationalAdd;
+__exports.rationalMultiply = rationalMultiply;
+__exports.rationalDivide = rationalDivide;
+__exports.substituteRational = substituteRational;
+__exports.rationalAt = rationalAt;
+__exports.simplify = simplify;
+__exports.formatExpression = formatExpression;
+__exports.keyOf = keyOf;
+__exports.infinity = infinity;
+__exports.isInfinite = isInfinite;
+__exports.createOperationBudget = createOperationBudget;
 const ZERO = Object.freeze({ kind: 'number', numerator: 0n, denominator: 1n });
 const ONE = Object.freeze({ kind: 'number', numerator: 1n, denominator: 1n });
 const MINUS_ONE = Object.freeze({ kind: 'number', numerator: -1n, denominator: 1n });
@@ -6977,36 +7001,16 @@ function createOperationBudget(limit = DEFAULT_MAX_OPERATIONS) {
   return new OperationBudget(limit);
 }
 
-__exports.isNumber = isNumber;
-__exports.isZero = isZero;
-__exports.rational = rational;
-__exports.integer = integer;
-__exports.symbol = symbol;
-__exports.add = add;
-__exports.multiply = multiply;
-__exports.power = power;
-__exports.negate = negate;
-__exports.substitute = substitute;
-__exports.equals = equals;
-__exports.polynomialCoefficients = polynomialCoefficients;
-__exports.rationalFunction = rationalFunction;
-__exports.rationalAdd = rationalAdd;
-__exports.rationalMultiply = rationalMultiply;
-__exports.rationalDivide = rationalDivide;
-__exports.substituteRational = substituteRational;
-__exports.rationalAt = rationalAt;
-__exports.simplify = simplify;
-__exports.formatExpression = formatExpression;
-__exports.keyOf = keyOf;
-__exports.infinity = infinity;
-__exports.isInfinite = isInfinite;
-__exports.createOperationBudget = createOperationBudget;
 __exports.ONE = ONE;
 __exports.DEFAULT_MAX_OPERATIONS = DEFAULT_MAX_OPERATIONS;
 __exports.INFINITY_NAMES = INFINITY_NAMES;
 };
 
 __modules["src/core/analysis/reduce.js"] = function (__require, __exports) {
+__exports.isReduciblePassive = isReduciblePassive;
+__exports.primitiveImpedance = primitiveImpedance;
+__exports.reduceTwoTerminalNetwork = reduceTwoTerminalNetwork;
+__exports.reduceNetwork = reduceNetwork;
 let PASSIVE_KINDS; __bind(() => { ({ PASSIVE_KINDS } = __require("src/core/analysis/shared.js")); });
 /**
  * Textbook series/parallel reduction of a network of passive primitives
@@ -7208,13 +7212,10 @@ function reduceNetwork(primitives, boundaryNodes, ops) {
   return { primitives: [...fixed, ...reducedPrimitives], proofs };
 }
 
-__exports.isReduciblePassive = isReduciblePassive;
-__exports.primitiveImpedance = primitiveImpedance;
-__exports.reduceTwoTerminalNetwork = reduceTwoTerminalNetwork;
-__exports.reduceNetwork = reduceNetwork;
 };
 
 __modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
+__exports.adaptCombinedReport = adaptCombinedReport;
 let OWN, firstDefined; __bind(() => { ({ OWN, firstDefined } = __require("src/core/analysis/shared.js")); });
 let analyzeResponse; __bind(() => { ({ analyzeResponse } = __require("src/core/analysis/response.js")); });
 let joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance; __bind(() => { ({ joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js")); });
@@ -7746,10 +7747,11 @@ function adaptCombinedReport(report) {
   return base;
 }
 
-__exports.adaptCombinedReport = adaptCombinedReport;
 };
 
 __modules["src/core/analysis/response.js"] = function (__require, __exports) {
+__exports.analyzeResponse = analyzeResponse;
+__exports.processResponses = processResponses;
 let add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol; __bind(() => { ({ add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js")); });
 
 
@@ -8037,11 +8039,11 @@ function processResponses(responses = {}, options = {}) {
   return Object.freeze(result);
 }
 
-__exports.analyzeResponse = analyzeResponse;
-__exports.processResponses = processResponses;
 };
 
 __modules["src/core/analysis/shared.js"] = function (__require, __exports) {
+__exports.firstDefined = firstDefined;
+__exports.asList = asList;
 /** Leaf helpers and vocabulary shared across the small-signal analysis modules. */
 
 /** First value that is neither undefined nor null. */
@@ -8064,14 +8066,14 @@ const MOS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 /** Primitive kinds that are plain two-terminal passives. */
 const PASSIVE_KINDS = new Set(['resistor', 'capacitor', 'inductor', 'conductance', 'admittance']);
 
-__exports.firstDefined = firstDefined;
-__exports.asList = asList;
 __exports.OWN = OWN;
 __exports.MOS_TYPES = MOS_TYPES;
 __exports.PASSIVE_KINDS = PASSIVE_KINDS;
 };
 
 __modules["src/core/analysis/solve.js"] = function (__require, __exports) {
+__exports.solveLinearSystem = solveLinearSystem;
+__exports.solveMNA = solveMNA;
 let numberOps, validateMnaOps; __bind(() => { ({ numberOps, validateMnaOps } = __require("src/core/analysis/mna.js")); });
 /**
  * Exact multi-RHS linear solver for the matrix produced by mna.js.
@@ -8340,11 +8342,10 @@ function solveMNA(system, options = {}) {
   });
 }
 
-__exports.solveLinearSystem = solveLinearSystem;
-__exports.solveMNA = solveMNA;
 };
 
 __modules["src/core/analysis/topological-solve.js"] = function (__require, __exports) {
+__exports.solveByTopology = solveByTopology;
 let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
 let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
 
@@ -8496,10 +8497,12 @@ function solveByTopology(system, excitations, context, ops, options = {}) {
   };
 }
 
-__exports.solveByTopology = solveByTopology;
 };
 
 __modules["src/core/analysis/topology.js"] = function (__require, __exports) {
+__exports.findSignalCuts = findSignalCuts;
+__exports.approximateTopology = approximateTopology;
+__exports.buildTopologyIdentities = buildTopologyIdentities;
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
 let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
 let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
@@ -8718,12 +8721,45 @@ function buildTopologyIdentities(pipeline, options = {}) {
   }
 }
 
-__exports.findSignalCuts = findSignalCuts;
-__exports.approximateTopology = approximateTopology;
-__exports.buildTopologyIdentities = buildTopologyIdentities;
 };
 
 __modules["src/core/beats.js"] = function (__require, __exports) {
+__exports.switchState = switchState;
+__exports.switchPhase = switchPhase;
+__exports.isTexSource = isTexSource;
+__exports.phaseKey = phaseKey;
+__exports.switchGroupKey = switchGroupKey;
+__exports.switchesOf = switchesOf;
+__exports.switchKeyFor = switchKeyFor;
+__exports.beatsFromJSON = beatsFromJSON;
+__exports.beatsToJSON = beatsToJSON;
+__exports.nextBeatId = nextBeatId;
+__exports.beatTitle = beatTitle;
+__exports.beatObjectKind = beatObjectKind;
+__exports.beatTargetId = beatTargetId;
+__exports.visibilityTrack = visibilityTrack;
+__exports.addBeat = addBeat;
+__exports.removeBeat = removeBeat;
+__exports.moveBeat = moveBeat;
+__exports.renameBeat = renameBeat;
+__exports.presenceAt = presenceAt;
+__exports.setPresenceFrom = setPresenceFrom;
+__exports.setPresenceAt = setPresenceAt;
+__exports.introduceAt = introduceAt;
+__exports.visibleBeats = visibleBeats;
+__exports.switchStateAt = switchStateAt;
+__exports.setSwitchFrom = setSwitchFrom;
+__exports.highlightsAt = highlightsAt;
+__exports.setHighlightFrom = setHighlightFrom;
+__exports.cycleBeatHighlight = cycleBeatHighlight;
+__exports.switchPhases = switchPhases;
+__exports.phaseLive = phaseLive;
+__exports.phaseBeats = phaseBeats;
+__exports.renameBeatObject = renameBeatObject;
+__exports.carryBeatSwitchKey = carryBeatSwitchKey;
+__exports.renameBeatHighlightKey = renameBeatHighlightKey;
+__exports.drawnNetPaths = drawnNetPaths;
+__exports.resolveBeat = resolveBeat;
 let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
 let INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName; __bind(() => { ({ INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName } = __require("src/core/model.js")); });
 let steinerBranches; __bind(() => { ({ steinerBranches } = __require("src/core/router.js")); });
@@ -9522,47 +9558,16 @@ function resolveBeat(circuit, index) {
   };
 }
 
-__exports.switchState = switchState;
-__exports.switchPhase = switchPhase;
-__exports.isTexSource = isTexSource;
-__exports.phaseKey = phaseKey;
-__exports.switchGroupKey = switchGroupKey;
-__exports.switchesOf = switchesOf;
-__exports.switchKeyFor = switchKeyFor;
-__exports.beatsFromJSON = beatsFromJSON;
-__exports.beatsToJSON = beatsToJSON;
-__exports.nextBeatId = nextBeatId;
-__exports.beatTitle = beatTitle;
-__exports.beatObjectKind = beatObjectKind;
-__exports.beatTargetId = beatTargetId;
-__exports.visibilityTrack = visibilityTrack;
-__exports.addBeat = addBeat;
-__exports.removeBeat = removeBeat;
-__exports.moveBeat = moveBeat;
-__exports.renameBeat = renameBeat;
-__exports.presenceAt = presenceAt;
-__exports.setPresenceFrom = setPresenceFrom;
-__exports.setPresenceAt = setPresenceAt;
-__exports.introduceAt = introduceAt;
-__exports.visibleBeats = visibleBeats;
-__exports.switchStateAt = switchStateAt;
-__exports.setSwitchFrom = setSwitchFrom;
-__exports.highlightsAt = highlightsAt;
-__exports.setHighlightFrom = setHighlightFrom;
-__exports.cycleBeatHighlight = cycleBeatHighlight;
-__exports.switchPhases = switchPhases;
-__exports.phaseLive = phaseLive;
-__exports.phaseBeats = phaseBeats;
-__exports.renameBeatObject = renameBeatObject;
-__exports.carryBeatSwitchKey = carryBeatSwitchKey;
-__exports.renameBeatHighlightKey = renameBeatHighlightKey;
-__exports.drawnNetPaths = drawnNetPaths;
-__exports.resolveBeat = resolveBeat;
 __exports.SWITCH_TYPES = SWITCH_TYPES;
 __exports.PRESENCES = PRESENCES;
 };
 
 __modules["src/core/commands.js"] = function (__require, __exports) {
+__exports.splitArgs = splitArgs;
+__exports.parseArgs = parseArgs;
+__exports.evaluate = evaluate;
+__exports.commandHelp = commandHelp;
+__exports.runCommand = runCommand;
 let Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld } = __require("src/core/model.js")); });
 let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } = __require("src/core/components/index.js")); });
 let GRID, onGrid, snap, ceilGrid; __bind(() => { ({ GRID, onGrid, snap, ceilGrid } = __require("src/core/grid.js")); });
@@ -10772,11 +10777,6 @@ function netCommand(circuit, pos, result) {
   throw new Error('usage: net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction');
 }
 
-__exports.splitArgs = splitArgs;
-__exports.parseArgs = parseArgs;
-__exports.evaluate = evaluate;
-__exports.commandHelp = commandHelp;
-__exports.runCommand = runCommand;
 };
 
 __modules["src/core/components/block.js"] = function (__require, __exports) {
@@ -10955,6 +10955,9 @@ __exports.voltage_source = voltage_source;
 };
 
 __modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
+__exports.defineSymbol = defineSymbol;
+__exports.markTerminalLeads = markTerminalLeads;
+__exports.validateSymbol = validateSymbol;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
 
@@ -11026,9 +11029,6 @@ function validateSymbol(def) {
   }
 }
 
-__exports.defineSymbol = defineSymbol;
-__exports.markTerminalLeads = markTerminalLeads;
-__exports.validateSymbol = validateSymbol;
 };
 
 __modules["src/core/components/diode.js"] = function (__require, __exports) {
@@ -11201,6 +11201,8 @@ __exports.ground = ground;
 };
 
 __modules["src/core/components/index.js"] = function (__require, __exports) {
+__exports.getSymbol = getSymbol;
+__exports.seriesTerminalNames = seriesTerminalNames;
 let resistor; __bind(() => { ({ resistor } = __require("src/core/components/resistor.js")); });
 let capacitor; __bind(() => { ({ capacitor } = __require("src/core/components/capacitor.js")); });
 let inductor; __bind(() => { ({ inductor } = __require("src/core/components/inductor.js")); });
@@ -11351,8 +11353,6 @@ function seriesTerminalNames(def) {
   return terminals.length === 2 ? terminals.map((terminal) => terminal.name) : null;
 }
 
-__exports.getSymbol = getSymbol;
-__exports.seriesTerminalNames = seriesTerminalNames;
 __exports.symbolTypes = symbolTypes;
 __exports.symbolTypeNames = symbolTypeNames;
 };
@@ -11617,6 +11617,7 @@ __exports.xnor3_gate = xnor3_gate;
 };
 
 __modules["src/core/components/mos.js"] = function (__require, __exports) {
+__exports.createMos = createMos;
 let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
@@ -11674,7 +11675,6 @@ function createMos(type, { pmos = false, bulk = false } = {}) {
   });
 }
 
-__exports.createMos = createMos;
 };
 
 __modules["src/core/components/mux.js"] = function (__require, __exports) {
@@ -12186,6 +12186,11 @@ __exports.vcm = vcm;
 };
 
 __modules["src/core/document.js"] = function (__require, __exports) {
+__exports.validDocumentName = validDocumentName;
+__exports.documentKind = documentKind;
+__exports.createDocument = createDocument;
+__exports.loadDocument = loadDocument;
+__exports.renderDocument = renderDocument;
 let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 
@@ -12218,14 +12223,22 @@ function loadDocument(data) {
 }
 function renderDocument(document, options = {}) { return svgString(document, options); }
 
-__exports.validDocumentName = validDocumentName;
-__exports.documentKind = documentKind;
-__exports.createDocument = createDocument;
-__exports.loadDocument = loadDocument;
-__exports.renderDocument = renderDocument;
 };
 
 __modules["src/core/geometry.js"] = function (__require, __exports) {
+__exports.applyTransform = applyTransform;
+__exports.applyDir = applyDir;
+__exports.transformToSvg = transformToSvg;
+__exports.transformRect = transformRect;
+__exports.inverseTransform = inverseTransform;
+__exports.rectFromPoints = rectFromPoints;
+__exports.rectUnion = rectUnion;
+__exports.rectsOverlap = rectsOverlap;
+__exports.segmentCrossesRect = segmentCrossesRect;
+__exports.distanceToSegment = distanceToSegment;
+__exports.fmt = fmt;
+__exports.pt = pt;
+__exports.midSnap = midSnap;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
 
@@ -12381,22 +12394,15 @@ function midSnap(a, b) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-__exports.applyTransform = applyTransform;
-__exports.applyDir = applyDir;
-__exports.transformToSvg = transformToSvg;
-__exports.transformRect = transformRect;
-__exports.inverseTransform = inverseTransform;
-__exports.rectFromPoints = rectFromPoints;
-__exports.rectUnion = rectUnion;
-__exports.rectsOverlap = rectsOverlap;
-__exports.segmentCrossesRect = segmentCrossesRect;
-__exports.distanceToSegment = distanceToSegment;
-__exports.fmt = fmt;
-__exports.pt = pt;
-__exports.midSnap = midSnap;
 };
 
 __modules["src/core/grid.js"] = function (__require, __exports) {
+__exports.snap = snap;
+__exports.snapPoint = snapPoint;
+__exports.onGrid = onGrid;
+__exports.cell = cell;
+__exports.floorGrid = floorGrid;
+__exports.ceilGrid = ceilGrid;
 /**
  * Coarse placement grid. Every world coordinate of a terminal, a component
  * origin, or a wire point must be an integer multiple of GRID.
@@ -12432,16 +12438,18 @@ function floorGrid(n) {
 function ceilGrid(n) {
   return Math.ceil(n / GRID) * GRID;
 }
-__exports.snap = snap;
-__exports.snapPoint = snapPoint;
-__exports.onGrid = onGrid;
-__exports.cell = cell;
-__exports.floorGrid = floorGrid;
-__exports.ceilGrid = ceilGrid;
 __exports.GRID = GRID;
 };
 
 __modules["src/core/line-style.js"] = function (__require, __exports) {
+__exports.normalizeArrowhead = normalizeArrowhead;
+__exports.defaultArrowhead = defaultArrowhead;
+__exports.arrowheadEnds = arrowheadEnds;
+__exports.polylineArrowheadValues = polylineArrowheadValues;
+__exports.polylineArrowheadValue = polylineArrowheadValue;
+__exports.polylineArrowheadStyles = polylineArrowheadStyles;
+__exports.arrowheadGeometry = arrowheadGeometry;
+__exports.polylineArrowheads = polylineArrowheads;
 /** The one filled triangular arrowhead offered by the shared style menu. */
 const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
 
@@ -12586,18 +12594,37 @@ function polylineArrowheads(points = [], value = 'none', options = {}) {
   return { shaftPoints, heads };
 }
 
-__exports.normalizeArrowhead = normalizeArrowhead;
-__exports.defaultArrowhead = defaultArrowhead;
-__exports.arrowheadEnds = arrowheadEnds;
-__exports.polylineArrowheadValues = polylineArrowheadValues;
-__exports.polylineArrowheadValue = polylineArrowheadValue;
-__exports.polylineArrowheadStyles = polylineArrowheadStyles;
-__exports.arrowheadGeometry = arrowheadGeometry;
-__exports.polylineArrowheads = polylineArrowheads;
 __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 };
 
 __modules["src/core/model.js"] = function (__require, __exports) {
+__exports.canonicalNetName = canonicalNetName;
+__exports.referenceMarkerInfo = referenceMarkerInfo;
+__exports.referenceMarkerGlobalNames = referenceMarkerGlobalNames;
+__exports.isReferenceMarkerGlobalName = isReferenceMarkerGlobalName;
+__exports.isReferenceMarker = isReferenceMarker;
+__exports.referenceMarkerName = referenceMarkerName;
+__exports.referenceMarkerNameConflicts = referenceMarkerNameConflicts;
+__exports.referenceMarkerIsLocal = referenceMarkerIsLocal;
+__exports.parseLabelRuns = parseLabelRuns;
+__exports.labelRunLines = labelRunLines;
+__exports.symbolInkParts = symbolInkParts;
+__exports.symbolInkRect = symbolInkRect;
+__exports.applyMarkup = applyMarkup;
+__exports.containedWireSegments = containedWireSegments;
+__exports.extractWireIslands = extractWireIslands;
+__exports.extractWireFragments = extractWireFragments;
+__exports.transformWorldPoints = transformWorldPoints;
+__exports.transformComponentWorld = transformComponentWorld;
+__exports.netTerminalPositionKey = netTerminalPositionKey;
+__exports.parseTermRef = parseTermRef;
+__exports.stripMathDelimiters = stripMathDelimiters;
+__exports.mathTextForMetrics = mathTextForMetrics;
+__exports.normalizeMathSource = normalizeMathSource;
+__exports.normalizeComponentRefdes = normalizeComponentRefdes;
+__exports.componentLabelText = componentLabelText;
+__exports.pathHasDiagonal = pathHasDiagonal;
+__exports.diagonalDraftPath = diagonalDraftPath;
 let applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect; __bind(() => { ({ applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js")); });
 let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require("src/core/grid.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
@@ -18878,33 +18905,6 @@ class Circuit {
   }
 }
 
-__exports.canonicalNetName = canonicalNetName;
-__exports.referenceMarkerInfo = referenceMarkerInfo;
-__exports.referenceMarkerGlobalNames = referenceMarkerGlobalNames;
-__exports.isReferenceMarkerGlobalName = isReferenceMarkerGlobalName;
-__exports.isReferenceMarker = isReferenceMarker;
-__exports.referenceMarkerName = referenceMarkerName;
-__exports.referenceMarkerNameConflicts = referenceMarkerNameConflicts;
-__exports.referenceMarkerIsLocal = referenceMarkerIsLocal;
-__exports.parseLabelRuns = parseLabelRuns;
-__exports.labelRunLines = labelRunLines;
-__exports.symbolInkParts = symbolInkParts;
-__exports.symbolInkRect = symbolInkRect;
-__exports.applyMarkup = applyMarkup;
-__exports.containedWireSegments = containedWireSegments;
-__exports.extractWireIslands = extractWireIslands;
-__exports.extractWireFragments = extractWireFragments;
-__exports.transformWorldPoints = transformWorldPoints;
-__exports.transformComponentWorld = transformComponentWorld;
-__exports.netTerminalPositionKey = netTerminalPositionKey;
-__exports.parseTermRef = parseTermRef;
-__exports.stripMathDelimiters = stripMathDelimiters;
-__exports.mathTextForMetrics = mathTextForMetrics;
-__exports.normalizeMathSource = normalizeMathSource;
-__exports.normalizeComponentRefdes = normalizeComponentRefdes;
-__exports.componentLabelText = componentLabelText;
-__exports.pathHasDiagonal = pathHasDiagonal;
-__exports.diagonalDraftPath = diagonalDraftPath;
 __exports.REFERENCE_MARKER_TYPES = REFERENCE_MARKER_TYPES;
 __exports.NET_HIGHLIGHT_COLORS = NET_HIGHLIGHT_COLORS;
 __exports.LABEL_CHAR_W = LABEL_CHAR_W;
@@ -18922,6 +18922,8 @@ __exports.Circuit = Circuit;
 };
 
 __modules["src/core/object-clipboard.js"] = function (__require, __exports) {
+__exports.encodeObjectClipboard = encodeObjectClipboard;
+__exports.decodeObjectClipboard = decodeObjectClipboard;
 let symbolTypes; __bind(() => { ({ symbolTypes } = __require("src/core/components/index.js")); });
 
 
@@ -19031,13 +19033,17 @@ function bufferProblem(data) {
     || null;
 }
 
-__exports.encodeObjectClipboard = encodeObjectClipboard;
-__exports.decodeObjectClipboard = decodeObjectClipboard;
 __exports.OBJECT_CLIPBOARD_FORMAT = OBJECT_CLIPBOARD_FORMAT;
 __exports.OBJECT_CLIPBOARD_VERSION = OBJECT_CLIPBOARD_VERSION;
 };
 
 __modules["src/core/page-guide.js"] = function (__require, __exports) {
+__exports.normalizePageGuide = normalizePageGuide;
+__exports.pageGuideWidth = pageGuideWidth;
+__exports.pageGuideTextSize = pageGuideTextSize;
+__exports.pageGuideFrame = pageGuideFrame;
+__exports.pageGuideCaption = pageGuideCaption;
+__exports.circuitPageGuideFrame = circuitPageGuideFrame;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let LABEL_FONT_SIZE; __bind(() => { ({ LABEL_FONT_SIZE } = __require("src/core/model.js")); });
 
@@ -19121,16 +19127,13 @@ function circuitPageGuideFrame(circuit, guide, padding = GRID) {
   };
 }
 
-__exports.normalizePageGuide = normalizePageGuide;
-__exports.pageGuideWidth = pageGuideWidth;
-__exports.pageGuideTextSize = pageGuideTextSize;
-__exports.pageGuideFrame = pageGuideFrame;
-__exports.pageGuideCaption = pageGuideCaption;
-__exports.circuitPageGuideFrame = circuitPageGuideFrame;
 __exports.PAGE_GUIDES = PAGE_GUIDES;
 };
 
 __modules["src/core/png-export.js"] = function (__require, __exports) {
+__exports.normalizePngDpi = normalizePngDpi;
+__exports.pngRasterScale = pngRasterScale;
+__exports.withPngDensity = withPngDensity;
 let LABEL_FONT_SIZE; __bind(() => { ({ LABEL_FONT_SIZE } = __require("src/core/model.js")); });
 
 
@@ -19201,15 +19204,23 @@ function withPngDensity(bytes, dpi) {
   return result;
 }
 
-__exports.normalizePngDpi = normalizePngDpi;
-__exports.pngRasterScale = pngRasterScale;
-__exports.withPngDensity = withPngDensity;
 __exports.PNG_DPI_CHOICES = PNG_DPI_CHOICES;
 __exports.DEFAULT_PNG_DPI = DEFAULT_PNG_DPI;
 __exports.DEFAULT_EXPORT_TEXT_PT = DEFAULT_EXPORT_TEXT_PT;
 };
 
 __modules["src/core/render.js"] = function (__require, __exports) {
+__exports.texToLabelMarkup = texToLabelMarkup;
+__exports.plainTexText = plainTexText;
+__exports.svgPixelSize = svgPixelSize;
+__exports.texToMathML = texToMathML;
+__exports.componentShapeSvg = componentShapeSvg;
+__exports.labelShapeSvg = labelShapeSvg;
+__exports.viewportFrame = viewportFrame;
+__exports.viewportGridPath = viewportGridPath;
+__exports.viewportGridSvg = viewportGridSvg;
+__exports.svgString = svgString;
+__exports.editorOverlay = editorOverlay;
 let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js")); });
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
@@ -20797,22 +20808,23 @@ function editorOverlay(circuit, opts = {}) {
   return parts.join('\n');
 }
 
-__exports.texToLabelMarkup = texToLabelMarkup;
-__exports.plainTexText = plainTexText;
-__exports.svgPixelSize = svgPixelSize;
-__exports.texToMathML = texToMathML;
-__exports.componentShapeSvg = componentShapeSvg;
-__exports.labelShapeSvg = labelShapeSvg;
-__exports.viewportFrame = viewportFrame;
-__exports.viewportGridPath = viewportGridPath;
-__exports.viewportGridSvg = viewportGridSvg;
-__exports.svgString = svgString;
-__exports.editorOverlay = editorOverlay;
 __exports.BEAT_DIM_INK = BEAT_DIM_INK;
 __exports.BEAT_FADE_INK = BEAT_FADE_INK;
 };
 
 __modules["src/core/router.js"] = function (__require, __exports) {
+__exports.snapP = snapP;
+__exports.compressElbow = compressElbow;
+__exports.autoRoute = autoRoute;
+__exports.pruneRoute = pruneRoute;
+__exports.gateBodyCrossingAllowed = gateBodyCrossingAllowed;
+__exports.steinerBranches = steinerBranches;
+__exports.steinerRoute = steinerRoute;
+__exports.balancedCrossCoupling = balancedCrossCoupling;
+__exports.segmentsCross = segmentsCross;
+__exports.segThroughInterior = segThroughInterior;
+__exports.bodyClearanceSafe = bodyClearanceSafe;
+__exports.smartRoute = smartRoute;
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let junctionPoints, normalizeBranches, pointKey, reduceBranches; __bind(() => { ({ junctionPoints, normalizeBranches, pointKey, reduceBranches } = __require("src/core/wiring.js")); });
 
@@ -21906,21 +21918,12 @@ function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: [] }) {
   return best;
 }
 
-__exports.snapP = snapP;
-__exports.compressElbow = compressElbow;
-__exports.autoRoute = autoRoute;
-__exports.pruneRoute = pruneRoute;
-__exports.gateBodyCrossingAllowed = gateBodyCrossingAllowed;
-__exports.steinerBranches = steinerBranches;
-__exports.steinerRoute = steinerRoute;
-__exports.balancedCrossCoupling = balancedCrossCoupling;
-__exports.segmentsCross = segmentsCross;
-__exports.segThroughInterior = segThroughInterior;
-__exports.bodyClearanceSafe = bodyClearanceSafe;
-__exports.smartRoute = smartRoute;
 };
 
 __modules["src/core/selection-drawing.js"] = function (__require, __exports) {
+__exports.hasDrawableSelection = hasDrawableSelection;
+__exports.selectionSubset = selectionSubset;
+__exports.selectionDrawing = selectionDrawing;
 let Circuit, Net; __bind(() => { ({ Circuit, Net } = __require("src/core/model.js")); });
 let renderDocument; __bind(() => { ({ renderDocument } = __require("src/core/document.js")); });
 let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
@@ -22024,13 +22027,12 @@ function selectionDrawing(document, selection = {}, options = {}) {
   return renderDocument(drawing, { ...DRAWING_EXPORT_OPTIONS, ...options, viewport, emptyHint: false });
 }
 
-__exports.hasDrawableSelection = hasDrawableSelection;
-__exports.selectionSubset = selectionSubset;
-__exports.selectionDrawing = selectionDrawing;
 __exports.DRAWING_EXPORT_OPTIONS = DRAWING_EXPORT_OPTIONS;
 };
 
 __modules["src/core/selection.js"] = function (__require, __exports) {
+__exports.copySelectionParts = copySelectionParts;
+__exports.resolveCopySelection = resolveCopySelection;
 let extractWireFragments; __bind(() => { ({ extractWireFragments } = __require("src/core/model.js")); });
 
 
@@ -22083,11 +22085,10 @@ function resolveCopySelection(circuit, { refs = [], labels = [], netIds = [], wi
   return { comps, freeLabels, nets, fragments };
 }
 
-__exports.copySelectionParts = copySelectionParts;
-__exports.resolveCopySelection = resolveCopySelection;
 };
 
 __modules["src/core/stubs.js"] = function (__require, __exports) {
+__exports.addTerminalStubs = addTerminalStubs;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, canonicalNetName; __bind(() => { ({ INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, canonicalNetName } = __require("src/core/model.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
@@ -22220,11 +22221,17 @@ function addTerminalStubs(circuit, refdes) {
   return { stubs, skipped };
 }
 
-__exports.addTerminalStubs = addTerminalStubs;
 __exports.STUB_CELLS = STUB_CELLS;
 };
 
 __modules["src/core/style.js"] = function (__require, __exports) {
+__exports.resolveColor = resolveColor;
+__exports.themeInkSvg = themeInkSvg;
+__exports.setColorToken = setColorToken;
+__exports.strokeAttrs = strokeAttrs;
+__exports.strokeWidth = strokeWidth;
+__exports.fontAttrs = fontAttrs;
+__exports.styleAttrs = styleAttrs;
 /**
  * Centralized schematic line styles.
  *
@@ -22344,13 +22351,6 @@ function styleAttrs(style = {}, base = 'symbol', miterLimit) {
   return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
 }
 
-__exports.resolveColor = resolveColor;
-__exports.themeInkSvg = themeInkSvg;
-__exports.setColorToken = setColorToken;
-__exports.strokeAttrs = strokeAttrs;
-__exports.strokeWidth = strokeWidth;
-__exports.fontAttrs = fontAttrs;
-__exports.styleAttrs = styleAttrs;
 __exports.COLOR_PALETTE = COLOR_PALETTE;
 __exports.escapeSvg = escapeSvg;
 __exports.LABEL_FONT_SIZES = LABEL_FONT_SIZES;
@@ -22358,6 +22358,11 @@ __exports.labelFontSize = labelFontSize;
 };
 
 __modules["src/core/supply-bars.js"] = function (__require, __exports) {
+__exports.supplyRailName = supplyRailName;
+__exports.supplyBarJoins = supplyBarJoins;
+__exports.supplyBars = supplyBars;
+__exports.hiddenSupplyBarLabels = hiddenSupplyBarLabels;
+__exports.supplyBarRow = supplyBarRow;
 let transformRect; __bind(() => { ({ transformRect } = __require("src/core/geometry.js")); });
 let canonicalNetName, referenceMarkerInfo, referenceMarkerName; __bind(() => { ({ canonicalNetName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js")); });
 
@@ -22503,14 +22508,11 @@ function supplyBarRow(circuit, refdes) {
   return row.filter((slab) => supplyRailName(slab.component) === rail).map((slab) => slab.component.refdes);
 }
 
-__exports.supplyRailName = supplyRailName;
-__exports.supplyBarJoins = supplyBarJoins;
-__exports.supplyBars = supplyBars;
-__exports.hiddenSupplyBarLabels = hiddenSupplyBarLabels;
-__exports.supplyBarRow = supplyBarRow;
 };
 
 __modules["src/core/timing-diagram.js"] = function (__require, __exports) {
+__exports.timingWavePoints = timingWavePoints;
+__exports.addTimingDiagram = addTimingDiagram;
 let GRID, ceilGrid, floorGrid; __bind(() => { ({ GRID, ceilGrid, floorGrid } = __require("src/core/grid.js")); });
 let isTexSource, switchPhases; __bind(() => { ({ isTexSource, switchPhases } = __require("src/core/beats.js")); });
 /**
@@ -22571,11 +22573,14 @@ function addTimingDiagram(circuit) {
   });
 }
 
-__exports.timingWavePoints = timingWavePoints;
-__exports.addTimingDiagram = addTimingDiagram;
 };
 
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
+__exports.wireRunAt = wireRunAt;
+__exports.collapseCollinear = collapseCollinear;
+__exports.findRunLine = findRunLine;
+__exports.moveJunctionEndpoint = moveJunctionEndpoint;
+__exports.moveWireRun = moveWireRun;
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 
 
@@ -22874,14 +22879,29 @@ function moveWireRun(pts, orient, line, target, endpointMeta = null) {
   return t;
 }
 
-__exports.wireRunAt = wireRunAt;
-__exports.collapseCollinear = collapseCollinear;
-__exports.findRunLine = findRunLine;
-__exports.moveJunctionEndpoint = moveJunctionEndpoint;
-__exports.moveWireRun = moveWireRun;
 };
 
 __modules["src/core/wiring.js"] = function (__require, __exports) {
+__exports.orthogonalizePath = orthogonalizePath;
+__exports.clonePath = clonePath;
+__exports.cloneFixedPath = cloneFixedPath;
+__exports.pathSegments = pathSegments;
+__exports.compactPath = compactPath;
+__exports.normalizePath = normalizePath;
+__exports.wireSegments = wireSegments;
+__exports.pointOnPath = pointOnPath;
+__exports.splitBranchAt = splitBranchAt;
+__exports.normalizeBranches = normalizeBranches;
+__exports.junctionPoints = junctionPoints;
+__exports.crossNetOverlaps = crossNetOverlaps;
+__exports.samePolylineSet = samePolylineSet;
+__exports.hasPositiveBranchOverlap = hasPositiveBranchOverlap;
+__exports.reduceBranches = reduceBranches;
+__exports.joinBranchEnds = joinBranchEnds;
+__exports.deleteWireSegment = deleteWireSegment;
+__exports.splitByComponent = splitByComponent;
+__exports.pathLength = pathLength;
+__exports.validateWiring = validateWiring;
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 
 
@@ -23455,30 +23475,13 @@ function validateWiring(net) {
   return errors;
 }
 
-__exports.orthogonalizePath = orthogonalizePath;
-__exports.clonePath = clonePath;
-__exports.cloneFixedPath = cloneFixedPath;
-__exports.pathSegments = pathSegments;
-__exports.compactPath = compactPath;
-__exports.normalizePath = normalizePath;
-__exports.wireSegments = wireSegments;
-__exports.pointOnPath = pointOnPath;
-__exports.splitBranchAt = splitBranchAt;
-__exports.normalizeBranches = normalizeBranches;
-__exports.junctionPoints = junctionPoints;
-__exports.crossNetOverlaps = crossNetOverlaps;
-__exports.samePolylineSet = samePolylineSet;
-__exports.hasPositiveBranchOverlap = hasPositiveBranchOverlap;
-__exports.reduceBranches = reduceBranches;
-__exports.joinBranchEnds = joinBranchEnds;
-__exports.deleteWireSegment = deleteWireSegment;
-__exports.splitByComponent = splitByComponent;
-__exports.pathLength = pathLength;
-__exports.validateWiring = validateWiring;
 __exports.pointKey = pointKey;
 };
 
 __modules["src/web/analysis-options.js"] = function (__require, __exports) {
+__exports.analysisOptionDefaults = analysisOptionDefaults;
+__exports.normalizeAnalysisOptions = normalizeAnalysisOptions;
+__exports.migrateAnalysisFormState = migrateAnalysisFormState;
 /** Canonical small-signal form options and the legacy persistence boundary. */
 
 const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
@@ -23721,13 +23724,18 @@ function migrateAnalysisFormState(value = {}) {
   };
 }
 
-__exports.analysisOptionDefaults = analysisOptionDefaults;
-__exports.normalizeAnalysisOptions = normalizeAnalysisOptions;
-__exports.migrateAnalysisFormState = migrateAnalysisFormState;
 __exports.ANALYSIS_OPTION_DEFAULTS = ANALYSIS_OPTION_DEFAULTS;
 };
 
 __modules["src/web/analysis-state.js"] = function (__require, __exports) {
+__exports.analysisNetOptionText = analysisNetOptionText;
+__exports.analysisFormStorageKey = analysisFormStorageKey;
+__exports.splitAnalysisValues = splitAnalysisValues;
+__exports.analysisNetAliases = analysisNetAliases;
+__exports.pruneAnalysisNetValues = pruneAnalysisNetValues;
+__exports.pruneAnalysisDeviceRegions = pruneAnalysisDeviceRegions;
+__exports.formatAnalysisDeviceRegions = formatAnalysisDeviceRegions;
+__exports.analysisFormDefaults = analysisFormDefaults;
 let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
 /**
  * Pure helpers for the small-signal analysis form.
@@ -23839,18 +23847,12 @@ function analysisFormDefaults(nets = [], { targetNetId = '', componentInputNetId
   };
 }
 
-__exports.analysisNetOptionText = analysisNetOptionText;
-__exports.analysisFormStorageKey = analysisFormStorageKey;
-__exports.splitAnalysisValues = splitAnalysisValues;
-__exports.analysisNetAliases = analysisNetAliases;
-__exports.pruneAnalysisNetValues = pruneAnalysisNetValues;
-__exports.pruneAnalysisDeviceRegions = pruneAnalysisDeviceRegions;
-__exports.formatAnalysisDeviceRegions = formatAnalysisDeviceRegions;
-__exports.analysisFormDefaults = analysisFormDefaults;
 __exports.ANALYSIS_FORM_KEY = ANALYSIS_FORM_KEY;
 };
 
 __modules["src/web/clipboard.js"] = function (__require, __exports) {
+__exports.pngDataUrlBlob = pngDataUrlBlob;
+__exports.writeDrawingToClipboard = writeDrawingToClipboard;
 let svgToPngDataUrl, withEmbeddedMathFont; __bind(() => { ({ svgToPngDataUrl, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let DEFAULT_PNG_DPI, pngRasterScale; __bind(() => { ({ DEFAULT_PNG_DPI, pngRasterScale } = __require("src/core/png-export.js")); });
 
@@ -23886,11 +23888,12 @@ function writeDrawingToClipboard(svg, {
   return clipboard.write([new ClipboardItem({ 'image/png': png, 'text/plain': text })]);
 }
 
-__exports.pngDataUrlBlob = pngDataUrlBlob;
-__exports.writeDrawingToClipboard = writeDrawingToClipboard;
 };
 
 __modules["src/web/commit-feedback.js"] = function (__require, __exports) {
+__exports.commitFeedbackDiff = commitFeedbackDiff;
+__exports.isEmptyFeedback = isEmptyFeedback;
+__exports.commitFeedbackSvg = commitFeedbackSvg;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let componentShapeSvg, labelShapeSvg; __bind(() => { ({ componentShapeSvg, labelShapeSvg } = __require("src/core/render.js")); });
 /**
@@ -24102,12 +24105,12 @@ function commitFeedbackSvg(diff) {
   return { under: under.join(''), over: over.join('') };
 }
 
-__exports.commitFeedbackDiff = commitFeedbackDiff;
-__exports.isEmptyFeedback = isEmptyFeedback;
-__exports.commitFeedbackSvg = commitFeedbackSvg;
 };
 
 __modules["src/web/drawing-export.js"] = function (__require, __exports) {
+__exports.svgToPngDataUrl = svgToPngDataUrl;
+__exports.applyExportDarkTheme = applyExportDarkTheme;
+__exports.withEmbeddedMathFont = withEmbeddedMathFont;
 let svgPixelSize; __bind(() => { ({ svgPixelSize } = __require("src/core/render.js")); });
 let withPngDensity; __bind(() => { ({ withPngDensity } = __require("src/core/png-export.js")); });
 
@@ -24192,12 +24195,226 @@ async function withEmbeddedMathFont(svg) {
   return face ? svg.replace(/(<svg\b[^>]*>)/, `$1<style>${face}</style>`) : svg;
 }
 
-__exports.svgToPngDataUrl = svgToPngDataUrl;
-__exports.applyExportDarkTheme = applyExportDarkTheme;
-__exports.withEmbeddedMathFont = withEmbeddedMathFont;
+};
+
+__modules["src/web/editor-state.js"] = function (__require, __exports) {
+/**
+ * The editor's shared state, for the modules split out of main.js.
+ *
+ * main.js owns the state as module variables and defines an accessor here
+ * for each one another module reads or writes, so `editor.circuit` is always
+ * the live document. Modules import this object instead of importing the
+ * variables, which ES modules would make read-only.
+ */
+const editor = {};
+
+__exports.editor = editor;
+};
+
+__modules["src/web/elements.js"] = function (__require, __exports) {
+/**
+ * The editor page's fixed elements, looked up once. Every id here is in
+ * index.html; elements the editor creates at run time are not listed.
+ */
+
+const canvasEl = document.getElementById('canvas');
+const componentContextMenuEl = document.getElementById('component-context-menu');
+const componentsListEl = document.getElementById('components-list');
+const netsListEl = document.getElementById('nets-list');
+const detailEl = document.getElementById('detail');
+const statusEl = document.getElementById('status');
+const accessibilityAnnouncementEl = document.getElementById('accessibility-announcement');
+const logEl = document.getElementById('log');
+const cmdInput = document.getElementById('cmd-input');
+const consoleEl = document.getElementById('console-panel');
+const statusModeEl = document.getElementById('status-mode');
+const statusSelectionEl = document.getElementById('status-selection');
+const statusCursorEl = document.getElementById('status-cursor');
+const statusZoomEl = document.getElementById('status-zoom');
+const statusCheckEl = document.getElementById('status-check');
+const statusMessageEl = document.getElementById('status-message');
+const logDrawerEl = document.getElementById('log-drawer');
+const logPinEl = document.getElementById('log-pin');
+const logClearEl = document.getElementById('log-clear');
+const circuitSelectEl = document.getElementById('circuit-select');
+const circuitNameEl = document.getElementById('circuit-name');
+const newDocumentButton = document.getElementById('btn-new-document');
+const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
+const revealDocumentBtn = document.getElementById('btn-reveal-document');
+const exportCircuitBtn = document.getElementById('btn-export');
+const analysisButton = document.getElementById('btn-analysis');
+const deleteDialog = document.getElementById('delete-dialog');
+const deleteDialogMessage = document.getElementById('delete-dialog-message');
+const switchDialog = document.getElementById('switch-dialog');
+const switchDialogMessage = document.getElementById('switch-dialog-message');
+const exportDialog = document.getElementById('export-dialog');
+const exportForm = document.getElementById('export-form');
+const exportCancel = document.getElementById('export-cancel');
+const checkSummaryBodyEl = document.getElementById('check-summary-body');
+const clearCheckButtonEl = document.getElementById('btn-clear-check');
+const helpDialog = document.getElementById('help-dialog');
+const helpDialogContent = document.getElementById('help-dialog-content');
+const helpSearch = document.getElementById('help-search');
+const analysisDialog = document.getElementById('analysis-dialog');
+const analysisForm = document.getElementById('analysis-form');
+const analysisTarget = document.getElementById('analysis-target');
+const analysisReference = document.getElementById('analysis-reference');
+const analysisInput = document.getElementById('analysis-input');
+const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
+const analysisDeviceRegions = document.getElementById('analysis-device-regions');
+const analysisApproxRo = document.getElementById('analysis-approx-ro');
+const analysisApproxBody = document.getElementById('analysis-approx-body');
+const analysisApproxMiller = document.getElementById('analysis-approx-miller');
+const analysisParasitics = document.getElementById('analysis-parasitics');
+const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
+const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
+const analysisResult = document.getElementById('analysis-result');
+const analysisEquation = document.getElementById('analysis-equation');
+const analysisDetails = document.getElementById('analysis-details');
+const analysisNetlistPanel = document.getElementById('analysis-panel-netlist');
+const analysisNetlist = document.getElementById('analysis-netlist');
+const analysisModelPanel = document.getElementById('analysis-panel-model');
+const analysisModelEl = document.getElementById('analysis-model');
+const analysisModelOpen = document.getElementById('analysis-model-open');
+const modelDialog = document.getElementById('model-dialog');
+const modelDialogTitle = document.getElementById('model-dialog-title');
+const modelDialogFigure = document.getElementById('model-dialog-figure');
+const modelDialogNotes = document.getElementById('model-dialog-notes');
+const modelDialogRubber = document.getElementById('model-dialog-rubber');
+const analysisCancel = document.getElementById('analysis-cancel');
+const analysisAnnotate = document.getElementById('analysis-annotate');
+const tipCardEl = document.getElementById('tip-card');
+const tipTextEl = document.getElementById('tip-card-text');
+const tipsButton = document.getElementById('btn-tips');
+const tutorialCardEl = document.getElementById('tutorial-card');
+const tutorialStepEl = document.getElementById('tutorial-step');
+const tutorialStepsEl = document.getElementById('tutorial-steps');
+const tutorialCountEl = document.getElementById('tutorial-count');
+const tutorialBarEl = document.getElementById('tutorial-bar-fill');
+const tutorialSkipEl = document.getElementById('tutorial-skip');
+const tutorialStepsToggleEl = document.getElementById('tutorial-steps-toggle');
+const modeToolbarEl = document.querySelector('.mode-toolbar');
+const beatStripEl = document.getElementById('beat-strip');
+const beatListEl = document.getElementById('beat-list');
+const beatHintEl = document.getElementById('beat-hint');
+const presenterEl = document.getElementById('presenter');
+const presenterStageEl = document.getElementById('presenter-stage');
+const presenterCountEl = document.getElementById('presenter-count');
+const toolbarEl = document.querySelector('.toolbar');
+const alignPanelEl = document.getElementById('align-panel');
+const railFlyoutProxyEl = document.getElementById('btn-rail-annotate');
+const railFlyoutEl = document.getElementById('rail-flyout');
+const panelFilterEl = document.getElementById('panel-filter');
+const sidePanelEl = document.getElementById('side-panel');
+const sidePanelToggleEl = document.getElementById('btn-side-panel');
+const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
+const themeBtn = document.getElementById('btn-theme');
+const gridBtn = document.getElementById('btn-grid');
+const crosshairBtn = document.getElementById('btn-crosshair');
+const guidesBtn = document.getElementById('btn-guides');
+const paneEl = document.querySelector('.canvas-pane');
+
+__exports.canvasEl = canvasEl;
+__exports.componentContextMenuEl = componentContextMenuEl;
+__exports.componentsListEl = componentsListEl;
+__exports.netsListEl = netsListEl;
+__exports.detailEl = detailEl;
+__exports.statusEl = statusEl;
+__exports.accessibilityAnnouncementEl = accessibilityAnnouncementEl;
+__exports.logEl = logEl;
+__exports.cmdInput = cmdInput;
+__exports.consoleEl = consoleEl;
+__exports.statusModeEl = statusModeEl;
+__exports.statusSelectionEl = statusSelectionEl;
+__exports.statusCursorEl = statusCursorEl;
+__exports.statusZoomEl = statusZoomEl;
+__exports.statusCheckEl = statusCheckEl;
+__exports.statusMessageEl = statusMessageEl;
+__exports.logDrawerEl = logDrawerEl;
+__exports.logPinEl = logPinEl;
+__exports.logClearEl = logClearEl;
+__exports.circuitSelectEl = circuitSelectEl;
+__exports.circuitNameEl = circuitNameEl;
+__exports.newDocumentButton = newDocumentButton;
+__exports.deleteCircuitBtn = deleteCircuitBtn;
+__exports.revealDocumentBtn = revealDocumentBtn;
+__exports.exportCircuitBtn = exportCircuitBtn;
+__exports.analysisButton = analysisButton;
+__exports.deleteDialog = deleteDialog;
+__exports.deleteDialogMessage = deleteDialogMessage;
+__exports.switchDialog = switchDialog;
+__exports.switchDialogMessage = switchDialogMessage;
+__exports.exportDialog = exportDialog;
+__exports.exportForm = exportForm;
+__exports.exportCancel = exportCancel;
+__exports.checkSummaryBodyEl = checkSummaryBodyEl;
+__exports.clearCheckButtonEl = clearCheckButtonEl;
+__exports.helpDialog = helpDialog;
+__exports.helpDialogContent = helpDialogContent;
+__exports.helpSearch = helpSearch;
+__exports.analysisDialog = analysisDialog;
+__exports.analysisForm = analysisForm;
+__exports.analysisTarget = analysisTarget;
+__exports.analysisReference = analysisReference;
+__exports.analysisInput = analysisInput;
+__exports.analysisAcGrounds = analysisAcGrounds;
+__exports.analysisDeviceRegions = analysisDeviceRegions;
+__exports.analysisApproxRo = analysisApproxRo;
+__exports.analysisApproxBody = analysisApproxBody;
+__exports.analysisApproxMiller = analysisApproxMiller;
+__exports.analysisParasitics = analysisParasitics;
+__exports.analysisApproxGmRo = analysisApproxGmRo;
+__exports.analysisApproxDominantPole = analysisApproxDominantPole;
+__exports.analysisResult = analysisResult;
+__exports.analysisEquation = analysisEquation;
+__exports.analysisDetails = analysisDetails;
+__exports.analysisNetlistPanel = analysisNetlistPanel;
+__exports.analysisNetlist = analysisNetlist;
+__exports.analysisModelPanel = analysisModelPanel;
+__exports.analysisModelEl = analysisModelEl;
+__exports.analysisModelOpen = analysisModelOpen;
+__exports.modelDialog = modelDialog;
+__exports.modelDialogTitle = modelDialogTitle;
+__exports.modelDialogFigure = modelDialogFigure;
+__exports.modelDialogNotes = modelDialogNotes;
+__exports.modelDialogRubber = modelDialogRubber;
+__exports.analysisCancel = analysisCancel;
+__exports.analysisAnnotate = analysisAnnotate;
+__exports.tipCardEl = tipCardEl;
+__exports.tipTextEl = tipTextEl;
+__exports.tipsButton = tipsButton;
+__exports.tutorialCardEl = tutorialCardEl;
+__exports.tutorialStepEl = tutorialStepEl;
+__exports.tutorialStepsEl = tutorialStepsEl;
+__exports.tutorialCountEl = tutorialCountEl;
+__exports.tutorialBarEl = tutorialBarEl;
+__exports.tutorialSkipEl = tutorialSkipEl;
+__exports.tutorialStepsToggleEl = tutorialStepsToggleEl;
+__exports.modeToolbarEl = modeToolbarEl;
+__exports.beatStripEl = beatStripEl;
+__exports.beatListEl = beatListEl;
+__exports.beatHintEl = beatHintEl;
+__exports.presenterEl = presenterEl;
+__exports.presenterStageEl = presenterStageEl;
+__exports.presenterCountEl = presenterCountEl;
+__exports.toolbarEl = toolbarEl;
+__exports.alignPanelEl = alignPanelEl;
+__exports.railFlyoutProxyEl = railFlyoutProxyEl;
+__exports.railFlyoutEl = railFlyoutEl;
+__exports.panelFilterEl = panelFilterEl;
+__exports.sidePanelEl = sidePanelEl;
+__exports.sidePanelToggleEl = sidePanelToggleEl;
+__exports.scrollSchemeButton = scrollSchemeButton;
+__exports.themeBtn = themeBtn;
+__exports.gridBtn = gridBtn;
+__exports.crosshairBtn = crosshairBtn;
+__exports.guidesBtn = guidesBtn;
+__exports.paneEl = paneEl;
 };
 
 __modules["src/web/file-dialog.js"] = function (__require, __exports) {
+__exports.showFileDialog = showFileDialog;
+__exports.confirmChoice = confirmChoice;
 /**
  * In-app file browser for Open, Save as, and choosing the workspace folder.
  * The local server reads the file system, so documents keep a real path and
@@ -24447,11 +24664,23 @@ function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Can
   });
 }
 
-__exports.showFileDialog = showFileDialog;
-__exports.confirmChoice = confirmChoice;
 };
 
 __modules["src/web/gestures.js"] = function (__require, __exports) {
+__exports.isPinDragCandidate = isPinDragCandidate;
+__exports.arrivalDirection = arrivalDirection;
+__exports.quickAddPlacement = quickAddPlacement;
+__exports.radialRingRadius = radialRingRadius;
+__exports.radialSector = radialSector;
+__exports.segmentsIntersect = segmentsIntersect;
+__exports.knifeCrossings = knifeCrossings;
+__exports.strokeCrossesPolyline = strokeCrossesPolyline;
+__exports.strokeCrossesRect = strokeCrossesRect;
+__exports.spliceCandidate = spliceCandidate;
+__exports.pinHandleRadius = pinHandleRadius;
+__exports.wheelIntent = wheelIntent;
+__exports.easeOutCubic = easeOutCubic;
+__exports.lerpView = lerpView;
 let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geometry.js")); });
 /**
  * Pure geometry and decision helpers for pointer gestures.
@@ -24683,23 +24912,24 @@ function lerpView(from, to, t) {
   };
 }
 
-__exports.isPinDragCandidate = isPinDragCandidate;
-__exports.arrivalDirection = arrivalDirection;
-__exports.quickAddPlacement = quickAddPlacement;
-__exports.radialRingRadius = radialRingRadius;
-__exports.radialSector = radialSector;
-__exports.segmentsIntersect = segmentsIntersect;
-__exports.knifeCrossings = knifeCrossings;
-__exports.strokeCrossesPolyline = strokeCrossesPolyline;
-__exports.strokeCrossesRect = strokeCrossesRect;
-__exports.spliceCandidate = spliceCandidate;
-__exports.pinHandleRadius = pinHandleRadius;
-__exports.wheelIntent = wheelIntent;
-__exports.easeOutCubic = easeOutCubic;
-__exports.lerpView = lerpView;
 };
 
 __modules["src/web/interaction.js"] = function (__require, __exports) {
+__exports.moveAnnotationEndpoint = moveAnnotationEndpoint;
+__exports.resizeRect = resizeRect;
+__exports.attachedEdgeShift = attachedEdgeShift;
+__exports.alignedAnchorShift = alignedAnchorShift;
+__exports.viewFollowingCursor = viewFollowingCursor;
+__exports.isSelectionModifier = isSelectionModifier;
+__exports.isPrimaryPointerEvent = isPrimaryPointerEvent;
+__exports.shouldForwardCanvasMove = shouldForwardCanvasMove;
+__exports.compatibilityMoveFilter = compatibilityMoveFilter;
+__exports.shouldPanTouch = shouldPanTouch;
+__exports.isKeyboardSurfaceTarget = isKeyboardSurfaceTarget;
+__exports.worldAndCursorFromClient = worldAndCursorFromClient;
+__exports.nearestPoint = nearestPoint;
+__exports.symmetryOperation = symmetryOperation;
+__exports.constrainAxis = constrainAxis;
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 
 
@@ -24903,24 +25133,23 @@ function constrainAxis(start, current, enabled = true) {
     : { x: start.x, y: current.y };
 }
 
-__exports.moveAnnotationEndpoint = moveAnnotationEndpoint;
-__exports.resizeRect = resizeRect;
-__exports.attachedEdgeShift = attachedEdgeShift;
-__exports.alignedAnchorShift = alignedAnchorShift;
-__exports.viewFollowingCursor = viewFollowingCursor;
-__exports.isSelectionModifier = isSelectionModifier;
-__exports.isPrimaryPointerEvent = isPrimaryPointerEvent;
-__exports.shouldForwardCanvasMove = shouldForwardCanvasMove;
-__exports.compatibilityMoveFilter = compatibilityMoveFilter;
-__exports.shouldPanTouch = shouldPanTouch;
-__exports.isKeyboardSurfaceTarget = isKeyboardSurfaceTarget;
-__exports.worldAndCursorFromClient = worldAndCursorFromClient;
-__exports.nearestPoint = nearestPoint;
-__exports.symmetryOperation = symmetryOperation;
-__exports.constrainAxis = constrainAxis;
 };
 
 __modules["src/web/layout.js"] = function (__require, __exports) {
+__exports.layoutAnchor = layoutAnchor;
+__exports.componentLayoutItem = componentLayoutItem;
+__exports.ghostLayoutItem = ghostLayoutItem;
+__exports.labelLayoutItem = labelLayoutItem;
+__exports.alignmentPlan = alignmentPlan;
+__exports.distributionPlan = distributionPlan;
+__exports.alignFeatures = alignFeatures;
+__exports.outlineOf = outlineOf;
+__exports.alignCompatible = alignCompatible;
+__exports.alignFeatureAt = alignFeatureAt;
+__exports.alignToDelta = alignToDelta;
+__exports.placementGuides = placementGuides;
+__exports.describeGuides = describeGuides;
+__exports.layoutSuggestions = layoutSuggestions;
 let applyTransform, transformRect; __bind(() => { ({ applyTransform, transformRect } = __require("src/core/geometry.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
@@ -25450,23 +25679,11 @@ function layoutSuggestions(items, grid = GRID) {
   return result.slice(0, 12);
 }
 
-__exports.layoutAnchor = layoutAnchor;
-__exports.componentLayoutItem = componentLayoutItem;
-__exports.ghostLayoutItem = ghostLayoutItem;
-__exports.labelLayoutItem = labelLayoutItem;
-__exports.alignmentPlan = alignmentPlan;
-__exports.distributionPlan = distributionPlan;
-__exports.alignFeatures = alignFeatures;
-__exports.outlineOf = outlineOf;
-__exports.alignCompatible = alignCompatible;
-__exports.alignFeatureAt = alignFeatureAt;
-__exports.alignToDelta = alignToDelta;
-__exports.placementGuides = placementGuides;
-__exports.describeGuides = describeGuides;
-__exports.layoutSuggestions = layoutSuggestions;
 };
 
 __modules["src/web/main.js"] = function (__require, __exports) {
+__exports.selectAllNetIds = selectAllNetIds;
+__exports.deriveInteractionState = deriveInteractionState;
 let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames, symbolTypeNames; __bind(() => { ({ getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js")); });
 let runCommand, commandHelp, evaluate; __bind(() => { ({ runCommand, commandHelp, evaluate } = __require("src/core/commands.js")); });
@@ -25511,6 +25728,8 @@ let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ choos
 let arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
 let LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
 let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides; __bind(() => { ({ alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides } = __require("src/web/layout.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpDialogContent, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, alignPanelEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpDialogContent, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, alignPanelEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -25568,6 +25787,12 @@ let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan,
 
 
 
+
+
+// Accessors for the state the split-out modules share (see editor-state.js).
+Object.defineProperties(editor, {
+});
+
 // ----- boot failure surface --------------------------------------
 // If the module fails to load/parse/import, show the problem instead of a dead page.
 
@@ -25583,81 +25808,15 @@ window.addEventListener('error', (ev) => {
 
 // ----- element references -----------------------------------------
 
-const canvasEl = document.getElementById('canvas');
-const componentContextMenuEl = document.getElementById('component-context-menu');
-const componentsListEl = document.getElementById('components-list');
-const netsListEl = document.getElementById('nets-list');
-const detailEl = document.getElementById('detail');
-const statusEl = document.getElementById('status');
-const accessibilityAnnouncementEl = document.getElementById('accessibility-announcement');
-const logEl = document.getElementById('log');
-const cmdInput = document.getElementById('cmd-input');
-const consoleEl = document.getElementById('console-panel');
-const statusModeEl = document.getElementById('status-mode');
-const statusSelectionEl = document.getElementById('status-selection');
-const statusCursorEl = document.getElementById('status-cursor');
-const statusZoomEl = document.getElementById('status-zoom');
-const statusCheckEl = document.getElementById('status-check');
-const statusMessageEl = document.getElementById('status-message');
-const logDrawerEl = document.getElementById('log-drawer');
-const logPinEl = document.getElementById('log-pin');
-const logClearEl = document.getElementById('log-clear');
-const circuitSelectEl = document.getElementById('circuit-select');
-const circuitNameEl = document.getElementById('circuit-name');
-const newDocumentButton = document.getElementById('btn-new-document');
-const deleteCircuitBtn = document.getElementById('btn-delete-circuit');
-const revealDocumentBtn = document.getElementById('btn-reveal-document');
-const exportCircuitBtn = document.getElementById('btn-export');
-const analysisButton = document.getElementById('btn-analysis');
-const deleteDialog = document.getElementById('delete-dialog');
-const deleteDialogMessage = document.getElementById('delete-dialog-message');
-const switchDialog = document.getElementById('switch-dialog');
-const switchDialogMessage = document.getElementById('switch-dialog-message');
-const exportDialog = document.getElementById('export-dialog');
-const exportForm = document.getElementById('export-form');
-const exportCancel = document.getElementById('export-cancel');
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
 const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
 const exportSelectionInput = exportForm?.querySelector('input[name="selection"]');
 // The selection as it stood when the export dialog opened.
 let exportSelection = null;
-const checkSummaryBodyEl = document.getElementById('check-summary-body');
-const clearCheckButtonEl = document.getElementById('btn-clear-check');
-const helpDialog = document.getElementById('help-dialog');
-const helpDialogContent = document.getElementById('help-dialog-content');
-const helpSearch = document.getElementById('help-search');
-const analysisDialog = document.getElementById('analysis-dialog');
-const analysisForm = document.getElementById('analysis-form');
-const analysisTarget = document.getElementById('analysis-target');
-const analysisReference = document.getElementById('analysis-reference');
-const analysisInput = document.getElementById('analysis-input');
-const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
-const analysisDeviceRegions = document.getElementById('analysis-device-regions');
-const analysisApproxRo = document.getElementById('analysis-approx-ro');
-const analysisApproxBody = document.getElementById('analysis-approx-body');
-const analysisApproxMiller = document.getElementById('analysis-approx-miller');
-const analysisParasitics = document.getElementById('analysis-parasitics');
-const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
-const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
-const analysisResult = document.getElementById('analysis-result');
-const analysisEquation = document.getElementById('analysis-equation');
-const analysisDetails = document.getElementById('analysis-details');
-const analysisNetlistPanel = document.getElementById('analysis-panel-netlist');
-const analysisNetlist = document.getElementById('analysis-netlist');
-const analysisModelPanel = document.getElementById('analysis-panel-model');
-const analysisModelEl = document.getElementById('analysis-model');
-const analysisModelOpen = document.getElementById('analysis-model-open');
-const modelDialog = document.getElementById('model-dialog');
-const modelDialogTitle = document.getElementById('model-dialog-title');
-const modelDialogFigure = document.getElementById('model-dialog-figure');
-const modelDialogNotes = document.getElementById('model-dialog-notes');
-const modelDialogRubber = document.getElementById('model-dialog-rubber');
 const analysisTabButtons = [...document.querySelectorAll('[data-analysis-tab]')];
 const analysisTabPanels = new Map([...document.querySelectorAll('.analysis-tab-panel')]
   .map((panel) => [panel.id.replace(/^analysis-panel-/, ''), panel]));
-const analysisCancel = document.getElementById('analysis-cancel');
-const analysisAnnotate = document.getElementById('analysis-annotate');
 
 function setAnalysisResultTab(name = 'equations') {
   const requested = analysisTabPanels.has(name) ? name : 'equations';
@@ -25871,9 +26030,6 @@ let tutorial = null;
 const tipBook = new TipBook((() => {
   try { return JSON.parse(localStorage.getItem(TIPS_KEY) || 'null'); } catch { return null; }
 })());
-const tipCardEl = document.getElementById('tip-card');
-const tipTextEl = document.getElementById('tip-card-text');
-const tipsButton = document.getElementById('btn-tips');
 const TIP_VISIBLE_MS = 14000;
 let shownTip = null;
 let tipHideTimer = 0;
@@ -25935,13 +26091,6 @@ syncTipsButton();
 // Optional and never offered by itself: it starts only from the More menu or
 // the empty-canvas card, and closing it leaves the drawing as it is. Steps are
 // checked from the drawing's structure in tutorial.js.
-const tutorialCardEl = document.getElementById('tutorial-card');
-const tutorialStepEl = document.getElementById('tutorial-step');
-const tutorialStepsEl = document.getElementById('tutorial-steps');
-const tutorialCountEl = document.getElementById('tutorial-count');
-const tutorialBarEl = document.getElementById('tutorial-bar-fill');
-const tutorialSkipEl = document.getElementById('tutorial-skip');
-const tutorialStepsToggleEl = document.getElementById('tutorial-steps-toggle');
 let tutorialKey = '';
 let tutorialState = null;
 let tutorialCheerTimer = 0;
@@ -26076,7 +26225,6 @@ tutorialSkipEl?.addEventListener('click', () => {
   render();
 });
 document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
-const modeToolbarEl = document.querySelector('.mode-toolbar');
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
@@ -26269,12 +26417,6 @@ let selectedBeatIds = new Set();
 let beatAnchorId = null;
 let beatStripActive = false;
 let presenter = null; // { index, blank, fullscreen }
-const beatStripEl = document.getElementById('beat-strip');
-const beatListEl = document.getElementById('beat-list');
-const beatHintEl = document.getElementById('beat-hint');
-const presenterEl = document.getElementById('presenter');
-const presenterStageEl = document.getElementById('presenter-stage');
-const presenterCountEl = document.getElementById('presenter-count');
 
 /**
  * Derive the one interaction state used by the toolbar, canvas, and status
@@ -27224,7 +27366,6 @@ async function revealCurrentDocument() {
 // ----- toolbar fitting -------------------------------------------------------------
 // The top toolbar drops button text in stages as its row runs out of space (see
 // toolbar-fit.js). Refit when the bar resizes or the document title changes.
-const toolbarEl = document.querySelector('.toolbar');
 let toolbarFitFrame = 0;
 let titleMeasureContext = null;
 
@@ -28708,7 +28849,6 @@ function previewLayoutPlan(plan) {
   renderCanvas(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision);
 }
 
-const alignPanelEl = document.getElementById('align-panel');
 alignPanelEl?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-layout-align], [data-layout-distribute]');
   if (!button || button.disabled) return;
@@ -39029,8 +39169,6 @@ function modeToolbarControlFor(state) {
 // the strip with all four. The real tool buttons live in the strip, so their
 // bindings and pressed state are unchanged.
 const RAIL_FLYOUT_TOOLS = ['annotation', 'arrow', 'box', 'line'];
-const railFlyoutProxyEl = document.getElementById('btn-rail-annotate');
-const railFlyoutEl = document.getElementById('rail-flyout');
 let railFlyoutTool = 'annotation';
 
 function railFlyoutButton(tool) {
@@ -40309,7 +40447,6 @@ for (const toggle of document.querySelectorAll('.side-panel .panel-toggle')) {
   toggle.addEventListener('click', () => setPanelCollapsed(name, !section.classList.contains('collapsed')));
 }
 
-const panelFilterEl = document.getElementById('panel-filter');
 panelFilterEl?.addEventListener('input', () => {
   panelFilter = panelFilterEl.value.trim().replace(/[_^{}]/g, '').toLowerCase();
   panelStateKey = '';
@@ -40726,8 +40863,6 @@ for (const item of document.querySelectorAll('[data-proxy-for]')) {
 // toggle collapses it, remembered per browser. A narrow window (see style.css)
 // slides it over the canvas as a drawer that starts closed and closes on a
 // canvas press or Escape.
-const sidePanelEl = document.getElementById('side-panel');
-const sidePanelToggleEl = document.getElementById('btn-side-panel');
 const narrowPanelQuery = window.matchMedia('(max-width: 600px)');
 const SIDE_PANEL_COLLAPSED_KEY = 'mosfeteer.sidePanelCollapsed';
 
@@ -40814,7 +40949,6 @@ revealDocumentBtn?.addEventListener('click', revealCurrentDocument);
 document.getElementById('btn-open-file')?.addEventListener('click', openDocumentDialog);
 document.getElementById('btn-save-as')?.addEventListener('click', () => saveCircuit({ saveAs: true }));
 document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
-const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 function syncScrollSchemeButton() {
   scrollSchemeButton?.setAttribute('aria-checked', String(scrollScheme === 'trackpad'));
 }
@@ -40917,7 +41051,6 @@ document.getElementById('btn-help').addEventListener('click', () => {
 // ----- theme (dark mode) ---------------------------------------------
 
 const THEME_KEY = 'mosfeteer:theme';
-const themeBtn = document.getElementById('btn-theme');
 
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
@@ -40950,7 +41083,6 @@ if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
 
 // ----- grid toggle button --------------------------------------------
 
-const gridBtn = document.getElementById('btn-grid');
 
 /** Turn the placement grid on/off; keeps the toolbar button and the '#'
  *  keybinding in sync. */
@@ -40973,7 +41105,6 @@ if (gridBtn) {
 // Crosshair visibility is independent from pointer presence: the pointer
 // leaving the canvas hides it, while this toggle controls whether it may
 // render when the pointer is inside.
-const crosshairBtn = document.getElementById('btn-crosshair');
 function setCrosshair(on, announce = true) {
   crosshairVisible = !!on;
 
@@ -40986,7 +41117,6 @@ function setCrosshair(on, announce = true) {
 }
 // Placement guides are advisory, so they are a view toggle like the grid and
 // the crosshair rather than anything the document carries.
-const guidesBtn = document.getElementById('btn-guides');
 function setGuides(on, announce = true) {
   guidesVisible = !!on;
   if (guidesBtn) {
@@ -41444,7 +41574,6 @@ window.addEventListener('beforeunload', (ev) => {
   ev.returnValue = 'You have unsaved schematic changes.';
 });
 
-const paneEl = document.querySelector('.canvas-pane');
 
 function syncModeToolbarOverflow() {
   if (!modeToolbarEl) return;
@@ -41512,11 +41641,12 @@ statusCheckEl?.addEventListener('click', () => {
 });
 
 
-__exports.selectAllNetIds = selectAllNetIds;
-__exports.deriveInteractionState = deriveInteractionState;
 };
 
 __modules["src/web/persistence.js"] = function (__require, __exports) {
+__exports.defaultExportDirectory = defaultExportDirectory;
+__exports.createBrowserPersistenceAdapter = createBrowserPersistenceAdapter;
+__exports.createPersistenceAdapter = createPersistenceAdapter;
 let validDocumentName; __bind(() => { ({ validDocumentName } = __require("src/core/document.js")); });
 /**
  * Persistence boundary for the editor.
@@ -41862,12 +41992,14 @@ function createPersistenceAdapter({ fetchImpl = globalThis.fetch } = {}) {
 }
 
 __exports.validDocumentName = validDocumentName;
-__exports.defaultExportDirectory = defaultExportDirectory;
-__exports.createBrowserPersistenceAdapter = createBrowserPersistenceAdapter;
-__exports.createPersistenceAdapter = createPersistenceAdapter;
 };
 
 __modules["src/web/selection.js"] = function (__require, __exports) {
+__exports.copyableLabelPayload = copyableLabelPayload;
+__exports.selectedSetMoveSource = selectedSetMoveSource;
+__exports.completeSelectedNetIds = completeSelectedNetIds;
+__exports.chooseWireHitCandidate = chooseWireHitCandidate;
+__exports.nextStackedSelection = nextStackedSelection;
 
 
 /** Convert any standalone visual label, including a net label, to the
@@ -41978,14 +42110,12 @@ function nextStackedSelection(candidates = [], current = null) {
 }
 
 __exports.copySelectionParts = __require("src/core/selection.js").copySelectionParts;
-__exports.copyableLabelPayload = copyableLabelPayload;
-__exports.selectedSetMoveSource = selectedSetMoveSource;
-__exports.completeSelectedNetIds = completeSelectedNetIds;
-__exports.chooseWireHitCandidate = chooseWireHitCandidate;
-__exports.nextStackedSelection = nextStackedSelection;
 };
 
 __modules["src/web/status-bar.js"] = function (__require, __exports) {
+__exports.logDrawerTransition = logDrawerTransition;
+__exports.zoomPercent = zoomPercent;
+__exports.statusFields = statusFields;
 /**
  * Status bar and log drawer state.
  *
@@ -42053,13 +42183,11 @@ function statusFields({ mode, selection, cursor, hints = [] }) {
   };
 }
 
-__exports.logDrawerTransition = logDrawerTransition;
-__exports.zoomPercent = zoomPercent;
-__exports.statusFields = statusFields;
 __exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
 };
 
 __modules["src/web/tips.js"] = function (__require, __exports) {
+__exports.loadTipState = loadTipState;
 // Contextual tips: one short line in a corner of the canvas, offered when the
 // user is doing something a faster way exists for. They are deliberately
 // scarce. A tip waits until its situation has come up a few times, is retired
@@ -42173,7 +42301,6 @@ class TipBook {
   }
 }
 
-__exports.loadTipState = loadTipState;
 __exports.TIPS = TIPS;
 __exports.TIP_COOLDOWN_MS = TIP_COOLDOWN_MS;
 __exports.TIPS_PER_SESSION = TIPS_PER_SESSION;
@@ -42182,6 +42309,9 @@ __exports.TipBook = TipBook;
 };
 
 __modules["src/web/toolbar-fit.js"] = function (__require, __exports) {
+__exports.chooseToolbarStage = chooseToolbarStage;
+__exports.toolbarStageTokens = toolbarStageTokens;
+__exports.toolbarFits = toolbarFits;
 /**
  * The top toolbar is one row that gives way in stages as its space runs out,
  * least useful text first. Each stage adds one token to the toolbar's
@@ -42219,14 +42349,20 @@ function toolbarFits({ scrollWidth, clientWidth, titleWidth, titleTextWidth }) {
   return scrollWidth <= clientWidth + 1 && titleWidth + 1 >= Math.min(titleTextWidth, TITLE_COMFORT_PX);
 }
 
-__exports.chooseToolbarStage = chooseToolbarStage;
-__exports.toolbarStageTokens = toolbarStageTokens;
-__exports.toolbarFits = toolbarFits;
 __exports.TOOLBAR_STAGES = TOOLBAR_STAGES;
 __exports.TITLE_COMFORT_PX = TITLE_COMFORT_PX;
 };
 
 __modules["src/web/toolbar.js"] = function (__require, __exports) {
+__exports.fuzzyScore = fuzzyScore;
+__exports.placementSearchScore = placementSearchScore;
+__exports.withRecentType = withRecentType;
+__exports.minimalRevealScroll = minimalRevealScroll;
+__exports.componentPaletteItems = componentPaletteItems;
+__exports.editorKeymap = editorKeymap;
+__exports.editorKeymapText = editorKeymapText;
+__exports.layerActionForKey = layerActionForKey;
+__exports.layoutAlignKey = layoutAlignKey;
 /** Display names and extra search words for the insert menu, keyed by symbol type. */
 const PLACEMENT_LABELS = {
   resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode',
@@ -42564,15 +42700,6 @@ function layoutAlignKey({
   return LAYOUT_ALIGN_KEYS[key] || null;
 }
 
-__exports.fuzzyScore = fuzzyScore;
-__exports.placementSearchScore = placementSearchScore;
-__exports.withRecentType = withRecentType;
-__exports.minimalRevealScroll = minimalRevealScroll;
-__exports.componentPaletteItems = componentPaletteItems;
-__exports.editorKeymap = editorKeymap;
-__exports.editorKeymapText = editorKeymapText;
-__exports.layerActionForKey = layerActionForKey;
-__exports.layoutAlignKey = layoutAlignKey;
 __exports.PLACEMENT_LABELS = PLACEMENT_LABELS;
 __exports.PLACEMENT_ALIASES = PLACEMENT_ALIASES;
 __exports.INSERT_RECENT_LIMIT = INSERT_RECENT_LIMIT;
@@ -42581,6 +42708,10 @@ __exports.EDITOR_KEYMAP = EDITOR_KEYMAP;
 };
 
 __modules["src/web/tutorial.js"] = function (__require, __exports) {
+__exports.tutorialRoles = tutorialRoles;
+__exports.tutorialProgress = tutorialProgress;
+__exports.openTutorialTargets = openTutorialTargets;
+__exports.tutorialRuns = tutorialRuns;
 let INTERFACE_PIN_TYPES; __bind(() => { ({ INTERFACE_PIN_TYPES } = __require("src/core/model.js")); });
 // The first-drawing tutorial: a five-transistor OTA drawn step by step. It is
 // optional and self-contained. Each step is checked from the drawing's
@@ -42776,15 +42907,12 @@ function tutorialRuns(text) {
     .map((part) => (part.startsWith('**') ? { key: true, text: part.slice(2, -2) } : { key: false, text: part }));
 }
 
-__exports.tutorialRoles = tutorialRoles;
-__exports.tutorialProgress = tutorialProgress;
-__exports.openTutorialTargets = openTutorialTargets;
-__exports.tutorialRuns = tutorialRuns;
 __exports.TUTORIAL_TARGETS = TUTORIAL_TARGETS;
 __exports.TUTORIAL_STEPS = TUTORIAL_STEPS;
 };
 
 __modules["src/web/window-session.js"] = function (__require, __exports) {
+__exports.createWindowSession = createWindowSession;
 /**
  * One editor window among several open on the same origin.
  *
@@ -42992,13 +43120,14 @@ function defaultRandomId() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-__exports.createWindowSession = createWindowSession;
 __exports.LEGACY_DRAFT_KEY = LEGACY_DRAFT_KEY;
 __exports.WINDOW_STALE_MS = WINDOW_STALE_MS;
 __exports.ORPHAN_DRAFT_MS = ORPHAN_DRAFT_MS;
 };
 
 __modules["src/web/wire-index.js"] = function (__require, __exports) {
+__exports.buildWireHitIndex = buildWireHitIndex;
+__exports.queryWireHitIndex = queryWireHitIndex;
 let distanceToSegment; __bind(() => { ({ distanceToSegment } = __require("src/core/geometry.js")); });
 
 
@@ -43070,8 +43199,6 @@ function queryWireHitIndex(index, raw, snapped, tolerance) {
   return rawHits.length ? rawHits : measure(snapped);
 }
 
-__exports.buildWireHitIndex = buildWireHitIndex;
-__exports.queryWireHitIndex = queryWireHitIndex;
 };
   __require("src/web/main.js");
 }());
