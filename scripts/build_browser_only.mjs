@@ -41,7 +41,11 @@ function importBindings(specifier, dependency) {
       const [imported, as, local] = part.split(/\s+/);
       return as === 'as' ? `${imported}: ${local}` : imported;
     });
-    return `const { ${bindings.join(', ')} } = __require(${JSON.stringify(dependency)});`;
+    // Named imports are re-read once each module finishes loading, like ESM's
+    // live bindings: a module in an import cycle (beats <-> model) otherwise
+    // keeps the other's still-empty exports.
+    const names = bindings.map((binding) => binding.split(':').pop().trim());
+    return `let ${names.join(', ')}; __bind(() => { ({ ${bindings.join(', ')} } = __require(${JSON.stringify(dependency)})); });`;
   }
   if (source.startsWith('* as ')) return `const ${source.slice(5).trim()} = __require(${JSON.stringify(dependency)});`;
   throw new Error(`browser bundle encountered an unsupported import: ${specifier}`);
@@ -119,12 +123,18 @@ globalThis.__MOSFETEER_FONT_URL = ${JSON.stringify(embeddedFontUrl)};
 (function () {
   const __modules = Object.create(null);
   const __cache = Object.create(null);
+  const __bindings = [];
+  function __bind(read) {
+    __bindings.push(read);
+    read();
+  }
   function __require(id) {
     if (__cache[id]) return __cache[id];
     const __exports = {};
     __cache[id] = __exports;
     if (!__modules[id]) throw new Error('browser bundle module not found: ' + id);
     __modules[id](__require, __exports);
+    for (const read of __bindings) read();
     return __exports;
   }
 ${moduleSource}
