@@ -5064,16 +5064,6 @@ function copySelectionExists() {
   return multi.size > 0 || selLabels.size > 0 || selectedWires.size > 0 ||
     !!selectedWire || selectedNets.size > 0;
 }
-function expandCopyNetSelection() {
-  const netIds = new Set(selectedNets);
-  const refs = new Set(multi);
-  for (const id of netIds) {
-    const net = circuit.nets.get(id);
-    for (const terminal of net?.terminals || []) refs.add(terminal.comp);
-  }
-  if (refs.size) setSelection([...refs], selected && refs.has(selected) ? selected : [...refs][0], true);
-}
-
 export function beginCopySource(startWorld, startClient) {
   // An existing selection is the source, not the object under the cursor.
   // This matters for mixed Ctrl+A/marquee selections and makes the source
@@ -5103,7 +5093,6 @@ export function beginCopySource(startWorld, startClient) {
       return false;
     }
   }
-  expandCopyNetSelection();
   if (!copySelection()) return false;
   return startCopyGhost(startWorld, startClient);
 }

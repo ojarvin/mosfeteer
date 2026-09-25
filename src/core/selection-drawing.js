@@ -22,13 +22,11 @@ function schematicSubset(circuit, selection) {
   // takes its color from the source net it came from.
   const sourceOf = new Map(nets.map((net) => [net.id, net]));
   drawing.netHighlight = (net) => circuit.netHighlight(sourceOf.get(net?.id) || net);
-  const labelIds = new Set(freeLabels.map((label) => label.id));
-  drawing.labels = new Map([...circuit.labels].filter(([id, label]) =>
-    labelIds.has(id) || (label.owner && drawing.components.has(label.owner)) ||
-    (label.netId && drawing.nets.has(label.netId))));
   for (const [i, fragment] of fragments.entries()) {
+    // A wholly selected net keeps its id so its net labels still name it.
+    const keepId = fragment.whole && !drawing.nets.has(fragment.net.id);
     const net = new Net(drawing, {
-      id: `${fragment.net.id}-selection-${i}`, name: fragment.net.name,
+      id: keepId ? fragment.net.id : `${fragment.net.id}-selection-${i}`, name: fragment.net.name,
       style: fragment.net.style, drawOrder: fragment.net.drawOrder,
       routingMode: 'fixed', fixedPaths: fragment.paths.map((points) => ({ points })),
       junctions: fragment.junctions,
@@ -52,6 +50,10 @@ function schematicSubset(circuit, selection) {
     drawing.nets.set(net.id, net);
     sourceOf.set(net.id, fragment.net);
   }
+  const labelIds = new Set(freeLabels.map((label) => label.id));
+  drawing.labels = new Map([...circuit.labels].filter(([id, label]) =>
+    labelIds.has(id) || (label.owner && drawing.components.has(label.owner)) ||
+    (label.netId && drawing.nets.has(label.netId))));
   // Junction dots are derived parts of complete wire topology. Internal paste
   // recreates them; an image must retain the existing dots without mutating or
   // repairing the source drawing. Partial islands retain only real junctions.

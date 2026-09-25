@@ -123,6 +123,14 @@ export function copySelection({ quiet = false } = {}) {
     logLine('nothing selected to copy');
     return false;
   }
+  const netLabelPayload = (label) => ({
+    netId: label.netId,
+    text: label.text,
+    align: label.align,
+    netSide: label.netSide,
+    x: label.anchorWorld().x,
+    y: label.anchorWorld().y,
+  });
   const nets = parts.nets.map((net) => ({
     id: net.id,
     name: net.name,
@@ -131,18 +139,11 @@ export function copySelection({ quiet = false } = {}) {
     terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
     ...captureRouteGeometry(net),
     fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
-    netLabels: editor.circuit.netLabels(net).map((label) => ({
-      netId: net.id,
-      text: label.text,
-      align: label.align,
-      netSide: label.netSide,
-      x: label.anchorWorld().x,
-      y: label.anchorWorld().y,
-    })),
+    netLabels: editor.circuit.netLabels(net).map(netLabelPayload),
   }));
-  const fragments = parts.fragments.map(({ net, paths, junctions }) => ({
+  const fragments = parts.fragments.map(({ net, paths, junctions, netLabels = [] }) => ({
     name: net.name, routingMode: net.routingMode, allowDiagonal: net.allowDiagonal,
-    drawOrder: net.drawOrder, paths, junctions,
+    drawOrder: net.drawOrder, paths, junctions, netLabels: netLabels.map(netLabelPayload),
   }));
   // Grid-snapped anchor = bbox centre of the selection, so paste re-centres it
   // at the cursor without drifting off the grid.
@@ -535,6 +536,13 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
             if (paths[branch][segment - 1].x === paths[branch][segment].x && paths[branch][segment - 1].y === paths[branch][segment].y) continue;
             pastedWireKeys.push(`${net.id}:${branch}:${segment}`);
           }
+        }
+        for (const label of fragment.netLabels || []) {
+          const anchor = { x: label.x + dx, y: label.y + dy };
+          const pasted = net.name
+            ? editor.circuit.addNetLabel(net.id, { anchor, align: label.align, netSide: label.netSide })
+            : editor.circuit.addLabel({ text: '', netId: net.id, netSide: label.netSide, x: anchor.x, y: anchor.y, align: label.align });
+          addedNetLabels.push(pasted.id);
         }
       }
       editor.circuit._loading = wasLoading;

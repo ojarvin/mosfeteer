@@ -1,4 +1,5 @@
 import { extractWireFragments } from './model.js';
+import { pointOnPath } from './wiring.js';
 
 /** Owned labels bring their component; other labels remain visual selections. */
 export function copySelectionParts({ labels = [], refs = [], netIds = [] } = {}) {
@@ -12,12 +13,12 @@ export function copySelectionParts({ labels = [], refs = [], netIds = [] } = {})
 }
 
 /** One selection rule for in-editor copies and standalone drawings. Wire keys
- * use the editor's net:branch:segment identity (segments are one-based). */
+ * use the editor's net:branch:segment identity (segments are one-based).
+ * A selected net never brings the parts on its terminals: without them it is
+ * copied as its whole wire, carrying its net labels, and its pin ends become
+ * free wire ends. */
 export function resolveCopySelection(circuit, { refs = [], labels = [], netIds = [], wireKeys = [] } = {}) {
   const copy = copySelectionParts({ labels, refs, netIds });
-  for (const id of copy.netIds) {
-    for (const terminal of circuit.nets.get(id)?.terminals || []) copy.refs.add(terminal.comp);
-  }
   const comps = [...copy.refs].map((ref) => circuit.components.get(ref)).filter(Boolean);
   const compRefs = new Set(comps.map((comp) => comp.refdes));
   const labelIds = new Set(copy.labels.map((label) => label.id));
@@ -42,9 +43,21 @@ export function resolveCopySelection(circuit, { refs = [], labels = [], netIds =
       (copy.netIds.has(net.id) || (selected.length > 0 && selected.length === segmentCount));
     if ((internal && (!selected.length || selected.length === segmentCount)) || completeTerminalless) {
       nets.push(net);
+    } else if (copy.netIds.has(net.id)) {
+      const all = paths.flatMap((path, branch) => path.slice(1).map((_, i) => ({ branch, segment: i + 1 })));
+      const islands = extractWireFragments(paths, all, net.junctions)
+        .map((island) => ({ net, ...island, whole: true, netLabels: [] }));
+      // Each net label rides the island it sits on; one off every path, the first.
+      for (const label of circuit.netLabels(net)) {
+        const home = islands.find((island) => island.paths.some((path) => pointOnPath(label.anchorWorld(), path))) || islands[0];
+        home?.netLabels.push(label);
+      }
+      fragments.push(...islands);
     } else if (selected.length) {
       for (const island of extractWireFragments(paths, selected, net.junctions)) fragments.push({ net, ...island });
     }
   }
-  return { comps, freeLabels, nets, fragments };
+  // A net label that travels with its copied wire is not also a loose label.
+  const carried = new Set([...nets.map((net) => net.id), ...fragments.filter((fragment) => fragment.whole).map((fragment) => fragment.net.id)]);
+  return { comps, freeLabels: freeLabels.filter((label) => !carried.has(label.netId)), nets, fragments };
 }

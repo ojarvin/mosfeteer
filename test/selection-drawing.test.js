@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { Circuit, Net } from '../src/core/model.js';
 import { resolveCopySelection } from '../src/core/selection.js';
 import { selectionDrawing } from '../src/core/selection-drawing.js';
+import { addTerminalStubs } from '../src/core/stubs.js';
 
 function fixture() {
   const circuit = new Circuit();
@@ -44,11 +45,34 @@ test('complete component sets include internal physical nets and their labels', 
   assert.deepEqual(parts.nets, [net]);
 });
 
-test('explicit whole-net selection brings its terminals, and an owned label brings its component', () => {
-  const { circuit, net } = fixture();
+test('explicit whole-net selection draws its wire and net labels, not its terminals', () => {
+  const { circuit, net, netLabel } = fixture();
   const svg = selectionDrawing(circuit, { netIds: [net.id] });
-  assert.match(svg, /data-ref="R1"/);
-  assert.match(svg, /data-ref="R2"/);
+  assert.doesNotMatch(svg, /data-ref=/);
+  assert.ok(svg.includes(wireId(net)));
+  assert.ok(svg.includes(`data-label-id="${netLabel.id}"`));
+  const parts = resolveCopySelection(circuit, { netIds: [net.id] });
+  assert.deepEqual(parts.comps, []);
+  assert.equal(parts.fragments.length, 1);
+  assert.deepEqual(parts.fragments[0].netLabels, [netLabel]);
+});
+
+test('a labelled stub on a MOS gate copies only the stub and its net label', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 400, y: 400 });
+  const [stub] = addTerminalStubs(circuit, ['M1']).stubs.filter((entry) => entry.ref === 'M1.g');
+  const parts = resolveCopySelection(circuit, { netIds: [stub.netId], labels: [circuit.labels.get(stub.labelId)] });
+  assert.deepEqual(parts.comps, []);
+  assert.equal(parts.nets.length, 0);
+  assert.equal(parts.fragments.length, 1);
+  assert.deepEqual(parts.fragments[0].paths, [[{ x: 280, y: 400 }, { x: 200, y: 400 }]]);
+  assert.deepEqual(parts.fragments[0].netLabels.map((label) => label.id), [stub.labelId]);
+  // The selected net label is not also copied as a loose annotation.
+  assert.deepEqual(parts.freeLabels, []);
+});
+
+test('an owned label brings its component', () => {
+  const { circuit } = fixture();
   const owned = [...circuit.labels.values()].find((label) => label.owner === 'R1');
   const labelSvg = selectionDrawing(circuit, { labels: [owned] });
   assert.match(labelSvg, /data-ref="R1"/);

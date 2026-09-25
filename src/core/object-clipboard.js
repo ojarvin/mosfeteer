@@ -66,6 +66,8 @@ function labelProblem(label) {
   return null;
 }
 
+const netLabelsValid = (labels) => Array.isArray(labels) && labels.every((label) => isObject(label) && finite(label.x) && finite(label.y));
+
 function netProblem(net) {
   if (!isObject(net)) return 'a net is not an object';
   if (!text(net.id)) return 'a net has no id';
@@ -79,9 +81,7 @@ function netProblem(net) {
     if (!optional(net.route, path) || !optional(net.branches, (branches) => Array.isArray(branches) && branches.every(path))) return `net ${net.id} has bad wires`;
     if (!Array.isArray(net.junctions) || !net.junctions.every(point)) return `net ${net.id} has bad junctions`;
   }
-  if (!optional(net.netLabels, (labels) => Array.isArray(labels) && labels.every((label) => isObject(label) && finite(label.x) && finite(label.y)))) {
-    return `net ${net.id} has bad labels`;
-  }
+  if (!optional(net.netLabels, netLabelsValid)) return `net ${net.id} has bad labels`;
   return null;
 }
 
@@ -90,6 +90,7 @@ function fragmentProblem(fragment) {
   if (!Array.isArray(fragment.paths) || !fragment.paths.length || !fragment.paths.every(path)) return 'a wire has bad points';
   if (!Array.isArray(fragment.junctions) || !fragment.junctions.every(point)) return 'a wire has bad junctions';
   if (!optional(fragment.name, text)) return 'a wire has a bad net name';
+  if (!optional(fragment.netLabels, netLabelsValid)) return 'a wire has bad labels';
   return null;
 }
 

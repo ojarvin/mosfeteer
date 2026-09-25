@@ -18993,6 +18993,8 @@ function labelProblem(label) {
   return null;
 }
 
+const netLabelsValid = (labels) => Array.isArray(labels) && labels.every((label) => isObject(label) && finite(label.x) && finite(label.y));
+
 function netProblem(net) {
   if (!isObject(net)) return 'a net is not an object';
   if (!text(net.id)) return 'a net has no id';
@@ -19006,9 +19008,7 @@ function netProblem(net) {
     if (!optional(net.route, path) || !optional(net.branches, (branches) => Array.isArray(branches) && branches.every(path))) return `net ${net.id} has bad wires`;
     if (!Array.isArray(net.junctions) || !net.junctions.every(point)) return `net ${net.id} has bad junctions`;
   }
-  if (!optional(net.netLabels, (labels) => Array.isArray(labels) && labels.every((label) => isObject(label) && finite(label.x) && finite(label.y)))) {
-    return `net ${net.id} has bad labels`;
-  }
+  if (!optional(net.netLabels, netLabelsValid)) return `net ${net.id} has bad labels`;
   return null;
 }
 
@@ -19017,6 +19017,7 @@ function fragmentProblem(fragment) {
   if (!Array.isArray(fragment.paths) || !fragment.paths.length || !fragment.paths.every(path)) return 'a wire has bad points';
   if (!Array.isArray(fragment.junctions) || !fragment.junctions.every(point)) return 'a wire has bad junctions';
   if (!optional(fragment.name, text)) return 'a wire has a bad net name';
+  if (!optional(fragment.netLabels, netLabelsValid)) return 'a wire has bad labels';
   return null;
 }
 
@@ -21953,13 +21954,11 @@ function schematicSubset(circuit, selection) {
   // takes its color from the source net it came from.
   const sourceOf = new Map(nets.map((net) => [net.id, net]));
   drawing.netHighlight = (net) => circuit.netHighlight(sourceOf.get(net?.id) || net);
-  const labelIds = new Set(freeLabels.map((label) => label.id));
-  drawing.labels = new Map([...circuit.labels].filter(([id, label]) =>
-    labelIds.has(id) || (label.owner && drawing.components.has(label.owner)) ||
-    (label.netId && drawing.nets.has(label.netId))));
   for (const [i, fragment] of fragments.entries()) {
+    // A wholly selected net keeps its id so its net labels still name it.
+    const keepId = fragment.whole && !drawing.nets.has(fragment.net.id);
     const net = new Net(drawing, {
-      id: `${fragment.net.id}-selection-${i}`, name: fragment.net.name,
+      id: keepId ? fragment.net.id : `${fragment.net.id}-selection-${i}`, name: fragment.net.name,
       style: fragment.net.style, drawOrder: fragment.net.drawOrder,
       routingMode: 'fixed', fixedPaths: fragment.paths.map((points) => ({ points })),
       junctions: fragment.junctions,
@@ -21983,6 +21982,10 @@ function schematicSubset(circuit, selection) {
     drawing.nets.set(net.id, net);
     sourceOf.set(net.id, fragment.net);
   }
+  const labelIds = new Set(freeLabels.map((label) => label.id));
+  drawing.labels = new Map([...circuit.labels].filter(([id, label]) =>
+    labelIds.has(id) || (label.owner && drawing.components.has(label.owner)) ||
+    (label.netId && drawing.nets.has(label.netId))));
   // Junction dots are derived parts of complete wire topology. Internal paste
   // recreates them; an image must retain the existing dots without mutating or
   // repairing the source drawing. Partial islands retain only real junctions.
@@ -22034,6 +22037,8 @@ __modules["src/core/selection.js"] = function (__require, __exports) {
 __exports.copySelectionParts = copySelectionParts;
 __exports.resolveCopySelection = resolveCopySelection;
 let extractWireFragments; __bind(() => { ({ extractWireFragments } = __require("src/core/model.js")); });
+let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
+
 
 
 /** Owned labels bring their component; other labels remain visual selections. */
@@ -22048,12 +22053,12 @@ function copySelectionParts({ labels = [], refs = [], netIds = [] } = {}) {
 }
 
 /** One selection rule for in-editor copies and standalone drawings. Wire keys
- * use the editor's net:branch:segment identity (segments are one-based). */
+ * use the editor's net:branch:segment identity (segments are one-based).
+ * A selected net never brings the parts on its terminals: without them it is
+ * copied as its whole wire, carrying its net labels, and its pin ends become
+ * free wire ends. */
 function resolveCopySelection(circuit, { refs = [], labels = [], netIds = [], wireKeys = [] } = {}) {
   const copy = copySelectionParts({ labels, refs, netIds });
-  for (const id of copy.netIds) {
-    for (const terminal of circuit.nets.get(id)?.terminals || []) copy.refs.add(terminal.comp);
-  }
   const comps = [...copy.refs].map((ref) => circuit.components.get(ref)).filter(Boolean);
   const compRefs = new Set(comps.map((comp) => comp.refdes));
   const labelIds = new Set(copy.labels.map((label) => label.id));
@@ -22078,11 +22083,23 @@ function resolveCopySelection(circuit, { refs = [], labels = [], netIds = [], wi
       (copy.netIds.has(net.id) || (selected.length > 0 && selected.length === segmentCount));
     if ((internal && (!selected.length || selected.length === segmentCount)) || completeTerminalless) {
       nets.push(net);
+    } else if (copy.netIds.has(net.id)) {
+      const all = paths.flatMap((path, branch) => path.slice(1).map((_, i) => ({ branch, segment: i + 1 })));
+      const islands = extractWireFragments(paths, all, net.junctions)
+        .map((island) => ({ net, ...island, whole: true, netLabels: [] }));
+      // Each net label rides the island it sits on; one off every path, the first.
+      for (const label of circuit.netLabels(net)) {
+        const home = islands.find((island) => island.paths.some((path) => pointOnPath(label.anchorWorld(), path))) || islands[0];
+        home?.netLabels.push(label);
+      }
+      fragments.push(...islands);
     } else if (selected.length) {
       for (const island of extractWireFragments(paths, selected, net.junctions)) fragments.push({ net, ...island });
     }
   }
-  return { comps, freeLabels, nets, fragments };
+  // A net label that travels with its copied wire is not also a loose label.
+  const carried = new Set([...nets.map((net) => net.id), ...fragments.filter((fragment) => fragment.whole).map((fragment) => fragment.net.id)]);
+  return { comps, freeLabels: freeLabels.filter((label) => !carried.has(label.netId)), nets, fragments };
 }
 
 };
@@ -27374,6 +27391,14 @@ function copySelection({ quiet = false } = {}) {
     logLine('nothing selected to copy');
     return false;
   }
+  const netLabelPayload = (label) => ({
+    netId: label.netId,
+    text: label.text,
+    align: label.align,
+    netSide: label.netSide,
+    x: label.anchorWorld().x,
+    y: label.anchorWorld().y,
+  });
   const nets = parts.nets.map((net) => ({
     id: net.id,
     name: net.name,
@@ -27382,18 +27407,11 @@ function copySelection({ quiet = false } = {}) {
     terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
     ...captureRouteGeometry(net),
     fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
-    netLabels: editor.circuit.netLabels(net).map((label) => ({
-      netId: net.id,
-      text: label.text,
-      align: label.align,
-      netSide: label.netSide,
-      x: label.anchorWorld().x,
-      y: label.anchorWorld().y,
-    })),
+    netLabels: editor.circuit.netLabels(net).map(netLabelPayload),
   }));
-  const fragments = parts.fragments.map(({ net, paths, junctions }) => ({
+  const fragments = parts.fragments.map(({ net, paths, junctions, netLabels = [] }) => ({
     name: net.name, routingMode: net.routingMode, allowDiagonal: net.allowDiagonal,
-    drawOrder: net.drawOrder, paths, junctions,
+    drawOrder: net.drawOrder, paths, junctions, netLabels: netLabels.map(netLabelPayload),
   }));
   // Grid-snapped anchor = bbox centre of the selection, so paste re-centres it
   // at the cursor without drifting off the grid.
@@ -27786,6 +27804,13 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
             if (paths[branch][segment - 1].x === paths[branch][segment].x && paths[branch][segment - 1].y === paths[branch][segment].y) continue;
             pastedWireKeys.push(`${net.id}:${branch}:${segment}`);
           }
+        }
+        for (const label of fragment.netLabels || []) {
+          const anchor = { x: label.x + dx, y: label.y + dy };
+          const pasted = net.name
+            ? editor.circuit.addNetLabel(net.id, { anchor, align: label.align, netSide: label.netSide })
+            : editor.circuit.addLabel({ text: '', netId: net.id, netSide: label.netSide, x: anchor.x, y: anchor.y, align: label.align });
+          addedNetLabels.push(pasted.id);
         }
       }
       editor.circuit._loading = wasLoading;
@@ -37576,16 +37601,6 @@ function copySelectionExists() {
   return multi.size > 0 || selLabels.size > 0 || selectedWires.size > 0 ||
     !!selectedWire || selectedNets.size > 0;
 }
-function expandCopyNetSelection() {
-  const netIds = new Set(selectedNets);
-  const refs = new Set(multi);
-  for (const id of netIds) {
-    const net = circuit.nets.get(id);
-    for (const terminal of net?.terminals || []) refs.add(terminal.comp);
-  }
-  if (refs.size) setSelection([...refs], selected && refs.has(selected) ? selected : [...refs][0], true);
-}
-
 function beginCopySource(startWorld, startClient) {
   // An existing selection is the source, not the object under the cursor.
   // This matters for mixed Ctrl+A/marquee selections and makes the source
@@ -37615,7 +37630,6 @@ function beginCopySource(startWorld, startClient) {
       return false;
     }
   }
-  expandCopyNetSelection();
   if (!copySelection()) return false;
   return startCopyGhost(startWorld, startClient);
 }
