@@ -18,7 +18,8 @@ import { logLine, renderStatus } from './status-bar-ui.js';
 import { activeBeatIndex, beatLabel } from './beats-ui.js';
 import { persistence, displayPath } from './document-session.js';
 import { editor } from './editor-state.js';
-import { copySelectionSource, render, syncRenderedLabelMetrics } from './main.js';
+import { copySelectionSource } from './copy-paste.js';
+import { render, syncRenderedLabelMetrics } from './main.js';
 
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
 

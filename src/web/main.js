@@ -20,13 +20,11 @@ import { componentShapeSvg, editorOverlay, svgString } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
 import { loadDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
-import { resolveCopySelection } from '../core/selection.js';
-import { encodeObjectClipboard, decodeObjectClipboard } from '../core/object-clipboard.js';
 import { applyTransform, distanceToSegment } from '../core/geometry.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
-import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } from './selection.js';
+import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { layerActionForKey, layoutAlignKey, naturalCompare } from './toolbar.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } from './interaction.js';
@@ -62,11 +60,12 @@ import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, op
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
 import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } from './side-panel.js';
-import { toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls } from './style-controls.js';
+import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt } from './annotation-tools.js';
+import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -523,14 +522,11 @@ export function scheduleInteractionRender() {
   renderFrame = requestAnimationFrame(() => { renderFrame = null; render(); });
 }
 
-export function copySelectionSource() {
-  const wireKeys = new Set(selectedWires);
-  if (selectedWire) wireKeys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
-  return {
-    refs: multi, labels: selectedLabels(), netIds: selectedNets, wireKeys,
-  };
-}
-
+/** Copied selection. `nets` are complete electrical nets; `fragments` are
+ * terminal-less geometric islands extracted from selected segments. A net label
+ * selected on its own is stored in `labels` as a floating annotation. */
+let clipboard = null;
+installCopyPaste();
 // ----- toolbar fitting -------------------------------------------------------------
 
 let toolbarFitKey = '';
@@ -631,7 +627,7 @@ function clonePoints(points, move = clonePoint) {
   return (points || []).map(move);
 }
 /** Copy fixed-path entries so a drag snapshot shares nothing with the live net. */
-function cloneFixedPaths(entries, move = clonePoint) {
+export function cloneFixedPaths(entries, move = clonePoint) {
   return (entries || []).map((entry) => ({
     points: clonePoints(entry.points, move),
     start: entry.start ? { ...entry.start } : null,
@@ -646,7 +642,7 @@ function captureFixedGeometry(net) {
   return { fixedPaths: cloneFixedPaths(net.fixedPaths), junctions: clonePoints(net.junctions) };
 }
 /** Managed route geometry of one net, detached from the live model. */
-function captureRouteGeometry(net, move = clonePoint) {
+export function captureRouteGeometry(net, move = clonePoint) {
   return {
     route: net.route ? clonePoints(net.route, move) : null,
     branches: net.branches ? net.branches.map((path) => clonePoints(path, move)) : null,
@@ -898,7 +894,7 @@ export function applyEditorSelection(target, extend = false) {
 
 /** Drop segment keys whose net/branch/segment no longer exists.  Topology
  * edits, undo/load, and MST reduction can all invalidate branch indices. */
-function validateSelectedWires() {
+export function validateSelectedWires() {
   const valid = new Set();
   for (const key of selectedWires) {
     const w = keyToWire(key);
@@ -1304,99 +1300,6 @@ export function restackSelected(direction) {
   render();
 }
 
-function mirroredCopyGhostOperation(operation) {
-  if (operation === 'rotate') return 'rotateCCW';
-  if (operation === 'rotateCCW') return 'rotate';
-  return operation;
-}
-
-/** Keep the secondary copy as the exact symmetric image of a transformed
- * primary copy. Keyboard transforms do not pass through moveCopyGhost(), so
- * the mirror must be transformed in the same event instead of waiting for a
- * later pointer move to rebuild it. */
-function refreshCopyGhostMirror({ operation = null, pivot = null, translation = null } = {}) {
-  const ghost = drag?.ghost;
-  const mirror = ghost?.mirror;
-  if (!ghost || !mirror || !symmetry?.operation) return true;
-  if (translation) {
-    const dx = symmetry.operation === 'mirrorX' ? -translation.dx : translation.dx;
-    const dy = symmetry.operation === 'mirrorY' ? -translation.dy : translation.dy;
-    translateCopyGhost(mirror, dx, dy);
-  } else if (operation && pivot) {
-    const mirrorPivot = transformWorldPoints([pivot], symmetry.pin, symmetry.operation)[0];
-    restoreCopyGhostSelection(mirror);
-    const changed = transformMixedSelection(mirroredCopyGhostOperation(operation), {
-      recordHistory: false,
-      center: mirrorPivot,
-    });
-    restoreCopyGhostSelection(ghost);
-    if (!changed) return false;
-  }
-  mirror.baseGeometry = captureCopyGhostGeometry(mirror);
-  return true;
-}
-
-function refreshCopyGhostBase(transform = {}) {
-  if (drag?.mode === 'copyghost' && drag.ghost) {
-    refreshCopyGhostMirror(transform);
-    drag.ghost.baseSnapshot = snapshot();
-    drag.ghost.baseGeometry = captureCopyGhostGeometry(drag.ghost);
-    // The base snapshot now already contains the ghost at the current cursor.
-    // Reset the translation origin so the next mousemove applies only its
-    // incremental delta instead of translating from the old copy start.
-    drag.startWorld = { x: snap(cursor.x), y: snap(cursor.y) };
-    drag.ghost.startWorld = { ...drag.startWorld };
-  }
-}
-
-function captureCopyGhostGeometry(ghost) {
-  const comps = new Map();
-  for (const ref of ghost.refs) {
-    const comp = circuit.components.get(ref);
-    if (comp) comps.set(ref, { x: comp.transform.x, y: comp.transform.y });
-  }
-  const labels = new Map();
-  for (const id of ghost.labels) {
-    const label = circuit.labels.get(id);
-    if (!label || label.owner) continue;
-    labels.set(id, {
-      anchor: { ...label.anchor },
-      end: label.end ? { ...label.end } : null,
-      points: label.points ? label.points.map((point) => ({ ...point })) : null,
-      textAnchor: label.textAnchor ? { ...label.textAnchor } : null,
-    });
-  }
-  const nets = new Map();
-  for (const id of ghost.netIds) {
-    const net = circuit.nets.get(id);
-    if (net) nets.set(id, captureNetGeometry(net));
-  }
-  return { comps, labels, nets };
-}
-
-function restoreCopyGhostGeometry(ghost) {
-  for (const [ref, origin] of ghost.baseGeometry?.comps || []) {
-    const comp = circuit.components.get(ref);
-    if (comp) {
-      comp.transform.x = origin.x;
-      comp.transform.y = origin.y;
-    }
-  }
-  for (const [id, origin] of ghost.baseGeometry?.labels || []) {
-    const label = circuit.labels.get(id);
-    if (!label || label.owner) continue;
-    label.anchor = { ...origin.anchor };
-    if (origin.end) label.end = { ...origin.end };
-    if (origin.points) label.points = origin.points.map((point) => ({ ...point }));
-    if (origin.textAnchor) label.textAnchor = { ...origin.textAnchor };
-  }
-  for (const [id, origin] of ghost.baseGeometry?.nets || []) {
-    const net = circuit.nets.get(id);
-    if (net) translateNetGeometry(net, origin, 0, 0);
-  }
-  circuit.invalidateRoutingCache();
-}
-
 function applySingletonWorldTransform(comp, operation, pivot = null) {
   const center = pivot || { x: comp.transform.x, y: comp.transform.y };
   const next = transformComponentWorld(comp.transform, center, operation);
@@ -1557,7 +1460,7 @@ function mirrorSelectionAbout(axis) {
 /** World-space transform for a mixed component/label/wire selection. Attached
  * nets must be wholly selected (and all their terminals selected); otherwise a
  * transform would need unsafe detach/rubber-band semantics and is rejected. */
-function transformMixedSelection(operation, { recordHistory = true, center: pivot = null, translation = null } = {}) {
+export function transformMixedSelection(operation, { recordHistory = true, center: pivot = null, translation = null } = {}) {
   const delta = translation && Number.isFinite(translation.dx) && Number.isFinite(translation.dy)
     ? { dx: snap(translation.dx), dy: snap(translation.dy) }
     : null;
@@ -1961,7 +1864,7 @@ function copyGhostSymmetryPin() {
  *  degrees just as the second pair is being positioned. Until a pair is
  *  committed it still follows the cursor, so a first move in the wrong
  *  direction costs nothing. */
-function syncSymmetryOperation() {
+export function syncSymmetryOperation() {
   if (!symmetry || symmetry.settled) return;
   if (symmetry.waitingForMotion) return;
   // A copy can be armed from an arbitrary point in a multi-device selection.
@@ -5206,7 +5109,7 @@ function detachMoveComponents(drag) {
   return selectedNetIds;
 }
 
-function captureNetGeometry(net) {
+export function captureNetGeometry(net) {
   return {
     ...captureRouteGeometry(net),
     fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
@@ -5237,7 +5140,7 @@ function snappedDragDelta(startWorld, currentWorld) {
   };
 }
 
-function translateNetGeometry(net, saved, dx, dy) {
+export function translateNetGeometry(net, saved, dx, dy) {
   const move = (p) => ({ x: p.x + dx, y: p.y + dy });
   Object.assign(net, captureRouteGeometry(saved, move));
   if (net.routingMode === 'fixed' && saved.fixedPaths) net.fixedPaths = cloneFixedPaths(saved.fixedPaths, move);
@@ -7004,471 +6907,6 @@ function onNormalKey(key, shiftKey = false) {
 installHelp();
 
 // ----- command console ---------------------------------------------------
-
-/** Copied selection. `nets` are complete electrical nets; `fragments` are
- * terminal-less geometric islands extracted from selected segments. A net label
- * selected on its own is stored in `labels` as a floating annotation. */
-let clipboard = null;
-
-function copySelection({ quiet = false } = {}) {
-  const parts = resolveCopySelection(circuit, copySelectionSource());
-  const { comps, freeLabels } = parts;
-  if (!comps.length && !freeLabels.length && !parts.nets.length && !parts.fragments.length) {
-    logLine('nothing selected to copy');
-    return false;
-  }
-  const nets = parts.nets.map((net) => ({
-    id: net.id,
-    name: net.name,
-    routingMode: net.routingMode,
-    drawOrder: net.drawOrder,
-    terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
-    ...captureRouteGeometry(net),
-    fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
-    netLabels: circuit.netLabels(net).map((label) => ({
-      netId: net.id,
-      text: label.text,
-      align: label.align,
-      netSide: label.netSide,
-      x: label.anchorWorld().x,
-      y: label.anchorWorld().y,
-    })),
-  }));
-  const fragments = parts.fragments.map(({ net, paths, junctions }) => ({
-    name: net.name, routingMode: net.routingMode, allowDiagonal: net.allowDiagonal,
-    drawOrder: net.drawOrder, paths, junctions,
-  }));
-  // Grid-snapped anchor = bbox centre of the selection, so paste re-centres it
-  // at the cursor without drifting off the grid.
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  const addRect = (r) => {
-    x0 = Math.min(x0, r.x);
-    y0 = Math.min(y0, r.y);
-    x1 = Math.max(x1, r.x + r.w);
-    y1 = Math.max(y1, r.y + r.h);
-  };
-  for (const c of comps) addRect(c.bboxWorld());
-  for (const l of freeLabels) addRect(l.bbox());
-  for (const net of [...nets, ...fragments]) {
-    const paths = net.paths || (net.path ? [net.path] : (net.branches || net.fixedPaths?.map((e) => e.points) || (net.route ? [net.route] : [])));
-    for (const path of paths) for (const p of path) addRect({ x: p.x, y: p.y, w: 0, h: 0 });
-  }
-  if (!Number.isFinite(x0)) x0 = y0 = x1 = y1 = 0;
-  const anchor = { x: snap((x0 + x1) / 2), y: snap((y0 + y1) / 2) };
-  const styleSource = selectedStyleSource();
-  clipboard = {
-    comps: comps.map((c) => ({
-      origRef: c.refdes,
-      type: c.type,
-      x: c.transform.x,
-      y: c.transform.y,
-      rotation: c.transform.rotation,
-      mirrorX: c.transform.mirrorX,
-      mirrorY: c.transform.mirrorY,
-      negativeInputs: c.negativeInputs ? [...c.negativeInputs] : [],
-      joinBar: !!c.joinBar,
-      style: { ...(c.style || {}) },
-      // The value: a resistance, a switch's phase.
-      value: c.value,
-    })),
-    labels: freeLabels.map(copyableLabelPayload),
-    nets,
-    fragments,
-    anchor,
-    style: styleSource?.style || null,
-  };
-
-  if (!quiet) logLine(`copied ${comps.length} component(s), ${freeLabels.length} label(s), ${nets.length} net(s), ${fragments.length} wire island(s)`);
-  return true;
-}
-
-function copyGhostSelection() {
-  return {
-    refs: selectedComps().map((c) => c.refdes),
-    labels: selectedLabels().map((l) => l.id),
-    netIds: [...new Set([...circuit.nets.keys()])],
-    wireKeys: [...selectedWires],
-  };
-}
-
-function restoreCopyGhostSelection(ghost) {
-  setSelection(ghost.refs, ghost.refs[0], true);
-  setLabelSelection(ghost.labels, ghost.labels[0], true);
-  selectedNets = new Set(ghost.netIds.filter((id) => circuit.nets.has(id)));
-  selectedWires = new Set(ghost.wireKeys);
-  selectedWire = selectedWires.size ? keyToWire(selectedWires.values().next().value) : null;
-  validateSelectedWires();
-}
-
-function translateCopyGhost(ghost, dx, dy) {
-  for (const ref of ghost.refs) {
-    const comp = circuit.components.get(ref);
-    if (comp) {
-      comp.transform.x += dx;
-      comp.transform.y += dy;
-    }
-  }
-  for (const id of ghost.labels) {
-    const label = circuit.labels.get(id);
-    if (!label || label.owner) continue;
-    label.anchor.x += dx;
-    label.anchor.y += dy;
-    if (['arrow', 'box', 'line'].includes(label.kind)) {
-      label.end.x += dx;
-      label.end.y += dy;
-      if (label.points) label.points = label.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
-      label.textAnchor.x += dx;
-      label.textAnchor.y += dy;
-    }
-  }
-  for (const id of ghost.netIds) {
-    const net = circuit.nets.get(id);
-    if (!net) continue;
-    const move = (p) => ({ x: p.x + dx, y: p.y + dy });
-    if (net.routingMode === 'fixed') {
-      for (const entry of net.fixedPaths) entry.points = entry.points.map(move);
-    } else {
-      if (net.route) net.route = net.route.map(move);
-      if (net.branches) net.branches = net.branches.map((path) => path.map(move));
-    }
-    net.junctions = net.junctions.map(move);
-  }
-  circuit.invalidateRoutingCache();
-  circuit.syncJunctionSolders();
-}
-
-function startCopyGhost(startWorld, startClient, anchorShift = null) {
-  if (!clipboard) return false;
-  const beforeSnapshot = snapshot();
-  const existingNetIds = new Set(circuit.nets.keys());
-  const start = { x: snap(startWorld.x), y: snap(startWorld.y) };
-  cursor = start;
-  pasteClipboard({ recordHistory: false, connect: false });
-  const ghost = copyGhostSelection();
-  ghost.netIds = ghost.netIds.filter((id) => !existingNetIds.has(id));
-  // The source click is the placement anchor, not the clipboard set center.
-  // Translate the freshly pasted set back by the same offset so the clicked
-  // source point remains under the cursor while all relative geometry stays
-  // unchanged.
-  const shift = anchorShift || {
-    x: clipboard.anchor.x - start.x,
-    y: clipboard.anchor.y - start.y,
-  };
-  translateCopyGhost(ghost, shift.x, shift.y);
-  ghost.anchorShift = { ...shift };
-  markModelChanged();
-  ghost.beforeSnapshot = beforeSnapshot;
-  ghost.baseSnapshot = snapshot();
-  ghost.baseGeometry = captureCopyGhostGeometry(ghost);
-  ghost.startWorld = start;
-  drag = {
-    mode: 'copyghost',
-    startWorld: start,
-    startClient,
-    ghost,
-    moved: false,
-    rubber: null,
-  };
-  copyPending = true;
-  if (altHeld) setSymmetry(true);
-  render();
-  return true;
-}
-
-function moveCopyGhost(w) {
-  if (!drag?.ghost) return;
-  const ghost = drag.ghost;
-  if (ghost.baseGeometry) {
-    restoreCopyGhostGeometry(ghost);
-  } else {
-    circuit = Circuit.fromJSON(JSON.parse(ghost.baseSnapshot));
-  }
-  // Aim the axis from the new cursor and, the first time it has a direction,
-  // arm the mirror while the primary is still sitting at its base.
-  if (symmetry && !symmetry.settled) {
-    cursor = { x: snap(w.x), y: snap(w.y) };
-    if (symmetry.waitingForMotion) {
-      const armed = symmetry.armedCursor || symmetry.pin;
-      if (cursor.x !== armed.x || cursor.y !== armed.y) symmetry.waitingForMotion = false;
-    }
-    syncSymmetryOperation();
-  }
-  if (symmetry?.operation && !ghost.mirror) armCopyGhostMirror();
-  const dx = snap(w.x) - snap(drag.startWorld.x);
-  const dy = snap(w.y) - snap(drag.startWorld.y);
-  translateCopyGhost(ghost, dx, dy);
-  if (ghost.mirror) {
-    restoreCopyGhostGeometry(ghost.mirror);
-    // Reflecting a translated set is the same as translating the reflected
-    // one by the reflected delta, so the mirror never has to be rebuilt.
-    translateCopyGhost(ghost.mirror,
-      symmetry?.operation === 'mirrorY' ? dx : -dx,
-      symmetry?.operation === 'mirrorY' ? -dy : dy);
-  }
-  restoreCopyGhostSelection(ghost);
-  cursor = { x: snap(w.x), y: snap(w.y) };
-  markModelChanged();
-}
-
-/** Arm the mirrored half of a copy ghost. Duplicate the primary ghost's
- *  current state first, so an explicit rotate/mirror performed before Alt is
- *  preserved, then reflect that duplicate about the drag-selected axis.
- *  Keeping its own base geometry means every later pointer move is only a
- *  translation, since reflecting a translated set is the same as translating
- *  the reflected one by the reflected delta. */
-function armCopyGhostMirror() {
-  const ghost = drag?.ghost;
-  if (!ghost || !symmetry?.operation || ghost.mirror || !clipboard) return false;
-  const beforeSnapshot = snapshot();
-  const existingNets = new Set(circuit.nets.keys());
-  const existingComps = new Set(circuit.components.keys());
-  const existingLabels = new Set(circuit.labels.keys());
-  const savedCursor = { ...cursor };
-  const savedClipboard = clipboard;
-  // Re-copy the live primary ghost instead of using the original clipboard.
-  // This carries its current component transforms, labels, and internal nets
-  // into the new half before the symmetry transform is applied.
-  restoreCopyGhostSelection(ghost);
-  if (!copySelection()) {
-    clipboard = savedClipboard;
-    cursor = savedCursor;
-    return false;
-  }
-  cursor = { ...clipboard.anchor };
-  try {
-    pasteClipboard({ recordHistory: false, connect: false });
-  } finally {
-    clipboard = savedClipboard;
-    cursor = savedCursor;
-  }
-  const mirror = {
-    refs: [...circuit.components.keys()].filter((ref) => !existingComps.has(ref)),
-    labels: [...circuit.labels.keys()].filter((id) => !existingLabels.has(id)),
-    netIds: [...circuit.nets.keys()].filter((id) => !existingNets.has(id)),
-    wireKeys: [],
-    beforeSnapshot,
-  };
-  if (!mirror.refs.length && !mirror.labels.length) {
-    circuit = Circuit.fromJSON(JSON.parse(beforeSnapshot));
-    cursor = savedCursor;
-    return false;
-  }
-  restoreCopyGhostSelection(mirror);
-  const moved = transformMixedSelection(symmetry.operation, { recordHistory: false, center: symmetry.pin });
-  cursor = savedCursor;
-  if (moved === false) {
-    circuit = Circuit.fromJSON(JSON.parse(beforeSnapshot));
-    restoreCopyGhostSelection(ghost);
-    logLine('mirrored copy: this selection cannot be reflected whole', 'error');
-    return false;
-  }
-  mirror.baseGeometry = captureCopyGhostGeometry(mirror);
-  ghost.mirror = mirror;
-  restoreCopyGhostSelection(ghost);
-  markModelChanged();
-  return true;
-}
-
-/** Drop the mirrored half while preserving the primary ghost's current offset. */
-function dropCopyGhostMirror() {
-  const ghost = drag?.ghost;
-  if (!ghost?.mirror) return;
-  const dx = snap(cursor.x) - snap(drag.startWorld.x);
-  const dy = snap(cursor.y) - snap(drag.startWorld.y);
-  // Restore the pre-mirror topology without repairing the transient overlap;
-  // translate the primary ghost before normal coincidence repair resumes.
-  const beforeMirror = JSON.parse(ghost.mirror.beforeSnapshot);
-  beforeMirror.topologyOnly = true;
-  circuit = Circuit.fromJSON(beforeMirror);
-  ghost.mirror = null;
-  translateCopyGhost(ghost, dx, dy);
-  restoreCopyGhostSelection(ghost);
-  markModelChanged();
-}
-
-function commitCopyGhost() {
-  if (!drag?.ghost) return false;
-  const ghost = drag.ghost;
-  // The mirror was pasted after `beforeSnapshot`, so both halves already sit
-  // inside the one history entry recorded below.
-  const refs = [...ghost.refs, ...(ghost.mirror?.refs || [])];
-  circuit.connectCoincident(refs);
-  circuit.reconnectCoincidentNets();
-  circuit.ensureUniqueTerminals(refs);
-  circuit.syncJunctionSolders();
-  recordHistoryEntry(ghost.beforeSnapshot);
-  const anchorShift = ghost.anchorShift;
-  const mirrored = !!ghost.mirror;
-  drag = null;
-  copyPending = false;
-  startCopyGhost({ x: cursor.x, y: cursor.y }, { x: 0, y: 0 }, anchorShift);
-  if (mirrored && symmetry?.operation) armCopyGhostMirror();
-  return true;
-}
-
-// The copy buffer also goes on the system clipboard as tagged JSON text, so
-// objects copied in one editor paste into another (another tab, window, or
-// workspace). Ctrl/Cmd+V reads it from the browser's paste event, which needs
-// no clipboard permission; `p` pastes this editor's own buffer.
-let objectClipboardText = null;
-let objectPaste = null;
-
-document.addEventListener('copy', (ev) => {
-  if (objectClipboardText === null || !ev.clipboardData) return;
-  ev.clipboardData.setData('text/plain', objectClipboardText);
-  ev.preventDefault();
-  objectClipboardText = null;
-});
-
-function publishObjectClipboard() {
-  if (!clipboard) return;
-  const text = encodeObjectClipboard(clipboard);
-  objectClipboardText = text;
-  let copied = false;
-  try { copied = document.execCommand('copy') && objectClipboardText === null; } catch { /* use the async API */ }
-  objectClipboardText = null;
-  if (!copied) globalThis.navigator?.clipboard?.writeText?.(text).catch(() => {});
-}
-
-/** Paste on the paste event that follows this Ctrl/Cmd+V, or from the editor's
- *  own buffer if the browser sends none. `kind` is 'objects' or 'style'. */
-function armObjectPaste(kind) {
-  const armed = { kind };
-  objectPaste = armed;
-  setTimeout(() => {
-    if (objectPaste !== armed) return;
-    objectPaste = null;
-    finishObjectPaste(kind);
-  }, 100);
-}
-
-function finishObjectPaste(kind) {
-  if (kind === 'style') pasteStyle();
-  else pasteClipboard();
-}
-
-document.addEventListener('paste', (ev) => {
-  const armed = objectPaste;
-  if (!armed) return;
-  objectPaste = null;
-  ev.preventDefault();
-  try {
-    const buffer = decodeObjectClipboard(ev.clipboardData?.getData('text/plain') || '');
-    if (buffer) clipboard = buffer;
-  } catch (err) {
-    logLine(err.message, 'error');
-    return;
-  }
-  finishObjectPaste(armed.kind);
-});
-
-/** Paste the clipboard at the cursor (re-centred on the selection anchor). */
-function pasteClipboard({ recordHistory = true, connect = true } = {}) {
-  if (!clipboard) {
-    logLine('nothing copied');
-    return;
-  }
-  const dx = snap(cursor.x) - clipboard.anchor.x;
-  const dy = snap(cursor.y) - clipboard.anchor.y;
-  const addedComps = [];
-  const addedLabels = [];
-  const addedNetLabels = [];
-  const apply = () => {
-    const refMap = new Map();
-    const wasLoading = circuit._loading;
-    // Do not let addComponent's coincidence hook create memberships before
-    // the copied net records exist.  Otherwise a paste at an existing pin can
-    // leave that terminal in both the old and the copied net.
-    circuit._loading = true;
-    try {
-      for (const c of clipboard.comps) {
-        const comp = circuit.addComponent(c.type, {
-          x: c.x + dx,
-          y: c.y + dy,
-          rotation: c.rotation,
-          mirrorX: c.mirrorX,
-          mirrorY: c.mirrorY,
-          negativeInputs: c.negativeInputs,
-          joinBar: c.joinBar,
-          style: c.style,
-          value: c.value,
-        });
-        refMap.set(c.origRef, comp.refdes);
-        addedComps.push(comp.refdes);
-      }
-      const labelMap = new Map();
-      for (const l of clipboard.labels.filter((label) => ['arrow', 'box', 'line'].includes(label.kind))) {
-        const shape = circuit.addAnnotation(l.kind, {
-          x: l.x + dx, y: l.y + dy, end: l.end && { x: l.end.x + dx, y: l.end.y + dy },
-          points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
-        });
-        labelMap.set(l.id, shape.id);
-        addedLabels.push(shape.id);
-      }
-      for (const l of clipboard.labels.filter((label) => label.kind === 'label')) {
-        const nl = circuit.addLabel({ text: l.text, align: l.align, parent: l.parent ? labelMap.get(l.parent) : null, x: l.x + dx, y: l.y + dy, style: l.style, math: l.math, mathBox: l.mathBox || undefined });
-        addedLabels.push(nl.id);
-      }
-      const netMap = new Map();
-      for (const n of clipboard.nets) {
-      const fixedPaths = n.routingMode === 'fixed' ? n.fixedPaths.map((e) => ({
-        points: e.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
-        start: e.start && refMap.has(e.start.comp) ? { comp: refMap.get(e.start.comp), term: e.start.term } : null,
-        end: e.end && refMap.has(e.end.comp) ? { comp: refMap.get(e.end.comp), term: e.end.term } : null,
-      })) : null;
-      const net = circuit.createWireNet({ name: n.name, routingMode: n.routingMode, allowDiagonal: n.allowDiagonal, drawOrder: n.drawOrder, fixedPaths });
-      netMap.set(n.id, net);
-      for (const t of n.terminals) {
-        const newRef = refMap.get(t.comp);
-        if (newRef) net.terminals.push({ comp: newRef, term: t.term });
-      }
-        if (n.routingMode !== 'fixed') {
-          net.route = n.route ? n.route.map((p) => ({ x: p.x + dx, y: p.y + dy })) : null;
-          net.junctions = n.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-          net.branches = n.branches ? n.branches.map((b) => b.map((p) => ({ x: p.x + dx, y: p.y + dy }))) : null;
-        }
-        for (const label of n.netLabels || []) {
-          const anchor = { x: label.x + dx, y: label.y + dy };
-          const targetNet = netMap.get(label.netId) || net;
-          const pasted = targetNet.name
-            ? circuit.addNetLabel(targetNet.id, { anchor, align: label.align, netSide: label.netSide })
-            : circuit.addLabel({ text: '', netId: targetNet.id, netSide: label.netSide, x: anchor.x, y: anchor.y, align: label.align });
-          addedNetLabels.push(pasted.id);
-        }
-      }
-      const pastedWireKeys = [];
-      for (const fragment of clipboard.fragments || []) {
-      const paths = fragment.paths.map((path) => path.map((p) => ({ x: p.x + dx, y: p.y + dy })));
-      const net = circuit.createWireNet(fragment.routingMode === 'fixed'
-        ? { name: fragment.name, routingMode: 'fixed', drawOrder: fragment.drawOrder, fixedPaths: paths.map((path) => ({ points: path, start: null, end: null })), junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
-        : { name: fragment.name, routingMode: 'managed', allowDiagonal: fragment.allowDiagonal, drawOrder: fragment.drawOrder, branches: paths, route: paths[0], junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
-        for (let branch = 0; branch < paths.length; branch++) {
-          for (let segment = 1; segment < paths[branch].length; segment++) {
-            if (paths[branch][segment - 1].x === paths[branch][segment].x && paths[branch][segment - 1].y === paths[branch][segment].y) continue;
-            pastedWireKeys.push(`${net.id}:${branch}:${segment}`);
-          }
-        }
-      }
-      circuit._loading = wasLoading;
-      // Coincidence is resolved once, against the complete copied topology.
-      if (connect) circuit.connectCoincident(addedComps);
-      circuit.ensureUniqueTerminals(addedComps);
-      circuit.syncJunctionSolders();
-      setSelection(addedComps, undefined, true);
-      setLabelSelection([...addedLabels, ...addedNetLabels], undefined, true);
-      selectedWires = new Set(pastedWireKeys);
-      syncSelectedWire();
-    } finally {
-      circuit._loading = wasLoading;
-    }
-  };
-  if (recordHistory) commit(apply);
-  else apply();
-  render();
-}
 
 function runLine(line) {
   const trimmed = line.trim();

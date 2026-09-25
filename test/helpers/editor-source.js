@@ -27,5 +27,6 @@ export function functionSource(name, source = editorSource()) {
   const start = source.search(new RegExp(`(?:^|\\n)(?:export )?(?:async )?function ${name}\\(`));
   if (start < 0) return '';
   const end = source.indexOf('\n}\n', start + 1);
-  return source.slice(start, end < 0 ? undefined : end + 2);
+  // Without the export keyword, so a test can evaluate the function alone.
+  return source.slice(start, end < 0 ? undefined : end + 2).replace(/^\n?export /, '');
 }
