@@ -1,4 +1,4 @@
-import { editorSource } from './helpers/editor-source.js';
+import { editorSource, functionSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getSymbol } from '../src/core/components/index.js';
@@ -145,7 +145,7 @@ test('editor gestures are wired through the shared draft, history, and menus', a
   assert.match(main, /isPinDragCandidate\(componentHit\?\.def\)\) \{\s*drag\.pinGrab = /);
   assert.match(main, /drag\.mode === 'move' && drag\.pinGrab && !drag\.moved && movedOut\) \{\s*beginPinWire\(drag, w\);/);
   // Quick-add places and wires the part as one history entry.
-  const pick = main.slice(main.indexOf('function pickQuickAdd('), main.indexOf("window.addEventListener('pointerdown', (ev) => {\n  if (quickAdd"));
+  const pick = functionSource('pickQuickAdd', main);
   assert.match(pick, /const before = snapshot\(\);/);
   assert.match(pick, /connectWireToTerminal\(\{ refdes: comp\.refdes, term: placement\.terminal[^)]*\}, before\)/);
   assert.match(pick, /applyJson\(before\)/);

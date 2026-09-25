@@ -11,7 +11,7 @@
  */
 
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints } from '../core/model.js';
-import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
+import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
 import { addTerminalStubs } from '../core/stubs.js';
@@ -29,11 +29,11 @@ import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.j
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
-import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
+import { layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare } from './toolbar.js';
 import { confirmChoice } from './file-dialog.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } from './interaction.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
-import { arrivalDirection, isPinDragCandidate, knifeCrossings, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
+import { isPinDragCandidate, knifeCrossings, pinHandleRadius, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED } from './status-bar.js';
 import { alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 import { editor } from './editor-state.js';
@@ -77,6 +77,7 @@ import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback } from './commit-flash.js';
 import { appendMarkupText, renderComponents, renderNets, renderDetail, PANEL_COLLAPSED_KEY, collapsedPanels, toggleSidePanel, installSidePanel } from './side-panel.js';
 import { toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls } from './style-controls.js';
+import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -85,6 +86,7 @@ Object.defineProperties(editor, {
   activeSymmetryCells: { get: () => activeSymmetryCells, set: (value) => { activeSymmetryCells = value; } },
   activeSyncSuspended: { get: () => activeSyncSuspended, set: (value) => { activeSyncSuspended = value; } },
   alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
+  altHeld: { get: () => altHeld, set: (value) => { altHeld = value; } },
   analysisPick: { get: () => analysisPick, set: (value) => { analysisPick = value; } },
   annotationPoints: { get: () => annotationPoints, set: (value) => { annotationPoints = value; } },
   beatAnchorId: { get: () => beatAnchorId, set: (value) => { beatAnchorId = value; } },
@@ -146,6 +148,7 @@ Object.defineProperties(editor, {
   presenter: { get: () => presenter, set: (value) => { presenter = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
   previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
+  quickAdd: { get: () => quickAdd, set: (value) => { quickAdd = value; } },
   radialMenuEl: { get: () => radialMenuEl, set: (value) => { radialMenuEl = value; } },
   remoteConflictLogged: { get: () => remoteConflictLogged, set: (value) => { remoteConflictLogged = value; } },
   restoredDraftPath: { get: () => restoredDraftPath, set: (value) => { restoredDraftPath = value; } },
@@ -630,7 +633,7 @@ function restoreToolState(state) {
   copyPending = false;
 }
 
-function undo() {
+export function undo() {
   const cancelled = cancelDirectDraft();
   if (!history.length) {
     if (cancelled) render();
@@ -1886,7 +1889,7 @@ export function stubSelection() {
   logLine(`${added}${out.skipped.length ? `; skipped ${out.skipped.join(', ')} (would short)` : ''}`);
   render();
 }
-function moveCursor(cellsX, cellsY) {
+export function moveCursor(cellsX, cellsY) {
   const next = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
   cursor = wire && terminalSnap ? terminalSnapWorld(next) : next;
   followCursor();
@@ -2291,7 +2294,7 @@ document.getElementById('btn-mode-highlight')?.addEventListener('contextmenu', (
   openHighlightToolMenu(ev.clientX, ev.clientY);
 });
 
-function placeNetLabelAt(world) {
+export function placeNetLabelAt(world) {
   const target = netLabelTargetAt(world);
   if (!target) {
     hintLine('NET LABEL: click a physical wire');
@@ -2420,7 +2423,7 @@ export function clearSymmetry() {
 /** Arm or drop symmetric placement. It belongs to a component ghost only.
  *  Releasing the modifier takes the twin away but keeps a settled axis, so a
  *  transform between two pairs costs nothing: the next press resumes it. */
-function setSymmetry(on) {
+export function setSymmetry(on) {
   const armed = (mode === 'insert' && pendingPlace?.kind === 'component')
     || drag?.mode === 'copyghost';
   if (on && armed && !symmetry) {
@@ -2512,7 +2515,7 @@ function splicePreviewTarget(ghost) {
   return null;
 }
 
-function placePending() {
+export function placePending() {
   if (!pendingPlace) return;
   if (pendingPlace.kind === 'label') {
     const label = circuit.addLabel({ text: 'label', x: cursor.x, y: cursor.y, align: 'center' });
@@ -2695,7 +2698,7 @@ export function render() {
   }
 }
 
-function draftRoutePath(draft, to = cursor) {
+export function draftRoutePath(draft, to = cursor) {
   if (!draft?.source) return undefined;
   const from = wireOrigin(draft.source);
   if (!from) return undefined;
@@ -4407,7 +4410,7 @@ function startWireAt(w) {
 
 /** Pressing Enter in wire mode commits the draft wire: onto a terminal,
  *  another wire, or as an open-ended managed branch in empty space. */
-function commitWireAtCursor() {
+export function commitWireAtCursor() {
   if (!wire || !wire.source) {
     logLine('start a wire by clicking a terminal (or any point) first');
     return;
@@ -4462,7 +4465,7 @@ function commitWireAtCursor() {
 /** Commit the draft wire onto a component terminal. Terminal-origin wires go
  *  through connectTwo; free-point / on-wire-origin drafts splice into the
  *  target net without disturbing its existing wire. */
-function connectWireToTerminal(dst, before = null) {
+export function connectWireToTerminal(dst, before = null) {
   const src = wire.source;
   if (src.fixed) {
     if (commitFixedEndpointDraft(src.fixed, `${dst.refdes}.${dst.term}`, wire.points, 'smart')) wire = newWireDraft();
@@ -4748,7 +4751,7 @@ function beginCopyDrag(grab, ev) {
   canvasMouseMove(ev);
 }
 
-function endGestureWire() {
+export function endGestureWire() {
   if (!gestureWire) return;
   gestureWire = false;
   wire = null;
@@ -7057,57 +7060,12 @@ function onWireKey(key) {
   render();
 }
 
-const PLACEMENT = {
-  r: 'resistor',
-  c: 'capacitor',
-  L: 'inductor',
-  d: 'diode',
-  n: 'nmos',
-  p: 'pmos',
-  N: 'npn',
-  P: 'pnp',
-  g: 'ground',
-  s: 'supply',
-  x: 'switch_open',
-  X: 'switch_closed',
-  i: 'current_source',
-  v: 'voltage_source',
-  u: 'opamp',
-  A: 'and2_gate',
-  b: 'buffer',
-  I: 'input',
-  o: 'output',
-  O: 'inputoutput',
-  a: 'solder',
-};
-
-// Human-facing names keep the picker useful at a glance. Aliases stay out of
-// the menu while the underlying type remains the stable placement value.
-// The registry is the single source of truth for insertable components.
-// Grouping is derived from the type name, so adding a symbol to symbolTypes
-// automatically adds it to the appropriate menu section.
-const INSERT_COMPONENT_TYPES = [...symbolTypeNames];
-// Browse order is analog first, digital second, with the interface ports kept
-// above both macros and the digital cells. A query reorders the groups by their
-// best match instead, so this is the order of the unfiltered list.
-const INSERT_CATEGORY_RULES = [
-  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^diode$/],
-  ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
-  ['Switches', /^switch_/],
-  ['Sources & power', /^(current_source|voltage_source|vccs|supply|ground|vcm)$/],
-  ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
-  ['Macros', /^(opamp|opamp_diff|adc|dac)$/],
-  ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
-  ['Sequential', /^(?:dff|latch)(?:_|$)/],
-  ['Blocks / shells', /^block$/],
-  ['Signal flow', /^signal_(sum|multiply)$/],
-];
-
+let quickAdd = null; // { point, fromWire, query, index, el, input, list }
 /** Rank a component/label name against a fuzzy query (subsequence match).
  *  Returns a score >= 0 for a match (higher = better) or -1 for no match.
  *  Prefix hits beat substring hits, which beat pure subsequences; shorter
  *  names win ties. */
-function transformPendingComponent(operation) {
+export function transformPendingComponent(operation) {
   if (!pendingPlace || pendingPlace.kind !== 'component') return false;
   const def = getSymbol(pendingPlace.type);
   const base = {
@@ -7122,131 +7080,6 @@ function transformPendingComponent(operation) {
   pendingPlace.mirrorX = next.mirrorX;
   pendingPlace.mirrorY = next.mirrorY;
   return true;
-}
-
-// Arrow-key highlight in the insert picker. It belongs to one query string, so
-// typing or deleting a character returns the highlight to the best match.
-let insertNav = { query: '', index: 0 };
-
-function insertHighlightIndex(entries = insertMenuEntries()) {
-  if (insertNav.query !== insertQuery || !entries.length) return 0;
-  return Math.min(insertNav.index, entries.length - 1);
-}
-
-/** Up/Down step through matches; Left/Right jump to the previous/next category. */
-function moveInsertHighlight(key) {
-  const groups = insertMenuGroups();
-  const entries = groups.flatMap((group) => group.entries);
-  if (!entries.length) return;
-  let index = insertHighlightIndex(entries);
-  if (key === 'ArrowDown') index = (index + 1) % entries.length;
-  else if (key === 'ArrowUp') index = (index - 1 + entries.length) % entries.length;
-  else {
-    const starts = [];
-    let offset = 0;
-    for (const group of groups) { starts.push(offset); offset += group.entries.length; }
-    const current = starts.findLastIndex((start) => start <= index);
-    if (key === 'ArrowRight') index = starts[(current + 1) % starts.length];
-    else if (index !== starts[current]) index = starts[current];
-    else index = starts[(current - 1 + starts.length) % starts.length];
-  }
-  insertNav = { query: insertQuery, index };
-}
-
-function selectInsertMatch() {
-  const entries = insertMenuEntries();
-  if (!entries.length) return false;
-  return pickInsertType(entries[insertHighlightIndex(entries)]);
-}
-
-/** Arm the ghost for one picked entry.  Shared by Enter/Tab and menu clicks. */
-function pickInsertType(type) {
-  if (!type) return false;
-  const startWorld = { ...cursor };
-  insertNav = { query: '', index: 0 };
-  pendingPlace = type === 'label'
-    ? { kind: 'label', startWorld }
-    : { kind: 'component', type, rotation: 0, mirrorX: null, mirrorY: null, startWorld };
-  if (altHeld && pendingPlace.kind === 'component') setSymmetry(true);
-  insertQuery = '';
-  return true;
-}
-
-function onInsertKey(key, shiftKey = false) {
-  if (key === 'u' && pendingPlace) {
-    undo();
-    return;
-  }
-  // Arrow keys browse the picker; once a ghost exists they move the cursor and ghost.
-  const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
-  if (arrow && !pendingPlace) {
-    moveInsertHighlight(key);
-    render();
-    return;
-  }
-  if (arrow) {
-    moveCursor(arrow[0], arrow[1]);
-    render();
-    return;
-  }
-  // With a ghost selected, r rotates CW and Shift+r mirrors horizontally.
-  if (pendingPlace && pendingPlace.kind === 'component' && key === 'r' && !shiftKey) {
-    transformPendingComponent('rotate');
-    render();
-    return;
-  }
-  if (pendingPlace && pendingPlace.kind === 'component' && (key === 'R' || shiftKey && key.toLowerCase() === 'r')) {
-    transformPendingComponent('mirrorX');
-    render();
-    return;
-  }
-
-  // Escape peels one layer at a time: the mirror axis first, so a new one can
-  // be started without losing the ghost, then the ghost, then insert mode.
-  if (symmetry && key === 'Escape') {
-    clearSymmetry();
-    logLine('symmetry axis cleared');
-    render();
-    return;
-  }
-
-  // A placement ghost is pending: Enter/click commits it; Esc drops it back to
-  // the search picker so a different component can be typed.
-  if (pendingPlace) {
-    if (key === 'Enter') {
-      commit(() => placePending());
-      render();
-    } else if (key === 'Escape' || key === 'Backspace') {
-      pendingPlace = null;
-      clearSymmetry();
-      insertQuery = '';
-      render();
-    }
-    return;
-  }
-
-  // Fuzzy search picker (no ghost): Enter or Tab selects the best match.
-  if (key === 'Enter' || key === 'Tab') {
-    if (selectInsertMatch()) render();
-    return;
-  }
-  if (key === 'Escape') {
-    mode = 'normal';
-    insertQuery = '';
-    insertNav = { query: '', index: 0 };
-    render();
-    return;
-  }
-  if (key === 'Backspace') {
-    insertQuery = insertQuery.slice(0, -1);
-    render();
-    return;
-  }
-  if (key.length === 1) {
-    insertQuery += key;
-    render();
-    return;
-  }
 }
 
 /** Arrow keys grow the selection box; Enter commits it and Escape cancels. */
@@ -8509,329 +8342,8 @@ export function syncInteractionUI() {
 }
 
 // ----- insert-mode menu ----------------------------------------------------
-// A dropdown listing every placable component, shown in insert mode until a
-// ghost is armed. It is anchored where insert mode opened rather than dragged
-// along by the pointer, so the mouse can reach it: hovering highlights an
-// entry and clicking arms it, exactly like the keyboard highlight and Enter.
-let insertMenu = null;
-let insertMenuAnchor = null; // world point the menu hangs from
-// The types most recently placed, newest first. It is session state, never
-// persisted and never part of a document: it follows what is being drawn right
-// now, so reopening a file does not inherit someone else's shortcuts.
-let insertRecentTypes = [];
-
-/** Record one committed placement at the head of the Recent group. */
-function rememberInsertType(type) {
-  insertRecentTypes = withRecentType(insertRecentTypes, type, INSERT_RECENT_LIMIT);
-}
-// Every registered symbol type appears in the menu automatically; the list is
-// fuzzy-filtered by the live `insertQuery` while typing.
-function insertMenuEntries() {
-  return insertMenuGroups().flatMap((group) => group.entries);
-}
-
-function insertMenuGroups() {
-  const availableTypes = INSERT_COMPONENT_TYPES;
-  const groups = INSERT_CATEGORY_RULES.map(([title, rule]) => ({
-    title,
-    entries: availableTypes.filter((type) => rule.test(type)),
-  }));
-  groups.push({ title: 'Annotations', entries: ['solder', 'label'] });
-  if (!insertQuery) {
-    const placeable = new Set(groups.flatMap((group) => group.entries));
-    const recent = insertRecentTypes.filter((type) => placeable.has(type));
-    // The recents repeat their category entry rather than being moved out of
-    // it, so the list below stays the complete, stable index it is browsed as.
-    const listed = recent.length ? [{ title: 'Recent', entries: recent }, ...groups] : groups;
-    return listed.filter((group) => group.entries.length);
-  }
-  for (const group of groups) {
-    group.entries = group.entries
-      .map((type) => [type, placementSearchScore(insertQuery, type)])
-      .filter(([, score]) => score >= 0)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([type]) => type);
-  }
-  const filtered = groups.filter((group) => group.entries.length);
-  return filtered.sort((a, b) => (
-    placementSearchScore(insertQuery, b.entries[0]) - placementSearchScore(insertQuery, a.entries[0])
-  ));
-}
-
-const symbolPreviewCache = new Map();
-
-/** Small cached drawing of a placeable type for the insert menu. */
-function symbolPreviewSvg(type) {
-  if (symbolPreviewCache.has(type)) return symbolPreviewCache.get(type);
-  let svg = '';
-  if (type === 'label') {
-    svg = '<svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M8 19h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
-  } else if (type === 'block') {
-    svg = '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
-  } else {
-    try {
-      const preview = new Circuit();
-      preview.addComponent(type, { x: 0, y: 0, noLabel: true });
-      const b = preview.bounds(6);
-      svg = svgString(preview, { grid: false, terminals: false, junctions: false, background: false, themeInk: true })
-        .replace(/viewBox="[^"]*"/, `viewBox="${b.x} ${b.y} ${b.w} ${b.h}" preserveAspectRatio="xMidYMid meet"`);
-    } catch { svg = ''; }
-  }
-  symbolPreviewCache.set(type, svg);
-  return svg;
-}
-
-function updateInsertMenu() {
-  // The picker only needs to be visible when insert mode has no ghost selected;
-  // once a placement (component/label) is pending it would just be in the way.
-  if (mode !== 'insert' || pendingPlace) {
-    if (insertMenu) insertMenu.remove();
-    insertMenu = null;
-    return;
-  }
-  if (!insertMenu) {
-    insertNav = { query: '', index: 0 };
-    insertMenuAnchor = { ...cursor };
-    insertMenu = document.createElement('div');
-    insertMenu.id = 'insert-menu';
-    insertMenu.className = 'insert-menu';
-    document.body.appendChild(insertMenu);
-  }
-  // Rebuild the entries every render so the live query filter is reflected.
-  insertMenu.textContent = '';
-  const query = document.createElement('div');
-  query.className = 'insert-menu-query';
-  query.textContent = insertQuery ? `~ ${insertQuery}` : 'type to filter…';
-  insertMenu.appendChild(query);
-  const groups = insertMenuGroups();
-  insertMenu._entries = groups.flatMap((group) => group.entries);
-  if (!insertMenu._entries.length) {
-    const none = document.createElement('div');
-    none.className = 'insert-menu-none';
-    none.textContent = 'no match';
-    insertMenu.appendChild(none);
-  }
-  const highlight = insertHighlightIndex(insertMenu._entries);
-  const body = document.createElement('div');
-  body.className = 'insert-menu-body';
-  insertMenu.appendChild(body);
-  const items = [];
-  for (const group of groups) {
-    const section = document.createElement('div');
-    section.className = 'insert-menu-group';
-    const heading = document.createElement('div');
-    heading.className = 'insert-menu-category';
-    heading.textContent = group.title;
-    section.appendChild(heading);
-    for (const type of group.entries) {
-      const index = items.length;
-      const item = document.createElement('div');
-      item.className = `insert-menu-item${index === highlight ? ' active' : ''}`;
-      const preview = document.createElement('span');
-      preview.className = 'insert-menu-preview';
-      preview.innerHTML = symbolPreviewSvg(type);
-      const name = document.createElement('span');
-      name.textContent = PLACEMENT_LABELS[type] || type;
-      const hint = document.createElement('kbd');
-      hint.textContent = 'Enter';
-      item.append(preview, name, hint);
-      // Hovering moves the same highlight the arrow keys move, in place: a
-      // rebuild under the pointer would restart hover on every mouse move.
-      item.addEventListener('mousemove', () => {
-        if (insertNav.query === insertQuery && insertNav.index === index) return;
-        insertNav = { query: insertQuery, index };
-        for (const [i, el] of items.entries()) el.classList.toggle('active', i === index);
-      });
-      item.addEventListener('mousedown', (ev) => {
-        ev.preventDefault(); // keep the canvas focused so keys still reach the editor
-        if (!pickInsertType(type)) return;
-        render();
-      });
-      items.push(item);
-      section.appendChild(item);
-    }
-    body.appendChild(section);
-  }
-  insertMenu.style.display = 'block';
-  // The body is one scrolling column, so most of the list is out of sight:
-  // the highlight scrolls itself into view to stay reachable by keyboard.
-  items[highlight]?.scrollIntoView({ block: 'nearest' });
-
-  const p = worldToClient(insertMenuAnchor?.x ?? cursor.x, insertMenuAnchor?.y ?? cursor.y);
-  const rect = insertMenu.getBoundingClientRect();
-  let left = p.x + 14;
-  let top = p.y - rect.height / 2;
-  if (left + rect.width > window.innerWidth - 8) left = p.x - rect.width - 14;
-  left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
-  top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, top));
-  insertMenu.style.left = `${left}px`;
-  insertMenu.style.top = `${top}px`;
-}
 
 // ----- quick-add menu ---------------------------------------------------------
-// Dropping a pin-drag wire in empty space offers the parts that usually end a
-// wire there. The chosen part is placed so one of its pins lands exactly on the
-// drop point, turned so its body continues the wire, and wired in the same
-// undo entry. Typing filters every placeable type.
-const QUICK_ADD_DEFAULTS = ['ground', 'supply', 'input', 'output', 'port', 'resistor', 'capacitor', 'nmos', 'pmos', 'current_source'];
-const QUICK_ADD_SPECIAL = {
-  '@netlabel': { label: 'Net label', icon: 'tag', words: ['net', 'label', 'name'] },
-  '@open': { label: 'Leave an open end', icon: 'wire', words: ['open', 'end', 'wire', 'leave'] },
-};
-let quickAdd = null; // { point, fromWire, query, index, el, input, list }
-
-function quickAddEntries(query) {
-  const specials = quickAdd?.fromWire ? Object.keys(QUICK_ADD_SPECIAL) : [];
-  if (!query) return [...QUICK_ADD_DEFAULTS.filter((type) => symbolTypeNames.includes(type)), ...specials];
-  const scored = INSERT_COMPONENT_TYPES
-    .filter((type) => type !== 'solder')
-    .map((type) => [type, placementSearchScore(query, type)])
-    .filter(([, score]) => score >= 0);
-  for (const key of specials) {
-    const score = Math.max(...[QUICK_ADD_SPECIAL[key].label, ...QUICK_ADD_SPECIAL[key].words].map((word) => fuzzyScore(query, word)));
-    if (score >= 0) scored.push([key, score]);
-  }
-  return scored.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 10).map(([type]) => type);
-}
-
-function openQuickAdd({ clientX, clientY, point, fromWire = false }) {
-  closeQuickAdd({ cancel: false });
-  const el = document.createElement('div');
-  el.className = 'quick-add glass';
-  el.setAttribute('role', 'dialog');
-  el.setAttribute('aria-label', 'Add a part at the wire end');
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'quick-add-input';
-  input.placeholder = 'Add part…';
-  input.setAttribute('aria-label', 'Filter parts');
-  input.autocomplete = 'off';
-  input.spellcheck = false;
-  const list = document.createElement('div');
-  list.className = 'quick-add-list';
-  list.setAttribute('role', 'listbox');
-  el.append(input, list);
-  document.body.appendChild(el);
-  quickAdd = { point, fromWire, query: '', index: 0, el, input, list };
-  renderQuickAdd();
-  const rect = el.getBoundingClientRect();
-  const left = Math.max(8, Math.min(clientX + 12, window.innerWidth - rect.width - 8));
-  const top = Math.max(8, Math.min(clientY - 18, window.innerHeight - rect.height - 8));
-  el.style.left = `${left}px`;
-  el.style.top = `${top}px`;
-  input.addEventListener('input', () => {
-    quickAdd.query = input.value.trim();
-    quickAdd.index = 0;
-    renderQuickAdd();
-  });
-  input.addEventListener('keydown', (ev) => {
-    const entries = quickAddEntries(quickAdd.query);
-    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-      ev.preventDefault();
-      const step = ev.key === 'ArrowDown' ? 1 : -1;
-      quickAdd.index = (quickAdd.index + step + entries.length) % Math.max(1, entries.length);
-      renderQuickAdd();
-    } else if (ev.key === 'Enter' || ev.key === 'Tab') {
-      ev.preventDefault();
-      if (entries[quickAdd.index]) pickQuickAdd(entries[quickAdd.index]);
-    } else if (ev.key === 'Escape') {
-      ev.preventDefault();
-      ev.stopPropagation();
-      closeQuickAdd();
-    }
-  });
-  input.focus();
-}
-
-function renderQuickAdd() {
-  if (!quickAdd) return;
-  const entries = quickAddEntries(quickAdd.query);
-  quickAdd.index = Math.min(quickAdd.index, Math.max(0, entries.length - 1));
-  quickAdd.list.replaceChildren();
-  if (!entries.length) {
-    const none = document.createElement('div');
-    none.className = 'quick-add-none';
-    none.textContent = 'no match';
-    quickAdd.list.appendChild(none);
-  }
-  entries.forEach((type, index) => {
-    const item = document.createElement('div');
-    item.className = `quick-add-item${index === quickAdd.index ? ' active' : ''}`;
-    item.setAttribute('role', 'option');
-    item.setAttribute('aria-selected', String(index === quickAdd.index));
-    const preview = document.createElement('span');
-    preview.className = 'quick-add-preview';
-    const special = QUICK_ADD_SPECIAL[type];
-    preview.innerHTML = special
-      ? `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[special.icon]}</svg>`
-      : symbolPreviewSvg(type);
-    const name = document.createElement('span');
-    name.textContent = special ? special.label : (PLACEMENT_LABELS[type] || type);
-    item.append(preview, name);
-    item.addEventListener('mousemove', () => {
-      if (quickAdd.index === index) return;
-      quickAdd.index = index;
-      for (const [i, el] of [...quickAdd.list.children].entries()) el.classList.toggle('active', i === index);
-    });
-    item.addEventListener('mousedown', (ev) => {
-      ev.preventDefault();
-      pickQuickAdd(type);
-    });
-    quickAdd.list.appendChild(item);
-  });
-  quickAdd.list.children[quickAdd.index]?.scrollIntoView?.({ block: 'nearest' });
-}
-
-function closeQuickAdd({ cancel = true } = {}) {
-  if (!quickAdd) return;
-  quickAdd.el.remove();
-  quickAdd = null;
-  if (cancel) {
-    endGestureWire();
-    render();
-  }
-  canvasEl.focus({ preventScroll: true });
-}
-
-function pickQuickAdd(type) {
-  if (!quickAdd) return;
-  const { point, fromWire } = quickAdd;
-  closeQuickAdd({ cancel: false });
-  cursor = { ...point };
-  if (type === '@open' || type === '@netlabel') {
-    if (wire?.source) commitWireAtCursor();
-    endGestureWire();
-    if (type === '@netlabel') placeNetLabelAt(point);
-    render();
-    return;
-  }
-  const def = getSymbol(type);
-  const direction = fromWire && wire?.source ? arrivalDirection(draftRoutePath(wire, point)) : null;
-  const sourceComp = fromWire && wire?.source?.refdes ? circuit.components.get(wire.source.refdes) : null;
-  const source = sourceComp ? { ...sourceComp.transform, defaultMirrorX: !!sourceComp.def?.defaultMirrorX, defaultMirrorY: !!sourceComp.def?.defaultMirrorY } : null;
-  const placement = quickAddPlacement(def, point, direction, source);
-  const before = snapshot();
-  try {
-    const comp = circuit.addComponent(type, {
-      x: placement.x, y: placement.y, rotation: placement.rotation,
-      mirrorX: placement.mirrorX, mirrorY: placement.mirrorY, noLabel: false,
-    });
-    markModelChanged();
-    if (fromWire && wire?.source && placement.terminal) {
-      connectWireToTerminal({ refdes: comp.refdes, term: placement.terminal, x: point.x, y: point.y }, before);
-    } else {
-      circuit.connectCoincident(comp.refdes);
-      recordHistoryEntry(before, true);
-    }
-    rememberInsertType(type);
-    logLine(`placed ${comp.refdes} (${type}) at the wire end`);
-  } catch (err) {
-    applyJson(before);
-    logLine(`Could not add ${PLACEMENT_LABELS[type] || type}: ${err.message || err}`, 'error');
-  }
-  endGestureWire();
-  render();
-}
 
 window.addEventListener('pointerdown', (ev) => {
   if (quickAdd && !quickAdd.el.contains(ev.target)) closeQuickAdd();
