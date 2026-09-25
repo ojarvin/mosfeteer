@@ -16,7 +16,8 @@ import { inlineEditLabel } from './label-editor.js';
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
 import { copyAsImage } from './export-ui.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
-import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setSelection, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } from './main.js';
+import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
+import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
 
 function contextStyleValue(target, field) {
   if (target?.kind === 'wire') {

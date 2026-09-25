@@ -26218,12 +26218,14 @@ let inlineEditLabel; __bind(() => { ({ inlineEditLabel } = __require("src/web/la
 let appendBeatContextItems, plainMarkup; __bind(() => { ({ appendBeatContextItems, plainMarkup } = __require("src/web/beats-ui.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
-let activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setSelection, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setSelection, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } = __require("src/web/main.js")); });
+let handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue; __bind(() => { ({ handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } = __require("src/web/style-controls.js")); });
+let activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } = __require("src/web/main.js")); });
 /**
  * The right-click context menu on parts, wires, labels, and nets: its
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -30630,15 +30632,11 @@ __exports.nearestTerminal = nearestTerminal;
 __exports.selectedComp = selectedComp;
 __exports.setSelection = setSelection;
 __exports.setLabelSelection = setLabelSelection;
+__exports.keyToWire = keyToWire;
 __exports.syncSelectedWire = syncSelectedWire;
 __exports.applyEditorSelection = applyEditorSelection;
 __exports.selectedLabels = selectedLabels;
 __exports.selectedLabel = selectedLabel;
-__exports.styleDefaults = styleDefaults;
-__exports.wireStyleValue = wireStyleValue;
-__exports.selectionStyleState = selectionStyleState;
-__exports.syncStyleControls = syncStyleControls;
-__exports.handleStyleControlClick = handleStyleControlClick;
 __exports.pickLabel = pickLabel;
 __exports.annotationTextAt = annotationTextAt;
 __exports.annotationGeometryAt = annotationGeometryAt;
@@ -30692,7 +30690,6 @@ let cycleBeatHighlight, highlightsAt, setHighlightFrom; __bind(() => { ({ cycleB
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let componentShapeSvg, editorOverlay, svgString; __bind(() => { ({ componentShapeSvg, editorOverlay, svgString } = __require("src/core/render.js")); });
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
-let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
@@ -30729,6 +30726,7 @@ let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDoc
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
 let appendMarkupText, renderComponents, renderNets, renderDetail, PANEL_COLLAPSED_KEY, collapsedPanels, toggleSidePanel, installSidePanel; __bind(() => { ({ appendMarkupText, renderComponents, renderNets, renderDetail, PANEL_COLLAPSED_KEY, collapsedPanels, toggleSidePanel, installSidePanel } = __require("src/web/side-panel.js")); });
+let toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -30806,6 +30804,7 @@ Object.defineProperties(editor, {
   beatViewsCache: { get: () => beatViewsCache, set: (value) => { beatViewsCache = value; } },
   canvasSvgEl: { get: () => canvasSvgEl, set: (value) => { canvasSvgEl = value; } },
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
+  clipboard: { get: () => clipboard, set: (value) => { clipboard = value; } },
   clipboardNotice: { get: () => clipboardNotice, set: (value) => { clipboardNotice = value; } },
   committedCanvasKey: { get: () => committedCanvasKey, set: (value) => { committedCanvasKey = value; } },
   componentRangeAnchor: { get: () => componentRangeAnchor, set: (value) => { componentRangeAnchor = value; } },
@@ -31768,54 +31767,8 @@ function moveLabelTree(origins, move) {
 function moveLabelOriginsOnce(origins, dx, dy) {
   moveLabelTree(origins, (label, origin) => moveLabelSafely(label, origin.x + dx, origin.y + dy));
 }
-/** Text-bearing selection: labels and annotation captions. */
-function selectedTextTargets() {
-  const labels = new Map();
-  for (const label of selectedLabels()) {
-    if (label.kind === 'label') labels.set(label.id, label);
-    if (['arrow', 'box', 'line'].includes(label.kind)) {
-      for (const child of circuit.labels.values()) {
-        if (child.parent === label.id) labels.set(child.id, child);
-      }
-    }
-  }
-  // Keep the result shape used by the shared text-style controls.  Schematic
-  // block text is no longer a separate selection role, but the panel still
-  // asks for this collection while deciding whether its row is visible.
-  return { labels: [...labels.values()], blocks: [] };
-}
+installStyleControls();
 
-function selectedFontState(field) {
-  const { labels } = selectedTextTargets();
-  return labels.length > 0 && labels.every((label) => label.style?.[field] !== false);
-}
-
-function setSelectedLabelFont(field, on) {
-  const { labels } = selectedTextTargets();
-  if (!labels.length) return;
-  commit(() => {
-    for (const label of labels) label.style[field] = on;
-  });
-  render();
-}
-
-function toggleSelectedLabelFont(field) {
-  setSelectedLabelFont(field, !selectedFontState(field));
-}
-
-function setSelectedLabelAlign(align) {
-  const { labels } = selectedTextTargets();
-  if (!labels.length) return;
-  commit(() => labels.forEach((label) => label.setAlign(align)));
-  render();
-}
-
-function selectedWireTargets() {
-  return [...selectedWires].map((key) => {
-    const wire = keyToWire(key);
-    return wire ? { net: circuit.nets.get(wire.netId), key: `${wire.branch}:${wire.segment}` } : null;
-  }).filter((item) => item?.net);
-}
 function syncSelectedNetSolders() {
   for (const ref of selectedNetSolders) multi.delete(ref);
   selectedNetSolders = new Set();
@@ -31832,292 +31785,6 @@ function syncSelectedNetSolders() {
   }
   for (const ref of selectedNetSolders) multi.add(ref);
   if (selectedNetSolders.size && !selected) selected = [...selectedNetSolders][0];
-}
-
-function styleDefaults(field) {
-  return field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : field === 'arrowhead' ? 'none' : 'normal';
-}
-
-function arrowheadKind(object) {
-  if (object?.kind === 'arrow' || object?.kind === 'line') return object.kind;
-  if (object?.routingMode) return 'wire';
-  return null;
-}
-
-function supportsArrowhead(object) {
-  return !!arrowheadKind(object);
-}
-
-/** Combine the two independent start/end toggle buttons into the one shared
- * arrowhead value the model stores. */
-function combineArrowheadEnds(start, end) {
-  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
-}
-
-const LINE_STYLE_ICONS = { solid: 'line-solid', dashed: 'line-dashed', 'dash-dot': 'line-dash-dot', dotted: 'line-dotted' };
-
-function singlePathArrowheadValue(net) {
-  const path = net?.paths?.()[0];
-  if (!path || path.length < 2) return defaultArrowhead('wire');
-  return polylineArrowheadValue(net.wireStyles, 0, path, net.style?.arrowhead);
-}
-
-function wireStyleValue(net, key, field) {
-  const wire = keyToWire(`${net?.id || ''}:${key}`);
-  if (field === 'arrowhead' && net?.paths?.().length === 1 && wire.branch === 0) {
-    return singlePathArrowheadValue(net);
-  }
-  return net?.wireStyles?.[key]?.[field] ?? net?.style?.[field] ?? styleDefaults(field);
-}
-
-function objectStyleValue(object, field) {
-  if (field === 'arrowhead' && supportsArrowhead(object)) {
-    if (object?.routingMode) {
-      return object.paths?.().length === 1
-        ? singlePathArrowheadValue(object)
-        : object.style?.arrowhead || defaultArrowhead('wire');
-    }
-    return object.style?.arrowhead || defaultArrowhead(arrowheadKind(object));
-  }
-  return object?.style?.[field] || styleDefaults(field);
-}
-
-/** Put a shared arrowhead on the two endpoints of a one-path wire. */
-function setSinglePathArrowhead(net, value) {
-  const path = net?.paths?.()[0];
-  if (!path || path.length < 2) return false;
-  net.wireStyles = polylineArrowheadStyles(net.wireStyles, 0, path, value);
-  // Segment styles now carry the endpoint-only placement. Leaving a net-wide
-  // value here would make the renderer inherit it at every segment.
-  delete net.style.arrowhead;
-  return true;
-}
-
-function applyNetStyle(net, style) {
-  const next = { ...style };
-  if (next.arrowhead !== undefined && net.paths?.().length === 1) {
-    setSinglePathArrowhead(net, next.arrowhead);
-    delete next.arrowhead;
-  }
-  net.style = { ...(net.style || {}), ...next };
-}
-
-function applyWireTargetStyle(net, key, style) {
-  const wire = keyToWire(`${net.id}:${key}`);
-  const next = { ...style };
-  if (next.arrowhead !== undefined && net.paths?.().length === 1 && wire.branch === 0) {
-    setSinglePathArrowhead(net, next.arrowhead);
-    delete next.arrowhead;
-  }
-  if (Object.keys(next).length) {
-    net.wireStyles[key] = { ...(net.wireStyles[key] || {}), ...next };
-  }
-}
-
-function selectedWireTargetKeys() {
-  const keys = new Set(selectedWires);
-  if (selectedWire) keys.add(`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`);
-  return [...keys];
-}
-
-function selectedStyleSource() {
-  const comps = selectedComps();
-  const labels = selectedLabels();
-  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
-  const wireKeys = selectedWireTargetKeys();
-  const total = comps.length + labels.length + nets.length + wireKeys.length;
-  if (total !== 1) return null;
-  if (comps.length === 1) return { kind: 'object', style: { ...(comps[0].style || {}) } };
-  if (labels.length === 1) return { kind: 'object', style: { ...(labels[0].style || {}) } };
-  if (nets.length === 1) {
-    const net = nets[0];
-    return {
-      kind: 'object',
-      style: {
-        ...(net.style || {}),
-        ...(net.paths?.().length === 1 ? { arrowhead: singlePathArrowheadValue(net) } : {}),
-      },
-    };
-  }
-  const wire = keyToWire(wireKeys[0]);
-  const net = circuit.nets.get(wire.netId);
-  if (!net) return null;
-  return {
-    kind: 'wire',
-    style: {
-      ...(net.wireStyles?.[`${wire.branch}:${wire.segment}`] || net.style || {}),
-      arrowhead: wireStyleValue(net, `${wire.branch}:${wire.segment}`, 'arrowhead'),
-    },
-  };
-}
-
-function applyStyleToSelected(style) {
-  const comps = selectedComps();
-  const labels = selectedLabels();
-  const wireTargets = selectedWireTargets();
-  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
-  const wireKeys = selectedWireTargetKeys();
-  if (selectedWire) {
-    const net = circuit.nets.get(selectedWire.netId);
-    if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
-  }
-  const objects = [...comps, ...labels, ...nets];
-  if (!objects.length && !wireTargets.length) {
-    logLine('nothing selected for style paste');
-    return false;
-  }
-  commit(() => {
-    for (const obj of objects) {
-      const next = { ...(obj.style || {}) };
-      for (const field of ['color', 'lineStyle', 'width', 'arrowhead']) {
-        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box', 'line'].includes(obj.kind) || obj.routingMode) &&
-            (field !== 'arrowhead' || supportsArrowhead(obj))) {
-          next[field] = style[field];
-        }
-      }
-      if (style.color !== undefined && typeof obj.setColor === 'function') obj.setColor(style.color);
-      if (obj.routingMode) applyNetStyle(obj, next);
-      else obj.style = { ...(obj.style || {}), ...next };
-    }
-    for (const { net, key } of wireTargets) {
-      applyWireTargetStyle(net, key, style);
-    }
-  });
-  render();
-  return true;
-}
-
-function pasteStyle() {
-  if (!clipboard?.style) {
-    logLine(clipboard ? 'style paste requires a single copied object' : 'nothing copied');
-    return false;
-  }
-  return applyStyleToSelected(clipboard.style);
-}
-
-function applySelectedStyle(field, value) {
-  const comps = selectedComps();
-  const labels = selectedLabels();
-  const wireTargets = selectedWireTargets();
-  const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
-  if (selectedWire) {
-    const net = circuit.nets.get(selectedWire.netId);
-    if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
-  }
-  const objects = [...comps, ...labels, ...nets];
-  if (!objects.length && !wireTargets.length) return;
-  const next = value || styleDefaults(field);
-  commit(() => {
-    for (const obj of objects) {
-      if (field === 'lineStyle' && !['arrow', 'box', 'line'].includes(obj.kind) && !obj.routingMode) continue;
-      if (field === 'arrowhead' && !supportsArrowhead(obj)) continue;
-      if (field === 'color' && typeof obj.setColor === 'function') obj.setColor(next);
-      else if (obj.routingMode) applyNetStyle(obj, { [field]: next });
-      else obj.style = { ...(obj.style || {}), [field]: next };
-    }
-    for (const { net, key } of wireTargets) {
-      applyWireTargetStyle(net, key, { [field]: next });
-    }
-  });
-  render();
-}
-/** The selection's shared style, or null when nothing styleable is selected.
- * A field the selection disagrees on reads as ''. */
-function selectionStyleState() {
-  const wireTargets = selectedWireTargets();
-  if (selectedWire) {
-    const net = circuit.nets.get(selectedWire.netId);
-    if (net) wireTargets.push({ net, key: `${selectedWire.branch}:${selectedWire.segment}` });
-  }
-  const objects = [...selectedComps(), ...selectedLabels(), ...[...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean)];
-  if (!objects.length && !wireTargets.length) return null;
-  const hasWireSelection = wireTargets.length > 0 || selectedNets.size > 0;
-  const common = (values) => (values.length && values.every((v) => v === values[0]) ? values[0] : '');
-  const pick = (field) => common([
-    ...objects.map((o) => objectStyleValue(o, field)),
-    ...wireTargets.map(({ net, key }) => wireStyleValue(net, key, field)),
-  ]);
-  const { labels } = selectedTextTargets();
-  return {
-    color: pick('color'),
-    lineStyle: pick('lineStyle'),
-    arrowhead: pick('arrowhead'),
-    width: pick('width'),
-    supportsLine: hasWireSelection || objects.some((o) => ['arrow', 'box', 'line'].includes(o.kind)),
-    supportsArrowhead: hasWireSelection || objects.some(supportsArrowhead),
-    text: labels.length ? {
-      align: labels.every((label) => label.align === labels[0].align) ? labels[0].align : null,
-      towardPart: labels.every((label) => label.owner || label.netId),
-      bold: selectedFontState('bold'),
-      italic: selectedFontState('italic'),
-    } : null,
-  };
-}
-
-/** Reflect a selection style in one set of style controls: the side panel's
- * or the context menu's strip, which share their data attributes. */
-function syncStyleControls(root, state) {
-  const pressed = (button, on) => button.setAttribute('aria-pressed', String(on));
-  const lineRow = root.querySelector('[data-style-row="line"]');
-  const textRow = root.querySelector('[data-style-row="text"]');
-  if (lineRow) lineRow.hidden = !state.supportsLine;
-  if (textRow) textRow.hidden = !state.text;
-  const ends = arrowheadEnds(state.arrowhead);
-  for (const button of root.querySelectorAll('[data-arrow-end]')) {
-    button.hidden = button.disabled = !state.supportsArrowhead;
-    pressed(button, ends[button.dataset.arrowEnd]);
-  }
-  for (const button of root.querySelectorAll('[data-line-style]')) pressed(button, button.dataset.lineStyle === state.lineStyle);
-  for (const button of root.querySelectorAll('[data-width]')) pressed(button, button.dataset.width === state.width);
-  for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(swatch.dataset.value === state.color));
-  for (const button of root.querySelectorAll('[data-style-align]')) {
-    if (button.dataset.styleAlign === 'parent') button.hidden = button.disabled = !state.text?.towardPart;
-    pressed(button, button.dataset.styleAlign === state.text?.align);
-  }
-  for (const button of root.querySelectorAll('[data-style-font]')) pressed(button, !!state.text?.[button.dataset.styleFont]);
-}
-
-/** Apply a style control click inside `root`; returns whether it was one. */
-function handleStyleControlClick(root, ev) {
-  const button = ev.target.closest?.('button');
-  if (!button || button.disabled || !root.contains(button)) return false;
-  const { dataset } = button;
-  if (dataset.arrowEnd) {
-    const on = (end) => root.querySelector(`[data-arrow-end="${end}"]`)?.getAttribute('aria-pressed') === 'true';
-    const start = dataset.arrowEnd === 'start' ? !on('start') : on('start');
-    const end = dataset.arrowEnd === 'end' ? !on('end') : on('end');
-    applySelectedStyle('arrowhead', combineArrowheadEnds(start, end));
-  } else if (dataset.lineStyle) applySelectedStyle('lineStyle', dataset.lineStyle);
-  else if (dataset.width) applySelectedStyle('width', dataset.width);
-  else if (button.classList.contains('swatch')) applySelectedStyle('color', dataset.value);
-  else if (dataset.styleAlign) setSelectedLabelAlign(dataset.styleAlign);
-  else if (dataset.styleFont) setSelectedLabelFont(dataset.styleFont, button.getAttribute('aria-pressed') !== 'true');
-  else return false;
-  return true;
-}
-
-/** The panel only exists while something is styleable; an open context menu's
- * strip follows the same selection. */
-function updateStyleControls() {
-  const state = selectionStyleState();
-  const panel = document.getElementById('style-panel');
-  if (panel) {
-    panel.hidden = !state;
-    if (state) {
-      syncStyleControls(panel, state);
-      const linePattern = document.getElementById('style-line-pattern');
-      if (linePattern) {
-        linePattern.disabled = !state.supportsLine;
-        const icon = linePattern.querySelector('.button-icon');
-        if (icon) icon.innerHTML = ICON_PATHS[LINE_STYLE_ICONS[state.lineStyle] || 'line-solid'];
-      }
-    }
-  }
-  const strip = componentContextMenuEl?.querySelector('.context-style-strip');
-  if (strip) {
-    strip.hidden = !state;
-    if (state) syncStyleControls(strip, state);
-  }
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
@@ -40307,7 +39974,6 @@ for (const rail of document.querySelectorAll('.mode-toolbar, .rail-flyout')) {
     if (ev.detail > 0 && ev.target.closest('button')) canvasEl.focus({ preventScroll: true });
   });
 }
-document.getElementById('style-panel')?.addEventListener('click', (ev) => handleStyleControlClick(ev.currentTarget, ev));
 
 // ----- side panel: collapsible sections, filter, resizable width ------------
 
@@ -43050,6 +42716,378 @@ function statusFields({ mode, selection, cursor, hints = [] }) {
 }
 
 __exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
+};
+
+__modules["src/web/style-controls.js"] = function (__require, __exports) {
+__exports.toggleSelectedLabelFont = toggleSelectedLabelFont;
+__exports.styleDefaults = styleDefaults;
+__exports.wireStyleValue = wireStyleValue;
+__exports.selectedStyleSource = selectedStyleSource;
+__exports.pasteStyle = pasteStyle;
+__exports.selectionStyleState = selectionStyleState;
+__exports.syncStyleControls = syncStyleControls;
+__exports.handleStyleControlClick = handleStyleControlClick;
+__exports.updateStyleControls = updateStyleControls;
+__exports.installStyleControls = installStyleControls;
+let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
+let componentContextMenuEl; __bind(() => { ({ componentContextMenuEl } = __require("src/web/elements.js")); });
+let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icons.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let commit, keyToWire, render, selectedComps, selectedLabels; __bind(() => { ({ commit, keyToWire, render, selectedComps, selectedLabels } = __require("src/web/main.js")); });
+/**
+ * The style controls for the selection: color, line dash and arrowheads,
+ * width, text alignment, bold and italic. The side panel and the context
+ * menu's style strip share them; Ctrl+Shift+V pastes a copied style.
+ */
+
+
+
+
+
+
+
+
+/** Text-bearing selection: labels and annotation captions. */
+function selectedTextTargets() {
+  const labels = new Map();
+  for (const label of selectedLabels()) {
+    if (label.kind === 'label') labels.set(label.id, label);
+    if (['arrow', 'box', 'line'].includes(label.kind)) {
+      for (const child of editor.circuit.labels.values()) {
+        if (child.parent === label.id) labels.set(child.id, child);
+      }
+    }
+  }
+  // Keep the result shape used by the shared text-style controls.  Schematic
+  // block text is no longer a separate selection role, but the panel still
+  // asks for this collection while deciding whether its row is visible.
+  return { labels: [...labels.values()], blocks: [] };
+}
+
+function selectedFontState(field) {
+  const { labels } = selectedTextTargets();
+  return labels.length > 0 && labels.every((label) => label.style?.[field] !== false);
+}
+
+function setSelectedLabelFont(field, on) {
+  const { labels } = selectedTextTargets();
+  if (!labels.length) return;
+  commit(() => {
+    for (const label of labels) label.style[field] = on;
+  });
+  render();
+}
+
+function toggleSelectedLabelFont(field) {
+  setSelectedLabelFont(field, !selectedFontState(field));
+}
+
+function setSelectedLabelAlign(align) {
+  const { labels } = selectedTextTargets();
+  if (!labels.length) return;
+  commit(() => labels.forEach((label) => label.setAlign(align)));
+  render();
+}
+
+function selectedWireTargets() {
+  return [...editor.selectedWires].map((key) => {
+    const wire = keyToWire(key);
+    return wire ? { net: editor.circuit.nets.get(wire.netId), key: `${wire.branch}:${wire.segment}` } : null;
+  }).filter((item) => item?.net);
+}
+
+function styleDefaults(field) {
+  return field === 'color' ? '#111' : field === 'lineStyle' ? 'solid' : field === 'arrowhead' ? 'none' : 'normal';
+}
+
+function arrowheadKind(object) {
+  if (object?.kind === 'arrow' || object?.kind === 'line') return object.kind;
+  if (object?.routingMode) return 'wire';
+  return null;
+}
+
+function supportsArrowhead(object) {
+  return !!arrowheadKind(object);
+}
+
+/** Combine the two independent start/end toggle buttons into the one shared
+ * arrowhead value the model stores. */
+function combineArrowheadEnds(start, end) {
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : 'none';
+}
+
+const LINE_STYLE_ICONS = { solid: 'line-solid', dashed: 'line-dashed', 'dash-dot': 'line-dash-dot', dotted: 'line-dotted' };
+
+function singlePathArrowheadValue(net) {
+  const path = net?.paths?.()[0];
+  if (!path || path.length < 2) return defaultArrowhead('wire');
+  return polylineArrowheadValue(net.wireStyles, 0, path, net.style?.arrowhead);
+}
+
+function wireStyleValue(net, key, field) {
+  const wire = keyToWire(`${net?.id || ''}:${key}`);
+  if (field === 'arrowhead' && net?.paths?.().length === 1 && wire.branch === 0) {
+    return singlePathArrowheadValue(net);
+  }
+  return net?.wireStyles?.[key]?.[field] ?? net?.style?.[field] ?? styleDefaults(field);
+}
+
+function objectStyleValue(object, field) {
+  if (field === 'arrowhead' && supportsArrowhead(object)) {
+    if (object?.routingMode) {
+      return object.paths?.().length === 1
+        ? singlePathArrowheadValue(object)
+        : object.style?.arrowhead || defaultArrowhead('wire');
+    }
+    return object.style?.arrowhead || defaultArrowhead(arrowheadKind(object));
+  }
+  return object?.style?.[field] || styleDefaults(field);
+}
+
+/** Put a shared arrowhead on the two endpoints of a one-path wire. */
+function setSinglePathArrowhead(net, value) {
+  const path = net?.paths?.()[0];
+  if (!path || path.length < 2) return false;
+  net.wireStyles = polylineArrowheadStyles(net.wireStyles, 0, path, value);
+  // Segment styles now carry the endpoint-only placement. Leaving a net-wide
+  // value here would make the renderer inherit it at every segment.
+  delete net.style.arrowhead;
+  return true;
+}
+
+function applyNetStyle(net, style) {
+  const next = { ...style };
+  if (next.arrowhead !== undefined && net.paths?.().length === 1) {
+    setSinglePathArrowhead(net, next.arrowhead);
+    delete next.arrowhead;
+  }
+  net.style = { ...(net.style || {}), ...next };
+}
+
+function applyWireTargetStyle(net, key, style) {
+  const wire = keyToWire(`${net.id}:${key}`);
+  const next = { ...style };
+  if (next.arrowhead !== undefined && net.paths?.().length === 1 && wire.branch === 0) {
+    setSinglePathArrowhead(net, next.arrowhead);
+    delete next.arrowhead;
+  }
+  if (Object.keys(next).length) {
+    net.wireStyles[key] = { ...(net.wireStyles[key] || {}), ...next };
+  }
+}
+
+function selectedWireTargetKeys() {
+  const keys = new Set(editor.selectedWires);
+  if (editor.selectedWire) keys.add(`${editor.selectedWire.netId}:${editor.selectedWire.branch}:${editor.selectedWire.segment}`);
+  return [...keys];
+}
+
+function selectedStyleSource() {
+  const comps = selectedComps();
+  const labels = selectedLabels();
+  const nets = [...editor.selectedNets].map((id) => editor.circuit.nets.get(id)).filter(Boolean);
+  const wireKeys = selectedWireTargetKeys();
+  const total = comps.length + labels.length + nets.length + wireKeys.length;
+  if (total !== 1) return null;
+  if (comps.length === 1) return { kind: 'object', style: { ...(comps[0].style || {}) } };
+  if (labels.length === 1) return { kind: 'object', style: { ...(labels[0].style || {}) } };
+  if (nets.length === 1) {
+    const net = nets[0];
+    return {
+      kind: 'object',
+      style: {
+        ...(net.style || {}),
+        ...(net.paths?.().length === 1 ? { arrowhead: singlePathArrowheadValue(net) } : {}),
+      },
+    };
+  }
+  const wire = keyToWire(wireKeys[0]);
+  const net = editor.circuit.nets.get(wire.netId);
+  if (!net) return null;
+  return {
+    kind: 'wire',
+    style: {
+      ...(net.wireStyles?.[`${wire.branch}:${wire.segment}`] || net.style || {}),
+      arrowhead: wireStyleValue(net, `${wire.branch}:${wire.segment}`, 'arrowhead'),
+    },
+  };
+}
+
+function applyStyleToSelected(style) {
+  const comps = selectedComps();
+  const labels = selectedLabels();
+  const wireTargets = selectedWireTargets();
+  const nets = [...editor.selectedNets].map((id) => editor.circuit.nets.get(id)).filter(Boolean);
+  const wireKeys = selectedWireTargetKeys();
+  if (editor.selectedWire) {
+    const net = editor.circuit.nets.get(editor.selectedWire.netId);
+    if (net) wireTargets.push({ net, key: `${editor.selectedWire.branch}:${editor.selectedWire.segment}` });
+  }
+  const objects = [...comps, ...labels, ...nets];
+  if (!objects.length && !wireTargets.length) {
+    logLine('nothing selected for style paste');
+    return false;
+  }
+  commit(() => {
+    for (const obj of objects) {
+      const next = { ...(obj.style || {}) };
+      for (const field of ['color', 'lineStyle', 'width', 'arrowhead']) {
+        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box', 'line'].includes(obj.kind) || obj.routingMode) &&
+            (field !== 'arrowhead' || supportsArrowhead(obj))) {
+          next[field] = style[field];
+        }
+      }
+      if (style.color !== undefined && typeof obj.setColor === 'function') obj.setColor(style.color);
+      if (obj.routingMode) applyNetStyle(obj, next);
+      else obj.style = { ...(obj.style || {}), ...next };
+    }
+    for (const { net, key } of wireTargets) {
+      applyWireTargetStyle(net, key, style);
+    }
+  });
+  render();
+  return true;
+}
+
+function pasteStyle() {
+  if (!editor.clipboard?.style) {
+    logLine(editor.clipboard ? 'style paste requires a single copied object' : 'nothing copied');
+    return false;
+  }
+  return applyStyleToSelected(editor.clipboard.style);
+}
+
+function applySelectedStyle(field, value) {
+  const comps = selectedComps();
+  const labels = selectedLabels();
+  const wireTargets = selectedWireTargets();
+  const nets = [...editor.selectedNets].map((id) => editor.circuit.nets.get(id)).filter(Boolean);
+  if (editor.selectedWire) {
+    const net = editor.circuit.nets.get(editor.selectedWire.netId);
+    if (net) wireTargets.push({ net, key: `${editor.selectedWire.branch}:${editor.selectedWire.segment}` });
+  }
+  const objects = [...comps, ...labels, ...nets];
+  if (!objects.length && !wireTargets.length) return;
+  const next = value || styleDefaults(field);
+  commit(() => {
+    for (const obj of objects) {
+      if (field === 'lineStyle' && !['arrow', 'box', 'line'].includes(obj.kind) && !obj.routingMode) continue;
+      if (field === 'arrowhead' && !supportsArrowhead(obj)) continue;
+      if (field === 'color' && typeof obj.setColor === 'function') obj.setColor(next);
+      else if (obj.routingMode) applyNetStyle(obj, { [field]: next });
+      else obj.style = { ...(obj.style || {}), [field]: next };
+    }
+    for (const { net, key } of wireTargets) {
+      applyWireTargetStyle(net, key, { [field]: next });
+    }
+  });
+  render();
+}
+
+/** The selection's shared style, or null when nothing styleable is selected.
+ * A field the selection disagrees on reads as ''. */
+function selectionStyleState() {
+  const wireTargets = selectedWireTargets();
+  if (editor.selectedWire) {
+    const net = editor.circuit.nets.get(editor.selectedWire.netId);
+    if (net) wireTargets.push({ net, key: `${editor.selectedWire.branch}:${editor.selectedWire.segment}` });
+  }
+  const objects = [...selectedComps(), ...selectedLabels(), ...[...editor.selectedNets].map((id) => editor.circuit.nets.get(id)).filter(Boolean)];
+  if (!objects.length && !wireTargets.length) return null;
+  const hasWireSelection = wireTargets.length > 0 || editor.selectedNets.size > 0;
+  const common = (values) => (values.length && values.every((v) => v === values[0]) ? values[0] : '');
+  const pick = (field) => common([
+    ...objects.map((o) => objectStyleValue(o, field)),
+    ...wireTargets.map(({ net, key }) => wireStyleValue(net, key, field)),
+  ]);
+  const { labels } = selectedTextTargets();
+  return {
+    color: pick('color'),
+    lineStyle: pick('lineStyle'),
+    arrowhead: pick('arrowhead'),
+    width: pick('width'),
+    supportsLine: hasWireSelection || objects.some((o) => ['arrow', 'box', 'line'].includes(o.kind)),
+    supportsArrowhead: hasWireSelection || objects.some(supportsArrowhead),
+    text: labels.length ? {
+      align: labels.every((label) => label.align === labels[0].align) ? labels[0].align : null,
+      towardPart: labels.every((label) => label.owner || label.netId),
+      bold: selectedFontState('bold'),
+      italic: selectedFontState('italic'),
+    } : null,
+  };
+}
+
+/** Reflect a selection style in one set of style controls: the side panel's
+ * or the context menu's strip, which share their data attributes. */
+function syncStyleControls(root, state) {
+  const pressed = (button, on) => button.setAttribute('aria-pressed', String(on));
+  const lineRow = root.querySelector('[data-style-row="line"]');
+  const textRow = root.querySelector('[data-style-row="text"]');
+  if (lineRow) lineRow.hidden = !state.supportsLine;
+  if (textRow) textRow.hidden = !state.text;
+  const ends = arrowheadEnds(state.arrowhead);
+  for (const button of root.querySelectorAll('[data-arrow-end]')) {
+    button.hidden = button.disabled = !state.supportsArrowhead;
+    pressed(button, ends[button.dataset.arrowEnd]);
+  }
+  for (const button of root.querySelectorAll('[data-line-style]')) pressed(button, button.dataset.lineStyle === state.lineStyle);
+  for (const button of root.querySelectorAll('[data-width]')) pressed(button, button.dataset.width === state.width);
+  for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(swatch.dataset.value === state.color));
+  for (const button of root.querySelectorAll('[data-style-align]')) {
+    if (button.dataset.styleAlign === 'parent') button.hidden = button.disabled = !state.text?.towardPart;
+    pressed(button, button.dataset.styleAlign === state.text?.align);
+  }
+  for (const button of root.querySelectorAll('[data-style-font]')) pressed(button, !!state.text?.[button.dataset.styleFont]);
+}
+
+/** Apply a style control click inside `root`; returns whether it was one. */
+function handleStyleControlClick(root, ev) {
+  const button = ev.target.closest?.('button');
+  if (!button || button.disabled || !root.contains(button)) return false;
+  const { dataset } = button;
+  if (dataset.arrowEnd) {
+    const on = (end) => root.querySelector(`[data-arrow-end="${end}"]`)?.getAttribute('aria-pressed') === 'true';
+    const start = dataset.arrowEnd === 'start' ? !on('start') : on('start');
+    const end = dataset.arrowEnd === 'end' ? !on('end') : on('end');
+    applySelectedStyle('arrowhead', combineArrowheadEnds(start, end));
+  } else if (dataset.lineStyle) applySelectedStyle('lineStyle', dataset.lineStyle);
+  else if (dataset.width) applySelectedStyle('width', dataset.width);
+  else if (button.classList.contains('swatch')) applySelectedStyle('color', dataset.value);
+  else if (dataset.styleAlign) setSelectedLabelAlign(dataset.styleAlign);
+  else if (dataset.styleFont) setSelectedLabelFont(dataset.styleFont, button.getAttribute('aria-pressed') !== 'true');
+  else return false;
+  return true;
+}
+
+/** The panel only exists while something is styleable; an open context menu's
+ * strip follows the same selection. */
+function updateStyleControls() {
+  const state = selectionStyleState();
+  const panel = document.getElementById('style-panel');
+  if (panel) {
+    panel.hidden = !state;
+    if (state) {
+      syncStyleControls(panel, state);
+      const linePattern = document.getElementById('style-line-pattern');
+      if (linePattern) {
+        linePattern.disabled = !state.supportsLine;
+        const icon = linePattern.querySelector('.button-icon');
+        if (icon) icon.innerHTML = ICON_PATHS[LINE_STYLE_ICONS[state.lineStyle] || 'line-solid'];
+      }
+    }
+  }
+  const strip = componentContextMenuEl?.querySelector('.context-style-strip');
+  if (strip) {
+    strip.hidden = !state;
+    if (state) syncStyleControls(strip, state);
+  }
+}
+
+function installStyleControls() {
+  document.getElementById('style-panel')?.addEventListener('click', (ev) => handleStyleControlClick(ev.currentTarget, ev));
+}
+
 };
 
 __modules["src/web/tips.js"] = function (__require, __exports) {
