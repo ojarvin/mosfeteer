@@ -51,7 +51,7 @@ import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constra
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
 import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
-import { alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides } from './layout.js';
+import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 import { editor } from './editor-state.js';
 import {
   canvasEl,
@@ -128,7 +128,6 @@ import {
   presenterStageEl,
   presenterCountEl,
   toolbarEl,
-  alignPanelEl,
   railFlyoutProxyEl,
   railFlyoutEl,
   panelFilterEl,
@@ -143,12 +142,21 @@ import {
 } from './elements.js';
 import { ICON_PATHS, syncToolCursor, installIcons } from './icons.js';
 import { noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding } from './onboarding.js';
+import { ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } from './align-tool.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
+  alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
+  cursor: { get: () => cursor, set: (value) => { cursor = value; } },
+  drag: { get: () => drag, set: (value) => { drag = value; } },
+  layoutPreviewRects: { get: () => layoutPreviewRects, set: (value) => { layoutPreviewRects = value; } },
   modelRevision: { get: () => modelRevision, set: (value) => { modelRevision = value; } },
+  multi: { get: () => multi, set: (value) => { multi = value; } },
+  previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
+  previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
+  selLabels: { get: () => selLabels, set: (value) => { selLabels = value; } },
   tutorial: { get: () => tutorial, set: (value) => { tutorial = value; } },
   view: { get: () => view, set: (value) => { view = value; } },
 });
@@ -549,7 +557,7 @@ export function logLine(text, cls, { peek = true } = {}) {
 }
 
 /** Transient guidance: shown in the message chip, never appended to the log. */
-function hintLine(text) {
+export function hintLine(text) {
   setStatusMessage(text, 'hint');
 }
 
@@ -801,7 +809,7 @@ function flushDraft() {
     });
   } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
 }
-function scheduleInteractionRender() {
+export function scheduleInteractionRender() {
   // Routing the draft is the costly part of a wire-mode repaint; do it once
   // per painted frame rather than once per input event.
   wirePreviewStale = true;
@@ -1906,7 +1914,7 @@ function selectedComp() {
 }
 
 /** Replace the selection. `primary` defaults to the first element. */
-function setSelection(refs, primary = refs[0], preserveMixed = false) {
+export function setSelection(refs, primary = refs[0], preserveMixed = false) {
   clearDiagnosticFocus();
   if (!preserveMixed) {
     selLabel = null;
@@ -1921,7 +1929,7 @@ function setSelection(refs, primary = refs[0], preserveMixed = false) {
 }
 
 /** Replace the label selection. `primary` defaults to the first element. */
-function setLabelSelection(ids, primary = ids[0], preserveMixed = false) {
+export function setLabelSelection(ids, primary = ids[0], preserveMixed = false) {
   clearDiagnosticFocus();
   const selectableIds = ids.filter((id) => circuit.labels.get(id)?.selectable !== false);
   if (!preserveMixed) {
@@ -1952,7 +1960,7 @@ function syncSelectedWire() {
 /** One selection gesture for every document kind and selectable role.
  * A plain click replaces the complete mixed selection. Shift/Ctrl/Cmd toggles
  * only the clicked identity and preserves every other selected role. */
-function applyEditorSelection(target, extend = false) {
+export function applyEditorSelection(target, extend = false) {
   clearDiagnosticFocus();
   if (!extend) {
     selected = null; multi.clear();
@@ -2063,7 +2071,7 @@ function finishDiagonalSegmentDrag() {
   render();
 }
 
-function selectedLabels() {
+export function selectedLabels() {
   return [...selLabels]
     .map((id) => circuit.labels.get(id))
     .filter((label) => label && label.selectable !== false);
@@ -2454,7 +2462,7 @@ function updateStyleControls() {
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
-function pickLabel(w) {
+export function pickLabel(w) {
   return labelsAt(w)[0] || null;
 }
 
@@ -2481,7 +2489,7 @@ function labelsAt(w) {
   return [...onText, ...inBox];
 }
 
-function annotationTextAt(world) {
+export function annotationTextAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   for (const label of labels()) {
     if (!['arrow', 'box'].includes(label.kind)) continue;
@@ -2492,7 +2500,7 @@ function annotationTextAt(world) {
   return null;
 }
 
-function annotationGeometryAt(world) {
+export function annotationGeometryAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   const near = (a, b) => distanceToSegment(p, a, b) <= GRID / 2;
   for (const label of labels()) {
@@ -2509,7 +2517,7 @@ function annotationGeometryAt(world) {
   return null;
 }
 
-function annotationEndpointAt(world) {
+export function annotationEndpointAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   for (const label of labels()) {
     if (['arrow', 'line'].includes(label.kind)) {
@@ -2537,7 +2545,7 @@ function annotationSegmentAt(world) {
   return null;
 }
 
-function selectedComps() {
+export function selectedComps() {
   const out = [];
   for (const r of multi) {
     const c = circuit.components.get(r);
@@ -2549,7 +2557,7 @@ function selectedComps() {
 /** The Align panel never silently drops a selected electrical object. Owned
  * labels ride their component; net labels and wires need different movement
  * semantics and therefore make the whole layout action unavailable. */
-function layoutSelection() {
+export function layoutSelection() {
   const components = selectedComps();
   const labels = selectedLabels().filter((label) => !label.owner || !multi.has(label.owner));
   // Free annotations and a box/arrow's own child labels line up like any
@@ -2565,7 +2573,7 @@ function layoutSelection() {
   return { items, count, blocked };
 }
 
-function layoutPlan(action, measure = 'gaps') {
+export function layoutPlan(action, measure = 'gaps') {
   const selection = layoutSelection();
   if (selection.blocked) return { ok: false, reason: 'Select only components or free annotations; wires and net labels cannot be aligned this way.' };
   return action === 'x' || action === 'y'
@@ -2573,7 +2581,7 @@ function layoutPlan(action, measure = 'gaps') {
     : { ...alignmentPlan(selection.items, action), kind: 'align' };
 }
 
-function updateAlignControls() {
+export function updateAlignControls() {
   const panel = document.getElementById('align-panel');
   if (!panel) return;
   const selection = layoutSelection();
@@ -2594,7 +2602,7 @@ function updateAlignControls() {
   }
 }
 
-function applyLayoutPlan(plan) {
+export function applyLayoutPlan(plan) {
   if (!plan.ok) { logLine(plan.reason, 'error'); return false; }
   const moves = plan.deltas.filter(({ dx, dy }) => dx || dy);
   if (!moves.length) { logLine('selection is already aligned'); return false; }
@@ -2663,199 +2671,7 @@ function alignSelectionByKey({ align, repeat }) {
   applyLayoutPlan(plan);
 }
 
-// ----- Align to -------------------------------------------------------------
-// Shift+A: the selection moves as one rigid piece. The first click picks an
-// edge or point of the selection's outline, the second a matching edge or
-// point of another object. Nothing is stored: the selection is the group.
-
-const ALIGN_SOURCE_HINT = 'ALIGN: click an edge or point of the selection (click objects to change it); Esc exits';
-const ALIGN_POINT_PX = 10;
-
-/** World units per screen pixel, for hit radii that keep their on-screen size. */
-function worldPerPixel() {
-  const p = paneSize();
-  return p ? view.w / p.w : 1;
-}
-
-/** The selection's outline: parts and free or owned text, not wires, which
- * follow their parts. */
-function alignOutline() {
-  const labels = selectedLabels().filter((label) => !label.owner || !multi.has(label.owner));
-  return outlineOf([...selectedComps().map(componentLayoutItem), ...labels.map(labelLayoutItem)]);
-}
-
-/** Objects the selection can align to: every part and label outside it. A
- * selected part's own labels and a selected shape's captions move with it. */
-function alignTargets() {
-  const out = [];
-  for (const c of circuit.components.values()) {
-    if (!multi.has(c.refdes) && c.type !== 'solder') out.push({ id: c.refdes, bbox: c.bboxWorld() });
-  }
-  for (const label of circuit.labels.values()) {
-    if (label.selectable === false || selLabels.has(label.id) || selLabels.has(label.parent) || multi.has(label.owner)) continue;
-    out.push({ id: label.id, bbox: label.bbox() });
-  }
-  return out;
-}
-
-function alignSourceFeatures() {
-  const outline = alignOutline();
-  return outline ? alignFeatures(outline, null) : [];
-}
-
-function alignTargetFeatures() {
-  const source = alignTool?.source;
-  return alignTargets().flatMap((target) => alignFeatures(target.bbox, target.id))
-    .filter((feature) => alignCompatible(source, feature));
-}
-
-const sameFeature = (a, b) => (!a && !b) || (!!a && !!b && a.kind === b.kind && a.name === b.name && a.owner === b.owner);
-
-function updateAlignHover(w) {
-  const tolerance = ALIGN_POINT_PX * worldPerPixel();
-  const hover = alignTool.source
-    ? alignFeatureAt(alignTargetFeatures(), w, tolerance) || alignFeatureAt(alignSourceFeatures(), w, tolerance)
-    : alignFeatureAt(alignSourceFeatures(), w, tolerance);
-  const focus = alignTool.source && !hover?.owner
-    ? alignTargets().filter(({ bbox }) => w.x >= bbox.x - tolerance && w.x <= bbox.x + bbox.w + tolerance && w.y >= bbox.y - tolerance && w.y <= bbox.y + bbox.h + tolerance)
-      .sort((a, b) => a.bbox.w * a.bbox.h - b.bbox.w * b.bbox.h)[0]?.id || null
-    : hover?.owner || null;
-  if (sameFeature(hover, alignTool.hover) && focus === alignTool.focus) return;
-  alignTool.hover = hover;
-  alignTool.focus = focus;
-  scheduleInteractionRender();
-}
-
-/** A picked source and its matching features on the object under the pointer,
- * with the landing outline previewed. Interaction only. */
-function alignOverlay() {
-  if (!alignTool) return null;
-  const outline = alignOutline();
-  if (!outline) return null;
-  const { source, hover } = alignTool;
-  const target = source && hover?.owner ? hover : null;
-  const focus = target?.owner || alignTool.focus;
-  const focusTarget = focus ? alignTargets().find((candidate) => candidate.id === focus) : null;
-  const delta = target ? alignToDelta(source, target) : null;
-  return {
-    outline,
-    source,
-    hover,
-    features: source
-      ? [...alignFeatures(outline, null).filter((feature) => feature.kind === 'point'),
-        ...(focusTarget ? alignFeatures(focusTarget.bbox, focusTarget.id).filter((feature) => alignCompatible(source, feature)) : [])]
-      : alignFeatures(outline, null).filter((feature) => feature.kind === 'point'),
-    focus: focusTarget?.bbox || null,
-    preview: delta ? { x: outline.x + delta.dx, y: outline.y + delta.dy, w: outline.w, h: outline.h } : null,
-    target,
-  };
-}
-
-function keptAlignSelection() {
-  const refs = [...multi];
-  const labels = [...selLabels];
-  return () => {
-    setSelection(refs.filter((ref) => circuit.components.has(ref)));
-    setLabelSelection(labels.filter((id) => circuit.labels.has(id)));
-  };
-}
-
-function alignMouseDown(startWorld, startClient, ev) {
-  const tolerance = ALIGN_POINT_PX * worldPerPixel();
-  if (alignTool.source) {
-    const target = alignFeatureAt(alignTargetFeatures(), startWorld, tolerance);
-    if (target) {
-      alignSelectionTo(alignTool.source, target);
-      return;
-    }
-  }
-  const source = alignFeatureAt(alignSourceFeatures(), startWorld, tolerance);
-  if (source) {
-    alignTool = { source, hover: null };
-    hintLine(`ALIGN: click a ${source.kind === 'edge' ? `${source.axis === 'x' ? 'vertical' : 'horizontal'} edge` : 'point'} of another object to align to; Esc picks again`);
-    render();
-    return;
-  }
-  if (alignTool.source) {
-    hintLine('ALIGN: click a highlighted edge or point of another object; Esc picks again');
-    return;
-  }
-  // Before a source is picked, clicks shape the selection as in Select.
-  const extend = ev.shiftKey || ev.ctrlKey || ev.metaKey;
-  const label = pickLabel(startWorld) || annotationTextAt(startWorld) || annotationGeometryAt(startWorld) || annotationEndpointAt(startWorld)?.label;
-  const hit = label ? null : pickAt(startWorld);
-  const target = label?.owner && circuit.components.has(label.owner) ? { kind: 'component', id: label.owner }
-    : label ? { kind: 'label', id: label.id }
-      : hit?.refdes && circuit.components.has(hit.refdes) ? { kind: 'component', id: hit.refdes } : null;
-  if (!target) {
-    beginMarqueeSelection(startWorld, startClient, ev);
-    return;
-  }
-  // A near miss on a handle must not shrink the set to the part under it.
-  if (!extend && (target.kind === 'component' ? multi : selLabels).has(target.id)) {
-    hintLine(ALIGN_SOURCE_HINT);
-    return;
-  }
-  applyEditorSelection(target, extend);
-  hintLine(ALIGN_SOURCE_HINT);
-  render();
-}
-
-/** Move the whole selection so `source` lands on `target`, through the same
- * drag path as the Move tool: wires inside the set translate, wires to the
- * rest reroute, and the edit is one undo entry. */
-function alignSelectionTo(source, target) {
-  const { dx, dy, exact } = alignToDelta(source, target);
-  alignTool = { source: null, hover: null };
-  if (!dx && !dy) {
-    hintLine('already aligned');
-    render();
-    return;
-  }
-  const start = { x: snap(cursor.x), y: snap(cursor.y) };
-  const from = worldToClient(start.x, start.y);
-  const to = worldToClient(start.x + dx, start.y + dy);
-  beginObjectMove([...multi], [...selLabels], start, from);
-  drag.moved = true;
-  canvasMouseMove({ clientX: to.x, clientY: to.y, shiftKey: false });
-  canvasMouseUp({ clientX: to.x, clientY: to.y, button: 0, shiftKey: false });
-  hintLine(exact ? 'aligned the selection; pick another edge or point, or Esc'
-    : 'aligned to the nearest grid point; exact alignment falls between grid points');
-}
-
-function previewLayoutPlan(plan) {
-  const items = layoutSelection().items;
-  layoutPreviewRects = plan.ok ? plan.deltas.filter(({ dx, dy }) => dx || dy).map(({ id, dx, dy }) => {
-    const item = items.find((candidate) => candidate.id === id);
-    return item && { x: item.bbox.x + dx, y: item.bbox.y + dy, w: item.bbox.w, h: item.bbox.h };
-  }).filter(Boolean) : [];
-  renderCanvas(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision);
-}
-
-alignPanelEl?.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-layout-align], [data-layout-distribute]');
-  if (!button || button.disabled) return;
-  const action = button.dataset.layoutAlign || button.dataset.layoutDistribute;
-  const measure = document.getElementById('align-measure')?.value || 'gaps';
-  applyLayoutPlan(layoutPlan(action, measure));
-});
-alignPanelEl?.addEventListener('pointerover', (event) => {
-  const button = event.target.closest('[data-layout-align], [data-layout-distribute]');
-  if (!button || button.disabled) return;
-  previewLayoutPlan(layoutPlan(button.dataset.layoutAlign || button.dataset.layoutDistribute,
-    document.getElementById('align-measure')?.value || 'gaps'));
-});
-alignPanelEl?.addEventListener('pointerout', (event) => {
-  if (!event.target.closest('[data-layout-align], [data-layout-distribute]')) return;
-  layoutPreviewRects = [];
-  renderCanvas(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision);
-});
-alignPanelEl?.querySelector('#align-measure')?.addEventListener('change', () => {
-  layoutPreviewRects = [];
-  updateAlignControls();
-  render();
-});
-
+installAlignPanel();
 function selectedDrawTargets() {
   const groups = [];
   const netIds = new Set(selectedNets);
@@ -5214,7 +5030,7 @@ function scheduleMeasuredLabelRender() {
   });
 }
 
-function renderCanvas(modelKey) {
+export function renderCanvas(modelKey) {
   // Fixed-net editing preserves literal geometry.
   const directFrom = directWire?.source ? wireOrigin(directWire.source) : null;
   if (directWire?.source && !directFrom) directWire = null;
@@ -5902,7 +5718,7 @@ function clientToWorld(clientX, clientY, refView = view) {
   return worldAndCursorFromClient(clientX, clientY, pane.getBoundingClientRect(), refView).world;
 }
 
-function worldToClient(wx, wy, refView = view) {
+export function worldToClient(wx, wy, refView = view) {
   const pane = document.querySelector('.canvas-pane');
   const r = pane.getBoundingClientRect();
   return {
@@ -5964,7 +5780,7 @@ function boxSelectionContents(x0, y0, x1, y1) {
   return { refs, labels, nets, wires };
 }
 
-function beginMarqueeSelection(startWorld, startClient, ev) {
+export function beginMarqueeSelection(startWorld, startClient, ev) {
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
   if (!ev.shiftKey) setSelection([]);
   drag = {
@@ -5986,7 +5802,7 @@ function hasSelectableObjectAt(world) {
 }
 
 /** `matchAt` for an unsnapped world point. */
-function pickAt(w) {
+export function pickAt(w) {
   return matchAt(snap(w.x), snap(w.y));
 }
 
@@ -7835,7 +7651,7 @@ function canvasMouseDown(ev) {
 /** Arm one translation drag for any selected object combination. Keeping
  * this collection in one place makes component, label, and mixed drags share
  * the same relative-anchor and wire behavior. */
-function beginObjectMove(refs, labelIds, startWorld, startClient, options = {}) {
+export function beginObjectMove(refs, labelIds, startWorld, startClient, options = {}) {
   const startSnapshot = snapshot();
   // Moves and Ctrl/Cmd-drag copies preview in an isolated document from the
   // first pointer down, so a cancelled drag leaves nothing behind and a drop
@@ -8320,7 +8136,7 @@ function placementWorld(current, shiftKey) {
     : current;
 }
 
-function canvasMouseMove(ev) {
+export function canvasMouseMove(ev) {
   // The quick-add menu is anchored at the drop point; the wire preview stays there.
   if (quickAdd) return;
   const { w, cursorChanged } = updateCursorFromEvent(ev);
@@ -8756,7 +8572,7 @@ function canvasMouseMove(ev) {
   }
 }
 
-function canvasMouseUp(ev) {
+export function canvasMouseUp(ev) {
   const click = stackedClick;
   stackedClick = null;
   const still = !!drag && !dragMoved(drag.startWorld, drag.startClient, clientToWorld(ev.clientX, ev.clientY), ev);
