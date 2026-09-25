@@ -2511,14 +2511,27 @@ test('older documents align their centered part and net labels toward what they 
 test('sub-pixel measurement noise at a grid boundary does not shift aligned label edges', () => {
   const c = new Circuit();
   const label = c.addLabel({ text: '\\text{Assumptions}', x: 400, y: 240, math: true, align: 'left' });
-  label.setRenderedTextBounds(320.00001, 160.00001);
+  // Left-aligned math keeps its half-cell gap plus its far-side padding, so
+  // 294 units of text exactly fill eight cells.
+  label.setRenderedTextBounds(294.00001, 160.00001);
   const before = label.bbox();
   assert.deepEqual(before, { x: 240, y: 160, w: 320, h: 160 });
   const loaded = Circuit.fromJSON(c.toJSON()).labels.get(label.id);
-  loaded.setRenderedTextBounds(319.99999, 159.99999);
+  loaded.setRenderedTextBounds(293.99999, 159.99999);
   assert.deepEqual(loaded.bbox(), before);
-  loaded.setRenderedTextBounds(320.01, 160.01);
+  loaded.setRenderedTextBounds(294.01, 160.01);
   assert.deepEqual(loaded.bbox(), { x: 200, y: 120, w: 400, h: 240 }, 'real overflow still expands outward');
+});
+
+test('aligned math text keeps the full gap from its aligned edge however much of the box it fills', () => {
+  const c = new Circuit();
+  for (const width of [100, 110, 120, 130, 140]) {
+    const label = c.addLabel({ text: '$x$', x: 400, y: 0, math: true, align: 'left' });
+    label.setRenderedTextBounds(width, 30);
+    const box = label.bbox();
+    assert.equal(label.inkRect().x - box.x, GRID / 2, `left gap at text width ${width}`);
+    assert.ok(box.w - width >= GRID / 2 + 6, `far-side padding at text width ${width}`);
+  }
 });
 
 test('applyMarkup wraps, unwraps, and reverts mixed selections', () => {

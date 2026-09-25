@@ -275,6 +275,9 @@ export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 /** Gap between left/right aligned text and its box edge: half a grid cell. */
 export const LABEL_ALIGN_INSET = GRID / 2;
 
+/** Padding a math label keeps on the sides its alignment does not set. */
+export const MATH_LABEL_PAD = 6;
+
 const symbolInk = new WeakMap();
 const symbolInkPieces = new WeakMap();
 
@@ -883,8 +886,12 @@ export class LabelInstance {
     const tolerance = this._renderedTextBounds ? 0.001 : 0;
     // Aligned text keeps its full inset from the aligned edge: the box grows
     // rather than squeezing the gap, so the gap looks the same on every label.
-    // (Math labels carry their own padding.)
-    const inset = this.math || this.textAlign() === 'center' ? 0 : LABEL_ALIGN_INSET;
+    // Measured math also keeps its padding on the far side; unmeasured math
+    // reserves whole cells below instead.
+    const aligned = this.textAlign() !== 'center';
+    const inset = !aligned ? 0
+      : !this.math ? LABEL_ALIGN_INSET
+        : this._renderedTextBounds ? LABEL_ALIGN_INSET + MATH_LABEL_PAD : 0;
     let n = Math.ceil((this.textWidth() + inset - tolerance) / GRID);
     // MathML font metrics are not available in the model layer.  Reserve one
     // grid cell on each side of math labels so wide glyphs, stretchy
@@ -1027,7 +1034,7 @@ export class LabelInstance {
       const measured = this._renderedTextBounds;
       if (!measured) return b;
       // Where mathLabelSvg's padded flex box puts the content.
-      const side = Math.max(6, Math.min(LABEL_ALIGN_INSET, b.w - measured.w - 6));
+      const side = Math.max(MATH_LABEL_PAD, Math.min(LABEL_ALIGN_INSET, b.w - measured.w - MATH_LABEL_PAD));
       const x = align === 'left' ? b.x + side
         : align === 'right' ? b.x + b.w - side - measured.w
           : b.x + (b.w - measured.w) / 2;

@@ -12752,6 +12752,9 @@ const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 /** Gap between left/right aligned text and its box edge: half a grid cell. */
 const LABEL_ALIGN_INSET = GRID / 2;
 
+/** Padding a math label keeps on the sides its alignment does not set. */
+const MATH_LABEL_PAD = 6;
+
 const symbolInk = new WeakMap();
 const symbolInkPieces = new WeakMap();
 
@@ -13360,8 +13363,12 @@ class LabelInstance {
     const tolerance = this._renderedTextBounds ? 0.001 : 0;
     // Aligned text keeps its full inset from the aligned edge: the box grows
     // rather than squeezing the gap, so the gap looks the same on every label.
-    // (Math labels carry their own padding.)
-    const inset = this.math || this.textAlign() === 'center' ? 0 : LABEL_ALIGN_INSET;
+    // Measured math also keeps its padding on the far side; unmeasured math
+    // reserves whole cells below instead.
+    const aligned = this.textAlign() !== 'center';
+    const inset = !aligned ? 0
+      : !this.math ? LABEL_ALIGN_INSET
+        : this._renderedTextBounds ? LABEL_ALIGN_INSET + MATH_LABEL_PAD : 0;
     let n = Math.ceil((this.textWidth() + inset - tolerance) / GRID);
     // MathML font metrics are not available in the model layer.  Reserve one
     // grid cell on each side of math labels so wide glyphs, stretchy
@@ -13504,7 +13511,7 @@ class LabelInstance {
       const measured = this._renderedTextBounds;
       if (!measured) return b;
       // Where mathLabelSvg's padded flex box puts the content.
-      const side = Math.max(6, Math.min(LABEL_ALIGN_INSET, b.w - measured.w - 6));
+      const side = Math.max(MATH_LABEL_PAD, Math.min(LABEL_ALIGN_INSET, b.w - measured.w - MATH_LABEL_PAD));
       const x = align === 'left' ? b.x + side
         : align === 'right' ? b.x + b.w - side - measured.w
           : b.x + (b.w - measured.w) / 2;
@@ -18772,6 +18779,7 @@ __exports.LABEL_CHAR_W = LABEL_CHAR_W;
 __exports.LABEL_FONT_SIZE = LABEL_FONT_SIZE;
 __exports.LABEL_CAP_H = LABEL_CAP_H;
 __exports.LABEL_ALIGN_INSET = LABEL_ALIGN_INSET;
+__exports.MATH_LABEL_PAD = MATH_LABEL_PAD;
 __exports.LABEL_ALIGNS = LABEL_ALIGNS;
 __exports.INTERFACE_PIN_TYPES = INTERFACE_PIN_TYPES;
 __exports.MOS_ANALYSIS_TYPES = MOS_ANALYSIS_TYPES;
@@ -18879,7 +18887,7 @@ let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyT
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
 let escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
-let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
 let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let drawnNetPaths, switchState; __bind(() => { ({ drawnNetPaths, switchState } = __require("src/core/beats.js")); });
@@ -19060,7 +19068,7 @@ const BEAT_DIM_INK = '#b8b8b8';
 const BEAT_FADE_INK = '#e2e2e2';
 
 /** Outline that gives drawing math the weight of the other labels. */
-const MATH_LABEL_STROKE = '0.03em';
+const MATH_LABEL_STROKE = '0.02em';
 
 const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
 
@@ -19396,8 +19404,9 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   const align = label.textAlign();
   const justify = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
   const aria = escapeSvg(`Math label ${label.text}`);
-  const sidePadding = Math.max(6, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - 6));
-  const padding = `6px ${align === 'right' ? sidePadding : 6}px 6px ${align === 'left' ? sidePadding : 6}px`;
+  const pad = MATH_LABEL_PAD;
+  const sidePadding = Math.max(pad, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - pad));
+  const padding = `${pad}px ${align === 'right' ? sidePadding : pad}px ${pad}px ${align === 'left' ? sidePadding : pad}px`;
   // Latin Modern Math has one weight, too light beside the drawing's strokes
   // and bold labels; a thin outline in the text color thickens every glyph.
   const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;-webkit-text-stroke:${MATH_LABEL_STROKE} currentColor;pointer-events:none;`;
