@@ -231,6 +231,72 @@ test('a partial move leaves no junction anchor behind at the old position', () =
   assertNetClean(circuit, net, 1);
 });
 
+test('moving a pair along its tail legs changes only those legs, and carries the bulk tie beside the pins', () => {
+  // PMOS pair sources meet the tail drain at one junction; the bulks meet on
+  // a tie beside the pins, which reaches up to the tail junction.
+  const circuit = new Circuit();
+  circuit.addComponent('pmosb', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('pmosb', { refdes: 'M2', x: 480, y: 0, mirrorX: true });
+  circuit.addComponent('pmos', { refdes: 'M3', x: 240, y: -360 });
+  circuit.connect('M3.d', 'M1.s', 'M2.s');
+  circuit.connect('M1.b', 'M3.d');
+  circuit.connect('M2.b', 'M3.d');
+  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  reloaded.syncJunctionSolders();
+  const net = reloaded.netOfTerminal({ comp: 'M3', term: 'd' });
+  const before = net.paths();
+  assert.deepEqual(net.junctions, [{ x: 240, y: -120 }, { x: 240, y: 0 }]);
+
+  const moved = new Map([['M1', { dx: 0, dy: 80 }], ['M2', { dx: 0, dy: 80 }]]);
+  reloaded.moveComponent('M1', 0, 80);
+  reloaded.moveComponent('M2', 480, 80);
+  reloaded.rerouteNet(net, moved);
+  reloaded.syncJunctionSolders();
+
+  // The tail junction and its horizontal run stay; the source legs stretch.
+  const sourceArm = net.paths().find((path) => path[0].x === 0 && path[0].y === 0);
+  assert.deepEqual(sourceArm, [{ x: 0, y: 0 }, { x: 0, y: -120 }, { x: 240, y: -120 }]);
+  assert.deepEqual(net.paths()[0], before[0]);
+  // The bulk tie moves with the pins and its trunk stretches down to it.
+  assert.deepEqual(net.junctions, [{ x: 240, y: -120 }, { x: 240, y: 80 }]);
+  assert.ok(net.paths().some((path) => JSON.stringify(path) === JSON.stringify([{ x: 240, y: 80 }, { x: 0, y: 80 }])));
+  assertNetClean(reloaded, net, 2);
+});
+
+test('moving a pair stretches its L-shaped bulk and source wires and keeps every junction', () => {
+  // Each device's source and bulk wires meet beside it, and those side
+  // junctions join the tail node.
+  const circuit = new Circuit();
+  circuit.addComponent('pmos', { refdes: 'M1', x: 280, y: -280 });
+  circuit.addComponent('pmosb', { refdes: 'M2', x: 0, y: 0 });
+  circuit.addComponent('pmosb', { refdes: 'M3', x: 560, y: 0, mirrorX: true });
+  const net = circuit.createWireNet({ branches: [
+    [{ x: 280, y: -200 }, { x: 280, y: -120 }],
+    [{ x: 0, y: -80 }, { x: 0, y: -120 }, { x: 120, y: -120 }],
+    [{ x: 0, y: 0 }, { x: 120, y: 0 }, { x: 120, y: -120 }],
+    [{ x: 120, y: -120 }, { x: 280, y: -120 }],
+    [{ x: 560, y: -80 }, { x: 560, y: -120 }, { x: 440, y: -120 }],
+    [{ x: 560, y: 0 }, { x: 440, y: 0 }, { x: 440, y: -120 }],
+    [{ x: 440, y: -120 }, { x: 280, y: -120 }],
+  ], junctions: [{ x: 120, y: -120 }, { x: 280, y: -120 }, { x: 440, y: -120 }] });
+  for (const ref of ['M1.d', 'M2.s', 'M2.b', 'M3.s', 'M3.b']) circuit.connectTo(net.id, ref);
+  const junctions = () => net.junctions.map((p) => `${p.x},${p.y}`).sort();
+  const before = junctions();
+
+  const moved = new Map([['M2', { dx: 0, dy: 80 }], ['M3', { dx: 0, dy: 80 }]]);
+  circuit.moveComponent('M2', 0, 80);
+  circuit.moveComponent('M3', 560, 80);
+  circuit.rerouteNet(net, moved);
+  circuit.syncJunctionSolders();
+
+  assert.deepEqual(junctions(), before);
+  const paths = net.paths().map((path) => JSON.stringify(path));
+  assert.ok(paths.includes(JSON.stringify([{ x: 0, y: 0 }, { x: 0, y: -120 }, { x: 120, y: -120 }])));
+  assert.ok(paths.includes(JSON.stringify([{ x: 0, y: 80 }, { x: 120, y: 80 }, { x: 120, y: -120 }])));
+  assert.ok(paths.includes(JSON.stringify([{ x: 120, y: -120 }, { x: 280, y: -120 }])));
+  assertNetClean(circuit, net, 3);
+});
+
 test('a junction held by a moved device travels with it, not with the drawing', () => {
   // The editor sees this net already split into arms meeting at the junction:
   // a preview clone reloads from JSON, which reduces the overlapping legs into

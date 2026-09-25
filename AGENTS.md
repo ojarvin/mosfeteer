@@ -217,8 +217,11 @@ The model is topological; geometry is a route, not connectivity.
 - Moving, rotating, mirroring, or resizing components reroutes touched managed
   nets whose terminal anchors move, while preserving geometry for touched nets
   whose connected terminals stay put. If all terminals share one displacement,
-  translate the net rigidly. Detached moves split selected wire islands without
-  moving unselected islands.
+  translate the net rigidly. Otherwise only the legs at moved terminals change;
+  a pin's leg slides along itself or moves sideways by stretching the next
+  segment, and a junction travels with the move only when a moved arm cannot
+  take it up that way. Detached moves split selected wire islands
+  without moving unselected islands.
 - Wire editing is transactional. A click without sufficient movement does not
   mutate the model; invalid overlaps restore the pre-drag document; mouseup or
   Enter creates one history entry.
