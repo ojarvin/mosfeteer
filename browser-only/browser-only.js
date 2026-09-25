@@ -25545,12 +25545,14 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas-view.js")); });
 let SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis; __bind(() => { ({ SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } = __require("src/web/analysis-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let activateCopy, activateMove, annotationGeometryAt, appendBeatContextItems, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, inlineEditLabel, namedGroupNets, pickAt, pickLabel, pickWire, plainMarkup, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, appendBeatContextItems, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, inlineEditLabel, namedGroupNets, pickAt, pickLabel, pickWire, plainMarkup, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } = __require("src/web/main.js")); });
+let inlineEditLabel; __bind(() => { ({ inlineEditLabel } = __require("src/web/label-editor.js")); });
+let activateCopy, activateMove, annotationGeometryAt, appendBeatContextItems, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, plainMarkup, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, appendBeatContextItems, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, plainMarkup, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } = __require("src/web/main.js")); });
 /**
  * The right-click context menu on parts, wires, labels, and nets: its
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -27865,6 +27867,412 @@ function constrainAxis(start, current, enabled = true) {
 
 };
 
+__modules["src/web/label-editor.js"] = function (__require, __exports) {
+__exports.bindInlineEditorKeys = bindInlineEditorKeys;
+__exports.boxState = boxState;
+__exports.restoreBoxState = restoreBoxState;
+__exports.inlineEditSchematicBlock = inlineEditSchematicBlock;
+__exports.openComponentChildLabelEditor = openComponentChildLabelEditor;
+__exports.openReferenceMarkerEditor = openReferenceMarkerEditor;
+__exports.inlineEditLabel = inlineEditLabel;
+let INTERFACE_PIN_TYPES, isReferenceMarker, normalizeComponentRefdes, referenceMarkerInfo, stripMathDelimiters, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker, normalizeComponentRefdes, referenceMarkerInfo, stripMathDelimiters, applyMarkup } = __require("src/core/model.js")); });
+let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars.js")); });
+let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
+let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
+let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let commit, confirmNamedConnection, cycleLabelSelection, interfacePortNet, markModelChanged, namedConnectionConflicts, portNameConflict, recordHistoryEntry, renameLabelThroughModel, render, reportPortNameConflict, restoreProvisionalLabel, snapshot, supplyBarGroup; __bind(() => { ({ commit, confirmNamedConnection, cycleLabelSelection, interfacePortNet, markModelChanged, namedConnectionConflicts, portNameConflict, recordHistoryEntry, renameLabelThroughModel, render, reportPortNameConflict, restoreProvisionalLabel, snapshot, supplyBarGroup } = __require("src/web/main.js")); });
+/**
+ * The inline editors that open over the canvas: label and annotation text,
+ * a part's name and child labels, a supply bar's rail name, a reference
+ * marker's value, and a schematic block's caption.
+ */
+
+
+
+
+
+
+
+
+
+
+/** Standard inline-editor keys: Enter or blur commits, Escape cancels, and
+ *  Shift+Enter inserts a line break where the field accepts one. Extra keys
+ *  are handled first and may claim the event by returning true. */
+function bindInlineEditorKeys(input, done, { multiline = true, extraKeys = null } = {}) {
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (extraKeys?.(ev)) return;
+    if (multiline && ev.key === 'Enter' && ev.shiftKey) return;
+    if (ev.key === 'Enter') { ev.preventDefault(); done(true); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); done(false); }
+  });
+  input.addEventListener('blur', () => done(true));
+}
+
+/** A box annotation's geometry and its child labels' anchors, to restore. */
+function boxState(label) {
+  const children = new Map();
+  for (const child of editor.circuit.labels.values()) if (child.parent === label.id) children.set(child.id, { ...child.anchor });
+  return { anchor: { ...label.anchor }, end: { ...label.end }, textAnchor: { ...label.textAnchor }, children };
+}
+
+function restoreBoxState(label, state) {
+  label.anchor = { ...state.anchor };
+  label.end = { ...state.end };
+  label.textAnchor = { ...state.textAnchor };
+  for (const [id, anchor] of state.children) {
+    const child = editor.circuit.labels.get(id);
+    if (child) child.anchor = { ...anchor };
+  }
+}
+
+function inlineEditSchematicBlock(component) {
+  if (!component || component.type !== 'block' || editor.inlineInput) return;
+  const pane = document.querySelector('.canvas-pane');
+  const input = document.createElement('textarea');
+  input.value = component.value || '';
+  input.spellcheck = false;
+  input.className = 'label-inline-editor block-inline-editor';
+  input.style.position = 'fixed';
+  input.style.zIndex = '30';
+  // Covers the block at the current zoom and pan, repositioned on every repaint.
+  input.relayout = () => {
+    const paneRect = pane.getBoundingClientRect();
+    const box = component.bboxWorld();
+    input.style.left = `${paneRect.left + ((box.x - editor.view.x) / editor.view.w) * paneRect.width}px`;
+    input.style.top = `${paneRect.top + ((box.y - editor.view.y) / editor.view.h) * paneRect.height}px`;
+    input.style.width = `${(box.w / editor.view.w) * paneRect.width}px`;
+    input.style.height = `${(box.h / editor.view.h) * paneRect.height}px`;
+  };
+  input.relayout();
+  input.style.textAlign = 'center';
+  input.style.resize = 'none';
+  input.style.whiteSpace = 'pre-wrap';
+  input.style.overflow = 'hidden';
+  document.body.appendChild(input);
+  editor.inlineInput = input;
+  input.focus({ preventScroll: true });
+  input.select();
+  let closed = false;
+  const done = (apply) => {
+    if (closed) return;
+    closed = true;
+    editor.inlineInput = null;
+    const text = input.value.trim();
+    input.remove();
+    if (apply && text && text !== component.value) commit(() => editor.circuit.setValue(component.refdes, text));
+    render();
+  };
+  bindInlineEditorKeys(input, done);
+}
+
+function openComponentChildLabelEditor(component) {
+  if (!component || editor.inlineInput) return;
+  if (isReferenceMarker(component)) {
+    openReferenceMarkerEditor(component);
+    return;
+  }
+  if (component.type === 'block') {
+    inlineEditSchematicBlock(component);
+    return;
+  }
+  let label = editor.circuit.labelOf(component.refdes);
+  if (label) {
+    inlineEditLabel(label);
+    return;
+  }
+  // Legacy/imported symbols can lack the owned label that current inserts get
+  // automatically. Create it at the symbol's declared label offset, then use
+  // a draft edit so Escape/blank restores the pre-edit circuit unchanged.
+  if (!component.def?.labelOffset || !editor.circuit._ensureComponentInstanceLabel) return;
+  const before = snapshot();
+  label = editor.circuit._ensureComponentInstanceLabel(component);
+  if (label) inlineEditLabel(label, { ownedLabelDraft: true, initialSnapshot: before });
+}
+
+/** A joined supply bar has one label, shown over its first supply and
+ *  centred on the bar; its name goes to every supply on the bar. */
+function openSupplyBarLabelEditor(refs) {
+  const lead = editor.circuit.components.get(refs[0]);
+  const existing = editor.circuit.labelOf(lead.refdes);
+  if (existing) {
+    inlineEditLabel(existing, { removeOnEmpty: true });
+    return;
+  }
+  const bar = supplyBars(editor.circuit).find((candidate) => candidate.refs[0] === lead.refdes);
+  const info = referenceMarkerInfo('supply');
+  const centre = bar ? bar.rect.x + bar.rect.w / 2 : lead.transform.x;
+  const before = snapshot();
+  const label = editor.circuit.addLabel({
+    text: '',
+    owner: lead.refdes,
+    // Local offsets rotate with the supply; a bar is only ever centred for an
+    // upright one, which is also the only way a row of them reads as a bar.
+    offset: lead.transform.rotation ? info.labelOffset : { x: snap(centre - lead.transform.x), y: info.labelOffset.y },
+    align: 'center',
+    style: { color: lead.style.color },
+  });
+  inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
+}
+
+function openReferenceMarkerEditor(component) {
+  if (!component || editor.inlineInput) return;
+  const bar = component.type === 'supply' ? supplyBarGroup(component.refdes) : [];
+  if (bar.length > 1) {
+    openSupplyBarLabelEditor(bar);
+    return;
+  }
+  const existing = editor.circuit.labelOf(component.refdes);
+  if (existing) {
+    inlineEditLabel(existing, { removeOnEmpty: true });
+    return;
+  }
+  const info = referenceMarkerInfo(component.type);
+  if (!info) return;
+  const before = snapshot();
+  const label = editor.circuit.addLabel({
+    text: component.value || '',
+    owner: component.refdes,
+    offset: info.labelOffset,
+    align: 'parent',
+    style: { color: component.style.color },
+  });
+  inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
+}
+
+function inlineEditLabel(label, options = {}) {
+  if (!label || label.role === 'signal-input-sign' || editor.inlineInput) return;
+  const provisional = !!options.provisional;
+  const equationDraft = !!options.equationDraft;
+  const initialSnapshot = options.initialSnapshot || null;
+  const initialName = options.initialName || '';
+  // A joined supply bar is one rail: whatever this edit names, every supply on
+  // the bar takes. Captured now, since the edit itself may break the bar.
+  const barRefs = label.owner ? supplyBarGroup(label.owner) : [];
+  const nameBar = (text) => {
+    if (barRefs.length > 1) editor.circuit.nameSupplyBar(barRefs, text);
+  };
+  editor.lastLabelClick = null; // starting an edit clears any pending double-click state
+  const pane = document.querySelector('.canvas-pane');
+  const align = label.textAlign();
+  const editorPad = 4;
+  // Ordinary Enter commits. Shift+Enter is reserved for inserting a newline
+  // and is shared by every LabelInstance editor, including connector labels.
+  const input = document.createElement('textarea');
+  input.value = label.text;
+  input.spellcheck = false;
+  input.className = 'label-inline-editor';
+  input.dataset.labelId = label.id;
+  // Fixed, in viewport coordinates, and focused without scrolling: a long
+  // label's editor may run past the window, and an absolute element there
+  // would widen the page and scroll the whole editor sideways on focus.
+  input.style.position = 'fixed';
+  input.style.zIndex = '30';
+  input.style.textAlign = align;
+  input.style.resize = 'none';
+  input.style.whiteSpace = 'pre-wrap';
+  input.style.overflowWrap = 'anywhere';
+  input.style.overflow = 'hidden';
+  // Measure the live editor text in the same face as the rendered label. The
+  // The box grows from the actual text anchor while keeping alignment stable.
+  const measure = document.createElement('span');
+  measure.className = 'label-inline-editor-measure';
+  document.body.appendChild(measure);
+  // The editor covers the text, not the label's grid box: the label's own
+  // font at the current zoom, one line tall per line, centred where the text
+  // is drawn, and growing from the text's aligned edge (or its centre) just
+  // as the drawn text does. Laid out again on every repaint, so it follows
+  // zooming and panning like the drawing.
+  const resize = () => {
+    const b = label.bbox();
+    const r = pane.getBoundingClientRect();
+    const scale = r.width / editor.view.w;
+    const screenX = (x) => r.left + (x - editor.view.x) * scale;
+    const inset = label.math ? 0 : label.alignInset();
+    const alignedEdge = align === 'left' ? screenX(b.x + inset) - editorPad
+      : align === 'right' ? screenX(b.x + b.w - inset) + editorPad
+        : screenX(b.x + b.w / 2);
+    const fontPx = Math.max(6, labelFontSize(label.style?.width) * scale);
+    input.style.fontSize = `${fontPx}px`;
+    measure.textContent = input.value || ' ';
+    measure.style.fontSize = input.style.fontSize;
+    // Long text wraps inside the visible canvas instead of running off it,
+    // and scrolls within the editor once even that is taller than the pane.
+    const margin = 8;
+    const width = Math.min(r.width - 2 * margin, Math.max(2 * fontPx, measure.getBoundingClientRect().width + 4));
+    const wanted = align === 'left' ? alignedEdge : align === 'right' ? alignedEdge - width : alignedEdge - width / 2;
+    const left = Math.min(Math.max(wanted, r.left + margin), r.right - margin - width);
+    input.style.width = `${width}px`;
+    input.style.left = `${left}px`;
+    input.style.height = '0px';
+    const lines = input.value.split('\n').length * fontPx * 1.2 + 4;
+    const height = Math.min(r.height - 2 * margin, Math.max(lines, input.scrollHeight + 2));
+    input.style.height = `${height}px`;
+    input.style.overflowY = input.scrollHeight > height + 1 ? 'auto' : 'hidden';
+    const centre = r.top + (b.y + b.h / 2 - editor.view.y) * scale;
+    input.style.top = `${Math.min(Math.max(centre - height / 2, r.top + margin), r.bottom - margin - height)}px`;
+  };
+  input.relayout = resize;
+  resize();
+  input.addEventListener('input', resize);
+  document.body.appendChild(input);
+  editor.inlineInput = input;
+  render();
+  input.focus({ preventScroll: true });
+  if (equationDraft) input.setSelectionRange(Math.min(1, input.value.length), Math.min(1, input.value.length));
+  else input.select();
+  let closed = false;
+  let prompting = false;
+  const done = async (applyText) => {
+    if (closed || prompting) return;
+    const v = input.value.trim();
+    const owner = label.owner ? editor.circuit.components.get(label.owner) : null;
+    const namesNet = !!label.netId || !!(owner && INTERFACE_PIN_TYPES.has(owner.type));
+    if (applyText && v && v !== label.text && namesNet) {
+      const targetNet = label.netId ? editor.circuit.nets.get(label.netId) : interfacePortNet(owner);
+      const conflicts = namedConnectionConflicts(v, {
+        netId: targetNet?.id || null,
+        ownerRefdes: owner?.refdes || null,
+      });
+      const portConflict = portNameConflict(conflicts, owner?.refdes);
+      if (portConflict) {
+        reportPortNameConflict(portConflict, v);
+        input.focus({ preventScroll: true });
+        input.select();
+        return false;
+      }
+      if (conflicts.length) {
+        prompting = true;
+        const connect = await confirmNamedConnection(v, conflicts);
+        prompting = false;
+        if (!connect) {
+          input.focus({ preventScroll: true });
+          input.select();
+          return false;
+        }
+      }
+    }
+    closed = true;
+    editor.inlineInput = null;
+    measure.remove();
+    input.remove();
+    if (provisional) {
+      if (applyText && v) {
+        try {
+          renameLabelThroughModel(label, v);
+          recordHistoryEntry(initialSnapshot || snapshot());
+        } catch (err) {
+          logLine(`net label edit cancelled: ${err.message}`, 'error');
+          restoreProvisionalLabel(label, initialName);
+        }
+      } else {
+        restoreProvisionalLabel(label, initialName);
+      }
+      markModelChanged(false);
+    } else if (options.markerDraft) {
+      if (applyText) {
+        try {
+          label.setText(v);
+          if (!v) editor.circuit.removeLabel(label.id);
+          nameBar(v);
+          recordHistoryEntry(initialSnapshot || snapshot());
+        } catch (err) {
+          logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
+          editor.circuit.removeLabel(label.id);
+        }
+      } else {
+        editor.circuit.removeLabel(label.id);
+      }
+      markModelChanged(false);
+    } else if (options.ownedLabelDraft) {
+      if (applyText && v) {
+        try {
+          if (v !== label.text) renameLabelThroughModel(label, v);
+          recordHistoryEntry(initialSnapshot || snapshot());
+        } catch (err) {
+          logLine(`component label edit cancelled: ${err.message}`, 'error');
+          editor.circuit.removeLabel(label.id);
+        }
+      } else if (editor.circuit.labels.has(label.id)) {
+        editor.circuit.removeLabel(label.id);
+      }
+      markModelChanged(false);
+    } else if (equationDraft) {
+      // A fresh equation starts as `$$`; Escape, blur without content, or an
+      // untouched draft should not leave a literal delimiter label behind.
+      if (applyText && stripMathDelimiters(v)) {
+        if (v !== label.text) commit(() => renameLabelThroughModel(label, v));
+      } else if (editor.circuit.labels.has(label.id)) commit(() => editor.circuit.removeLabel(label.id));
+    } else if (applyText && v && v !== label.text) {
+      const owner = label.owner ? editor.circuit.components.get(label.owner) : null;
+      // Interface pins validate exactly like every other instance label: the
+      // label is the component's identity, and a port additionally names its
+      // net through the same rename. A switch's label is its phase instead.
+      const ordinaryOwner = owner && !isReferenceMarker(owner) && !switchState(owner) && !label.math;
+      if (ordinaryOwner) {
+        const canonical = normalizeComponentRefdes(v);
+        if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(canonical)) {
+          logLine(`Invalid component name "${v}".`, 'error');
+        } else if (canonical !== owner.refdes && editor.circuit.components.has(canonical)) {
+          logLine(`Component name "${canonical}" is already in use.`, 'error');
+        } else {
+          commit(() => renameLabelThroughModel(label, v));
+        }
+      } else {
+        commit(() => {
+          renameLabelThroughModel(label, v);
+          nameBar(v);
+        });
+      }
+    }
+    else if (options.removeOnEmpty && !v) commit(() => {
+      if (label.owner && isReferenceMarker(editor.circuit.components.get(label.owner))) label.setText('');
+      editor.circuit.removeLabel(label.id);
+      nameBar('');
+    });
+    render();
+    return true;
+  };
+  // Ctrl+, (comma) / Ctrl+. (period) wrap the selected text in subscript /
+  // superscript markup `_{...}` / `^{...}`. Toggle off (un-wrap) by pressing
+  // again on the same selection; a selection that mixes plain and sub/super
+  // text reverts everything in it to normal. The canvas re-renders the markup
+  // live so the effect is visible while editing.
+  const toggleMarkup = (mark) => {
+    const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, mark);
+    if (!res) return;
+    input.value = res.text;
+    input.setSelectionRange(res.selStart, res.selEnd);
+    if (provisional) {
+      renameLabelThroughModel(label, res.text);
+      markModelChanged(false);
+    } else commit(() => renameLabelThroughModel(label, res.text));
+    render();
+  };
+  bindInlineEditorKeys(input, done, {
+    extraKeys: (ev) => {
+      if (ev.key === 'Tab') {
+        ev.preventDefault();
+        done(true).then((committed) => {
+          if (committed) cycleLabelSelection(ev.shiftKey ? -1 : 1, label.id);
+        });
+        return true;
+      }
+      if ((ev.ctrlKey || ev.metaKey) && (ev.key === ',' || ev.key === '.')) {
+        ev.preventDefault();
+        toggleMarkup(ev.key === ',' ? '_' : '^');
+        return true;
+      }
+      return false;
+    },
+  });
+}
+
+};
+
 __modules["src/web/layout.js"] = function (__require, __exports) {
 __exports.layoutAnchor = layoutAnchor;
 __exports.componentLayoutItem = componentLayoutItem;
@@ -28414,7 +28822,10 @@ function layoutSuggestions(items, grid = GRID) {
 __modules["src/web/main.js"] = function (__require, __exports) {
 __exports.selectAllNetIds = selectAllNetIds;
 __exports.deriveInteractionState = deriveInteractionState;
+__exports.markModelChanged = markModelChanged;
 __exports.commit = commit;
+__exports.snapshot = snapshot;
+__exports.recordHistoryEntry = recordHistoryEntry;
 __exports.scheduleInteractionRender = scheduleInteractionRender;
 __exports.copyAsImage = copyAsImage;
 __exports.requestDocumentAction = requestDocumentAction;
@@ -28446,6 +28857,14 @@ __exports.updateAlignControls = updateAlignControls;
 __exports.applyLayoutPlan = applyLayoutPlan;
 __exports.restackSelected = restackSelected;
 __exports.deleteSelection = deleteSelection;
+__exports.cycleLabelSelection = cycleLabelSelection;
+__exports.renameLabelThroughModel = renameLabelThroughModel;
+__exports.interfacePortNet = interfacePortNet;
+__exports.namedConnectionConflicts = namedConnectionConflicts;
+__exports.portNameConflict = portNameConflict;
+__exports.reportPortNameConflict = reportPortNameConflict;
+__exports.confirmNamedConnection = confirmNamedConnection;
+__exports.restoreProvisionalLabel = restoreProvisionalLabel;
 __exports.stubSelection = stubSelection;
 __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.symmetryAxisText = symmetryAxisText;
@@ -28462,7 +28881,6 @@ __exports.armModalMove = armModalMove;
 __exports.beginCopySource = beginCopySource;
 __exports.canvasMouseMove = canvasMouseMove;
 __exports.canvasMouseUp = canvasMouseUp;
-__exports.inlineEditLabel = inlineEditLabel;
 __exports.componentDisplayName = componentDisplayName;
 __exports.appendMarkupText = appendMarkupText;
 __exports.startComponentRename = startComponentRename;
@@ -28477,7 +28895,7 @@ __exports.setPanelCollapsed = setPanelCollapsed;
 __exports.startNewDocument = startNewDocument;
 __exports.sidePanelVisible = sidePanelVisible;
 __exports.setSidePanelVisible = setSidePanelVisible;
-let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
+let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames, symbolTypeNames; __bind(() => { ({ getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js")); });
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
@@ -28487,7 +28905,7 @@ let addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduc
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale; __bind(() => { ({ DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } = __require("src/core/png-export.js")); });
 let componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
-let labelFontSize, resolveColor, themeInkSvg; __bind(() => { ({ labelFontSize, resolveColor, themeInkSvg } = __require("src/core/style.js")); });
+let resolveColor, themeInkSvg; __bind(() => { ({ resolveColor, themeInkSvg } = __require("src/core/style.js")); });
 let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
 let createDocument, loadDocument, renderDocument; __bind(() => { ({ createDocument, loadDocument, renderDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
@@ -28527,6 +28945,7 @@ let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, fo
 let clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope, syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi; __bind(() => { ({ clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope, syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi } = __require("src/web/analysis-ui.js")); });
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
 let closeComponentContextMenu, appendContextItem, openComponentContextMenu, selectContextTarget, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, appendContextItem, openComponentContextMenu, selectContextTarget, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
+let bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, openComponentChildLabelEditor, openReferenceMarkerEditor, inlineEditLabel; __bind(() => { ({ bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, openComponentChildLabelEditor, openReferenceMarkerEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -28538,6 +28957,7 @@ let closeComponentContextMenu, appendContextItem, openComponentContextMenu, sele
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -28609,9 +29029,11 @@ Object.defineProperties(editor, {
   drag: { get: () => drag, set: (value) => { drag = value; } },
   equationAnnotationLayout: { get: () => equationAnnotationLayout, set: (value) => { equationAnnotationLayout = value; } },
   equationEmphasis: { get: () => equationEmphasis, set: (value) => { equationEmphasis = value; } },
+  inlineInput: { get: () => inlineInput, set: (value) => { inlineInput = value; } },
   insertQuery: { get: () => insertQuery, set: (value) => { insertQuery = value; } },
   labelMode: { get: () => labelMode, set: (value) => { labelMode = value; } },
   lastCheckReport: { get: () => lastCheckReport, set: (value) => { lastCheckReport = value; } },
+  lastLabelClick: { get: () => lastLabelClick, set: (value) => { lastLabelClick = value; } },
   latestSmallSignalModel: { get: () => latestSmallSignalModel, set: (value) => { latestSmallSignalModel = value; } },
   layoutPreviewRects: { get: () => layoutPreviewRects, set: (value) => { layoutPreviewRects = value; } },
   logDrawerState: { get: () => logDrawerState, set: (value) => { logDrawerState = value; } },
@@ -33714,20 +34136,6 @@ const DRAG_THRESH = 6; // px before a press becomes a drag
 let drag = null;
 let inlineInput = null; // the active inline-edit <input>, if any
 
-/** Standard inline-editor keys: Enter or blur commits, Escape cancels, and
- *  Shift+Enter inserts a line break where the field accepts one. Extra keys
- *  are handled first and may claim the event by returning true. */
-function bindInlineEditorKeys(input, done, { multiline = true, extraKeys = null } = {}) {
-  input.addEventListener('keydown', (ev) => {
-    ev.stopPropagation();
-    if (extraKeys?.(ev)) return;
-    if (multiline && ev.key === 'Enter' && ev.shiftKey) return;
-    if (ev.key === 'Enter') { ev.preventDefault(); done(true); }
-    else if (ev.key === 'Escape') { ev.preventDefault(); done(false); }
-  });
-  input.addEventListener('blur', () => done(true));
-}
-
 let lastLabelClick = null; // { id, x, y, at } of the previous label click (for double-click fallback)
 let lastLineClick = null;
 let lastWireClick = null; // { key, x, y, at } of the previous wire click (for double-click fallback)
@@ -37171,63 +37579,7 @@ window.addEventListener('blur', () => {
   }
 });
 
-/** A box annotation's geometry and its child labels' anchors, to restore. */
-function boxState(label) {
-  const children = new Map();
-  for (const child of circuit.labels.values()) if (child.parent === label.id) children.set(child.id, { ...child.anchor });
-  return { anchor: { ...label.anchor }, end: { ...label.end }, textAnchor: { ...label.textAnchor }, children };
-}
 
-function restoreBoxState(label, state) {
-  label.anchor = { ...state.anchor };
-  label.end = { ...state.end };
-  label.textAnchor = { ...state.textAnchor };
-  for (const [id, anchor] of state.children) {
-    const child = circuit.labels.get(id);
-    if (child) child.anchor = { ...anchor };
-  }
-}
-
-
-function inlineEditSchematicBlock(component) {
-  if (!component || component.type !== 'block' || inlineInput) return;
-  const pane = document.querySelector('.canvas-pane');
-  const input = document.createElement('textarea');
-  input.value = component.value || '';
-  input.spellcheck = false;
-  input.className = 'label-inline-editor block-inline-editor';
-  input.style.position = 'fixed';
-  input.style.zIndex = '30';
-  // Covers the block at the current zoom and pan, repositioned on every repaint.
-  input.relayout = () => {
-    const paneRect = pane.getBoundingClientRect();
-    const box = component.bboxWorld();
-    input.style.left = `${paneRect.left + ((box.x - view.x) / view.w) * paneRect.width}px`;
-    input.style.top = `${paneRect.top + ((box.y - view.y) / view.h) * paneRect.height}px`;
-    input.style.width = `${(box.w / view.w) * paneRect.width}px`;
-    input.style.height = `${(box.h / view.h) * paneRect.height}px`;
-  };
-  input.relayout();
-  input.style.textAlign = 'center';
-  input.style.resize = 'none';
-  input.style.whiteSpace = 'pre-wrap';
-  input.style.overflow = 'hidden';
-  document.body.appendChild(input);
-  inlineInput = input;
-  input.focus({ preventScroll: true });
-  input.select();
-  let closed = false;
-  const done = (apply) => {
-    if (closed) return;
-    closed = true;
-    inlineInput = null;
-    const text = input.value.trim();
-    input.remove();
-    if (apply && text && text !== component.value) commit(() => circuit.setValue(component.refdes, text));
-    render();
-  };
-  bindInlineEditorKeys(input, done);
-}
 // Double-click edits the active document's object. Components edit their owned
 // child label; reference markers create the same provisional child label when
 // one is missing.
@@ -37253,306 +37605,6 @@ canvasEl.addEventListener('dblclick', (ev) => {
     }
   }
 });
-
-function openComponentChildLabelEditor(component) {
-  if (!component || inlineInput) return;
-  if (isReferenceMarker(component)) {
-    openReferenceMarkerEditor(component);
-    return;
-  }
-  if (component.type === 'block') {
-    inlineEditSchematicBlock(component);
-    return;
-  }
-  let label = circuit.labelOf(component.refdes);
-  if (label) {
-    inlineEditLabel(label);
-    return;
-  }
-  // Legacy/imported symbols can lack the owned label that current inserts get
-  // automatically. Create it at the symbol's declared label offset, then use
-  // a draft edit so Escape/blank restores the pre-edit circuit unchanged.
-  if (!component.def?.labelOffset || !circuit._ensureComponentInstanceLabel) return;
-  const before = snapshot();
-  label = circuit._ensureComponentInstanceLabel(component);
-  if (label) inlineEditLabel(label, { ownedLabelDraft: true, initialSnapshot: before });
-}
-/** A joined supply bar has one label, shown over its first supply and
- *  centred on the bar; its name goes to every supply on the bar. */
-function openSupplyBarLabelEditor(refs) {
-  const lead = circuit.components.get(refs[0]);
-  const existing = circuit.labelOf(lead.refdes);
-  if (existing) {
-    inlineEditLabel(existing, { removeOnEmpty: true });
-    return;
-  }
-  const bar = supplyBars(circuit).find((candidate) => candidate.refs[0] === lead.refdes);
-  const info = referenceMarkerInfo('supply');
-  const centre = bar ? bar.rect.x + bar.rect.w / 2 : lead.transform.x;
-  const before = snapshot();
-  const label = circuit.addLabel({
-    text: '',
-    owner: lead.refdes,
-    // Local offsets rotate with the supply; a bar is only ever centred for an
-    // upright one, which is also the only way a row of them reads as a bar.
-    offset: lead.transform.rotation ? info.labelOffset : { x: snap(centre - lead.transform.x), y: info.labelOffset.y },
-    align: 'center',
-    style: { color: lead.style.color },
-  });
-  inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
-}
-
-function openReferenceMarkerEditor(component) {
-  if (!component || inlineInput) return;
-  const bar = component.type === 'supply' ? supplyBarGroup(component.refdes) : [];
-  if (bar.length > 1) {
-    openSupplyBarLabelEditor(bar);
-    return;
-  }
-  const existing = circuit.labelOf(component.refdes);
-  if (existing) {
-    inlineEditLabel(existing, { removeOnEmpty: true });
-    return;
-  }
-  const info = referenceMarkerInfo(component.type);
-  if (!info) return;
-  const before = snapshot();
-  const label = circuit.addLabel({
-    text: component.value || '',
-    owner: component.refdes,
-    offset: info.labelOffset,
-    align: 'parent',
-    style: { color: component.style.color },
-  });
-  inlineEditLabel(label, { markerDraft: true, initialSnapshot: before, removeOnEmpty: true });
-}
-function inlineEditLabel(label, options = {}) {
-  if (!label || label.role === 'signal-input-sign' || inlineInput) return;
-  const provisional = !!options.provisional;
-  const equationDraft = !!options.equationDraft;
-  const initialSnapshot = options.initialSnapshot || null;
-  const initialName = options.initialName || '';
-  // A joined supply bar is one rail: whatever this edit names, every supply on
-  // the bar takes. Captured now, since the edit itself may break the bar.
-  const barRefs = label.owner ? supplyBarGroup(label.owner) : [];
-  const nameBar = (text) => {
-    if (barRefs.length > 1) circuit.nameSupplyBar(barRefs, text);
-  };
-  lastLabelClick = null; // starting an edit clears any pending double-click state
-  const pane = document.querySelector('.canvas-pane');
-  const align = label.textAlign();
-  const editorPad = 4;
-  // Ordinary Enter commits. Shift+Enter is reserved for inserting a newline
-  // and is shared by every LabelInstance editor, including connector labels.
-  const input = document.createElement('textarea');
-  input.value = label.text;
-  input.spellcheck = false;
-  input.className = 'label-inline-editor';
-  input.dataset.labelId = label.id;
-  // Fixed, in viewport coordinates, and focused without scrolling: a long
-  // label's editor may run past the window, and an absolute element there
-  // would widen the page and scroll the whole editor sideways on focus.
-  input.style.position = 'fixed';
-  input.style.zIndex = '30';
-  input.style.textAlign = align;
-  input.style.resize = 'none';
-  input.style.whiteSpace = 'pre-wrap';
-  input.style.overflowWrap = 'anywhere';
-  input.style.overflow = 'hidden';
-  // Measure the live editor text in the same face as the rendered label. The
-  // The box grows from the actual text anchor while keeping alignment stable.
-  const measure = document.createElement('span');
-  measure.className = 'label-inline-editor-measure';
-  document.body.appendChild(measure);
-  // The editor covers the text, not the label's grid box: the label's own
-  // font at the current zoom, one line tall per line, centred where the text
-  // is drawn, and growing from the text's aligned edge (or its centre) just
-  // as the drawn text does. Laid out again on every repaint, so it follows
-  // zooming and panning like the drawing.
-  const resize = () => {
-    const b = label.bbox();
-    const r = pane.getBoundingClientRect();
-    const scale = r.width / view.w;
-    const screenX = (x) => r.left + (x - view.x) * scale;
-    const inset = label.math ? 0 : label.alignInset();
-    const alignedEdge = align === 'left' ? screenX(b.x + inset) - editorPad
-      : align === 'right' ? screenX(b.x + b.w - inset) + editorPad
-        : screenX(b.x + b.w / 2);
-    const fontPx = Math.max(6, labelFontSize(label.style?.width) * scale);
-    input.style.fontSize = `${fontPx}px`;
-    measure.textContent = input.value || ' ';
-    measure.style.fontSize = input.style.fontSize;
-    // Long text wraps inside the visible canvas instead of running off it,
-    // and scrolls within the editor once even that is taller than the pane.
-    const margin = 8;
-    const width = Math.min(r.width - 2 * margin, Math.max(2 * fontPx, measure.getBoundingClientRect().width + 4));
-    const wanted = align === 'left' ? alignedEdge : align === 'right' ? alignedEdge - width : alignedEdge - width / 2;
-    const left = Math.min(Math.max(wanted, r.left + margin), r.right - margin - width);
-    input.style.width = `${width}px`;
-    input.style.left = `${left}px`;
-    input.style.height = '0px';
-    const lines = input.value.split('\n').length * fontPx * 1.2 + 4;
-    const height = Math.min(r.height - 2 * margin, Math.max(lines, input.scrollHeight + 2));
-    input.style.height = `${height}px`;
-    input.style.overflowY = input.scrollHeight > height + 1 ? 'auto' : 'hidden';
-    const centre = r.top + (b.y + b.h / 2 - view.y) * scale;
-    input.style.top = `${Math.min(Math.max(centre - height / 2, r.top + margin), r.bottom - margin - height)}px`;
-  };
-  input.relayout = resize;
-  resize();
-  input.addEventListener('input', resize);
-  document.body.appendChild(input);
-  inlineInput = input;
-  render();
-  input.focus({ preventScroll: true });
-  if (equationDraft) input.setSelectionRange(Math.min(1, input.value.length), Math.min(1, input.value.length));
-  else input.select();
-  let closed = false;
-  let prompting = false;
-  const done = async (applyText) => {
-    if (closed || prompting) return;
-    const v = input.value.trim();
-    const owner = label.owner ? circuit.components.get(label.owner) : null;
-    const namesNet = !!label.netId || !!(owner && INTERFACE_PIN_TYPES.has(owner.type));
-    if (applyText && v && v !== label.text && namesNet) {
-      const targetNet = label.netId ? circuit.nets.get(label.netId) : interfacePortNet(owner);
-      const conflicts = namedConnectionConflicts(v, {
-        netId: targetNet?.id || null,
-        ownerRefdes: owner?.refdes || null,
-      });
-      const portConflict = portNameConflict(conflicts, owner?.refdes);
-      if (portConflict) {
-        reportPortNameConflict(portConflict, v);
-        input.focus({ preventScroll: true });
-        input.select();
-        return false;
-      }
-      if (conflicts.length) {
-        prompting = true;
-        const connect = await confirmNamedConnection(v, conflicts);
-        prompting = false;
-        if (!connect) {
-          input.focus({ preventScroll: true });
-          input.select();
-          return false;
-        }
-      }
-    }
-    closed = true;
-    inlineInput = null;
-    measure.remove();
-    input.remove();
-    if (provisional) {
-      if (applyText && v) {
-        try {
-          renameLabelThroughModel(label, v);
-          recordHistoryEntry(initialSnapshot || snapshot());
-        } catch (err) {
-          logLine(`net label edit cancelled: ${err.message}`, 'error');
-          restoreProvisionalLabel(label, initialName);
-        }
-      } else {
-        restoreProvisionalLabel(label, initialName);
-      }
-      markModelChanged(false);
-    } else if (options.markerDraft) {
-      if (applyText) {
-        try {
-          label.setText(v);
-          if (!v) circuit.removeLabel(label.id);
-          nameBar(v);
-          recordHistoryEntry(initialSnapshot || snapshot());
-        } catch (err) {
-          logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
-          circuit.removeLabel(label.id);
-        }
-      } else {
-        circuit.removeLabel(label.id);
-      }
-      markModelChanged(false);
-    } else if (options.ownedLabelDraft) {
-      if (applyText && v) {
-        try {
-          if (v !== label.text) renameLabelThroughModel(label, v);
-          recordHistoryEntry(initialSnapshot || snapshot());
-        } catch (err) {
-          logLine(`component label edit cancelled: ${err.message}`, 'error');
-          circuit.removeLabel(label.id);
-        }
-      } else if (circuit.labels.has(label.id)) {
-        circuit.removeLabel(label.id);
-      }
-      markModelChanged(false);
-    } else if (equationDraft) {
-      // A fresh equation starts as `$$`; Escape, blur without content, or an
-      // untouched draft should not leave a literal delimiter label behind.
-      if (applyText && stripMathDelimiters(v)) {
-        if (v !== label.text) commit(() => renameLabelThroughModel(label, v));
-      } else if (circuit.labels.has(label.id)) commit(() => circuit.removeLabel(label.id));
-    } else if (applyText && v && v !== label.text) {
-      const owner = label.owner ? circuit.components.get(label.owner) : null;
-      // Interface pins validate exactly like every other instance label: the
-      // label is the component's identity, and a port additionally names its
-      // net through the same rename. A switch's label is its phase instead.
-      const ordinaryOwner = owner && !isReferenceMarker(owner) && !switchState(owner) && !label.math;
-      if (ordinaryOwner) {
-        const canonical = normalizeComponentRefdes(v);
-        if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(canonical)) {
-          logLine(`Invalid component name "${v}".`, 'error');
-        } else if (canonical !== owner.refdes && circuit.components.has(canonical)) {
-          logLine(`Component name "${canonical}" is already in use.`, 'error');
-        } else {
-          commit(() => renameLabelThroughModel(label, v));
-        }
-      } else {
-        commit(() => {
-          renameLabelThroughModel(label, v);
-          nameBar(v);
-        });
-      }
-    }
-    else if (options.removeOnEmpty && !v) commit(() => {
-      if (label.owner && isReferenceMarker(circuit.components.get(label.owner))) label.setText('');
-      circuit.removeLabel(label.id);
-      nameBar('');
-    });
-    render();
-    return true;
-  };
-  // Ctrl+, (comma) / Ctrl+. (period) wrap the selected text in subscript /
-  // superscript markup `_{...}` / `^{...}`. Toggle off (un-wrap) by pressing
-  // again on the same selection; a selection that mixes plain and sub/super
-  // text reverts everything in it to normal. The canvas re-renders the markup
-  // live so the effect is visible while editing.
-  const toggleMarkup = (mark) => {
-    const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, mark);
-    if (!res) return;
-    input.value = res.text;
-    input.setSelectionRange(res.selStart, res.selEnd);
-    if (provisional) {
-      renameLabelThroughModel(label, res.text);
-      markModelChanged(false);
-    } else commit(() => renameLabelThroughModel(label, res.text));
-    render();
-  };
-  bindInlineEditorKeys(input, done, {
-    extraKeys: (ev) => {
-      if (ev.key === 'Tab') {
-        ev.preventDefault();
-        done(true).then((committed) => {
-          if (committed) cycleLabelSelection(ev.shiftKey ? -1 : 1, label.id);
-        });
-        return true;
-      }
-      if ((ev.ctrlKey || ev.metaKey) && (ev.key === ',' || ev.key === '.')) {
-        ev.preventDefault();
-        toggleMarkup(ev.key === ',' ? '_' : '^');
-        return true;
-      }
-      return false;
-    },
-  });
-}
 
 // ----- mouse wheel
 canvasEl.addEventListener(

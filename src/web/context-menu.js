@@ -12,7 +12,8 @@ import { logLine } from './status-bar-ui.js';
 import { clientToWorld } from './canvas-view.js';
 import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } from './analysis-ui.js';
 import { editor } from './editor-state.js';
-import { activateCopy, activateMove, annotationGeometryAt, appendBeatContextItems, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, inlineEditLabel, namedGroupNets, pickAt, pickLabel, pickWire, plainMarkup, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } from './main.js';
+import { inlineEditLabel } from './label-editor.js';
+import { activateCopy, activateMove, annotationGeometryAt, appendBeatContextItems, appendMarkupText, commit, componentDisplayName, copyAsImage, deleteSelection, handleStyleControlClick, namedGroupNets, pickAt, pickLabel, pickWire, plainMarkup, render, restackSelected, selectedComps, selectedTransform, selectionStyleState, setLabelSelection, setPanelCollapsed, setSelection, startComponentRename, startNetRename, styleDefaults, supplyBarGroup, supplyBarHit, syncSelectedWire, syncStyleControls, wireStyleValue } from './main.js';
 
 function contextStyleValue(target, field) {
   if (target?.kind === 'wire') {
