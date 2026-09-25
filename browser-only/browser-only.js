@@ -23489,10 +23489,12 @@ let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, componentLayoutItem, labelLayoutItem, outlineOf; __bind(() => { ({ alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, componentLayoutItem, labelLayoutItem, outlineOf } = __require("src/web/layout.js")); });
 let alignPanelEl; __bind(() => { ({ alignPanelEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, hintLine, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient; __bind(() => { ({ annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, hintLine, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient } = __require("src/web/main.js")); });
+let hintLine; __bind(() => { ({ hintLine } = __require("src/web/status-bar-ui.js")); });
+let annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient; __bind(() => { ({ annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient } = __require("src/web/main.js")); });
 /**
  * Align to (Shift+A) and the side panel's align and distribute controls.
  */
+
 
 
 
@@ -26214,15 +26216,15 @@ __modules["src/web/main.js"] = function (__require, __exports) {
 __exports.selectAllNetIds = selectAllNetIds;
 __exports.deriveInteractionState = deriveInteractionState;
 __exports.paneSize = paneSize;
-__exports.logLine = logLine;
-__exports.hintLine = hintLine;
 __exports.scheduleInteractionRender = scheduleInteractionRender;
 __exports.requestDocumentAction = requestDocumentAction;
 __exports.renderSaveState = renderSaveState;
+__exports.selectedComp = selectedComp;
 __exports.setSelection = setSelection;
 __exports.setLabelSelection = setLabelSelection;
 __exports.applyEditorSelection = applyEditorSelection;
 __exports.selectedLabels = selectedLabels;
+__exports.selectedLabel = selectedLabel;
 __exports.pickLabel = pickLabel;
 __exports.annotationTextAt = annotationTextAt;
 __exports.annotationGeometryAt = annotationGeometryAt;
@@ -26235,6 +26237,8 @@ __exports.applyLayoutPlan = applyLayoutPlan;
 __exports.deleteSelection = deleteSelection;
 __exports.fitView = fitView;
 __exports.stubSelection = stubSelection;
+__exports.symmetryAxisText = symmetryAxisText;
+__exports.symmetryTwin = symmetryTwin;
 __exports.render = render;
 __exports.renderCanvas = renderCanvas;
 __exports.clientToWorld = clientToWorld;
@@ -26248,6 +26252,7 @@ __exports.canvasMouseMove = canvasMouseMove;
 __exports.canvasMouseUp = canvasMouseUp;
 __exports.selectContextTarget = selectContextTarget;
 __exports.interactionState = interactionState;
+__exports.syncInteractionUI = syncInteractionUI;
 __exports.activateMove = activateMove;
 __exports.activateCopy = activateCopy;
 __exports.activateAlign = activateAlign;
@@ -26293,15 +26298,16 @@ let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatA
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
 let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
 let arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
-let LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
-let alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
+let LOG_DRAWER_CLOSED; __bind(() => { ({ LOG_DRAWER_CLOSED } = __require("src/web/status-bar.js")); });
+let alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
+let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, statusCheckEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, statusCheckEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
 let ICON_PATHS, syncToolCursor, installIcons; __bind(() => { ({ ICON_PATHS, syncToolCursor, installIcons } = __require("src/web/icons.js")); });
 let noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
 let ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel; __bind(() => { ({ ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } = __require("src/web/align-tool.js")); });
 let renderHelpSearch, showHelp, installHelp; __bind(() => { ({ renderHelpSearch, showHelp, installHelp } = __require("src/web/help.js")); });
 let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind(() => { ({ openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } = __require("src/web/radial-menu.js")); });
+let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -26364,24 +26370,45 @@ let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind((
 
 
 
+
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
+  activePlacementGuides: { get: () => activePlacementGuides, set: (value) => { activePlacementGuides = value; } },
+  activeSymmetryCells: { get: () => activeSymmetryCells, set: (value) => { activeSymmetryCells = value; } },
   alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
+  analysisPick: { get: () => analysisPick, set: (value) => { analysisPick = value; } },
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
+  clipboardNotice: { get: () => clipboardNotice, set: (value) => { clipboardNotice = value; } },
   copyMode: { get: () => copyMode, set: (value) => { copyMode = value; } },
   cursor: { get: () => cursor, set: (value) => { cursor = value; } },
+  diagnosticSelection: { get: () => diagnosticSelection, set: (value) => { diagnosticSelection = value; } },
+  directWire: { get: () => directWire, set: (value) => { directWire = value; } },
   drag: { get: () => drag, set: (value) => { drag = value; } },
+  insertQuery: { get: () => insertQuery, set: (value) => { insertQuery = value; } },
+  labelMode: { get: () => labelMode, set: (value) => { labelMode = value; } },
+  lastCheckReport: { get: () => lastCheckReport, set: (value) => { lastCheckReport = value; } },
   layoutPreviewRects: { get: () => layoutPreviewRects, set: (value) => { layoutPreviewRects = value; } },
+  logDrawerState: { get: () => logDrawerState, set: (value) => { logDrawerState = value; } },
+  mode: { get: () => mode, set: (value) => { mode = value; } },
   modelRevision: { get: () => modelRevision, set: (value) => { modelRevision = value; } },
   moveMode: { get: () => moveMode, set: (value) => { moveMode = value; } },
   multi: { get: () => multi, set: (value) => { multi = value; } },
+  netWarnings: { get: () => netWarnings, set: (value) => { netWarnings = value; } },
+  pendingPlace: { get: () => pendingPlace, set: (value) => { pendingPlace = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
   previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
   radialMenuEl: { get: () => radialMenuEl, set: (value) => { radialMenuEl = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
   selLabels: { get: () => selLabels, set: (value) => { selLabels = value; } },
+  selectedNets: { get: () => selectedNets, set: (value) => { selectedNets = value; } },
+  symmetry: { get: () => symmetry, set: (value) => { symmetry = value; } },
+  terminalSnap: { get: () => terminalSnap, set: (value) => { terminalSnap = value; } },
   tutorial: { get: () => tutorial, set: (value) => { tutorial = value; } },
   view: { get: () => view, set: (value) => { view = value; } },
+  viewPane: { get: () => viewPane, set: (value) => { viewPane = value; } },
+  visual: { get: () => visual, set: (value) => { visual = value; } },
+  wire: { get: () => wire, set: (value) => { wire = value; } },
+  zoom: { get: () => zoom, set: (value) => { zoom = value; } },
 });
 
 // ----- boot failure surface --------------------------------------
@@ -26752,81 +26779,7 @@ function clampViewScale() {
 // through hintLine() and never enters the log.
 
 let logDrawerState = LOG_DRAWER_CLOSED;
-let logPeekTimer = 0;
-let logHoverTimer = 0;
-let pointerInConsole = false;
-
-function setStatusMessage(text, cls) {
-  if (!statusMessageEl) return;
-  const lines = String(text).split('\n');
-  statusMessageEl.textContent = lines.length > 1 ? `${lines[0]} …` : lines[0];
-  statusMessageEl.dataset.kind = cls || 'info';
-  statusMessageEl.title = `${text}\nClick to open the log and command line (:)`;
-  // Restart the fade: a fresh message is bright, then settles to dim.
-  statusMessageEl.classList.remove('fresh');
-  void statusMessageEl.offsetWidth;
-  statusMessageEl.classList.add('fresh');
-}
-
-function logLine(text, cls, { peek = true } = {}) {
-  const line = document.createElement('div');
-  if (cls) line.className = cls;
-  line.textContent = text;
-  logEl.appendChild(line);
-  logEl.scrollTop = logEl.scrollHeight;
-  if (cls !== 'cmd') setStatusMessage(text, cls);
-  if (cls === 'error' && peek) applyLogDrawerEvent({ type: 'error' });
-  if (cls === 'error' || cls === 'status') announce(text);
-}
-
-/** Transient guidance: shown in the message chip, never appended to the log. */
-function hintLine(text) {
-  setStatusMessage(text, 'hint');
-}
-
-function applyLogDrawerEvent(event) {
-  const before = logDrawerState;
-  logDrawerState = logDrawerTransition(logDrawerState, event);
-  if (logDrawerState === before) return;
-  syncLogDrawer();
-  window.clearTimeout(logPeekTimer);
-  if (logDrawerState.open && logDrawerState.reason === 'peek') {
-    logPeekTimer = window.setTimeout(() => applyLogDrawerEvent({ type: 'peek-timeout', inside: pointerInConsole }), 3500);
-  }
-}
-
-function syncLogDrawer() {
-  if (!logDrawerEl) return;
-  const { open, pinned, reason } = logDrawerState;
-  logDrawerEl.hidden = !open;
-  logDrawerEl.dataset.reason = reason || '';
-  statusMessageEl?.setAttribute('aria-expanded', String(open));
-  logPinEl?.setAttribute('aria-pressed', String(pinned));
-  if (open) logEl.scrollTop = logEl.scrollHeight;
-}
-
-function openCommandLine(prefill = '') {
-  applyLogDrawerEvent({ type: 'command' });
-  cmdInput.value = prefill;
-  cmdInput.focus();
-  cmdInput.setSelectionRange(prefill.length, prefill.length);
-}
-
-function logCommand(line) {
-  logLine(`> ${line}`, 'cmd');
-}
-
-function announce(text) {
-  if (!accessibilityAnnouncementEl) return;
-  accessibilityAnnouncementEl.textContent = '';
-  requestAnimationFrame(() => { accessibilityAnnouncementEl.textContent = text; });
-}
-
-
-function noteActionPrevented(error) {
-  const detail = error?.message || String(error || 'the requested change was rejected');
-  logLine(`action prevented: ${detail}`, 'status');
-}
+installStatusBar();
 
 // ----- history --------------------------------------------------------
 
@@ -39169,82 +39122,6 @@ function syncInteractionUI() {
   return state;
 }
 
-function renderStatus() {
-  const interaction = syncInteractionUI();
-  const comp = selectedComp();
-  const label = selectedLabel();
-  const sel = label
-    ? `${label.isNetLabel?.() ? 'net' : label.owner ? 'instance' : 'annotation'} "${label.text}"${selLabels.size > 1 ? ` +${selLabels.size - 1}` : ''}`
-    : comp
-      ? `${comp.refdes}${multi.size > 1 ? ` +${multi.size - 1}` : ''}`
-      : '';
-  const parts = [];
-  if (analysisPick) parts.push('click a wire or pin for the analysis node · Esc cancel');
-  if (visual) {
-    parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
-  }
-  if (mode === 'insert') {
-    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Alt symmetric · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
-  }
-  if (symmetry) {
-    const mirroring = drag?.mode === 'copyghost' ? !!drag.ghost?.mirror : !!symmetryTwin();
-    parts.push(symmetry.operation
-      ? `SYMMETRY about ${symmetryAxisText()}${symmetry.settled ? ' (held)' : ''}${activeSymmetryCells ? ` · ${activeSymmetryCells} ${activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${activeSymmetryCells * 2} apart` : ''}${mirroring ? (drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
-      : `SYMMETRY armed at (${symmetry.pin.x},${symmetry.pin.y}) · move to mirror`);
-  }
-  if (activePlacementGuides.length) parts.push(describeGuides(activePlacementGuides));
-  if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
-  if (labelMode === 'highlight') parts.push('click a wire, pin, net label, rail marker, or port to cycle its net color · 8 removes all · Esc exits');
-  if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
-  if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
-  if (wire) {
-    parts.push(
-      `${terminalSnap ? 'TERMINAL SNAP · ' : ''}` + (wire.source
-        ? wire.source.fixed
-          ? `WIRE fixed endpoint @ (${wire.source.fixed.point.x},${wire.source.fixed.point.y}) → click points / target`
-          : wire.source.refdes
-            ? `WIRE ${wire.source.refdes}.${wire.source.term} → terminal click commits · other clicks guide · Enter commits`
-            : `WIRE (${wire.source.x},${wire.source.y}) → terminal click commits · other clicks guide · Enter commits`
-        : `WIRE (${wire.routeStyle || routeMode}): click a terminal or point to start`),
-    );
-  }
-  if (directWire) {
-    parts.push(directWire.source
-      ? `${directWire.source.fixed ? 'fixed endpoint suffix' : `${directWire.routeMode || routeMode} direct path`}${directWire.points.length ? ` · ${directWire.points.length} point${directWire.points.length === 1 ? '' : 's'}` : ''} · click waypoints / terminal / wire · Enter · Esc cancel`
-      : 'click a terminal or open fixed endpoint to start · Esc cancel');
-  }
-  if (selectedNets.size) parts.push(`nets ${selectedNets.size}`);
-  if (lastCheckReport && (diagnosticSelection.components.size || diagnosticSelection.nets.size || diagnosticSelection.labels.size)) {
-    parts.push(`check focus ${diagnosticSelection.components.size + diagnosticSelection.nets.size + diagnosticSelection.labels.size}`);
-  }
-  if (netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
-  if (circuit.netNameWarnings?.length) parts.push('⚠ merged net names require reconciliation');
-  if (clipboardNotice) parts.unshift(clipboardNotice);
-  const fields = statusFields({
-    mode: analysisPick ? 'PICK NET' : interaction.label,
-    selection: sel,
-    cursor,
-    hints: parts,
-  });
-  statusEl.textContent = fields.hint;
-  statusEl.className = `status ${interaction.key}`;
-  if (directWire) statusEl.classList.add('direct-wire');
-  else if (wire) statusEl.classList.add('wire');
-  else if (mode === 'insert') statusEl.classList.add('insert');
-  if (statusModeEl) {
-    statusModeEl.textContent = fields.mode;
-    statusModeEl.className = `status-mode ${statusEl.className.replace(/^status\s*/, '')}`;
-  }
-  if (statusSelectionEl) {
-    statusSelectionEl.textContent = fields.selection;
-    statusSelectionEl.hidden = !fields.selection;
-  }
-  if (statusCursorEl) statusCursorEl.textContent = fields.cursor;
-  // render() measured the pane before writing the DOM; measuring again here
-  // would force a synchronous layout on every frame.
-  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(view, (viewPane || paneSize())?.w, zoom)}%`;
-}
-
 // ----- insert-mode menu ----------------------------------------------------
 // A dropdown listing every placable component, shown in insert mode until a
 // ghost is armed. It is anchored where insert mode opened rather than dragged
@@ -41450,32 +41327,6 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
   }).observe(paneEl);
 }
 
-// The log drawer opens from the message chip (click, or a short hover), from
-// `:`, and briefly on errors. It overlays the canvas, so nothing reflows.
-if (consoleEl && logDrawerEl) {
-  consoleEl.addEventListener('pointerenter', () => { pointerInConsole = true; });
-  consoleEl.addEventListener('pointerleave', () => {
-    pointerInConsole = false;
-    window.clearTimeout(logHoverTimer);
-    if (document.activeElement !== cmdInput) applyLogDrawerEvent({ type: 'leave' });
-  });
-  statusMessageEl?.addEventListener('click', () => applyLogDrawerEvent({ type: 'toggle' }));
-  statusMessageEl?.addEventListener('pointerenter', () => {
-    window.clearTimeout(logHoverTimer);
-    logHoverTimer = window.setTimeout(() => applyLogDrawerEvent({ type: 'hover' }), 300);
-  });
-  statusMessageEl?.addEventListener('pointerleave', () => window.clearTimeout(logHoverTimer));
-  logPinEl?.addEventListener('click', () => applyLogDrawerEvent({ type: 'pin' }));
-  logClearEl?.addEventListener('click', () => { logEl.replaceChildren(); });
-  window.addEventListener('pointerdown', (ev) => {
-    if (logDrawerState.open && !consoleEl.contains(ev.target)) applyLogDrawerEvent({ type: 'dismiss' });
-  }, true);
-  cmdInput.addEventListener('blur', () => {
-    // Keep a hovered drawer open; it closes when the pointer leaves.
-    if (!pointerInConsole) applyLogDrawerEvent({ type: 'command-done' });
-  });
-}
-
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
 statusCheckEl?.addEventListener('click', () => {
   if (lastCheckReport) focusCheckSummary();
@@ -41498,11 +41349,13 @@ let TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns; __bind(
 let transformRect; __bind(() => { ({ transformRect } = __require("src/core/geometry.js")); });
 let canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl; __bind(() => { ({ canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let fitView, logLine, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ fitView, logLine, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/main.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let fitView, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ fitView, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/main.js")); });
 /**
  * Onboarding in the editor: the contextual tip card and the first-drawing
  * tutorial. The rules live in tips.js and tutorial.js; this shows them.
  */
+
 
 
 
@@ -42300,6 +42153,216 @@ function nextStackedSelection(candidates = [], current = null) {
 }
 
 __exports.copySelectionParts = __require("src/core/selection.js").copySelectionParts;
+};
+
+__modules["src/web/status-bar-ui.js"] = function (__require, __exports) {
+__exports.logLine = logLine;
+__exports.hintLine = hintLine;
+__exports.applyLogDrawerEvent = applyLogDrawerEvent;
+__exports.openCommandLine = openCommandLine;
+__exports.logCommand = logCommand;
+__exports.announce = announce;
+__exports.noteActionPrevented = noteActionPrevented;
+__exports.renderStatus = renderStatus;
+__exports.installStatusBar = installStatusBar;
+let LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
+let describeGuides; __bind(() => { ({ describeGuides } = __require("src/web/layout.js")); });
+let statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl; __bind(() => { ({ statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } = __require("src/web/elements.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let paneSize, selectedComp, selectedLabel, symmetryAxisText, symmetryTwin, syncInteractionUI; __bind(() => { ({ paneSize, selectedComp, selectedLabel, symmetryAxisText, symmetryTwin, syncInteractionUI } = __require("src/web/main.js")); });
+/**
+ * The status bar and the log drawer: the mode chip, selection and cursor
+ * readouts, the message chip, and the log it opens. The fields' wording is
+ * in status-bar.js.
+ */
+
+
+
+
+
+
+
+let logPeekTimer = 0;
+
+let logHoverTimer = 0;
+
+let pointerInConsole = false;
+
+function setStatusMessage(text, cls) {
+  if (!statusMessageEl) return;
+  const lines = String(text).split('\n');
+  statusMessageEl.textContent = lines.length > 1 ? `${lines[0]} …` : lines[0];
+  statusMessageEl.dataset.kind = cls || 'info';
+  statusMessageEl.title = `${text}\nClick to open the log and command line (:)`;
+  // Restart the fade: a fresh message is bright, then settles to dim.
+  statusMessageEl.classList.remove('fresh');
+  void statusMessageEl.offsetWidth;
+  statusMessageEl.classList.add('fresh');
+}
+
+function logLine(text, cls, { peek = true } = {}) {
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = text;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+  if (cls !== 'cmd') setStatusMessage(text, cls);
+  if (cls === 'error' && peek) applyLogDrawerEvent({ type: 'error' });
+  if (cls === 'error' || cls === 'status') announce(text);
+}
+
+/** Transient guidance: shown in the message chip, never appended to the log. */
+function hintLine(text) {
+  setStatusMessage(text, 'hint');
+}
+
+function applyLogDrawerEvent(event) {
+  const before = editor.logDrawerState;
+  editor.logDrawerState = logDrawerTransition(editor.logDrawerState, event);
+  if (editor.logDrawerState === before) return;
+  syncLogDrawer();
+  window.clearTimeout(logPeekTimer);
+  if (editor.logDrawerState.open && editor.logDrawerState.reason === 'peek') {
+    logPeekTimer = window.setTimeout(() => applyLogDrawerEvent({ type: 'peek-timeout', inside: pointerInConsole }), 3500);
+  }
+}
+
+function syncLogDrawer() {
+  if (!logDrawerEl) return;
+  const { open, pinned, reason } = editor.logDrawerState;
+  logDrawerEl.hidden = !open;
+  logDrawerEl.dataset.reason = reason || '';
+  statusMessageEl?.setAttribute('aria-expanded', String(open));
+  logPinEl?.setAttribute('aria-pressed', String(pinned));
+  if (open) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function openCommandLine(prefill = '') {
+  applyLogDrawerEvent({ type: 'command' });
+  cmdInput.value = prefill;
+  cmdInput.focus();
+  cmdInput.setSelectionRange(prefill.length, prefill.length);
+}
+
+function logCommand(line) {
+  logLine(`> ${line}`, 'cmd');
+}
+
+function announce(text) {
+  if (!accessibilityAnnouncementEl) return;
+  accessibilityAnnouncementEl.textContent = '';
+  requestAnimationFrame(() => { accessibilityAnnouncementEl.textContent = text; });
+}
+
+function noteActionPrevented(error) {
+  const detail = error?.message || String(error || 'the requested change was rejected');
+  logLine(`action prevented: ${detail}`, 'status');
+}
+
+function renderStatus() {
+  const interaction = syncInteractionUI();
+  const comp = selectedComp();
+  const label = selectedLabel();
+  const sel = label
+    ? `${label.isNetLabel?.() ? 'net' : label.owner ? 'instance' : 'annotation'} "${label.text}"${editor.selLabels.size > 1 ? ` +${editor.selLabels.size - 1}` : ''}`
+    : comp
+      ? `${comp.refdes}${editor.multi.size > 1 ? ` +${editor.multi.size - 1}` : ''}`
+      : '';
+  const parts = [];
+  if (editor.analysisPick) parts.push('click a wire or pin for the analysis node · Esc cancel');
+  if (editor.visual) {
+    parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
+  }
+  if (editor.mode === 'insert') {
+    parts.push(editor.pendingPlace ? `place ${editor.pendingPlace.kind === 'label' ? 'label' : editor.pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Alt symmetric · Esc cancel` : editor.insertQuery ? `~${editor.insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
+  }
+  if (editor.symmetry) {
+    const mirroring = editor.drag?.mode === 'copyghost' ? !!editor.drag.ghost?.mirror : !!symmetryTwin();
+    parts.push(editor.symmetry.operation
+      ? `SYMMETRY about ${symmetryAxisText()}${editor.symmetry.settled ? ' (held)' : ''}${editor.activeSymmetryCells ? ` · ${editor.activeSymmetryCells} ${editor.activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${editor.activeSymmetryCells * 2} apart` : ''}${mirroring ? (editor.drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
+      : `SYMMETRY armed at (${editor.symmetry.pin.x},${editor.symmetry.pin.y}) · move to mirror`);
+  }
+  if (editor.activePlacementGuides.length) parts.push(describeGuides(editor.activePlacementGuides));
+  if (editor.labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
+  if (editor.labelMode === 'highlight') parts.push('click a wire, pin, net label, rail marker, or port to cycle its net color · 8 removes all · Esc exits');
+  if (editor.labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
+  if (editor.labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
+  if (editor.wire) {
+    parts.push(
+      `${editor.terminalSnap ? 'TERMINAL SNAP · ' : ''}` + (editor.wire.source
+        ? editor.wire.source.fixed
+          ? `WIRE fixed endpoint @ (${editor.wire.source.fixed.point.x},${editor.wire.source.fixed.point.y}) → click points / target`
+          : editor.wire.source.refdes
+            ? `WIRE ${editor.wire.source.refdes}.${editor.wire.source.term} → terminal click commits · other clicks guide · Enter commits`
+            : `WIRE (${editor.wire.source.x},${editor.wire.source.y}) → terminal click commits · other clicks guide · Enter commits`
+        : `WIRE (${editor.wire.routeStyle || editor.routeMode}): click a terminal or point to start`),
+    );
+  }
+  if (editor.directWire) {
+    parts.push(editor.directWire.source
+      ? `${editor.directWire.source.fixed ? 'fixed endpoint suffix' : `${editor.directWire.routeMode || editor.routeMode} direct path`}${editor.directWire.points.length ? ` · ${editor.directWire.points.length} point${editor.directWire.points.length === 1 ? '' : 's'}` : ''} · click waypoints / terminal / wire · Enter · Esc cancel`
+      : 'click a terminal or open fixed endpoint to start · Esc cancel');
+  }
+  if (editor.selectedNets.size) parts.push(`nets ${editor.selectedNets.size}`);
+  if (editor.lastCheckReport && (editor.diagnosticSelection.components.size || editor.diagnosticSelection.nets.size || editor.diagnosticSelection.labels.size)) {
+    parts.push(`check focus ${editor.diagnosticSelection.components.size + editor.diagnosticSelection.nets.size + editor.diagnosticSelection.labels.size}`);
+  }
+  if (editor.netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
+  if (editor.circuit.netNameWarnings?.length) parts.push('⚠ merged net names require reconciliation');
+  if (editor.clipboardNotice) parts.unshift(editor.clipboardNotice);
+  const fields = statusFields({
+    mode: editor.analysisPick ? 'PICK NET' : interaction.label,
+    selection: sel,
+    cursor: editor.cursor,
+    hints: parts,
+  });
+  statusEl.textContent = fields.hint;
+  statusEl.className = `status ${interaction.key}`;
+  if (editor.directWire) statusEl.classList.add('direct-wire');
+  else if (editor.wire) statusEl.classList.add('wire');
+  else if (editor.mode === 'insert') statusEl.classList.add('insert');
+  if (statusModeEl) {
+    statusModeEl.textContent = fields.mode;
+    statusModeEl.className = `status-mode ${statusEl.className.replace(/^status\s*/, '')}`;
+  }
+  if (statusSelectionEl) {
+    statusSelectionEl.textContent = fields.selection;
+    statusSelectionEl.hidden = !fields.selection;
+  }
+  if (statusCursorEl) statusCursorEl.textContent = fields.cursor;
+  // render() measured the pane before writing the DOM; measuring again here
+  // would force a synchronous layout on every frame.
+  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`;
+}
+
+function installStatusBar() {
+  // The log drawer opens from the message chip (click, or a short hover), from
+  // `:`, and briefly on errors. It overlays the canvas, so nothing reflows.
+  if (consoleEl && logDrawerEl) {
+    consoleEl.addEventListener('pointerenter', () => { pointerInConsole = true; });
+    consoleEl.addEventListener('pointerleave', () => {
+      pointerInConsole = false;
+      window.clearTimeout(logHoverTimer);
+      if (document.activeElement !== cmdInput) applyLogDrawerEvent({ type: 'leave' });
+    });
+    statusMessageEl?.addEventListener('click', () => applyLogDrawerEvent({ type: 'toggle' }));
+    statusMessageEl?.addEventListener('pointerenter', () => {
+      window.clearTimeout(logHoverTimer);
+      logHoverTimer = window.setTimeout(() => applyLogDrawerEvent({ type: 'hover' }), 300);
+    });
+    statusMessageEl?.addEventListener('pointerleave', () => window.clearTimeout(logHoverTimer));
+    logPinEl?.addEventListener('click', () => applyLogDrawerEvent({ type: 'pin' }));
+    logClearEl?.addEventListener('click', () => { logEl.replaceChildren(); });
+    window.addEventListener('pointerdown', (ev) => {
+      if (editor.logDrawerState.open && !consoleEl.contains(ev.target)) applyLogDrawerEvent({ type: 'dismiss' });
+    }, true);
+    cmdInput.addEventListener('blur', () => {
+      // Keep a hovered drawer open; it closes when the pointer leaves.
+      if (!pointerInConsole) applyLogDrawerEvent({ type: 'command-done' });
+    });
+  }
+}
+
 };
 
 __modules["src/web/status-bar.js"] = function (__require, __exports) {

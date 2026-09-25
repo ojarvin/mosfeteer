@@ -6,7 +6,8 @@ import { snap } from '../core/grid.js';
 import { alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, componentLayoutItem, labelLayoutItem, outlineOf } from './layout.js';
 import { alignPanelEl } from './elements.js';
 import { editor } from './editor-state.js';
-import { annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, hintLine, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient } from './main.js';
+import { hintLine } from './status-bar-ui.js';
+import { annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient } from './main.js';
 
 // ----- Align to -------------------------------------------------------------
 // Shift+A: the selection moves as one rigid piece. The first click picks an

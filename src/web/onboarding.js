@@ -9,7 +9,8 @@ import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } f
 import { transformRect } from '../core/geometry.js';
 import { canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } from './elements.js';
 import { editor } from './editor-state.js';
-import { fitView, logLine, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument } from './main.js';
+import { logLine } from './status-bar-ui.js';
+import { fitView, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument } from './main.js';
 
 // ----- contextual tips ---------------------------------------------------------
 // One quiet line in the canvas corner when a faster way exists for what the

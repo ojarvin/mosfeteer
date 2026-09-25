@@ -234,7 +234,7 @@ test('radial menu tools act on their part at the release point', async () => {
   for (const label of ['Rotate', 'Mirror H', 'Mirror V', 'Delete', 'Copy', 'Detach move', 'Move']) assert.match(radial, new RegExp(`label: '${label}'`));
   assert.match(radial, /radialMove\(radial, at, 'detached'\)/);
   assert.match(radial, /armModalMove\(\{ refdes: radial\.refdes \}, at\.world, at\.client\)/);
-  assert.match(radial, /if \((?:editor\.)?copyMode\) beginCopySource\(at\.world, at\.client\)/);
+  assert.match(radial, /if \(copyMode\) beginCopySource\(at\.world, at\.client\)/);
   // Space's wire stubs, on the part the menu selected.
   assert.match(radial, /label: 'Wire stubs', icon: 'stub', run: \(\) => stubSelection\(\)/);
   assert.match(main, /finishRadialMenu\(radial, \{ x: ev\.clientX, y: ev\.clientY \}\);/);

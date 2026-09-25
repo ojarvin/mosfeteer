@@ -50,8 +50,8 @@ import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, fo
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
 import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
-import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
-import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
+import { LOG_DRAWER_CLOSED } from './status-bar.js';
+import { alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 import { editor } from './editor-state.js';
 import {
   canvasEl,
@@ -59,20 +59,9 @@ import {
   componentsListEl,
   netsListEl,
   detailEl,
-  statusEl,
-  accessibilityAnnouncementEl,
-  logEl,
   cmdInput,
-  consoleEl,
-  statusModeEl,
-  statusSelectionEl,
-  statusCursorEl,
   statusZoomEl,
   statusCheckEl,
-  statusMessageEl,
-  logDrawerEl,
-  logPinEl,
-  logClearEl,
   circuitSelectEl,
   circuitNameEl,
   newDocumentButton,
@@ -144,25 +133,46 @@ import { noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial
 import { ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } from './align-tool.js';
 import { renderHelpSearch, showHelp, installHelp } from './help.js';
 import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } from './radial-menu.js';
+import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } from './status-bar-ui.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
+  activePlacementGuides: { get: () => activePlacementGuides, set: (value) => { activePlacementGuides = value; } },
+  activeSymmetryCells: { get: () => activeSymmetryCells, set: (value) => { activeSymmetryCells = value; } },
   alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
+  analysisPick: { get: () => analysisPick, set: (value) => { analysisPick = value; } },
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
+  clipboardNotice: { get: () => clipboardNotice, set: (value) => { clipboardNotice = value; } },
   copyMode: { get: () => copyMode, set: (value) => { copyMode = value; } },
   cursor: { get: () => cursor, set: (value) => { cursor = value; } },
+  diagnosticSelection: { get: () => diagnosticSelection, set: (value) => { diagnosticSelection = value; } },
+  directWire: { get: () => directWire, set: (value) => { directWire = value; } },
   drag: { get: () => drag, set: (value) => { drag = value; } },
+  insertQuery: { get: () => insertQuery, set: (value) => { insertQuery = value; } },
+  labelMode: { get: () => labelMode, set: (value) => { labelMode = value; } },
+  lastCheckReport: { get: () => lastCheckReport, set: (value) => { lastCheckReport = value; } },
   layoutPreviewRects: { get: () => layoutPreviewRects, set: (value) => { layoutPreviewRects = value; } },
+  logDrawerState: { get: () => logDrawerState, set: (value) => { logDrawerState = value; } },
+  mode: { get: () => mode, set: (value) => { mode = value; } },
   modelRevision: { get: () => modelRevision, set: (value) => { modelRevision = value; } },
   moveMode: { get: () => moveMode, set: (value) => { moveMode = value; } },
   multi: { get: () => multi, set: (value) => { multi = value; } },
+  netWarnings: { get: () => netWarnings, set: (value) => { netWarnings = value; } },
+  pendingPlace: { get: () => pendingPlace, set: (value) => { pendingPlace = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
   previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
   radialMenuEl: { get: () => radialMenuEl, set: (value) => { radialMenuEl = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
   selLabels: { get: () => selLabels, set: (value) => { selLabels = value; } },
+  selectedNets: { get: () => selectedNets, set: (value) => { selectedNets = value; } },
+  symmetry: { get: () => symmetry, set: (value) => { symmetry = value; } },
+  terminalSnap: { get: () => terminalSnap, set: (value) => { terminalSnap = value; } },
   tutorial: { get: () => tutorial, set: (value) => { tutorial = value; } },
   view: { get: () => view, set: (value) => { view = value; } },
+  viewPane: { get: () => viewPane, set: (value) => { viewPane = value; } },
+  visual: { get: () => visual, set: (value) => { visual = value; } },
+  wire: { get: () => wire, set: (value) => { wire = value; } },
+  zoom: { get: () => zoom, set: (value) => { zoom = value; } },
 });
 
 // ----- boot failure surface --------------------------------------
@@ -533,81 +543,7 @@ function clampViewScale() {
 // through hintLine() and never enters the log.
 
 let logDrawerState = LOG_DRAWER_CLOSED;
-let logPeekTimer = 0;
-let logHoverTimer = 0;
-let pointerInConsole = false;
-
-function setStatusMessage(text, cls) {
-  if (!statusMessageEl) return;
-  const lines = String(text).split('\n');
-  statusMessageEl.textContent = lines.length > 1 ? `${lines[0]} …` : lines[0];
-  statusMessageEl.dataset.kind = cls || 'info';
-  statusMessageEl.title = `${text}\nClick to open the log and command line (:)`;
-  // Restart the fade: a fresh message is bright, then settles to dim.
-  statusMessageEl.classList.remove('fresh');
-  void statusMessageEl.offsetWidth;
-  statusMessageEl.classList.add('fresh');
-}
-
-export function logLine(text, cls, { peek = true } = {}) {
-  const line = document.createElement('div');
-  if (cls) line.className = cls;
-  line.textContent = text;
-  logEl.appendChild(line);
-  logEl.scrollTop = logEl.scrollHeight;
-  if (cls !== 'cmd') setStatusMessage(text, cls);
-  if (cls === 'error' && peek) applyLogDrawerEvent({ type: 'error' });
-  if (cls === 'error' || cls === 'status') announce(text);
-}
-
-/** Transient guidance: shown in the message chip, never appended to the log. */
-export function hintLine(text) {
-  setStatusMessage(text, 'hint');
-}
-
-function applyLogDrawerEvent(event) {
-  const before = logDrawerState;
-  logDrawerState = logDrawerTransition(logDrawerState, event);
-  if (logDrawerState === before) return;
-  syncLogDrawer();
-  window.clearTimeout(logPeekTimer);
-  if (logDrawerState.open && logDrawerState.reason === 'peek') {
-    logPeekTimer = window.setTimeout(() => applyLogDrawerEvent({ type: 'peek-timeout', inside: pointerInConsole }), 3500);
-  }
-}
-
-function syncLogDrawer() {
-  if (!logDrawerEl) return;
-  const { open, pinned, reason } = logDrawerState;
-  logDrawerEl.hidden = !open;
-  logDrawerEl.dataset.reason = reason || '';
-  statusMessageEl?.setAttribute('aria-expanded', String(open));
-  logPinEl?.setAttribute('aria-pressed', String(pinned));
-  if (open) logEl.scrollTop = logEl.scrollHeight;
-}
-
-function openCommandLine(prefill = '') {
-  applyLogDrawerEvent({ type: 'command' });
-  cmdInput.value = prefill;
-  cmdInput.focus();
-  cmdInput.setSelectionRange(prefill.length, prefill.length);
-}
-
-function logCommand(line) {
-  logLine(`> ${line}`, 'cmd');
-}
-
-function announce(text) {
-  if (!accessibilityAnnouncementEl) return;
-  accessibilityAnnouncementEl.textContent = '';
-  requestAnimationFrame(() => { accessibilityAnnouncementEl.textContent = text; });
-}
-
-
-function noteActionPrevented(error) {
-  const detail = error?.message || String(error || 'the requested change was rejected');
-  logLine(`action prevented: ${detail}`, 'status');
-}
+installStatusBar();
 
 // ----- history --------------------------------------------------------
 
@@ -1913,7 +1849,7 @@ function compUnderCursor() {
   return hit && circuit.components.has(hit.refdes) ? circuit.components.get(hit.refdes) : null;
 }
 
-function selectedComp() {
+export function selectedComp() {
   return selected && circuit.components.has(selected) ? circuit.components.get(selected) : null;
 }
 
@@ -2081,7 +2017,7 @@ export function selectedLabels() {
     .filter((label) => label && label.selectable !== false);
 }
 
-function selectedLabel() {
+export function selectedLabel() {
   return selLabel && circuit.labels.has(selLabel) ? circuit.labels.get(selLabel) : null;
 }
 /** Move each recorded label from its origin, parents before children; a
@@ -4391,12 +4327,12 @@ function pendingTransform() {
  *  armed, has no direction yet, or the ghost sits on the axis itself -- there
  *  is no pair to place when both halves would land on the same square. */
 /** The axis in the drawing's own terms, e.g. `x=0`. */
-function symmetryAxisText() {
+export function symmetryAxisText() {
   if (!symmetry?.operation) return '';
   return symmetry.operation === 'mirrorX' ? `x=${symmetry.pin.x}` : `y=${symmetry.pin.y}`;
 }
 
-function symmetryTwin(base = pendingTransform()) {
+export function symmetryTwin(base = pendingTransform()) {
   if (!base || !symmetry?.operation) return null;
   const twin = transformComponentWorld(base, symmetry.pin, symmetry.operation);
   return twin.x === base.x && twin.y === base.y ? null : twin;
@@ -12903,7 +12839,7 @@ function revealModeToolbarControl(control) {
 }
 
 /** Apply all interaction affordances from one derived state. */
-function syncInteractionUI() {
+export function syncInteractionUI() {
   const state = interactionState();
   const modeControl = modeToolbarControlFor(state);
   if (lastToolbarState !== null && state.toolbar !== lastToolbarState) {
@@ -12948,82 +12884,6 @@ function syncInteractionUI() {
   syncRailFlyout(state);
   syncToolCursor(state);
   return state;
-}
-
-function renderStatus() {
-  const interaction = syncInteractionUI();
-  const comp = selectedComp();
-  const label = selectedLabel();
-  const sel = label
-    ? `${label.isNetLabel?.() ? 'net' : label.owner ? 'instance' : 'annotation'} "${label.text}"${selLabels.size > 1 ? ` +${selLabels.size - 1}` : ''}`
-    : comp
-      ? `${comp.refdes}${multi.size > 1 ? ` +${multi.size - 1}` : ''}`
-      : '';
-  const parts = [];
-  if (analysisPick) parts.push('click a wire or pin for the analysis node · Esc cancel');
-  if (visual) {
-    parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
-  }
-  if (mode === 'insert') {
-    parts.push(pendingPlace ? `place ${pendingPlace.kind === 'label' ? 'label' : pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Alt symmetric · Esc cancel` : insertQuery ? `~${insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
-  }
-  if (symmetry) {
-    const mirroring = drag?.mode === 'copyghost' ? !!drag.ghost?.mirror : !!symmetryTwin();
-    parts.push(symmetry.operation
-      ? `SYMMETRY about ${symmetryAxisText()}${symmetry.settled ? ' (held)' : ''}${activeSymmetryCells ? ` · ${activeSymmetryCells} ${activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${activeSymmetryCells * 2} apart` : ''}${mirroring ? (drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
-      : `SYMMETRY armed at (${symmetry.pin.x},${symmetry.pin.y}) · move to mirror`);
-  }
-  if (activePlacementGuides.length) parts.push(describeGuides(activePlacementGuides));
-  if (labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
-  if (labelMode === 'highlight') parts.push('click a wire, pin, net label, rail marker, or port to cycle its net color · 8 removes all · Esc exits');
-  if (labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
-  if (labelMode === 'equation') parts.push('click anywhere for LaTeX equation · Enter/blur commit · Esc cancel');
-  if (wire) {
-    parts.push(
-      `${terminalSnap ? 'TERMINAL SNAP · ' : ''}` + (wire.source
-        ? wire.source.fixed
-          ? `WIRE fixed endpoint @ (${wire.source.fixed.point.x},${wire.source.fixed.point.y}) → click points / target`
-          : wire.source.refdes
-            ? `WIRE ${wire.source.refdes}.${wire.source.term} → terminal click commits · other clicks guide · Enter commits`
-            : `WIRE (${wire.source.x},${wire.source.y}) → terminal click commits · other clicks guide · Enter commits`
-        : `WIRE (${wire.routeStyle || routeMode}): click a terminal or point to start`),
-    );
-  }
-  if (directWire) {
-    parts.push(directWire.source
-      ? `${directWire.source.fixed ? 'fixed endpoint suffix' : `${directWire.routeMode || routeMode} direct path`}${directWire.points.length ? ` · ${directWire.points.length} point${directWire.points.length === 1 ? '' : 's'}` : ''} · click waypoints / terminal / wire · Enter · Esc cancel`
-      : 'click a terminal or open fixed endpoint to start · Esc cancel');
-  }
-  if (selectedNets.size) parts.push(`nets ${selectedNets.size}`);
-  if (lastCheckReport && (diagnosticSelection.components.size || diagnosticSelection.nets.size || diagnosticSelection.labels.size)) {
-    parts.push(`check focus ${diagnosticSelection.components.size + diagnosticSelection.nets.size + diagnosticSelection.labels.size}`);
-  }
-  if (netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
-  if (circuit.netNameWarnings?.length) parts.push('⚠ merged net names require reconciliation');
-  if (clipboardNotice) parts.unshift(clipboardNotice);
-  const fields = statusFields({
-    mode: analysisPick ? 'PICK NET' : interaction.label,
-    selection: sel,
-    cursor,
-    hints: parts,
-  });
-  statusEl.textContent = fields.hint;
-  statusEl.className = `status ${interaction.key}`;
-  if (directWire) statusEl.classList.add('direct-wire');
-  else if (wire) statusEl.classList.add('wire');
-  else if (mode === 'insert') statusEl.classList.add('insert');
-  if (statusModeEl) {
-    statusModeEl.textContent = fields.mode;
-    statusModeEl.className = `status-mode ${statusEl.className.replace(/^status\s*/, '')}`;
-  }
-  if (statusSelectionEl) {
-    statusSelectionEl.textContent = fields.selection;
-    statusSelectionEl.hidden = !fields.selection;
-  }
-  if (statusCursorEl) statusCursorEl.textContent = fields.cursor;
-  // render() measured the pane before writing the DOM; measuring again here
-  // would force a synchronous layout on every frame.
-  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(view, (viewPane || paneSize())?.w, zoom)}%`;
 }
 
 // ----- insert-mode menu ----------------------------------------------------
@@ -15229,32 +15089,6 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
     syncModeToolbarOverflow();
     render();
   }).observe(paneEl);
-}
-
-// The log drawer opens from the message chip (click, or a short hover), from
-// `:`, and briefly on errors. It overlays the canvas, so nothing reflows.
-if (consoleEl && logDrawerEl) {
-  consoleEl.addEventListener('pointerenter', () => { pointerInConsole = true; });
-  consoleEl.addEventListener('pointerleave', () => {
-    pointerInConsole = false;
-    window.clearTimeout(logHoverTimer);
-    if (document.activeElement !== cmdInput) applyLogDrawerEvent({ type: 'leave' });
-  });
-  statusMessageEl?.addEventListener('click', () => applyLogDrawerEvent({ type: 'toggle' }));
-  statusMessageEl?.addEventListener('pointerenter', () => {
-    window.clearTimeout(logHoverTimer);
-    logHoverTimer = window.setTimeout(() => applyLogDrawerEvent({ type: 'hover' }), 300);
-  });
-  statusMessageEl?.addEventListener('pointerleave', () => window.clearTimeout(logHoverTimer));
-  logPinEl?.addEventListener('click', () => applyLogDrawerEvent({ type: 'pin' }));
-  logClearEl?.addEventListener('click', () => { logEl.replaceChildren(); });
-  window.addEventListener('pointerdown', (ev) => {
-    if (logDrawerState.open && !consoleEl.contains(ev.target)) applyLogDrawerEvent({ type: 'dismiss' });
-  }, true);
-  cmdInput.addEventListener('blur', () => {
-    // Keep a hovered drawer open; it closes when the pointer leaves.
-    if (!pointerInConsole) applyLogDrawerEvent({ type: 'command-done' });
-  });
 }
 
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
