@@ -49,7 +49,7 @@ import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOpti
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
-import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
+import { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 import { editor } from './editor-state.js';
@@ -143,18 +143,22 @@ import { ICON_PATHS, syncToolCursor, installIcons } from './icons.js';
 import { noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding } from './onboarding.js';
 import { ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } from './align-tool.js';
 import { renderHelpSearch, showHelp, installHelp } from './help.js';
+import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } from './radial-menu.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
   alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
+  copyMode: { get: () => copyMode, set: (value) => { copyMode = value; } },
   cursor: { get: () => cursor, set: (value) => { cursor = value; } },
   drag: { get: () => drag, set: (value) => { drag = value; } },
   layoutPreviewRects: { get: () => layoutPreviewRects, set: (value) => { layoutPreviewRects = value; } },
   modelRevision: { get: () => modelRevision, set: (value) => { modelRevision = value; } },
+  moveMode: { get: () => moveMode, set: (value) => { moveMode = value; } },
   multi: { get: () => multi, set: (value) => { multi = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
   previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
+  radialMenuEl: { get: () => radialMenuEl, set: (value) => { radialMenuEl = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
   selLabels: { get: () => selLabels, set: (value) => { selLabels = value; } },
   tutorial: { get: () => tutorial, set: (value) => { tutorial = value; } },
@@ -3207,7 +3211,7 @@ function rerouteTouchedNets(refs, moved, fresh = false, beforeTerminals = null, 
 /** Delete all selected objects together in one undo step.  Selected whole nets
  *  are removed before segment cuts, so selecting both cannot leave fragments;
  *  touched-but-unselected nets are rerouted afterward. */
-function deleteSelection() {
+export function deleteSelection() {
   const comps = selectedComps();
   const labels = selectedLabels();
   const keys = new Set(selectedWires);
@@ -4149,7 +4153,7 @@ function addPhaseBeats() {
 
 /** A tap of Space: a labelled wire stub on every unconnected terminal of the
  * selected parts, skipping any that would short (core/stubs.js). */
-function stubSelection() {
+export function stubSelection() {
   if (mode !== 'normal' || drag || hasWireDraft() || labelMode || moveMode || copyMode || deleteMode || visual) return;
   const refs = selectedComps().map((c) => c.refdes);
   if (!refs.length) {
@@ -5713,7 +5717,7 @@ function cancelDrag() {
  *  mapping. During a pan/zoom drag the reference must be the view captured at
  *  mousedown — mapping against the *live* view creates feedback and makes the
  *  pan stick/stutter. */
-function clientToWorld(clientX, clientY, refView = view) {
+export function clientToWorld(clientX, clientY, refView = view) {
   const pane = document.querySelector('.canvas-pane');
   return worldAndCursorFromClient(clientX, clientY, pane.getBoundingClientRect(), refView).world;
 }
@@ -6761,94 +6765,7 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
 }
 
 // ----- radial menu -------------------------------------------------------------
-// Right-drag (or hold) on a component opens a marking menu around the press.
-// Releasing in a sector runs it, so a practiced flick needs no reading; release
-// in the centre cancels. Sector 0 is up and indices run clockwise.
-// Every item acts on the part the menu was opened on: the tools pick it up at
-// the release point exactly as a click on it with that tool armed would, so
-// the part follows the pointer from where the flick ended.
-const RADIAL_ITEMS = [
-  { label: 'Rotate', icon: 'rotate', run: () => selectedTransform('rotate') },
-  { label: 'Mirror H', icon: 'mirror-x', run: () => selectedTransform('mirror-x') },
-  { label: 'Mirror V', icon: 'mirror-y', run: () => selectedTransform('mirror-y') },
-  { label: 'Delete', icon: 'trash', danger: true, run: () => deleteSelection() },
-  { label: 'Copy', icon: 'copy', run: (radial, at) => {
-    activateCopy();
-    if (copyMode) beginCopySource(at.world, at.client);
-  } },
-  { label: 'Detach move', icon: 'detach', run: (radial, at) => radialMove(radial, at, 'detached') },
-  { label: 'Move', icon: 'move', run: (radial, at) => radialMove(radial, at, 'connected') },
-  // The part is selected; pick its edge or point to align, then the target's.
-  { label: 'Align', icon: 'align', run: () => activateAlign() },
-  { label: 'Wire stubs', icon: 'stub', run: () => stubSelection() },
-];
-
-function radialMove(radial, at, kind) {
-  activateMove(kind);
-  if (!moveMode || !circuit.components.has(radial.refdes)) return;
-  cursor = { x: snap(at.world.x), y: snap(at.world.y) };
-  armModalMove({ refdes: radial.refdes }, at.world, at.client);
-}
-// Round tiles of one size at equal angles, on a ring sized so every pair of
-// neighbours has the same gap.
-const RADIAL_TILE = 64;
-const RADIAL_RADIUS = radialRingRadius(RADIAL_ITEMS.length, RADIAL_TILE, 10);
 let radialMenuEl = null;
-
-function openRadialMenu(radial) {
-  noteTip('radial');
-  window.clearTimeout(radial.holdTimer);
-  radial.mode = 'radial';
-  const comp = circuit.components.get(radial.refdes);
-  if (comp) selectContextTarget({ kind: 'component', value: comp });
-  render();
-  radialMenuEl?.remove();
-  radialMenuEl = document.createElement('div');
-  radialMenuEl.className = 'radial-menu';
-  radialMenuEl.setAttribute('role', 'menu');
-  radialMenuEl.style.left = `${radial.startClient.x}px`;
-  radialMenuEl.style.top = `${radial.startClient.y}px`;
-  radialMenuEl.style.setProperty('--radial-radius', `${RADIAL_RADIUS}px`);
-  radialMenuEl.style.setProperty('--radial-tile', `${RADIAL_TILE}px`);
-  const hub = document.createElement('div');
-  hub.className = 'radial-hub glass';
-  hub.textContent = radial.refdes;
-  radialMenuEl.appendChild(hub);
-  RADIAL_ITEMS.forEach((item, index) => {
-    const el = document.createElement('div');
-    el.className = `radial-item glass${item.danger ? ' danger' : ''}`;
-    el.setAttribute('role', 'menuitem');
-    // Placed by CSS from its angle, so the opening animation can sweep it
-    // around the hub and out to the ring.
-    el.style.setProperty('--radial-angle', `${(index / RADIAL_ITEMS.length) * 360}deg`);
-    el.style.setProperty('--radial-delay', `${index * 14}ms`);
-    el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
-    el.title = item.label;
-    const text = document.createElement('span');
-    text.textContent = item.label;
-    el.appendChild(text);
-    radialMenuEl.appendChild(el);
-  });
-  document.body.appendChild(radialMenuEl);
-}
-
-function highlightRadial(dx, dy) {
-  if (!radialMenuEl) return;
-  const sector = radialSector(dx, dy, RADIAL_ITEMS.length, 22);
-  [...radialMenuEl.querySelectorAll('.radial-item')].forEach((el, index) => el.classList.toggle('active', index === sector));
-}
-
-function closeRadialMenu() {
-  radialMenuEl?.remove();
-  radialMenuEl = null;
-}
-
-function finishRadialMenu(radial, client) {
-  closeRadialMenu();
-  const sector = radialSector(client.x - radial.startClient.x, client.y - radial.startClient.y, RADIAL_ITEMS.length, 22);
-  if (sector >= 0) RADIAL_ITEMS[sector].run(radial, { client: { ...client }, world: clientToWorld(client.x, client.y) });
-  render();
-}
 
 // ----- pin-drag wiring --------------------------------------------------------
 // Dragging out of a pin draws a managed wire without entering Wire mode. The
@@ -7900,7 +7817,7 @@ function armModalLabelMove(label, startWorld, startClient) {
   render();
 }
 
-function armModalMove(hit, startWorld, startClient) {
+export function armModalMove(hit, startWorld, startClient) {
   // Preserve a preselected component set when the source click lands on one
   // of its members. A mixed component/label selection remains mixed.
   const refs = multi.has(hit.refdes) ? [...multi] : [hit.refdes];
@@ -8023,7 +7940,7 @@ function expandCopyNetSelection() {
   if (refs.size) setSelection([...refs], selected && refs.has(selected) ? selected : [...refs][0], true);
 }
 
-function beginCopySource(startWorld, startClient) {
+export function beginCopySource(startWorld, startClient) {
   // An existing selection is the source, not the object under the cursor.
   // This matters for mixed Ctrl+A/marquee selections and makes the source
   // click a confirmation gesture rather than an accidental selection change.
@@ -10402,7 +10319,7 @@ function openComponentContextMenu(target, x, y) {
 }
 
 /** Right-clicking an unselected object makes it the selection, so menu actions have one clear scope. */
-function selectContextTarget(target) {
+export function selectContextTarget(target) {
   if (target.kind === 'component') {
     if (multi.has(target.value.refdes)) return;
     setSelection(supplyBarGroup(target.value.refdes), target.value.refdes);
@@ -13651,7 +13568,7 @@ function activateWire() {
   render();
 }
 
-function activateMove(kind = 'connected') {
+export function activateMove(kind = 'connected') {
   leaveActiveInteraction();
   noteTip('move-start');
   mode = 'normal';
@@ -13667,7 +13584,7 @@ function activateMove(kind = 'connected') {
   render();
 }
 
-function activateCopy() {
+export function activateCopy() {
   leaveActiveInteraction();
   mode = 'normal';
   terminalSnap = false;
@@ -13683,7 +13600,7 @@ function activateCopy() {
   render();
 }
 
-function activateAlign() {
+export function activateAlign() {
   leaveActiveInteraction();
   terminalSnap = false;
   moveMode = null;
@@ -13698,7 +13615,7 @@ function activateAlign() {
   render();
 }
 
-function selectedTransform(action) {
+export function selectedTransform(action) {
   clearDiagnosticFocus();
   if (hasWireDraft()) { logLine('finish or cancel the active wire before transforming'); return; }
   if (!selectedComps().length && !selectedLabels().length && !selectedWires.size && !selectedWire && !selectedNets.size) {

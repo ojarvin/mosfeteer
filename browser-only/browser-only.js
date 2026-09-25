@@ -25134,6 +25134,120 @@ function lerpView(from, to, t) {
 
 };
 
+__modules["src/web/help.js"] = function (__require, __exports) {
+__exports.renderHelpSearch = renderHelpSearch;
+__exports.showHelp = showHelp;
+__exports.installHelp = installHelp;
+let commandHelp; __bind(() => { ({ commandHelp } = __require("src/core/commands.js")); });
+let editorKeymap; __bind(() => { ({ editorKeymap } = __require("src/web/toolbar.js")); });
+let helpDialog, helpDialogContent, helpSearch; __bind(() => { ({ helpDialog, helpDialogContent, helpSearch } = __require("src/web/elements.js")); });
+/**
+ * The keyboard help overlay (?): the keymap and command reference, searchable.
+ */
+
+
+
+
+
+let helpCommandText = '';
+
+function helpKeyNodes(keys) {
+  const container = document.createElement('span');
+  container.className = 'help-keys';
+  keys.split(' / ').forEach((alternative, index) => {
+    if (index) container.append(document.createTextNode(' / '));
+    const note = alternative.match(/^(.*?)\s+(\([^)]*\))$/);
+    const combo = note ? note[1] : alternative;
+    // Named gestures and console commands read as text; key combinations get caps.
+    if (/\s/.test(combo) && !/^(Arrow keys)$/.test(combo)) {
+      const code = document.createElement('code');
+      code.textContent = combo;
+      container.append(code);
+    } else {
+      combo.split(/\+(?=.)/).forEach((part, partIndex) => {
+        if (partIndex) container.append(document.createTextNode('+'));
+        const kbd = document.createElement('kbd');
+        kbd.textContent = part;
+        container.append(kbd);
+      });
+    }
+    if (note) container.append(document.createTextNode(` ${note[2]}`));
+  });
+  return container;
+}
+
+function renderHelpSearch() {
+  if (!helpDialogContent) return;
+  const query = helpSearch?.value.trim().toLowerCase() || '';
+  const matches = (...parts) => !query || parts.some((part) => part.toLowerCase().includes(query));
+  helpDialogContent.replaceChildren();
+  const grid = document.createElement('div');
+  grid.className = 'help-sections';
+  let count = 0;
+  for (const [section, entries] of editorKeymap()) {
+    const rows = entries.filter(([keys, description]) => matches(keys, description, section));
+    if (!rows.length) continue;
+    const block = document.createElement('section');
+    block.className = 'help-section';
+    const title = document.createElement('h3');
+    title.textContent = section;
+    block.appendChild(title);
+    for (const [keys, description] of rows) {
+      const row = document.createElement('div');
+      row.className = 'help-row';
+      const text = document.createElement('span');
+      text.className = 'help-description';
+      text.textContent = description;
+      row.append(helpKeyNodes(keys), text);
+      block.appendChild(row);
+      count++;
+    }
+    grid.appendChild(block);
+  }
+  if (grid.childElementCount) helpDialogContent.appendChild(grid);
+  const commandLines = helpCommandText.split('\n').filter((line) => matches(line));
+  if (commandLines.length) {
+    const commands = document.createElement('details');
+    commands.className = 'help-commands';
+    commands.open = !!query;
+    const summary = document.createElement('summary');
+    summary.textContent = 'Console commands';
+    const pre = document.createElement('pre');
+    pre.textContent = commandLines.join('\n');
+    commands.append(summary, pre);
+    helpDialogContent.appendChild(commands);
+    count += commandLines.length;
+  }
+  if (!count) {
+    const empty = document.createElement('p');
+    empty.className = 'help-empty';
+    empty.textContent = `Nothing matches "${helpSearch.value.trim()}".`;
+    helpDialogContent.appendChild(empty);
+  }
+}
+
+function showHelp() {
+  if (!helpDialog) return;
+  try {
+    helpCommandText = commandHelp();
+  } catch (err) {
+    helpCommandText = String(err.message || err);
+  }
+  if (helpSearch) helpSearch.value = '';
+  renderHelpSearch();
+  if (!helpDialog.open) helpDialog.showModal();
+  helpSearch?.focus();
+}
+
+function installHelp() {
+  helpSearch?.addEventListener('input', renderHelpSearch);
+  helpSearch?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') ev.preventDefault();
+  });
+}
+
+};
+
 __modules["src/web/icons.js"] = function (__require, __exports) {
 __exports.syncToolCursor = syncToolCursor;
 __exports.installIcons = installIcons;
@@ -26118,20 +26232,30 @@ __exports.layoutSelection = layoutSelection;
 __exports.layoutPlan = layoutPlan;
 __exports.updateAlignControls = updateAlignControls;
 __exports.applyLayoutPlan = applyLayoutPlan;
+__exports.deleteSelection = deleteSelection;
 __exports.fitView = fitView;
+__exports.stubSelection = stubSelection;
 __exports.render = render;
 __exports.renderCanvas = renderCanvas;
+__exports.clientToWorld = clientToWorld;
 __exports.worldToClient = worldToClient;
 __exports.beginMarqueeSelection = beginMarqueeSelection;
 __exports.pickAt = pickAt;
 __exports.beginObjectMove = beginObjectMove;
+__exports.armModalMove = armModalMove;
+__exports.beginCopySource = beginCopySource;
 __exports.canvasMouseMove = canvasMouseMove;
 __exports.canvasMouseUp = canvasMouseUp;
+__exports.selectContextTarget = selectContextTarget;
 __exports.interactionState = interactionState;
+__exports.activateMove = activateMove;
+__exports.activateCopy = activateCopy;
+__exports.activateAlign = activateAlign;
+__exports.selectedTransform = selectedTransform;
 __exports.startNewDocument = startNewDocument;
 let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames, symbolTypeNames; __bind(() => { ({ getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js")); });
-let runCommand, commandHelp, evaluate; __bind(() => { ({ runCommand, commandHelp, evaluate } = __require("src/core/commands.js")); });
+let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBarRow, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js")); });
 let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
@@ -26160,7 +26284,7 @@ let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPa
 let copyableLabelPayload, selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection; __bind(() => { ({ copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } = __require("src/web/selection.js")); });
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
 let commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback; __bind(() => { ({ commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js")); });
-let INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType; __bind(() => { ({ INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js")); });
+let INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType; __bind(() => { ({ INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js")); });
 let createPersistenceAdapter, defaultExportDirectory, validDocumentName; __bind(() => { ({ createPersistenceAdapter, defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js")); });
 let createWindowSession; __bind(() => { ({ createWindowSession } = __require("src/web/window-session.js")); });
 let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
@@ -26168,14 +26292,16 @@ let analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; 
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
 let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
-let arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
+let arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
 let LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
 let alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpDialogContent, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpDialogContent, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
+let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
 let ICON_PATHS, syncToolCursor, installIcons; __bind(() => { ({ ICON_PATHS, syncToolCursor, installIcons } = __require("src/web/icons.js")); });
 let noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
 let ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel; __bind(() => { ({ ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } = __require("src/web/align-tool.js")); });
+let renderHelpSearch, showHelp, installHelp; __bind(() => { ({ renderHelpSearch, showHelp, installHelp } = __require("src/web/help.js")); });
+let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind(() => { ({ openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } = __require("src/web/radial-menu.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -26236,17 +26362,22 @@ let ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignS
 
 
 
+
+
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
   alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
+  copyMode: { get: () => copyMode, set: (value) => { copyMode = value; } },
   cursor: { get: () => cursor, set: (value) => { cursor = value; } },
   drag: { get: () => drag, set: (value) => { drag = value; } },
   layoutPreviewRects: { get: () => layoutPreviewRects, set: (value) => { layoutPreviewRects = value; } },
   modelRevision: { get: () => modelRevision, set: (value) => { modelRevision = value; } },
+  moveMode: { get: () => moveMode, set: (value) => { moveMode = value; } },
   multi: { get: () => multi, set: (value) => { multi = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
   previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
+  radialMenuEl: { get: () => radialMenuEl, set: (value) => { radialMenuEl = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
   selLabels: { get: () => selLabels, set: (value) => { selLabels = value; } },
   tutorial: { get: () => tutorial, set: (value) => { tutorial = value; } },
@@ -32853,94 +32984,7 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
 }
 
 // ----- radial menu -------------------------------------------------------------
-// Right-drag (or hold) on a component opens a marking menu around the press.
-// Releasing in a sector runs it, so a practiced flick needs no reading; release
-// in the centre cancels. Sector 0 is up and indices run clockwise.
-// Every item acts on the part the menu was opened on: the tools pick it up at
-// the release point exactly as a click on it with that tool armed would, so
-// the part follows the pointer from where the flick ended.
-const RADIAL_ITEMS = [
-  { label: 'Rotate', icon: 'rotate', run: () => selectedTransform('rotate') },
-  { label: 'Mirror H', icon: 'mirror-x', run: () => selectedTransform('mirror-x') },
-  { label: 'Mirror V', icon: 'mirror-y', run: () => selectedTransform('mirror-y') },
-  { label: 'Delete', icon: 'trash', danger: true, run: () => deleteSelection() },
-  { label: 'Copy', icon: 'copy', run: (radial, at) => {
-    activateCopy();
-    if (copyMode) beginCopySource(at.world, at.client);
-  } },
-  { label: 'Detach move', icon: 'detach', run: (radial, at) => radialMove(radial, at, 'detached') },
-  { label: 'Move', icon: 'move', run: (radial, at) => radialMove(radial, at, 'connected') },
-  // The part is selected; pick its edge or point to align, then the target's.
-  { label: 'Align', icon: 'align', run: () => activateAlign() },
-  { label: 'Wire stubs', icon: 'stub', run: () => stubSelection() },
-];
-
-function radialMove(radial, at, kind) {
-  activateMove(kind);
-  if (!moveMode || !circuit.components.has(radial.refdes)) return;
-  cursor = { x: snap(at.world.x), y: snap(at.world.y) };
-  armModalMove({ refdes: radial.refdes }, at.world, at.client);
-}
-// Round tiles of one size at equal angles, on a ring sized so every pair of
-// neighbours has the same gap.
-const RADIAL_TILE = 64;
-const RADIAL_RADIUS = radialRingRadius(RADIAL_ITEMS.length, RADIAL_TILE, 10);
 let radialMenuEl = null;
-
-function openRadialMenu(radial) {
-  noteTip('radial');
-  window.clearTimeout(radial.holdTimer);
-  radial.mode = 'radial';
-  const comp = circuit.components.get(radial.refdes);
-  if (comp) selectContextTarget({ kind: 'component', value: comp });
-  render();
-  radialMenuEl?.remove();
-  radialMenuEl = document.createElement('div');
-  radialMenuEl.className = 'radial-menu';
-  radialMenuEl.setAttribute('role', 'menu');
-  radialMenuEl.style.left = `${radial.startClient.x}px`;
-  radialMenuEl.style.top = `${radial.startClient.y}px`;
-  radialMenuEl.style.setProperty('--radial-radius', `${RADIAL_RADIUS}px`);
-  radialMenuEl.style.setProperty('--radial-tile', `${RADIAL_TILE}px`);
-  const hub = document.createElement('div');
-  hub.className = 'radial-hub glass';
-  hub.textContent = radial.refdes;
-  radialMenuEl.appendChild(hub);
-  RADIAL_ITEMS.forEach((item, index) => {
-    const el = document.createElement('div');
-    el.className = `radial-item glass${item.danger ? ' danger' : ''}`;
-    el.setAttribute('role', 'menuitem');
-    // Placed by CSS from its angle, so the opening animation can sweep it
-    // around the hub and out to the ring.
-    el.style.setProperty('--radial-angle', `${(index / RADIAL_ITEMS.length) * 360}deg`);
-    el.style.setProperty('--radial-delay', `${index * 14}ms`);
-    el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
-    el.title = item.label;
-    const text = document.createElement('span');
-    text.textContent = item.label;
-    el.appendChild(text);
-    radialMenuEl.appendChild(el);
-  });
-  document.body.appendChild(radialMenuEl);
-}
-
-function highlightRadial(dx, dy) {
-  if (!radialMenuEl) return;
-  const sector = radialSector(dx, dy, RADIAL_ITEMS.length, 22);
-  [...radialMenuEl.querySelectorAll('.radial-item')].forEach((el, index) => el.classList.toggle('active', index === sector));
-}
-
-function closeRadialMenu() {
-  radialMenuEl?.remove();
-  radialMenuEl = null;
-}
-
-function finishRadialMenu(radial, client) {
-  closeRadialMenu();
-  const sector = radialSector(client.x - radial.startClient.x, client.y - radial.startClient.y, RADIAL_ITEMS.length, 22);
-  if (sector >= 0) RADIAL_ITEMS[sector].run(radial, { client: { ...client }, world: clientToWorld(client.x, client.y) });
-  render();
-}
 
 // ----- pin-drag wiring --------------------------------------------------------
 // Dragging out of a pin draws a managed wire without entering Wire mode. The
@@ -38223,100 +38267,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 }
 
-let helpCommandText = '';
-
-function helpKeyNodes(keys) {
-  const container = document.createElement('span');
-  container.className = 'help-keys';
-  keys.split(' / ').forEach((alternative, index) => {
-    if (index) container.append(document.createTextNode(' / '));
-    const note = alternative.match(/^(.*?)\s+(\([^)]*\))$/);
-    const combo = note ? note[1] : alternative;
-    // Named gestures and console commands read as text; key combinations get caps.
-    if (/\s/.test(combo) && !/^(Arrow keys)$/.test(combo)) {
-      const code = document.createElement('code');
-      code.textContent = combo;
-      container.append(code);
-    } else {
-      combo.split(/\+(?=.)/).forEach((part, partIndex) => {
-        if (partIndex) container.append(document.createTextNode('+'));
-        const kbd = document.createElement('kbd');
-        kbd.textContent = part;
-        container.append(kbd);
-      });
-    }
-    if (note) container.append(document.createTextNode(` ${note[2]}`));
-  });
-  return container;
-}
-
-function renderHelpSearch() {
-  if (!helpDialogContent) return;
-  const query = helpSearch?.value.trim().toLowerCase() || '';
-  const matches = (...parts) => !query || parts.some((part) => part.toLowerCase().includes(query));
-  helpDialogContent.replaceChildren();
-  const grid = document.createElement('div');
-  grid.className = 'help-sections';
-  let count = 0;
-  for (const [section, entries] of editorKeymap()) {
-    const rows = entries.filter(([keys, description]) => matches(keys, description, section));
-    if (!rows.length) continue;
-    const block = document.createElement('section');
-    block.className = 'help-section';
-    const title = document.createElement('h3');
-    title.textContent = section;
-    block.appendChild(title);
-    for (const [keys, description] of rows) {
-      const row = document.createElement('div');
-      row.className = 'help-row';
-      const text = document.createElement('span');
-      text.className = 'help-description';
-      text.textContent = description;
-      row.append(helpKeyNodes(keys), text);
-      block.appendChild(row);
-      count++;
-    }
-    grid.appendChild(block);
-  }
-  if (grid.childElementCount) helpDialogContent.appendChild(grid);
-  const commandLines = helpCommandText.split('\n').filter((line) => matches(line));
-  if (commandLines.length) {
-    const commands = document.createElement('details');
-    commands.className = 'help-commands';
-    commands.open = !!query;
-    const summary = document.createElement('summary');
-    summary.textContent = 'Console commands';
-    const pre = document.createElement('pre');
-    pre.textContent = commandLines.join('\n');
-    commands.append(summary, pre);
-    helpDialogContent.appendChild(commands);
-    count += commandLines.length;
-  }
-  if (!count) {
-    const empty = document.createElement('p');
-    empty.className = 'help-empty';
-    empty.textContent = `Nothing matches "${helpSearch.value.trim()}".`;
-    helpDialogContent.appendChild(empty);
-  }
-}
-
-function showHelp() {
-  if (!helpDialog) return;
-  try {
-    helpCommandText = commandHelp();
-  } catch (err) {
-    helpCommandText = String(err.message || err);
-  }
-  if (helpSearch) helpSearch.value = '';
-  renderHelpSearch();
-  if (!helpDialog.open) helpDialog.showModal();
-  helpSearch?.focus();
-}
-
-helpSearch?.addEventListener('input', renderHelpSearch);
-helpSearch?.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') ev.preventDefault();
-});
+installHelp();
 
 // ----- command console ---------------------------------------------------
 
@@ -42118,6 +42069,119 @@ function createPersistenceAdapter({ fetchImpl = globalThis.fetch } = {}) {
 }
 
 __exports.validDocumentName = validDocumentName;
+};
+
+__modules["src/web/radial-menu.js"] = function (__require, __exports) {
+__exports.openRadialMenu = openRadialMenu;
+__exports.highlightRadial = highlightRadial;
+__exports.closeRadialMenu = closeRadialMenu;
+__exports.finishRadialMenu = finishRadialMenu;
+let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
+let radialRingRadius, radialSector; __bind(() => { ({ radialRingRadius, radialSector } = __require("src/web/gestures.js")); });
+let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icons.js")); });
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, clientToWorld, deleteSelection, render, selectContextTarget, selectedTransform, stubSelection; __bind(() => { ({ activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, clientToWorld, deleteSelection, render, selectContextTarget, selectedTransform, stubSelection } = __require("src/web/main.js")); });
+/**
+ * The radial marking menu a right-drag or hold on a part opens. The ring
+ * geometry is in gestures.js.
+ */
+
+
+
+
+
+
+
+
+// Right-drag (or hold) on a component opens a marking menu around the press.
+// Releasing in a sector runs it, so a practiced flick needs no reading; release
+// in the centre cancels. Sector 0 is up and indices run clockwise.
+// Every item acts on the part the menu was opened on: the tools pick it up at
+// the release point exactly as a click on it with that tool armed would, so
+// the part follows the pointer from where the flick ended.
+const RADIAL_ITEMS = [
+  { label: 'Rotate', icon: 'rotate', run: () => selectedTransform('rotate') },
+  { label: 'Mirror H', icon: 'mirror-x', run: () => selectedTransform('mirror-x') },
+  { label: 'Mirror V', icon: 'mirror-y', run: () => selectedTransform('mirror-y') },
+  { label: 'Delete', icon: 'trash', danger: true, run: () => deleteSelection() },
+  { label: 'Copy', icon: 'copy', run: (radial, at) => {
+    activateCopy();
+    if (editor.copyMode) beginCopySource(at.world, at.client);
+  } },
+  { label: 'Detach move', icon: 'detach', run: (radial, at) => radialMove(radial, at, 'detached') },
+  { label: 'Move', icon: 'move', run: (radial, at) => radialMove(radial, at, 'connected') },
+  // The part is selected; pick its edge or point to align, then the target's.
+  { label: 'Align', icon: 'align', run: () => activateAlign() },
+  { label: 'Wire stubs', icon: 'stub', run: () => stubSelection() },
+];
+
+function radialMove(radial, at, kind) {
+  activateMove(kind);
+  if (!editor.moveMode || !editor.circuit.components.has(radial.refdes)) return;
+  editor.cursor = { x: snap(at.world.x), y: snap(at.world.y) };
+  armModalMove({ refdes: radial.refdes }, at.world, at.client);
+}
+// Round tiles of one size at equal angles, on a ring sized so every pair of
+// neighbours has the same gap.
+const RADIAL_TILE = 64;
+const RADIAL_RADIUS = radialRingRadius(RADIAL_ITEMS.length, RADIAL_TILE, 10);
+
+function openRadialMenu(radial) {
+  noteTip('radial');
+  window.clearTimeout(radial.holdTimer);
+  radial.mode = 'radial';
+  const comp = editor.circuit.components.get(radial.refdes);
+  if (comp) selectContextTarget({ kind: 'component', value: comp });
+  render();
+  editor.radialMenuEl?.remove();
+  editor.radialMenuEl = document.createElement('div');
+  editor.radialMenuEl.className = 'radial-menu';
+  editor.radialMenuEl.setAttribute('role', 'menu');
+  editor.radialMenuEl.style.left = `${radial.startClient.x}px`;
+  editor.radialMenuEl.style.top = `${radial.startClient.y}px`;
+  editor.radialMenuEl.style.setProperty('--radial-radius', `${RADIAL_RADIUS}px`);
+  editor.radialMenuEl.style.setProperty('--radial-tile', `${RADIAL_TILE}px`);
+  const hub = document.createElement('div');
+  hub.className = 'radial-hub glass';
+  hub.textContent = radial.refdes;
+  editor.radialMenuEl.appendChild(hub);
+  RADIAL_ITEMS.forEach((item, index) => {
+    const el = document.createElement('div');
+    el.className = `radial-item glass${item.danger ? ' danger' : ''}`;
+    el.setAttribute('role', 'menuitem');
+    // Placed by CSS from its angle, so the opening animation can sweep it
+    // around the hub and out to the ring.
+    el.style.setProperty('--radial-angle', `${(index / RADIAL_ITEMS.length) * 360}deg`);
+    el.style.setProperty('--radial-delay', `${index * 14}ms`);
+    el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
+    el.title = item.label;
+    const text = document.createElement('span');
+    text.textContent = item.label;
+    el.appendChild(text);
+    editor.radialMenuEl.appendChild(el);
+  });
+  document.body.appendChild(editor.radialMenuEl);
+}
+
+function highlightRadial(dx, dy) {
+  if (!editor.radialMenuEl) return;
+  const sector = radialSector(dx, dy, RADIAL_ITEMS.length, 22);
+  [...editor.radialMenuEl.querySelectorAll('.radial-item')].forEach((el, index) => el.classList.toggle('active', index === sector));
+}
+
+function closeRadialMenu() {
+  editor.radialMenuEl?.remove();
+  editor.radialMenuEl = null;
+}
+
+function finishRadialMenu(radial, client) {
+  closeRadialMenu();
+  const sector = radialSector(client.x - radial.startClient.x, client.y - radial.startClient.y, RADIAL_ITEMS.length, 22);
+  if (sector >= 0) RADIAL_ITEMS[sector].run(radial, { client: { ...client }, world: clientToWorld(client.x, client.y) });
+  render();
+}
+
 };
 
 __modules["src/web/selection.js"] = function (__require, __exports) {
