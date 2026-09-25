@@ -16939,6 +16939,32 @@ class Circuit {
     return result;
   }
 
+  /** The free ends of managed wires: path ends that meet no terminal, no
+   * other path of their net, and no junction -- where a floating wire or a
+   * stub stops. [{ netId, pathIndex, endpointIndex, point }] */
+  openWireEnds() {
+    const terminalPoints = new Set();
+    for (const component of this.components.values()) {
+      for (const t of component.worldTerminals()) terminalPoints.add(`${t.x},${t.y}`);
+    }
+    const ends = [];
+    for (const net of this.nets.values()) {
+      if (net.routingMode === 'fixed') continue;
+      const paths = net.paths();
+      paths.forEach((path, pathIndex) => {
+        if (path.length < 2) return;
+        for (const endpointIndex of [0, path.length - 1]) {
+          const point = path[endpointIndex];
+          if (terminalPoints.has(`${point.x},${point.y}`)) continue;
+          if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) continue;
+          if (paths.some((other, i) => i !== pathIndex && pointOnPath(point, other))) continue;
+          ends.push({ netId: net.id, pathIndex, endpointIndex, point: { x: point.x, y: point.y } });
+        }
+      });
+    }
+    return ends;
+  }
+
   _fixedOpenEndpoint(net, pathIndex, endpointIndex, endpointCount = null) {
     if (!net || net.routingMode !== 'fixed') return null;
     const entry = net.fixedPaths[pathIndex];
@@ -30286,7 +30312,11 @@ function draftRoutePath(draft, to = cursor) {
   // path will splice it at the selected terminal/wire target. Without this,
   // the preview treats the destination net as an obstacle and rejects valid
   // terminal orders such as M3 -> M1 after M2 -> M1.
-  const excludedNets = new Set(sourceNetId ? [sourceNetId] : []);
+  // A free wire end is met at its tip, never along its wire, so a draft
+  // from or to one keeps that wire as an obstacle.
+  const openEnds = circuit.openWireEnds();
+  const isOpenEnd = (p, netId) => openEnds.some((end) => end.netId === netId && end.point.x === p.x && end.point.y === p.y);
+  const excludedNets = new Set(sourceNetId && !isOpenEnd(endpoints[0], sourceNetId) ? [sourceNetId] : []);
   for (const component of circuit.components.values()) {
     for (const terminal of component.worldTerminals()) {
       if (terminal.x !== endpoints.at(-1).x || terminal.y !== endpoints.at(-1).y) continue;
@@ -30295,6 +30325,7 @@ function draftRoutePath(draft, to = cursor) {
     }
   }
   for (const net of circuit.nets.values()) {
+    if (isOpenEnd(endpoints.at(-1), net.id)) continue;
     if (net.paths().some((path) => pointOnPath(endpoints.at(-1), path))) excludedNets.add(net.id);
   }
   const env = circuit._netEnv(excludedNets);
@@ -30800,7 +30831,7 @@ function renderCanvas(modelKey) {
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
     wireSource: (wire || directWire)?.source ? { ...(wire || directWire).source } : undefined,
-    terminalSnapTarget: terminalSnap ? nearestTerminal(cursor, { anyDistance: true }) : null,
+    terminalSnapTarget: terminalSnap ? nearestSnapTarget(cursor) : null,
     ghost,
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
@@ -31701,8 +31732,16 @@ function newWireDraft() {
   };
 }
 
+/** What the Alt-held wiring cursor snaps to: the nearest component terminal
+ * or free wire end, so a floating wire or a stub continues like a pin. */
+function nearestSnapTarget(point) {
+  const ends = circuit.openWireEnds().map((end) => ({ x: end.point.x, y: end.point.y, wireEnd: end }));
+  const terminal = nearestTerminal(point, { anyDistance: true });
+  return nearestPoint(point, terminal ? [terminal, ...ends] : ends);
+}
+
 function terminalSnapWorld(point) {
-  const hit = nearestTerminal(point, { anyDistance: true });
+  const hit = nearestSnapTarget(point);
   return hit ? { x: hit.x, y: hit.y } : snappedWorld(point);
 }
 
@@ -31885,6 +31924,21 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
       }
     }
   } else if (wire.source) {
+    // A free wire end finishes the draft like a terminal: the wire joins it.
+    const end = circuit.openWireEnds().find((e) => e.point.x === x && e.point.y === y);
+    if (end && !(wire.source.x === x && wire.source.y === y)) {
+      const net = circuit.nets.get(end.netId);
+      const path = net.paths()[end.pathIndex];
+      cursor = { x, y };
+      joinWireToNet({ net, branch: end.pathIndex }, {
+        netId: end.netId,
+        pathIndex: end.pathIndex,
+        segmentIndex: end.endpointIndex === 0 ? 1 : path.length - 1,
+        point: { x, y },
+      });
+      render();
+      return;
+    }
     const wireHit = pickWire({ x, y });
     if (wire.routeStyle === 'diagonal' && wireHit) {
       const target = exactWireTargetAt({ x, y });
@@ -41314,7 +41368,7 @@ const TIPS = Object.freeze([
     trigger: 'wire-start',
     after: 2,
     retiredBy: 'terminal-snap',
-    text: 'Hold Alt while wiring: the cursor jumps to the nearest terminal, so there is no need to aim.',
+    text: 'Hold Alt while wiring: the cursor jumps to the nearest terminal or free wire end, so there is no need to aim.',
   },
   {
     id: 'pin-drag',
@@ -41618,7 +41672,7 @@ const naturalCompare = new Intl.Collator(undefined, { numeric: true, sensitivity
 const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
     ['i / Shift+I', 'insert mode (fuzzy-search component and label placement)'],
-    ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal; Enter commits'],
+    ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal or free wire end; a click on a free wire end joins it; Enter commits'],
     ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
     ['/ (wire)', 'flip which way the corner under the cursor turns'],
     ['drag from a pin', 'draw a wire without Wire mode; drop on a pin or wire, or in space to add a part'],
@@ -41712,7 +41766,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['r / Shift+R', 'rotate / mirror the component ghost'],
     ['Ctrl/Cmd+R', 'mirror the component ghost vertically'],
     ['hold Alt', 'symmetric placement/copy: pin a mirror axis, move off it, and place both halves'],
-    ['hold Alt (wire)', 'snap the cursor to the nearest terminal while wiring'],
+    ['hold Alt (wire)', 'snap the cursor to the nearest terminal or free wire end while wiring'],
     ['Backspace', 'edit the search string or drop the ghost'],
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],
