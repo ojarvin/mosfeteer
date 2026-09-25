@@ -17,7 +17,8 @@ import { bindInlineEditorKeys, inlineEditSchematicBlock, openReferenceMarkerEdit
 import { plainMarkup } from './beats-ui.js';
 import { editor } from './editor-state.js';
 import { confirmNamedConnection, namedConnectionConflicts, portNameConflict, reportPortNameConflict } from './net-names.js';
-import { bindHoverPreview, commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets } from './main.js';
+import { bindHoverPreview } from './hover-preview.js';
+import { commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets } from './main.js';
 
 let panelFilter = '';
 

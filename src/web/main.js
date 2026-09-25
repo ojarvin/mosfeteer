@@ -34,8 +34,6 @@ import { alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, 
 import { editor } from './editor-state.js';
 import {
   canvasEl,
-  componentsListEl,
-  netsListEl,
   cmdInput,
   statusZoomEl,
   clearCheckButtonEl,
@@ -45,7 +43,7 @@ import {
 } from './elements.js';
 import { installIcons } from './icons.js';
 import { noteTip, tutorialTargetRects, syncTutorial, offerTutorial, installOnboarding } from './onboarding.js';
-import { ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } from './align-tool.js';
+import { ALIGN_SOURCE_HINT, worldPerPixel, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } from './align-tool.js';
 import { renderHelpSearch, showHelp, installHelp } from './help.js';
 import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } from './radial-menu.js';
 import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } from './status-bar-ui.js';
@@ -66,6 +64,7 @@ import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncMod
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
+import { netMarkerRefs, setHoverTarget, updateCanvasHover } from './hover-preview.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -112,6 +111,10 @@ Object.defineProperties(editor, {
   future: { get: () => future, set: (value) => { future = value; } },
   guidesVisible: { get: () => guidesVisible, set: (value) => { guidesVisible = value; } },
   history: { get: () => history, set: (value) => { history = value; } },
+  hoverAnnotationId: { get: () => hoverAnnotationId, set: (value) => { hoverAnnotationId = value; } },
+  hoverFromPanel: { get: () => hoverFromPanel, set: (value) => { hoverFromPanel = value; } },
+  hoverPinsRef: { get: () => hoverPinsRef, set: (value) => { hoverPinsRef = value; } },
+  hoverTarget: { get: () => hoverTarget, set: (value) => { hoverTarget = value; } },
   inlineInput: { get: () => inlineInput, set: (value) => { inlineInput = value; } },
   insertQuery: { get: () => insertQuery, set: (value) => { insertQuery = value; } },
   labelMode: { get: () => labelMode, set: (value) => { labelMode = value; } },
@@ -2719,93 +2722,12 @@ function currentWirePreview() {
 // Hovering a wire or pin tints its whole net, and the matching side-panel row
 // lights up; hovering a panel row does the same on the canvas.
 let hoverTarget = null; // { kind:'net', ids } | { kind:'component', refdes }
+
 let hoverFromPanel = false;
+
 let hoverPinsRef = null; // component whose pins show drag handles in Select mode
+
 let hoverAnnotationId = null; // arrow/line whose vertex handles show in Select mode
-let hoverMove = false; // pointer rests where a press moves a block or box
-
-/** Parts that stand for a net itself: the reference markers (ground, supply,
- * VCM) and interface ports on it. A net highlight, selected or hovered, glows
- * them along with its wires. */
-function netMarkerRefs(nets) {
-  const refs = new Set();
-  for (const net of nets) {
-    for (const terminal of net?.terminals || []) {
-      const component = circuit.components.get(terminal.comp);
-      if (component && (isReferenceMarker(component) || INTERFACE_PIN_TYPES.has(component.type))) refs.add(component.refdes);
-    }
-  }
-  return [...refs];
-}
-
-function sameHover(a, b) {
-  if (!a || !b) return a === b;
-  return a.kind === b.kind && (a.kind === 'net' ? a.ids.join(' ') === b.ids.join(' ') : a.refdes === b.refdes);
-}
-
-function setHoverTarget(next, fromPanel = false) {
-  if (sameHover(hoverTarget, next)) return;
-  hoverTarget = next;
-  hoverFromPanel = !!next && fromPanel;
-  const ids = new Set(next?.kind === 'net' ? next.ids : []);
-  for (const row of netsListEl?.querySelectorAll('[data-net-ids]') || []) {
-    row.classList.toggle('hover', row.dataset.netIds.split(' ').some((id) => ids.has(id)));
-  }
-  for (const row of componentsListEl?.querySelectorAll('[data-refdes]') || []) {
-    row.classList.toggle('hover', next?.kind === 'component' && row.dataset.refdes === next.refdes);
-  }
-  scheduleInteractionRender();
-}
-
-export function bindHoverPreview(row, target) {
-  row.addEventListener('mouseenter', () => setHoverTarget(target(), true));
-  row.addEventListener('mouseleave', () => { if (hoverFromPanel) setHoverTarget(null); });
-}
-
-function updateCanvasHover(w) {
-  if (hoverFromPanel) return;
-  if (alignTool) {
-    updateAlignHover(w);
-    return;
-  }
-  const quiet = mode === 'insert' || (labelMode && labelMode !== 'highlight') || visual || quickAdd;
-  const selecting = !quiet && !wire && !directWire && !moveMode && !copyMode && !deleteMode;
-  const hit = selecting ? pickAt(w) : null;
-  const hitComponent = hit?.refdes ? circuit.components.get(hit.refdes) : null;
-  // A selected block shows resize handles on its outline; pin handles there
-  // would sit on top of them.
-  const pinsRef = hitComponent && isPinDragCandidate(hitComponent.def) &&
-    !(hitComponent.type === 'block' && multi.has(hitComponent.refdes)) ? hitComponent.refdes : null;
-  // Mirror canvasMouseDown's order: annotation drag points and outlines are
-  // picked before labels and components.
-  const annotation = selecting ? annotationEndpointAt(w)?.label || annotationGeometryAt(w) : null;
-  // Delete shows a line's vertices while the pointer rests on one it can
-  // remove alone.
-  const deleteVertex = deleteMode && !quiet ? removableVertexAt(w)?.label : null;
-  const annotationId = deleteVertex?.id || (annotation && ['arrow', 'line'].includes(annotation.kind) ? annotation.id : null);
-  if (pinsRef !== hoverPinsRef || annotationId !== hoverAnnotationId) {
-    hoverPinsRef = pinsRef;
-    hoverAnnotationId = annotationId;
-    scheduleInteractionRender();
-  }
-  const move = annotation
-    ? annotation.kind === 'box' && !annotationTextAt(w)
-    : !!(hitComponent?.type === 'block' && !hit.term && !pickLabel(w));
-  if (move !== hoverMove) {
-    hoverMove = move;
-    canvasEl.classList.toggle('hover-move', move);
-  }
-  let net = null;
-  if (!quiet) {
-    const terminal = nearestTerminal(w);
-    net = terminal ? circuit.netOfTerminal({ comp: terminal.refdes, term: terminal.term }) : pickWire(w)?.net || null;
-  }
-  // A pin or wire previews its net; a part body previews the part's own row.
-  const body = !net && hit?.refdes && !hit.term ? circuit.components.get(hit.refdes) : null;
-  setHoverTarget(net
-    ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id) }
-    : body && body.type !== 'solder' ? { kind: 'component', refdes: body.refdes } : null);
-}
 
 // ----- snap pulse ------------------------------------------------------------------
 let snapLayerEl = null;
@@ -5336,7 +5258,7 @@ export function beginCopySource(startWorld, startClient) {
 }
 /** A line or arrow vertex under `world` that Delete can remove on its own,
  * leaving the rest of the annotation: { label, index } or null. */
-function removableVertexAt(world) {
+export function removableVertexAt(world) {
   const hit = annotationEndpointAt(world);
   const index = hit?.endpoint.startsWith('vertex:') ? Number(hit.endpoint.slice(7)) : -1;
   return index >= 0 && hit.label.canRemoveVertex(index) ? { label: hit.label, index } : null;
