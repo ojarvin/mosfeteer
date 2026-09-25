@@ -40,6 +40,14 @@ export const COLOR_PALETTE = {
   indigo: '#8f8bd1',
   purple: '#b08ac6',
   pink: '#d889b5',
+  // Later highlight colors: a little more saturated, in the hue gaps above.
+  cyan: '#4cb8d8',
+  lime: '#b3cf52',
+  magenta: '#c475cf',
+  emerald: '#4fbd82',
+  crimson: '#c9485e',
+  cobalt: '#5580d0',
+  brown: '#b98052',
   slate: '#9aa7b8',
   gray: '#7a7d85',
 };

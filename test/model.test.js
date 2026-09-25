@@ -3834,6 +3834,16 @@ test('an unnamed reference marker on a differently named net is a rail conflict'
   assert.deepEqual(referenceMarkerNameConflicts(c), []);
 });
 
+test('net highlights offer sixteen distinct palette colors, the first nine unchanged', async () => {
+  const { COLOR_PALETTE } = await import('../src/core/style.js');
+  assert.ok(NET_HIGHLIGHT_COLORS.length >= 16);
+  // Saved documents store tokens; the original cycle keeps its order.
+  assert.deepEqual(NET_HIGHLIGHT_COLORS.slice(0, 9), ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
+  const values = NET_HIGHLIGHT_COLORS.map((token) => COLOR_PALETTE[token]);
+  assert.ok(values.every(Boolean));
+  assert.equal(new Set(values).size, values.length);
+});
+
 test('net highlights color whole electrical groups with unique cycling colors', async () => {
   const { runCommand } = await import('../src/core/commands.js');
   const c = new Circuit();

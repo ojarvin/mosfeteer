@@ -122,7 +122,10 @@ export function referenceMarkerName(component) {
 
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
  * highlight follows the theme like any other colored object. */
-export const NET_HIGHLIGHT_COLORS = Object.freeze(['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
+export const NET_HIGHLIGHT_COLORS = Object.freeze([
+  'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink',
+  'cyan', 'lime', 'magenta', 'emerald', 'crimson', 'cobalt', 'brown',
+]);
 
 /** Unnamed (global) reference markers attached to a net that carries a
  * different given name, e.g. a ground on `OUT`. The net keeps its name, but
