@@ -77,7 +77,7 @@ test('named net edits confirm virtual connections, and port names never repeat',
 test('insert categories keep switches and macros separate and include vccs with sources', () => {
   const main = editorSource();
   assert.match(main, /\['Switches', \/\^switch_\//);
-  assert.match(main, /\['Sources & power', \/\^\(current_source\|voltage_source\|vccs\|supply\|ground\|vcm\)\$\//);
+  assert.match(main, /\['Sources & power', \/\^\(current_source\|voltage_source\|vccs\|vcvs\|supply\|ground\|vcm\)\$\//);
   assert.match(main, /\['Macros', \/\^\(opamp\|opamp_diff\|adc\|dac\)\$\//);
   assert.match(main, /\['Logic', \/\^\(inverter\|buffer\|tristate_\(inverter\|buffer\)\|mux2\|\.\*_gate\)\$\//);
   assert.match(main, /\['Sequential', \/\^\(\?:dff\|latch\)\(\?:_\|\$\)\//);

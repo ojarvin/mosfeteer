@@ -67,7 +67,7 @@ The routing-sensitive symbol contract is:
 | NMOS / PMOS | `g=(-120,0)`, `d=(0,-80)`, `s=(0,80)` | bbox `{-120,-80,120,160}`; PMOS mirrors Y by default |
 | bulk MOS | plain MOS plus `b=(0,0)` | bulk label offset `{40,-40}` |
 | NPN / PNP | `b=(-160,0)`, `c=(0,-120)`, `e=(0,120)` | bbox `{-160,-120,160,240}`; PNP collector/emitter are inverted |
-| current/voltage source, VCCS | `a=(0,-80)`, `b=(0,80)` | bbox `{-40,-80,80,160}`; VCCS is the diamond controlled source |
+| current/voltage source, VCCS, VCVS | `a=(0,-80)`, `b=(0,80)` | bbox `{-40,-80,80,160}`; VCCS/VCVS are the diamond controlled sources |
 | opamp | `ip=(-200,-40)`, `im=(-200,40)`, `o=(160,0)` | `+` on top; differential variant adds `om=(160,-40)`, `op=(160,40)`; documents without `opampPolarityVersion` load mirrored so they draw as saved |
 | inverter/buffer | `a=(-120,0)`, `y=(120,0)` | tri-state variants add `en=(0,80)` |
 | 2-input logic | `a=(-120,-40)`, `b=(-120,40)`, `y=(120,0)` | XOR/XNOR output is at `x=160`; 3-input adds `c` at `y=40` |

@@ -5,6 +5,7 @@ import { defineSymbol, validateSymbol } from '../src/core/components/defineSymbo
 import { symbolTypes, symbolTypeNames, getSymbol } from '../src/core/components/index.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 import { buildCommands } from '../scripts/build_symbols.mjs';
+import { Circuit } from '../src/core/model.js';
 
 test('every registered symbol validates clean (grid contract)', () => {
   for (const type of symbolTypeNames) {
@@ -48,7 +49,7 @@ test('VCM uses a 56-wide, 32-deep open outline with no filled primitive', () => 
 
 test('passive symbols use a centered local origin', () => {
   for (const type of [
-    'resistor', 'capacitor', 'inductor', 'diode',
+    'resistor', 'capacitor', 'inductor', 'impedance', 'diode',
     'switch_open', 'switch_closed',
     'variable_resistor', 'variable_capacitor', 'variable_inductor',
   ]) {
@@ -80,23 +81,50 @@ test('symbols generator covers every reference-sheet component and category', ()
   const adds = commands.filter((command) => command.startsWith('add '));
   const annotations = commands.filter((command) => command.startsWith('annotation add '));
   assert.equal(commands[0], 'clear');
-  assert.equal(adds.length, 73);
+  assert.equal(adds.length, 75);
   assert.equal(annotations.length, 11);
   assert.ok(annotations.every((command) => command.includes('--align right --right-edge -320')));
   assert.ok(adds.filter((command) => command.startsWith('add switch_')).every((command) => !command.includes('--rot')));
   assert.equal(annotations.filter((command) => command.includes(' Sequential ')).length, 1);
   assert.deepEqual(annotations.filter((command) => command.includes(' Sequential ')).map((command) => Number(command.match(/ Sequential 0 (-?\d+)/)?.[1])), [2400]);
   assert.equal(annotations.filter((command) => command.includes(' Logic ')).length, 1);
-  assert.deepEqual(adds.slice(0, 7).map((command) => command.split(' ')[1]), [
+  assert.deepEqual(adds.slice(0, 8).map((command) => command.split(' ')[1]), [
     'resistor', 'variable_resistor', 'capacitor', 'variable_capacitor',
-    'inductor', 'variable_inductor', 'diode',
+    'inductor', 'variable_inductor', 'impedance', 'diode',
   ]);
   assert.deepEqual(adds.filter((command) => command.split(' ')[2]?.startsWith('U')).map((command) => command.split(' ')[2]),
     Array.from({ length: 45 }, (_, index) => `U${index + 1}`));
-  for (const type of ['vccs', 'tristate_inverter', 'tristate_buffer', 'mux2', 'dff', 'dff_qb', 'dff_rst', 'dff_clkb_rstb_qb', 'latch', 'latch_rst', 'latch_enb_rstb_qb', 'and3_gate', 'xnor3_gate', 'block']) {
+  for (const type of ['vccs', 'vcvs', 'impedance', 'tristate_inverter', 'tristate_buffer', 'mux2', 'dff', 'dff_qb', 'dff_rst', 'dff_clkb_rstb_qb', 'latch', 'latch_rst', 'latch_enb_rstb_qb', 'and3_gate', 'xnor3_gate', 'block']) {
     assert.ok(adds.some((command) => command.startsWith(`add ${type} `)), `${type} is present`);
   }
   assert.match(commands.at(-1), /^annotation add category_signal_flow Signal flow /);
+});
+
+test('impedance is a centered box between the resistor pins, labelled Z_{1}', () => {
+  const def = getSymbol('impedance');
+  assert.equal(def.refPrefix, 'Z');
+  assert.deepEqual(def.labelOffset, getSymbol('resistor').labelOffset);
+  assert.deepEqual(def.graphics.map((graphic) => graphic.d), [
+    'M -40 -20 L 40 -20 L 40 20 L -40 20 Z', 'M -80 0 L -40 0', 'M 40 0 L 80 0',
+  ]);
+  const circuit = new Circuit();
+  circuit.addComponent('impedance', { x: 0, y: 0 });
+  assert.equal(circuit.labelOf('Z1').text, 'Z_{1}');
+});
+
+test('vcvs is the vccs diamond with + toward a and - toward b', () => {
+  const vcvs = getSymbol('vcvs');
+  const vccs = getSymbol('vccs');
+  assert.equal(vcvs.refPrefix, 'E');
+  assert.deepEqual(vcvs.terminals, vccs.terminals);
+  assert.deepEqual(vcvs.bbox, vccs.bbox);
+  assert.deepEqual(vcvs.labelOffset, vccs.labelOffset);
+  assert.equal(vcvs.graphics[0].d, vccs.graphics[0].d);
+  const marks = vcvs.graphics.slice(1, 4).map((graphic) => graphic.d);
+  // A plus above the center, a minus of the same width below it, both inside the diamond.
+  assert.deepEqual(marks, ['M -9 -15 L 9 -15', 'M 0 -24 L 0 -6', 'M -9 16 L 9 16']);
+  for (const [x, y] of [[-9, -15], [9, -15], [0, -24], [-9, 16], [9, 16]]) assert.ok(Math.abs(x) + Math.abs(y) < 40);
+  assert.equal(vcvs.graphics.some((graphic) => graphic.kind === 'polygon'), false);
 });
 
 test('resistor zigzag is centered and symmetric', () => {
@@ -427,7 +455,10 @@ test('refdes prefixes by component type', () => {
     resistor: 'R',
     capacitor: 'C',
     inductor: 'L',
+    impedance: 'Z',
     diode: 'D',
+    vccs: 'G',
+    vcvs: 'E',
     nmos: 'M',
     pmos: 'M',
     nmosb: 'M',

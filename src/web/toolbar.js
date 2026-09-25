@@ -1,6 +1,6 @@
 /** Display names and extra search words for the insert menu, keyed by symbol type. */
 export const PLACEMENT_LABELS = {
-  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode',
+  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', impedance: 'Impedance', diode: 'Diode',
   nmos: 'NMOS transistor', pmos: 'PMOS transistor',
   nmosb: 'NMOS transistor with bulk', pmosb: 'PMOS transistor with bulk',
   npn: 'NPN transistor', pnp: 'PNP transistor',
@@ -9,6 +9,7 @@ export const PLACEMENT_LABELS = {
   port: 'Port',
   current_source: 'Current source', voltage_source: 'Voltage source',
   vccs: 'VCCS (voltage-controlled current source)',
+  vcvs: 'VCVS (voltage-controlled voltage source)',
   opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', inverter: 'Inverter', buffer: 'Buffer',
   tristate_inverter: 'Tri-state inverter', tristate_buffer: 'Tri-state buffer',
   mux2: '2:1 multiplexer',
@@ -35,7 +36,7 @@ export const PLACEMENT_LABELS = {
 };
 
 export const PLACEMENT_ALIASES = {
-  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'],
+  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'], impedance: ['load', 'network'],
   nmos: ['mos', 'n-channel', 'fet'], pmos: ['mos', 'p-channel', 'fet'],
   nmosb: ['mos', 'body', 'bulk', 'n-channel', 'fet'], pmosb: ['mos', 'body', 'bulk', 'p-channel', 'fet'],
   npn: ['bjt'], pnp: ['bjt'],
@@ -43,6 +44,7 @@ export const PLACEMENT_ALIASES = {
   ground: ['gnd', 'vss'],
   current_source: ['idc', 'current'], voltage_source: ['vdc', 'voltage'],
   vccs: ['transconductance', 'controlled current', 'gm'],
+  vcvs: ['controlled voltage', 'voltage gain'],
   opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
   tristate_inverter: ['tri-state', 'tristate', 'three-state', 'enable'],
   tristate_buffer: ['tri-state', 'tristate', 'three-state', 'enable'],

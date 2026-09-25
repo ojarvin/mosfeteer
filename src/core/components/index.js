@@ -13,7 +13,8 @@ import { vcm } from './vcm.js';
 import { supply } from './supply.js';
 import { portInput, portOutput, portInputOutput, port } from './port.js';
 import { current_source, voltage_source } from './current.js';
-import { vccs } from './vccs.js';
+import { vccs, vcvs } from './vccs.js';
+import { impedance } from './impedance.js';
 import { opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } from './logic.js';
 import { adc, dac } from './converter.js';
 import { dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } from './flipflop.js';
@@ -29,6 +30,7 @@ export const symbolTypes = {
   resistor,
   capacitor,
   inductor,
+  impedance,
   diode,
   nmos,
   pmos,
@@ -46,6 +48,7 @@ export const symbolTypes = {
   current_source,
   voltage_source,
   vccs,
+  vcvs,
   opamp,
   opamp_diff: opampDiff,
   inverter,

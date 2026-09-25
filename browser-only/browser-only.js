@@ -11200,6 +11200,38 @@ const ground = defineSymbol({
 __exports.ground = ground;
 };
 
+__modules["src/core/components/impedance.js"] = function (__require, __exports) {
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
+
+
+/**
+ * Generic impedance: the textbook box that stands for any two-terminal
+ * network (`Z_1`) where the drawing does not commit to R, L, or C. It shares
+ * the resistor's pins and footprint so the two swap in place.
+ */
+const impedance = defineSymbol({
+  type: 'impedance',
+  description: 'Impedance',
+  refPrefix: 'Z',
+  terminals: [
+    { name: 'a', x: -80, y: 0, direction: 'passive', dir: { x: -1, y: 0 } },
+    { name: 'b', x: 80, y: 0, direction: 'passive', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -40, w: 160, h: 80 },
+  graphics: [
+    { kind: 'path', d: 'M -40 -20 L 40 -20 L 40 20 L -40 20 Z', style: 'symbol' },
+    { kind: 'path', d: 'M -80 0 L -40 0', style: 'symbol' },
+    { kind: 'path', d: 'M 40 0 L 80 0', style: 'symbol' },
+  ],
+  textPos: { x: 0, y: -30, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: 0, y: -80 },
+  defaultValue: '',
+});
+
+__exports.impedance = impedance;
+};
+
 __modules["src/core/components/index.js"] = function (__require, __exports) {
 __exports.getSymbol = getSymbol;
 __exports.seriesTerminalNames = seriesTerminalNames;
@@ -11218,7 +11250,8 @@ let vcm; __bind(() => { ({ vcm } = __require("src/core/components/vcm.js")); });
 let supply; __bind(() => { ({ supply } = __require("src/core/components/supply.js")); });
 let portInput, portOutput, portInputOutput, port; __bind(() => { ({ portInput, portOutput, portInputOutput, port } = __require("src/core/components/port.js")); });
 let current_source, voltage_source; __bind(() => { ({ current_source, voltage_source } = __require("src/core/components/current.js")); });
-let vccs; __bind(() => { ({ vccs } = __require("src/core/components/vccs.js")); });
+let vccs, vcvs; __bind(() => { ({ vccs, vcvs } = __require("src/core/components/vccs.js")); });
+let impedance; __bind(() => { ({ impedance } = __require("src/core/components/impedance.js")); });
 let opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate; __bind(() => { ({ opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js")); });
 let adc, dac; __bind(() => { ({ adc, dac } = __require("src/core/components/converter.js")); });
 let dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb; __bind(() => { ({ dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } = __require("src/core/components/flipflop.js")); });
@@ -11254,11 +11287,13 @@ let signal_sum, signal_multiply; __bind(() => { ({ signal_sum, signal_multiply }
 
 
 
+
 /** All registered symbol definitions, keyed by type name. */
 const symbolTypes = {
   resistor,
   capacitor,
   inductor,
+  impedance,
   diode,
   nmos,
   pmos,
@@ -11276,6 +11311,7 @@ const symbolTypes = {
   current_source,
   voltage_source,
   vccs,
+  vcvs,
   opamp,
   opamp_diff: opampDiff,
   inverter,
@@ -12126,6 +12162,18 @@ __modules["src/core/components/vccs.js"] = function (__require, __exports) {
 let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
+// An 80x80 diamond: the same visual weight as the round sources beside it.
+const DIAMOND = { kind: 'path', d: 'M 0 -40 L 40 0 L 0 40 L -40 0 Z', style: 'symbol' };
+const LEADS = [
+  { kind: 'path', d: 'M 0 -40 L 0 -80', style: 'symbol' },
+  { kind: 'path', d: 'M 0 40 L 0 80', style: 'symbol' },
+];
+
+const SOURCE_TERMINALS = [
+  { name: 'a', x: 0, y: -80, direction: 'positive', dir: { x: 0, y: -1 } },
+  { name: 'b', x: 0, y: 80, direction: 'negative', dir: { x: 0, y: 1 } },
+];
+
 /**
  * Voltage-controlled current source: the textbook diamond used to draw a
  * transconductance branch in a small-signal model. The controlling voltage is
@@ -12137,18 +12185,37 @@ const vccs = defineSymbol({
   type: 'vccs',
   description: 'Controlled Current Source',
   refPrefix: 'G',
-  terminals: [
-    { name: 'a', x: 0, y: -80, direction: 'positive', dir: { x: 0, y: -1 } },
-    { name: 'b', x: 0, y: 80, direction: 'negative', dir: { x: 0, y: 1 } },
-  ],
+  terminals: SOURCE_TERMINALS,
   bbox: { x: -40, y: -80, w: 80, h: 160 },
   graphics: [
-    // An 80x80 diamond: the same visual weight as the round sources beside it.
-    { kind: 'path', d: 'M 0 -40 L 40 0 L 0 40 L -40 0 Z', style: 'symbol' },
+    DIAMOND,
     { kind: 'path', d: 'M 0 -26 L 0 -8', style: 'symbol' },
     { kind: 'polygon', points: [{ x: 0, y: 26 }, { x: -16, y: -8 }, { x: 16, y: -8 }], fill: 'foreground' },
-    { kind: 'path', d: 'M 0 -40 L 0 -80', style: 'symbol' },
-    { kind: 'path', d: 'M 0 40 L 0 80', style: 'symbol' },
+    ...LEADS,
+  ],
+  textPos: { x: 0, y: -52, anchor: 'middle' },
+  refPos: null,
+  labelOffset: { x: -80, y: 0 },
+  defaultValue: '',
+});
+
+/**
+ * Voltage-controlled voltage source, the VCCS's pair: the same diamond with
+ * the voltage source's polarity marks inside it, `+` toward terminal `a`.
+ * Its gain and controlling voltage live in the instance label (`A v_{in}`).
+ */
+const vcvs = defineSymbol({
+  type: 'vcvs',
+  description: 'Controlled Voltage Source',
+  refPrefix: 'E',
+  terminals: SOURCE_TERMINALS,
+  bbox: { x: -40, y: -80, w: 80, h: 160 },
+  graphics: [
+    DIAMOND,
+    { kind: 'path', d: 'M -9 -15 L 9 -15', style: 'symbol' },
+    { kind: 'path', d: 'M 0 -24 L 0 -6', style: 'symbol' },
+    { kind: 'path', d: 'M -9 16 L 9 16', style: 'symbol' },
+    ...LEADS,
   ],
   textPos: { x: 0, y: -52, anchor: 'middle' },
   refPos: null,
@@ -12157,6 +12224,7 @@ const vccs = defineSymbol({
 });
 
 __exports.vccs = vccs;
+__exports.vcvs = vcvs;
 };
 
 __modules["src/core/components/vcm.js"] = function (__require, __exports) {
@@ -30777,10 +30845,10 @@ const INSERT_COMPONENT_TYPES = [...symbolTypeNames];
 // above both macros and the digital cells. A query reorders the groups by their
 // best match instead, so this is the order of the unfiltered list.
 const INSERT_CATEGORY_RULES = [
-  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^diode$/],
+  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(impedance|diode)$/],
   ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
   ['Switches', /^switch_/],
-  ['Sources & power', /^(current_source|voltage_source|vccs|supply|ground|vcm)$/],
+  ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Macros', /^(opamp|opamp_diff|adc|dac)$/],
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
@@ -43655,7 +43723,7 @@ __exports.layerActionForKey = layerActionForKey;
 __exports.layoutAlignKey = layoutAlignKey;
 /** Display names and extra search words for the insert menu, keyed by symbol type. */
 const PLACEMENT_LABELS = {
-  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode',
+  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', impedance: 'Impedance', diode: 'Diode',
   nmos: 'NMOS transistor', pmos: 'PMOS transistor',
   nmosb: 'NMOS transistor with bulk', pmosb: 'PMOS transistor with bulk',
   npn: 'NPN transistor', pnp: 'PNP transistor',
@@ -43664,6 +43732,7 @@ const PLACEMENT_LABELS = {
   port: 'Port',
   current_source: 'Current source', voltage_source: 'Voltage source',
   vccs: 'VCCS (voltage-controlled current source)',
+  vcvs: 'VCVS (voltage-controlled voltage source)',
   opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', inverter: 'Inverter', buffer: 'Buffer',
   tristate_inverter: 'Tri-state inverter', tristate_buffer: 'Tri-state buffer',
   mux2: '2:1 multiplexer',
@@ -43690,7 +43759,7 @@ const PLACEMENT_LABELS = {
 };
 
 const PLACEMENT_ALIASES = {
-  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'],
+  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'], impedance: ['load', 'network'],
   nmos: ['mos', 'n-channel', 'fet'], pmos: ['mos', 'p-channel', 'fet'],
   nmosb: ['mos', 'body', 'bulk', 'n-channel', 'fet'], pmosb: ['mos', 'body', 'bulk', 'p-channel', 'fet'],
   npn: ['bjt'], pnp: ['bjt'],
@@ -43698,6 +43767,7 @@ const PLACEMENT_ALIASES = {
   ground: ['gnd', 'vss'],
   current_source: ['idc', 'current'], voltage_source: ['vdc', 'voltage'],
   vccs: ['transconductance', 'controlled current', 'gm'],
+  vcvs: ['controlled voltage', 'voltage gain'],
   opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
   tristate_inverter: ['tri-state', 'tristate', 'three-state', 'enable'],
   tristate_buffer: ['tri-state', 'tristate', 'three-state', 'enable'],

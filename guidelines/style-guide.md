@@ -184,12 +184,13 @@ mirror flag to override that default.
 
 | type | terminals | bbox (local units) |
 |------|-----------|--------------------|
-| resistor / capacitor / inductor / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
+| resistor / capacitor / inductor / impedance / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40; impedance is an 80×40 box labelled `Z_1` |
 | diode | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
 | nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox `{-120,-80,120,160}`; drain and source leads end at their terminals and share the wire-cap overlap |
 | nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox `{-120,-80,120,160}`; bulk pin points right with a visible internal path ending at the terminal and sharing the wire-cap overlap |
 | npn / pnp | `b` (left) `c` (top) `e` (bottom) | x:-160..0, y:-120..120 |
 | current_source / voltage_source | `a` (top) `b` (bottom) | body x:-40..40, y:-80..80; default label center offset x:-80 (bbox edge x:-40) |
+| vccs / vcvs | `a` (top) `b` (bottom) | same footprint and label offset as the sources; 80×80 diamond, VCCS with an arrow toward `b`, VCVS with `+` toward `a` and `−` toward `b` inside; gain and control go in the label (`g_m v_{gs}`, `A v_{in}`) |
 | ground | `gnd` (top edge) | x:0..80, y:0..120 |
 | vcm | `vcm` (top edge) | x:-40..40, y:0..80 |
 | supply | `p` (bottom edge) | x:-40..40, y:-80..0 |

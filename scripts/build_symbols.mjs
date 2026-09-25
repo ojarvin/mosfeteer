@@ -26,7 +26,7 @@ const rows = [
       ['resistor', 'R1', 0], ['variable_resistor', 'R2', 480],
       ['capacitor', 'C1', 960], ['variable_capacitor', 'C2', 1440],
       ['inductor', 'L1', 1920], ['variable_inductor', 'L2', 2400],
-      ['diode', 'D1', 2880],
+      ['impedance', 'Z1', 2880], ['diode', 'D1', 3360],
     ],
   },
   {
@@ -45,7 +45,7 @@ const rows = [
   {
     label: 'Sources',
     y: -400,
-    items: [['current_source', 'I1', 0], ['voltage_source', 'V1', 480], ['vccs', 'G1', 960]],
+    items: [['current_source', 'I1', 0], ['voltage_source', 'V1', 480], ['vccs', 'G1', 960], ['vcvs', 'E1', 1440]],
   },
   {
     label: 'Ports',

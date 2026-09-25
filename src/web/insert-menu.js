@@ -52,10 +52,10 @@ const INSERT_COMPONENT_TYPES = [...symbolTypeNames];
 // above both macros and the digital cells. A query reorders the groups by their
 // best match instead, so this is the order of the unfiltered list.
 const INSERT_CATEGORY_RULES = [
-  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^diode$/],
+  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(impedance|diode)$/],
   ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
   ['Switches', /^switch_/],
-  ['Sources & power', /^(current_source|voltage_source|vccs|supply|ground|vcm)$/],
+  ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Macros', /^(opamp|opamp_diff|adc|dac)$/],
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
