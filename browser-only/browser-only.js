@@ -9447,6 +9447,8 @@ let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require
 let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
 let addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
 let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
+let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
+
 
 
 
@@ -9946,6 +9948,7 @@ function commandHelp() {
     '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
+    '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
@@ -10300,6 +10303,13 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return annotationCommand(circuit, pos, result, flags);
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
+  if (cmd === 'stubs' || cmd === 'stub') {
+    if (!pos.length) throw new Error('usage: stubs <refdes> ...');
+    const { stubs, skipped } = addTerminalStubs(circuit, pos);
+    const added = stubs.map((stub) => `${stub.ref} ${stub.name}`).join(', ');
+    const message = `${stubs.length} stub${stubs.length === 1 ? '' : 's'}${added ? `: ${added}` : ''}${skipped.length ? `; skipped (would short) ${skipped.join(', ')}` : ''}`;
+    return result(message, { stubs, skipped }, stubs.length > 0);
+  }
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
   if (cmd === 'timing') {
     const rows = addTimingDiagram(circuit);
@@ -13406,6 +13416,14 @@ class LabelInstance {
     const w = this.colWidth() * GRID;
     const h = this.rowHeight() * GRID;
     if (this.netId) {
+      if (this.netSide === 'below' || this.netSide === 'above' || !this.netSide) {
+        // Along a wire, left- or right-aligned text keeps the edge a two-cell
+        // box would have and grows away from it: a stub's label edge stays on
+        // its terminal (core/stubs.js).
+        const y = this.netSide === 'below' ? a.y : a.y - h;
+        if (this.align === 'right') return { x: a.x + GRID - w, y, w, h };
+        if (this.align === 'left') return { x: a.x - GRID, y, w, h };
+      }
       if (this.netSide === 'below') return { x: a.x - w / 2, y: a.y, w, h };
       if (this.netSide === 'left') return { x: a.x - w, y: a.y - h / 2, w, h };
       if (this.netSide === 'right') return { x: a.x, y: a.y - h / 2, w, h };
@@ -18150,10 +18168,20 @@ class Circuit {
    * geometry, each preserving its remaining branches. */
   _splitDisconnectedNet(net) {
     const paths = net.branches && net.branches.length ? net.branches : [];
-    if (!paths.length || net.terminals.length < 2) return;
+    if (!paths.length || !net.terminals.length) return;
     const terminals = net.terminals.map((t) => ({ ...t, point: this.components.get(t.comp)?.terminalWorld(t.term) }));
-    const components = splitByComponent(paths, terminals.filter((t) => t.point));
-    if (components.length < 2) return;
+    // A terminal left with no wire at all is unconnected again, not a
+    // one-terminal net of its own.
+    const components = splitByComponent(paths, terminals.filter((t) => t.point))
+      .filter((piece) => piece.paths.length);
+    if (!components.length) {
+      // Only wire no terminal reaches is left: each piece stays a bare wire island.
+      const ends = paths.map((path, i) => ({ comp: '', term: String(i), point: path[0] }));
+      components.push(...splitByComponent(paths, ends).map((piece) => ({ terminals: [], paths: piece.paths })));
+    }
+    if (components.length < 2 && components[0].terminals.length === net.terminals.length) return;
+    // The net's terminals are regrouped, so a name clash from merging them is gone.
+    this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     const apply = (n, comp) => {
       n.terminals = comp.terminals.map(({ comp, term }) => ({ comp, term }));
       n.branches = comp.paths.length ? comp.paths.map((p) => clonePath(p, n.allowDiagonal)) : null;
@@ -21647,6 +21675,130 @@ __exports.copySelectionParts = copySelectionParts;
 __exports.resolveCopySelection = resolveCopySelection;
 };
 
+__modules["src/core/stubs.js"] = function (__require, __exports) {
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, canonicalNetName; __bind(() => { ({ INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, canonicalNetName } = __require("src/core/model.js")); });
+let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
+/**
+ * Wire stubs: a short wire out of every unconnected terminal of the chosen
+ * parts, each ending its own new net and carrying a net label with a fresh
+ * generated name (net1, net2, ...). Like Virtuoso's "create wire stubs and
+ * labels", it turns a placed part into one that is wired up by name.
+ */
+
+
+
+
+
+/** Stub length: two grid cells out of the terminal. */
+const STUB_CELLS = 2;
+
+const samePoint = (a, b) => a.x === b.x && a.y === b.y;
+
+/** The lowest `net<k>` that no net and no part is called. */
+function freshNetName(taken) {
+  for (let k = 1; ; k += 1) {
+    const name = `net${k}`;
+    if (!taken.has(name.toLowerCase())) return name;
+  }
+}
+
+function takenNames(circuit) {
+  const taken = new Set();
+  for (const net of circuit.nets.values()) if (net.name) taken.add(canonicalNetName(net.name).toLowerCase());
+  for (const refdes of circuit.components.keys()) taken.add(String(refdes).toLowerCase());
+  return taken;
+}
+
+/**
+ * Whether a stub from terminal point `from` to `to` (grid points `points`
+ * along it) would join something: another terminal or a solder dot anywhere on
+ * it, a wire touching either end, or a wire running along it or ending,
+ * bending, or branching on it. A wire crossing it straight through is fine.
+ */
+function stubShorts(circuit, component, terminalName, points) {
+  const from = points[0];
+  const to = points.at(-1);
+  for (const other of circuit.components.values()) {
+    if (other.type === 'solder') {
+      const dot = { x: other.transform.x, y: other.transform.y };
+      if (points.some((p) => samePoint(p, dot))) return true;
+      continue;
+    }
+    for (const def of other.terminalDefs) {
+      if (other === component && def.name === terminalName) continue;
+      const w = other.terminalWorld(def.name);
+      if (points.some((p) => samePoint(p, w))) return true;
+    }
+  }
+  const horizontal = from.y === to.y;
+  for (const net of circuit.nets.values()) {
+    for (const path of net.paths()) {
+      if (path.length < 2) continue;
+      for (const [i, p] of points.entries()) {
+        if (!pointOnPath(p, path)) continue;
+        if (i === 0 || i === points.length - 1) return true;
+        if (path.some((vertex) => samePoint(vertex, p))) return true;
+        for (let s = 1; s < path.length; s += 1) {
+          const a = path[s - 1];
+          const b = path[s];
+          if (!pointOnPath(p, [a, b])) continue;
+          if (horizontal ? a.y === b.y : a.x === b.x) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Add a stub and a named net label to every unconnected terminal of the parts
+ * `refdes`. A stub leaves its terminal along the terminal's outward direction,
+ * STUB_CELLS long; its label sits at the middle of the stub, above a
+ * horizontal stub with its text aligned toward the terminal, and beside a
+ * vertical one aligned toward the wire. A stub that would join anything else
+ * is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
+ */
+function addTerminalStubs(circuit, refdes) {
+  const stubs = [];
+  const skipped = [];
+  const taken = takenNames(circuit);
+  // Resolve every part first, so an unknown one leaves the drawing untouched.
+  const components = refdes.map((ref) => circuit.getComponent(ref));
+  for (const component of components) {
+    if (component.type === 'solder' || REFERENCE_MARKER_TYPES.includes(component.type) || INTERFACE_PIN_TYPES.has(component.type)) continue;
+    for (const def of component.terminalDefs) {
+      const termRef = `${component.refdes}.${def.name}`;
+      if (circuit.netOfTerminal({ comp: component.refdes, term: def.name })) continue;
+      const from = component.terminalWorld(def.name);
+      const dir = circuit._pinDir(component, def, from.x, from.y);
+      const points = [];
+      for (let i = 0; i <= STUB_CELLS; i += 1) points.push({ x: from.x + dir.x * GRID * i, y: from.y + dir.y * GRID * i });
+      if (stubShorts(circuit, component, def.name, points)) {
+        skipped.push(termRef);
+        continue;
+      }
+      const path = [points[0], points.at(-1)];
+      const name = freshNetName(taken);
+      taken.add(name.toLowerCase());
+      const net = circuit.createWireNet({ branches: [path], route: path });
+      circuit.connectTo(net.id, termRef);
+      circuit.renameNet(net, name);
+      const middle = points[Math.floor(points.length / 2)];
+      const labelOpts = dir.y === 0
+        ? { netSide: 'above', align: dir.x < 0 ? 'right' : 'left' }
+        : { netSide: 'right', align: 'parent' };
+      const label = circuit.addNetLabel(net, { anchor: middle, ...labelOpts });
+      stubs.push({ ref: termRef, netId: net.id, name, labelId: label.id });
+    }
+  }
+  return { stubs, skipped };
+}
+
+__exports.addTerminalStubs = addTerminalStubs;
+__exports.STUB_CELLS = STUB_CELLS;
+};
+
 __modules["src/core/style.js"] = function (__require, __exports) {
 /**
  * Centralized schematic line styles.
@@ -24861,6 +25013,7 @@ let getSymbol, seriesTerminalNames, symbolTypeNames; __bind(() => { ({ getSymbol
 let runCommand, commandHelp, evaluate; __bind(() => { ({ runCommand, commandHelp, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBarRow, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js")); });
 let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
+let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats; __bind(() => { ({ addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } = __require("src/core/beats.js")); });
 let TipBook; __bind(() => { ({ TipBook } = __require("src/web/tips.js")); });
 let TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns; __bind(() => { ({ TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
@@ -24907,6 +25060,7 @@ let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan,
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -25566,6 +25720,7 @@ let wirePreview = null;
 let wirePreviewStale = false;
 let terminalSnap = false; // Alt-held wiring cursor: snap to the nearest terminal
 let spaceHeld = false; // Space turns a left drag into a pan
+let spaceTap = false; // Space went down and nothing used it yet: its release stubs the selection
 // 'mouse': the wheel zooms. 'trackpad': two-finger scroll pans, pinch zooms.
 // A per-machine preference, so it lives in browser storage, not the document.
 let scrollScheme = (() => {
@@ -29537,6 +29692,22 @@ function addPhaseBeats() {
   setActiveBeat(index);
 }
 
+/** A tap of Space: a labelled wire stub on every unconnected terminal of the
+ * selected parts, skipping any that would short (core/stubs.js). */
+function stubSelection() {
+  if (mode !== 'normal' || drag || hasWireDraft() || labelMode || moveMode || copyMode || deleteMode || visual) return;
+  const refs = selectedComps().map((c) => c.refdes);
+  if (!refs.length) {
+    hintLine('Space: select parts to add wire stubs to their unconnected terminals');
+    return;
+  }
+  const out = commit(() => addTerminalStubs(circuit, refs));
+  if (!out) return;
+  const added = out.stubs.length ? `added ${out.stubs.length} wire stub${out.stubs.length === 1 ? '' : 's'}` : 'no unconnected terminals to stub';
+  logLine(`${added}${out.skipped.length ? `; skipped ${out.skipped.join(', ')} (would short)` : ''}`);
+  render();
+}
+
 /** A timing diagram template under the drawing: each phase's name and a
  * waveform line to edit into its timing (core/timing-diagram.js). */
 function addTimingDiagramTemplate() {
@@ -32264,6 +32435,7 @@ function canvasMouseDown(ev) {
   const rawStartWorld = clientToWorld(ev.clientX, ev.clientY);
   const startWorld = b === 0 && wire && terminalSnap ? terminalSnapWorld(rawStartWorld) : rawStartWorld;
   const startClient = { x: ev.clientX, y: ev.clientY };
+  spaceTap = false;
 
   if (b === 1 || (b === 0 && spaceHeld)) {
     ev.preventDefault();
@@ -35816,6 +35988,10 @@ window.addEventListener('keyup', (ev) => {
   if (ev.key === ' ') {
     spaceHeld = false;
     canvasEl.classList.remove('space-pan');
+    if (spaceTap) {
+      spaceTap = false;
+      stubSelection();
+    }
     return;
   }
   if (ev.key !== 'Alt') return;
@@ -35828,6 +36004,7 @@ window.addEventListener('keyup', (ev) => {
 });
 window.addEventListener('blur', () => {
   spaceHeld = false;
+  spaceTap = false;
   canvasEl.classList.remove('space-pan');
   altHeld = false;
   setSymmetry(false);
@@ -40211,6 +40388,7 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === ' ' && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !(mode === 'insert' && !pendingPlace)) {
     if (!spaceHeld) {
       spaceHeld = true;
+      spaceTap = !ev.repeat;
       canvasEl.classList.add('space-pan');
     }
     ev.preventDefault();
@@ -41473,6 +41651,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
     ['Shift+A', 'align to: click an edge or point of the selection, then a matching one of another object; the set moves as one'],
+    ['Space', 'wire stubs: a labelled stub (net1, net2, ...) on every unconnected terminal of the selected parts; any that would short are skipped'],
     ['9', 'highlight nets: each click cycles a net group\'s color'],
     ['8', 'remove every net highlight'],
     ['t', 'edit the primary selected label (no-op otherwise)'],
