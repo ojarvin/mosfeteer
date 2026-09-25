@@ -25879,7 +25879,14 @@ function layoutSuggestions(items, grid = GRID) {
 __modules["src/web/main.js"] = function (__require, __exports) {
 __exports.selectAllNetIds = selectAllNetIds;
 __exports.deriveInteractionState = deriveInteractionState;
+__exports.paneSize = paneSize;
+__exports.logLine = logLine;
+__exports.requestDocumentAction = requestDocumentAction;
+__exports.renderSaveState = renderSaveState;
+__exports.fitView = fitView;
+__exports.render = render;
 __exports.interactionState = interactionState;
+__exports.startNewDocument = startNewDocument;
 let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames, symbolTypeNames; __bind(() => { ({ getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js")); });
 let runCommand, commandHelp, evaluate; __bind(() => { ({ runCommand, commandHelp, evaluate } = __require("src/core/commands.js")); });
@@ -25887,8 +25894,6 @@ let hiddenSupplyBarLabels, supplyBarRow, supplyBars; __bind(() => { ({ hiddenSup
 let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats; __bind(() => { ({ addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } = __require("src/core/beats.js")); });
-let TipBook; __bind(() => { ({ TipBook } = __require("src/web/tips.js")); });
-let TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns; __bind(() => { ({ TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale; __bind(() => { ({ DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } = __require("src/core/png-export.js")); });
 let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
@@ -25905,7 +25910,7 @@ let DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSub
 let svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
 let encodeObjectClipboard, decodeObjectClipboard; __bind(() => { ({ encodeObjectClipboard, decodeObjectClipboard } = __require("src/core/object-clipboard.js")); });
-let applyTransform, distanceToSegment, transformRect; __bind(() => { ({ applyTransform, distanceToSegment, transformRect } = __require("src/core/geometry.js")); });
+let applyTransform, distanceToSegment; __bind(() => { ({ applyTransform, distanceToSegment } = __require("src/core/geometry.js")); });
 let applyMarkup; __bind(() => { ({ applyMarkup } = __require("src/core/model.js")); });
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
 let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js")); });
@@ -25925,8 +25930,9 @@ let arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRad
 let LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
 let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides; __bind(() => { ({ alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpDialogContent, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, alignPanelEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpDialogContent, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, alignPanelEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
+let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpDialogContent, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, alignPanelEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusCheckEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, analysisButton, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, checkSummaryBodyEl, clearCheckButtonEl, helpDialog, helpDialogContent, helpSearch, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, modelDialog, modelDialogTitle, modelDialogFigure, modelDialogNotes, modelDialogRubber, analysisCancel, analysisAnnotate, modeToolbarEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl, toolbarEl, alignPanelEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
 let ICON_PATHS, syncToolCursor, installIcons; __bind(() => { ({ ICON_PATHS, syncToolCursor, installIcons } = __require("src/web/icons.js")); });
+let noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -25986,10 +25992,13 @@ let ICON_PATHS, syncToolCursor, installIcons; __bind(() => { ({ ICON_PATHS, sync
 
 
 
-
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
+  circuit: { get: () => circuit, set: (value) => { circuit = value; } },
+  modelRevision: { get: () => modelRevision, set: (value) => { modelRevision = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
+  tutorial: { get: () => tutorial, set: (value) => { tutorial = value; } },
+  view: { get: () => view, set: (value) => { view = value; } },
 });
 
 // ----- boot failure surface --------------------------------------
@@ -26044,211 +26053,9 @@ for (const button of analysisTabButtons) {
 }
 setAnalysisResultTab();
 installIcons();
-// ----- contextual tips ---------------------------------------------------------
-// One quiet line in the canvas corner when a faster way exists for what the
-// user is doing. The rules that keep them scarce live in tips.js; this only
-// stores the state and shows the card. `noteTip` is safe to call anywhere.
-const TIPS_KEY = 'mosfeteer.tips';
 // The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.
 let tutorial = null;
-const tipBook = new TipBook((() => {
-  try { return JSON.parse(localStorage.getItem(TIPS_KEY) || 'null'); } catch { return null; }
-})());
-const TIP_VISIBLE_MS = 14000;
-let shownTip = null;
-let tipHideTimer = 0;
-
-function saveTips() {
-  try { localStorage.setItem(TIPS_KEY, JSON.stringify(tipBook.toJSON())); } catch { /* per-session only */ }
-}
-
-function hideTip() {
-  window.clearTimeout(tipHideTimer);
-  shownTip = null;
-  if (tipCardEl) tipCardEl.hidden = true;
-}
-
-function noteTip(event) {
-  // The tutorial teaches the same things; tips still retire, but stay quiet.
-  const tip = tutorial ? (tipBook.note(event, -Infinity), null) : tipBook.note(event, Date.now());
-  // Using the feature a visible tip describes answers it.
-  if (shownTip && tipBook.state.retired.includes(shownTip.id)) hideTip();
-  saveTips();
-  if (!tip || !tipCardEl) return;
-  shownTip = tip;
-  tipTextEl.textContent = tip.text;
-  tipCardEl.hidden = false;
-  window.clearTimeout(tipHideTimer);
-  tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS);
-}
-
-function syncTipsButton() {
-  tipsButton?.setAttribute('aria-checked', String(!tipBook.state.off));
-}
-
-document.getElementById('tip-card-close')?.addEventListener('click', () => {
-  if (shownTip) tipBook.retire(shownTip.id);
-  saveTips();
-  hideTip();
-});
-document.getElementById('tip-card-off')?.addEventListener('click', () => {
-  tipBook.setOff(true);
-  saveTips();
-  hideTip();
-  syncTipsButton();
-  logLine('tips off — turn them back on from the More menu', 'status');
-});
-// Hovering keeps a tip up while it is being read.
-tipCardEl?.addEventListener('mouseenter', () => window.clearTimeout(tipHideTimer));
-tipCardEl?.addEventListener('mouseleave', () => {
-  if (shownTip) tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS / 2);
-});
-tipsButton?.addEventListener('click', () => {
-  tipBook.setOff(!tipBook.state.off);
-  if (tipBook.state.off) hideTip();
-  saveTips();
-  syncTipsButton();
-});
-syncTipsButton();
-
-// ----- first-drawing tutorial ------------------------------------------------
-// Optional and never offered by itself: it starts only from the More menu or
-// the empty-canvas card, and closing it leaves the drawing as it is. Steps are
-// checked from the drawing's structure in tutorial.js.
-let tutorialKey = '';
-let tutorialState = null;
-let tutorialCheerTimer = 0;
-
-function currentTutorialProgress() {
-  if (!tutorial) return null;
-  const key = `${modelRevision}:${[...tutorial.skipped].join(',')}:${circuit.netHighlights.size}`;
-  if (key !== tutorialKey) {
-    tutorialKey = key;
-    tutorialState = tutorialProgress(circuit, tutorial.skipped);
-  }
-  return tutorialState;
-}
-
-function tutorialTargetRects() {
-  const progress = currentTutorialProgress();
-  if (!progress?.current) return [];
-  return openTutorialTargets(circuit, progress.current).map((target) => {
-    const def = getSymbol(target.type);
-    const transform = { x: target.x, y: target.y, rotation: 0, mirrorX: target.mirrorX, mirrorY: !!def.defaultMirrorY };
-    return { rect: transformRect(transform, def.bbox), caption: target.caption };
-  });
-}
-
-function appendTutorialText(parent, text) {
-  for (const run of tutorialRuns(text)) {
-    parent.append(run.key ? Object.assign(document.createElement('kbd'), { textContent: run.text }) : run.text);
-  }
-}
-
-function tutorialElapsed() {
-  const seconds = Math.round(((tutorial.finishedAt || Date.now()) - tutorial.startedAt) / 1000);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-}
-
-function syncTutorial() {
-  if (!tutorialCardEl) return;
-  tutorialCardEl.hidden = !tutorial;
-  const progress = currentTutorialProgress();
-  if (!progress) return;
-  // A step finished since the last look earns a short cheer.
-  const fresh = progress.steps.filter((step) => step.done && !tutorial.cheered.has(step.id));
-  for (const step of fresh) tutorial.cheered.add(step.id);
-  if (fresh.length) {
-    tutorial.cheer = TUTORIAL_STEPS.find((step) => step.id === fresh.at(-1).id).title;
-    window.clearTimeout(tutorialCheerTimer);
-    tutorialCheerTimer = window.setTimeout(() => {
-      if (tutorial) tutorial.cheer = null;
-      syncTutorial();
-    }, 2600);
-  }
-  if (progress.finished && !tutorial.finishedAt) tutorial.finishedAt = Date.now();
-  const total = TUTORIAL_STEPS.length;
-  tutorialCountEl.textContent = `${progress.doneCount} / ${total}`;
-  tutorialBarEl.style.width = `${(progress.doneCount / total) * 100}%`;
-  tutorialStepEl.replaceChildren();
-  if (tutorial.cheer) {
-    tutorialStepEl.append(Object.assign(document.createElement('div'), { className: 'tutorial-cheer', textContent: `✓ ${tutorial.cheer}` }));
-  }
-  const heading = document.createElement('h3');
-  const body = document.createElement('p');
-  if (progress.current) {
-    heading.textContent = progress.current.title;
-    appendTutorialText(body, progress.current.text);
-  } else {
-    const skippedCount = progress.steps.filter((step) => step.skipped).length;
-    heading.textContent = skippedCount ? 'Through the tutorial' : 'You drew a 5T OTA!';
-    appendTutorialText(body, `${skippedCount ? `All steps visited in ${tutorialElapsed()}; skipped ones tick off whenever you finish them.` : `Done in ${tutorialElapsed()}.`} Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.`);
-  }
-  tutorialStepEl.append(heading, body);
-  tutorialStepsEl.hidden = !tutorial.showSteps;
-  tutorialStepsToggleEl.textContent = tutorial.showSteps ? 'Hide steps' : 'All steps';
-  tutorialStepsEl.replaceChildren(...progress.steps.map((step) => {
-    const item = document.createElement('li');
-    item.textContent = TUTORIAL_STEPS.find((candidate) => candidate.id === step.id).title;
-    item.classList.toggle('done', step.done);
-    item.classList.toggle('skipped', step.skipped);
-    item.classList.toggle('current', step.id === progress.current?.id);
-    return item;
-  }));
-  tutorialSkipEl.hidden = !progress.current;
-}
-
-/** Begin the tutorial in a fresh document (after the usual unsaved-changes check). */
-function offerTutorial() {
-  requestDocumentAction('Starting the tutorial', () => {
-    startNewDocument();
-    startTutorial();
-  });
-}
-
-function startTutorial() {
-  circuitNameEl.value = 'tutorial-5t-ota';
-  renderSaveState();
-  tutorial = { startedAt: Date.now(), skipped: new Set(), cheered: new Set(), cheer: null, finishedAt: null };
-  tutorialKey = '';
-  hideTip();
-  fitView();
-  // Keep the marked spots clear of the card at the bottom left.
-  const pane = paneSize();
-  if (pane && tutorialCardEl) {
-    const cardWorld = ((tutorialCardEl.getBoundingClientRect().width || 340) + 68) * (view.w / pane.w);
-    view = { ...view, x: view.x - cardWorld / 2 };
-  }
-  render();
-  canvasEl.focus();
-  logLine('Tutorial started: follow the card at the bottom left, or close it any time.', 'status');
-}
-
-/** Drop the tutorial's state; the card hides on the next render. The tutorial
- *  belongs to its own drawing, so opening another design ends it. */
-function dropTutorial() {
-  tutorial = null;
-  window.clearTimeout(tutorialCheerTimer);
-}
-
-function endTutorial() {
-  dropTutorial();
-  render();
-  canvasEl.focus();
-}
-
-document.getElementById('tutorial-close')?.addEventListener('click', endTutorial);
-tutorialStepsToggleEl?.addEventListener('click', () => {
-  if (!tutorial) return;
-  tutorial.showSteps = !tutorial.showSteps;
-  syncTutorial();
-});
-tutorialSkipEl?.addEventListener('click', () => {
-  const current = currentTutorialProgress()?.current;
-  if (current) tutorial.skipped.add(current.id);
-  render();
-});
-document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
+installOnboarding();
 // ----- editor state ----------------------------------------------
 
 const persistence = createPersistenceAdapter();
@@ -41664,6 +41471,241 @@ statusCheckEl?.addEventListener('click', () => {
   else runCheck();
 });
 
+
+};
+
+__modules["src/web/onboarding.js"] = function (__require, __exports) {
+__exports.noteTip = noteTip;
+__exports.tutorialTargetRects = tutorialTargetRects;
+__exports.syncTutorial = syncTutorial;
+__exports.offerTutorial = offerTutorial;
+__exports.dropTutorial = dropTutorial;
+__exports.installOnboarding = installOnboarding;
+let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
+let TipBook; __bind(() => { ({ TipBook } = __require("src/web/tips.js")); });
+let TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns; __bind(() => { ({ TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
+let transformRect; __bind(() => { ({ transformRect } = __require("src/core/geometry.js")); });
+let canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl; __bind(() => { ({ canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } = __require("src/web/elements.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let fitView, logLine, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ fitView, logLine, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/main.js")); });
+/**
+ * Onboarding in the editor: the contextual tip card and the first-drawing
+ * tutorial. The rules live in tips.js and tutorial.js; this shows them.
+ */
+
+
+
+
+
+
+
+
+
+// ----- contextual tips ---------------------------------------------------------
+// One quiet line in the canvas corner when a faster way exists for what the
+// user is doing. The rules that keep them scarce live in tips.js; this only
+// stores the state and shows the card. `noteTip` is safe to call anywhere.
+const TIPS_KEY = 'mosfeteer.tips';
+const tipBook = new TipBook((() => {
+  try { return JSON.parse(localStorage.getItem(TIPS_KEY) || 'null'); } catch { return null; }
+})());
+const TIP_VISIBLE_MS = 14000;
+let shownTip = null;
+let tipHideTimer = 0;
+
+function saveTips() {
+  try { localStorage.setItem(TIPS_KEY, JSON.stringify(tipBook.toJSON())); } catch { /* per-session only */ }
+}
+
+function hideTip() {
+  window.clearTimeout(tipHideTimer);
+  shownTip = null;
+  if (tipCardEl) tipCardEl.hidden = true;
+}
+
+function noteTip(event) {
+  // The tutorial teaches the same things; tips still retire, but stay quiet.
+  const tip = editor.tutorial ? (tipBook.note(event, -Infinity), null) : tipBook.note(event, Date.now());
+  // Using the feature a visible tip describes answers it.
+  if (shownTip && tipBook.state.retired.includes(shownTip.id)) hideTip();
+  saveTips();
+  if (!tip || !tipCardEl) return;
+  shownTip = tip;
+  tipTextEl.textContent = tip.text;
+  tipCardEl.hidden = false;
+  window.clearTimeout(tipHideTimer);
+  tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS);
+}
+
+function syncTipsButton() {
+  tipsButton?.setAttribute('aria-checked', String(!tipBook.state.off));
+}
+
+// ----- first-drawing tutorial ------------------------------------------------
+// Optional and never offered by itself: it starts only from the More menu or
+// the empty-canvas card, and closing it leaves the drawing as it is. Steps are
+// checked from the drawing's structure in tutorial.js.
+let tutorialKey = '';
+let tutorialState = null;
+let tutorialCheerTimer = 0;
+
+function currentTutorialProgress() {
+  if (!editor.tutorial) return null;
+  const key = `${editor.modelRevision}:${[...editor.tutorial.skipped].join(',')}:${editor.circuit.netHighlights.size}`;
+  if (key !== tutorialKey) {
+    tutorialKey = key;
+    tutorialState = tutorialProgress(editor.circuit, editor.tutorial.skipped);
+  }
+  return tutorialState;
+}
+
+function tutorialTargetRects() {
+  const progress = currentTutorialProgress();
+  if (!progress?.current) return [];
+  return openTutorialTargets(editor.circuit, progress.current).map((target) => {
+    const def = getSymbol(target.type);
+    const transform = { x: target.x, y: target.y, rotation: 0, mirrorX: target.mirrorX, mirrorY: !!def.defaultMirrorY };
+    return { rect: transformRect(transform, def.bbox), caption: target.caption };
+  });
+}
+
+function appendTutorialText(parent, text) {
+  for (const run of tutorialRuns(text)) {
+    parent.append(run.key ? Object.assign(document.createElement('kbd'), { textContent: run.text }) : run.text);
+  }
+}
+
+function tutorialElapsed() {
+  const seconds = Math.round(((editor.tutorial.finishedAt || Date.now()) - editor.tutorial.startedAt) / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function syncTutorial() {
+  if (!tutorialCardEl) return;
+  tutorialCardEl.hidden = !editor.tutorial;
+  const progress = currentTutorialProgress();
+  if (!progress) return;
+  // A step finished since the last look earns a short cheer.
+  const fresh = progress.steps.filter((step) => step.done && !editor.tutorial.cheered.has(step.id));
+  for (const step of fresh) editor.tutorial.cheered.add(step.id);
+  if (fresh.length) {
+    editor.tutorial.cheer = TUTORIAL_STEPS.find((step) => step.id === fresh.at(-1).id).title;
+    window.clearTimeout(tutorialCheerTimer);
+    tutorialCheerTimer = window.setTimeout(() => {
+      if (editor.tutorial) editor.tutorial.cheer = null;
+      syncTutorial();
+    }, 2600);
+  }
+  if (progress.finished && !editor.tutorial.finishedAt) editor.tutorial.finishedAt = Date.now();
+  const total = TUTORIAL_STEPS.length;
+  tutorialCountEl.textContent = `${progress.doneCount} / ${total}`;
+  tutorialBarEl.style.width = `${(progress.doneCount / total) * 100}%`;
+  tutorialStepEl.replaceChildren();
+  if (editor.tutorial.cheer) {
+    tutorialStepEl.append(Object.assign(document.createElement('div'), { className: 'tutorial-cheer', textContent: `✓ ${editor.tutorial.cheer}` }));
+  }
+  const heading = document.createElement('h3');
+  const body = document.createElement('p');
+  if (progress.current) {
+    heading.textContent = progress.current.title;
+    appendTutorialText(body, progress.current.text);
+  } else {
+    const skippedCount = progress.steps.filter((step) => step.skipped).length;
+    heading.textContent = skippedCount ? 'Through the tutorial' : 'You drew a 5T OTA!';
+    appendTutorialText(body, `${skippedCount ? `All steps visited in ${tutorialElapsed()}; skipped ones tick off whenever you finish them.` : `Done in ${tutorialElapsed()}.`} Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.`);
+  }
+  tutorialStepEl.append(heading, body);
+  tutorialStepsEl.hidden = !editor.tutorial.showSteps;
+  tutorialStepsToggleEl.textContent = editor.tutorial.showSteps ? 'Hide steps' : 'All steps';
+  tutorialStepsEl.replaceChildren(...progress.steps.map((step) => {
+    const item = document.createElement('li');
+    item.textContent = TUTORIAL_STEPS.find((candidate) => candidate.id === step.id).title;
+    item.classList.toggle('done', step.done);
+    item.classList.toggle('skipped', step.skipped);
+    item.classList.toggle('current', step.id === progress.current?.id);
+    return item;
+  }));
+  tutorialSkipEl.hidden = !progress.current;
+}
+
+/** Begin the tutorial in a fresh document (after the usual unsaved-changes check). */
+function offerTutorial() {
+  requestDocumentAction('Starting the tutorial', () => {
+    startNewDocument();
+    startTutorial();
+  });
+}
+
+function startTutorial() {
+  circuitNameEl.value = 'tutorial-5t-ota';
+  renderSaveState();
+  editor.tutorial = { startedAt: Date.now(), skipped: new Set(), cheered: new Set(), cheer: null, finishedAt: null };
+  tutorialKey = '';
+  hideTip();
+  fitView();
+  // Keep the marked spots clear of the card at the bottom left.
+  const pane = paneSize();
+  if (pane && tutorialCardEl) {
+    const cardWorld = ((tutorialCardEl.getBoundingClientRect().width || 340) + 68) * (editor.view.w / pane.w);
+    editor.view = { ...editor.view, x: editor.view.x - cardWorld / 2 };
+  }
+  render();
+  canvasEl.focus();
+  logLine('Tutorial started: follow the card at the bottom left, or close it any time.', 'status');
+}
+
+/** Drop the tutorial's state; the card hides on the next render. The tutorial
+ *  belongs to its own drawing, so opening another design ends it. */
+function dropTutorial() {
+  editor.tutorial = null;
+  window.clearTimeout(tutorialCheerTimer);
+}
+
+function endTutorial() {
+  dropTutorial();
+  render();
+  canvasEl.focus();
+}
+
+function installOnboarding() {
+  document.getElementById('tip-card-close')?.addEventListener('click', () => {
+    if (shownTip) tipBook.retire(shownTip.id);
+    saveTips();
+    hideTip();
+  });
+  document.getElementById('tip-card-off')?.addEventListener('click', () => {
+    tipBook.setOff(true);
+    saveTips();
+    hideTip();
+    syncTipsButton();
+    logLine('tips off — turn them back on from the More menu', 'status');
+  });
+  // Hovering keeps a tip up while it is being read.
+  tipCardEl?.addEventListener('mouseenter', () => window.clearTimeout(tipHideTimer));
+  tipCardEl?.addEventListener('mouseleave', () => {
+    if (shownTip) tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS / 2);
+  });
+  tipsButton?.addEventListener('click', () => {
+    tipBook.setOff(!tipBook.state.off);
+    if (tipBook.state.off) hideTip();
+    saveTips();
+    syncTipsButton();
+  });
+  syncTipsButton();
+
+  document.getElementById('tutorial-close')?.addEventListener('click', endTutorial);
+  tutorialStepsToggleEl?.addEventListener('click', () => {
+    if (!editor.tutorial) return;
+    editor.tutorial.showSteps = !editor.tutorial.showSteps;
+    syncTutorial();
+  });
+  tutorialSkipEl?.addEventListener('click', () => {
+    const current = currentTutorialProgress()?.current;
+    if (current) editor.tutorial.skipped.add(current.id);
+    render();
+  });
+  document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
+}
 
 };
 
