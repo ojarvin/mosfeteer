@@ -10861,6 +10861,12 @@ canvasEl.addEventListener('contextmenu', (ev) => {
   if (Date.now() < suppressContextMenuUntil) return;
   openContextMenuAt(ev.clientX, ev.clientY);
 });
+// The late Windows event lands on whatever the release opened under the
+// cursor (the context or radial menu), not the canvas: keep the browser's own
+// menu from opening over ours.
+window.addEventListener('contextmenu', (ev) => {
+  if (Date.now() < suppressContextMenuUntil || componentContextMenuEl?.contains(ev.target) || radialMenuEl?.contains(ev.target)) ev.preventDefault();
+}, true);
 window.addEventListener('mousedown', (ev) => {
   if (componentContextMenuEl?.hidden || componentContextMenuEl.contains(ev.target)) return;
   closeComponentContextMenu();
