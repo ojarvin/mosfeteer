@@ -78,3 +78,8 @@ npm test
 - [`docs/beats.md`](docs/beats.md): how beats are stored and edited
 - [`docs/circuit-spec.md`](docs/circuit-spec.md): deterministic circuit generation
 - [`docs/topological-small-signal.md`](docs/topological-small-signal.md): how the analysis works
+
+## License
+
+[MIT](LICENSE). The vendored Latin Modern Math font in `src/web/fonts/` keeps
+its own [GUST Font License](src/web/fonts/GUST-FONT-LICENSE.txt).
