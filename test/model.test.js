@@ -3842,6 +3842,11 @@ test('net highlights offer sixteen distinct palette colors, the first nine uncha
   const values = NET_HIGHLIGHT_COLORS.map((token) => COLOR_PALETTE[token]);
   assert.ok(values.every(Boolean));
   assert.equal(new Set(values).size, values.length);
+  // The style swatches offer every palette color too.
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const swatches = [...html.matchAll(/class="swatch[^"]*"[^>]*data-value="([^"]+)"/g)].map((match) => match[1]);
+  for (const value of Object.values(COLOR_PALETTE)) assert.ok(swatches.includes(value), `swatch for ${value}`);
 });
 
 test('net highlights color whole electrical groups with unique cycling colors', async () => {

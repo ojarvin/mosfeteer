@@ -2705,8 +2705,10 @@ button.status-chip:hover {
   gap: 6px;
 }
 
+/* Two rows keep the menu narrow now that the palette has 19 swatches. */
 .context-style-strip .swatches {
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(10, 18px);
 }
 
 .component-context-menu .context-style-strip button {
