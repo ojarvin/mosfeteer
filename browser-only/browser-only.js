@@ -3,16 +3,22 @@ globalThis.__MOSFETEER_FONT_URL = "data:font/woff2;base64,d09GMk9UVE8ABfn8AA4AAA
 (function () {
   const __modules = Object.create(null);
   const __cache = Object.create(null);
+  const __bindings = [];
+  function __bind(read) {
+    __bindings.push(read);
+    read();
+  }
   function __require(id) {
     if (__cache[id]) return __cache[id];
     const __exports = {};
     __cache[id] = __exports;
     if (!__modules[id]) throw new Error('browser bundle module not found: ' + id);
     __modules[id](__require, __exports);
+    for (const read of __bindings) read();
     return __exports;
   }
 __modules["src/core/analysis/algebra-ops.js"] = function (__require, __exports) {
-const { integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js");
+let integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES; __bind(() => { ({ integer, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, infinity, createOperationBudget, isInfinite, symbol: makeSymbol, DEFAULT_MAX_OPERATIONS, INFINITY_NAMES } = __require("src/core/analysis/rational.js")); });
 /**
  * Adapt rational.js to the small algebra contract used by MNA and solve.
  *
@@ -140,9 +146,9 @@ __exports.createRationalOps = createRationalOps;
 };
 
 __modules["src/core/analysis/approximation.js"] = function (__require, __exports) {
-const { OWN } = __require("src/core/analysis/shared.js");
-const { cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js");
-const { add, equals, integer, multiply, polynomialCoefficients, power, rationalFunction, substituteRational, symbol } = __require("src/core/analysis/rational.js");
+let OWN; __bind(() => { ({ OWN } = __require("src/core/analysis/shared.js")); });
+let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
+let add, equals, integer, multiply, polynomialCoefficients, power, rationalFunction, substituteRational, symbol; __bind(() => { ({ add, equals, integer, multiply, polynomialCoefficients, power, rationalFunction, substituteRational, symbol } = __require("src/core/analysis/rational.js")); });
 
 
 
@@ -664,7 +670,7 @@ __exports.applyApproximations = applyApproximations;
 };
 
 __modules["src/core/analysis/compact.js"] = function (__require, __exports) {
-const { add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js");
+let add, integer, multiply, rationalFunction; __bind(() => { ({ add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js")); });
 
 
 /** Cancel local distributive identities without expanding a huge transfer. */
@@ -709,8 +715,8 @@ __exports.compactRational = compactRational;
 };
 
 __modules["src/core/analysis/context.js"] = function (__require, __exports) {
-const { asList, MOS_TYPES } = __require("src/core/analysis/shared.js");
-const { canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js");
+let asList, MOS_TYPES; __bind(() => { ({ asList, MOS_TYPES } = __require("src/core/analysis/shared.js")); });
+let canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal; __bind(() => { ({ canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js")); });
 
 
 
@@ -1106,7 +1112,7 @@ __exports.AC_GROUND = AC_GROUND;
 };
 
 __modules["src/core/analysis/devices.js"] = function (__require, __exports) {
-const { MOS_TYPES } = __require("src/core/analysis/shared.js");
+let MOS_TYPES; __bind(() => { ({ MOS_TYPES } = __require("src/core/analysis/shared.js")); });
 
 // Primitive contract: terminals.a -> terminals.b is the branch direction;
 // VCCS control.a -> control.b is its voltage-control direction.
@@ -1522,7 +1528,7 @@ __exports.convertCircuitToPrimitives = convertCircuitToPrimitives;
 };
 
 __modules["src/core/analysis/diagnostics.js"] = function (__require, __exports) {
-const { asList, firstDefined } = __require("src/core/analysis/shared.js");
+let asList, firstDefined; __bind(() => { ({ asList, firstDefined } = __require("src/core/analysis/shared.js")); });
 
 const STAGES = Object.freeze([
   'context', 'primitive', 'primitives', 'conversion', 'devices', 'graph', 'mna', 'solver', 'solve',
@@ -1872,19 +1878,19 @@ __exports.formatDiagnosticLog = formatDiagnosticLog;
 };
 
 __modules["src/core/analysis/engine.js"] = function (__require, __exports) {
-const { MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js");
-const { applyApproximations } = __require("src/core/analysis/approximation.js");
-const { cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js");
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { symbolProvenance } = __require("src/core/analysis/provenance.js");
-const { buildExactAnalysisPipeline } = __require("src/core/analysis/pipeline.js");
-const { presentDiagnostics } = __require("src/core/analysis/diagnostics.js");
-const { describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js");
-const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { approximateTopology, buildTopologyIdentities } = __require("src/core/analysis/topology.js");
-const { compactRational } = __require("src/core/analysis/compact.js");
-const { infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js");
-const { equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js");
+let MOS_TYPES, firstDefined; __bind(() => { ({ MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js")); });
+let applyApproximations; __bind(() => { ({ applyApproximations } = __require("src/core/analysis/approximation.js")); });
+let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
+let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
+let symbolProvenance; __bind(() => { ({ symbolProvenance } = __require("src/core/analysis/provenance.js")); });
+let buildExactAnalysisPipeline; __bind(() => { ({ buildExactAnalysisPipeline } = __require("src/core/analysis/pipeline.js")); });
+let presentDiagnostics; __bind(() => { ({ presentDiagnostics } = __require("src/core/analysis/diagnostics.js")); });
+let describeSmallSignalNetlist; __bind(() => { ({ describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js")); });
+let analyzeResponse; __bind(() => { ({ analyzeResponse } = __require("src/core/analysis/response.js")); });
+let approximateTopology, buildTopologyIdentities; __bind(() => { ({ approximateTopology, buildTopologyIdentities } = __require("src/core/analysis/topology.js")); });
+let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
+let infinity, integer, rational, rationalFunction, substituteRational; __bind(() => { ({ infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js")); });
+let equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation; __bind(() => { ({ equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js")); });
 
 
 
@@ -2692,8 +2698,8 @@ __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 };
 
 __modules["src/core/analysis/graph.js"] = function (__require, __exports) {
-const { asList, PASSIVE_KINDS } = __require("src/core/analysis/shared.js");
-const { AC_GROUND } = __require("src/core/analysis/context.js");
+let asList, PASSIVE_KINDS; __bind(() => { ({ asList, PASSIVE_KINDS } = __require("src/core/analysis/shared.js")); });
+let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
 
 
 
@@ -2907,8 +2913,8 @@ __exports.coupledSubgraph = coupledSubgraph;
 };
 
 __modules["src/core/analysis/index.js"] = function (__require, __exports) {
-const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
-const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
+let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
+let adaptCombinedReport; __bind(() => { ({ adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
 
 
 
@@ -3013,14 +3019,14 @@ __exports.expressionHasFrequency = expressionHasFrequency;
 };
 
 __modules["src/core/analysis/miller.js"] = function (__require, __exports) {
-const { AC_GROUND } = __require("src/core/analysis/context.js");
-const { isReduciblePassive, reduceTwoTerminalNetwork } = __require("src/core/analysis/reduce.js");
-const { buildMNA } = __require("src/core/analysis/mna.js");
-const { coupledSubgraph } = __require("src/core/analysis/graph.js");
-const { solveMNA } = __require("src/core/analysis/solve.js");
-const { resolveValue, toMnaPrimitives } = __require("src/core/analysis/pipeline.js");
-const { compactRational } = __require("src/core/analysis/compact.js");
-const { integer, substituteRational } = __require("src/core/analysis/rational.js");
+let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
+let isReduciblePassive, reduceTwoTerminalNetwork; __bind(() => { ({ isReduciblePassive, reduceTwoTerminalNetwork } = __require("src/core/analysis/reduce.js")); });
+let buildMNA; __bind(() => { ({ buildMNA } = __require("src/core/analysis/mna.js")); });
+let coupledSubgraph; __bind(() => { ({ coupledSubgraph } = __require("src/core/analysis/graph.js")); });
+let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
+let resolveValue, toMnaPrimitives; __bind(() => { ({ resolveValue, toMnaPrimitives } = __require("src/core/analysis/pipeline.js")); });
+let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
+let integer, substituteRational; __bind(() => { ({ integer, substituteRational } = __require("src/core/analysis/rational.js")); });
 /**
  * Miller approximation, applied as a pre-solve modeling transform.
  *
@@ -3543,10 +3549,10 @@ __exports.MNA_OPS = MNA_OPS;
 };
 
 __modules["src/core/analysis/model-schematic.js"] = function (__require, __exports) {
-const { Circuit } = __require("src/core/model.js");
-const { rectsOverlap } = __require("src/core/geometry.js");
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { renderExpression } = __require("src/core/analysis/present.js");
+let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
+let rectsOverlap; __bind(() => { ({ rectsOverlap } = __require("src/core/geometry.js")); });
+let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
+let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 /**
  * Draw the small-signal model the solve actually used as an ordinary
  * schematic: one column per node, shunt branches hanging from each node down
@@ -4022,9 +4028,9 @@ __exports.AC_GROUND_NODE = AC_GROUND_NODE;
 };
 
 __modules["src/core/analysis/netlist.js"] = function (__require, __exports) {
-const { firstDefined } = __require("src/core/analysis/shared.js");
-const { formatExpression } = __require("src/core/analysis/rational.js");
-const { renderExpression } = __require("src/core/analysis/present.js");
+let firstDefined; __bind(() => { ({ firstDefined } = __require("src/core/analysis/shared.js")); });
+let formatExpression; __bind(() => { ({ formatExpression } = __require("src/core/analysis/rational.js")); });
+let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 
 
 
@@ -4335,19 +4341,19 @@ __exports.describeSmallSignalNetlist = describeSmallSignalNetlist;
 };
 
 __modules["src/core/analysis/pipeline.js"] = function (__require, __exports) {
-const { firstDefined } = __require("src/core/analysis/shared.js");
-const { AC_GROUND, resolveAnalysisContext } = __require("src/core/analysis/context.js");
-const { convertCircuitToPrimitives } = __require("src/core/analysis/devices.js");
-const { coupledSubgraph, splitAtNode } = __require("src/core/analysis/graph.js");
-const { buildMNA, numberOps, validateMnaOps } = __require("src/core/analysis/mna.js");
-const { add: addExpression, keyOf, multiply: multiplyExpression, negate: negateExpression, power: powerExpression, rationalFunction } = __require("src/core/analysis/rational.js");
-const { applyMillerApproximation } = __require("src/core/analysis/miller.js");
-const { provenParallel } = __require("src/core/analysis/present.js");
-const { reduceNetwork } = __require("src/core/analysis/reduce.js");
-const { solveMNA } = __require("src/core/analysis/solve.js");
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { compactRational } = __require("src/core/analysis/compact.js");
-const { solveByTopology } = __require("src/core/analysis/topological-solve.js");
+let firstDefined; __bind(() => { ({ firstDefined } = __require("src/core/analysis/shared.js")); });
+let AC_GROUND, resolveAnalysisContext; __bind(() => { ({ AC_GROUND, resolveAnalysisContext } = __require("src/core/analysis/context.js")); });
+let convertCircuitToPrimitives; __bind(() => { ({ convertCircuitToPrimitives } = __require("src/core/analysis/devices.js")); });
+let coupledSubgraph, splitAtNode; __bind(() => { ({ coupledSubgraph, splitAtNode } = __require("src/core/analysis/graph.js")); });
+let buildMNA, numberOps, validateMnaOps; __bind(() => { ({ buildMNA, numberOps, validateMnaOps } = __require("src/core/analysis/mna.js")); });
+let addExpression, keyOf, multiplyExpression, negateExpression, powerExpression, rationalFunction; __bind(() => { ({ add: addExpression, keyOf, multiply: multiplyExpression, negate: negateExpression, power: powerExpression, rationalFunction } = __require("src/core/analysis/rational.js")); });
+let applyMillerApproximation; __bind(() => { ({ applyMillerApproximation } = __require("src/core/analysis/miller.js")); });
+let provenParallel; __bind(() => { ({ provenParallel } = __require("src/core/analysis/present.js")); });
+let reduceNetwork; __bind(() => { ({ reduceNetwork } = __require("src/core/analysis/reduce.js")); });
+let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
+let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
+let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
+let solveByTopology; __bind(() => { ({ solveByTopology } = __require("src/core/analysis/topological-solve.js")); });
 
 
 
@@ -4979,7 +4985,7 @@ __exports.buildExactAnalysisPipeline = buildExactAnalysisPipeline;
 };
 
 __modules["src/core/analysis/polynomial-gcd.js"] = function (__require, __exports) {
-const { add, integer, multiply, power, rationalFunction, symbol } = __require("src/core/analysis/rational.js");
+let add, integer, multiply, power, rationalFunction, symbol; __bind(() => { ({ add, integer, multiply, power, rationalFunction, symbol } = __require("src/core/analysis/rational.js")); });
 /**
  * Cancel a common polynomial factor from a rational function's numerator and
  * denominator. `rationalFunction` removes only common monomial content, so a
@@ -5353,7 +5359,7 @@ __exports.cancelCommonPolynomialFactor = cancelCommonPolynomialFactor;
 };
 
 __modules["src/core/analysis/present.js"] = function (__require, __exports) {
-const { INFINITY_NAMES, ONE, isNumber, isZero, keyOf } = __require("src/core/analysis/rational.js");
+let INFINITY_NAMES, ONE, isNumber, isZero, keyOf; __bind(() => { ({ INFINITY_NAMES, ONE, isNumber, isZero, keyOf } = __require("src/core/analysis/rational.js")); });
 
 
 const PRECEDENCE = Object.freeze({ sum: 10, product: 20, power: 30, atom: 40 });
@@ -6917,7 +6923,7 @@ __exports.INFINITY_NAMES = INFINITY_NAMES;
 };
 
 __modules["src/core/analysis/reduce.js"] = function (__require, __exports) {
-const { PASSIVE_KINDS } = __require("src/core/analysis/shared.js");
+let PASSIVE_KINDS; __bind(() => { ({ PASSIVE_KINDS } = __require("src/core/analysis/shared.js")); });
 /**
  * Textbook series/parallel reduction of a network of passive primitives
  * (resistor/capacitor/inductor/conductance/admittance). A human reduces a
@@ -7125,10 +7131,10 @@ __exports.reduceNetwork = reduceNetwork;
 };
 
 __modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
-const { OWN, firstDefined } = __require("src/core/analysis/shared.js");
-const { analyzeResponse } = __require("src/core/analysis/response.js");
-const { joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js");
-const { infinity } = __require("src/core/analysis/rational.js");
+let OWN, firstDefined; __bind(() => { ({ OWN, firstDefined } = __require("src/core/analysis/shared.js")); });
+let analyzeResponse; __bind(() => { ({ analyzeResponse } = __require("src/core/analysis/response.js")); });
+let joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance; __bind(() => { ({ joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js")); });
+let infinity; __bind(() => { ({ infinity } = __require("src/core/analysis/rational.js")); });
 
 
 
@@ -7617,7 +7623,7 @@ __exports.adaptCombinedReport = adaptCombinedReport;
 };
 
 __modules["src/core/analysis/response.js"] = function (__require, __exports) {
-const { add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js");
+let add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol; __bind(() => { ({ add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js")); });
 
 
 const DEFAULT_VARIABLE = 's';
@@ -7939,7 +7945,7 @@ __exports.PASSIVE_KINDS = PASSIVE_KINDS;
 };
 
 __modules["src/core/analysis/solve.js"] = function (__require, __exports) {
-const { numberOps, validateMnaOps } = __require("src/core/analysis/mna.js");
+let numberOps, validateMnaOps; __bind(() => { ({ numberOps, validateMnaOps } = __require("src/core/analysis/mna.js")); });
 /**
  * Exact multi-RHS linear solver for the matrix produced by mna.js.
  *
@@ -8212,8 +8218,8 @@ __exports.solveMNA = solveMNA;
 };
 
 __modules["src/core/analysis/topological-solve.js"] = function (__require, __exports) {
-const { solveMNA } = __require("src/core/analysis/solve.js");
-const { compactRational } = __require("src/core/analysis/compact.js");
+let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
+let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
 
 
 
@@ -8367,10 +8373,10 @@ __exports.solveByTopology = solveByTopology;
 };
 
 __modules["src/core/analysis/topology.js"] = function (__require, __exports) {
-const { createRationalOps } = __require("src/core/analysis/algebra-ops.js");
-const { solveMNA } = __require("src/core/analysis/solve.js");
-const { compactRational } = __require("src/core/analysis/compact.js");
-const { applyApproximations, intrinsicallyDominates } = __require("src/core/analysis/approximation.js");
+let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
+let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
+let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
+let applyApproximations, intrinsicallyDominates; __bind(() => { ({ applyApproximations, intrinsicallyDominates } = __require("src/core/analysis/approximation.js")); });
 
 
 
@@ -8591,9 +8597,9 @@ __exports.buildTopologyIdentities = buildTopologyIdentities;
 };
 
 __modules["src/core/beats.js"] = function (__require, __exports) {
-const { getSymbol } = __require("src/core/components/index.js");
-const { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName } = __require("src/core/model.js");
-const { steinerBranches } = __require("src/core/router.js");
+let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
+let INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName; __bind(() => { ({ INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName } = __require("src/core/model.js")); });
+let steinerBranches; __bind(() => { ({ steinerBranches } = __require("src/core/router.js")); });
 /**
  * Beats: an ordered list of view states over one drawing, so a figure can be
  * built up (or its switch phases shown) step by step. The contract is in
@@ -9430,17 +9436,17 @@ __exports.PRESENCES = PRESENCES;
 };
 
 __modules["src/core/commands.js"] = function (__require, __exports) {
-const { Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld } = __require("src/core/model.js");
-const { getSymbol, symbolTypeNames } = __require("src/core/components/index.js");
-const { GRID, onGrid, snap, ceilGrid } = __require("src/core/grid.js");
-const { applyDir, applyTransform, fmt, rectsOverlap } = __require("src/core/geometry.js");
-const { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js");
-const { crossNetOverlaps } = __require("src/core/wiring.js");
-const { svgString } = __require("src/core/render.js");
-const { hiddenSupplyBarLabels } = __require("src/core/supply-bars.js");
-const { analyzeSmallSignal } = __require("src/core/analysis/index.js");
-const { addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js");
-const { addTimingDiagram } = __require("src/core/timing-diagram.js");
+let Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld } = __require("src/core/model.js")); });
+let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } = __require("src/core/components/index.js")); });
+let GRID, onGrid, snap, ceilGrid; __bind(() => { ({ GRID, onGrid, snap, ceilGrid } = __require("src/core/grid.js")); });
+let applyDir, applyTransform, fmt, rectsOverlap; __bind(() => { ({ applyDir, applyTransform, fmt, rectsOverlap } = __require("src/core/geometry.js")); });
+let balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute; __bind(() => { ({ balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js")); });
+let crossNetOverlaps; __bind(() => { ({ crossNetOverlaps } = __require("src/core/wiring.js")); });
+let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
+let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require("src/core/supply-bars.js")); });
+let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
+let addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
+let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
 
 
 
@@ -10632,7 +10638,7 @@ __exports.runCommand = runCommand;
 };
 
 __modules["src/core/components/block.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 // A schematic block is the default footprint for a resizable abstraction node.
@@ -10675,7 +10681,7 @@ __exports.block = block;
 };
 
 __modules["src/core/components/capacitor.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -10707,7 +10713,7 @@ __exports.capacitor = capacitor;
 };
 
 __modules["src/core/components/converter.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
@@ -10762,7 +10768,7 @@ __exports.dac = dac;
 };
 
 __modules["src/core/components/current.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 const SOURCE_TERMINALS = [
@@ -10807,7 +10813,7 @@ __exports.voltage_source = voltage_source;
 };
 
 __modules["src/core/components/defineSymbol.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
 
 /**
@@ -10884,7 +10890,7 @@ __exports.validateSymbol = validateSymbol;
 };
 
 __modules["src/core/components/diode.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -10916,7 +10922,7 @@ __exports.diode = diode;
 };
 
 __modules["src/core/components/flipflop.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 const BODY = Object.freeze({ x: -40, y: -80, w: 80, h: 160 });
@@ -11025,7 +11031,7 @@ __exports.latch_enb_rstb_qb = latch_enb_rstb_qb;
 };
 
 __modules["src/core/components/ground.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11053,31 +11059,31 @@ __exports.ground = ground;
 };
 
 __modules["src/core/components/index.js"] = function (__require, __exports) {
-const { resistor } = __require("src/core/components/resistor.js");
-const { capacitor } = __require("src/core/components/capacitor.js");
-const { inductor } = __require("src/core/components/inductor.js");
-const { diode } = __require("src/core/components/diode.js");
-const { nmos } = __require("src/core/components/nmos.js");
-const { pmos } = __require("src/core/components/pmos.js");
-const { nmosb } = __require("src/core/components/nmosb.js");
-const { pmosb } = __require("src/core/components/pmosb.js");
-const { npn } = __require("src/core/components/npn.js");
-const { pnp } = __require("src/core/components/pnp.js");
-const { ground } = __require("src/core/components/ground.js");
-const { vcm } = __require("src/core/components/vcm.js");
-const { supply } = __require("src/core/components/supply.js");
-const { portInput, portOutput, portInputOutput, port } = __require("src/core/components/port.js");
-const { current_source, voltage_source } = __require("src/core/components/current.js");
-const { vccs } = __require("src/core/components/vccs.js");
-const { opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js");
-const { adc, dac } = __require("src/core/components/converter.js");
-const { dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } = __require("src/core/components/flipflop.js");
-const { variable_resistor, variable_capacitor, variable_inductor } = __require("src/core/components/variable.js");
-const { solder } = __require("src/core/components/solder.js");
-const { switch_open, switch_closed } = __require("src/core/components/switch.js");
-const { block } = __require("src/core/components/block.js");
-const { mux2 } = __require("src/core/components/mux.js");
-const { signal_sum, signal_multiply } = __require("src/core/components/signal-flow.js");
+let resistor; __bind(() => { ({ resistor } = __require("src/core/components/resistor.js")); });
+let capacitor; __bind(() => { ({ capacitor } = __require("src/core/components/capacitor.js")); });
+let inductor; __bind(() => { ({ inductor } = __require("src/core/components/inductor.js")); });
+let diode; __bind(() => { ({ diode } = __require("src/core/components/diode.js")); });
+let nmos; __bind(() => { ({ nmos } = __require("src/core/components/nmos.js")); });
+let pmos; __bind(() => { ({ pmos } = __require("src/core/components/pmos.js")); });
+let nmosb; __bind(() => { ({ nmosb } = __require("src/core/components/nmosb.js")); });
+let pmosb; __bind(() => { ({ pmosb } = __require("src/core/components/pmosb.js")); });
+let npn; __bind(() => { ({ npn } = __require("src/core/components/npn.js")); });
+let pnp; __bind(() => { ({ pnp } = __require("src/core/components/pnp.js")); });
+let ground; __bind(() => { ({ ground } = __require("src/core/components/ground.js")); });
+let vcm; __bind(() => { ({ vcm } = __require("src/core/components/vcm.js")); });
+let supply; __bind(() => { ({ supply } = __require("src/core/components/supply.js")); });
+let portInput, portOutput, portInputOutput, port; __bind(() => { ({ portInput, portOutput, portInputOutput, port } = __require("src/core/components/port.js")); });
+let current_source, voltage_source; __bind(() => { ({ current_source, voltage_source } = __require("src/core/components/current.js")); });
+let vccs; __bind(() => { ({ vccs } = __require("src/core/components/vccs.js")); });
+let opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate; __bind(() => { ({ opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js")); });
+let adc, dac; __bind(() => { ({ adc, dac } = __require("src/core/components/converter.js")); });
+let dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb; __bind(() => { ({ dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } = __require("src/core/components/flipflop.js")); });
+let variable_resistor, variable_capacitor, variable_inductor; __bind(() => { ({ variable_resistor, variable_capacitor, variable_inductor } = __require("src/core/components/variable.js")); });
+let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.js")); });
+let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
+let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
+let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
+let signal_sum, signal_multiply; __bind(() => { ({ signal_sum, signal_multiply } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -11210,7 +11216,7 @@ __exports.symbolTypeNames = symbolTypeNames;
 };
 
 __modules["src/core/components/inductor.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11239,7 +11245,7 @@ __exports.inductor = inductor;
 };
 
 __modules["src/core/components/logic.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11469,7 +11475,7 @@ __exports.xnor3_gate = xnor3_gate;
 };
 
 __modules["src/core/components/mos.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 const TERMINALS = [
@@ -11530,7 +11536,7 @@ __exports.createMos = createMos;
 };
 
 __modules["src/core/components/mux.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /** Compact two-input, one-select multiplexer. */
@@ -11566,7 +11572,7 @@ __exports.mux2 = mux2;
 };
 
 __modules["src/core/components/nmos.js"] = function (__require, __exports) {
-const { createMos } = __require("src/core/components/mos.js");
+let createMos; __bind(() => { ({ createMos } = __require("src/core/components/mos.js")); });
 
 
 const nmos = createMos('nmos');
@@ -11575,7 +11581,7 @@ __exports.nmos = nmos;
 };
 
 __modules["src/core/components/nmosb.js"] = function (__require, __exports) {
-const { createMos } = __require("src/core/components/mos.js");
+let createMos; __bind(() => { ({ createMos } = __require("src/core/components/mos.js")); });
 
 
 const nmosb = createMos('nmosb', { bulk: true });
@@ -11584,7 +11590,7 @@ __exports.nmosb = nmosb;
 };
 
 __modules["src/core/components/npn.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11623,7 +11629,7 @@ __exports.npn = npn;
 };
 
 __modules["src/core/components/pmos.js"] = function (__require, __exports) {
-const { createMos } = __require("src/core/components/mos.js");
+let createMos; __bind(() => { ({ createMos } = __require("src/core/components/mos.js")); });
 
 
 const pmos = createMos('pmos', { pmos: true });
@@ -11632,7 +11638,7 @@ __exports.pmos = pmos;
 };
 
 __modules["src/core/components/pmosb.js"] = function (__require, __exports) {
-const { createMos } = __require("src/core/components/mos.js");
+let createMos; __bind(() => { ({ createMos } = __require("src/core/components/mos.js")); });
 
 
 const pmosb = createMos('pmosb', { pmos: true, bulk: true });
@@ -11641,7 +11647,7 @@ __exports.pmosb = pmosb;
 };
 
 __modules["src/core/components/pnp.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11678,7 +11684,7 @@ __exports.pnp = pnp;
 };
 
 __modules["src/core/components/port.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 function boxedPort(type, description, refPrefix, outline, options = {}) {
@@ -11748,7 +11754,7 @@ __exports.port = port;
 };
 
 __modules["src/core/components/resistor.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11779,7 +11785,7 @@ __exports.resistor = resistor;
 };
 
 __modules["src/core/components/signal-flow.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 const SIGNAL_TERMINALS = [
@@ -11829,7 +11835,7 @@ __exports.signal_multiply = signal_multiply;
 };
 
 __modules["src/core/components/solder.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11865,7 +11871,7 @@ __exports.solder = solder;
 };
 
 __modules["src/core/components/supply.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11892,7 +11898,7 @@ __exports.supply = supply;
 };
 
 __modules["src/core/components/switch.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -11935,10 +11941,10 @@ __exports.switch_closed = switch_closed;
 };
 
 __modules["src/core/components/variable.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
-const { resistor } = __require("src/core/components/resistor.js");
-const { capacitor } = __require("src/core/components/capacitor.js");
-const { inductor } = __require("src/core/components/inductor.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
+let resistor; __bind(() => { ({ resistor } = __require("src/core/components/resistor.js")); });
+let capacitor; __bind(() => { ({ capacitor } = __require("src/core/components/capacitor.js")); });
+let inductor; __bind(() => { ({ inductor } = __require("src/core/components/inductor.js")); });
 
 
 
@@ -11975,7 +11981,7 @@ __exports.variable_inductor = variable_inductor;
 };
 
 __modules["src/core/components/vccs.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -12012,7 +12018,7 @@ __exports.vccs = vccs;
 };
 
 __modules["src/core/components/vcm.js"] = function (__require, __exports) {
-const { defineSymbol } = __require("src/core/components/defineSymbol.js");
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
 
 
 /**
@@ -12038,8 +12044,8 @@ __exports.vcm = vcm;
 };
 
 __modules["src/core/document.js"] = function (__require, __exports) {
-const { Circuit } = __require("src/core/model.js");
-const { svgString } = __require("src/core/render.js");
+let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
+let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 
 
 
@@ -12078,7 +12084,7 @@ __exports.renderDocument = renderDocument;
 };
 
 __modules["src/core/geometry.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
 
 /**
@@ -12450,15 +12456,15 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 };
 
 __modules["src/core/model.js"] = function (__require, __exports) {
-const { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js");
-const { snap, snapPoint, GRID } = __require("src/core/grid.js");
-const { getSymbol, seriesTerminalNames } = __require("src/core/components/index.js");
-const { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js");
-const { collapseCollinear } = __require("src/core/wireedit.js");
-const { LABEL_FONT_SIZES, labelFontSize, strokeWidth } = __require("src/core/style.js");
-const { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js");
-const { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js");
-const { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js");
+let applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect; __bind(() => { ({ applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js")); });
+let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require("src/core/grid.js")); });
+let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
+let balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute; __bind(() => { ({ balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js")); });
+let collapseCollinear; __bind(() => { ({ collapseCollinear } = __require("src/core/wireedit.js")); });
+let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_SIZES, labelFontSize, strokeWidth } = __require("src/core/style.js")); });
+let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
+let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
+let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js")); });
 
 
 
@@ -18673,8 +18679,8 @@ __exports.Circuit = Circuit;
 };
 
 __modules["src/core/page-guide.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-const { LABEL_FONT_SIZE } = __require("src/core/model.js");
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let LABEL_FONT_SIZE; __bind(() => { ({ LABEL_FONT_SIZE } = __require("src/core/model.js")); });
 
 
 
@@ -18766,15 +18772,15 @@ __exports.PAGE_GUIDES = PAGE_GUIDES;
 };
 
 __modules["src/core/render.js"] = function (__require, __exports) {
-const { applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js");
-const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
-const { autoRoute } = __require("src/core/router.js");
-const { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js");
-const { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js");
-const { defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js");
-const { hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js");
-const { drawnNetPaths, switchState } = __require("src/core/beats.js");
-const { normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js");
+let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js")); });
+let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
+let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
+let escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
+let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
+let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
+let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
+let drawnNetPaths, switchState; __bind(() => { ({ drawnNetPaths, switchState } = __require("src/core/beats.js")); });
+let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 
 
 
@@ -20367,8 +20373,8 @@ __exports.BEAT_FADE_INK = BEAT_FADE_INK;
 };
 
 __modules["src/core/router.js"] = function (__require, __exports) {
-const { GRID, snap } = __require("src/core/grid.js");
-const { junctionPoints, normalizeBranches, pointKey, reduceBranches } = __require("src/core/wiring.js");
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
+let junctionPoints, normalizeBranches, pointKey, reduceBranches; __bind(() => { ({ junctionPoints, normalizeBranches, pointKey, reduceBranches } = __require("src/core/wiring.js")); });
 
 
 
@@ -21475,11 +21481,11 @@ __exports.smartRoute = smartRoute;
 };
 
 __modules["src/core/selection-drawing.js"] = function (__require, __exports) {
-const { Circuit, Net } = __require("src/core/model.js");
-const { renderDocument } = __require("src/core/document.js");
-const { resolveCopySelection } = __require("src/core/selection.js");
-const { GRID } = __require("src/core/grid.js");
-const { junctionPoints, pointOnPath } = __require("src/core/wiring.js");
+let Circuit, Net; __bind(() => { ({ Circuit, Net } = __require("src/core/model.js")); });
+let renderDocument; __bind(() => { ({ renderDocument } = __require("src/core/document.js")); });
+let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let junctionPoints, pointOnPath; __bind(() => { ({ junctionPoints, pointOnPath } = __require("src/core/wiring.js")); });
 
 
 
@@ -21585,7 +21591,7 @@ __exports.DRAWING_EXPORT_OPTIONS = DRAWING_EXPORT_OPTIONS;
 };
 
 __modules["src/core/selection.js"] = function (__require, __exports) {
-const { extractWireFragments } = __require("src/core/model.js");
+let extractWireFragments; __bind(() => { ({ extractWireFragments } = __require("src/core/model.js")); });
 
 
 /** Owned labels bring their component; other labels remain visual selections. */
@@ -21775,8 +21781,8 @@ __exports.labelFontSize = labelFontSize;
 };
 
 __modules["src/core/supply-bars.js"] = function (__require, __exports) {
-const { transformRect } = __require("src/core/geometry.js");
-const { canonicalNetName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js");
+let transformRect; __bind(() => { ({ transformRect } = __require("src/core/geometry.js")); });
+let canonicalNetName, referenceMarkerInfo, referenceMarkerName; __bind(() => { ({ canonicalNetName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js")); });
 
 
 
@@ -21928,8 +21934,8 @@ __exports.supplyBarRow = supplyBarRow;
 };
 
 __modules["src/core/timing-diagram.js"] = function (__require, __exports) {
-const { GRID, ceilGrid, floorGrid } = __require("src/core/grid.js");
-const { isTexSource, switchPhases } = __require("src/core/beats.js");
+let GRID, ceilGrid, floorGrid; __bind(() => { ({ GRID, ceilGrid, floorGrid } = __require("src/core/grid.js")); });
+let isTexSource, switchPhases; __bind(() => { ({ isTexSource, switchPhases } = __require("src/core/beats.js")); });
 /**
  * Timing diagram template: one clock waveform per switch phase, drawn under
  * the drawing as plain annotations the author then edits into the real
@@ -21993,7 +21999,7 @@ __exports.addTimingDiagram = addTimingDiagram;
 };
 
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
-const { GRID, snap } = __require("src/core/grid.js");
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 
 
 /**
@@ -22299,7 +22305,7 @@ __exports.moveWireRun = moveWireRun;
 };
 
 __modules["src/core/wiring.js"] = function (__require, __exports) {
-const { snap, GRID } = __require("src/core/grid.js");
+let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 
 
 const pointKey = (p) => `${snap(p.x)},${snap(p.y)}`;
@@ -23130,7 +23136,7 @@ __exports.ANALYSIS_OPTION_DEFAULTS = ANALYSIS_OPTION_DEFAULTS;
 };
 
 __modules["src/web/analysis-state.js"] = function (__require, __exports) {
-const { parseLabelRuns } = __require("src/core/model.js");
+let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
 /**
  * Pure helpers for the small-signal analysis form.
  *
@@ -23253,7 +23259,7 @@ __exports.ANALYSIS_FORM_KEY = ANALYSIS_FORM_KEY;
 };
 
 __modules["src/web/clipboard.js"] = function (__require, __exports) {
-const { svgToPngDataUrl, withEmbeddedMathFont } = __require("src/web/drawing-export.js");
+let svgToPngDataUrl, withEmbeddedMathFont; __bind(() => { ({ svgToPngDataUrl, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 
 
 function pngDataUrlBlob(dataUrl) {
@@ -23288,8 +23294,8 @@ __exports.writeDrawingToClipboard = writeDrawingToClipboard;
 };
 
 __modules["src/web/commit-feedback.js"] = function (__require, __exports) {
-const { GRID } = __require("src/core/grid.js");
-const { componentShapeSvg, labelShapeSvg } = __require("src/core/render.js");
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let componentShapeSvg, labelShapeSvg; __bind(() => { ({ componentShapeSvg, labelShapeSvg } = __require("src/core/render.js")); });
 /**
  * Commit feedback: what visibly "landed" between two committed documents.
  *
@@ -23505,7 +23511,7 @@ __exports.commitFeedbackSvg = commitFeedbackSvg;
 };
 
 __modules["src/web/drawing-export.js"] = function (__require, __exports) {
-const { svgPixelSize } = __require("src/core/render.js");
+let svgPixelSize; __bind(() => { ({ svgPixelSize } = __require("src/core/render.js")); });
 
 
 async function svgToPngDataUrl(svg, scale = 4) {
@@ -23835,7 +23841,7 @@ __exports.confirmChoice = confirmChoice;
 };
 
 __modules["src/web/gestures.js"] = function (__require, __exports) {
-const { applyTransform } = __require("src/core/geometry.js");
+let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geometry.js")); });
 /**
  * Pure geometry and decision helpers for pointer gestures.
  *
@@ -24083,7 +24089,7 @@ __exports.lerpView = lerpView;
 };
 
 __modules["src/web/interaction.js"] = function (__require, __exports) {
-const { snap, GRID } = __require("src/core/grid.js");
+let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 
 
 function moveAnnotationEndpoint(label, endpoint, p) {
@@ -24304,8 +24310,8 @@ __exports.constrainAxis = constrainAxis;
 };
 
 __modules["src/web/layout.js"] = function (__require, __exports) {
-const { applyTransform, transformRect } = __require("src/core/geometry.js");
-const { GRID } = __require("src/core/grid.js");
+let applyTransform, transformRect; __bind(() => { ({ applyTransform, transformRect } = __require("src/core/geometry.js")); });
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
 
 
@@ -24850,46 +24856,46 @@ __exports.layoutSuggestions = layoutSuggestions;
 };
 
 __modules["src/web/main.js"] = function (__require, __exports) {
-const { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js");
-const { getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js");
-const { runCommand, commandHelp, evaluate } = __require("src/core/commands.js");
-const { hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js");
-const { addTimingDiagram } = __require("src/core/timing-diagram.js");
-const { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } = __require("src/core/beats.js");
-const { TipBook } = __require("src/web/tips.js");
-const { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js");
-const { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js");
-const { analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js");
-const { adaptCombinedReport } = __require("src/core/analysis/report-adapter.js");
-const { smallSignalSchematic } = __require("src/core/analysis/model-schematic.js");
-const { componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js");
-const { componentsOfSymbols } = __require("src/core/analysis/provenance.js");
-const { resolveColor, themeInkSvg } = __require("src/core/style.js");
-const { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js");
-const { createDocument, loadDocument, renderDocument } = __require("src/core/document.js");
-const { snap, GRID } = __require("src/core/grid.js");
-const { resolveCopySelection } = __require("src/core/selection.js");
-const { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } = __require("src/core/selection-drawing.js");
-const { svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js");
-const { writeDrawingToClipboard } = __require("src/web/clipboard.js");
-const { applyTransform, distanceToSegment, transformRect } = __require("src/core/geometry.js");
-const { applyMarkup } = __require("src/core/model.js");
-const { smartRoute } = __require("src/core/router.js");
-const { moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js");
-const { crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js");
-const { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate } = __require("src/web/selection.js");
-const { buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js");
-const { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js");
-const { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js");
-const { createPersistenceAdapter, defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js");
-const { confirmChoice, showFileDialog } = __require("src/web/file-dialog.js");
-const { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js");
-const { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js");
-const { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js");
-const { chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js");
-const { arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js");
-const { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js");
-const { alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides } = __require("src/web/layout.js");
+let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, stripMathDelimiters, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
+let getSymbol, seriesTerminalNames, symbolTypeNames; __bind(() => { ({ getSymbol, seriesTerminalNames, symbolTypeNames } = __require("src/core/components/index.js")); });
+let runCommand, commandHelp, evaluate; __bind(() => { ({ runCommand, commandHelp, evaluate } = __require("src/core/commands.js")); });
+let hiddenSupplyBarLabels, supplyBarRow, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBarRow, supplyBars } = __require("src/core/supply-bars.js")); });
+let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
+let addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats; __bind(() => { ({ addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } = __require("src/core/beats.js")); });
+let TipBook; __bind(() => { ({ TipBook } = __require("src/web/tips.js")); });
+let TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns; __bind(() => { ({ TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
+let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
+let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
+let adaptCombinedReport; __bind(() => { ({ adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
+let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
+let componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath; __bind(() => { ({ componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js")); });
+let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("src/core/analysis/provenance.js")); });
+let resolveColor, themeInkSvg; __bind(() => { ({ resolveColor, themeInkSvg } = __require("src/core/style.js")); });
+let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
+let createDocument, loadDocument, renderDocument; __bind(() => { ({ createDocument, loadDocument, renderDocument } = __require("src/core/document.js")); });
+let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
+let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
+let DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset; __bind(() => { ({ DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } = __require("src/core/selection-drawing.js")); });
+let svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
+let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
+let applyTransform, distanceToSegment, transformRect; __bind(() => { ({ applyTransform, distanceToSegment, transformRect } = __require("src/core/geometry.js")); });
+let applyMarkup; __bind(() => { ({ applyMarkup } = __require("src/core/model.js")); });
+let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
+let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js")); });
+let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js")); });
+let copyableLabelPayload, selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate; __bind(() => { ({ copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate } = __require("src/web/selection.js")); });
+let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
+let commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback; __bind(() => { ({ commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js")); });
+let INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType; __bind(() => { ({ INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, editorKeymap, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js")); });
+let createPersistenceAdapter, defaultExportDirectory, validDocumentName; __bind(() => { ({ createPersistenceAdapter, defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js")); });
+let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
+let analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
+let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
+let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
+let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
+let arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, radialRingRadius, radialSector, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
+let LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
+let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides; __bind(() => { ({ alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan, componentLayoutItem, describeGuides, distributionPlan, ghostLayoutItem, labelLayoutItem, outlineOf, placementGuides } = __require("src/web/layout.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -35753,6 +35759,12 @@ canvasEl.addEventListener('contextmenu', (ev) => {
   if (Date.now() < suppressContextMenuUntil) return;
   openContextMenuAt(ev.clientX, ev.clientY);
 });
+// The late Windows event lands on whatever the release opened under the
+// cursor (the context or radial menu), not the canvas: keep the browser's own
+// menu from opening over ours.
+window.addEventListener('contextmenu', (ev) => {
+  if (Date.now() < suppressContextMenuUntil || componentContextMenuEl?.contains(ev.target) || radialMenuEl?.contains(ev.target)) ev.preventDefault();
+}, true);
 window.addEventListener('mousedown', (ev) => {
   if (componentContextMenuEl?.hidden || componentContextMenuEl.contains(ev.target)) return;
   closeComponentContextMenu();
@@ -40582,7 +40594,7 @@ __exports.deriveInteractionState = deriveInteractionState;
 };
 
 __modules["src/web/persistence.js"] = function (__require, __exports) {
-const { validDocumentName } = __require("src/core/document.js");
+let validDocumentName; __bind(() => { ({ validDocumentName } = __require("src/core/document.js")); });
 /**
  * Persistence boundary for the editor.
  *
@@ -41629,7 +41641,7 @@ __exports.EDITOR_KEYMAP = EDITOR_KEYMAP;
 };
 
 __modules["src/web/tutorial.js"] = function (__require, __exports) {
-const { INTERFACE_PIN_TYPES } = __require("src/core/model.js");
+let INTERFACE_PIN_TYPES; __bind(() => { ({ INTERFACE_PIN_TYPES } = __require("src/core/model.js")); });
 // The first-drawing tutorial: a five-transistor OTA drawn step by step. It is
 // optional and self-contained. Each step is checked from the drawing's
 // structure (which parts exist, which pins share a net), never from exact
@@ -41833,7 +41845,7 @@ __exports.TUTORIAL_STEPS = TUTORIAL_STEPS;
 };
 
 __modules["src/web/wire-index.js"] = function (__require, __exports) {
-const { distanceToSegment } = __require("src/core/geometry.js");
+let distanceToSegment; __bind(() => { ({ distanceToSegment } = __require("src/core/geometry.js")); });
 
 
 const CELL = 40;
