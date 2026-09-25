@@ -4,12 +4,11 @@
  * Static files: the editor (`/src/web`) and the shared core (`/src/core`).
  * Document API: files addressed by absolute path, plus a workspace folder that
  * the document picker lists and new documents are saved into.
- * Command API: `/api/circuits/<name>` (read), `.../cmd`, `.../generate`, and `/api/active` for the
+ * Command API: `/api/circuits/<name>` (read), `.../cmd`, and `/api/active` for the
  * CLI; `<name>` is `<workspace>/<name>.json`.
  */
 
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
@@ -17,14 +16,12 @@ import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCommand } from '../core/commands.js';
 import { createDocument, documentKind, loadDocument } from '../core/document.js';
-import { generateCircuit } from '../core/circuitSpec.js';
-import { routeCircuit } from '../core/routing.js';
 import {
   absolutePath, browseFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,
   fileRevision, isJsonFile, listDocuments, readDocumentFile, serializeDocument, validDocumentName, writeFileAtomic,
 } from './documents.js';
 import { findChromium, printSvgToPdf } from './browser.js';
-import { svgPixelSize, svgString } from '../core/render.js';
+import { svgPixelSize } from '../core/render.js';
 import { codeFingerprint } from './fingerprint.js';
 import { pngToPdf } from './pdf-raster.js';
 import { allowedHosts, checkRequest } from './request-guard.js';
@@ -43,7 +40,6 @@ const CONTENT_SECURITY_POLICY = [
   "img-src 'self' data:", "font-src 'self'", "connect-src 'self'",
   "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ');
-const MAX_GENERATION_PREVIEWS = 32;
 const MIME = {
   '.js': 'text/javascript',
   '.mjs': 'text/javascript',
@@ -188,8 +184,6 @@ export async function startApp({
     }, 2_000);
     idleTimer.unref?.();
   }
-
-  const generationPreviews = new Map();
 
   async function workspaceInfo() {
     const documents = await listDocuments(workspace());
@@ -361,13 +355,11 @@ export async function startApp({
       return;
     }
 
-    const commandMatch = pathname.match(/^\/api\/circuits\/([^/]+)\/(cmd|generate)$/);
+    const commandMatch = pathname.match(/^\/api\/circuits\/([^/]+)\/cmd$/);
     if (commandMatch && method === 'POST') {
       const name = commandCircuitName(commandMatch[1]);
       if (!name) throw httpError('invalid circuit name');
-      const path = circuitPath(name);
-      if (commandMatch[2] === 'cmd') await runCircuitCommands(req, res, name, path);
-      else await runGeneration(req, res, name, path);
+      await runCircuitCommands(req, res, name, circuitPath(name));
       return;
     }
 
@@ -465,67 +457,6 @@ export async function startApp({
     json(res, 200, response, revisionHeaders(revision));
   }
 
-  async function runGeneration(req, res, name, path) {
-    const body = await requestBody(req);
-    const mode = body.mode || 'preview';
-    if (mode !== 'preview' && mode !== 'commit') throw httpError('mode must be preview or commit', 400, 'invalid-mode');
-    if (mode === 'commit') {
-      const preview = body.previewId ? generationPreviews.get(body.previewId) : null;
-      if (!preview || preview.target !== name || !preview.state) throw httpError('previewId is missing or does not match this circuit', 409, 'preview-required');
-      assertCurrentCode();
-      const committed = loadDocument(preview.state);
-      if (name === activeName) throw httpError('generated circuits cannot replace the active circuit', 409, 'circuit-exists');
-      const revision = await withLock(path, async () => {
-        try {
-          await writeFileAtomic(path, serializeDocument(committed), { overwrite: false });
-        } catch (error) {
-          if (error.code === 'exists') throw httpError('target circuit already exists', 409, 'circuit-exists');
-          throw error;
-        }
-        return fileRevision(path);
-      });
-      await setActive(name);
-      generationPreviews.delete(body.previewId);
-      json(res, 200, { ...preview.response, mode, mutated: true, committed: true }, revisionHeaders(revision));
-      return;
-    }
-    let generated;
-    try {
-      generated = routeCircuit(generateCircuit(body.spec), body.options || {});
-    } catch (error) {
-      // Malformed specs are client errors.
-      throw Object.assign(error, { status: error.status || 400, code: error.code || 'generation-error' });
-    }
-    if (!generated.ok) {
-      throw Object.assign(httpError('generation candidate failed hard checks', 422, 'generation-failed'), { report: generated.report });
-    }
-    const response = {
-      name,
-      mode,
-      previewId: randomUUID(),
-      mutated: false,
-      committed: false,
-      normalizedSpec: generated.spec,
-      topology: generated.spec,
-      candidate: {
-        score: generated.metrics.score,
-        issues: generated.metrics.evaluation?.issues || [],
-        placement: generated.placement,
-        metrics: generated.metrics,
-        semantic: generated.semantic,
-        report: generated.report,
-      },
-      semantic: generated.semantic,
-      state: generated.state,
-      artifacts: {
-        svg: svgString(generated.circuit, { grid: true, terminals: false, junctions: false, background: true, netNames: true }),
-      },
-    };
-    generationPreviews.set(response.previewId, { target: name, state: generated.state, response });
-    while (generationPreviews.size > MAX_GENERATION_PREVIEWS) generationPreviews.delete(generationPreviews.keys().next().value);
-    json(res, 200, response);
-  }
-
   async function serveStatic(req, res, url) {
     const headers = { 'Cache-Control': 'no-store, max-age=0' };
     let pathname;
@@ -577,7 +508,7 @@ export async function startApp({
           : error.code === 'EEXIST' ? 409
             : error.code === 'EACCES' || error.code === 'EPERM' ? 403
               : 500;
-      json(res, status, { error: error.message, ...(typeof error.code === 'string' ? { code: error.code } : {}), ...(error.report ? { report: error.report } : {}), ...(error.existing ? { existing: error.existing } : {}) });
+      json(res, status, { error: error.message, ...(typeof error.code === 'string' ? { code: error.code } : {}), ...(error.existing ? { existing: error.existing } : {}) });
     }
   });
 

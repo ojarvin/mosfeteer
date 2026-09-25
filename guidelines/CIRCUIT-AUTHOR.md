@@ -49,79 +49,20 @@ until the user accepts it.
 This contract is intentionally project-local and provider-neutral. It is the
 role prompt; the rest of this file is its operating procedure.
 
-## Deterministic generation workflow
+## Electrical contract first
 
 Natural-language interpretation belongs to the AI agent operating in this
-project directory, not to the browser editor. Stay in the circuit-author lane
-and translate the request into an explicit, versioned CircuitSpec before asking
-the deterministic generator to place and route it. The browser has no generation
-tool; use the CLI/API workflow below.
-
-Resolve the electrical contract first. Ask the user before guessing material
-topology, transistor polarity, biasing, feedback, supply/ground convention,
-port direction or meaning, or any other choice with multiple reasonable
-answers. Do not claim analog correctness from semantic, placement, routing, or
-`eval` checks; they validate declared structure and geometry only.
-
-Use a **new, unused circuit name** for generation. Do not overwrite an existing
-circuit, and do not commit until the user explicitly approves the reviewed
-preview. The exact CLI sequence is:
-
-```sh
-# Build the explicit spec from the approved electrical contract. This temporary
-# input is not a circuit JSON file and must not be committed to the repository.
-cat > /tmp/mosfeteer-spec.json <<'JSON'
-{
-  "version": 1,
-  "motif": "<motif>",
-  "components": [],
-  "nets": [],
-  "semantics": {}
-}
-JSON
-
-# Preview only: no circuit is loaded, changed, saved, or activated.
-node src/cli/index.js <new-circuit-name> generate --preview \
-  --file /tmp/mosfeteer-spec.json > /tmp/mosfeteer-preview.json
-
-# Review the structured JSON report and its artifacts before asking approval.
-# It includes normalized CircuitSpec, candidate score/issues, semantic report,
-# placement/routing report, state, and artifacts.svg.
-
-# After explicit user approval, rerun the same spec as a new named circuit.
-node src/cli/index.js <new-circuit-name> generate --commit \
-  --file /tmp/mosfeteer-spec.json
-
-# Verify the committed files through the API, then use ordinary commands for
-# subsequent manual edits.
-# GET /api/circuits/<new-circuit-name>
-node src/cli/index.js <new-circuit-name> state
-```
-
-The spec may come from a file or stdin; `--file -` is equivalent to stdin, and
-omitting `--file` also reads stdin:
-
-```sh
-node src/cli/index.js <new-circuit-name> generate --preview < spec.json
-cat spec.json | node src/cli/index.js <new-circuit-name> generate --commit
-```
-
-A preview must be inspected in both the structured report and the SVG output.
-If generation fails, report the returned validation/routing details,
-preserve all existing circuits, ask for the missing decision or corrected
-CircuitSpec, and preview again. Do not silently alter the topology to make a
-candidate pass. A malformed spec returns an error without saving; a candidate
-that fails hard checks is rejected without creating the requested circuit.
-Commit is accepted only for a new name and is still not proof of analog
-correctness.
+project directory, not to the browser editor. Resolve the electrical contract
+before drawing. Ask the user before guessing material topology, transistor
+polarity, biasing, feedback, supply/ground convention, port direction or
+meaning, or any other choice with multiple reasonable answers. Do not claim
+analog correctness from `eval` or Design Check; they validate structure and
+geometry only.
 
 The agent may modify only the explicitly requested circuit, through the running
 editor's CLI/HTTP commands. It must not edit source, tests, configuration,
 project documentation, or unrelated circuits, and must not write circuit JSON
-directly. After generation commit, use ordinary editor commands (`add`,
-`move`, `rotate`, `mirror`, `connect`, `net`, `rename`, `value`, `rm`) for
-explicitly requested manual edits; preview and approval are required again if
-the requested change materially changes the generated topology.
+directly.
 
 Companion docs:
 
@@ -226,7 +167,6 @@ The browser live-syncs changed active-circuit revisions while visible; CLI comma
 ```text
 GET /api/workspace
 GET /api/circuits/<name>
-POST /api/circuits/<name>/generate
 ```
 
 Each saved circuit is `<workspace>/<name>.json`; older notes may
@@ -296,9 +236,6 @@ help                           full command list
   on the grid.
 - The CLI / HTTP command endpoint **saves on every mutated command** automatically.
   You do not need a separate `save` step.
-- Deterministic generation preview/commit is documented in
-  [`docs/circuit-spec.md`](../docs/circuit-spec.md); the browser has no
-  natural-language generation tool.
 - `cross A1 A2 B1 B2` accepts four terminals at the corners of one grid-aligned
   rectangle. It creates exactly two fixed diagonal nets for the opposite
   pairings, with one central crossing and no solder/join at the crossing.

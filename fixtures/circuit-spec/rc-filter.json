@@ -1,1 +1,0 @@
-{"version":1,"motif":"rc-filter","components":[{"id":"R1","type":"resistor"},{"id":"C1","type":"capacitor"}],"nets":[{"id":"vin","name":"VIN","terminals":[{"component":"R1","terminal":"a"}]},{"id":"vout","name":"VOUT","terminals":[{"component":"R1","terminal":"b"},{"component":"C1","terminal":"a"}]},{"id":"gnd","name":"GND","terminals":[{"component":"C1","terminal":"b"}]}]}

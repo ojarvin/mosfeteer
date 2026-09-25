@@ -9,8 +9,7 @@ connectivity model and renders it as SVG. The repository is `ojarvin/mosfeteer`;
 - **Developer:** improve the application, tests, APIs, or documentation. Read
   [`guidelines/DEVELOPER.md`](guidelines/DEVELOPER.md).
 - **Circuit author:** create or revise a drawing in the running editor. Read
-  [`guidelines/CIRCUIT-AUTHOR.md`](guidelines/CIRCUIT-AUTHOR.md) and
-  [`docs/circuit-spec.md`](docs/circuit-spec.md). Do not inspect or modify
+  [`guidelines/CIRCUIT-AUTHOR.md`](guidelines/CIRCUIT-AUTHOR.md). Do not inspect or modify
   application source, tests, or configuration in this role.
 
 Both roles follow [`guidelines/style-guide.md`](guidelines/style-guide.md).
@@ -25,9 +24,9 @@ notes here.
 - `src/server/` — loopback HTTP server, document I/O, settings, and export.
 - `src/web/` — browser editor, persistence adapter, interaction, and styles.
 - `src/cli/index.js` — thin HTTP client for scripted editing.
-- `test/` — Node test suite; `fixtures/` — CircuitSpec examples.
+- `test/` — Node test suite.
 - `guidelines/` — role and visual-quality instructions.
-- `docs/` — focused architecture, analysis, and generation docs.
+- `docs/` — focused architecture, analysis, and beats docs.
 - `launch.mjs`, `Mosfeteer.cmd` — launcher and its Windows double-click wrapper.
 
 Useful commands:
@@ -299,14 +298,6 @@ use one persistent CDP connection, temporary ports/directories, real mouse
 events for double-click (`clickCount: 2`), and only terminate processes they
 started. Never use a broad `pkill`.
 
-## Generated placement
-
-`src/core/placement.js` (`placeCircuit` / `tryPlaceCircuit`) is a pure,
-deterministic analog placement seam. `src/core/routing.js`
-(`routeCircuit` / `tryRouteCircuit`) materializes declared physical nets,
-preserves fixed paths, retries bounded net orders, and returns either metrics or
-an atomic failure. The contract and fixtures live in `docs/circuit-spec.md`.
-
 ## Maintenance rules
 
 - Read the relevant guideline, source module, and tests before changing code.
@@ -316,5 +307,5 @@ an atomic failure. The contract and fixtures live in `docs/circuit-spec.md`.
   feature contracts in focused docs and implementation-specific facts in
   source/tests. Remove stale prose instead of appending to this file.
 - Keep role expectations in `guidelines/`, visual standards in
-  `guidelines/style-guide.md`, and analysis/routing/generation details in the
+  `guidelines/style-guide.md`, and analysis/routing details in the
   focused `docs/` files.

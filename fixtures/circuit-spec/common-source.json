@@ -1,1 +1,0 @@
-{"version":1,"motif":"common-source","components":[{"id":"M1","type":"nmos"}],"nets":[{"id":"gate","name":"VIN","terminals":[{"component":"M1","terminal":"g"}]},{"id":"drain","name":"VOUT","terminals":[{"component":"M1","terminal":"d"}]},{"id":"source","name":"GND","terminals":[{"component":"M1","terminal":"s"}]}]}

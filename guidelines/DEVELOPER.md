@@ -40,10 +40,6 @@ src/
 │   ├── wiring.js       Wire geometry, branch joining, normalizePath.
 │   ├── wireedit.js     Wire drag/edit primitives.
 │   ├── render.js       SVG renderer (svgString, editorOverlay).
-│   ├── circuitSpec.js  Versioned generator-facing topology contract.
-│   ├── semantic.js     Pure checks for declared analog intent.
-│   ├── placement.js    Phase 2 deterministic analog placer.
-│   ├── routing.js      Phase 3 deterministic batch router.
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning
@@ -53,7 +49,7 @@ src/
 │   ├── geometry.js     bbox/transform helpers.
 │   └── style.js        Stroke roles (symbol/wire/emph/ground/supply) and font attrs.
 ├── server/
-│   ├── app.js          Static files + HTTP API (documents, workspace, commands, generation).
+│   ├── app.js          Static files + HTTP API (documents, workspace, commands, export).
 │   ├── serve.js        Development entry (`npm run serve`).
 │   ├── documents.js    Document files: names, atomic writes, listing, browsing.
 │   ├── settings.js     data/settings.json: workspace folder and recent files.
@@ -65,9 +61,8 @@ src/
 │   ├── main.js         Editor (input, render, undo/redo, ghost, wire drag).
 │   └── style.css       Layout, dark mode, toolbars.
 └── cli/
-    └── index.js        Thin HTTP client over command and generation endpoints.
+    └── index.js        Thin HTTP client over the command endpoint.
 test/                   Node test runner (`node --test`).
-fixtures/circuit-spec/  Topology-only CircuitSpec examples.
 launch.mjs              End-user launcher; Mosfeteer.cmd wraps it on Windows.
 guidelines/             Role docs + style guide.
 AGENTS.md               Cross-cutting runtime invariants and agent context.
@@ -142,8 +137,8 @@ browser and `/api/export`, not here.
 ## Tests
 
 `npm test` runs the Node test runner over `test/**/*.test.js`. Tests use plain
-`node --test`; no Jest or transpilation. JSON fixtures live under
-`fixtures/`. Read one existing `test/<thing>.test.js` before writing a new one.
+`node --test`; no Jest or transpilation. Shared test data lives under
+`test/fixtures/`. Read one existing `test/<thing>.test.js` before writing a new one.
 The browser rendering benchmark is `test/browser-performance.html`; serve the
 repository over HTTP before opening it. `render()` runs on every pointer frame:
 helpers it calls must write the DOM only when a value actually changes (a

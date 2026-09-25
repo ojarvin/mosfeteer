@@ -76,7 +76,6 @@ npm test
 
 - [`AGENTS.md`](AGENTS.md): editor behavior and the symbol specification
 - [`docs/beats.md`](docs/beats.md): how beats are stored and edited
-- [`docs/circuit-spec.md`](docs/circuit-spec.md): deterministic circuit generation
 - [`docs/topological-small-signal.md`](docs/topological-small-signal.md): how the analysis works
 
 ## License
