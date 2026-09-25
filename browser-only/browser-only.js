@@ -29817,6 +29817,191 @@ function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Can
 
 };
 
+__modules["src/web/gesture-overlay.js"] = function (__require, __exports) {
+__exports.syncSnapPulse = syncSnapPulse;
+__exports.annotationReach = annotationReach;
+__exports.cutAlong = cutAlong;
+__exports.withGestureOverlay = withGestureOverlay;
+let componentShapeSvg; __bind(() => { ({ componentShapeSvg } = __require("src/core/render.js")); });
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let knifeCrossings, pinHandleRadius, strokeCrossesPolyline, strokeCrossesRect; __bind(() => { ({ knifeCrossings, pinHandleRadius, strokeCrossesPolyline, strokeCrossesRect } = __require("src/web/gestures.js")); });
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
+let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
+let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
+let netMarkerRefs; __bind(() => { ({ netMarkerRefs } = __require("src/web/hover-preview.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let deleteSelection, keyToWire, nearestTerminal, netsTouching, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire; __bind(() => { ({ deleteSelection, keyToWire, nearestTerminal, netsTouching, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } = __require("src/web/main.js")); });
+/**
+ * The canvas's gesture layer: pin handles, the snap pulse on the terminal a
+ * wire will land on, and the Delete tool's knife stroke with the cuts it
+ * makes. The stroke geometry is in gestures.js.
+ */
+
+
+
+
+
+
+
+
+
+
+
+/** A wire end that lands on a pin gets one small ripple at that pin. */
+function syncSnapPulse() {
+  if (!editor.snapLayerEl) return;
+  const source = (editor.wire || editor.directWire)?.source;
+  let key = '';
+  if (source) {
+    const target = nearestTerminal(editor.cursor);
+    if (target && target.x === editor.cursor.x && target.y === editor.cursor.y
+        && !(target.refdes === source.refdes && target.term === source.term)) key = `${target.x},${target.y}`;
+  }
+  if (key === editor.snapPulseKey) return;
+  editor.snapPulseKey = key;
+  if (!key) {
+    editor.snapLayerEl.replaceChildren();
+    return;
+  }
+  const [x, y] = key.split(',');
+  editor.snapLayerEl.innerHTML = `<circle class="snap-ring" cx="${x}" cy="${y}" r="10"/><circle class="snap-pulse" cx="${x}" cy="${y}" r="10"/>`;
+}
+
+/** Every drawn wire path, fixed and managed, for knife hit tests. */
+function allWirePaths() {
+  return [...editor.circuit.nets.values()].flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
+}
+
+/** The drawn outline of a box, line, or arrow annotation, or null for text. */
+/** The part of an arrow or box its captions attach to: an arrow's start
+ * point, where addAnnotation places the caption, or the box's rectangle. */
+function annotationReach(label) {
+  if (label.kind === 'arrow' && label.points?.length) {
+    const a = label.points[0];
+    return { x0: a.x, x1: a.x, y0: a.y, y1: a.y };
+  }
+  if (label.kind !== 'box') return null;
+  const b = label.bbox();
+  return { x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h };
+}
+
+function annotationOutline(label) {
+  if (['line', 'arrow'].includes(label.kind)) return label.points || null;
+  if (label.kind !== 'box') return null;
+  const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
+  const y0 = Math.min(label.anchor.y, label.end.y); const y1 = Math.max(label.anchor.y, label.end.y);
+  return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 }];
+}
+
+/** Everything a knife stroke cuts: wire segments it crosses, parts whose body
+ * it passes through, line/arrow/box annotations whose linework it crosses, and
+ * free text or net labels it passes through. A part's box is inset a little so
+ * cutting a wire at a pin does not take the part too. Owned name labels go
+ * with their part, and solder dots follow the wires, so neither is a target. */
+function knifeTargets(stroke) {
+  const inset = GRID / 4;
+  const refs = [];
+  for (const c of editor.circuit.components.values()) {
+    if (c.type === 'solder') continue;
+    const r = c.bboxWorld();
+    if (strokeCrossesRect(stroke, { x: r.x + inset, y: r.y + inset, w: r.w - 2 * inset, h: r.h - 2 * inset })) refs.push(c.refdes);
+  }
+  const labelIds = [];
+  for (const label of editor.circuit.labels.values()) {
+    if (label.owner || label.selectable === false) continue;
+    const outline = annotationOutline(label);
+    if (outline ? strokeCrossesPolyline(stroke, outline) : strokeCrossesRect(stroke, label.bbox())) labelIds.push(label.id);
+  }
+  return { wires: knifeCrossings(stroke, allWirePaths()), refs, labels: labelIds };
+}
+
+/** Delete everything a knife stroke cuts, as one undo entry. */
+function cutAlong(stroke) {
+  noteTip('knife');
+  const { wires, refs, labels: labelIds } = knifeTargets(stroke);
+  if (!wires.length && !refs.length && !labelIds.length) {
+    hintLine('knife: nothing crossed');
+    return;
+  }
+  setSelection(refs);
+  setLabelSelection(labelIds);
+  editor.selectedNets.clear();
+  editor.selectedWires = new Set(wires);
+  syncSelectedWire();
+  deleteSelection();
+  const counts = [
+    wires.length && `${wires.length} wire segment${wires.length === 1 ? '' : 's'}`,
+    refs.length && `${refs.length} part${refs.length === 1 ? '' : 's'}`,
+    labelIds.length && `${labelIds.length} label${labelIds.length === 1 ? '' : 's'}/annotation${labelIds.length === 1 ? '' : 's'}`,
+  ].filter(Boolean);
+  logLine(`knife cut ${counts.join(', ')}`);
+}
+
+/** Gesture feedback appended to the editor overlay's elements, in world units. */
+function withGestureOverlay(svg, ghost) {
+  const parts = [];
+  // Nets attached to the selected parts carry a faint tint of the selection.
+  if (editor.multi.size && !editor.drag) {
+    for (const id of netsTouching([...editor.multi])) {
+      for (const pts of editor.circuit.nets.get(id)?.paths() || []) {
+        if (pts.length > 1) parts.push(`<polyline class="selection-net-tint" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+      }
+    }
+  }
+  if (editor.hoverTarget?.kind === 'net' && !editor.drag) {
+    for (const id of editor.hoverTarget.ids) {
+      for (const pts of editor.circuit.nets.get(id)?.paths() || []) {
+        if (pts.length > 1) parts.push(`<polyline class="gesture-hover-net" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+      }
+    }
+    for (const ref of netMarkerRefs(editor.hoverTarget.ids.map((id) => editor.circuit.nets.get(id)))) {
+      parts.push(`<g class="selection-glow gesture-hover-marker" pointer-events="none">${componentShapeSvg(editor.circuit.components.get(ref))}</g>`);
+    }
+  }
+  const pinsComp = !editor.drag && editor.hoverPinsRef ? editor.circuit.components.get(editor.hoverPinsRef) : null;
+  if (pinsComp) {
+    const p = paneSize();
+    const r = pinHandleRadius(p ? editor.view.w / p.w : 1);
+    for (const t of pinsComp.worldTerminals()) parts.push(`<circle class="gesture-pin" cx="${t.x}" cy="${t.y}" r="${r}" vector-effect="non-scaling-stroke"/>`);
+  }
+  // The canvas already shows the part under the pointer; only a panel hover
+  // needs to point at it.
+  if (editor.hoverTarget?.kind === 'component' && editor.hoverFromPanel) {
+    const box = editor.circuit.components.get(editor.hoverTarget.refdes)?.bboxWorld();
+    if (box) parts.push(`<rect class="gesture-hover-comp" x="${box.x - 8}" y="${box.y - 8}" width="${box.w + 16}" height="${box.h + 16}" rx="10" vector-effect="non-scaling-stroke"/>`);
+  }
+  if (editor.drag?.mode === 'deletemarquee' && editor.drag.knife && editor.drag.moved) {
+    const stroke = [...editor.drag.knife];
+    const cut = knifeTargets(stroke);
+    for (const key of cut.wires) {
+      const { netId, branch, segment } = keyToWire(key);
+      const pts = editor.circuit.nets.get(netId)?.paths()?.[branch];
+      if (pts?.[segment]) parts.push(`<line class="gesture-cut" x1="${pts[segment - 1].x}" y1="${pts[segment - 1].y}" x2="${pts[segment].x}" y2="${pts[segment].y}" vector-effect="non-scaling-stroke"/>`);
+    }
+    for (const ref of cut.refs) {
+      parts.push(`<g class="selection-glow gesture-cut-part" pointer-events="none">${componentShapeSvg(editor.circuit.components.get(ref))}</g>`);
+    }
+    for (const id of cut.labels) {
+      const label = editor.circuit.labels.get(id);
+      const outline = annotationOutline(label);
+      if (outline) parts.push(`<polyline class="gesture-cut" fill="none" points="${outline.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+      else {
+        const b = label.bbox();
+        parts.push(`<rect class="gesture-cut-label" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="3" vector-effect="non-scaling-stroke"/>`);
+      }
+    }
+    parts.push(`<polyline class="gesture-knife" points="${stroke.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+  }
+  const splice = splicePreviewTarget(ghost);
+  if (splice) {
+    parts.push(`<line class="gesture-splice" x1="${splice.a.x}" y1="${splice.a.y}" x2="${splice.b.x}" y2="${splice.b.y}" vector-effect="non-scaling-stroke"/>`);
+  }
+  if (!parts.length) return svg;
+  return `${svg}\n<g class="gesture-overlay" pointer-events="none">${parts.join('')}</g>`;
+}
+
+};
+
 __modules["src/web/gestures.js"] = function (__require, __exports) {
 __exports.isPinDragCandidate = isPinDragCandidate;
 __exports.arrivalDirection = arrivalDirection;
@@ -32245,6 +32430,7 @@ __exports.symmetryTwin = symmetryTwin;
 __exports.syncSymmetryOperation = syncSymmetryOperation;
 __exports.clearSymmetry = clearSymmetry;
 __exports.setSymmetry = setSymmetry;
+__exports.splicePreviewTarget = splicePreviewTarget;
 __exports.placePending = placePending;
 __exports.render = render;
 __exports.draftRoutePath = draftRoutePath;
@@ -32255,6 +32441,7 @@ __exports.pickAt = pickAt;
 __exports.supplyBarGroup = supplyBarGroup;
 __exports.supplyBarHit = supplyBarHit;
 __exports.pickWire = pickWire;
+__exports.netsTouching = netsTouching;
 __exports.commitWireAtCursor = commitWireAtCursor;
 __exports.connectWireToTerminal = connectWireToTerminal;
 __exports.endGestureWire = endGestureWire;
@@ -32289,7 +32476,7 @@ let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
-let componentShapeSvg, editorOverlay, svgString; __bind(() => { ({ componentShapeSvg, editorOverlay, svgString } = __require("src/core/render.js")); });
+let editorOverlay, svgString; __bind(() => { ({ editorOverlay, svgString } = __require("src/core/render.js")); });
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
@@ -32301,7 +32488,7 @@ let selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, nextS
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
 let layerActionForKey, layoutAlignKey, naturalCompare; __bind(() => { ({ layerActionForKey, layoutAlignKey, naturalCompare } = __require("src/web/toolbar.js")); });
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
-let isPinDragCandidate, knifeCrossings, pinHandleRadius, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ isPinDragCandidate, knifeCrossings, pinHandleRadius, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
+let isPinDragCandidate, spliceCandidate, wheelIntent; __bind(() => { ({ isPinDragCandidate, spliceCandidate, wheelIntent } = __require("src/web/gestures.js")); });
 let LOG_DRAWER_CLOSED; __bind(() => { ({ LOG_DRAWER_CLOSED } = __require("src/web/status-bar.js")); });
 let alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -32330,6 +32517,7 @@ let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ sho
 let moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt; __bind(() => { ({ moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
 let netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ netMarkerRefs, setHoverTarget, updateCanvasHover } = __require("src/web/hover-preview.js")); });
+let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => { ({ syncSnapPulse, annotationReach, cutAlong, withGestureOverlay } = __require("src/web/gesture-overlay.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -32341,6 +32529,7 @@ let netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ netMarke
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -32483,6 +32672,8 @@ Object.defineProperties(editor, {
   selectedWire: { get: () => selectedWire, set: (value) => { selectedWire = value; } },
   selectedWires: { get: () => selectedWires, set: (value) => { selectedWires = value; } },
   showGrid: { get: () => showGrid, set: (value) => { showGrid = value; } },
+  snapLayerEl: { get: () => snapLayerEl, set: (value) => { snapLayerEl = value; } },
+  snapPulseKey: { get: () => snapPulseKey, set: (value) => { snapPulseKey = value; } },
   suppressContextMenuUntil: { get: () => suppressContextMenuUntil, set: (value) => { suppressContextMenuUntil = value; } },
   suppressNetNameChoice: { get: () => suppressNetNameChoice, set: (value) => { suppressNetNameChoice = value; } },
   symmetry: { get: () => symmetry, set: (value) => { symmetry = value; } },
@@ -35055,160 +35246,8 @@ let hoverAnnotationId = null; // arrow/line whose vertex handles show in Select 
 
 // ----- snap pulse ------------------------------------------------------------------
 let snapLayerEl = null;
+
 let snapPulseKey = '';
-
-/** A wire end that lands on a pin gets one small ripple at that pin. */
-function syncSnapPulse() {
-  if (!snapLayerEl) return;
-  const source = (wire || directWire)?.source;
-  let key = '';
-  if (source) {
-    const target = nearestTerminal(cursor);
-    if (target && target.x === cursor.x && target.y === cursor.y
-        && !(target.refdes === source.refdes && target.term === source.term)) key = `${target.x},${target.y}`;
-  }
-  if (key === snapPulseKey) return;
-  snapPulseKey = key;
-  if (!key) {
-    snapLayerEl.replaceChildren();
-    return;
-  }
-  const [x, y] = key.split(',');
-  snapLayerEl.innerHTML = `<circle class="snap-ring" cx="${x}" cy="${y}" r="10"/><circle class="snap-pulse" cx="${x}" cy="${y}" r="10"/>`;
-}
-
-/** Every drawn wire path, fixed and managed, for knife hit tests. */
-function allWirePaths() {
-  return [...circuit.nets.values()].flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
-}
-
-/** The drawn outline of a box, line, or arrow annotation, or null for text. */
-/** The part of an arrow or box its captions attach to: an arrow's start
- * point, where addAnnotation places the caption, or the box's rectangle. */
-function annotationReach(label) {
-  if (label.kind === 'arrow' && label.points?.length) {
-    const a = label.points[0];
-    return { x0: a.x, x1: a.x, y0: a.y, y1: a.y };
-  }
-  if (label.kind !== 'box') return null;
-  const b = label.bbox();
-  return { x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h };
-}
-
-function annotationOutline(label) {
-  if (['line', 'arrow'].includes(label.kind)) return label.points || null;
-  if (label.kind !== 'box') return null;
-  const x0 = Math.min(label.anchor.x, label.end.x); const x1 = Math.max(label.anchor.x, label.end.x);
-  const y0 = Math.min(label.anchor.y, label.end.y); const y1 = Math.max(label.anchor.y, label.end.y);
-  return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 }];
-}
-
-/** Everything a knife stroke cuts: wire segments it crosses, parts whose body
- * it passes through, line/arrow/box annotations whose linework it crosses, and
- * free text or net labels it passes through. A part's box is inset a little so
- * cutting a wire at a pin does not take the part too. Owned name labels go
- * with their part, and solder dots follow the wires, so neither is a target. */
-function knifeTargets(stroke) {
-  const inset = GRID / 4;
-  const refs = [];
-  for (const c of circuit.components.values()) {
-    if (c.type === 'solder') continue;
-    const r = c.bboxWorld();
-    if (strokeCrossesRect(stroke, { x: r.x + inset, y: r.y + inset, w: r.w - 2 * inset, h: r.h - 2 * inset })) refs.push(c.refdes);
-  }
-  const labelIds = [];
-  for (const label of circuit.labels.values()) {
-    if (label.owner || label.selectable === false) continue;
-    const outline = annotationOutline(label);
-    if (outline ? strokeCrossesPolyline(stroke, outline) : strokeCrossesRect(stroke, label.bbox())) labelIds.push(label.id);
-  }
-  return { wires: knifeCrossings(stroke, allWirePaths()), refs, labels: labelIds };
-}
-
-/** Delete everything a knife stroke cuts, as one undo entry. */
-function cutAlong(stroke) {
-  noteTip('knife');
-  const { wires, refs, labels: labelIds } = knifeTargets(stroke);
-  if (!wires.length && !refs.length && !labelIds.length) {
-    hintLine('knife: nothing crossed');
-    return;
-  }
-  setSelection(refs);
-  setLabelSelection(labelIds);
-  selectedNets.clear();
-  selectedWires = new Set(wires);
-  syncSelectedWire();
-  deleteSelection();
-  const counts = [
-    wires.length && `${wires.length} wire segment${wires.length === 1 ? '' : 's'}`,
-    refs.length && `${refs.length} part${refs.length === 1 ? '' : 's'}`,
-    labelIds.length && `${labelIds.length} label${labelIds.length === 1 ? '' : 's'}/annotation${labelIds.length === 1 ? '' : 's'}`,
-  ].filter(Boolean);
-  logLine(`knife cut ${counts.join(', ')}`);
-}
-
-/** Gesture feedback appended to the editor overlay's elements, in world units. */
-function withGestureOverlay(svg, ghost) {
-  const parts = [];
-  // Nets attached to the selected parts carry a faint tint of the selection.
-  if (multi.size && !drag) {
-    for (const id of netsTouching([...multi])) {
-      for (const pts of circuit.nets.get(id)?.paths() || []) {
-        if (pts.length > 1) parts.push(`<polyline class="selection-net-tint" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
-      }
-    }
-  }
-  if (hoverTarget?.kind === 'net' && !drag) {
-    for (const id of hoverTarget.ids) {
-      for (const pts of circuit.nets.get(id)?.paths() || []) {
-        if (pts.length > 1) parts.push(`<polyline class="gesture-hover-net" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
-      }
-    }
-    for (const ref of netMarkerRefs(hoverTarget.ids.map((id) => circuit.nets.get(id)))) {
-      parts.push(`<g class="selection-glow gesture-hover-marker" pointer-events="none">${componentShapeSvg(circuit.components.get(ref))}</g>`);
-    }
-  }
-  const pinsComp = !drag && hoverPinsRef ? circuit.components.get(hoverPinsRef) : null;
-  if (pinsComp) {
-    const p = paneSize();
-    const r = pinHandleRadius(p ? view.w / p.w : 1);
-    for (const t of pinsComp.worldTerminals()) parts.push(`<circle class="gesture-pin" cx="${t.x}" cy="${t.y}" r="${r}" vector-effect="non-scaling-stroke"/>`);
-  }
-  // The canvas already shows the part under the pointer; only a panel hover
-  // needs to point at it.
-  if (hoverTarget?.kind === 'component' && hoverFromPanel) {
-    const box = circuit.components.get(hoverTarget.refdes)?.bboxWorld();
-    if (box) parts.push(`<rect class="gesture-hover-comp" x="${box.x - 8}" y="${box.y - 8}" width="${box.w + 16}" height="${box.h + 16}" rx="10" vector-effect="non-scaling-stroke"/>`);
-  }
-  if (drag?.mode === 'deletemarquee' && drag.knife && drag.moved) {
-    const stroke = [...drag.knife];
-    const cut = knifeTargets(stroke);
-    for (const key of cut.wires) {
-      const { netId, branch, segment } = keyToWire(key);
-      const pts = circuit.nets.get(netId)?.paths()?.[branch];
-      if (pts?.[segment]) parts.push(`<line class="gesture-cut" x1="${pts[segment - 1].x}" y1="${pts[segment - 1].y}" x2="${pts[segment].x}" y2="${pts[segment].y}" vector-effect="non-scaling-stroke"/>`);
-    }
-    for (const ref of cut.refs) {
-      parts.push(`<g class="selection-glow gesture-cut-part" pointer-events="none">${componentShapeSvg(circuit.components.get(ref))}</g>`);
-    }
-    for (const id of cut.labels) {
-      const label = circuit.labels.get(id);
-      const outline = annotationOutline(label);
-      if (outline) parts.push(`<polyline class="gesture-cut" fill="none" points="${outline.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
-      else {
-        const b = label.bbox();
-        parts.push(`<rect class="gesture-cut-label" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="3" vector-effect="non-scaling-stroke"/>`);
-      }
-    }
-    parts.push(`<polyline class="gesture-knife" points="${stroke.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
-  }
-  const splice = splicePreviewTarget(ghost);
-  if (splice) {
-    parts.push(`<line class="gesture-splice" x1="${splice.a.x}" y1="${splice.a.y}" x2="${splice.b.x}" y2="${splice.b.y}" vector-effect="non-scaling-stroke"/>`);
-  }
-  if (!parts.length) return svg;
-  return `${svg}\n<g class="gesture-overlay" pointer-events="none">${parts.join('')}</g>`;
-}
 
 // ----- mouse ------------------------------------------------------------
 
