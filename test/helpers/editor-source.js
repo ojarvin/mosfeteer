@@ -18,3 +18,11 @@ export function editorSource() {
   }
   return parts.join('\n').replace(/\beditor\.(?=[A-Za-z_$])/g, '');
 }
+
+/** One top-level function of the editor's source, from its declaration to its closing brace. */
+export function functionSource(name, source = editorSource()) {
+  const start = source.search(new RegExp(`(?:^|\\n)(?:export )?(?:async )?function ${name}\\(`));
+  if (start < 0) return '';
+  const end = source.indexOf('\n}\n', start + 1);
+  return source.slice(start, end < 0 ? undefined : end + 2);
+}

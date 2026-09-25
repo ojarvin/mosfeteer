@@ -1,4 +1,4 @@
-import { editorSource } from './helpers/editor-source.js';
+import { editorSource, functionSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -529,7 +529,7 @@ test('startup paints before listing documents and restoring the requested docume
 
 test('fit reserves the axis the mode rail is thin along', () => {
   const main = editorSource();
-  const fit = main.slice(main.indexOf('function fitView('), main.indexOf('function cycleSelection('));
+  const fit = functionSource('fitView', main);
   // On a narrow window the rail is a horizontal strip across the top. Reserving
   // its width there leaves a 1 px usable pane, so the fit clamps to the widest
   // allowed view and the drawing disappears -- F looks like it stopped working.
@@ -543,7 +543,7 @@ test('fit reserves the axis the mode rail is thin along', () => {
 
 test('empty canvas fit starts at a 30-cell planning view', () => {
   const main = editorSource();
-  const fit = main.slice(main.indexOf('function fitView('), main.indexOf('function cycleSelection('));
+  const fit = functionSource('fitView', main);
   assert.match(fit, /x0 = -600;\s*y0 = -600;\s*x1 = 600;\s*y1 = 600;/);
 });
 

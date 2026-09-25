@@ -9,7 +9,8 @@ import { snap } from '../core/grid.js';
 import { statusCheckEl, checkSummaryBodyEl, clearCheckButtonEl } from './elements.js';
 import { logLine } from './status-bar-ui.js';
 import { editor } from './editor-state.js';
-import { animateViewTo, maxViewW, minViewW, paneSize, render, setPanelCollapsed, setSidePanelVisible, sidePanelVisible } from './main.js';
+import { animateViewTo, maxViewW, minViewW, paneSize } from './canvas-view.js';
+import { render, setPanelCollapsed, setSidePanelVisible, sidePanelVisible } from './main.js';
 
 export function resetCheckState() {
   editor.lastCheckReport = null;

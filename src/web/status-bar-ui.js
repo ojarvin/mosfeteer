@@ -8,7 +8,8 @@ import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } fro
 import { describeGuides } from './layout.js';
 import { statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } from './elements.js';
 import { editor } from './editor-state.js';
-import { paneSize, selectedComp, selectedLabel, symmetryAxisText, symmetryTwin, syncInteractionUI } from './main.js';
+import { paneSize } from './canvas-view.js';
+import { selectedComp, selectedLabel, symmetryAxisText, symmetryTwin, syncInteractionUI } from './main.js';
 
 let logPeekTimer = 0;
 

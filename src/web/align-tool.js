@@ -7,7 +7,8 @@ import { alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, component
 import { alignPanelEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { hintLine } from './status-bar-ui.js';
-import { annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient } from './main.js';
+import { paneSize, worldToClient } from './canvas-view.js';
+import { annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls } from './main.js';
 
 // ----- Align to -------------------------------------------------------------
 // Shift+A: the selection moves as one rigid piece. The first click picks an

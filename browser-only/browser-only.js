@@ -23490,10 +23490,12 @@ let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, componentLayou
 let alignPanelEl; __bind(() => { ({ alignPanelEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let hintLine; __bind(() => { ({ hintLine } = __require("src/web/status-bar-ui.js")); });
-let annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient; __bind(() => { ({ annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, paneSize, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls, worldToClient } = __require("src/web/main.js")); });
+let paneSize, worldToClient; __bind(() => { ({ paneSize, worldToClient } = __require("src/web/canvas-view.js")); });
+let annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls; __bind(() => { ({ annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSelection, applyLayoutPlan, beginMarqueeSelection, beginObjectMove, canvasMouseMove, canvasMouseUp, layoutPlan, layoutSelection, pickAt, pickLabel, render, renderCanvas, scheduleInteractionRender, selectedComps, selectedLabels, setLabelSelection, setSelection, updateAlignControls } = __require("src/web/main.js")); });
 /**
  * Align to (Shift+A) and the side panel's align and distribute controls.
  */
+
 
 
 
@@ -24072,6 +24074,299 @@ function analysisFormDefaults(nets = [], { targetNetId = '', componentInputNetId
 __exports.ANALYSIS_FORM_KEY = ANALYSIS_FORM_KEY;
 };
 
+__modules["src/web/canvas-view.js"] = function (__require, __exports) {
+__exports.paneSize = paneSize;
+__exports.viewFromCenter = viewFromCenter;
+__exports.resizeView = resizeView;
+__exports.syncViewToPane = syncViewToPane;
+__exports.minViewW = minViewW;
+__exports.maxViewW = maxViewW;
+__exports.followCursor = followCursor;
+__exports.prefersReducedMotion = prefersReducedMotion;
+__exports.cancelViewAnimation = cancelViewAnimation;
+__exports.animateViewTo = animateViewTo;
+__exports.fitView = fitView;
+__exports.applyCanvasViewport = applyCanvasViewport;
+__exports.clientToWorld = clientToWorld;
+__exports.worldToClient = worldToClient;
+__exports.worldRect = worldRect;
+__exports.rectContained = rectContained;
+__exports.zoomToWorldRect = zoomToWorldRect;
+let circuitPageGuideFrame; __bind(() => { ({ circuitPageGuideFrame } = __require("src/core/page-guide.js")); });
+let viewportFrame, viewportGridPath; __bind(() => { ({ viewportFrame, viewportGridPath } = __require("src/core/render.js")); });
+let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
+let viewFollowingCursor, worldAndCursorFromClient; __bind(() => { ({ viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
+let lerpView; __bind(() => { ({ lerpView } = __require("src/web/gestures.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let render, selectedComps; __bind(() => { ({ render, selectedComps } = __require("src/web/main.js")); });
+/**
+ * The canvas view: the world window the pane shows, its zoom limits, fitting
+ * and animating it, and converting between screen and world coordinates.
+ */
+
+
+
+
+
+
+
+
+
+function paneSize() {
+  const pane = document.querySelector('.canvas-pane');
+  if (!pane) return null;
+  const r = pane.getBoundingClientRect();
+  if (r.width < 10 || r.height < 10) return null;
+  return { w: r.width, h: r.height };
+}
+
+/** Build a view of the current pane size (grid-aligned) centered on (cx,cy). */
+function viewFromCenter(cx, cy) {
+  const p = paneSize();
+  const w = p ? Math.ceil((p.w / editor.zoom) / 40) * 40 : 1280;
+  const h = p ? Math.ceil((p.h / editor.zoom) / 40) * 40 : 960;
+  return { x: snap(cx - w / 2), y: snap(cy - h / 2), w, h };
+}
+
+/** Re-fit the fixed window to the pane size exactly (keeps top-left AND scale). */
+function resizeView() {
+  const p = paneSize();
+  if (!p) return;
+  const pxPerUnit = (editor.viewPane?.w || p.w) / editor.view.w;
+  editor.view.w = p.w / pxPerUnit;
+  editor.view.h = p.h / pxPerUnit;
+  clampViewScale();
+  editor.viewPane = p;
+}
+
+/** Called by render(): a pane that changed since the last layout re-fits first. */
+function syncViewToPane() {
+  const p = paneSize();
+  if (!p) return;
+  if (editor.viewPane && (Math.abs(p.w - editor.viewPane.w) > 0.5 || Math.abs(p.h - editor.viewPane.h) > 0.5)) resizeView();
+  editor.viewPane = p;
+}
+
+/** Zoom limits: never zoom in so close that a grid cell (40 units) exceeds
+ *  ~120px on screen — beyond that the grid-snapped cursor can sit a screen away
+ *  from the mouse with no way to bring it back. And never zoom out so far that
+ *  the drawn grid line count explodes (keeps the SVG light over a huge canvas). */
+function minViewW() {
+  const p = paneSize();
+  const cellPx = 120;
+  return Math.max(p ? (40 * p.w) / cellPx : 320, 320);
+}
+
+function maxViewW() {
+  return 40 * 1000; // at most ~1000 grid cells across, ~1000 grid lines per axis
+}
+
+/** Clamp view.w/h into the zoom range, preserving the center (and aspect). */
+function clampViewScale() {
+  const min = minViewW();
+  const max = maxViewW();
+  if (editor.view.w < min || editor.view.w > max) {
+    const cx = editor.view.x + editor.view.w / 2;
+    const cy = editor.view.y + editor.view.h / 2;
+    const nw = Math.min(Math.max(editor.view.w, min), max);
+    const f = nw / editor.view.w;
+    editor.view.w = nw;
+    editor.view.h *= f;
+    editor.view.x = cx - editor.view.w / 2;
+    editor.view.y = cy - editor.view.h / 2;
+  }
+}
+
+/** Arrow keys can walk the cursor (and any ghost or selection riding it) past
+ * the edge of the view, so the view follows it out rather than leaving the
+ * work off-screen. Mouse-driven cursor moves need no help: the pointer cannot
+ * leave the canvas. */
+function followCursor() {
+  const origin = viewFollowingCursor(editor.view, editor.cursor, GRID);
+  if (!origin) return false;
+  editor.view = { ...editor.view, ...origin };
+  return true;
+}
+
+// Fit, zoom-to-box, and jump-to-issue ease the view over a few frames so the
+// eye can follow where the drawing went. Any direct pan/zoom cancels it.
+let viewAnimation = 0;
+
+function prefersReducedMotion() {
+  return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
+function cancelViewAnimation() {
+  if (viewAnimation) cancelAnimationFrame(viewAnimation);
+  viewAnimation = 0;
+}
+
+function animateViewTo(target, ms = 200) {
+  cancelViewAnimation();
+  const from = { ...editor.view };
+  const to = { x: target.x, y: target.y, w: target.w, h: target.h };
+  if (prefersReducedMotion() || document.hidden) {
+    Object.assign(editor.view, to);
+    render();
+    return;
+  }
+  const start = performance.now();
+  const step = (now) => {
+    const t = (now - start) / ms;
+    Object.assign(editor.view, lerpView(from, to, t));
+    viewAnimation = t < 1 ? requestAnimationFrame(step) : 0;
+    render();
+  };
+  viewAnimation = requestAnimationFrame(step);
+}
+
+function fitView({ animate = false } = {}) {
+  cancelViewAnimation();
+  const target = { ...editor.view };
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  const add = (x, y) => {
+    x0 = Math.min(x0, x);
+    y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x);
+    y1 = Math.max(y1, y);
+  };
+  const b = editor.circuit.inkBounds();
+  if (b.w > 0 || b.h > 0) {
+    add(b.x, b.y);
+    add(b.x + b.w, b.y + b.h);
+    // A page guide is part of what the figure will be: fit its edges too.
+    if (editor.pageGuide) {
+      const frame = circuitPageGuideFrame(editor.circuit, editor.pageGuide);
+      add(frame.x, b.y);
+      add(frame.x + frame.width, b.y + b.h);
+    }
+  }
+  for (const c of selectedComps()) {
+    const r = c.bboxWorld();
+    add(r.x, r.y);
+    add(r.x + r.w, r.y + r.h);
+  }
+  if (!Number.isFinite(x0)) {
+    // An empty canvas has no content to fit. Give it a wider default window so
+    // the grid is useful for planning instead of opening at the zoom limit.
+    x0 = -600;
+    y0 = -600;
+    x1 = 600;
+    y1 = 600;
+  }
+  const pane = document.querySelector('.canvas-pane');
+  const rail = document.querySelector('.mode-toolbar');
+  const paneRect = pane?.getBoundingClientRect();
+  const railRect = rail?.getBoundingClientRect();
+  const paneW = paneRect?.width || 1;
+  const paneH = paneRect?.height || 1;
+  // The rail floats over the canvas, so the drawing is fitted beside it. It is
+  // a vertical column at the left on a wide window but a horizontal strip
+  // across the top on a narrow one, so reserve the axis it is thin along:
+  // reserving width for a full-width strip leaves no usable pane at all and
+  // fits the drawing into a 1 px box, which reads as F having stopped working.
+  const railIsColumn = railRect ? railRect.width <= railRect.height : false;
+  const leftPx = railRect && railIsColumn
+    ? Math.max(0, Math.min(paneW - 1, railRect.right - (paneRect?.left || 0)))
+    : 0;
+  const topPx = railRect && !railIsColumn
+    ? Math.max(0, Math.min(paneH - 1, railRect.bottom - (paneRect?.top || 0)))
+    : 0;
+  const usableW = Math.max(1, paneW - leftPx);
+  const usableH = Math.max(1, paneH - topPx);
+  const usableCenterPx = leftPx + usableW / 2;
+  const usableCenterPy = topPx + usableH / 2;
+  const marginPx = 16;
+  const fitW = Math.max(1, usableW - marginPx * 2);
+  const fitH = Math.max(1, usableH - marginPx * 2);
+  const rangeW = Math.max(1, x1 - x0);
+  const rangeH = Math.max(1, y1 - y0);
+  const scale = Math.min(fitW / rangeW, fitH / rangeH);
+  const aspect = paneW / paneH;
+  let tw = paneW / scale;
+  let th = paneH / scale;
+  const minW = minViewW();
+  const maxW = maxViewW();
+  if (tw < minW) {
+    tw = minW;
+    th = tw / aspect;
+  } else if (tw > maxW) {
+    tw = maxW;
+    th = tw / aspect;
+  }
+  target.w = tw;
+  target.h = th;
+  target.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
+  target.y = (y0 + y1) / 2 - th * usableCenterPy / paneH;
+  editor.viewPane = paneSize();
+  if (animate) {
+    animateViewTo(target);
+    return;
+  }
+  Object.assign(editor.view, target);
+  render();
+}
+
+/** Re-frame the committed drawing for the current view: root size, background,
+ * and grid. Same output as a full svgString rebuild at this viewport. */
+function applyCanvasViewport() {
+  const vp = { x: editor.view.x, y: editor.view.y, w: editor.view.w, h: editor.view.h };
+  const frame = viewportFrame(vp);
+  editor.canvasSvgEl.setAttribute('width', frame.width);
+  editor.canvasSvgEl.setAttribute('height', frame.height);
+  editor.canvasSvgEl.setAttribute('viewBox', frame.viewBox);
+  const background = editor.canvasSvgEl.firstElementChild;
+  if (background?.tagName !== 'rect') return;
+  for (const [name, value] of Object.entries(frame.background)) background.setAttribute(name, value);
+  editor.canvasSvgEl.querySelector(':scope > .grid-line')?.setAttribute('d', viewportGridPath(vp));
+}
+
+/** Convert client (pane-relative) coordinates to world, using `refView` for the
+ *  mapping. During a pan/zoom drag the reference must be the view captured at
+ *  mousedown — mapping against the *live* view creates feedback and makes the
+ *  pan stick/stutter. */
+function clientToWorld(clientX, clientY, refView = editor.view) {
+  const pane = document.querySelector('.canvas-pane');
+  return worldAndCursorFromClient(clientX, clientY, pane.getBoundingClientRect(), refView).world;
+}
+
+function worldToClient(wx, wy, refView = editor.view) {
+  const pane = document.querySelector('.canvas-pane');
+  const r = pane.getBoundingClientRect();
+  return {
+    x: r.left + ((wx - refView.x) / refView.w) * r.width,
+    y: r.top + ((wy - refView.y) / refView.h) * r.height,
+  };
+}
+
+function worldRect(a, b) {
+  return { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
+}
+
+/** True when rect `r` lies COMPLETELY inside `box` (touching an edge counts
+ *  as inside). Marquee selection uses containment, not mere intersection, so
+ *  a box only captures whole objects. */
+function rectContained(r, box) {
+  return r.x >= box.x0 && r.x + r.w <= box.x1 && r.y >= box.y0 && r.y + r.h <= box.y1;
+}
+
+function zoomToWorldRect(r) {
+  const pad = 60;
+  const aspect = editor.view.w / editor.view.h;
+  let tw = r.x1 - r.x0 + pad * 2;
+  let th = r.y1 - r.y0 + pad * 2;
+  if (tw / th > aspect) th = tw / aspect;
+  else tw = th * aspect;
+  tw = Math.min(Math.max(tw, minViewW()), maxViewW());
+  th = tw / aspect;
+  animateViewTo({ x: (r.x0 + r.x1) / 2 - tw / 2, y: (r.y0 + r.y1) / 2 - th / 2, w: tw, h: th });
+}
+
+};
+
 __modules["src/web/clipboard.js"] = function (__require, __exports) {
 __exports.pngDataUrlBlob = pngDataUrlBlob;
 __exports.writeDrawingToClipboard = writeDrawingToClipboard;
@@ -24341,12 +24636,14 @@ let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let statusCheckEl, checkSummaryBodyEl, clearCheckButtonEl; __bind(() => { ({ statusCheckEl, checkSummaryBodyEl, clearCheckButtonEl } = __require("src/web/elements.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let animateViewTo, maxViewW, minViewW, paneSize, render, setPanelCollapsed, setSidePanelVisible, sidePanelVisible; __bind(() => { ({ animateViewTo, maxViewW, minViewW, paneSize, render, setPanelCollapsed, setSidePanelVisible, sidePanelVisible } = __require("src/web/main.js")); });
+let animateViewTo, maxViewW, minViewW, paneSize; __bind(() => { ({ animateViewTo, maxViewW, minViewW, paneSize } = __require("src/web/canvas-view.js")); });
+let render, setPanelCollapsed, setSidePanelVisible, sidePanelVisible; __bind(() => { ({ render, setPanelCollapsed, setSidePanelVisible, sidePanelVisible } = __require("src/web/main.js")); });
 /**
  * Design Check in the editor: running it, the side panel's issue list, the
  * status chip, and focusing an issue's parts on the canvas. The checks
  * themselves are evaluate() in core/commands.js.
  */
+
 
 
 
@@ -26521,9 +26818,6 @@ function layoutSuggestions(items, grid = GRID) {
 __modules["src/web/main.js"] = function (__require, __exports) {
 __exports.selectAllNetIds = selectAllNetIds;
 __exports.deriveInteractionState = deriveInteractionState;
-__exports.paneSize = paneSize;
-__exports.minViewW = minViewW;
-__exports.maxViewW = maxViewW;
 __exports.scheduleInteractionRender = scheduleInteractionRender;
 __exports.requestDocumentAction = requestDocumentAction;
 __exports.renderSaveState = renderSaveState;
@@ -26543,15 +26837,11 @@ __exports.layoutPlan = layoutPlan;
 __exports.updateAlignControls = updateAlignControls;
 __exports.applyLayoutPlan = applyLayoutPlan;
 __exports.deleteSelection = deleteSelection;
-__exports.animateViewTo = animateViewTo;
-__exports.fitView = fitView;
 __exports.stubSelection = stubSelection;
 __exports.symmetryAxisText = symmetryAxisText;
 __exports.symmetryTwin = symmetryTwin;
 __exports.render = render;
 __exports.renderCanvas = renderCanvas;
-__exports.clientToWorld = clientToWorld;
-__exports.worldToClient = worldToClient;
 __exports.beginMarqueeSelection = beginMarqueeSelection;
 __exports.pickAt = pickAt;
 __exports.beginObjectMove = beginObjectMove;
@@ -26582,7 +26872,7 @@ let DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale; __bind(() => { ({ D
 let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
 let adaptCombinedReport; __bind(() => { ({ adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
 let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
-let componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath; __bind(() => { ({ componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML, viewportFrame, viewportGridPath } = __require("src/core/render.js")); });
+let componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML; __bind(() => { ({ componentShapeSvg, editorOverlay, plainTexText, svgString, texToLabelMarkup, texToMathML } = __require("src/core/render.js")); });
 let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("src/core/analysis/provenance.js")); });
 let labelFontSize, resolveColor, themeInkSvg; __bind(() => { ({ labelFontSize, resolveColor, themeInkSvg } = __require("src/core/style.js")); });
 let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
@@ -26607,9 +26897,9 @@ let createWindowSession; __bind(() => { ({ createWindowSession } = __require("sr
 let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
 let analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
-let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
+let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
 let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
-let arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
+let arrivalDirection, isPinDragCandidate, knifeCrossings, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ arrivalDirection, isPinDragCandidate, knifeCrossings, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
 let LOG_DRAWER_CLOSED; __bind(() => { ({ LOG_DRAWER_CLOSED } = __require("src/web/status-bar.js")); });
 let alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -26621,6 +26911,7 @@ let renderHelpSearch, showHelp, installHelp; __bind(() => { ({ renderHelpSearch,
 let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind(() => { ({ openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } = __require("src/web/radial-menu.js")); });
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
+let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, prefersReducedMotion, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, prefersReducedMotion, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -26685,12 +26976,14 @@ let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary,
 
 
 
+
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
   activePlacementGuides: { get: () => activePlacementGuides, set: (value) => { activePlacementGuides = value; } },
   activeSymmetryCells: { get: () => activeSymmetryCells, set: (value) => { activeSymmetryCells = value; } },
   alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
   analysisPick: { get: () => analysisPick, set: (value) => { analysisPick = value; } },
+  canvasSvgEl: { get: () => canvasSvgEl, set: (value) => { canvasSvgEl = value; } },
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
   clipboardNotice: { get: () => clipboardNotice, set: (value) => { clipboardNotice = value; } },
   copyMode: { get: () => copyMode, set: (value) => { copyMode = value; } },
@@ -26708,6 +27001,7 @@ Object.defineProperties(editor, {
   moveMode: { get: () => moveMode, set: (value) => { moveMode = value; } },
   multi: { get: () => multi, set: (value) => { multi = value; } },
   netWarnings: { get: () => netWarnings, set: (value) => { netWarnings = value; } },
+  pageGuide: { get: () => pageGuide, set: (value) => { pageGuide = value; } },
   pendingPlace: { get: () => pendingPlace, set: (value) => { pendingPlace = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
   previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
@@ -27004,76 +27298,10 @@ function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null
   return { key: 'normal', canvasClass: 'mode-normal', toolbar: 'normal', label: 'NORMAL' };
 }
 
-function paneSize() {
-  const pane = document.querySelector('.canvas-pane');
-  if (!pane) return null;
-  const r = pane.getBoundingClientRect();
-  if (r.width < 10 || r.height < 10) return null;
-  return { w: r.width, h: r.height };
-}
-
-/** Build a view of the current pane size (grid-aligned) centered on (cx,cy). */
-function viewFromCenter(cx, cy) {
-  const p = paneSize();
-  const w = p ? Math.ceil((p.w / zoom) / 40) * 40 : 1280;
-  const h = p ? Math.ceil((p.h / zoom) / 40) * 40 : 960;
-  return { x: snap(cx - w / 2), y: snap(cy - h / 2), w, h };
-}
-
 // The pane size the current view was laid out for. When the pane changes
 // (window resize, side panel drag, analysis dock) the view keeps its scale and
 // its top-left corner, so the drawing neither jumps nor rescales.
 let viewPane = null;
-
-/** Re-fit the fixed window to the pane size exactly (keeps top-left AND scale). */
-function resizeView() {
-  const p = paneSize();
-  if (!p) return;
-  const pxPerUnit = (viewPane?.w || p.w) / view.w;
-  view.w = p.w / pxPerUnit;
-  view.h = p.h / pxPerUnit;
-  clampViewScale();
-  viewPane = p;
-}
-
-/** Called by render(): a pane that changed since the last layout re-fits first. */
-function syncViewToPane() {
-  const p = paneSize();
-  if (!p) return;
-  if (viewPane && (Math.abs(p.w - viewPane.w) > 0.5 || Math.abs(p.h - viewPane.h) > 0.5)) resizeView();
-  viewPane = p;
-}
-
-/** Zoom limits: never zoom in so close that a grid cell (40 units) exceeds
- *  ~120px on screen — beyond that the grid-snapped cursor can sit a screen away
- *  from the mouse with no way to bring it back. And never zoom out so far that
- *  the drawn grid line count explodes (keeps the SVG light over a huge canvas). */
-function minViewW() {
-  const p = paneSize();
-  const cellPx = 120;
-  return Math.max(p ? (40 * p.w) / cellPx : 320, 320);
-}
-
-function maxViewW() {
-  return 40 * 1000; // at most ~1000 grid cells across, ~1000 grid lines per axis
-}
-
-/** Clamp view.w/h into the zoom range, preserving the center (and aspect). */
-function clampViewScale() {
-  const min = minViewW();
-  const max = maxViewW();
-  if (view.w < min || view.w > max) {
-    const cx = view.x + view.w / 2;
-    const cy = view.y + view.h / 2;
-    const nw = Math.min(Math.max(view.w, min), max);
-    const f = nw / view.w;
-    view.w = nw;
-    view.h *= f;
-    view.x = cx - view.w / 2;
-    view.y = cy - view.h / 2;
-  }
-}
-
 // ----- status bar and log drawer ------------------------------------
 // The log is an overlay drawer; the status bar's message chip always shows
 // the latest line. Guidance that merely repeats the live status hint goes
@@ -29736,141 +29964,9 @@ function moveCursor(cellsX, cellsY) {
   followCursor();
 }
 
-/** Arrow keys can walk the cursor (and any ghost or selection riding it) past
- * the edge of the view, so the view follows it out rather than leaving the
- * work off-screen. Mouse-driven cursor moves need no help: the pointer cannot
- * leave the canvas. */
-function followCursor() {
-  const origin = viewFollowingCursor(view, cursor, GRID);
-  if (!origin) return false;
-  view = { ...view, ...origin };
-  return true;
-}
-
 /** Fit the view to all contents (F), preserving the pane aspect ratio so the
  *  drawing always fills the space without distortion. */
 // ----- view animation --------------------------------------------------------
-// Fit, zoom-to-box, and jump-to-issue ease the view over a few frames so the
-// eye can follow where the drawing went. Any direct pan/zoom cancels it.
-let viewAnimation = 0;
-
-function prefersReducedMotion() {
-  return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-}
-
-function cancelViewAnimation() {
-  if (viewAnimation) cancelAnimationFrame(viewAnimation);
-  viewAnimation = 0;
-}
-
-function animateViewTo(target, ms = 200) {
-  cancelViewAnimation();
-  const from = { ...view };
-  const to = { x: target.x, y: target.y, w: target.w, h: target.h };
-  if (prefersReducedMotion() || document.hidden) {
-    Object.assign(view, to);
-    render();
-    return;
-  }
-  const start = performance.now();
-  const step = (now) => {
-    const t = (now - start) / ms;
-    Object.assign(view, lerpView(from, to, t));
-    viewAnimation = t < 1 ? requestAnimationFrame(step) : 0;
-    render();
-  };
-  viewAnimation = requestAnimationFrame(step);
-}
-
-function fitView({ animate = false } = {}) {
-  cancelViewAnimation();
-  const target = { ...view };
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  const add = (x, y) => {
-    x0 = Math.min(x0, x);
-    y0 = Math.min(y0, y);
-    x1 = Math.max(x1, x);
-    y1 = Math.max(y1, y);
-  };
-  const b = circuit.inkBounds();
-  if (b.w > 0 || b.h > 0) {
-    add(b.x, b.y);
-    add(b.x + b.w, b.y + b.h);
-    // A page guide is part of what the figure will be: fit its edges too.
-    if (pageGuide) {
-      const frame = circuitPageGuideFrame(circuit, pageGuide);
-      add(frame.x, b.y);
-      add(frame.x + frame.width, b.y + b.h);
-    }
-  }
-  for (const c of selectedComps()) {
-    const r = c.bboxWorld();
-    add(r.x, r.y);
-    add(r.x + r.w, r.y + r.h);
-  }
-  if (!Number.isFinite(x0)) {
-    // An empty canvas has no content to fit. Give it a wider default window so
-    // the grid is useful for planning instead of opening at the zoom limit.
-    x0 = -600;
-    y0 = -600;
-    x1 = 600;
-    y1 = 600;
-  }
-  const pane = document.querySelector('.canvas-pane');
-  const rail = document.querySelector('.mode-toolbar');
-  const paneRect = pane?.getBoundingClientRect();
-  const railRect = rail?.getBoundingClientRect();
-  const paneW = paneRect?.width || 1;
-  const paneH = paneRect?.height || 1;
-  // The rail floats over the canvas, so the drawing is fitted beside it. It is
-  // a vertical column at the left on a wide window but a horizontal strip
-  // across the top on a narrow one, so reserve the axis it is thin along:
-  // reserving width for a full-width strip leaves no usable pane at all and
-  // fits the drawing into a 1 px box, which reads as F having stopped working.
-  const railIsColumn = railRect ? railRect.width <= railRect.height : false;
-  const leftPx = railRect && railIsColumn
-    ? Math.max(0, Math.min(paneW - 1, railRect.right - (paneRect?.left || 0)))
-    : 0;
-  const topPx = railRect && !railIsColumn
-    ? Math.max(0, Math.min(paneH - 1, railRect.bottom - (paneRect?.top || 0)))
-    : 0;
-  const usableW = Math.max(1, paneW - leftPx);
-  const usableH = Math.max(1, paneH - topPx);
-  const usableCenterPx = leftPx + usableW / 2;
-  const usableCenterPy = topPx + usableH / 2;
-  const marginPx = 16;
-  const fitW = Math.max(1, usableW - marginPx * 2);
-  const fitH = Math.max(1, usableH - marginPx * 2);
-  const rangeW = Math.max(1, x1 - x0);
-  const rangeH = Math.max(1, y1 - y0);
-  const scale = Math.min(fitW / rangeW, fitH / rangeH);
-  const aspect = paneW / paneH;
-  let tw = paneW / scale;
-  let th = paneH / scale;
-  const minW = minViewW();
-  const maxW = maxViewW();
-  if (tw < minW) {
-    tw = minW;
-    th = tw / aspect;
-  } else if (tw > maxW) {
-    tw = maxW;
-    th = tw / aspect;
-  }
-  target.w = tw;
-  target.h = th;
-  target.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
-  target.y = (y0 + y1) / 2 - th * usableCenterPy / paneH;
-  viewPane = paneSize();
-  if (animate) {
-    animateViewTo(target);
-    return;
-  }
-  Object.assign(view, target);
-  render();
-}
 
 function cycleSelection(dir) {
   const list = sortedComps();
@@ -31758,20 +31854,6 @@ function currentWirePreview() {
   return wirePreview;
 }
 
-/** Re-frame the committed drawing for the current view: root size, background,
- * and grid. Same output as a full svgString rebuild at this viewport. */
-function applyCanvasViewport() {
-  const vp = { x: view.x, y: view.y, w: view.w, h: view.h };
-  const frame = viewportFrame(vp);
-  canvasSvgEl.setAttribute('width', frame.width);
-  canvasSvgEl.setAttribute('height', frame.height);
-  canvasSvgEl.setAttribute('viewBox', frame.viewBox);
-  const background = canvasSvgEl.firstElementChild;
-  if (background?.tagName !== 'rect') return;
-  for (const [name, value] of Object.entries(frame.background)) background.setAttribute(name, value);
-  canvasSvgEl.querySelector(':scope > .grid-line')?.setAttribute('d', viewportGridPath(vp));
-}
-
 // ----- hover preview -------------------------------------------------------------
 // Hovering a wire or pin tints its whole net, and the matching side-panel row
 // lights up; hovering a panel row does the same on the canvas.
@@ -32186,35 +32268,6 @@ function cancelDrag() {
   render();
 }
 
-/** Convert client (pane-relative) coordinates to world, using `refView` for the
- *  mapping. During a pan/zoom drag the reference must be the view captured at
- *  mousedown — mapping against the *live* view creates feedback and makes the
- *  pan stick/stutter. */
-function clientToWorld(clientX, clientY, refView = view) {
-  const pane = document.querySelector('.canvas-pane');
-  return worldAndCursorFromClient(clientX, clientY, pane.getBoundingClientRect(), refView).world;
-}
-
-function worldToClient(wx, wy, refView = view) {
-  const pane = document.querySelector('.canvas-pane');
-  const r = pane.getBoundingClientRect();
-  return {
-    x: r.left + ((wx - refView.x) / refView.w) * r.width,
-    y: r.top + ((wy - refView.y) / refView.h) * r.height,
-  };
-}
-
-function worldRect(a, b) {
-  return { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
-}
-
-/** True when rect `r` lies COMPLETELY inside `box` (touching an edge counts
- *  as inside). Marquee selection uses containment, not mere intersection, so
- *  a box only captures whole objects. */
-function rectContained(r, box) {
-  return r.x >= box.x0 && r.x + r.w <= box.x1 && r.y >= box.y0 && r.y + r.h <= box.y1;
-}
-
 /** Select everything COMPLETELY inside a world box (components by bbox, labels
  *  by bbox, nets by route). With `shift` the box adds to the current selection.
  *  Shared by the mouse marquee and visual-mode Enter. */
@@ -32549,18 +32602,6 @@ function netInBox(net, box) {
     for (const p of pts) if (!inside(p.x, p.y)) return false;
   }
   return true;
-}
-
-function zoomToWorldRect(r) {
-  const pad = 60;
-  const aspect = view.w / view.h;
-  let tw = r.x1 - r.x0 + pad * 2;
-  let th = r.y1 - r.y0 + pad * 2;
-  if (tw / th > aspect) th = tw / aspect;
-  else tw = th * aspect;
-  tw = Math.min(Math.max(tw, minViewW()), maxViewW());
-  th = tw / aspect;
-  animateViewTo({ x: (r.x0 + r.x1) / 2 - tw / 2, y: (r.y0 + r.y1) / 2 - th / 2, w: tw, h: th });
 }
 
 // ----- wire segment editing (see src/core/wireedit.js) ----------------------
@@ -41393,11 +41434,13 @@ let transformRect; __bind(() => { ({ transformRect } = __require("src/core/geome
 let canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl; __bind(() => { ({ canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let fitView, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ fitView, paneSize, render, renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/main.js")); });
+let fitView, paneSize; __bind(() => { ({ fitView, paneSize } = __require("src/web/canvas-view.js")); });
+let render, renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ render, renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/main.js")); });
 /**
  * Onboarding in the editor: the contextual tip card and the first-drawing
  * tutorial. The rules live in tips.js and tutorial.js; this shows them.
  */
+
 
 
 
@@ -41977,11 +42020,13 @@ let radialRingRadius, radialSector; __bind(() => { ({ radialRingRadius, radialSe
 let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icons.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, clientToWorld, deleteSelection, render, selectContextTarget, selectedTransform, stubSelection; __bind(() => { ({ activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, clientToWorld, deleteSelection, render, selectContextTarget, selectedTransform, stubSelection } = __require("src/web/main.js")); });
+let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas-view.js")); });
+let activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, deleteSelection, render, selectContextTarget, selectedTransform, stubSelection; __bind(() => { ({ activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, deleteSelection, render, selectContextTarget, selectedTransform, stubSelection } = __require("src/web/main.js")); });
 /**
  * The radial marking menu a right-drag or hold on a part opens. The ring
  * geometry is in gestures.js.
  */
+
 
 
 
@@ -42212,12 +42257,14 @@ let LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent; __bind(()
 let describeGuides; __bind(() => { ({ describeGuides } = __require("src/web/layout.js")); });
 let statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl; __bind(() => { ({ statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let paneSize, selectedComp, selectedLabel, symmetryAxisText, symmetryTwin, syncInteractionUI; __bind(() => { ({ paneSize, selectedComp, selectedLabel, symmetryAxisText, symmetryTwin, syncInteractionUI } = __require("src/web/main.js")); });
+let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
+let selectedComp, selectedLabel, symmetryAxisText, symmetryTwin, syncInteractionUI; __bind(() => { ({ selectedComp, selectedLabel, symmetryAxisText, symmetryTwin, syncInteractionUI } = __require("src/web/main.js")); });
 /**
  * The status bar and the log drawer: the mode chip, selection and cursor
  * readouts, the message chip, and the log it opens. The fields' wording is
  * in status-bar.js.
  */
+
 
 
 
