@@ -11,7 +11,8 @@ import { canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCard
 import { editor } from './editor-state.js';
 import { logLine } from './status-bar-ui.js';
 import { fitView, paneSize } from './canvas-view.js';
-import { render, renderSaveState, requestDocumentAction, startNewDocument } from './main.js';
+import { renderSaveState, requestDocumentAction, startNewDocument } from './document-session.js';
+import { render } from './main.js';
 
 // ----- contextual tips ---------------------------------------------------------
 // One quiet line in the canvas corner when a faster way exists for what the

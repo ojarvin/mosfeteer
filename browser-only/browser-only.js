@@ -27103,6 +27103,793 @@ function installDesignCheckUi() {
 
 };
 
+__modules["src/web/document-session.js"] = function (__require, __exports) {
+__exports.persistDraft = persistDraft;
+__exports.flushDraft = flushDraft;
+__exports.restoreDraft = restoreDraft;
+__exports.displayPath = displayPath;
+__exports.restoreStartup = restoreStartup;
+__exports.saveCircuit = saveCircuit;
+__exports.requestDocumentAction = requestDocumentAction;
+__exports.openDocumentDialog = openDocumentDialog;
+__exports.renderSaveState = renderSaveState;
+__exports.syncActiveCircuit = syncActiveCircuit;
+__exports.startNewDocument = startNewDocument;
+__exports.startSessionHeartbeat = startSessionHeartbeat;
+__exports.installDocumentSession = installDocumentSession;
+let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
+let createDocument, loadDocument; __bind(() => { ({ createDocument, loadDocument } = __require("src/core/document.js")); });
+let createPersistenceAdapter, validDocumentName; __bind(() => { ({ createPersistenceAdapter, validDocumentName } = __require("src/web/persistence.js")); });
+let createWindowSession; __bind(() => { ({ createWindowSession } = __require("src/web/window-session.js")); });
+let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
+let analysisFormStorageKey; __bind(() => { ({ analysisFormStorageKey } = __require("src/web/analysis-state.js")); });
+let circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm; __bind(() => { ({ circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } = __require("src/web/elements.js")); });
+let dropTutorial; __bind(() => { ({ dropTutorial } = __require("src/web/onboarding.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let resetCheckState; __bind(() => { ({ resetCheckState } = __require("src/web/design-check-ui.js")); });
+let viewFromCenter, fitView; __bind(() => { ({ viewFromCenter, fitView } = __require("src/web/canvas-view.js")); });
+let clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope; __bind(() => { ({ clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope } = __require("src/web/analysis-ui.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let applyJson, cancelPreviewTransaction, clearSymmetry, closeToolbarMenu, markModelChanged, render, scheduleToolbarFit, setSelection, snapshot, toolbarMenus; __bind(() => { ({ applyJson, cancelPreviewTransaction, clearSymmetry, closeToolbarMenu, markModelChanged, render, scheduleToolbarFit, setSelection, snapshot, toolbarMenus } = __require("src/web/main.js")); });
+/**
+ * The open document's life in the editor: new, open, save, save as, and
+ * delete; the unsaved-changes prompt; this window's local draft; following
+ * the CLI's active document and reloading files changed on disk; and dropped
+ * files. Storage itself is behind persistence.js.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const persistence = createPersistenceAdapter();
+
+function configureBrowserOnlyUi() {
+  if (!persistence.browserOnly) return;
+  // These actions depend on the local server's filesystem. Browser mode uses
+  // native file pickers and downloads instead of pretending that a browser can
+  // browse or reveal arbitrary folders.
+  for (const id of ['btn-workspace', 'btn-reveal-document']) document.getElementById(id)?.setAttribute('hidden', '');
+  const forget = document.getElementById('btn-delete-circuit');
+  if (forget) {
+    forget.textContent = 'Forget from browser…';
+    forget.title = 'Remove the current document from this browser\'s cached document list';
+  }
+  const deleteTitle = document.getElementById('delete-dialog-title');
+  if (deleteTitle) deleteTitle.textContent = 'Forget browser document?';
+  const confirmDelete = document.getElementById('confirm-delete');
+  if (confirmDelete) confirmDelete.textContent = 'Forget document';
+  const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
+  if (pdf) {
+    pdf.checked = false;
+    pdf.disabled = true;
+    pdf.closest('label')?.setAttribute('title', 'PDF export is not available in browser-only mode; use the browser print command.');
+  }
+}
+
+// Each window keeps its own draft and says which document it shows, so two
+// windows edit two documents side by side (see window-session.js).
+const windowSession = (() => {
+  let local = null;
+  let session = null;
+  try { local = window.localStorage; } catch { /* storage unavailable */ }
+  try { session = window.sessionStorage; } catch { /* storage unavailable */ }
+  return createWindowSession({ local, session });
+})();
+
+function persistDraft() {
+  if (!editor.draftReady || editor.draftTimer || editor.previewTransaction) return;
+  editor.draftTimer = setTimeout(flushDraft, 150);
+}
+
+function flushDraft() {
+  if (editor.draftTimer) { clearTimeout(editor.draftTimer); editor.draftTimer = null; }
+  if (!editor.draftReady) return;
+  try {
+    // A tab can close during a pointer gesture. Persist only the committed
+    // document, never the disposable preview clone.
+    const committed = editor.previewTransaction?.baseCircuit || editor.circuit;
+    windowSession.writeDraft({
+      name: editor.currentCircuitName,
+      path: editor.currentDocumentPath,
+      dir: editor.currentDocumentDir,
+      pendingName: circuitNameEl.value,
+      state: committed.toJSON(),
+      savedSnapshot: editor.lastSavedSnapshot,
+      view: { x: editor.view.x, y: editor.view.y, w: editor.view.w, h: editor.view.h },
+    });
+  } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
+}
+
+function restoreDraft() {
+  try {
+    const draft = JSON.parse(windowSession.draft || 'null');
+    if (!draft || !draft.state) {
+      editor.lastSavedSnapshot = snapshot();
+      return;
+    }
+    applyJson(JSON.stringify(draft.state));
+    editor.draftRestored = true;
+    editor.currentCircuitName = draft.name || '';
+    editor.currentDocumentPath = typeof draft.path === 'string' && draft.path ? draft.path : null;
+    editor.currentDocumentDir = typeof draft.dir === 'string' && draft.dir ? draft.dir : null;
+    circuitNameEl.value = typeof draft.pendingName === 'string' ? draft.pendingName : editor.currentCircuitName;
+    const savedView = draft.view;
+    if (savedView && [savedView.x, savedView.y, savedView.w, savedView.h].every(Number.isFinite) && savedView.w > 0 && savedView.h > 0) {
+      editor.view = { x: savedView.x, y: savedView.y, w: savedView.w, h: savedView.h };
+    }
+    editor.lastSavedSnapshot = draft.savedSnapshot || snapshot();
+    editor.restoredDraftPath = editor.currentDocumentPath;
+    editor.activeSyncSuspended = !editor.currentDocumentPath;
+  } catch (err) {
+    logLine(`Could not restore local draft: ${err.message}`, 'error');
+    editor.lastSavedSnapshot = snapshot();
+  }
+}
+
+function displayPath(path) {
+  const home = editor.workspaceState?.home;
+  return home && path && (path === home || path.startsWith(home + (editor.workspaceState.sep || '/')))
+    ? `~${path.slice(home.length)}`
+    : path || '';
+}
+
+function documentNameForPath(path) {
+  const known = [...(editor.workspaceState?.documents || []), ...(editor.workspaceState?.recent || [])].find((document) => document.path === path);
+  if (known) return known.name;
+  return String(path).split(/[\\/]/).pop().replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
+}
+
+const PICKER_OPEN_FILE = '__open-file__';
+
+const PICKER_WORKSPACE = '__workspace__';
+
+async function refreshCircuitList() {
+  try {
+    editor.workspaceState = await persistence.workspace();
+  } catch (err) {
+    logLine(`Could not list documents: ${err.message}`, 'error');
+    return;
+  }
+  const { documents = [], recent = [] } = editor.workspaceState;
+  const label = (document) => document.name;
+  const known = new Set([...documents, ...recent].map((document) => document.path));
+  const recentEntries = editor.currentDocumentPath && !known.has(editor.currentDocumentPath)
+    ? [{ name: editor.currentCircuitName || documentNameForPath(editor.currentDocumentPath), path: editor.currentDocumentPath, kind: 'circuit' }, ...recent]
+    : recent;
+  const groups = [
+    [persistence.browserOnly ? 'Documents available in this browser' : `Workspace · ${displayPath(editor.workspaceState.workspace)}`, documents],
+    ['Recent elsewhere', recentEntries],
+  ];
+  const signature = JSON.stringify([groups.map(([name, items]) => [name, items.map((item) => [label(item), item.path])])]);
+  if (circuitSelectEl.dataset.signature !== signature) {
+    const children = [new Option(documents.length || recentEntries.length ? 'Open document…' : 'No documents yet', '')];
+    for (const [name, items] of groups) {
+      if (!items.length) continue;
+      const group = document.createElement('optgroup');
+      group.label = name;
+      for (const item of items) {
+        const option = new Option(label(item), item.path);
+        option.title = item.path;
+        group.append(option);
+      }
+      children.push(group);
+    }
+    const actions = document.createElement('optgroup');
+    actions.label = 'More';
+    actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE));
+    if (!persistence.browserOnly) actions.append(new Option('Change workspace folder…', PICKER_WORKSPACE));
+    children.push(actions);
+    circuitSelectEl.replaceChildren(...children);
+    circuitSelectEl.dataset.signature = signature;
+  }
+  circuitSelectEl.value = editor.currentDocumentPath || '';
+  circuitSelectEl.title = editor.currentDocumentPath
+    ? editor.currentDocumentPath
+    : persistence.browserOnly ? 'Open a document file' : `Open a document from ${editor.workspaceState.workspace}`;
+}
+
+async function restoreStartup() {
+  const listPromise = refreshCircuitList();
+  const params = new URLSearchParams(window.location.search);
+  const openPath = params.get('open');
+  if (openPath) window.history.replaceState(null, '', window.location.pathname);
+  await listPromise;
+  if (openPath && openPath !== editor.currentDocumentPath) requestCircuitLoad(openPath);
+}
+
+async function saveCircuit({ saveAs = false } = {}) {
+  let name = circuitNameEl.value.trim();
+  let target;
+  if (saveAs) {
+    let choice;
+    try {
+      choice = await showFileDialog(persistence, {
+        mode: 'save',
+        dir: editor.currentDocumentDir || editor.workspaceState?.workspace || '',
+        name: validDocumentName(name) || editor.currentCircuitName || '',
+      });
+    } catch (err) {
+      logLine(`Could not choose a save file: ${err.message}`, 'error');
+      return;
+    }
+    if (!choice) return;
+    ({ name } = choice);
+    target = choice;
+  } else if (editor.currentDocumentPath && name === editor.currentCircuitName) {
+    target = { path: editor.currentDocumentPath };
+  } else {
+    target = { ...(editor.currentDocumentDir ? { dir: editor.currentDocumentDir } : {}), name };
+  }
+  if (!validDocumentName(name)) {
+    logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
+    circuitNameEl.focus();
+    return;
+  }
+  editor.syncGeneration += 1;
+  editor.saveInFlight += 1;
+  renderSaveState();
+  const previousScope = analysisFormScope();
+  try {
+    const state = editor.circuit.toJSON();
+    let data;
+    try {
+      data = await persistence.save(target, state, { overwrite: !!target.path });
+    } catch (err) {
+      if (err.code !== 'exists') throw err;
+      const replace = await confirmChoice({
+        title: 'Replace existing document?',
+        message: `A document named "${name}" already exists in ${displayPath(target.dir || editor.currentDocumentDir || editor.workspaceState?.workspace)}. Replacing it overwrites its contents.`,
+        confirmLabel: 'Replace',
+        danger: true,
+      });
+      if (!replace) {
+        logLine('Save canceled.');
+        return;
+      }
+      data = await persistence.save(target, state, { overwrite: true });
+    }
+    editor.currentCircuitName = data.name;
+    editor.currentDocumentPath = data.path;
+    editor.currentDocumentDir = data.dir;
+    editor.activeSyncSuspended = false;
+    migrateAnalysisFormStorage(previousScope, analysisFormScope());
+    circuitNameEl.value = data.name;
+    editor.lastSeenRevision = data.revision || null;
+    editor.lastCircuitTag = data.etag || null;
+    editor.lastSavedSnapshot = snapshot();
+    persistDraft();
+    await refreshCircuitList();
+    logLine(`Saved ${displayPath(data.path)}.`);
+  } catch (err) {
+    logLine(`Could not save document: ${err.message}`, 'error');
+  } finally {
+    editor.saveInFlight -= 1;
+    editor.syncGeneration += 1;
+    renderSaveState();
+  }
+}
+
+async function loadCircuit(path, quiet = false, options = {}) {
+  if (!path) return false;
+  const { syncGeneration: expectedGeneration, ...loadOptions } = options;
+  try {
+    const data = await persistence.load(path, loadOptions);
+    if (expectedGeneration !== undefined && (editor.saveInFlight || expectedGeneration !== editor.syncGeneration)) return false;
+    if (data.notModified) {
+      if (data.revision) editor.lastSeenRevision = data.revision;
+      if (data.etag) editor.lastCircuitTag = data.etag;
+      return true;
+    }
+    // Sync re-applies the same document after outside edits; only a
+    // different one ends the tutorial.
+    if (data.path !== editor.currentDocumentPath) dropTutorial();
+    // A document owns its undo history. Navigation must not make Undo
+    // restore a different document kind.
+    editor.history = [];
+    editor.future = [];
+    applyJson(JSON.stringify(data.state));
+    clearLatestAnalysisResult();
+    setSelection([]);
+    editor.cursor = { x: 0, y: 0 };
+    editor.currentCircuitName = data.name;
+    editor.currentDocumentPath = data.path;
+    editor.currentDocumentDir = data.dir;
+    editor.activeSyncSuspended = false;
+    editor.remoteConflictLogged = false;
+    circuitNameEl.value = data.name;
+    editor.lastSavedSnapshot = snapshot();
+    editor.lastSeenRevision = data.revision || null;
+    editor.lastCircuitTag = data.etag || null;
+    fitView();
+    renderSaveState();
+    void refreshCircuitList();
+    logLine(`Opened ${displayPath(data.path)}.`);
+    return true;
+  } catch (err) {
+    // A transient load failure (active circuit whose file does not exist yet)
+    // is retried by syncActiveCircuit on the next poll — log only the first.
+    if (!quiet) logLine(`Could not open document: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+/** Open document contents that have no file path (a dropped file). Saving puts it in the workspace. */
+function openUnsavedDocument(state, name) {
+  dropTutorial();
+  editor.history = [];
+  editor.future = [];
+  applyJson(JSON.stringify(state));
+  clearLatestAnalysisResult();
+  setSelection([]);
+  editor.cursor = { x: 0, y: 0 };
+  editor.currentCircuitName = '';
+  editor.currentDocumentPath = null;
+  editor.currentDocumentDir = null;
+  editor.activeSyncSuspended = true;
+  editor.remoteConflictLogged = false;
+  lastSeenActive = null;
+  editor.lastSeenRevision = null;
+  editor.lastCircuitTag = null;
+  circuitNameEl.value = validDocumentName(name) || '';
+  circuitSelectEl.value = '';
+  editor.lastSavedSnapshot = snapshot();
+  fitView();
+  renderSaveState();
+  persistDraft();
+  logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
+}
+
+function hasUnsavedChanges() {
+  return snapshot() !== editor.lastSavedSnapshot ||
+    (!editor.currentDocumentPath && !!validDocumentName(circuitNameEl.value));
+}
+
+let pendingDocumentAction = null;
+
+/** Run an action that replaces the open document, asking first when that would discard unsaved changes. */
+function requestDocumentAction(description, run) {
+  if (!hasUnsavedChanges()) {
+    run();
+    return;
+  }
+  pendingDocumentAction = run;
+  if (switchDialogMessage) {
+    switchDialogMessage.textContent = `${description} will discard the unsaved changes in "${editor.currentCircuitName || circuitNameEl.value.trim() || 'this design'}".`;
+  }
+  circuitSelectEl.value = editor.currentDocumentPath || '';
+  switchDialog?.showModal();
+}
+
+function requestCircuitLoad(path) {
+  if (!path) return;
+  requestDocumentAction(`Opening "${documentNameForPath(path)}"`, () => loadCircuit(path, false, { open: true }));
+}
+
+async function openDocumentDialog() {
+  try {
+    const choice = await showFileDialog(persistence, { mode: 'open', dir: editor.currentDocumentDir || editor.workspaceState?.workspace || '' });
+    if (choice) requestCircuitLoad(choice.path);
+  } catch (err) {
+    logLine(`Could not choose an open file: ${err.message}`, 'error');
+  }
+}
+
+async function chooseWorkspaceFolder() {
+  if (persistence.browserOnly) {
+    logLine('Browser-only mode uses the browser download location instead of a workspace folder.');
+    return;
+  }
+  const choice = await showFileDialog(persistence, { mode: 'folder', dir: editor.workspaceState?.workspace || '' });
+  if (!choice) return;
+  try {
+    editor.workspaceState = await persistence.setWorkspace(choice.path);
+    circuitSelectEl.dataset.signature = '';
+    await refreshCircuitList();
+    logLine(`Workspace folder is now ${displayPath(editor.workspaceState.workspace)}. New documents are saved there.`);
+  } catch (err) {
+    logLine(`Could not change the workspace folder: ${err.message}`, 'error');
+  }
+}
+
+async function revealCurrentDocument() {
+  if (!editor.currentDocumentPath) return;
+  if (persistence.browserOnly) {
+    logLine('Browser-only mode cannot reveal files in the operating-system file manager.');
+    return;
+  }
+  try {
+    await persistence.reveal(editor.currentDocumentPath);
+  } catch (err) {
+    logLine(`Could not show the document folder: ${err.message}`, 'error');
+  }
+}
+
+function renderSaveState() {
+  const dirty = hasUnsavedChanges();
+  // Fitting measures the toolbar at each compaction stage (a forced layout
+  // apiece), so refit only when the title or dirty dot can change its width;
+  // the toolbar's ResizeObserver covers everything else.
+  const fitKey = `${circuitNameEl.value}|${circuitNameEl.placeholder}|${dirty}`;
+  if (fitKey !== editor.toolbarFitKey) {
+    editor.toolbarFitKey = fitKey;
+    scheduleToolbarFit();
+  }
+  const dirtyDot = document.getElementById('dirty-dot');
+  if (dirtyDot) dirtyDot.hidden = !dirty;
+  if (deleteCircuitBtn) deleteCircuitBtn.disabled = !editor.currentDocumentPath || editor.deleteInFlight;
+  if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
+  circuitNameEl.title = editor.currentDocumentPath
+    ? `${editor.currentDocumentPath}\nRename and save to create a copy next to it.`
+    : persistence.browserOnly ? 'Name used when saving this document as a browser download' : 'Name used when saving this document to the workspace folder';
+  const saveButton = document.getElementById('btn-save');
+  if (saveButton) {
+    saveButton.disabled = !dirty || editor.saveInFlight > 0;
+    saveButton.title = dirty
+      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
+      : editor.currentDocumentPath ? `All changes saved to ${editor.currentDocumentPath}` : 'Nothing to save yet';
+  }
+}
+
+async function deleteSavedCircuit() {
+  const path = editor.currentDocumentPath;
+  if (!path || editor.deleteInFlight) return;
+  editor.deleteInFlight = true;
+  renderSaveState();
+  try {
+    await persistence.delete(path);
+    const name = editor.currentCircuitName;
+
+    editor.history = [];
+    editor.future = [];
+    cancelPreviewTransaction();
+    dropTutorial();
+    editor.circuit = new Circuit();
+    clearLatestAnalysisResult();
+    markModelChanged(false);
+    resetCheckState();
+    editor.directWire = null;
+    editor.wire = null;
+    editor.terminalSnap = false;
+    clearSymmetry();
+    editor.drag = null;
+    editor.moveMode = null;
+    editor.copyMode = false;
+    editor.deleteMode = false;
+    editor.alignTool = null;
+    editor.movePending = false;
+    editor.copyPending = false;
+    editor.visual = null;
+    editor.pendingPlace = null;
+    clearSymmetry();
+    editor.labelMode = null;
+    editor.annotationPoints = [];
+    setSelection([]);
+    editor.selectedNets.clear();
+    editor.cursor = { x: 0, y: 0 };
+    editor.view = viewFromCenter(0, 0);
+    editor.currentCircuitName = '';
+    editor.currentDocumentPath = null;
+    editor.currentDocumentDir = null;
+    editor.activeSyncSuspended = true;
+    circuitNameEl.value = '';
+    circuitSelectEl.value = '';
+    editor.lastSavedSnapshot = snapshot();
+    lastSeenActive = null;
+    lastFailedActive = null;
+    editor.lastSeenRevision = null;
+    editor.lastCircuitTag = null;
+    editor.restoredDraftPath = null;
+    editor.remoteConflictLogged = false;
+    windowSession.clearDraft();
+    render();
+    await refreshCircuitList();
+    logLine(`${persistence.browserOnly ? 'Forgot' : 'Deleted'} "${name}" (${displayPath(path)}).`);
+  } catch (err) {
+    logLine(`Could not delete document: ${err.message}`, 'error');
+  } finally {
+    editor.deleteInFlight = false;
+    renderSaveState();
+  }
+}
+
+function askDeleteCircuit() {
+  const path = editor.currentDocumentPath;
+  if (!path || !deleteDialog) return;
+  if (persistence.browserOnly) {
+    deleteDialogMessage.textContent = hasUnsavedChanges()
+      ? `This removes ${displayPath(path)} from this browser's cached document list and discards its unsaved editor changes. It does not delete a file already downloaded to disk.`
+      : `This removes ${displayPath(path)} from this browser's cached document list. It does not delete a file already downloaded to disk.`;
+  } else {
+    deleteDialogMessage.textContent = hasUnsavedChanges()
+      ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
+      : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
+  }
+  deleteDialog.showModal();
+}
+
+let lastSeenActive = null;
+
+let lastFailedActive = null; // active circuit path whose load failed (retry silently)
+
+async function syncActiveCircuitOnce() {
+  if (!persistence.liveSync) return;
+  windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden });
+  const generation = editor.syncGeneration;
+  // First, follow the server's "active circuit" — the CLI drives it, the
+  // browser mirrors it. Only auto-load on a CHANGE of the server's active
+  // circuit (lastSeenActive), not on every poll where it merely differs from
+  // the open document — otherwise a manual open gets clobbered by the next tick.
+  let active = null;
+  let activeRevision = null;
+  let activeResponseSucceeded = false;
+  try {
+    const data = await persistence.active();
+    if (typeof data.active === 'string') {
+      active = data.active ? data.path : '';
+      activeRevision = data.revision || null;
+      activeResponseSucceeded = true;
+    }
+  } catch {
+    // server restart — keep going with the content sync below
+  }
+
+  if (editor.saveInFlight || generation !== editor.syncGeneration) return;
+
+  if (editor.activeSyncSuspended) {
+    // Consume the current active identity while the explicit blank/dropped
+    // document owns the editor. This prevents the next poll from treating an
+    // already-active file as a change and replacing the unsaved document.
+    if (activeResponseSucceeded) {
+      lastSeenActive = active;
+      editor.lastSeenRevision = activeRevision;
+      lastFailedActive = null;
+    }
+    return;
+  }
+
+  // Seed the active revision without replacing the restored local draft.
+  if (activeResponseSucceeded && editor.restoredDraftPath && editor.currentDocumentPath === editor.restoredDraftPath) {
+    lastSeenActive = active;
+    editor.lastSeenRevision = activeRevision;
+    editor.restoredDraftPath = null;
+    return;
+  }
+  if (activeResponseSucceeded && editor.restoredDraftPath && editor.currentDocumentPath !== editor.restoredDraftPath) {
+    editor.restoredDraftPath = null;
+  }
+
+  // With several windows open, the CLI's new active document goes to one of
+  // them: none when a window already shows it, else the most recently
+  // focused. The others keep their documents.
+  if (active !== lastSeenActive && active && active !== editor.currentDocumentPath
+    && (windowSession.otherWindowShows(active) || !windowSession.leadsActiveSync())) {
+    lastSeenActive = active;
+    lastFailedActive = null;
+  }
+  if (active !== lastSeenActive) {
+    // The server only sends a revision for an active circuit whose file exists.
+    // Wait silently for a missing one (not yet written, or deleted) instead of
+    // requesting it and reporting a load error on every poll.
+    if (active && active !== editor.currentDocumentPath && activeResponseSucceeded && !activeRevision) return;
+    if (active && active !== editor.currentDocumentPath) {
+      // A failed load must NOT advance lastSeenActive — otherwise the poll
+      // would never retry once the file appears.
+      const quietRetry = active === lastFailedActive;
+      await loadCircuit(active, quietRetry, { syncGeneration: generation });
+      if (editor.currentDocumentPath === active) {
+        lastSeenActive = active;
+        lastFailedActive = null;
+      } else {
+        lastFailedActive = active;
+      }
+      return; // loadCircuit already re-rendered + fit (or logged the failure)
+    }
+    lastSeenActive = active;
+  }
+  if (!editor.currentDocumentPath) return;
+  // Avoid a document GET and model parse when the active revision is unchanged.
+  if (active === editor.currentDocumentPath && activeRevision && activeRevision === editor.lastSeenRevision) return;
+  try {
+    const data = await persistence.load(editor.currentDocumentPath, { ifNoneMatch: editor.lastCircuitTag });
+    if (editor.saveInFlight || generation !== editor.syncGeneration) return;
+    if (data.notModified) {
+      if (data.revision) editor.lastSeenRevision = data.revision;
+      if (data.etag) editor.lastCircuitTag = data.etag;
+      return;
+    }
+    // The model normalizes loaded state (notably reducible net geometry), so
+    // compare and record the canonical representation rather than the raw
+    // JSON on disk. Otherwise a clean design can become permanently dirty
+    // after the first poll of a normalized save.
+    const remoteSnapshot = JSON.stringify(loadDocument(data.state).toJSON());
+    const remoteRevision = data.revision || activeRevision;
+    const remoteTag = data.etag || editor.lastCircuitTag;
+    const currentSnapshot = snapshot();
+    editor.lastSeenRevision = remoteRevision || null;
+    editor.lastCircuitTag = remoteTag || null;
+    if (remoteSnapshot === currentSnapshot) return;
+    if (currentSnapshot !== editor.lastSavedSnapshot) {
+      if (!editor.remoteConflictLogged) {
+        logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
+        editor.remoteConflictLogged = true;
+      }
+      return;
+    }
+    applyJson(remoteSnapshot);
+    editor.lastSavedSnapshot = snapshot();
+    editor.remoteConflictLogged = false;
+    fitView();
+    logLine(`Reloaded ${editor.currentCircuitName}: the file changed on disk.`);
+  } catch {
+    // A missing file or a server restart should not interrupt editing.
+  }
+}
+
+async function syncActiveCircuit() {
+  if (!persistence.liveSync || document.hidden) return;
+  if (editor.syncInFlight) return editor.syncInFlight;
+  editor.syncInFlight = syncActiveCircuitOnce().finally(() => { editor.syncInFlight = null; });
+  return editor.syncInFlight;
+}
+
+function startNewDocument() {
+  // A blank document is a new analysis session. Do not reuse free-text
+  // references from an earlier unnamed schematic; named documents keep their
+  // own scoped preferences and are restored when reopened.
+  try { localStorage.removeItem(analysisFormStorageKey('new')); } catch { /* storage unavailable */ }
+  // Starting the tutorial restarts it right after this.
+  dropTutorial();
+  editor.syncGeneration += 1;
+  editor.activeSyncSuspended = true;
+  circuitNameEl.value = '';
+  circuitSelectEl.value = '';
+  editor.currentCircuitName = '';
+  editor.currentDocumentPath = null;
+  editor.currentDocumentDir = null;
+  editor.history = [];
+  editor.future = [];
+  applyJson(JSON.stringify(createDocument().toJSON()));
+  clearLatestAnalysisResult();
+  editor.lastSavedSnapshot = snapshot();
+  lastSeenActive = null;
+  editor.lastSeenRevision = null;
+  editor.lastCircuitTag = null;
+  editor.remoteConflictLogged = false;
+  editor.cursor = { x: 0, y: 0 };
+  editor.view = viewFromCenter(0, 0);
+  render();
+  circuitNameEl.focus();
+  renderSaveState();
+  logLine(persistence.browserOnly
+    ? 'Started a new schematic. Enter a name and save it as a browser download, or use Save as to choose a file name.'
+    : 'Started a new schematic. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.');
+}
+
+// Dropping a document file (for example, one received by email) opens a copy.
+function droppedFiles(ev) {
+  return [...(ev.dataTransfer?.types || [])].includes('Files');
+}
+
+/** Tell the local server this window is open; the launcher stops the server after the last one closes. */
+function startSessionHeartbeat() {
+  const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  const beat = () => {
+    persistence.heartbeat(id);
+    windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden });
+  };
+  beat();
+  // Runs while hidden too; browsers throttle background timers to about once a minute.
+  window.setInterval(beat, 20_000);
+  window.addEventListener('pageshow', (ev) => {
+    if (!ev.persisted) return;
+    windowSession.reopen();
+    beat();
+  });
+  window.addEventListener('focus', () => windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden, focused: true }));
+  document.addEventListener('visibilitychange', () => windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden }));
+  window.addEventListener('pagehide', () => {
+    windowSession.close();
+    if (persistence.liveSync) {
+      navigator.sendBeacon?.('/api/session', new Blob([JSON.stringify({ id, closing: true })], { type: 'application/json' }));
+    }
+  });
+}
+
+function installDocumentSession() {
+  configureBrowserOnlyUi();
+
+  if (deleteDialog) {
+    deleteDialog.addEventListener('close', () => {
+      if (deleteDialog.returnValue === 'confirm') deleteSavedCircuit();
+    });
+  }
+
+  if (switchDialog) {
+    switchDialog.addEventListener('close', () => {
+      const run = pendingDocumentAction;
+      pendingDocumentAction = null;
+      if (switchDialog.returnValue === 'discard' && run) run();
+      else circuitSelectEl.value = editor.currentDocumentPath || '';
+    });
+  }
+
+  newDocumentButton?.addEventListener('click', () => {
+    for (const [button, menu] of toolbarMenus) closeToolbarMenu(button, menu);
+    startNewDocument();
+  });
+
+  deleteCircuitBtn?.addEventListener('click', askDeleteCircuit);
+
+  revealDocumentBtn?.addEventListener('click', revealCurrentDocument);
+
+  document.getElementById('btn-open-file')?.addEventListener('click', openDocumentDialog);
+
+  document.getElementById('btn-save-as')?.addEventListener('click', () => saveCircuit({ saveAs: true }));
+
+  document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
+
+  circuitNameEl.addEventListener('input', renderSaveState);
+
+  circuitSelectEl.addEventListener('change', () => {
+    const value = circuitSelectEl.value;
+    circuitSelectEl.value = editor.currentDocumentPath || '';
+    if (value === PICKER_OPEN_FILE) openDocumentDialog();
+    else if (value === PICKER_WORKSPACE) chooseWorkspaceFolder();
+    else requestCircuitLoad(value);
+  });
+
+  window.addEventListener('dragover', (ev) => {
+    if (!droppedFiles(ev)) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'copy';
+  });
+
+  window.addEventListener('drop', async (ev) => {
+    if (!droppedFiles(ev)) return;
+    ev.preventDefault();
+    const file = [...ev.dataTransfer.files].find((candidate) => /\.json$/i.test(candidate.name));
+    if (!file) {
+      logLine('Drop a .json document file to open it.', 'error');
+      return;
+    }
+    let state;
+    try {
+      state = JSON.parse(await file.text());
+      loadDocument(state);
+    } catch (err) {
+      logLine(`Could not open ${file.name}: ${err.message}`, 'error');
+      return;
+    }
+    const name = file.name.replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
+    requestDocumentAction(`Opening "${file.name}"`, () => openUnsavedDocument(state, name));
+  });
+
+  // Documents created by the CLI, another window, or a file manager appear without a manual reload.
+  circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
+
+  window.addEventListener('beforeunload', (ev) => {
+    flushDraft();
+    if (snapshot() === editor.lastSavedSnapshot) return;
+    ev.preventDefault();
+    ev.returnValue = 'You have unsaved schematic changes.';
+  });
+}
+
+__exports.persistence = persistence;
+};
+
 __modules["src/web/drawing-export.js"] = function (__require, __exports) {
 __exports.svgToPngDataUrl = svgToPngDataUrl;
 __exports.applyExportDarkTheme = applyExportDarkTheme;
@@ -29398,11 +30185,12 @@ __exports.deriveInteractionState = deriveInteractionState;
 __exports.markModelChanged = markModelChanged;
 __exports.commit = commit;
 __exports.snapshot = snapshot;
+__exports.cancelPreviewTransaction = cancelPreviewTransaction;
 __exports.recordHistoryEntry = recordHistoryEntry;
 __exports.scheduleInteractionRender = scheduleInteractionRender;
 __exports.copyAsImage = copyAsImage;
-__exports.requestDocumentAction = requestDocumentAction;
-__exports.renderSaveState = renderSaveState;
+__exports.scheduleToolbarFit = scheduleToolbarFit;
+__exports.applyJson = applyJson;
 __exports.sortedComps = sortedComps;
 __exports.namedGroupNets = namedGroupNets;
 __exports.visibleNets = visibleNets;
@@ -29441,6 +30229,7 @@ __exports.confirmNamedConnection = confirmNamedConnection;
 __exports.restoreProvisionalLabel = restoreProvisionalLabel;
 __exports.symmetryAxisText = symmetryAxisText;
 __exports.symmetryTwin = symmetryTwin;
+__exports.clearSymmetry = clearSymmetry;
 __exports.render = render;
 __exports.renderCanvas = renderCanvas;
 __exports.beginMarqueeSelection = beginMarqueeSelection;
@@ -29464,7 +30253,7 @@ __exports.activateCopy = activateCopy;
 __exports.activateAlign = activateAlign;
 __exports.selectedTransform = selectedTransform;
 __exports.setPanelCollapsed = setPanelCollapsed;
-__exports.startNewDocument = startNewDocument;
+__exports.closeToolbarMenu = closeToolbarMenu;
 __exports.sidePanelVisible = sidePanelVisible;
 __exports.setSidePanelVisible = setSidePanelVisible;
 let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
@@ -29478,7 +30267,7 @@ let DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale; __bind(() => { ({ D
 let componentShapeSvg, editorOverlay, svgString; __bind(() => { ({ componentShapeSvg, editorOverlay, svgString } = __require("src/core/render.js")); });
 let resolveColor, themeInkSvg; __bind(() => { ({ resolveColor, themeInkSvg } = __require("src/core/style.js")); });
 let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
-let createDocument, loadDocument, renderDocument; __bind(() => { ({ createDocument, loadDocument, renderDocument } = __require("src/core/document.js")); });
+let loadDocument, renderDocument; __bind(() => { ({ loadDocument, renderDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
 let DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset; __bind(() => { ({ DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } = __require("src/core/selection-drawing.js")); });
@@ -29494,30 +30283,29 @@ let copyableLabelPayload, selectedSetMoveSource, selectedCompleteNetIds, chooseW
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
 let commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback; __bind(() => { ({ commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js")); });
 let INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType; __bind(() => { ({ INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js")); });
-let createPersistenceAdapter, defaultExportDirectory, validDocumentName; __bind(() => { ({ createPersistenceAdapter, defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js")); });
-let createWindowSession; __bind(() => { ({ createWindowSession } = __require("src/web/window-session.js")); });
+let defaultExportDirectory, validDocumentName; __bind(() => { ({ defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js")); });
 let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
-let analysisFormStorageKey; __bind(() => { ({ analysisFormStorageKey } = __require("src/web/analysis-state.js")); });
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
 let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
 let arrivalDirection, isPinDragCandidate, knifeCrossings, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent; __bind(() => { ({ arrivalDirection, isPinDragCandidate, knifeCrossings, pinHandleRadius, quickAddPlacement, spliceCandidate, strokeCrossesPolyline, strokeCrossesRect, wheelIntent } = __require("src/web/gestures.js")); });
 let LOG_DRAWER_CLOSED; __bind(() => { ({ LOG_DRAWER_CLOSED } = __require("src/web/status-bar.js")); });
 let alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, exportCircuitBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportDialog, exportForm, exportCancel, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
+let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, circuitNameEl, exportCircuitBtn, exportDialog, exportForm, exportCancel, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, detailEl, cmdInput, statusZoomEl, circuitNameEl, exportCircuitBtn, exportDialog, exportForm, exportCancel, clearCheckButtonEl, helpDialog, helpSearch, analysisDialog, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, panelFilterEl, sidePanelEl, sidePanelToggleEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn, paneEl } = __require("src/web/elements.js")); });
 let ICON_PATHS, syncToolCursor, installIcons; __bind(() => { ({ ICON_PATHS, syncToolCursor, installIcons } = __require("src/web/icons.js")); });
-let noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, offerTutorial, dropTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
+let noteTip, tutorialTargetRects, syncTutorial, offerTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, offerTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
 let ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel; __bind(() => { ({ ALIGN_SOURCE_HINT, worldPerPixel, updateAlignHover, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } = __require("src/web/align-tool.js")); });
 let renderHelpSearch, showHelp, installHelp; __bind(() => { ({ renderHelpSearch, showHelp, installHelp } = __require("src/web/help.js")); });
 let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind(() => { ({ openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } = __require("src/web/radial-menu.js")); });
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
 let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, prefersReducedMotion, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, prefersReducedMotion, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
-let clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope, syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi; __bind(() => { ({ clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope, syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi } = __require("src/web/analysis-ui.js")); });
+let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi } = __require("src/web/analysis-ui.js")); });
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
 let closeComponentContextMenu, appendContextItem, openComponentContextMenu, selectContextTarget, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, appendContextItem, openComponentContextMenu, selectContextTarget, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, openComponentChildLabelEditor, openReferenceMarkerEditor, inlineEditLabel; __bind(() => { ({ bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, openComponentChildLabelEditor, openReferenceMarkerEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
 let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, plainMarkup, beatLabel, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, plainMarkup, beatLabel, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
+let persistence, persistDraft, flushDraft, restoreDraft, displayPath, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistence, persistDraft, flushDraft, restoreDraft, displayPath, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -29581,14 +30369,15 @@ let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObject
 
 
 
-
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
   activeBeatId: { get: () => activeBeatId, set: (value) => { activeBeatId = value; } },
   activePlacementGuides: { get: () => activePlacementGuides, set: (value) => { activePlacementGuides = value; } },
   activeSymmetryCells: { get: () => activeSymmetryCells, set: (value) => { activeSymmetryCells = value; } },
+  activeSyncSuspended: { get: () => activeSyncSuspended, set: (value) => { activeSyncSuspended = value; } },
   alignTool: { get: () => alignTool, set: (value) => { alignTool = value; } },
   analysisPick: { get: () => analysisPick, set: (value) => { analysisPick = value; } },
+  annotationPoints: { get: () => annotationPoints, set: (value) => { annotationPoints = value; } },
   beatAnchorId: { get: () => beatAnchorId, set: (value) => { beatAnchorId = value; } },
   beatKnown: { get: () => beatKnown, set: (value) => { beatKnown = value; } },
   beatStripActive: { get: () => beatStripActive, set: (value) => { beatStripActive = value; } },
@@ -29601,25 +30390,38 @@ Object.defineProperties(editor, {
   clipboardNotice: { get: () => clipboardNotice, set: (value) => { clipboardNotice = value; } },
   contextMenuDismiss: { get: () => contextMenuDismiss, set: (value) => { contextMenuDismiss = value; } },
   copyMode: { get: () => copyMode, set: (value) => { copyMode = value; } },
+  copyPending: { get: () => copyPending, set: (value) => { copyPending = value; } },
   currentCircuitName: { get: () => currentCircuitName, set: (value) => { currentCircuitName = value; } },
+  currentDocumentDir: { get: () => currentDocumentDir, set: (value) => { currentDocumentDir = value; } },
   currentDocumentPath: { get: () => currentDocumentPath, set: (value) => { currentDocumentPath = value; } },
   cursor: { get: () => cursor, set: (value) => { cursor = value; } },
+  deleteInFlight: { get: () => deleteInFlight, set: (value) => { deleteInFlight = value; } },
+  deleteMode: { get: () => deleteMode, set: (value) => { deleteMode = value; } },
   diagnosticSelection: { get: () => diagnosticSelection, set: (value) => { diagnosticSelection = value; } },
   directWire: { get: () => directWire, set: (value) => { directWire = value; } },
+  draftReady: { get: () => draftReady, set: (value) => { draftReady = value; } },
+  draftRestored: { get: () => draftRestored, set: (value) => { draftRestored = value; } },
+  draftTimer: { get: () => draftTimer, set: (value) => { draftTimer = value; } },
   drag: { get: () => drag, set: (value) => { drag = value; } },
   equationAnnotationLayout: { get: () => equationAnnotationLayout, set: (value) => { equationAnnotationLayout = value; } },
   equationEmphasis: { get: () => equationEmphasis, set: (value) => { equationEmphasis = value; } },
+  future: { get: () => future, set: (value) => { future = value; } },
+  history: { get: () => history, set: (value) => { history = value; } },
   inlineInput: { get: () => inlineInput, set: (value) => { inlineInput = value; } },
   insertQuery: { get: () => insertQuery, set: (value) => { insertQuery = value; } },
   labelMode: { get: () => labelMode, set: (value) => { labelMode = value; } },
   lastCheckReport: { get: () => lastCheckReport, set: (value) => { lastCheckReport = value; } },
+  lastCircuitTag: { get: () => lastCircuitTag, set: (value) => { lastCircuitTag = value; } },
   lastLabelClick: { get: () => lastLabelClick, set: (value) => { lastLabelClick = value; } },
+  lastSavedSnapshot: { get: () => lastSavedSnapshot, set: (value) => { lastSavedSnapshot = value; } },
+  lastSeenRevision: { get: () => lastSeenRevision, set: (value) => { lastSeenRevision = value; } },
   latestSmallSignalModel: { get: () => latestSmallSignalModel, set: (value) => { latestSmallSignalModel = value; } },
   layoutPreviewRects: { get: () => layoutPreviewRects, set: (value) => { layoutPreviewRects = value; } },
   logDrawerState: { get: () => logDrawerState, set: (value) => { logDrawerState = value; } },
   mode: { get: () => mode, set: (value) => { mode = value; } },
   modelRevision: { get: () => modelRevision, set: (value) => { modelRevision = value; } },
   moveMode: { get: () => moveMode, set: (value) => { moveMode = value; } },
+  movePending: { get: () => movePending, set: (value) => { movePending = value; } },
   multi: { get: () => multi, set: (value) => { multi = value; } },
   netWarnings: { get: () => netWarnings, set: (value) => { netWarnings = value; } },
   pageGuide: { get: () => pageGuide, set: (value) => { pageGuide = value; } },
@@ -29628,7 +30430,10 @@ Object.defineProperties(editor, {
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
   previewTransaction: { get: () => previewTransaction, set: (value) => { previewTransaction = value; } },
   radialMenuEl: { get: () => radialMenuEl, set: (value) => { radialMenuEl = value; } },
+  remoteConflictLogged: { get: () => remoteConflictLogged, set: (value) => { remoteConflictLogged = value; } },
+  restoredDraftPath: { get: () => restoredDraftPath, set: (value) => { restoredDraftPath = value; } },
   routeMode: { get: () => routeMode, set: (value) => { routeMode = value; } },
+  saveInFlight: { get: () => saveInFlight, set: (value) => { saveInFlight = value; } },
   selLabels: { get: () => selLabels, set: (value) => { selLabels = value; } },
   selected: { get: () => selected, set: (value) => { selected = value; } },
   selectedBeatIds: { get: () => selectedBeatIds, set: (value) => { selectedBeatIds = value; } },
@@ -29637,12 +30442,16 @@ Object.defineProperties(editor, {
   selectedWires: { get: () => selectedWires, set: (value) => { selectedWires = value; } },
   suppressContextMenuUntil: { get: () => suppressContextMenuUntil, set: (value) => { suppressContextMenuUntil = value; } },
   symmetry: { get: () => symmetry, set: (value) => { symmetry = value; } },
+  syncGeneration: { get: () => syncGeneration, set: (value) => { syncGeneration = value; } },
+  syncInFlight: { get: () => syncInFlight, set: (value) => { syncInFlight = value; } },
   terminalSnap: { get: () => terminalSnap, set: (value) => { terminalSnap = value; } },
+  toolbarFitKey: { get: () => toolbarFitKey, set: (value) => { toolbarFitKey = value; } },
   tutorial: { get: () => tutorial, set: (value) => { tutorial = value; } },
   view: { get: () => view, set: (value) => { view = value; } },
   viewPane: { get: () => viewPane, set: (value) => { viewPane = value; } },
   visual: { get: () => visual, set: (value) => { visual = value; } },
   wire: { get: () => wire, set: (value) => { wire = value; } },
+  workspaceState: { get: () => workspaceState, set: (value) => { workspaceState = value; } },
   zoom: { get: () => zoom, set: (value) => { zoom = value; } },
 });
 
@@ -29685,33 +30494,7 @@ let tutorial = null;
 installOnboarding();
 // ----- editor state ----------------------------------------------
 
-const persistence = createPersistenceAdapter();
-
-function configureBrowserOnlyUi() {
-  if (!persistence.browserOnly) return;
-  // These actions depend on the local server's filesystem. Browser mode uses
-  // native file pickers and downloads instead of pretending that a browser can
-  // browse or reveal arbitrary folders.
-  for (const id of ['btn-workspace', 'btn-reveal-document']) document.getElementById(id)?.setAttribute('hidden', '');
-  const forget = document.getElementById('btn-delete-circuit');
-  if (forget) {
-    forget.textContent = 'Forget from browser…';
-    forget.title = 'Remove the current document from this browser\'s cached document list';
-  }
-  const deleteTitle = document.getElementById('delete-dialog-title');
-  if (deleteTitle) deleteTitle.textContent = 'Forget browser document?';
-  const confirmDelete = document.getElementById('confirm-delete');
-  if (confirmDelete) confirmDelete.textContent = 'Forget document';
-  const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
-  if (pdf) {
-    pdf.checked = false;
-    pdf.disabled = true;
-    pdf.closest('label')?.setAttribute('title', 'PDF export is not available in browser-only mode; use the browser print command.');
-  }
-}
-
-configureBrowserOnlyUi();
-
+installDocumentSession();
 let circuit = new Circuit();
 let mode = 'normal'; // 'normal' | 'insert'
 let labelMode = null; // null | 'net' | 'annotation' | 'equation' | 'arrow' | 'box' | 'line'
@@ -29806,15 +30589,6 @@ let lastSavedSnapshot = '';
 let draftReady = false;
 let draftRestored = false;
 let deleteInFlight = false;
-// Each window keeps its own draft and says which document it shows, so two
-// windows edit two documents side by side (see window-session.js).
-const windowSession = (() => {
-  let local = null;
-  let session = null;
-  try { local = window.localStorage; } catch { /* storage unavailable */ }
-  try { session = window.sessionStorage; } catch { /* storage unavailable */ }
-  return createWindowSession({ local, session });
-})();
 let restoredDraftPath = null;
 let remoteConflictLogged = false;
 let lastSeenRevision = null;
@@ -30101,201 +30875,12 @@ function mountCommitFeedback(force = false) {
   if (canvasSvgEl.lastElementChild !== layer) canvasSvgEl.appendChild(layer);
 }
 
-function persistDraft() {
-  if (!draftReady || draftTimer || previewTransaction) return;
-  draftTimer = setTimeout(flushDraft, 150);
-}
-function flushDraft() {
-  if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
-  if (!draftReady) return;
-  try {
-    // A tab can close during a pointer gesture. Persist only the committed
-    // document, never the disposable preview clone.
-    const committed = previewTransaction?.baseCircuit || circuit;
-    windowSession.writeDraft({
-      name: currentCircuitName,
-      path: currentDocumentPath,
-      dir: currentDocumentDir,
-      pendingName: circuitNameEl.value,
-      state: committed.toJSON(),
-      savedSnapshot: lastSavedSnapshot,
-      view: { x: view.x, y: view.y, w: view.w, h: view.h },
-    });
-  } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
-}
 function scheduleInteractionRender() {
   // Routing the draft is the costly part of a wire-mode repaint; do it once
   // per painted frame rather than once per input event.
   wirePreviewStale = true;
   if (renderFrame !== null) return;
   renderFrame = requestAnimationFrame(() => { renderFrame = null; render(); });
-}
-function restoreDraft() {
-  try {
-    const draft = JSON.parse(windowSession.draft || 'null');
-    if (!draft || !draft.state) {
-      lastSavedSnapshot = snapshot();
-      return;
-    }
-    applyJson(JSON.stringify(draft.state));
-    draftRestored = true;
-    currentCircuitName = draft.name || '';
-    currentDocumentPath = typeof draft.path === 'string' && draft.path ? draft.path : null;
-    currentDocumentDir = typeof draft.dir === 'string' && draft.dir ? draft.dir : null;
-    circuitNameEl.value = typeof draft.pendingName === 'string' ? draft.pendingName : currentCircuitName;
-    const savedView = draft.view;
-    if (savedView && [savedView.x, savedView.y, savedView.w, savedView.h].every(Number.isFinite) && savedView.w > 0 && savedView.h > 0) {
-      view = { x: savedView.x, y: savedView.y, w: savedView.w, h: savedView.h };
-    }
-    lastSavedSnapshot = draft.savedSnapshot || snapshot();
-    restoredDraftPath = currentDocumentPath;
-    activeSyncSuspended = !currentDocumentPath;
-  } catch (err) {
-    logLine(`Could not restore local draft: ${err.message}`, 'error');
-    lastSavedSnapshot = snapshot();
-  }
-}
-
-function displayPath(path) {
-  const home = workspaceState?.home;
-  return home && path && (path === home || path.startsWith(home + (workspaceState.sep || '/')))
-    ? `~${path.slice(home.length)}`
-    : path || '';
-}
-
-function documentNameForPath(path) {
-  const known = [...(workspaceState?.documents || []), ...(workspaceState?.recent || [])].find((document) => document.path === path);
-  if (known) return known.name;
-  return String(path).split(/[\\/]/).pop().replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
-}
-
-const PICKER_OPEN_FILE = '__open-file__';
-const PICKER_WORKSPACE = '__workspace__';
-
-async function refreshCircuitList() {
-  try {
-    workspaceState = await persistence.workspace();
-  } catch (err) {
-    logLine(`Could not list documents: ${err.message}`, 'error');
-    return;
-  }
-  const { documents = [], recent = [] } = workspaceState;
-  const label = (document) => document.name;
-  const known = new Set([...documents, ...recent].map((document) => document.path));
-  const recentEntries = currentDocumentPath && !known.has(currentDocumentPath)
-    ? [{ name: currentCircuitName || documentNameForPath(currentDocumentPath), path: currentDocumentPath, kind: 'circuit' }, ...recent]
-    : recent;
-  const groups = [
-    [persistence.browserOnly ? 'Documents available in this browser' : `Workspace · ${displayPath(workspaceState.workspace)}`, documents],
-    ['Recent elsewhere', recentEntries],
-  ];
-  const signature = JSON.stringify([groups.map(([name, items]) => [name, items.map((item) => [label(item), item.path])])]);
-  if (circuitSelectEl.dataset.signature !== signature) {
-    const children = [new Option(documents.length || recentEntries.length ? 'Open document…' : 'No documents yet', '')];
-    for (const [name, items] of groups) {
-      if (!items.length) continue;
-      const group = document.createElement('optgroup');
-      group.label = name;
-      for (const item of items) {
-        const option = new Option(label(item), item.path);
-        option.title = item.path;
-        group.append(option);
-      }
-      children.push(group);
-    }
-    const actions = document.createElement('optgroup');
-    actions.label = 'More';
-    actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE));
-    if (!persistence.browserOnly) actions.append(new Option('Change workspace folder…', PICKER_WORKSPACE));
-    children.push(actions);
-    circuitSelectEl.replaceChildren(...children);
-    circuitSelectEl.dataset.signature = signature;
-  }
-  circuitSelectEl.value = currentDocumentPath || '';
-  circuitSelectEl.title = currentDocumentPath
-    ? currentDocumentPath
-    : persistence.browserOnly ? 'Open a document file' : `Open a document from ${workspaceState.workspace}`;
-}
-
-async function restoreStartup() {
-  const listPromise = refreshCircuitList();
-  const params = new URLSearchParams(window.location.search);
-  const openPath = params.get('open');
-  if (openPath) window.history.replaceState(null, '', window.location.pathname);
-  await listPromise;
-  if (openPath && openPath !== currentDocumentPath) requestCircuitLoad(openPath);
-}
-
-async function saveCircuit({ saveAs = false } = {}) {
-  let name = circuitNameEl.value.trim();
-  let target;
-  if (saveAs) {
-    let choice;
-    try {
-      choice = await showFileDialog(persistence, {
-        mode: 'save',
-        dir: currentDocumentDir || workspaceState?.workspace || '',
-        name: validDocumentName(name) || currentCircuitName || '',
-      });
-    } catch (err) {
-      logLine(`Could not choose a save file: ${err.message}`, 'error');
-      return;
-    }
-    if (!choice) return;
-    ({ name } = choice);
-    target = choice;
-  } else if (currentDocumentPath && name === currentCircuitName) {
-    target = { path: currentDocumentPath };
-  } else {
-    target = { ...(currentDocumentDir ? { dir: currentDocumentDir } : {}), name };
-  }
-  if (!validDocumentName(name)) {
-    logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
-    circuitNameEl.focus();
-    return;
-  }
-  syncGeneration += 1;
-  saveInFlight += 1;
-  renderSaveState();
-  const previousScope = analysisFormScope();
-  try {
-    const state = circuit.toJSON();
-    let data;
-    try {
-      data = await persistence.save(target, state, { overwrite: !!target.path });
-    } catch (err) {
-      if (err.code !== 'exists') throw err;
-      const replace = await confirmChoice({
-        title: 'Replace existing document?',
-        message: `A document named "${name}" already exists in ${displayPath(target.dir || currentDocumentDir || workspaceState?.workspace)}. Replacing it overwrites its contents.`,
-        confirmLabel: 'Replace',
-        danger: true,
-      });
-      if (!replace) {
-        logLine('Save canceled.');
-        return;
-      }
-      data = await persistence.save(target, state, { overwrite: true });
-    }
-    currentCircuitName = data.name;
-    currentDocumentPath = data.path;
-    currentDocumentDir = data.dir;
-    activeSyncSuspended = false;
-    migrateAnalysisFormStorage(previousScope, analysisFormScope());
-    circuitNameEl.value = data.name;
-    lastSeenRevision = data.revision || null;
-    lastCircuitTag = data.etag || null;
-    lastSavedSnapshot = snapshot();
-    persistDraft();
-    await refreshCircuitList();
-    logLine(`Saved ${displayPath(data.path)}.`);
-  } catch (err) {
-    logLine(`Could not save document: ${err.message}`, 'error');
-  } finally {
-    saveInFlight -= 1;
-    syncGeneration += 1;
-    renderSaveState();
-  }
 }
 
 function copySelectionSource() {
@@ -30533,141 +31118,6 @@ function exportCircuit() {
   exportDialog?.showModal();
 }
 
-async function loadCircuit(path, quiet = false, options = {}) {
-  if (!path) return false;
-  const { syncGeneration: expectedGeneration, ...loadOptions } = options;
-  try {
-    const data = await persistence.load(path, loadOptions);
-    if (expectedGeneration !== undefined && (saveInFlight || expectedGeneration !== syncGeneration)) return false;
-    if (data.notModified) {
-      if (data.revision) lastSeenRevision = data.revision;
-      if (data.etag) lastCircuitTag = data.etag;
-      return true;
-    }
-    // Sync re-applies the same document after outside edits; only a
-    // different one ends the tutorial.
-    if (data.path !== currentDocumentPath) dropTutorial();
-    // A document owns its undo history. Navigation must not make Undo
-    // restore a different document kind.
-    history = [];
-    future = [];
-    applyJson(JSON.stringify(data.state));
-    clearLatestAnalysisResult();
-    setSelection([]);
-    cursor = { x: 0, y: 0 };
-    currentCircuitName = data.name;
-    currentDocumentPath = data.path;
-    currentDocumentDir = data.dir;
-    activeSyncSuspended = false;
-    remoteConflictLogged = false;
-    circuitNameEl.value = data.name;
-    lastSavedSnapshot = snapshot();
-    lastSeenRevision = data.revision || null;
-    lastCircuitTag = data.etag || null;
-    fitView();
-    renderSaveState();
-    void refreshCircuitList();
-    logLine(`Opened ${displayPath(data.path)}.`);
-    return true;
-  } catch (err) {
-    // A transient load failure (active circuit whose file does not exist yet)
-    // is retried by syncActiveCircuit on the next poll — log only the first.
-    if (!quiet) logLine(`Could not open document: ${err.message}`, 'error');
-    return false;
-  }
-}
-
-/** Open document contents that have no file path (a dropped file). Saving puts it in the workspace. */
-function openUnsavedDocument(state, name) {
-  dropTutorial();
-  history = [];
-  future = [];
-  applyJson(JSON.stringify(state));
-  clearLatestAnalysisResult();
-  setSelection([]);
-  cursor = { x: 0, y: 0 };
-  currentCircuitName = '';
-  currentDocumentPath = null;
-  currentDocumentDir = null;
-  activeSyncSuspended = true;
-  remoteConflictLogged = false;
-  lastSeenActive = null;
-  lastSeenRevision = null;
-  lastCircuitTag = null;
-  circuitNameEl.value = validDocumentName(name) || '';
-  circuitSelectEl.value = '';
-  lastSavedSnapshot = snapshot();
-  fitView();
-  renderSaveState();
-  persistDraft();
-  logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
-}
-
-function hasUnsavedChanges() {
-  return snapshot() !== lastSavedSnapshot ||
-    (!currentDocumentPath && !!validDocumentName(circuitNameEl.value));
-}
-
-let pendingDocumentAction = null;
-
-/** Run an action that replaces the open document, asking first when that would discard unsaved changes. */
-function requestDocumentAction(description, run) {
-  if (!hasUnsavedChanges()) {
-    run();
-    return;
-  }
-  pendingDocumentAction = run;
-  if (switchDialogMessage) {
-    switchDialogMessage.textContent = `${description} will discard the unsaved changes in "${currentCircuitName || circuitNameEl.value.trim() || 'this design'}".`;
-  }
-  circuitSelectEl.value = currentDocumentPath || '';
-  switchDialog?.showModal();
-}
-
-function requestCircuitLoad(path) {
-  if (!path) return;
-  requestDocumentAction(`Opening "${documentNameForPath(path)}"`, () => loadCircuit(path, false, { open: true }));
-}
-
-async function openDocumentDialog() {
-  try {
-    const choice = await showFileDialog(persistence, { mode: 'open', dir: currentDocumentDir || workspaceState?.workspace || '' });
-    if (choice) requestCircuitLoad(choice.path);
-  } catch (err) {
-    logLine(`Could not choose an open file: ${err.message}`, 'error');
-  }
-}
-
-async function chooseWorkspaceFolder() {
-  if (persistence.browserOnly) {
-    logLine('Browser-only mode uses the browser download location instead of a workspace folder.');
-    return;
-  }
-  const choice = await showFileDialog(persistence, { mode: 'folder', dir: workspaceState?.workspace || '' });
-  if (!choice) return;
-  try {
-    workspaceState = await persistence.setWorkspace(choice.path);
-    circuitSelectEl.dataset.signature = '';
-    await refreshCircuitList();
-    logLine(`Workspace folder is now ${displayPath(workspaceState.workspace)}. New documents are saved there.`);
-  } catch (err) {
-    logLine(`Could not change the workspace folder: ${err.message}`, 'error');
-  }
-}
-
-async function revealCurrentDocument() {
-  if (!currentDocumentPath) return;
-  if (persistence.browserOnly) {
-    logLine('Browser-only mode cannot reveal files in the operating-system file manager.');
-    return;
-  }
-  try {
-    await persistence.reveal(currentDocumentPath);
-  } catch (err) {
-    logLine(`Could not show the document folder: ${err.message}`, 'error');
-  }
-}
-
 // ----- toolbar fitting -------------------------------------------------------------
 // The top toolbar drops button text in stages as its row runs out of space (see
 // toolbar-fit.js). Refit when the bar resizes or the document title changes.
@@ -30709,232 +31159,6 @@ if (toolbarEl) {
 }
 
 let toolbarFitKey = '';
-
-function renderSaveState() {
-  const dirty = hasUnsavedChanges();
-  // Fitting measures the toolbar at each compaction stage (a forced layout
-  // apiece), so refit only when the title or dirty dot can change its width;
-  // the toolbar's ResizeObserver covers everything else.
-  const fitKey = `${circuitNameEl.value}|${circuitNameEl.placeholder}|${dirty}`;
-  if (fitKey !== toolbarFitKey) {
-    toolbarFitKey = fitKey;
-    scheduleToolbarFit();
-  }
-  const dirtyDot = document.getElementById('dirty-dot');
-  if (dirtyDot) dirtyDot.hidden = !dirty;
-  if (deleteCircuitBtn) deleteCircuitBtn.disabled = !currentDocumentPath || deleteInFlight;
-  if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !currentDocumentPath;
-  circuitNameEl.title = currentDocumentPath
-    ? `${currentDocumentPath}\nRename and save to create a copy next to it.`
-    : persistence.browserOnly ? 'Name used when saving this document as a browser download' : 'Name used when saving this document to the workspace folder';
-  const saveButton = document.getElementById('btn-save');
-  if (saveButton) {
-    saveButton.disabled = !dirty || saveInFlight > 0;
-    saveButton.title = dirty
-      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
-      : currentDocumentPath ? `All changes saved to ${currentDocumentPath}` : 'Nothing to save yet';
-  }
-}
-
-async function deleteSavedCircuit() {
-  const path = currentDocumentPath;
-  if (!path || deleteInFlight) return;
-  deleteInFlight = true;
-  renderSaveState();
-  try {
-    await persistence.delete(path);
-    const name = currentCircuitName;
-
-    history = [];
-    future = [];
-    cancelPreviewTransaction();
-    dropTutorial();
-    circuit = new Circuit();
-    clearLatestAnalysisResult();
-    markModelChanged(false);
-    resetCheckState();
-    directWire = null;
-    wire = null;
-    terminalSnap = false;
-    clearSymmetry();
-    drag = null;
-    moveMode = null;
-    copyMode = false;
-    deleteMode = false;
-    alignTool = null;
-    movePending = false;
-    copyPending = false;
-    visual = null;
-    pendingPlace = null;
-    clearSymmetry();
-    labelMode = null;
-    annotationPoints = [];
-    setSelection([]);
-    selectedNets.clear();
-    cursor = { x: 0, y: 0 };
-    view = viewFromCenter(0, 0);
-    currentCircuitName = '';
-    currentDocumentPath = null;
-    currentDocumentDir = null;
-    activeSyncSuspended = true;
-    circuitNameEl.value = '';
-    circuitSelectEl.value = '';
-    lastSavedSnapshot = snapshot();
-    lastSeenActive = null;
-    lastFailedActive = null;
-    lastSeenRevision = null;
-    lastCircuitTag = null;
-    restoredDraftPath = null;
-    remoteConflictLogged = false;
-    windowSession.clearDraft();
-    render();
-    await refreshCircuitList();
-    logLine(`${persistence.browserOnly ? 'Forgot' : 'Deleted'} "${name}" (${displayPath(path)}).`);
-  } catch (err) {
-    logLine(`Could not delete document: ${err.message}`, 'error');
-  } finally {
-    deleteInFlight = false;
-    renderSaveState();
-  }
-}
-
-function askDeleteCircuit() {
-  const path = currentDocumentPath;
-  if (!path || !deleteDialog) return;
-  if (persistence.browserOnly) {
-    deleteDialogMessage.textContent = hasUnsavedChanges()
-      ? `This removes ${displayPath(path)} from this browser's cached document list and discards its unsaved editor changes. It does not delete a file already downloaded to disk.`
-      : `This removes ${displayPath(path)} from this browser's cached document list. It does not delete a file already downloaded to disk.`;
-  } else {
-    deleteDialogMessage.textContent = hasUnsavedChanges()
-      ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
-      : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
-  }
-  deleteDialog.showModal();
-}
-
-let lastSeenActive = null;
-let lastFailedActive = null; // active circuit path whose load failed (retry silently)
-async function syncActiveCircuitOnce() {
-  if (!persistence.liveSync) return;
-  windowSession.touch({ path: currentDocumentPath, hidden: document.hidden });
-  const generation = syncGeneration;
-  // First, follow the server's "active circuit" — the CLI drives it, the
-  // browser mirrors it. Only auto-load on a CHANGE of the server's active
-  // circuit (lastSeenActive), not on every poll where it merely differs from
-  // the open document — otherwise a manual open gets clobbered by the next tick.
-  let active = null;
-  let activeRevision = null;
-  let activeResponseSucceeded = false;
-  try {
-    const data = await persistence.active();
-    if (typeof data.active === 'string') {
-      active = data.active ? data.path : '';
-      activeRevision = data.revision || null;
-      activeResponseSucceeded = true;
-    }
-  } catch {
-    // server restart — keep going with the content sync below
-  }
-
-  if (saveInFlight || generation !== syncGeneration) return;
-
-  if (activeSyncSuspended) {
-    // Consume the current active identity while the explicit blank/dropped
-    // document owns the editor. This prevents the next poll from treating an
-    // already-active file as a change and replacing the unsaved document.
-    if (activeResponseSucceeded) {
-      lastSeenActive = active;
-      lastSeenRevision = activeRevision;
-      lastFailedActive = null;
-    }
-    return;
-  }
-
-  // Seed the active revision without replacing the restored local draft.
-  if (activeResponseSucceeded && restoredDraftPath && currentDocumentPath === restoredDraftPath) {
-    lastSeenActive = active;
-    lastSeenRevision = activeRevision;
-    restoredDraftPath = null;
-    return;
-  }
-  if (activeResponseSucceeded && restoredDraftPath && currentDocumentPath !== restoredDraftPath) {
-    restoredDraftPath = null;
-  }
-
-  // With several windows open, the CLI's new active document goes to one of
-  // them: none when a window already shows it, else the most recently
-  // focused. The others keep their documents.
-  if (active !== lastSeenActive && active && active !== currentDocumentPath
-    && (windowSession.otherWindowShows(active) || !windowSession.leadsActiveSync())) {
-    lastSeenActive = active;
-    lastFailedActive = null;
-  }
-  if (active !== lastSeenActive) {
-    // The server only sends a revision for an active circuit whose file exists.
-    // Wait silently for a missing one (not yet written, or deleted) instead of
-    // requesting it and reporting a load error on every poll.
-    if (active && active !== currentDocumentPath && activeResponseSucceeded && !activeRevision) return;
-    if (active && active !== currentDocumentPath) {
-      // A failed load must NOT advance lastSeenActive — otherwise the poll
-      // would never retry once the file appears.
-      const quietRetry = active === lastFailedActive;
-      await loadCircuit(active, quietRetry, { syncGeneration: generation });
-      if (currentDocumentPath === active) {
-        lastSeenActive = active;
-        lastFailedActive = null;
-      } else {
-        lastFailedActive = active;
-      }
-      return; // loadCircuit already re-rendered + fit (or logged the failure)
-    }
-    lastSeenActive = active;
-  }
-  if (!currentDocumentPath) return;
-  // Avoid a document GET and model parse when the active revision is unchanged.
-  if (active === currentDocumentPath && activeRevision && activeRevision === lastSeenRevision) return;
-  try {
-    const data = await persistence.load(currentDocumentPath, { ifNoneMatch: lastCircuitTag });
-    if (saveInFlight || generation !== syncGeneration) return;
-    if (data.notModified) {
-      if (data.revision) lastSeenRevision = data.revision;
-      if (data.etag) lastCircuitTag = data.etag;
-      return;
-    }
-    // The model normalizes loaded state (notably reducible net geometry), so
-    // compare and record the canonical representation rather than the raw
-    // JSON on disk. Otherwise a clean design can become permanently dirty
-    // after the first poll of a normalized save.
-    const remoteSnapshot = JSON.stringify(loadDocument(data.state).toJSON());
-    const remoteRevision = data.revision || activeRevision;
-    const remoteTag = data.etag || lastCircuitTag;
-    const currentSnapshot = snapshot();
-    lastSeenRevision = remoteRevision || null;
-    lastCircuitTag = remoteTag || null;
-    if (remoteSnapshot === currentSnapshot) return;
-    if (currentSnapshot !== lastSavedSnapshot) {
-      if (!remoteConflictLogged) {
-        logLine(`${currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
-        remoteConflictLogged = true;
-      }
-      return;
-    }
-    applyJson(remoteSnapshot);
-    lastSavedSnapshot = snapshot();
-    remoteConflictLogged = false;
-    fitView();
-    logLine(`Reloaded ${currentCircuitName}: the file changed on disk.`);
-  } catch {
-    // A missing file or a server restart should not interrupt editing.
-  }
-}
-
-async function syncActiveCircuit() {
-  if (!persistence.liveSync || document.hidden) return;
-  if (syncInFlight) return syncInFlight;
-  syncInFlight = syncActiveCircuitOnce().finally(() => { syncInFlight = null; });
-  return syncInFlight;
-}
 
 function applyJson(blob) {
   if (previewTransaction) cancelPreviewTransaction();
@@ -40576,53 +40800,6 @@ clearCheckButtonEl?.addEventListener('click', () => {
   render();
 });
 
-if (deleteDialog) {
-  deleteDialog.addEventListener('close', () => {
-    if (deleteDialog.returnValue === 'confirm') deleteSavedCircuit();
-  });
-}
-if (switchDialog) {
-  switchDialog.addEventListener('close', () => {
-    const run = pendingDocumentAction;
-    pendingDocumentAction = null;
-    if (switchDialog.returnValue === 'discard' && run) run();
-    else circuitSelectEl.value = currentDocumentPath || '';
-  });
-}
-
-function startNewDocument() {
-  // A blank document is a new analysis session. Do not reuse free-text
-  // references from an earlier unnamed schematic; named documents keep their
-  // own scoped preferences and are restored when reopened.
-  try { localStorage.removeItem(analysisFormStorageKey('new')); } catch { /* storage unavailable */ }
-  // Starting the tutorial restarts it right after this.
-  dropTutorial();
-  syncGeneration += 1;
-  activeSyncSuspended = true;
-  circuitNameEl.value = '';
-  circuitSelectEl.value = '';
-  currentCircuitName = '';
-  currentDocumentPath = null;
-  currentDocumentDir = null;
-  history = [];
-  future = [];
-  applyJson(JSON.stringify(createDocument().toJSON()));
-  clearLatestAnalysisResult();
-  lastSavedSnapshot = snapshot();
-  lastSeenActive = null;
-  lastSeenRevision = null;
-  lastCircuitTag = null;
-  remoteConflictLogged = false;
-  cursor = { x: 0, y: 0 };
-  view = viewFromCenter(0, 0);
-  render();
-  circuitNameEl.focus();
-  renderSaveState();
-  logLine(persistence.browserOnly
-    ? 'Started a new schematic. Enter a name and save it as a browser download, or use Save as to choose a file name.'
-    : 'Started a new schematic. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.');
-}
-
 /**
  * Show the drawn small-signal model over the whole drawing area. It is a
  * figure, not a document: closing it puts the schematic back exactly as it
@@ -40769,16 +40946,6 @@ window.addEventListener('keydown', (ev) => {
   closeToolbarMenu(open[0], open[1], true);
 });
 
-newDocumentButton?.addEventListener('click', () => {
-  for (const [button, menu] of toolbarMenus) closeToolbarMenu(button, menu);
-  startNewDocument();
-});
-
-deleteCircuitBtn?.addEventListener('click', askDeleteCircuit);
-revealDocumentBtn?.addEventListener('click', revealCurrentDocument);
-document.getElementById('btn-open-file')?.addEventListener('click', openDocumentDialog);
-document.getElementById('btn-save-as')?.addEventListener('click', () => saveCircuit({ saveAs: true }));
-document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
 function syncScrollSchemeButton() {
   scrollSchemeButton?.setAttribute('aria-checked', String(scrollScheme === 'trackpad'));
 }
@@ -40824,43 +40991,6 @@ exportForm?.addEventListener('submit', (event) => {
   const selection = exportSelectionInput?.checked && exportSelection ? exportSelection : null;
   runExport({ dir: exportFolder, name, formats, ...settings, selection, beat: chosenExportBeat() });
 });
-circuitNameEl.addEventListener('input', renderSaveState);
-circuitSelectEl.addEventListener('change', () => {
-  const value = circuitSelectEl.value;
-  circuitSelectEl.value = currentDocumentPath || '';
-  if (value === PICKER_OPEN_FILE) openDocumentDialog();
-  else if (value === PICKER_WORKSPACE) chooseWorkspaceFolder();
-  else requestCircuitLoad(value);
-});
-
-// Dropping a document file (for example, one received by email) opens a copy.
-function droppedFiles(ev) {
-  return [...(ev.dataTransfer?.types || [])].includes('Files');
-}
-window.addEventListener('dragover', (ev) => {
-  if (!droppedFiles(ev)) return;
-  ev.preventDefault();
-  ev.dataTransfer.dropEffect = 'copy';
-});
-window.addEventListener('drop', async (ev) => {
-  if (!droppedFiles(ev)) return;
-  ev.preventDefault();
-  const file = [...ev.dataTransfer.files].find((candidate) => /\.json$/i.test(candidate.name));
-  if (!file) {
-    logLine('Drop a .json document file to open it.', 'error');
-    return;
-  }
-  let state;
-  try {
-    state = JSON.parse(await file.text());
-    loadDocument(state);
-  } catch (err) {
-    logLine(`Could not open ${file.name}: ${err.message}`, 'error');
-    return;
-  }
-  const name = file.name.replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
-  requestDocumentAction(`Opening "${file.name}"`, () => openUnsavedDocument(state, name));
-});
 
 document.getElementById('empty-state')?.addEventListener('click', (ev) => {
   const action = ev.target.closest?.('[data-empty-action]')?.dataset.emptyAction;
@@ -40871,8 +41001,6 @@ document.getElementById('empty-state')?.addEventListener('click', (ev) => {
   else if (action === 'tutorial') offerTutorial();
   if (action && !['open', 'help', 'tutorial'].includes(action)) canvasEl.focus();
 });
-// Documents created by the CLI, another window, or a file manager appear without a manual reload.
-circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
 
 document.getElementById('btn-help').addEventListener('click', () => {
   showHelp();
@@ -41343,31 +41471,6 @@ window.__circuit = () => ({
   activeBeat: activeBeatIndex(),
 });
 
-/** Tell the local server this window is open; the launcher stops the server after the last one closes. */
-function startSessionHeartbeat() {
-  const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-  const beat = () => {
-    persistence.heartbeat(id);
-    windowSession.touch({ path: currentDocumentPath, hidden: document.hidden });
-  };
-  beat();
-  // Runs while hidden too; browsers throttle background timers to about once a minute.
-  window.setInterval(beat, 20_000);
-  window.addEventListener('pageshow', (ev) => {
-    if (!ev.persisted) return;
-    windowSession.reopen();
-    beat();
-  });
-  window.addEventListener('focus', () => windowSession.touch({ path: currentDocumentPath, hidden: document.hidden, focused: true }));
-  document.addEventListener('visibilitychange', () => windowSession.touch({ path: currentDocumentPath, hidden: document.hidden }));
-  window.addEventListener('pagehide', () => {
-    windowSession.close();
-    if (persistence.liveSync) {
-      navigator.sendBeacon?.('/api/session', new Blob([JSON.stringify({ id, closing: true })], { type: 'application/json' }));
-    }
-  });
-}
-
 view = viewFromCenter(0, 0);
 window.__app ||= { renders: [] };
 
@@ -41396,13 +41499,6 @@ try {
 }
 const bb = banner();
 if (bb) bb.remove();
-
-window.addEventListener('beforeunload', (ev) => {
-  flushDraft();
-  if (snapshot() === lastSavedSnapshot) return;
-  ev.preventDefault();
-  ev.returnValue = 'You have unsaved schematic changes.';
-});
 
 
 function syncModeToolbarOverflow() {
@@ -41441,6 +41537,7 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
 
 
+__exports.toolbarMenus = toolbarMenus;
 };
 
 __modules["src/web/model-figure.js"] = function (__require, __exports) {
@@ -41704,11 +41801,13 @@ let canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, t
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let fitView, paneSize; __bind(() => { ({ fitView, paneSize } = __require("src/web/canvas-view.js")); });
-let render, renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ render, renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/main.js")); });
+let renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
+let render; __bind(() => { ({ render } = __require("src/web/main.js")); });
 /**
  * Onboarding in the editor: the contextual tip card and the first-drawing
  * tutorial. The rules live in tips.js and tutorial.js; this shows them.
  */
+
 
 
 
