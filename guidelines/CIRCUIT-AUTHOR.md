@@ -266,8 +266,9 @@ geometry; the rules for how to lay them out are in `style-guide.md`.
 
 ### Schematic browser editing hotkeys and fixed paths
 
-- `y` copies the selected set; `p` pastes it with fresh ids.
-  `Ctrl/Cmd+C` and `Ctrl/Cmd+V` are equivalent copy/paste shortcuts.
+- `y` or `Ctrl/Cmd+C` copies the selected set; `p` pastes it with fresh ids.
+  A copy also goes on the system clipboard, so `Ctrl/Cmd+V` pastes it into
+  another editor tab or window as well.
 - `Ctrl/Cmd+S` saves the current design. The design dropdown refuses to switch
   while the current design has unsaved changes; save first, or the selection is
   restored and an unsaved-changes warning is logged.

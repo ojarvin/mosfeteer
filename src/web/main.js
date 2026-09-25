@@ -34,6 +34,7 @@ import { resolveCopySelection } from '../core/selection.js';
 import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } from '../core/selection-drawing.js';
 import { svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { writeDrawingToClipboard } from './clipboard.js';
+import { encodeObjectClipboard, decodeObjectClipboard } from '../core/object-clipboard.js';
 import { applyTransform, distanceToSegment, transformRect } from '../core/geometry.js';
 import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
@@ -12522,7 +12523,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'y') {
-    copySelection();
+    if (copySelection()) publishObjectClipboard();
     return;
   }
 
@@ -13058,6 +13059,62 @@ function commitCopyGhost() {
   if (mirrored && symmetry?.operation) armCopyGhostMirror();
   return true;
 }
+
+// The copy buffer also goes on the system clipboard as tagged JSON text, so
+// objects copied in one editor paste into another (another tab, window, or
+// workspace). Ctrl/Cmd+V reads it from the browser's paste event, which needs
+// no clipboard permission; `p` pastes this editor's own buffer.
+let objectClipboardText = null;
+let objectPaste = null;
+
+document.addEventListener('copy', (ev) => {
+  if (objectClipboardText === null || !ev.clipboardData) return;
+  ev.clipboardData.setData('text/plain', objectClipboardText);
+  ev.preventDefault();
+  objectClipboardText = null;
+});
+
+function publishObjectClipboard() {
+  if (!clipboard) return;
+  const text = encodeObjectClipboard(clipboard);
+  objectClipboardText = text;
+  let copied = false;
+  try { copied = document.execCommand('copy') && objectClipboardText === null; } catch { /* use the async API */ }
+  objectClipboardText = null;
+  if (!copied) globalThis.navigator?.clipboard?.writeText?.(text).catch(() => {});
+}
+
+/** Paste on the paste event that follows this Ctrl/Cmd+V, or from the editor's
+ *  own buffer if the browser sends none. `kind` is 'objects' or 'style'. */
+function armObjectPaste(kind) {
+  const armed = { kind };
+  objectPaste = armed;
+  setTimeout(() => {
+    if (objectPaste !== armed) return;
+    objectPaste = null;
+    finishObjectPaste(kind);
+  }, 100);
+}
+
+function finishObjectPaste(kind) {
+  if (kind === 'style') pasteStyle();
+  else pasteClipboard();
+}
+
+document.addEventListener('paste', (ev) => {
+  const armed = objectPaste;
+  if (!armed) return;
+  objectPaste = null;
+  ev.preventDefault();
+  try {
+    const buffer = decodeObjectClipboard(ev.clipboardData?.getData('text/plain') || '');
+    if (buffer) clipboard = buffer;
+  } catch (err) {
+    logLine(err.message, 'error');
+    return;
+  }
+  finishObjectPaste(armed.kind);
+});
 
 /** Paste the clipboard at the cursor (re-centred on the selection anchor). */
 function pasteClipboard({ recordHistory = true, connect = true } = {}) {
@@ -15636,13 +15693,10 @@ window.addEventListener('keydown', (ev) => {
       render();
     } else if (k === 'c' && !ev.shiftKey) {
       ev.preventDefault();
-      copySelection();
-    } else if (k === 'v' && ev.shiftKey) {
-      ev.preventDefault();
-      pasteStyle();
+      if (copySelection()) publishObjectClipboard();
     } else if (k === 'v') {
-      ev.preventDefault();
-      pasteClipboard();
+      // Left to the browser, whose paste event carries the system clipboard.
+      armObjectPaste(ev.shiftKey ? 'style' : 'objects');
     } else if (k === 's') {
       ev.preventDefault();
       saveCircuit();

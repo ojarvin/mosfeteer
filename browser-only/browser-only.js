@@ -18921,6 +18921,122 @@ __exports.Net = Net;
 __exports.Circuit = Circuit;
 };
 
+__modules["src/core/object-clipboard.js"] = function (__require, __exports) {
+let symbolTypes; __bind(() => { ({ symbolTypes } = __require("src/core/components/index.js")); });
+
+
+// Copied objects travel between editors (tabs, windows, other workspaces) as
+// tagged JSON text on the system clipboard. The editor's in-memory copy buffer
+// is the payload itself; this module only frames and checks it. Anything read
+// back is untrusted: another app, an older editor, or a hand-edited paste may
+// have put it there, so a payload that is not wholly well-formed is refused
+// before any of it reaches the model.
+
+const OBJECT_CLIPBOARD_FORMAT = 'mosfeteer/objects';
+const OBJECT_CLIPBOARD_VERSION = 1;
+
+/** The clipboard text for a copy buffer. */
+function encodeObjectClipboard(buffer) {
+  return JSON.stringify({ format: OBJECT_CLIPBOARD_FORMAT, version: OBJECT_CLIPBOARD_VERSION, ...buffer });
+}
+
+/**
+ * The copy buffer in clipboard `text`, or null when the text is not copied
+ * Mosfeteer objects at all. Throws when it is tagged as Mosfeteer objects but
+ * cannot be pasted (a newer version, or a damaged payload).
+ */
+function decodeObjectClipboard(text) {
+  if (typeof text !== 'string' || !text.trimStart().startsWith('{') || !text.includes(OBJECT_CLIPBOARD_FORMAT)) return null;
+  let data;
+  try { data = JSON.parse(text); } catch { return null; }
+  if (!isObject(data) || data.format !== OBJECT_CLIPBOARD_FORMAT) return null;
+  if (data.version !== OBJECT_CLIPBOARD_VERSION) {
+    throw new Error(`copied objects are from a different Mosfeteer version (format ${data.version})`);
+  }
+  const problem = bufferProblem(data);
+  if (problem) throw new Error(`copied objects could not be read: ${problem}`);
+  const { format, version, ...buffer } = data;
+  return buffer;
+}
+
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+const point = (value) => isObject(value) && finite(value.x) && finite(value.y);
+const path = (value) => Array.isArray(value) && value.every(point);
+const optional = (value, check) => value === undefined || value === null || check(value);
+const text = (value) => typeof value === 'string';
+const endpoint = (value) => isObject(value) && text(value.comp) && text(value.term);
+
+function componentProblem(comp) {
+  if (!isObject(comp)) return 'a part is not an object';
+  if (!text(comp.type) || !Object.hasOwn(symbolTypes, comp.type)) return `unknown part type ${JSON.stringify(comp.type)}`;
+  if (!text(comp.origRef)) return 'a part has no name';
+  if (!finite(comp.x) || !finite(comp.y) || !finite(comp.rotation)) return `part ${comp.origRef} has no position`;
+  if (!optional(comp.negativeInputs, (inputs) => Array.isArray(inputs) && inputs.every(text))) return `part ${comp.origRef} has bad inputs`;
+  if (!optional(comp.style, isObject)) return `part ${comp.origRef} has a bad style`;
+  return null;
+}
+
+function labelProblem(label) {
+  if (!isObject(label)) return 'a label is not an object';
+  if (!['label', 'arrow', 'box', 'line'].includes(label.kind)) return `unknown label kind ${JSON.stringify(label.kind)}`;
+  if (!finite(label.x) || !finite(label.y)) return 'a label has no position';
+  if (label.kind === 'label' && !text(label.text)) return 'a text label has no text';
+  if (label.kind !== 'label' && !point(label.end)) return `a ${label.kind} has no end`;
+  if (label.kind === 'line' && !optional(label.points, path)) return 'a line has bad points';
+  if (!optional(label.style, isObject)) return 'a label has a bad style';
+  return null;
+}
+
+function netProblem(net) {
+  if (!isObject(net)) return 'a net is not an object';
+  if (!text(net.id)) return 'a net has no id';
+  if (!optional(net.name, text)) return `net ${net.id} has a bad name`;
+  if (!Array.isArray(net.terminals) || !net.terminals.every(endpoint)) return `net ${net.id} has bad terminals`;
+  if (net.routingMode === 'fixed') {
+    const entries = net.fixedPaths;
+    if (!Array.isArray(entries) || !entries.every((entry) => isObject(entry) && path(entry.points)
+      && optional(entry.start, endpoint) && optional(entry.end, endpoint))) return `net ${net.id} has bad wires`;
+  } else {
+    if (!optional(net.route, path) || !optional(net.branches, (branches) => Array.isArray(branches) && branches.every(path))) return `net ${net.id} has bad wires`;
+    if (!Array.isArray(net.junctions) || !net.junctions.every(point)) return `net ${net.id} has bad junctions`;
+  }
+  if (!optional(net.netLabels, (labels) => Array.isArray(labels) && labels.every((label) => isObject(label) && finite(label.x) && finite(label.y)))) {
+    return `net ${net.id} has bad labels`;
+  }
+  return null;
+}
+
+function fragmentProblem(fragment) {
+  if (!isObject(fragment)) return 'a wire is not an object';
+  if (!Array.isArray(fragment.paths) || !fragment.paths.length || !fragment.paths.every(path)) return 'a wire has bad points';
+  if (!Array.isArray(fragment.junctions) || !fragment.junctions.every(point)) return 'a wire has bad junctions';
+  if (!optional(fragment.name, text)) return 'a wire has a bad net name';
+  return null;
+}
+
+function bufferProblem(data) {
+  if (!point(data.anchor)) return 'no anchor';
+  for (const key of ['comps', 'labels', 'nets', 'fragments']) {
+    if (!Array.isArray(data[key])) return `no ${key} list`;
+  }
+  if (!optional(data.style, isObject)) return 'a bad style';
+  return data.comps.map(componentProblem).find(Boolean)
+    || data.labels.map(labelProblem).find(Boolean)
+    || data.nets.map(netProblem).find(Boolean)
+    || data.fragments.map(fragmentProblem).find(Boolean)
+    || null;
+}
+
+__exports.encodeObjectClipboard = encodeObjectClipboard;
+__exports.decodeObjectClipboard = decodeObjectClipboard;
+__exports.OBJECT_CLIPBOARD_FORMAT = OBJECT_CLIPBOARD_FORMAT;
+__exports.OBJECT_CLIPBOARD_VERSION = OBJECT_CLIPBOARD_VERSION;
+};
+
 __modules["src/core/page-guide.js"] = function (__require, __exports) {
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let LABEL_FONT_SIZE; __bind(() => { ({ LABEL_FONT_SIZE } = __require("src/core/model.js")); });
@@ -25375,6 +25491,7 @@ let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("
 let DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset; __bind(() => { ({ DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } = __require("src/core/selection-drawing.js")); });
 let svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
+let encodeObjectClipboard, decodeObjectClipboard; __bind(() => { ({ encodeObjectClipboard, decodeObjectClipboard } = __require("src/core/object-clipboard.js")); });
 let applyTransform, distanceToSegment, transformRect; __bind(() => { ({ applyTransform, distanceToSegment, transformRect } = __require("src/core/geometry.js")); });
 let applyMarkup; __bind(() => { ({ applyMarkup } = __require("src/core/model.js")); });
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
@@ -25404,6 +25521,7 @@ let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan,
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -37917,7 +38035,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'y') {
-    copySelection();
+    if (copySelection()) publishObjectClipboard();
     return;
   }
 
@@ -38453,6 +38571,62 @@ function commitCopyGhost() {
   if (mirrored && symmetry?.operation) armCopyGhostMirror();
   return true;
 }
+
+// The copy buffer also goes on the system clipboard as tagged JSON text, so
+// objects copied in one editor paste into another (another tab, window, or
+// workspace). Ctrl/Cmd+V reads it from the browser's paste event, which needs
+// no clipboard permission; `p` pastes this editor's own buffer.
+let objectClipboardText = null;
+let objectPaste = null;
+
+document.addEventListener('copy', (ev) => {
+  if (objectClipboardText === null || !ev.clipboardData) return;
+  ev.clipboardData.setData('text/plain', objectClipboardText);
+  ev.preventDefault();
+  objectClipboardText = null;
+});
+
+function publishObjectClipboard() {
+  if (!clipboard) return;
+  const text = encodeObjectClipboard(clipboard);
+  objectClipboardText = text;
+  let copied = false;
+  try { copied = document.execCommand('copy') && objectClipboardText === null; } catch { /* use the async API */ }
+  objectClipboardText = null;
+  if (!copied) globalThis.navigator?.clipboard?.writeText?.(text).catch(() => {});
+}
+
+/** Paste on the paste event that follows this Ctrl/Cmd+V, or from the editor's
+ *  own buffer if the browser sends none. `kind` is 'objects' or 'style'. */
+function armObjectPaste(kind) {
+  const armed = { kind };
+  objectPaste = armed;
+  setTimeout(() => {
+    if (objectPaste !== armed) return;
+    objectPaste = null;
+    finishObjectPaste(kind);
+  }, 100);
+}
+
+function finishObjectPaste(kind) {
+  if (kind === 'style') pasteStyle();
+  else pasteClipboard();
+}
+
+document.addEventListener('paste', (ev) => {
+  const armed = objectPaste;
+  if (!armed) return;
+  objectPaste = null;
+  ev.preventDefault();
+  try {
+    const buffer = decodeObjectClipboard(ev.clipboardData?.getData('text/plain') || '');
+    if (buffer) clipboard = buffer;
+  } catch (err) {
+    logLine(err.message, 'error');
+    return;
+  }
+  finishObjectPaste(armed.kind);
+});
 
 /** Paste the clipboard at the cursor (re-centred on the selection anchor). */
 function pasteClipboard({ recordHistory = true, connect = true } = {}) {
@@ -41031,13 +41205,10 @@ window.addEventListener('keydown', (ev) => {
       render();
     } else if (k === 'c' && !ev.shiftKey) {
       ev.preventDefault();
-      copySelection();
-    } else if (k === 'v' && ev.shiftKey) {
-      ev.preventDefault();
-      pasteStyle();
+      if (copySelection()) publishObjectClipboard();
     } else if (k === 'v') {
-      ev.preventDefault();
-      pasteClipboard();
+      // Left to the browser, whose paste event carries the system clipboard.
+      armObjectPaste(ev.shiftKey ? 'style' : 'objects');
     } else if (k === 's') {
       ev.preventDefault();
       saveCircuit();
@@ -42199,9 +42370,10 @@ const EDITOR_KEYMAP = Object.freeze([
     ['m', 'move selected objects with connectivity; stays armed'],
     ['Shift+M', 'move selected objects without connected nets; stays armed'],
     ['c', 'copy a selected object or set; stays armed'],
-    ['y / Ctrl/Cmd+C', 'copy the selected objects'],
+    ['y / Ctrl/Cmd+C', 'copy the selected objects, also for another editor'],
     ['Ctrl/Cmd+Shift+C', 'copy selection (or whole drawing) as an image for other apps'],
-    ['p / Ctrl/Cmd+V', 'paste the copied set at the cursor'],
+    ['Ctrl/Cmd+V', 'paste objects copied here or in another editor at the cursor'],
+    ['p', 'paste this editor\'s last copied set at the cursor'],
     ['Ctrl/Cmd+Shift+V', 'paste style from one copied object'],
     ['Delete', 'persistent delete; click objects while armed'],
     ['dd', 'delete the selected object set'],
