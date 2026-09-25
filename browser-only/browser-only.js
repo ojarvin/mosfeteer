@@ -9618,7 +9618,7 @@ const ISSUE_HINTS = {
   'unconnected-terminal': 'Connect this terminal with Wire/connect, or deliberately remove the unused component.',
   'component-overlap': 'Move one component at least one grid cell clear of the other component body.',
   'label-component-overlap': 'Move the label into open space; keep its anchor attached if it is an electrical net label.',
-  'label-overlap': 'Separate the labels or adjust their alignment so their boxes do not overlap.',
+  'label-overlap': 'Separate the labels or adjust their alignment so their text does not overlap.',
   'wire-through-body': 'Reroute the net around the component body; only a shared MOS gate bus may use the documented exception.',
   'managed-diagonal': 'Redraw this net with F3 set to orthogonal; reserve diagonal geometry for deliberate fixed routes.',
   'grid-violation': 'Move or edit the object onto the 40-unit grid.',
@@ -9778,13 +9778,16 @@ function evaluate(circuit) {
     { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) },
     { x: Math.min(a.x + a.w, b.x + b.w), y: Math.min(a.y + a.h, b.y + b.h) },
   ];
+  // Overlaps are what the reader sees: a label's text against a part's
+  // strokes and shapes, or another label's text. Grid-rounded label boxes are placement
+  // aids and routinely overlap without anything touching.
   for (const label of labels) {
-    const labelBox = label.bbox();
+    const labelBox = label.inkRect();
     for (const comp of comps) {
       if (annotated(comp)) continue;
-      const compBox = comp.bboxWorld();
-      if (!rectsOverlap(labelBox, compBox)) continue;
-      const message = `label ${label.id} overlaps ${comp.refdes}(${comp.type}) bbox`;
+      if (!comp.inkTouches(labelBox)) continue;
+      const compBox = comp.inkRectWorld();
+      const message = `label ${label.id} overlaps ${comp.refdes}(${comp.type})`;
       labelComponentOverlaps.push(message);
       addIssue('label-component-overlap', message, {
         refs: [label.id, comp.refdes],
@@ -9796,10 +9799,10 @@ function evaluate(circuit) {
   }
   for (let i = 0; i < labels.length; i++) {
     const a = labels[i];
-    const aBox = a.bbox();
+    const aBox = a.inkRect();
     for (let j = i + 1; j < labels.length; j++) {
       const b = labels[j];
-      const bBox = b.bbox();
+      const bBox = b.inkRect();
       if (!rectsOverlap(aBox, bBox)) continue;
       const refs = [a.id, b.id];
       const message = `labels ${refs.join('/')} overlap`;
@@ -12446,12 +12449,12 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 };
 
 __modules["src/core/model.js"] = function (__require, __exports) {
-const { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } = __require("src/core/geometry.js");
+const { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js");
 const { snap, snapPoint, GRID } = __require("src/core/grid.js");
 const { getSymbol, seriesTerminalNames } = __require("src/core/components/index.js");
 const { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js");
 const { collapseCollinear } = __require("src/core/wireedit.js");
-const { LABEL_FONT_SIZES } = __require("src/core/style.js");
+const { LABEL_FONT_SIZES, labelFontSize, strokeWidth } = __require("src/core/style.js");
 const { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js");
 const { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js");
 const { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js");
@@ -12706,6 +12709,94 @@ const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
 /** Gap between left/right aligned text and its box edge: a quarter grid cell. */
 const LABEL_ALIGN_INSET = GRID / 4;
+
+const symbolInk = new WeakMap();
+const symbolInkPieces = new WeakMap();
+
+/** The local rectangles a symbol's strokes and shapes cover, one per path
+ * segment (a curve by its control points), polygon, circle, and rect, each
+ * reaching half its stroke past its points. Finer than symbolInkRect, for
+ * telling whether text touches the drawing or only sits in an empty corner
+ * of it. Cached per definition. */
+function symbolInkParts(def) {
+  if (!def?.graphics?.length) return [];
+  if (symbolInkPieces.has(def)) return symbolInkPieces.get(def);
+  const parts = [];
+  const add = (g, pts) => {
+    const half = g.style ? strokeWidth({}, g.style) / 2 : 0;
+    const r = rectFromPoints(pts);
+    parts.push({ x: r.x - half, y: r.y - half, w: r.w + 2 * half, h: r.h + 2 * half });
+  };
+  for (const g of def.graphics) {
+    if (g.kind === 'path') {
+      // Absolute M/L/C/Z: a segment runs from the previous end point through
+      // the command's points (for C, its two control points and end point).
+      const commands = String(g.d).match(/[MLCZ][^MLCZ]*/gi) || [];
+      let start = null;
+      let last = null;
+      for (const command of commands) {
+        const type = command[0].toUpperCase();
+        const numbers = command.slice(1).match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+        const pts = [];
+        for (let i = 0; i + 1 < numbers.length; i += 2) pts.push({ x: numbers[i], y: numbers[i + 1] });
+        if (type === 'M') {
+          start = last = pts[0] || last;
+          for (const p of pts.slice(1)) { add(g, [last, p]); last = p; }
+        } else if (type === 'Z') {
+          if (last && start) add(g, [last, start]);
+          last = start;
+        } else if (last) {
+          if (type === 'C') {
+            for (let i = 0; i + 2 < pts.length; i += 3) { add(g, [last, pts[i], pts[i + 1], pts[i + 2]]); last = pts[i + 2]; }
+          } else {
+            for (const p of pts) { add(g, [last, p]); last = p; }
+          }
+        }
+      }
+    } else if (g.kind === 'polygon') {
+      add(g, g.points);
+    } else if (g.kind === 'circle' || g.kind === 'dot') {
+      add(g, [{ x: g.cx - g.r, y: g.cy - g.r }, { x: g.cx + g.r, y: g.cy + g.r }]);
+    } else if (g.kind === 'rect') {
+      add(g, [{ x: g.x, y: g.y }, { x: g.x + g.w, y: g.y + g.h }]);
+    }
+  }
+  symbolInkPieces.set(def, parts);
+  return parts;
+}
+
+/** The local rectangle a symbol's graphics cover: path points (absolute
+ * M/L/C, curve control points included), polygons, circles, rects, and text
+ * anchors. Null when it draws nothing. Cached per definition. */
+function symbolInkRect(def) {
+  if (!def?.graphics?.length) return null;
+  if (symbolInk.has(def)) return symbolInk.get(def);
+  const points = [];
+  // A stroked outline reaches half its stroke past its points.
+  const stroked = (g, pts) => {
+    const half = g.style ? strokeWidth({}, g.style) / 2 : 0;
+    for (const p of pts) points.push({ x: p.x - half, y: p.y - half }, { x: p.x + half, y: p.y + half });
+  };
+  for (const g of def.graphics) {
+    if (g.kind === 'path') {
+      const numbers = String(g.d).match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+      const pts = [];
+      for (let i = 0; i + 1 < numbers.length; i += 2) pts.push({ x: numbers[i], y: numbers[i + 1] });
+      stroked(g, pts);
+    } else if (g.kind === 'polygon') {
+      stroked(g, g.points);
+    } else if (g.kind === 'circle' || g.kind === 'dot') {
+      stroked(g, [{ x: g.cx - g.r, y: g.cy - g.r }, { x: g.cx + g.r, y: g.cy + g.r }]);
+    } else if (g.kind === 'rect') {
+      stroked(g, [{ x: g.x, y: g.y }, { x: g.x + g.w, y: g.y + g.h }]);
+    } else if (g.kind === 'text') {
+      points.push({ x: g.x, y: g.y });
+    }
+  }
+  const rect = points.length ? rectFromPoints(points) : null;
+  symbolInk.set(def, rect);
+  return rect;
+}
 
 /** Label alignments. 'parent' is the owned-label default: text beside its
  * part aligns toward it, and the box keeps the edge facing the part fixed
@@ -13343,6 +13434,40 @@ class LabelInstance {
    * aligned within the box (left/center/right) and vertically centered in it.
    * Returns {x, y, anchor} for an SVG <text> element.
    */
+  /**
+   * The rectangle the label visibly covers, for framing a drawing: the text
+   * itself rather than its grid-rounded box, and a shape's own geometry.
+   * A math label not yet measured by a browser falls back to its box.
+   */
+  inkRect() {
+    if (this.kind === 'arrow' || this.kind === 'line') {
+      return rectFromPoints(this.points?.length ? this.points : [this.anchor, this.end]);
+    }
+    if (this.kind === 'box') return rectFromPoints([this.anchor, this.end]);
+    const b = this.bbox();
+    const align = this.textAlign();
+    if (this.math) {
+      const measured = this._renderedTextBounds;
+      if (!measured) return b;
+      // Where mathLabelSvg's padded flex box puts the content.
+      const side = Math.max(6, Math.min(LABEL_ALIGN_INSET, b.w - measured.w - 6));
+      const x = align === 'left' ? b.x + side
+        : align === 'right' ? b.x + b.w - side - measured.w
+          : b.x + (b.w - measured.w) / 2;
+      return { x, y: b.y + (b.h - measured.h) / 2, w: measured.w, h: measured.h };
+    }
+    const { x, y, anchor } = this.textPos();
+    const w = this.textWidth();
+    const size = labelFontSize(this.style.width);
+    const lines = Math.max(1, this.text.split('\n').length);
+    // Capitals and superscripts above the baseline; descenders and the
+    // shifted subscripts below it.
+    const top = y - 0.75 * size;
+    const bottom = y + (lines - 1) * LABEL_FONT_SIZE + 0.3 * size;
+    const left = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+    return { x: left, y: top, w, h: bottom - top };
+  }
+
   textPos() {
     const b = this.bbox();
     const centerX = b.x + b.w / 2;
@@ -13732,6 +13857,20 @@ class ComponentInstance {
 
   worldTerminals() {
     return this.terminalDefs.map((t) => ({ name: t.name, ...this.terminalWorld(t.name) }));
+  }
+
+  /** Whether `rect` (world) touches the drawn symbol: one of its strokes or
+   * shapes (symbolInkParts), not just the empty corners of its outline. */
+  inkTouches(rect) {
+    if (!rectsOverlap(rect, this.inkRectWorld())) return false;
+    if (this.type === 'block') return true;
+    return symbolInkParts(this.def).some((part) => rectsOverlap(rect, transformRect(this.transform, part)));
+  }
+
+  /** The rectangle the symbol is drawn in (symbolInkRect), in world space. */
+  inkRectWorld() {
+    if (this.type === 'block') return this.bboxWorld();
+    return transformRect(this.transform, symbolInkRect(this.def) || this.def.bbox);
   }
 
   bboxWorld() {
@@ -15436,6 +15575,7 @@ class Circuit {
       if (excluded.has(n.id)) continue;
       wires.push(...this._explicitBranches(n));
     }
+    // Labels steer by their visible text, not their grid-rounded boxes.
     const labelRects = [];
     for (const l of this.labels.values()) {
       // Shape annotations are visual-only and must not influence routing.
@@ -15443,7 +15583,7 @@ class Circuit {
       // The net being re-laid-out may pass through its own label. Other net
       // labels remain soft obstacles just like free annotations.
       if (l.isNetLabel() && excluded.has(l.netId)) continue;
-      labelRects.push(l.bbox());
+      labelRects.push(l.inkRect());
     }
     const env = { rects, pins, pinRects, gatePassages, wires, labelRects };
     this._routingEnvCache.set(key, env);
@@ -18257,6 +18397,24 @@ class Circuit {
   // ----- queries used by renderer / agent ----------------------------
 
   /** Bounds of everything drawable (components + nets + labels), with margin. */
+  /** The drawing's visible extent: parts by their drawn symbols, wires, and
+   * labels by their text rather than their grid-rounded boxes
+   * (symbolInkRect, LabelInstance#inkRect). Used
+   * to frame exports and fit the view, so a label at the edge adds no
+   * empty cells. */
+  inkBounds(margin = 0) {
+    const rects = [];
+    for (const c of this.components.values()) rects.push(c.inkRectWorld());
+    for (const label of this.labels.values()) rects.push(label.inkRect());
+    for (const net of this.nets.values()) {
+      const pts = net.pathPoints();
+      if (pts.length) rects.push(rectFromPoints(pts));
+    }
+    if (rects.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+    const r = rectUnion(rects);
+    return { x: r.x - margin, y: r.y - margin, w: r.w + 2 * margin, h: r.h + 2 * margin };
+  }
+
   bounds(margin = 0) {
     const rects = [];
     for (const c of this.components.values()) rects.push(c.bboxWorld());
@@ -18475,6 +18633,8 @@ __exports.referenceMarkerNameConflicts = referenceMarkerNameConflicts;
 __exports.referenceMarkerIsLocal = referenceMarkerIsLocal;
 __exports.parseLabelRuns = parseLabelRuns;
 __exports.labelRunLines = labelRunLines;
+__exports.symbolInkParts = symbolInkParts;
+__exports.symbolInkRect = symbolInkRect;
 __exports.applyMarkup = applyMarkup;
 __exports.containedWireSegments = containedWireSegments;
 __exports.extractWireIslands = extractWireIslands;
@@ -18506,7 +18666,7 @@ __exports.Circuit = Circuit;
 };
 
 __modules["src/core/page-guide.js"] = function (__require, __exports) {
-const { ceilGrid, floorGrid, GRID } = __require("src/core/grid.js");
+const { GRID } = __require("src/core/grid.js");
 const { LABEL_FONT_SIZE } = __require("src/core/model.js");
 
 
@@ -18578,13 +18738,14 @@ function pageGuideCaption(guide) {
 /** The frame an export of `circuit` would get, with the same bounds and
  *  padding the drawing export uses; an empty drawing centres it on the origin. */
 function circuitPageGuideFrame(circuit, guide, padding = GRID) {
-  const b = circuit.bounds(0);
+  // The same visible extent the export frames (render.js svgString).
+  const b = circuit.inkBounds(0);
   if (b.w <= 0 && b.h <= 0) return pageGuideFrame(guide, 0, 0);
   return {
-    ...pageGuideFrame(guide, floorGrid(b.x) - padding, ceilGrid(b.x + b.w) + padding),
+    ...pageGuideFrame(guide, Math.floor(b.x) - padding, Math.ceil(b.x + b.w) + padding),
     // The figure's vertical extent, so an overflow can be marked clear of it.
-    top: floorGrid(b.y) - padding,
-    bottom: ceilGrid(b.y + b.h) + padding,
+    top: Math.floor(b.y) - padding,
+    bottom: Math.ceil(b.y + b.h) + padding,
   };
 }
 
@@ -19260,7 +19421,9 @@ function svgString(circuit, opts = {}) {
   // Shape annotations and a few legacy texts keep a faint opacity instead.
   const shapeOpacity = (id) => labelOpacity(id) || (beatHiddenLabel(id) ? FADED : beat?.dimLabels.has(id) ? DIMMED : '');
   const refTextOpacity = (ref) => refOpacity(ref) || (beatHiddenRef(ref) ? FADED : beat?.dimRefs.has(ref) ? DIMMED : '');
-  const b = circuit.bounds(o.grid || o.background ? 0 : 20);
+  // A drawn grid frames on whole cells; otherwise the frame hugs what is
+  // visible, so a label at the edge does not add its box's empty cells.
+  const b = o.grid ? circuit.bounds(0) : circuit.inkBounds(o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
   if (empty && !vp) {
@@ -19281,10 +19444,12 @@ function svgString(circuit, opts = {}) {
   // view (so free panning never rescales the drawing); without one, the view
   // auto-fits the circuit contents (exports / PNG).
   const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
-  let x0 = vp ? vp.x : floorGrid(b.x) - pad;
-  const y0 = vp ? vp.y : floorGrid(b.y) - pad;
-  let x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
-  const y1 = vp ? vp.y + vp.h : ceilGrid(b.y + b.h) + pad;
+  const lo = o.grid ? floorGrid : Math.floor;
+  const hi = o.grid ? ceilGrid : Math.ceil;
+  let x0 = vp ? vp.x : lo(b.x) - pad;
+  const y0 = vp ? vp.y : lo(b.y) - pad;
+  let x1 = vp ? vp.x + vp.w : hi(b.x + b.w) + pad;
+  const y1 = vp ? vp.y + vp.h : hi(b.y + b.h) + pad;
   // A page guide fixes the exported width, so the figure set at 100% column
   // width gets the guide's text size (see page-guide.js).
   const pageGuide = vp ? null : normalizePageGuide(o.pageGuide);
@@ -21398,7 +21563,7 @@ function selectionDrawing(document, selection = {}, options = {}) {
   const drawing = selectionSubset(document, selection);
   const padding = options.padding ?? GRID;
   if (!Number.isFinite(padding) || padding < 0) throw new Error('drawing padding must be a non-negative number');
-  const bounds = drawing.bounds();
+  const bounds = drawing.inkBounds();
   const viewport = {
     x: bounds.x - padding, y: bounds.y - padding,
     w: Math.max(1, bounds.w + padding * 2), h: Math.max(1, bounds.h + padding * 2),
@@ -28530,7 +28695,7 @@ function fitView({ animate = false } = {}) {
     x1 = Math.max(x1, x);
     y1 = Math.max(y1, y);
   };
-  const b = circuit.bounds();
+  const b = circuit.inkBounds();
   if (b.w > 0 || b.h > 0) {
     add(b.x, b.y);
     add(b.x + b.w, b.y + b.h);
