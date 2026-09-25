@@ -1,3 +1,4 @@
+import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -68,7 +69,7 @@ test('step text marks keys, and the tutorial is offered, never pushed', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-tutorial"[^>]*role="menuitem"/);
   assert.match(html, /data-empty-action="tutorial"/);
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // Nothing starts the tutorial except an explicit choice.
   assert.equal((main.match(/(?<!function )startTutorial\(\)/g) || []).length, 1);
   assert.match(main, /requestDocumentAction\('Starting the tutorial'/);

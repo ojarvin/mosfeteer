@@ -1,3 +1,4 @@
+import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -361,7 +362,7 @@ test('layout suggestions are conservative and separate from electrical check', (
 });
 
 test('the editor draws and names the guides it computed', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // Guides describe the object being placed or moved against what is already
   // committed, so the moving set and generated junction dots are not peers.
   assert.match(main, /!ghostRefs\.has\(component\.refdes\) && component\.type !== 'solder'/);
@@ -397,7 +398,7 @@ test('a suggested guide is drawn as one, and the crosshair stays out of its way'
 });
 
 test('the cursor crosshair starts off, leaving the guides to carry position', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /let crosshairVisible = false;/);
 });
 
@@ -414,7 +415,7 @@ test('align lives in the Selection inspector and lines up box child labels', asy
   const selection = html.slice(html.indexOf('data-panel="terminals"'), html.indexOf('</section>', html.indexOf('data-panel="terminals"')));
   assert.ok(selection.indexOf('id="style-panel"') < selection.indexOf('id="align-panel"'), 'Align follows Style inside Selection');
   assert.equal((html.match(/id="align-panel"/g) || []).length, 1);
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // A box's child label is eligible; only owned and net labels are excluded.
   assert.match(main, /const eligibleLabels = labels\.filter\(\(label\) => !label\.owner && !label\.netId\);/);
   // Children move from their original anchors after their parents.

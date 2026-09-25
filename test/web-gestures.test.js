@@ -1,3 +1,4 @@
+import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getSymbol } from '../src/core/components/index.js';
@@ -139,8 +140,7 @@ test('view easing interpolates and clamps', () => {
 });
 
 test('editor gestures are wired through the shared draft, history, and menus', async () => {
-  const { readFileSync } = await import('node:fs');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // A pin press stays a component click until it moves; then it is a wire draft.
   assert.match(main, /isPinDragCandidate\(componentHit\?\.def\)\) \{\s*drag\.pinGrab = /);
   assert.match(main, /drag\.mode === 'move' && drag\.pinGrab && !drag\.moved && movedOut\) \{\s*beginPinWire\(drag, w\);/);
@@ -173,8 +173,7 @@ test('editor gestures are wired through the shared draft, history, and menus', a
 });
 
 test('named-net shorts share one name picker; scripted commands never prompt', async () => {
-  const { readFileSync } = await import('node:fs');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // Every recorded edit checks for a new merged-name conflict.
   assert.match(main, /queueCommitFeedback\(startSnapshot, feedback\);\s*askNameForNewNetNameConflict\(startSnapshot\);/);
   // Solder, wire, and reference-rail shorts go through the same picker.
@@ -189,7 +188,7 @@ test('named-net shorts share one name picker; scripted commands never prompt', a
 
 test('rail tools hand keyboard focus back to the canvas after a pointer click', async () => {
   const { readFileSync } = await import('node:fs');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /querySelectorAll\('\.mode-toolbar, \.rail-flyout'\)[\s\S]{0,200}ev\.detail > 0 && ev\.target\.closest\('button'\)\) canvasEl\.focus/);
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   // Wire shapes live in a flyout like the annotation tools; box select is key-only.
@@ -199,8 +198,7 @@ test('rail tools hand keyboard focus back to the canvas after a pointer click', 
 });
 
 test('hover previews: net hovers glow markers and ports; part bodies light their panel row', async () => {
-  const { readFileSync } = await import('node:fs');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // Selected and hovered nets share one marker/port lookup.
   assert.match(main, /const netMarkers = netMarkerRefs\(nets\);/);
   assert.match(main, /netMarkerRefs\(hoverTarget\.ids\.map\(/);
@@ -222,8 +220,7 @@ test('knife strokes cross rectangles and polylines', async () => {
 });
 
 test('the knife deletes every object kind it cuts through one delete', async () => {
-  const { readFileSync } = await import('node:fs');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const cut = main.slice(main.indexOf('function knifeTargets('), main.indexOf('/** Gesture feedback appended'));
   assert.match(cut, /if \(c\.type === 'solder'\) continue;/);
   assert.match(cut, /if \(label\.owner \|\| label\.selectable === false\) continue;/);
@@ -232,8 +229,7 @@ test('the knife deletes every object kind it cuts through one delete', async () 
 });
 
 test('radial menu tools act on their part at the release point', async () => {
-  const { readFileSync } = await import('node:fs');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const radial = main.slice(main.indexOf('const RADIAL_ITEMS = ['), main.indexOf('const RADIAL_RADIUS'));
   for (const label of ['Rotate', 'Mirror H', 'Mirror V', 'Delete', 'Copy', 'Detach move', 'Move']) assert.match(radial, new RegExp(`label: '${label}'`));
   assert.match(radial, /radialMove\(radial, at, 'detached'\)/);
@@ -245,8 +241,7 @@ test('radial menu tools act on their part at the release point', async () => {
 });
 
 test('Ctrl+A selects nets that join touching pins without any wire', async () => {
-  const { readFileSync } = await import('node:fs');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /selectedNets = new Set\(selectAllNetIds\(circuit\)\);/);
   const body = main.slice(main.indexOf('export function selectAllNetIds('), main.indexOf('export function deriveInteractionState('));
   // Rebuild the pure helper and exercise it on a real model.
@@ -263,7 +258,7 @@ test('small windows: rail follows canvas height, one-row toolbar, drawer panel',
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // The rail turns horizontal by canvas height, not window width.
   assert.match(css, /container: canvas-pane \/ size;/);
   assert.match(css, /@container canvas-pane \(max-height: 380px\) \{\s*\.mode-toolbar \{\s*width: max-content;/);
@@ -283,7 +278,7 @@ test('small windows: rail follows canvas height, one-row toolbar, drawer panel',
 test('Design check runs from its panel section and an always-visible status chip', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const toolbar = html.slice(html.indexOf('<header class="toolbar">'), html.indexOf('</header>'));
   assert.doesNotMatch(toolbar, /id="btn-check"/);
   const section = html.slice(html.indexOf('id="check-summary"'), html.indexOf('id="check-summary-body"'));

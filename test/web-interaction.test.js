@@ -1,3 +1,4 @@
+import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,7 +10,7 @@ const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
 
 test('tool cursors badge the select arrow per tool, theme, and danger', () => {
-  const main = readFileSync(new URL('../src/web/icons.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function toolCursorValue(');
   const end = main.indexOf('\nfunction cursorIconFor(', start);
   const build = vm.runInNewContext(`(${main.slice(start, end)})`, {
@@ -32,7 +33,7 @@ test('tool cursors badge the select arrow per tool, theme, and danger', () => {
 });
 
 test('component rows share the net-list layout without inline delete controls', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function renderComponents()');
   const end = main.indexOf('\nfunction renderNets()', start);
   assert.ok(start > 0 && end > start);
@@ -45,12 +46,12 @@ test('component rows share the net-list layout without inline delete controls', 
 });
 
 test('export has a Ctrl/Cmd+E shortcut before focused-control handling', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /ev\.key\.toLowerCase\(\) === 'e'[^\n]*!inlineInput[\s\S]*?ev\.preventDefault\(\);\s*exportCircuit\(\);/);
 });
 
 test('document raster export sizes PNGs by the chosen DPI and keeps a fine PDF fallback', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(main, /svgToPngDataUrl\(svg, exportPngScale\(pngDpi\), \{ dpi: pngDpi \}\)/);
   assert.match(main, /request\.pdfPng = await svgToPngDataUrl\(svg, PDF_FALLBACK_PNG_SCALE\)/);
@@ -60,7 +61,7 @@ test('document raster export sizes PNGs by the chosen DPI and keeps a fine PDF f
 });
 
 test('named net edits confirm virtual connections, and port names never repeat', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /function namedConnectionConflicts\(/);
   assert.match(main, /function confirmNamedConnection\(/);
   assert.match(main, /cancelLabel: 'Keep separate'/);
@@ -74,7 +75,7 @@ test('named net edits confirm virtual connections, and port names never repeat',
 });
 
 test('insert categories keep switches and macros separate and include vccs with sources', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /\['Switches', \/\^switch_\//);
   assert.match(main, /\['Sources & power', \/\^\(current_source\|voltage_source\|vccs\|supply\|ground\|vcm\)\$\//);
   assert.match(main, /\['Macros', \/\^\(opamp\|opamp_diff\|adc\|dac\)\$\//);
@@ -84,7 +85,7 @@ test('insert categories keep switches and macros separate and include vccs with 
 });
 
 test('selection style controls keep their text-target result shape', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function selectedTextTargets()');
   const end = main.indexOf('\nfunction selectedFontState(', start);
   assert.ok(start > 0 && end > start);
@@ -92,7 +93,7 @@ test('selection style controls keep their text-target result shape', () => {
 });
 
 test('the small-signal figure owns Escape and hands the keyboard back', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf("modelDialog?.addEventListener('keydown'");
   assert.ok(start > 0, 'the model dialog handles Escape itself');
   const handlers = main.slice(start, start + 900);
@@ -105,7 +106,7 @@ test('the small-signal figure owns Escape and hands the keyboard back', () => {
 });
 
 test('the full-size figure is a view over one drawing, driven like the canvas', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function bindModelFigureView(');
   assert.ok(start > 0);
   const view = main.slice(start, main.indexOf('bindModelFigureView(modelDialogFigure)', start));
@@ -120,7 +121,7 @@ test('the full-size figure is a view over one drawing, driven like the canvas', 
 });
 
 test('the insert menu is one scrolling column led by the recent placements', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // Committed placements are what feed the Recent group, so an armed ghost the
   // user escapes never claims a slot.
   assert.match(main, /rememberInsertType\(pendingPlace\.type\)/);
@@ -145,7 +146,7 @@ test('the insert menu is one scrolling column led by the recent placements', () 
 });
 
 test('component drag snapshots restore segment styles with route geometry', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function captureNetGeometry(');
   const end = main.indexOf('\nfunction armModalLabelMove', start);
   const helpers = vm.runInNewContext(`(() => {
@@ -183,7 +184,7 @@ test('component drag snapshots restore segment styles with route geometry', () =
 });
 
 test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
-  const main = readFileSync(new URL('../src/web/icons.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function preloadToolCursors(');
   const end = main.indexOf('\nfunction installButtonIcons(', start);
   const built = [];
@@ -224,7 +225,7 @@ test('the view follows the cursor out of frame, minimally and with a margin', ()
 });
 
 test('MathML annotation measurements are independent of zoom on reload', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function renderedLabelTextBounds(');
   const end = main.indexOf('\n// Equation annotations are initially positioned', start);
   for (const scale of [0.08, 0.5, 1, 2]) {
@@ -245,14 +246,14 @@ test('MathML annotation measurements are independent of zoom on reload', () => {
 });
 
 test('generated category labels keep their persisted grid metrics', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function syncRenderedLabelMetrics()');
   const end = main.indexOf('\nfunction scheduleMeasuredLabelRender()', start);
   assert.match(main.slice(start, end), /if \(label\.id\.startsWith\('category_'\)\) continue;/);
 });
 
 test('multiline assumptions measure their text independently of the restored container width', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function renderedLabelTextBounds(');
   const end = main.indexOf('\n// Equation annotations are initially positioned', start);
   for (const containerWidth of [240, 320, 400]) {
@@ -383,12 +384,12 @@ test('new document control starts a schematic directly', () => {
   assert.doesNotMatch(html, /id="new-document-menu"|data-new-document=/);
   assert.doesNotMatch(html, /id="btn-new-circuit"|id="btn-new-block"/);
 
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /newDocumentButton\?\.addEventListener\('click', \(\) => \{[\s\S]*?startNewDocument\(\);/);
 });
 
 test('an explicit new document is protected from active-document auto-loads', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function startNewDocument(');
   const end = main.indexOf('\n/**', start);
   const startNew = main.slice(start, end);
@@ -455,7 +456,7 @@ test('small-signal analysis exposes the canonical v2 controls', () => {
 });
 
 test('analysis form state is scoped and role metadata is restored from the active schematic', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /analysisFormStorageKey\(analysisFormScope\(\)\)/);
   assert.match(main, /Select an input node before deriving equations/);
   assert.match(main, /analysis failed: \$\{message\}/);
@@ -504,12 +505,12 @@ test('analysis form state is scoped and role metadata is restored from the activ
 });
 
 test('arrow-key nudging moves mixed selections atomically', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /transformMixedSelection\('translate', \{ translation: \{ dx, dy \} \}\)/);
 });
 
 test('wire previews exclude the destination net and transformed nets keep terminal moves', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const preview = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview(', main.indexOf('function draftRoutePath(')));
   assert.match(preview, /const excludedNets = new Set\(sourceNetId && !isOpenEnd\(endpoints\[0\], sourceNetId\) \? \[sourceNetId\] : \[\]\)/);
   assert.match(preview, /circuit\._netEnv\(excludedNets\)/);
@@ -519,7 +520,7 @@ test('wire previews exclude the destination net and transformed nets keep termin
 });
 
 test('startup paints before listing documents and restoring the requested document', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /const listPromise = refreshCircuitList\(\);/);
   assert.match(main, /if \(openPath && openPath !== currentDocumentPath\) requestCircuitLoad\(openPath\);/);
   assert.match(main, /fitView\(\);\s*restoreStartup\(\)/);
@@ -527,7 +528,7 @@ test('startup paints before listing documents and restoring the requested docume
 });
 
 test('fit reserves the axis the mode rail is thin along', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const fit = main.slice(main.indexOf('function fitView('), main.indexOf('function cycleSelection('));
   // On a narrow window the rail is a horizontal strip across the top. Reserving
   // its width there leaves a 1 px usable pane, so the fit clamps to the widest
@@ -541,19 +542,19 @@ test('fit reserves the axis the mode rail is thin along', () => {
 });
 
 test('empty canvas fit starts at a 30-cell planning view', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const fit = main.slice(main.indexOf('function fitView('), main.indexOf('function cycleSelection('));
   assert.match(fit, /x0 = -600;\s*y0 = -600;\s*x1 = 600;\s*y1 = 600;/);
 });
 
 test('F5 reloads the application instead of entering the normal keymap', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /if \(ev\.key === 'F5'\)/);
   assert.match(main, /ev\.preventDefault\(\);\s*flushDraft\(\);\s*window\.location\.reload\(\);/);
 });
 
 test('analysis annotations use structured canonical assumptions', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function analysisAnnotationAssumptions');
   const end = main.indexOf('\n\nfunction openAnalysisDialog', start);
   assert.ok(start >= 0 && end > start);
@@ -576,7 +577,7 @@ test('analysis annotations use structured canonical assumptions', () => {
 });
 
 test('committed inserts repair coincident connectivity and analysis menus support multi-selection', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // One placement or a mirrored pair, each half repaired the same way.
   assert.match(main, /placements\.map\(\(t\) => circuit\.addComponent\(pendingPlace\.type/);
   assert.match(main, /for \(const comp of placed\) circuit\.connectCoincident\(comp\.refdes\);/);
@@ -653,7 +654,7 @@ test('symmetric placement mirrors across one axis, chosen by the cursor', () => 
 });
 
 test('Alt arms symmetric placement without swallowing the ghost keys', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   // Alt held on its own arms it; releasing it or losing the window drops the
   // mirrored ghost.
   assert.match(main, /if \(ev\.key === 'Alt'\) \{[\s\S]{0,220}setSymmetry\(true\)/);
@@ -685,7 +686,7 @@ test('Alt arms symmetric placement without swallowing the ghost keys', () => {
 test('Ctrl+r still mirrors vertically while Alt symmetry is held', () => {
   // Alt symmetry is held while Ctrl+r is pressed, so the explicit branch must
   // preserve the vertical mirror instead of treating r as a rotation.
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const drivingSymmetryIndex = main.indexOf('const drivingSymmetry = symmetry');
   const modifierBranchIndex = main.indexOf("if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {");
   assert.ok(drivingSymmetryIndex > 0 && modifierBranchIndex > drivingSymmetryIndex);
@@ -697,7 +698,7 @@ test('Ctrl+r still mirrors vertically while Alt symmetry is held', () => {
 });
 
 test('rejected actions do not create history entries and use the shared note', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function commit(fn)');
   const end = main.indexOf('\nfunction snapshot()', start);
   const commit = main.slice(start, end);
@@ -713,7 +714,7 @@ test('the placement guides are a view toggle beside the grid', () => {
   assert.ok(html.indexOf('id="btn-guides"') > html.indexOf('id="btn-grid"'));
   assert.ok(html.indexOf('id="btn-guides"') < html.indexOf('id="btn-theme"'));
 
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /key === 'G' \|\| \(key === 'g' && shiftKey\)\) setGuides\(!guidesVisible\)/);
   assert.match(main, /guides: guidesVisible \? placementGuides\(/);
   // Off by keyboard or button, but never reaching the deliberately armed axis.
@@ -732,7 +733,7 @@ test('the style menu exposes one shared arrowhead as independent start/end toggl
   assert.match(html, /data-line-style="dashed"/);
   assert.match(html, /data-line-style="dash-dot"/);
   assert.match(html, /data-line-style="dotted"/);
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /function combineArrowheadEnds\(start, end\)/);
   assert.match(main, /start && end \? 'both' : start \? 'start' : end \? 'end' : 'none'/);
   assert.match(main, /field !== 'arrowhead' \|\| supportsArrowhead/);
@@ -742,7 +743,7 @@ test('the context menu carries the style panel controls and stays open while sty
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="style-line-row" data-style-row="line"/);
   assert.match(html, /id="style-text-row" data-style-row="text"/);
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const open = main.slice(main.indexOf('function openComponentContextMenu('), main.indexOf('\nfunction selectContextTarget('));
   assert.match(open, /menu\.appendChild\(heading\);\s*appendContextStyleStrip\(menu\);\s*appendContextActions\(menu, target\);/);
   const strip = main.slice(main.indexOf('function appendContextStyleStrip('), main.indexOf('\nfunction openComponentContextMenu('));
@@ -760,7 +761,7 @@ test('the context menu carries the style panel controls and stays open while sty
 });
 
 test('opening another design ends the tutorial, but a sync reload of its own does not', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const body = (name) => main.slice(main.indexOf(`function ${name}(`), main.indexOf('\n}\n', main.indexOf(`function ${name}(`)));
   assert.match(body('loadCircuit'), /if \(data\.path !== currentDocumentPath\) dropTutorial\(\);\s*\/\/[^\n]*\n[^\n]*\n\s*history = \[\];/);
   assert.match(body('openUnsavedDocument'), /dropTutorial\(\);/);
@@ -771,7 +772,7 @@ test('opening another design ends the tutorial, but a sync reload of its own doe
 });
 
 test('hovering another context menu item closes submenus it is not part of', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function closeStrayContextSubmenus(');
   const close = vm.runInNewContext(`(${main.slice(start, main.indexOf('\n}\n', start) + 2)})`, {
     get componentContextMenuEl() { return menu; },
@@ -807,7 +808,7 @@ test('hovering another context menu item closes submenus it is not part of', () 
 });
 
 test('tools switch straight from inside another tool, dropping its uncommitted work', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const body = (name) => main.slice(main.indexOf(`function ${name}(`), main.indexOf('\n}\n', main.indexOf(`function ${name}(`)));
   // No tool refuses because another one is mid-interaction any more.
   assert.doesNotMatch(main, /finish (or cancel )?the active interaction/);
@@ -842,7 +843,7 @@ test('tools switch straight from inside another tool, dropping its uncommitted w
 });
 
 test('view toggles answer in every mode but the insert search', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const start = main.indexOf('function viewKey(');
   const view = main.slice(start, main.indexOf('\nfunction onVisualKey(', start));
   // Typing a component name is the one place a printable key is not a command.
@@ -861,7 +862,7 @@ test('view toggles answer in every mode but the insert search', () => {
 });
 
 test('wiring uses Alt for nearest-terminal snapping instead of symmetric routing', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /function terminalSnapWorld\(point\)/);
   assert.match(main, /function nearestSnapTarget\(point\)[\s\S]*?circuit\.openWireEnds\(\)[\s\S]*?nearestTerminal\(point, \{ anyDistance: true \}\)/);
   assert.match(main, /const hit = nearestSnapTarget\(point\);/);
@@ -879,27 +880,27 @@ test('wiring uses Alt for nearest-terminal snapping instead of symmetric routing
 });
 
 test('wire previews prefer a centered equivalent route', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const draft = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview', main.indexOf('function draftRoutePath(')));
   assert.match(draft, /allowDiagonal: false, preferMidpoint: true/);
 });
 
 test('wire drafts meet a free wire end at its tip instead of running along that wire', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const draft = main.slice(main.indexOf('function draftRoutePath('), main.indexOf('\nfunction draftWirePreview', main.indexOf('function draftRoutePath(')));
   assert.match(draft, /circuit\.openWireEnds\(\)/);
   assert.match(draft, /if \(isOpenEnd\(endpoints\.at\(-1\), net\.id\)\) continue;/);
 });
 
 test('terminal commits preserve the routed preview without manual waypoints', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const connect = main.slice(main.indexOf('function connectWireToTerminal('), main.indexOf('\n/** A point reflected', main.indexOf('function connectWireToTerminal(')));
   assert.match(connect, /const draftPath = draftRoutePath\(wire, end\);/);
   assert.doesNotMatch(connect, /wire\.points\.length \? draftRoutePath/);
 });
 
 test('wire previews can cross neighbours but validate the final drop, and canvas menus do not promise rename by double-click', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const drag = main.slice(main.indexOf('function managedWireDragAt('), main.indexOf('\nfunction canvasMouseDown', main.indexOf('function managedWireDragAt(')));
   assert.match(drag, /allowPastNeighbors: true/);
   assert.match(drag, /preserveDiagonalNeighbors: true/);
@@ -919,7 +920,7 @@ test('wire previews can cross neighbours but validate the final drop, and canvas
 });
 
 test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const arm = main.slice(main.indexOf('function armCopyGhostMirror('), main.indexOf('function dropCopyGhostMirror('));
   const symmetry = main.slice(main.indexOf('function copyGhostSymmetryPin('), main.indexOf('function setSymmetry('));
   assert.match(symmetry, /components\[0\]\.transform\.x, y: components\[0\]\.transform\.y/);
@@ -977,7 +978,7 @@ test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
 });
 
 test('transient copy ghosts stay out of side panels until committed', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const components = main.slice(main.indexOf('function renderComponents('), main.indexOf('function renderNets('));
   assert.match(components, /componentPaletteItems\(sortedComps\(\)\)[\s\S]*\.filter\(\(comp\) => !isTransientCopyGhostRef\(comp\.refdes\)\)/);
 
@@ -1009,7 +1010,7 @@ test('a compatibility mousemove after the same mouse pointermove is skipped', ()
 });
 
 test('9 arms net highlighting and 8 clears it unless they continue a count', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /if \(key === '9' && !counts\) \{\s*activateHighlight\(\);/);
   assert.match(main, /if \(key === '8' && !counts\) \{\s*removeAllNetHighlights\(\);/);
   // Clicks cycle through one undoable model edit (on a beat, the beat's own
@@ -1021,7 +1022,7 @@ test('9 arms net highlighting and 8 clears it unless they continue a count', () 
 });
 
 test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const down = main.slice(main.indexOf('const pickedLine = endpointHit?.label'), main.indexOf("mode: 'labelmove', labelId: annotationGeometry.id"));
   // Lines and arrows (grabbed by a vertex or segment), shape captions, and
   // box outlines each try the copy grab first; a click without a drag still
@@ -1034,7 +1035,7 @@ test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () =>
 });
 
 test('a still click on a selected object cycles to the next one stacked under it, and a press drags the selected one', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const up = main.slice(main.indexOf('function canvasMouseUp('), main.indexOf('\nfunction finishCanvasMouseUp('));
   assert.match(up, /const still = !!drag && !dragMoved\(/);
   assert.match(up, /nextStackedSelection\(click\.candidates, click\.pressKey\)/);
@@ -1045,7 +1046,7 @@ test('a still click on a selected object cycles to the next one stacked under it
 });
 
 test('a click picks the label whose text is under the pointer before one whose box merely reaches there, and cycles through every label', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const at = main.slice(main.indexOf('function labelsAt('), main.indexOf('\nfunction annotationTextAt('));
   assert.match(at, /const ink = label\.inkRect\(\);/);
   assert.match(at, /return \[\.\.\.onText, \.\.\.inBox\];/);
@@ -1054,7 +1055,7 @@ test('a click picks the label whose text is under the pointer before one whose b
 });
 
 test('the inline label editor covers the text, not the label\'s grid box, and follows zoom', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const edit = main.slice(main.indexOf('function inlineEditLabel('), main.indexOf('  resize();', main.indexOf('function inlineEditLabel(')));
   // The label's own size, one line tall per line, centred where the text is drawn.
   assert.match(edit, /labelFontSize\(label\.style\?\.width\) \* scale/);
@@ -1075,7 +1076,7 @@ test('the inline label editor covers the text, not the label\'s grid box, and fo
 });
 
 test('canvas text editors never scroll the page when they run past the window', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   for (const name of ['function inlineEditLabel(', 'function inlineEditSchematicBlock(']) {
     const body = main.slice(main.indexOf(name), main.indexOf('\n}\n', main.indexOf(name)));
     assert.match(body, /input\.style\.position = 'fixed';/, name);

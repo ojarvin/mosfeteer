@@ -1,3 +1,4 @@
+import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -56,7 +57,7 @@ test('turning tips off silences them, and stored junk is ignored', () => {
 });
 
 test('every tip is short and names a trigger and a retiring action the editor reports', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   for (const tip of TIPS) {
     assert.ok(tip.text.length <= 110, `${tip.id} is one short line`);
     for (const event of [tip.trigger, tip.retiredBy]) {

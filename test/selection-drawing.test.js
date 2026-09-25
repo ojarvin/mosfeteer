@@ -1,3 +1,4 @@
+import { editorSource } from './helpers/editor-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -179,7 +180,7 @@ test('exporting only the selection renders the subset with the normal export fra
   assert.ok(circuit.components.has('R2'), 'the document is untouched');
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /name="selection"[^>]*\/> Only the selection/);
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /exportSelectionInput\.checked = false;/);
 });
 

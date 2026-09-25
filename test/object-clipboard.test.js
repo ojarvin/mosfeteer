@@ -1,6 +1,6 @@
+import { editorSource } from './helpers/editor-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { encodeObjectClipboard, decodeObjectClipboard, OBJECT_CLIPBOARD_FORMAT } from '../src/core/object-clipboard.js';
 
 const buffer = () => ({
@@ -58,7 +58,7 @@ test('damaged or foreign-version copied objects are refused before any paste', (
 });
 
 test('Ctrl/Cmd+C publishes copies and Ctrl/Cmd+V is read from the browser paste event', async () => {
-  const main = await readFile(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /k === 'c' && !ev\.shiftKey\) \{\s*ev\.preventDefault\(\);\s*if \(copySelection\(\)\) publishObjectClipboard\(\);/);
   assert.match(main, /key === 'y'\) \{\s*if \(copySelection\(\)\) publishObjectClipboard\(\);/);
   // Ctrl/Cmd+V must not prevent the default, or no paste event follows.

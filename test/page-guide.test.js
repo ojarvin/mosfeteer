@@ -1,3 +1,4 @@
+import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -81,6 +82,6 @@ test('settings hold the page guide and preferences; More holds document actions'
   assert.doesNotMatch(view, /btn-settings/);
   const more = html.slice(html.indexOf('id="document-menu"'), html.indexOf('</div>', html.indexOf('id="document-menu"')));
   for (const id of ['btn-scroll-scheme', 'btn-tips', 'btn-tutorial', 'data-page-guide']) assert.doesNotMatch(more, new RegExp(id));
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(main, /renderDocument\(drawing, \{\s*\.\.\.DRAWING_EXPORT_OPTIONS,\s*grid,\s*pageGuide,/);
 });

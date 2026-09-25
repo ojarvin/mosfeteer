@@ -1,3 +1,4 @@
+import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -54,7 +55,7 @@ test('zoom reads as a percentage of the default scale; fields hide empty selecti
 test('the footer is one status line with an overlay log drawer and no resize affordance', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(html, /<footer class="statusbar" id="console-panel"/);
   assert.match(html, /<section id="log-drawer" class="log-drawer"[^>]*hidden>[\s\S]*id="log"[\s\S]*id="cmd-input"/);
   for (const id of ['status-mode', 'status-selection', 'status-cursor', 'status-zoom', 'status-check', 'status-message', 'btn-help']) {
@@ -76,7 +77,7 @@ test('the footer is one status line with an overlay log drawer and no resize aff
 });
 
 test('the view keeps its scale and top-left corner when the pane resizes', () => {
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   const resize = main.slice(main.indexOf('function resizeView()'), main.indexOf('function syncViewToPane()'));
   assert.match(resize, /const pxPerUnit = \(viewPane\?\.w \|\| p\.w\) \/ view\.w;/);
   assert.doesNotMatch(resize, /view\.x =|view\.y =/);
@@ -85,7 +86,7 @@ test('the view keeps its scale and top-left corner when the pane resizes', () =>
 
 test('document title, annotation flyout, and grouped design check are wired', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  const main = editorSource();
   assert.match(html, /<div class="circuit-picker"[^>]*>\s*<input id="circuit-name"[\s\S]*id="dirty-dot"[\s\S]*<select id="circuit-select"/);
   assert.match(main, /if \(dirtyDot\) dirtyDot\.hidden = !dirty;/);
   // Layer buttons live in the context menu and on Shift+Up/Down, not the rail.
