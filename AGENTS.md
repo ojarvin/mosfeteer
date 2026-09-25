@@ -109,7 +109,9 @@ circuit when rejecting a duplicate.
 Owned and net labels default to the `parent` alignment: beside the part (or
 at the side of its wire, for a net label) the text aligns toward it with the
 full inset, and the box keeps the edge facing it fixed as the text grows;
-above or below, the text is centered. Aligned text labels round their box up
+above or below, the text is centered. A net label above or below its wire
+that is aligned left or right keeps that edge where a two-cell box would have
+it and grows away, so a wire stub's label edge stays on its terminal. Aligned text labels round their box up
 to include that inset. Documents without `labelAlignVersion` 3 (or
 `ownedLabelAlignVersion` 2) load their centered part and net labels as
 `parent`.
@@ -278,7 +280,7 @@ Core keyboard vocabulary:
 | --- | --- |
 | normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `Shift+A` align to (selection outline edge/point, then another object's), `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
 | view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `?` help, `:` command line (log drawer) |
-| editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `9` net highlight tool, `8` remove all highlights |
+| editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `9` net highlight tool, `8` remove all highlights, `Space` tap labelled wire stubs on the selected parts' unconnected terminals (`src/core/stubs.js`; a stub that would short is skipped) |
 | beats | `Shift+B` beat strip, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or nearest-terminal cursor snapping while wiring |
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part, label, or annotation, or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |

@@ -15,6 +15,7 @@ import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/compone
 import { runCommand, commandHelp, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBarRow, supplyBars } from '../core/supply-bars.js';
 import { addTimingDiagram } from '../core/timing-diagram.js';
+import { addTerminalStubs } from '../core/stubs.js';
 import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setHighlightFrom, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchPhases, switchState, switchStateAt, switchesOf, phaseBeats } from '../core/beats.js';
 import { TipBook } from './tips.js';
 import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
@@ -668,6 +669,7 @@ let wirePreview = null;
 let wirePreviewStale = false;
 let terminalSnap = false; // Alt-held wiring cursor: snap to the nearest terminal
 let spaceHeld = false; // Space turns a left drag into a pan
+let spaceTap = false; // Space went down and nothing used it yet: its release stubs the selection
 // 'mouse': the wheel zooms. 'trackpad': two-finger scroll pans, pinch zooms.
 // A per-machine preference, so it lives in browser storage, not the document.
 let scrollScheme = (() => {
@@ -4639,6 +4641,22 @@ function addPhaseBeats() {
   setActiveBeat(index);
 }
 
+/** A tap of Space: a labelled wire stub on every unconnected terminal of the
+ * selected parts, skipping any that would short (core/stubs.js). */
+function stubSelection() {
+  if (mode !== 'normal' || drag || hasWireDraft() || labelMode || moveMode || copyMode || deleteMode || visual) return;
+  const refs = selectedComps().map((c) => c.refdes);
+  if (!refs.length) {
+    hintLine('Space: select parts to add wire stubs to their unconnected terminals');
+    return;
+  }
+  const out = commit(() => addTerminalStubs(circuit, refs));
+  if (!out) return;
+  const added = out.stubs.length ? `added ${out.stubs.length} wire stub${out.stubs.length === 1 ? '' : 's'}` : 'no unconnected terminals to stub';
+  logLine(`${added}${out.skipped.length ? `; skipped ${out.skipped.join(', ')} (would short)` : ''}`);
+  render();
+}
+
 /** A timing diagram template under the drawing: each phase's name and a
  * waveform line to edit into its timing (core/timing-diagram.js). */
 function addTimingDiagramTemplate() {
@@ -7366,6 +7384,7 @@ function canvasMouseDown(ev) {
   const rawStartWorld = clientToWorld(ev.clientX, ev.clientY);
   const startWorld = b === 0 && wire && terminalSnap ? terminalSnapWorld(rawStartWorld) : rawStartWorld;
   const startClient = { x: ev.clientX, y: ev.clientY };
+  spaceTap = false;
 
   if (b === 1 || (b === 0 && spaceHeld)) {
     ev.preventDefault();
@@ -10918,6 +10937,10 @@ window.addEventListener('keyup', (ev) => {
   if (ev.key === ' ') {
     spaceHeld = false;
     canvasEl.classList.remove('space-pan');
+    if (spaceTap) {
+      spaceTap = false;
+      stubSelection();
+    }
     return;
   }
   if (ev.key !== 'Alt') return;
@@ -10930,6 +10953,7 @@ window.addEventListener('keyup', (ev) => {
 });
 window.addEventListener('blur', () => {
   spaceHeld = false;
+  spaceTap = false;
   canvasEl.classList.remove('space-pan');
   altHeld = false;
   setSymmetry(false);
@@ -15313,6 +15337,7 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === ' ' && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !(mode === 'insert' && !pendingPlace)) {
     if (!spaceHeld) {
       spaceHeld = true;
+      spaceTap = !ev.repeat;
       canvasEl.classList.add('space-pan');
     }
     ev.preventDefault();

@@ -939,6 +939,14 @@ export class LabelInstance {
     const w = this.colWidth() * GRID;
     const h = this.rowHeight() * GRID;
     if (this.netId) {
+      if (this.netSide === 'below' || this.netSide === 'above' || !this.netSide) {
+        // Along a wire, left- or right-aligned text keeps the edge a two-cell
+        // box would have and grows away from it: a stub's label edge stays on
+        // its terminal (core/stubs.js).
+        const y = this.netSide === 'below' ? a.y : a.y - h;
+        if (this.align === 'right') return { x: a.x + GRID - w, y, w, h };
+        if (this.align === 'left') return { x: a.x - GRID, y, w, h };
+      }
       if (this.netSide === 'below') return { x: a.x - w / 2, y: a.y, w, h };
       if (this.netSide === 'left') return { x: a.x - w, y: a.y - h / 2, w, h };
       if (this.netSide === 'right') return { x: a.x, y: a.y - h / 2, w, h };
