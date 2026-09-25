@@ -26101,6 +26101,102 @@ function commitFeedbackSvg(diff) {
 
 };
 
+__modules["src/web/commit-flash.js"] = function (__require, __exports) {
+__exports.queueCommitFeedback = queueCommitFeedback;
+__exports.flushPendingCommitFeedback = flushPendingCommitFeedback;
+__exports.playCommitFeedback = playCommitFeedback;
+__exports.mountCommitFeedback = mountCommitFeedback;
+let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
+let commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback; __bind(() => { ({ commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+/**
+ * The brief flash over what an undoable edit changed. What changed is
+ * worked out in commit-feedback.js; this queues and plays it.
+ */
+
+
+
+
+
+const COMMIT_FEEDBACK_MS = 650;
+
+let commitFeedbackBursts = [];
+
+let commitFeedbackSeq = 0;
+
+function queueCommitFeedback(startSnapshot, when) {
+  if (when === 'none') {
+    // Wire drags already show the wire under the pointer the whole time; a
+    // flash on drop only flickers.
+    editor.pendingFeedbackSnapshot = null;
+    return;
+  }
+  const base = editor.pendingFeedbackSnapshot || startSnapshot;
+  if (when === 'defer') {
+    editor.pendingFeedbackSnapshot = base;
+    return;
+  }
+  editor.pendingFeedbackSnapshot = null;
+  playCommitFeedback(base);
+}
+
+function flushPendingCommitFeedback() {
+  if (!editor.pendingFeedbackSnapshot || editor.drag || editor.previewTransaction) return;
+  const base = editor.pendingFeedbackSnapshot;
+  editor.pendingFeedbackSnapshot = null;
+  playCommitFeedback(base);
+}
+
+function playCommitFeedback(beforeSnapshot) {
+  let diff;
+  try {
+    diff = commitFeedbackDiff(Circuit.fromJSON(JSON.parse(beforeSnapshot)), editor.circuit);
+  } catch {
+    return; // feedback is decoration; never let it break a commit
+  }
+  if (isEmptyFeedback(diff)) return;
+  if (window.__commitFeedbackLog) window.__commitFeedbackLog.push(Object.fromEntries(Object.entries(diff).map(([key, list]) => [key, list.length])));
+  const burst = { id: ++commitFeedbackSeq, ...commitFeedbackSvg(diff), start: performance.now() };
+  commitFeedbackBursts.push(burst);
+  setTimeout(() => {
+    commitFeedbackBursts = commitFeedbackBursts.filter((b) => b !== burst);
+    for (const el of editor.canvasSvgEl?.querySelectorAll(`[data-burst="${burst.id}"]`) || []) el.remove();
+  }, COMMIT_FEEDBACK_MS);
+  mountCommitFeedback(true);
+}
+
+function mountCommitFeedback(force = false) {
+  if (!editor.canvasSvgEl) return;
+  let layer = editor.canvasSvgEl.querySelector(':scope > .commit-feedback');
+  const underlay = editor.canvasSvgEl.querySelector(':scope > .editor-underlay');
+  if (layer && !force) {
+    // Keep it above the overlay, but never move it needlessly: re-inserting a
+    // node restarts its CSS animations, which flickered on every pointer move.
+    if (editor.canvasSvgEl.lastElementChild !== layer) editor.canvasSvgEl.appendChild(layer);
+    return;
+  }
+  if (!commitFeedbackBursts.length) {
+    layer?.remove();
+    underlay?.replaceChildren();
+    return;
+  }
+  if (!layer) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    layer.setAttribute('class', 'commit-feedback');
+    layer.setAttribute('aria-hidden', 'true');
+  }
+  // Negative delays resume each burst where it was if the canvas was rebuilt.
+  const now = performance.now();
+  const groups = (part) => commitFeedbackBursts
+    .map((b) => `<g data-burst="${b.id}" style="--landing-elapsed:${-Math.round(now - b.start)}ms">${b[part]}</g>`)
+    .join('');
+  layer.innerHTML = groups('over');
+  if (underlay) underlay.innerHTML = groups('under');
+  if (editor.canvasSvgEl.lastElementChild !== layer) editor.canvasSvgEl.appendChild(layer);
+}
+
+};
+
 __modules["src/web/context-menu.js"] = function (__require, __exports) {
 __exports.closeComponentContextMenu = closeComponentContextMenu;
 __exports.appendContextItem = appendContextItem;
@@ -30605,7 +30701,6 @@ let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunction
 let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js")); });
 let copyableLabelPayload, selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection; __bind(() => { ({ copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } = __require("src/web/selection.js")); });
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
-let commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback; __bind(() => { ({ commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js")); });
 let INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType; __bind(() => { ({ INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } = __require("src/web/toolbar.js")); });
 let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
@@ -30630,6 +30725,7 @@ let bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, o
 let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, plainMarkup, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, plainMarkup, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
+let queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -30746,6 +30842,7 @@ Object.defineProperties(editor, {
   multi: { get: () => multi, set: (value) => { multi = value; } },
   netWarnings: { get: () => netWarnings, set: (value) => { netWarnings = value; } },
   pageGuide: { get: () => pageGuide, set: (value) => { pageGuide = value; } },
+  pendingFeedbackSnapshot: { get: () => pendingFeedbackSnapshot, set: (value) => { pendingFeedbackSnapshot = value; } },
   pendingPlace: { get: () => pendingPlace, set: (value) => { pendingPlace = value; } },
   presenter: { get: () => presenter, set: (value) => { presenter = value; } },
   previewRevision: { get: () => previewRevision, set: (value) => { previewRevision = value; } },
@@ -31117,82 +31214,7 @@ function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now') {
 // changed (see commit-feedback.js). It lives in its own SVG layer so overlay
 // redraws do not restart it; a canvas rebuild remounts it mid-animation.
 
-const COMMIT_FEEDBACK_MS = 650;
 let pendingFeedbackSnapshot = null;
-let commitFeedbackBursts = [];
-let commitFeedbackSeq = 0;
-
-function queueCommitFeedback(startSnapshot, when) {
-  if (when === 'none') {
-    // Wire drags already show the wire under the pointer the whole time; a
-    // flash on drop only flickers.
-    pendingFeedbackSnapshot = null;
-    return;
-  }
-  const base = pendingFeedbackSnapshot || startSnapshot;
-  if (when === 'defer') {
-    pendingFeedbackSnapshot = base;
-    return;
-  }
-  pendingFeedbackSnapshot = null;
-  playCommitFeedback(base);
-}
-
-function flushPendingCommitFeedback() {
-  if (!pendingFeedbackSnapshot || drag || previewTransaction) return;
-  const base = pendingFeedbackSnapshot;
-  pendingFeedbackSnapshot = null;
-  playCommitFeedback(base);
-}
-
-function playCommitFeedback(beforeSnapshot) {
-  let diff;
-  try {
-    diff = commitFeedbackDiff(Circuit.fromJSON(JSON.parse(beforeSnapshot)), circuit);
-  } catch {
-    return; // feedback is decoration; never let it break a commit
-  }
-  if (isEmptyFeedback(diff)) return;
-  if (window.__commitFeedbackLog) window.__commitFeedbackLog.push(Object.fromEntries(Object.entries(diff).map(([key, list]) => [key, list.length])));
-  const burst = { id: ++commitFeedbackSeq, ...commitFeedbackSvg(diff), start: performance.now() };
-  commitFeedbackBursts.push(burst);
-  setTimeout(() => {
-    commitFeedbackBursts = commitFeedbackBursts.filter((b) => b !== burst);
-    for (const el of canvasSvgEl?.querySelectorAll(`[data-burst="${burst.id}"]`) || []) el.remove();
-  }, COMMIT_FEEDBACK_MS);
-  mountCommitFeedback(true);
-}
-
-function mountCommitFeedback(force = false) {
-  if (!canvasSvgEl) return;
-  let layer = canvasSvgEl.querySelector(':scope > .commit-feedback');
-  const underlay = canvasSvgEl.querySelector(':scope > .editor-underlay');
-  if (layer && !force) {
-    // Keep it above the overlay, but never move it needlessly: re-inserting a
-    // node restarts its CSS animations, which flickered on every pointer move.
-    if (canvasSvgEl.lastElementChild !== layer) canvasSvgEl.appendChild(layer);
-    return;
-  }
-  if (!commitFeedbackBursts.length) {
-    layer?.remove();
-    underlay?.replaceChildren();
-    return;
-  }
-  if (!layer) {
-    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    layer.setAttribute('class', 'commit-feedback');
-    layer.setAttribute('aria-hidden', 'true');
-  }
-  // Negative delays resume each burst where it was if the canvas was rebuilt.
-  const now = performance.now();
-  const groups = (part) => commitFeedbackBursts
-    .map((b) => `<g data-burst="${b.id}" style="--landing-elapsed:${-Math.round(now - b.start)}ms">${b[part]}</g>`)
-    .join('');
-  layer.innerHTML = groups('over');
-  if (underlay) underlay.innerHTML = groups('under');
-  if (canvasSvgEl.lastElementChild !== layer) canvasSvgEl.appendChild(layer);
-}
-
 function scheduleInteractionRender() {
   // Routing the draft is the costly part of a wire-mode repaint; do it once
   // per painted frame rather than once per input event.
