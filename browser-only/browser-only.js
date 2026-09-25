@@ -9580,6 +9580,8 @@ let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/
 let addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
 let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
+let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+
 
 
 
@@ -9714,6 +9716,7 @@ const FLAG_ARITY = {
   grid: 0,
   after: 1,
   beat: 1,
+  case: 0,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -10081,6 +10084,8 @@ function commandHelp() {
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
+    '  find TEXT [--case]             - list every label (nets, parts, switch phases, rails, annotations) and block caption containing TEXT',
+    '  replace FIND WITH [--case]     - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes)',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
@@ -10446,6 +10451,19 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const added = stubs.map((stub) => `${stub.ref} ${stub.name}`).join(', ');
     const message = `${stubs.length} stub${stubs.length === 1 ? '' : 's'}${added ? `: ${added}` : ''}${skipped.length ? `; skipped (would short) ${skipped.join(', ')}` : ''}`;
     return result(message, { stubs, skipped }, stubs.length > 0);
+  }
+  if (cmd === 'find') {
+    if (pos.length !== 1) throw new Error('usage: find TEXT [--case]  (quote TEXT with spaces)');
+    const found = findInLabels(circuit, pos[0], { matchCase: !!flags.case });
+    const rows = found.map((entry) => `${entry.key} ${entry.role} "${entry.text}"`);
+    return result(rows.join('\n') || `no text contains "${pos[0]}"`, found.map(({ key, role, text, count }) => ({ key, role, text, count })));
+  }
+  if (cmd === 'replace') {
+    if (pos.length !== 2) throw new Error('usage: replace FIND WITH [--case]  (quote text with spaces)');
+    const { changed, joins } = replaceInLabels(circuit, pos[0], pos[1], { matchCase: !!flags.case });
+    const rows = changed.map((entry) => `${entry.role} "${entry.from}" -> "${entry.to}"`);
+    const joined = joins.length ? `\nnets now joined by name: ${joins.join(', ')}` : '';
+    return result(`replaced ${changed.length} text${changed.length === 1 ? '' : 's'}${rows.length ? `:\n${rows.join('\n')}` : ''}${joined}`, { changed, joins }, changed.length > 0);
   }
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
   if (cmd === 'timing') {
@@ -12507,6 +12525,135 @@ function ceilGrid(n) {
   return Math.ceil(n / GRID) * GRID;
 }
 __exports.GRID = GRID;
+};
+
+__modules["src/core/label-search.js"] = function (__require, __exports) {
+__exports.searchableTexts = searchableTexts;
+__exports.findInLabels = findInLabels;
+__exports.replaceInLabels = replaceInLabels;
+let Circuit, INTERFACE_PIN_TYPES, isReferenceMarker; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, isReferenceMarker } = __require("src/core/model.js")); });
+let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
+
+
+
+// Search and replace over the drawing's text: every label role (net names,
+// part names, switch phases, rail names, annotations, equations, captions) and
+// block captions. Matching is literal on the authored text, so markup such as
+// `M_{1}` is searched as written. A replacement goes through the same model
+// path as editing that text by hand -- a net label renames its net, a part
+// label renames the part, a switch label sets its phase -- and is all or
+// nothing: one rejected change (an invalid or duplicate part name) leaves the
+// drawing untouched.
+
+/** What a searchable text is, for display: net, part, switch, rail, port,
+ * text, equation, caption, or block. */
+function roleOf(circuit, label) {
+  if (label.netId) return 'net';
+  if (label.owner) {
+    const owner = circuit.components.get(label.owner);
+    if (switchState(owner)) return 'switch';
+    if (isReferenceMarker(owner)) return 'rail';
+    if (INTERFACE_PIN_TYPES.has(owner?.type)) return 'port';
+    return 'part';
+  }
+  if (label.parent) return 'caption';
+  return label.math ? 'equation' : 'text';
+}
+
+/** Every searchable text in the drawing, as { key, role, text, label?, refdes? }.
+ * A label's key is `label:<id>`; a block caption's is `block:<refdes>`. */
+function searchableTexts(circuit) {
+  const texts = [];
+  for (const label of circuit.labels.values()) {
+    if (label.role === 'signal-input-sign' || !label.text) continue;
+    texts.push({ key: `label:${label.id}`, role: roleOf(circuit, label), text: label.text, label });
+  }
+  for (const component of circuit.components.values()) {
+    if (component.type === 'block' && component.value) {
+      texts.push({ key: `block:${component.refdes}`, role: 'block', text: String(component.value), refdes: component.refdes });
+    }
+  }
+  return texts;
+}
+
+function pattern(find, matchCase) {
+  if (typeof find !== 'string' || !find) throw new Error('search text is empty');
+  return new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), matchCase ? 'g' : 'gi');
+}
+
+/** The texts containing `find`, each with its match count and, when
+ * `replacement` is given, the text it would become. */
+function findInLabels(circuit, find, { matchCase = false, replacement = null } = {}) {
+  const re = pattern(find, matchCase);
+  const found = [];
+  for (const entry of searchableTexts(circuit)) {
+    const count = entry.text.match(re)?.length || 0;
+    if (!count) continue;
+    found.push({ ...entry, count, ...(replacement === null ? {} : { next: entry.text.replace(re, () => replacement) }) });
+  }
+  return found;
+}
+
+function applyReplacements(circuit, find, replacement, { matchCase, keys }) {
+  const re = pattern(find, matchCase);
+  // Every target is fixed before any change. Renaming one net label renames
+  // its net, so its other labels then already read the new name; a text that
+  // no longer reads as found is skipped, never searched again.
+  for (const { key, text } of findInLabels(circuit, find, { matchCase })) {
+    if (keys && !keys.has(key)) continue;
+    const [kind, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
+    const next = text.replace(re, () => replacement).trim();
+    if (kind === 'block') {
+      if (circuit.components.get(id)?.value === text) circuit.setValue(id, next);
+      continue;
+    }
+    const label = circuit.labels.get(id);
+    if (!label || label.text !== text) continue;
+    if (!next) throw new Error(`"${text}" would become empty`);
+    label.setText(next);
+  }
+}
+
+/**
+ * Replace every occurrence of `find` with `replacement` in the drawing's
+ * texts (or only those whose keys are listed). Returns { changed, joins }:
+ * the texts that changed, as { key, role, from, to }, and the names by which
+ * a renamed net now joins another net (a virtual electrical connection).
+ * Throws, changing nothing, when any single change is rejected. `dryRun`
+ * reports the same result without changing the drawing.
+ */
+function replaceInLabels(circuit, find, replacement, { matchCase = false, keys = null, dryRun = false } = {}) {
+  replacement = String(replacement ?? '');
+  const options = { matchCase, keys: keys && new Set(keys) };
+  const before = findInLabels(circuit, find, { matchCase }).filter((entry) => !options.keys || options.keys.has(entry.key));
+  // Rehearse on a copy first, so a rejected rename leaves no half-done edit.
+  const rehearsal = Circuit.fromJSON(circuit.toJSON());
+  try {
+    applyReplacements(rehearsal, find, replacement, options);
+  } catch (err) {
+    throw new Error(`replace changed nothing: ${err.message}`);
+  }
+  const after = new Map(searchableTexts(rehearsal).map((entry) => [entry.key, entry.text]));
+  const changed = before
+    .map((entry) => ({ key: entry.key, role: entry.role, from: entry.text, to: after.get(entry.key) ?? '' }))
+    .filter((entry) => entry.to !== entry.from);
+  const result = { changed, joins: joinedNames(circuit, rehearsal) };
+  if (!dryRun) applyReplacements(circuit, find, replacement, options);
+  return result;
+}
+
+/** Names under which nets that were apart before now share one name. */
+function joinedNames(before, after) {
+  const was = new Map([...before.nets.values()].map((net) => [net.id, before.netGroupKey(net)]));
+  const groups = new Map();
+  for (const net of after.nets.values()) {
+    const group = after.netGroupKey(net);
+    if (!groups.has(group)) groups.set(group, { name: net.name, was: new Set() });
+    groups.get(group).was.add(was.get(net.id));
+  }
+  return [...groups.values()].filter((group) => group.was.size > 1).map((group) => group.name);
+}
+
 };
 
 __modules["src/core/line-style.js"] = function (__require, __exports) {
@@ -29921,6 +30068,175 @@ function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Can
 
 };
 
+__modules["src/web/find-replace-ui.js"] = function (__require, __exports) {
+__exports.renderTextMatches = renderTextMatches;
+__exports.openReplace = openReplace;
+__exports.installFindReplace = installFindReplace;
+let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let appendMarkupText, setSidePanelVisible, sidePanelVisible; __bind(() => { ({ appendMarkupText, setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let commit, render, setLabelSelection, setSelection; __bind(() => { ({ commit, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+/**
+ * Find and replace in the side panel. The Ctrl+F filter also lists every
+ * label and block caption containing its text under "Text"; the replace row
+ * (Ctrl+H) rewrites all of them at once. What counts as a match and how each
+ * text is renamed is core/label-search.js.
+ */
+
+
+
+
+
+
+
+
+const filterEl = document.getElementById('panel-filter');
+const toggleEl = document.getElementById('panel-replace-toggle');
+const rowEl = document.getElementById('panel-replace');
+const replaceEl = document.getElementById('panel-replace-input');
+const caseEl = document.getElementById('panel-replace-case');
+const replaceAllEl = document.getElementById('panel-replace-all');
+const sectionEl = document.getElementById('text-matches');
+const listEl = document.getElementById('text-matches-list');
+const countEl = document.getElementById('text-matches-count');
+
+const ROLE_NAMES = {
+  net: 'net', part: 'part', switch: 'phase', rail: 'rail', port: 'port',
+  text: 'annotation', equation: 'equation', caption: 'caption', block: 'block',
+};
+
+/** The text being searched for: the filter exactly as typed, spaces and all. */
+function findText() {
+  const value = filterEl?.value || '';
+  return value.trim() ? value : '';
+}
+
+const matchCase = () => caseEl?.getAttribute('aria-pressed') === 'true';
+const replaceOpen = () => !!rowEl && !rowEl.hidden;
+
+function refresh() {
+  editor.panelStateKey = '';
+  render();
+}
+
+function selectMatch(entry) {
+  if (entry.refdes) setSelection([entry.refdes]);
+  else setLabelSelection([entry.label.id]);
+  render();
+}
+
+/** List the matching texts, each with what it becomes while replacing. */
+function renderTextMatches() {
+  if (!sectionEl || !listEl) return;
+  const find = findText();
+  sectionEl.hidden = !find;
+  listEl.innerHTML = '';
+  if (!find) return;
+  const replacement = replaceOpen() ? replaceEl.value : null;
+  const found = findInLabels(editor.circuit, find, { matchCase: matchCase(), replacement });
+  if (countEl) countEl.textContent = String(found.length);
+  if (replaceAllEl) replaceAllEl.disabled = !found.length;
+  if (!found.length) {
+    listEl.innerHTML = '<div class="no-items">No matching text</div>';
+    return;
+  }
+  listEl.setAttribute('role', 'listbox');
+  listEl.setAttribute('aria-label', 'Matching text');
+  for (const entry of found) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.setAttribute('role', 'option');
+    row.tabIndex = -1;
+    const text = document.createElement('span');
+    text.className = 'ref';
+    appendMarkupText(text, entry.text);
+    if (entry.next !== undefined && entry.next !== entry.text) {
+      const next = document.createElement('span');
+      next.className = 'text-match-next';
+      next.append('→ ');
+      appendMarkupText(next, entry.next || '(empty)');
+      text.append(' ', next);
+    }
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = ROLE_NAMES[entry.role] || entry.role;
+    row.title = `${ROLE_NAMES[entry.role] || entry.role}: ${entry.text}${entry.next !== undefined ? ` → ${entry.next}` : ''}`;
+    row.append(text, meta);
+    row.addEventListener('click', () => selectMatch(entry));
+    listEl.appendChild(row);
+  }
+}
+
+function openReplace() {
+  if (!sidePanelVisible()) setSidePanelVisible(true);
+  rowEl.hidden = false;
+  toggleEl.setAttribute('aria-expanded', 'true');
+  const target = findText() ? replaceEl : filterEl;
+  target.focus();
+  target.select();
+  refresh();
+}
+
+function closeReplace() {
+  rowEl.hidden = true;
+  toggleEl.setAttribute('aria-expanded', 'false');
+  filterEl.focus();
+  refresh();
+}
+
+async function replaceAll() {
+  const find = findText();
+  if (!find) return;
+  const replacement = replaceEl.value;
+  const options = { matchCase: matchCase() };
+  let preview;
+  try {
+    preview = replaceInLabels(editor.circuit, find, replacement, { ...options, dryRun: true });
+  } catch (err) {
+    logLine(err.message, 'error');
+    return;
+  }
+  if (!preview.changed.length) {
+    logLine(`no text contains "${find}"`);
+    return;
+  }
+  // Equal names are one electrical connection: say so before making one.
+  if (preview.joins.length && !await confirmChoice({
+    title: 'Join nets by name?',
+    message: `After this replace, nets that are now apart share the name ${preview.joins.join(', ')}, which connects them.`,
+    confirmLabel: 'Replace and join',
+  })) return;
+  let result = null;
+  commit(() => { result = replaceInLabels(editor.circuit, find, replacement, options); });
+  if (result) logLine(`replaced "${find}" in ${result.changed.length} text${result.changed.length === 1 ? '' : 's'}`);
+  refresh();
+}
+
+function installFindReplace() {
+  if (!filterEl || !rowEl) return;
+  toggleEl.addEventListener('click', () => (replaceOpen() ? closeReplace() : openReplace()));
+  caseEl.addEventListener('click', () => {
+    caseEl.setAttribute('aria-pressed', String(!matchCase()));
+    refresh();
+  });
+  replaceEl.addEventListener('input', refresh);
+  replaceAllEl.addEventListener('click', replaceAll);
+  replaceEl.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      replaceAll();
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeReplace();
+    }
+  });
+}
+
+};
+
 __modules["src/web/gesture-overlay.js"] = function (__require, __exports) {
 __exports.syncSnapPulse = syncSnapPulse;
 __exports.annotationReach = annotationReach;
@@ -30599,6 +30915,7 @@ const ICON_PATHS = {
   'folder-open': '<path d="M3 6.5h6l2 2h10v9H3z"/><path d="M3 6.5V5h7l2 2h9"/>',
   folder: '<path d="M3 6.5h6l2 2h10v10H3z" fill="currentColor" fill-opacity=".16"/><path d="M3 6.5V5h7l2 2"/>',
   workspace: '<path d="M4 5h16v14H4z" fill="currentColor" fill-opacity=".16"/><path d="M4 9h16"/>',
+  replace: '<path d="M4 8h12m0 0-3-3m3 3-3 3M20 16H8m0 0 3-3m-3 3 3 3"/>',
   sidebar: '<path d="M4 5h16v14H4z"/><path d="M14 5h6v14h-6z" fill="currentColor" fill-opacity=".16"/>',
   'file-plus': '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M12 11v6M9 14h6"/>',
   trash: '<path d="M4 6.5h16M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5l1 13h9l1-13" fill="currentColor" fill-opacity=".16"/><path d="M10.5 10.5v6M13.5 10.5v6"/>',
@@ -32614,6 +32931,7 @@ let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDoc
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
 let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } = __require("src/web/side-panel.js")); });
+let installFindReplace, openReplace, renderTextMatches; __bind(() => { ({ installFindReplace, openReplace, renderTextMatches } = __require("src/web/find-replace-ui.js")); });
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
@@ -32633,6 +32951,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -34769,6 +35088,7 @@ function render() {
   const nextPanelStateKey = `${modelKey}|${selected || ''}|${selLabel || ''}|${[...multi].join(',')}|${[...selLabels].join(',')}|${[...selectedNets].join(',')}`;
   if (nextPanelStateKey !== panelStateKey) {
     panelStateKey = nextPanelStateKey;
+    renderTextMatches();
     renderComponents();
     renderNets();
     renderDetail();
@@ -38848,6 +39168,7 @@ canvasEl.addEventListener(
 );
 
 installSidePanel();
+installFindReplace();
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 
 function onWireKey(key) {
@@ -39700,6 +40021,14 @@ window.addEventListener('keydown', (ev) => {
     ev.preventDefault();
     exportCircuit();
     return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'h' && !inlineInput) {
+    const filter = document.getElementById('panel-filter');
+    if (filter && !filter.closest('[hidden]')) {
+      ev.preventDefault();
+      openReplace();
+      return;
+    }
   }
   if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'f') {
     const filter = document.getElementById('panel-filter');
@@ -43951,7 +44280,8 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+E', 'open the export dialog'],
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+X', 'check / save without checking'],
-    ['Ctrl/Cmd+F', 'filter the component and net lists; Esc clears, then returns to the canvas'],
+    ['Ctrl/Cmd+F', 'find parts, nets, and any label text; Esc clears, then returns to the canvas'],
+    ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all'],
     [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
     ['explain eval', 'group design-check issues with repair hints'],

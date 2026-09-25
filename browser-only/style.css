@@ -4238,3 +4238,51 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
+
+/* ----- find and replace --------------------------------------------------- */
+
+.panel-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-filter-row[hidden] { display: none; }
+
+.panel-filter-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.panel-filter-row button {
+  flex: none;
+  height: 28px;
+  font-size: 0.75rem;
+}
+
+.panel-filter-row .icon-button {
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+}
+
+.panel-filter-row .icon-button:hover,
+.panel-filter-row .icon-button[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* The match-case toggle is a text toggle, like bold and italic. */
+.panel-filter-row .text-toggle {
+  width: 30px;
+}
+
+.text-match-next {
+  color: var(--accent);
+}

@@ -921,3 +921,29 @@ test('beat commands add, edit, list, and draw presentation steps', () => {
   assert.equal(circuit.components.get('S1').type, 'switch_closed');
   assert.throws(() => runCommand(circuit, 'switch R1 open'), /not a switch/);
 });
+
+test('find lists matching texts and replace renames them through their roles', () => {
+  const c = fresh();
+  runCommand(c, 'add switch_open S1 --at 0 0');
+  runCommand(c, 'value S1 phi1');
+  runCommand(c, 'label add "Phi1 closes first" 0 400');
+  const found = runCommand(c, 'find phi1');
+  assert.deepEqual(found.json.map((entry) => entry.role), ['switch', 'text']);
+  assert.deepEqual(runCommand(c, 'find phi1 --case').json.map((entry) => entry.role), ['switch']);
+  const replaced = runCommand(c, 'replace "phi1" "ck"');
+  assert.equal(replaced.mutated, true);
+  assert.match(replaced.text, /replaced 2 texts/);
+  assert.equal(c.getComponent('S1').value, 'ck');
+  assert.equal(runCommand(c, 'replace nothing-here x').mutated, false);
+  assert.throws(() => runCommand(c, 'replace onlyone'), /usage: replace/);
+  assert.match(commandHelp(), /replace FIND WITH/);
+});
+
+test('replace refuses a duplicate part name without changing anything', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 0 0');
+  runCommand(c, 'add resistor R2 --at 400 0');
+  const before = JSON.stringify(c.toJSON());
+  assert.throws(() => runCommand(c, 'replace R_{1} R_{2}'), /changed nothing/);
+  assert.equal(JSON.stringify(c.toJSON()), before);
+});

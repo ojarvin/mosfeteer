@@ -371,8 +371,23 @@
       <div class="side-panel-resizer" id="side-panel-resizer" role="separator" aria-orientation="vertical" aria-controls="side-panel" aria-label="Resize side panel" tabindex="0" title="Drag to resize; double-click to reset"></div>
 
       <div class="panel-filter" data-doc-kind="schematic">
-        <input id="panel-filter" type="search" placeholder="Filter components and nets (Ctrl+F)" aria-label="Filter components and nets" aria-keyshortcuts="Control+F Meta+F" autocomplete="off" spellcheck="false" />
+        <div class="panel-filter-row">
+          <input id="panel-filter" type="search" placeholder="Find parts, nets, and text (Ctrl+F)" aria-label="Find parts, nets, and text" aria-keyshortcuts="Control+F Meta+F" autocomplete="off" spellcheck="false" />
+          <button type="button" id="panel-replace-toggle" class="icon-button" data-icon="replace" aria-expanded="false" aria-controls="panel-replace" aria-keyshortcuts="Control+H Meta+H" aria-label="Replace text" title="Replace text in labels (Ctrl+H)">Replace</button>
+        </div>
+        <div class="panel-filter-row" id="panel-replace" hidden>
+          <input id="panel-replace-input" type="text" placeholder="Replace with" aria-label="Replace with" autocomplete="off" spellcheck="false" />
+          <button type="button" id="panel-replace-case" class="text-toggle" aria-pressed="false" aria-label="Match case" title="Match case">Aa</button>
+          <button type="button" id="panel-replace-all" title="Replace every match shown under Text (Enter)">Replace all</button>
+        </div>
       </div>
+
+      <section class="panel-group" data-panel="text-matches" data-doc-kind="schematic" id="text-matches" hidden>
+        <div class="panel-heading">
+          <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="text-matches-list">Text <span class="panel-count" id="text-matches-count"></span></button>
+        </div>
+        <div class="list" id="text-matches-list"></div>
+      </section>
 
       <section class="panel-group" data-panel="components" data-doc-kind="schematic">
         <div class="panel-heading">

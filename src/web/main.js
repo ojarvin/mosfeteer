@@ -58,6 +58,7 @@ import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, op
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
 import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } from './side-panel.js';
+import { installFindReplace, openReplace, renderTextMatches } from './find-replace-ui.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
@@ -2153,6 +2154,7 @@ export function render() {
   const nextPanelStateKey = `${modelKey}|${selected || ''}|${selLabel || ''}|${[...multi].join(',')}|${[...selLabels].join(',')}|${[...selectedNets].join(',')}`;
   if (nextPanelStateKey !== panelStateKey) {
     panelStateKey = nextPanelStateKey;
+    renderTextMatches();
     renderComponents();
     renderNets();
     renderDetail();
@@ -6232,6 +6234,7 @@ canvasEl.addEventListener(
 );
 
 installSidePanel();
+installFindReplace();
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 
 function onWireKey(key) {
@@ -7084,6 +7087,14 @@ window.addEventListener('keydown', (ev) => {
     ev.preventDefault();
     exportCircuit();
     return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'h' && !inlineInput) {
+    const filter = document.getElementById('panel-filter');
+    if (filter && !filter.closest('[hidden]')) {
+      ev.preventDefault();
+      openReplace();
+      return;
+    }
   }
   if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'f') {
     const filter = document.getElementById('panel-filter');

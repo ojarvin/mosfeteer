@@ -277,6 +277,22 @@ test('small windows: rail follows canvas height, one-row toolbar, drawer panel',
   assert.match(main, /if \(!sidePanelVisible\(\)\) setSidePanelVisible\(true\);\s*filter\.focus\(\);/);
 });
 
+test('the panel filter finds label text and Ctrl+H opens replace beside it', async () => {
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const main = editorSource();
+  const filter = html.slice(html.indexOf('class="panel-filter"'), html.indexOf('data-panel="components"'));
+  for (const id of ['panel-replace-toggle', 'panel-replace-input', 'panel-replace-case', 'panel-replace-all', 'text-matches-list']) {
+    assert.match(filter, new RegExp(`id="${id}"`));
+  }
+  assert.match(filter, /id="panel-replace"[^>]*hidden/);
+  assert.match(main, /ev\.key\.toLowerCase\(\) === 'h' && !inlineInput\) \{[\s\S]{0,160}openReplace\(\);/);
+  assert.match(main, /renderTextMatches\(\);\s*renderComponents\(\);/);
+  // A replace goes through the core, previewed first, as one undo step.
+  assert.match(main, /replaceInLabels\(circuit, find, replacement, \{ \.\.\.options, dryRun: true \}\)/);
+  assert.match(main, /commit\(\(\) => \{ result = replaceInLabels\(circuit, find, replacement, options\); \}\);/);
+});
+
 test('Design check runs from its panel section and an always-visible status chip', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');

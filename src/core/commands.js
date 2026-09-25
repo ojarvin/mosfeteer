@@ -10,6 +10,7 @@ import { analyzeSmallSignal } from './analysis/index.js';
 import { addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 import { addTimingDiagram } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
+import { findInLabels, replaceInLabels } from './label-search.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -132,6 +133,7 @@ const FLAG_ARITY = {
   grid: 0,
   after: 1,
   beat: 1,
+  case: 0,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -499,6 +501,8 @@ export function commandHelp() {
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
+    '  find TEXT [--case]             - list every label (nets, parts, switch phases, rails, annotations) and block caption containing TEXT',
+    '  replace FIND WITH [--case]     - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes)',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
@@ -864,6 +868,19 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const added = stubs.map((stub) => `${stub.ref} ${stub.name}`).join(', ');
     const message = `${stubs.length} stub${stubs.length === 1 ? '' : 's'}${added ? `: ${added}` : ''}${skipped.length ? `; skipped (would short) ${skipped.join(', ')}` : ''}`;
     return result(message, { stubs, skipped }, stubs.length > 0);
+  }
+  if (cmd === 'find') {
+    if (pos.length !== 1) throw new Error('usage: find TEXT [--case]  (quote TEXT with spaces)');
+    const found = findInLabels(circuit, pos[0], { matchCase: !!flags.case });
+    const rows = found.map((entry) => `${entry.key} ${entry.role} "${entry.text}"`);
+    return result(rows.join('\n') || `no text contains "${pos[0]}"`, found.map(({ key, role, text, count }) => ({ key, role, text, count })));
+  }
+  if (cmd === 'replace') {
+    if (pos.length !== 2) throw new Error('usage: replace FIND WITH [--case]  (quote text with spaces)');
+    const { changed, joins } = replaceInLabels(circuit, pos[0], pos[1], { matchCase: !!flags.case });
+    const rows = changed.map((entry) => `${entry.role} "${entry.from}" -> "${entry.to}"`);
+    const joined = joins.length ? `\nnets now joined by name: ${joins.join(', ')}` : '';
+    return result(`replaced ${changed.length} text${changed.length === 1 ? '' : 's'}${rows.length ? `:\n${rows.join('\n')}` : ''}${joined}`, { changed, joins }, changed.length > 0);
   }
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
   if (cmd === 'timing') {
