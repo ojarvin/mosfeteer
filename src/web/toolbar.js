@@ -229,7 +229,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+X', 'check / save without checking'],
     ['Ctrl/Cmd+F', 'find parts, nets, and any label text; Esc clears, then returns to the canvas'],
-    ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all'],
+    ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all; Esc clears both fields and returns to the canvas'],
     [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
     ['explain eval', 'group design-check issues with repair hints'],

@@ -30074,6 +30074,7 @@ __exports.openReplace = openReplace;
 __exports.installFindReplace = installFindReplace;
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let appendMarkupText, setSidePanelVisible, sidePanelVisible; __bind(() => { ({ appendMarkupText, setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -30084,6 +30085,7 @@ let commit, render, setLabelSelection, setSelection; __bind(() => { ({ commit, r
  * (Ctrl+H) rewrites all of them at once. What counts as a match and how each
  * text is renamed is core/label-search.js.
  */
+
 
 
 
@@ -30186,6 +30188,17 @@ function closeReplace() {
   refresh();
 }
 
+/** Escape while replacing ends the whole find: both fields clear, the replace
+ *  row closes, and the keyboard goes back to the drawing. */
+function endFindReplace() {
+  replaceEl.value = '';
+  rowEl.hidden = true;
+  toggleEl.setAttribute('aria-expanded', 'false');
+  filterEl.value = '';
+  filterEl.dispatchEvent(new Event('input'));
+  canvasEl.focus({ preventScroll: true });
+}
+
 async function replaceAll() {
   const find = findText();
   if (!find) return;
@@ -30224,15 +30237,18 @@ function installFindReplace() {
   replaceEl.addEventListener('input', refresh);
   replaceAllEl.addEventListener('click', replaceAll);
   replaceEl.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') {
-      ev.preventDefault();
-      replaceAll();
-    } else if (ev.key === 'Escape') {
-      ev.preventDefault();
-      ev.stopPropagation();
-      closeReplace();
-    }
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    replaceAll();
   });
+  // Captured on the whole find area, ahead of the filter's own Escape (clear,
+  // then leave), so one press ends a replace from any of its fields or buttons.
+  filterEl.closest('.panel-filter').addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || !replaceOpen()) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    endFindReplace();
+  }, { capture: true });
 }
 
 };
@@ -44281,7 +44297,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+X', 'check / save without checking'],
     ['Ctrl/Cmd+F', 'find parts, nets, and any label text; Esc clears, then returns to the canvas'],
-    ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all'],
+    ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all; Esc clears both fields and returns to the canvas'],
     [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
     ['explain eval', 'group design-check issues with repair hints'],

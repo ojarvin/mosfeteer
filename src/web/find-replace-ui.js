@@ -7,6 +7,7 @@
 
 import { findInLabels, replaceInLabels } from '../core/label-search.js';
 import { confirmChoice } from './file-dialog.js';
+import { canvasEl } from './elements.js';
 import { logLine } from './status-bar-ui.js';
 import { appendMarkupText, setSidePanelVisible, sidePanelVisible } from './side-panel.js';
 import { editor } from './editor-state.js';
@@ -106,6 +107,17 @@ function closeReplace() {
   refresh();
 }
 
+/** Escape while replacing ends the whole find: both fields clear, the replace
+ *  row closes, and the keyboard goes back to the drawing. */
+function endFindReplace() {
+  replaceEl.value = '';
+  rowEl.hidden = true;
+  toggleEl.setAttribute('aria-expanded', 'false');
+  filterEl.value = '';
+  filterEl.dispatchEvent(new Event('input'));
+  canvasEl.focus({ preventScroll: true });
+}
+
 async function replaceAll() {
   const find = findText();
   if (!find) return;
@@ -144,13 +156,16 @@ export function installFindReplace() {
   replaceEl.addEventListener('input', refresh);
   replaceAllEl.addEventListener('click', replaceAll);
   replaceEl.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') {
-      ev.preventDefault();
-      replaceAll();
-    } else if (ev.key === 'Escape') {
-      ev.preventDefault();
-      ev.stopPropagation();
-      closeReplace();
-    }
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    replaceAll();
   });
+  // Captured on the whole find area, ahead of the filter's own Escape (clear,
+  // then leave), so one press ends a replace from any of its fields or buttons.
+  filterEl.closest('.panel-filter').addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || !replaceOpen()) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    endFindReplace();
+  }, { capture: true });
 }

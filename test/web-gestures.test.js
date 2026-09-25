@@ -291,6 +291,9 @@ test('the panel filter finds label text and Ctrl+H opens replace beside it', asy
   // A replace goes through the core, previewed first, as one undo step.
   assert.match(main, /replaceInLabels\(circuit, find, replacement, \{ \.\.\.options, dryRun: true \}\)/);
   assert.match(main, /commit\(\(\) => \{ result = replaceInLabels\(circuit, find, replacement, options\); \}\);/);
+  // One Escape anywhere in the find area ends a replace: both fields clear.
+  assert.match(main, /if \(ev\.key !== 'Escape' \|\| !replaceOpen\(\)\) return;[\s\S]{0,80}endFindReplace\(\);\s*\}, \{ capture: true \}\);/);
+  assert.match(main, /function endFindReplace\(\) \{\s*replaceEl\.value = '';[\s\S]{0,200}filterEl\.value = '';/);
 });
 
 test('Design check runs from its panel section and an always-visible status chip', async () => {
