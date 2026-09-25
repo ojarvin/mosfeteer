@@ -2701,7 +2701,7 @@ function selectionStyleState() {
     supportsArrowhead: hasWireSelection || objects.some(supportsArrowhead),
     text: labels.length ? {
       align: labels.every((label) => label.align === labels[0].align) ? labels[0].align : null,
-      towardPart: labels.every((label) => label.owner),
+      towardPart: labels.every((label) => label.owner || label.netId),
       bold: selectedFontState('bold'),
       italic: selectedFontState('italic'),
     } : null,
@@ -4821,12 +4821,12 @@ function placeNetLabelAt(world) {
       // snapshot is recorded here and becomes the one atomic history entry if
       // the user eventually supplies a name.
       const initialSnapshot = snapshot();
-      label = circuit.addLabel({ text: '', netId: net.id, x: point.x, y: point.y, align: 'center' });
+      label = circuit.addLabel({ text: '', netId: net.id, x: point.x, y: point.y });
       label._provisionalInitialName = net.name || '';
       label._provisionalInitialSnapshot = initialSnapshot;
       markModelChanged(false);
     } else {
-      commit(() => { label = circuit.addNetLabel(net.id, { anchor: point, align: 'center' }); });
+      commit(() => { label = circuit.addNetLabel(net.id, { anchor: point }); });
     }
   } catch (err) {
     logLine(`NET LABEL: ${err.message}`, 'error');
@@ -7155,6 +7155,8 @@ const RADIAL_ITEMS = [
   } },
   { label: 'Detach move', icon: 'detach', run: (radial, at) => radialMove(radial, at, 'detached') },
   { label: 'Move', icon: 'move', run: (radial, at) => radialMove(radial, at, 'connected') },
+  // The part is selected; pick its edge or point to align, then the target's.
+  { label: 'Align', icon: 'align', run: () => activateAlign() },
 ];
 
 function radialMove(radial, at, kind) {

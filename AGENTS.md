@@ -107,11 +107,13 @@ preserve authored markup for display. Default numeric labels use explicit
 subscripts (`M_{1}`) while refdes connectivity remains `M1`. Never mutate the
 circuit when rejecting a duplicate.
 
-Owned labels default to the `parent` alignment: beside the part, the text
-aligns toward it with the full inset, and the box keeps the edge facing the
-part fixed as the text grows; above or below it the text is centered. Aligned
-text labels round their box up to include that inset. Documents without
-`ownedLabelAlignVersion` load their centered owned labels as `parent`.
+Owned and net labels default to the `parent` alignment: beside the part (or
+at the side of its wire, for a net label) the text aligns toward it with the
+full inset, and the box keeps the edge facing it fixed as the text grows;
+above or below, the text is centered. Aligned text labels round their box up
+to include that inset. Documents without `labelAlignVersion` 3 (or
+`ownedLabelAlignVersion` 2) load their centered part and net labels as
+`parent`.
 
 Interface ports are components and therefore also require unique identities.
 While a port is the only interface pin on its physical net, its authored label

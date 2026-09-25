@@ -2477,20 +2477,35 @@ test('a part label beside its part aligns toward it and keeps its box against it
   assert.deepEqual([vin.defaultAlign(), note.defaultAlign()], ['parent', 'center']);
 });
 
-test('older documents align their centered part labels toward the part on load', () => {
+test('older documents align their centered part and net labels toward what they name on load', () => {
   const c = new Circuit();
   c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
+  const net = c.createWireNet({ name: 'X', route: [{ x: 400, y: 0 }, { x: 800, y: 0 }] });
+  const side = c.addNetLabel(net, { x: 800, y: 0, netSide: 'right' });
   const note = c.addLabel({ text: 'note', x: 0, y: 400 });
-  const legacy = c.toJSON();
-  delete legacy.ownedLabelAlignVersion;
-  for (const label of legacy.labels) label.align = 'center';
-  const loaded = Circuit.fromJSON(legacy);
+  assert.deepEqual([side.align, side.textAlign()], ['parent', 'left'], 'a new side net label faces its wire');
+  assert.equal(side.textPos().x, 800 + GRID / 4, 'one inset from the wire end');
+  const centered = () => {
+    const data = c.toJSON();
+    for (const label of data.labels) label.align = 'center';
+    delete data.labelAlignVersion;
+    return data;
+  };
+  // Before either: both kinds face what they name; free text stays centered.
+  let loaded = Circuit.fromJSON(centered());
   assert.equal(loaded.labelOf('VIN').align, 'parent');
+  assert.equal(loaded.labels.get(side.id).align, 'parent');
   assert.equal(loaded.labels.get(note.id).align, 'center');
-  // A document that already knows the alignment keeps a centered part label.
-  const current = c.toJSON();
-  current.labels.find((label) => label.owner === 'VIN').align = 'center';
-  assert.equal(Circuit.fromJSON(current).labelOf('VIN').align, 'center');
+  // Saved with part-label alignment only (version 2): net labels catch up.
+  const v2 = { ...centered(), ownedLabelAlignVersion: 2 };
+  loaded = Circuit.fromJSON(v2);
+  assert.equal(loaded.labelOf('VIN').align, 'center');
+  assert.equal(loaded.labels.get(side.id).align, 'parent');
+  // A current document keeps labels it centered on purpose.
+  const current = { ...centered(), labelAlignVersion: 3 };
+  loaded = Circuit.fromJSON(current);
+  assert.equal(loaded.labelOf('VIN').align, 'center');
+  assert.equal(loaded.labels.get(side.id).align, 'center');
 });
 
 test('sub-pixel measurement noise at a grid boundary does not shift aligned label edges', () => {

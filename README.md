@@ -2,9 +2,9 @@
 
 <h1 align="center">Mosfeteer</h1>
 
-<p align="center">A keyboard-driven editor for textbook-style analog schematics, with auto-routed wires and symbolic small-signal analysis.</p>
+<p align="center">A keyboard-driven editor for textbook-style analog schematics, with assisted wiring, presentation beats, and symbolic small-signal analysis.</p>
 
-![A folded-cascode OTA in the editor, split diagonally between the light and dark themes](docs/images/editor.png)
+![A folded-cascode OTA with its bias network in the editor, split diagonally between the light and dark themes](docs/images/editor.png)
 
 ## Symbolic analysis
 
@@ -14,13 +14,23 @@ Pick the input and output nets to derive `Z_in`, `Z_out`, `A_v`, and any poles a
 
 ## Fast editing
 
-Press `i` and type to insert a part. Wires route themselves around parts on the grid, and Design Check (`x`) catches dangling pins, overlaps, and off-grid geometry. Press `?` for every shortcut.
+Press `i` and type to insert a part. Assisted wiring lays each wire out on the grid around the parts as you draw it, and keeps it tidy when parts move. Design Check (`x`) catches dangling pins, overlapping text, and off-grid geometry. Press `?` for every shortcut.
 
 ![Fuzzy insert picker filtered to MOS transistors, open beside the OTA](docs/images/insert.png)
 
 | Persistent net highlights (`9`) | Right-drag a part for quick actions |
 | :---: | :---: |
-| ![The OTA with its V_XN, V_XP, V_OUT, and tail nets each highlighted in a different color](docs/images/highlight.png) | ![Radial menu around M9 with rotate, mirror, move, copy, and delete](docs/images/radial.png) |
+| ![The OTA with its V_XN, V_XP, V_OUT, and tail nets each highlighted in a different color](docs/images/highlight.png) | ![Radial menu around M9 with rotate, mirror, move, copy, align, and delete](docs/images/radial.png) |
+
+## Beats
+
+Beats are presentation steps over one drawing: each shows, dims, or hides parts, sets switch positions, and highlights nets, without copying anything. Build a figure up step by step (`Shift+B`, then `+`), present it full screen (`Shift+F5`), or export every beat as numbered files that line up.
+
+![Four beats of the OTA: the input pair, the folded cascode, the first bias branch, and the full bias network](docs/images/beats.png)
+
+Label switches with the phase that drives them, and **Beats from switch phases** (More menu) adds one beat per phase: its switches closed, the others open, and whatever the open switches cut off dimmed.
+
+![A switched-capacitor integrator in its two phases: C1 samples V_IN in phi 1, and dumps its charge into C2 in phi 2](docs/images/phase-beats.png)
 
 ## Symbols
 
@@ -47,7 +57,7 @@ The editor opens in an app-style Chromium window, or your default browser. To ge
 - Each schematic is a single `.json` file you can keep in a repository or share like any other file.
 - New documents are saved to a workspace folder, `~/Documents/Schematics` by default. **Open** (Ctrl/Cmd+O) and **Save as** work with any folder.
 - An open document with no unsaved changes reloads when its file changes on disk, for example after a `git pull`.
-- **Export** (Ctrl/Cmd+E) writes SVG, PDF, and PNG.
+- **Export** (Ctrl/Cmd+E) writes SVG, PDF, and PNG, framed tightly around what is drawn. A page guide (IEEE single or double column) pads the export so its text lands at the paper's figure size.
 
 ## Scripting
 
@@ -65,5 +75,6 @@ npm test
 ```
 
 - [`AGENTS.md`](AGENTS.md): editor behavior and the symbol specification
+- [`docs/beats.md`](docs/beats.md): how beats are stored and edited
 - [`docs/circuit-spec.md`](docs/circuit-spec.md): deterministic circuit generation
 - [`docs/topological-small-signal.md`](docs/topological-small-signal.md): how the analysis works

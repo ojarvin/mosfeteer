@@ -338,9 +338,10 @@ export function symbolInkRect(def) {
   return rect;
 }
 
-/** Label alignments. 'parent' is the owned-label default: text beside its
- * part aligns toward it, and the box keeps the edge facing the part fixed
- * however wide the text grows; above or below the part it is centered. */
+/** Label alignments. 'parent' is the default for owned and net labels: text
+ * beside its part aligns toward it, and the box keeps the edge facing the
+ * part fixed however wide the text grows; a net label at the side of a wire
+ * aligns toward the wire. Above or below, the text is centered. */
 export const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
 
 /**
@@ -716,7 +717,9 @@ export class LabelInstance {
     this._text = opts.text !== undefined
       ? (this.math ? normalizeMathSource(opts.text) : String(opts.text))
       : 'label';
-    this.align = LABEL_ALIGNS.includes(opts.align) ? opts.align : 'center';
+    // Net labels and a part's own label face what they name; other text centers.
+    this.align = LABEL_ALIGNS.includes(opts.align) ? opts.align
+      : this.netId || (opts.owner && !opts.role) ? 'parent' : 'center';
     this.style = {
       color: opts.style?.color || '#111',
       lineStyle: opts.style?.lineStyle || 'solid',
@@ -962,10 +965,11 @@ export class LabelInstance {
     return null;
   }
 
-  /** The alignment the text is drawn with: 'parent' resolved toward the part. */
+  /** The alignment the text is drawn with: 'parent' resolved toward the part
+   * or, for a net label at the side of a wire, toward the wire. */
   textAlign() {
     if (this.align !== 'parent') return this.align;
-    const side = this.besideOwner();
+    const side = this.netId ? this.netSide : this.besideOwner();
     return side === 'left' ? 'right' : side === 'right' ? 'left' : 'center';
   }
 
@@ -1063,13 +1067,13 @@ export class LabelInstance {
   }
 
   setAlign(a) {
-    if (a === 'parent' && !this.owner) return;
+    if (a === 'parent' && !this.owner && !this.netId) return;
     if (LABEL_ALIGNS.includes(a)) this.align = a;
   }
 
   /** The alignment a label starts with, and returns to when cycled. */
   defaultAlign() {
-    return this.owner && !this.role ? 'parent' : 'center';
+    return this.netId || (this.owner && !this.role) ? 'parent' : 'center';
   }
 
   moveTo(wx, wy) {
@@ -5975,7 +5979,7 @@ export class Circuit {
       version: 2,
       sequentialVariantVersion: 2,
       opampPolarityVersion: 2,
-      ownedLabelAlignVersion: 2,
+      labelAlignVersion: 3,
       grid: 40,
       components: [...this.components.values()].map((c) => c.toJSON()),
       nets: [...this.nets.values()].map((n) => n.toJSON()),
@@ -6086,6 +6090,7 @@ export class Circuit {
     // merge that was later split.
     circuit.netNameWarnings = circuit.netNameWarnings.filter((warning) => !warning.names.slice(1).some((name) =>
       [...circuit.nets].some(([id, net]) => id !== warning.netId && canonicalNetName(net.name) === canonicalNetName(name))));
+    const labelAlignVersion = data.labelAlignVersion ?? (data.ownedLabelAlignVersion >= 2 ? 2 : 1);
     const loadedLabelIds = new Set();
     for (const l of data.labels || []) {
       if (l.id && loadedLabelIds.has(l.id)) throw new Error(`label id "${l.id}" already in use`);
@@ -6099,8 +6104,9 @@ export class Circuit {
           id: l.id,
           kind: l.kind,
           text: l.text,
-          // Owned labels were all centered until they could align toward their part.
-          align: l.owner && !l.role && l.align === 'center' && !(data.ownedLabelAlignVersion >= 2) ? 'parent' : l.align,
+          // Labels were all centered until they could face what they name:
+          // part labels from version 2, net labels from version 3.
+          align: l.align === 'center' && ((l.netId && labelAlignVersion < 3) || (l.owner && !l.role && labelAlignVersion < 2)) ? 'parent' : l.align,
           owner: l.owner || null,
           role: l.role || null,
           signalTerminal: l.signalTerminal || null,
