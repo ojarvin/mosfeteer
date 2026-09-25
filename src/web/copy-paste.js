@@ -12,8 +12,9 @@ import { encodeObjectClipboard, decodeObjectClipboard } from '../core/object-cli
 import { copyableLabelPayload } from './selection.js';
 import { logLine } from './status-bar-ui.js';
 import { selectedStyleSource, pasteStyle } from './style-controls.js';
+import { beginNetLabelPaste } from './annotation-tools.js';
 import { editor } from './editor-state.js';
-import { captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } from './main.js';
+import { captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } from './main.js';
 
 export function copySelectionSource() {
   const wireKeys = new Set(editor.selectedWires);
@@ -120,8 +121,24 @@ export function copySelection({ quiet = false } = {}) {
   const parts = resolveCopySelection(editor.circuit, copySelectionSource());
   const { comps, freeLabels } = parts;
   if (!comps.length && !freeLabels.length && !parts.nets.length && !parts.fragments.length) {
-    logLine('nothing selected to copy');
-    return false;
+    if (!parts.netLabels.length) {
+      logLine('nothing selected to copy');
+      return false;
+    }
+    // A net label on its own carries its net's name, which a paste attaches
+    // to another wire. With several, the primary one's.
+    const source = parts.netLabels.find((label) => label === selectedLabel()) || parts.netLabels[0];
+    editor.clipboard = {
+      comps: [], labels: [], nets: [], fragments: [],
+      anchor: { ...source.anchorWorld() },
+      netLabel: { text: source.text },
+      style: null,
+    };
+    if (!quiet) logLine(`copied net label "${source.text}"; paste it on a wire to give that net the name`);
+    return true;
+  }
+  if (parts.netLabels.length && !quiet) {
+    logLine(`left out ${parts.netLabels.length} net label${parts.netLabels.length === 1 ? '' : 's'} copied without ${parts.netLabels.length === 1 ? 'its' : 'their'} wire`);
   }
   const netLabelPayload = (label) => ({
     netId: label.netId,
@@ -249,6 +266,7 @@ function translateCopyGhost(ghost, dx, dy) {
 
 export function startCopyGhost(startWorld, startClient, anchorShift = null) {
   if (!editor.clipboard) return false;
+  if (editor.clipboard.netLabel) return beginNetLabelPaste(editor.clipboard.netLabel.text);
   const beforeSnapshot = snapshot();
   const existingNetIds = new Set(editor.circuit.nets.keys());
   const start = { x: snap(startWorld.x), y: snap(startWorld.y) };
@@ -455,6 +473,12 @@ function finishObjectPaste(kind) {
 export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
   if (!editor.clipboard) {
     logLine('nothing copied');
+    return;
+  }
+  // A copied net label has no place of its own: the user picks its wire. Only
+  // an interactive paste starts that; a paste inside another gesture skips it.
+  if (editor.clipboard.netLabel) {
+    if (recordHistory) beginNetLabelPaste(editor.clipboard.netLabel.text);
     return;
   }
   const dx = snap(editor.cursor.x) - editor.clipboard.anchor.x;

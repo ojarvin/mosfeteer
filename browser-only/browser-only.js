@@ -19245,6 +19245,7 @@ function bufferProblem(data) {
     if (!Array.isArray(data[key])) return `no ${key} list`;
   }
   if (!optional(data.style, isObject)) return 'a bad style';
+  if (!optional(data.netLabel, (label) => isObject(label) && text(label.text) && label.text.trim())) return 'a bad net label';
   return data.comps.map(componentProblem).find(Boolean)
     || data.labels.map(labelProblem).find(Boolean)
     || data.nets.map(netProblem).find(Boolean)
@@ -19444,7 +19445,7 @@ let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyT
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
 let escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
-let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
 let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let drawnNetPaths, switchState; __bind(() => { ({ drawnNetPaths, switchState } = __require("src/core/beats.js")); });
@@ -20528,6 +20529,13 @@ function editorOverlay(circuit, opts = {}) {
     const r = c.bboxWorld();
     parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c, opts.beatView?.defOf(c))}</g>`);
     parts.push(`<rect class="selection-outline" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
+
+  // A copied net label on its way to a wire: its name, just above the point
+  // it would attach to, faint until the cursor is on a wire it can name.
+  if (opts.netLabelPaste) {
+    const { text, x, y, onWire } = opts.netLabelPaste;
+    parts.push(`<g class="net-label-paste-preview" opacity="${onWire ? 0.8 : 0.35}" pointer-events="none">${labelTextEl(x, y - 16, parseLabelRuns(text), 'middle', 'label', 'var(--accent)')}</g>`);
   }
 
   for (const r of opts.layoutPreviewRects || []) {
@@ -22163,7 +22171,7 @@ const DRAWING_EXPORT_OPTIONS = Object.freeze({
 });
 
 function schematicSubset(circuit, selection) {
-  const { comps, freeLabels, nets, fragments } = resolveCopySelection(circuit, selection);
+  const { comps, freeLabels, netLabels, nets, fragments } = resolveCopySelection(circuit, selection);
   const drawing = new Circuit();
   drawing.components = new Map(comps.map((comp) => [comp.refdes, comp]));
   drawing.nets = new Map(nets.map((net) => [net.id, net]));
@@ -22173,8 +22181,9 @@ function schematicSubset(circuit, selection) {
   const sourceOf = new Map(nets.map((net) => [net.id, net]));
   drawing.netHighlight = (net) => circuit.netHighlight(sourceOf.get(net?.id) || net);
   for (const [i, fragment] of fragments.entries()) {
-    // A wholly selected net keeps its id so its net labels still name it.
-    const keepId = fragment.whole && !drawing.nets.has(fragment.net.id);
+    // A wholly selected net, or a piece carrying net labels, keeps its id so
+    // those labels still name it.
+    const keepId = (fragment.whole || fragment.netLabels?.length) && !drawing.nets.has(fragment.net.id);
     const net = new Net(drawing, {
       id: keepId ? fragment.net.id : `${fragment.net.id}-selection-${i}`, name: fragment.net.name,
       style: fragment.net.style, drawOrder: fragment.net.drawOrder,
@@ -22200,7 +22209,8 @@ function schematicSubset(circuit, selection) {
     drawing.nets.set(net.id, net);
     sourceOf.set(net.id, fragment.net);
   }
-  const labelIds = new Set(freeLabels.map((label) => label.id));
+  // A net label selected alone is still part of the picture.
+  const labelIds = new Set([...freeLabels, ...netLabels].map((label) => label.id));
   drawing.labels = new Map([...circuit.labels].filter(([id, label]) =>
     labelIds.has(id) || (label.owner && drawing.components.has(label.owner)) ||
     (label.netId && drawing.nets.has(label.netId))));
@@ -22254,7 +22264,8 @@ __exports.DRAWING_EXPORT_OPTIONS = DRAWING_EXPORT_OPTIONS;
 __modules["src/core/selection.js"] = function (__require, __exports) {
 __exports.copySelectionParts = copySelectionParts;
 __exports.resolveCopySelection = resolveCopySelection;
-let extractWireFragments; __bind(() => { ({ extractWireFragments } = __require("src/core/model.js")); });
+__exports.netLabelPasteKind = netLabelPasteKind;
+let canonicalNetName, extractWireFragments; __bind(() => { ({ canonicalNetName, extractWireFragments } = __require("src/core/model.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
 
 
@@ -22312,12 +22323,35 @@ function resolveCopySelection(circuit, { refs = [], labels = [], netIds = [], wi
       }
       fragments.push(...islands);
     } else if (selected.length) {
-      for (const island of extractWireFragments(paths, selected, net.junctions)) fragments.push({ net, ...island });
+      // A selected net label rides the copied piece of wire it sits on.
+      const onNet = copy.labels.filter((label) => label.netId === net.id);
+      for (const island of extractWireFragments(paths, selected, net.junctions)) {
+        const netLabels = onNet.filter((label) => island.paths.some((path) => pointOnPath(label.anchorWorld(), path)));
+        fragments.push({ net, ...island, ...(netLabels.length ? { netLabels } : {}) });
+      }
     }
   }
-  // A net label that travels with its copied wire is not also a loose label.
+  // A net label never becomes loose text: it travels with its copied wire, or
+  // on its own it carries only its net's name (`netLabels`), which a paste
+  // attaches to another wire.
   const carried = new Set([...nets.map((net) => net.id), ...fragments.filter((fragment) => fragment.whole).map((fragment) => fragment.net.id)]);
-  return { comps, freeLabels: freeLabels.filter((label) => !carried.has(label.netId)), nets, fragments };
+  const riding = new Set(fragments.flatMap((fragment) => fragment.netLabels || []));
+  return {
+    comps,
+    freeLabels: freeLabels.filter((label) => !label.netId),
+    netLabels: freeLabels.filter((label) => label.netId && !carried.has(label.netId) && !riding.has(label)),
+    nets,
+    fragments,
+  };
+}
+
+/** What pasting a copied net label named `name` onto `net` does: 'same' adds
+ * another label of the net's own name, 'name' gives an unnamed net the name
+ * (joining it by name to every net called that), and 'rename' would rename a
+ * differently named net, which the editor confirms first. */
+function netLabelPasteKind(net, name) {
+  if (!net.name) return 'name';
+  return canonicalNetName(net.name) === canonicalNetName(name) ? 'same' : 'rename';
 }
 
 };
@@ -25233,22 +25267,30 @@ __exports.commitArrowAnnotation = commitArrowAnnotation;
 __exports.placeShapeAnnotation = placeShapeAnnotation;
 __exports.highlightNetAt = highlightNetAt;
 __exports.removeAllNetHighlights = removeAllNetHighlights;
+__exports.beginNetLabelPaste = beginNetLabelPaste;
+__exports.clearNetLabelPaste = clearNetLabelPaste;
+__exports.pastingNetName = pastingNetName;
+__exports.netLabelPastePreview = netLabelPastePreview;
 __exports.placeNetLabelAt = placeNetLabelAt;
 let INTERFACE_PIN_TYPES, NET_HIGHLIGHT_COLORS, isReferenceMarker, referenceMarkerInfo; __bind(() => { ({ INTERFACE_PIN_TYPES, NET_HIGHLIGHT_COLORS, isReferenceMarker, referenceMarkerInfo } = __require("src/core/model.js")); });
 let cycleBeatHighlight, highlightsAt, setHighlightFrom; __bind(() => { ({ cycleBeatHighlight, highlightsAt, setHighlightFrom } = __require("src/core/beats.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
+let netLabelPasteKind; __bind(() => { ({ netLabelPasteKind } = __require("src/core/selection.js")); });
+let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
 let constrainAxis; __bind(() => { ({ constrainAxis } = __require("src/web/interaction.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let inlineEditLabel; __bind(() => { ({ inlineEditLabel } = __require("src/web/label-editor.js")); });
 let activeBeatIndex; __bind(() => { ({ activeBeatIndex } = __require("src/web/beats-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot; __bind(() => { ({ commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot } = __require("src/web/main.js")); });
+let activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot; __bind(() => { ({ activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot } = __require("src/web/main.js")); });
 /**
  * Placing things with the label tools: net labels on wires and pins, free
  * text and equation annotations, lines, arrows, boxes, and net highlights.
  */
+
+
 
 
 
@@ -25510,7 +25552,82 @@ function removeAllNetHighlights() {
   render();
 }
 
+// The name a pasted net label carries while the net label tool places it.
+// Cleared whenever a tool is picked, so plain Shift+L never inherits it.
+let pastedNetName = null;
+
+/** Paste a copied net label: the net label tool, carrying `name`, places it
+ * on the wires clicked until Esc. `once` ends after one placement (a drag). */
+function beginNetLabelPaste(name, { once = false } = {}) {
+  activateNetLabel();
+  pastedNetName = { name, once };
+  hintLine(`NET LABEL: click a wire to name its net ${name}; Esc ends`);
+  render();
+  return true;
+}
+
+function clearNetLabelPaste() {
+  pastedNetName = null;
+}
+
+function pastingNetName() {
+  return editor.labelMode === 'net' ? pastedNetName?.name || null : null;
+}
+
+/** Where the pasted name would land under `world`, for the overlay preview. */
+function netLabelPastePreview(world) {
+  const name = pastingNetName();
+  if (!name) return null;
+  const target = netLabelTargetAt(world);
+  const onWire = !!target && !target.ambiguous;
+  return { text: name, x: onWire ? target.point.x : snap(world.x), y: onWire ? target.point.y : snap(world.y), onWire };
+}
+
+/** Attach the pasted name to the wire at `world`: an unnamed net takes it, a
+ * net of that name gains another label, and a differently named net is
+ * renamed only once the user confirms. */
+async function pasteNetLabelAt(world, name) {
+  const target = netLabelTargetAt(world);
+  if (!target) {
+    hintLine('NET LABEL: place a net label on a wire');
+    return false;
+  }
+  if (target.ambiguous) {
+    logLine('NET LABEL: wire crossing is ambiguous — select/highlight one net first');
+    return false;
+  }
+  const { net, point } = target;
+  const kind = netLabelPasteKind(net, name);
+  if (kind === 'rename' && !await confirmChoice({
+    title: 'Rename net?',
+    message: `This wire is on net ${net.name}. Rename it to ${name}? Any net already named ${name} then connects to it.`,
+    confirmLabel: 'Rename',
+  })) return false;
+  let label = null;
+  commit(() => { label = editor.circuit.addNetLabel(net.id, { text: name, anchor: point }); });
+  if (!label) return false;
+  setSelection([]);
+  setLabelSelection([label.id]);
+  editor.selectedNets = new Set([net.id]);
+  logLine(kind === 'rename' ? `renamed net to "${name}" and placed its label`
+    : kind === 'name' ? `named ${net.id} "${name}" and placed its label` : `placed net label "${name}"`);
+  render();
+  return true;
+}
+
 function placeNetLabelAt(world) {
+  const name = pastingNetName();
+  if (name) {
+    // A dragged label places once, hit or miss, then hands back to Select.
+    const once = !!pastedNetName.once;
+    pasteNetLabelAt(world, name).then(() => {
+      if (once) {
+        activateSelect();
+        render();
+      }
+    });
+    return true;
+  }
   const target = netLabelTargetAt(world);
   if (!target) {
     hintLine('NET LABEL: click a physical wire');
@@ -27490,14 +27607,16 @@ let encodeObjectClipboard, decodeObjectClipboard; __bind(() => { ({ encodeObject
 let copyableLabelPayload; __bind(() => { ({ copyableLabelPayload } = __require("src/web/selection.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let selectedStyleSource, pasteStyle; __bind(() => { ({ selectedStyleSource, pasteStyle } = __require("src/web/style-controls.js")); });
+let beginNetLabelPaste; __bind(() => { ({ beginNetLabelPaste } = __require("src/web/annotation-tools.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } = __require("src/web/main.js")); });
+let captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } = __require("src/web/main.js")); });
 /**
  * Copy and paste: the copied set, the copy ghost that follows the pointer
  * (and its mirrored twin), pasting, and the system clipboard exchange that
  * carries objects between editor windows. Which objects a copy takes is
  * core/selection.js; the clipboard format is core/object-clipboard.js.
  */
+
 
 
 
@@ -27614,8 +27733,24 @@ function copySelection({ quiet = false } = {}) {
   const parts = resolveCopySelection(editor.circuit, copySelectionSource());
   const { comps, freeLabels } = parts;
   if (!comps.length && !freeLabels.length && !parts.nets.length && !parts.fragments.length) {
-    logLine('nothing selected to copy');
-    return false;
+    if (!parts.netLabels.length) {
+      logLine('nothing selected to copy');
+      return false;
+    }
+    // A net label on its own carries its net's name, which a paste attaches
+    // to another wire. With several, the primary one's.
+    const source = parts.netLabels.find((label) => label === selectedLabel()) || parts.netLabels[0];
+    editor.clipboard = {
+      comps: [], labels: [], nets: [], fragments: [],
+      anchor: { ...source.anchorWorld() },
+      netLabel: { text: source.text },
+      style: null,
+    };
+    if (!quiet) logLine(`copied net label "${source.text}"; paste it on a wire to give that net the name`);
+    return true;
+  }
+  if (parts.netLabels.length && !quiet) {
+    logLine(`left out ${parts.netLabels.length} net label${parts.netLabels.length === 1 ? '' : 's'} copied without ${parts.netLabels.length === 1 ? 'its' : 'their'} wire`);
   }
   const netLabelPayload = (label) => ({
     netId: label.netId,
@@ -27743,6 +27878,7 @@ function translateCopyGhost(ghost, dx, dy) {
 
 function startCopyGhost(startWorld, startClient, anchorShift = null) {
   if (!editor.clipboard) return false;
+  if (editor.clipboard.netLabel) return beginNetLabelPaste(editor.clipboard.netLabel.text);
   const beforeSnapshot = snapshot();
   const existingNetIds = new Set(editor.circuit.nets.keys());
   const start = { x: snap(startWorld.x), y: snap(startWorld.y) };
@@ -27949,6 +28085,12 @@ function finishObjectPaste(kind) {
 function pasteClipboard({ recordHistory = true, connect = true } = {}) {
   if (!editor.clipboard) {
     logLine('nothing copied');
+    return;
+  }
+  // A copied net label has no place of its own: the user picks its wire. Only
+  // an interactive paste starts that; a paste inside another gesture skips it.
+  if (editor.clipboard.netLabel) {
+    if (recordHistory) beginNetLabelPaste(editor.clipboard.netLabel.text);
     return;
   }
   const dx = snap(editor.cursor.x) - editor.clipboard.anchor.x;
@@ -32952,7 +33094,7 @@ let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind((
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
-let moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt; __bind(() => { ({ moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
+let moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview; __bind(() => { ({ moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
 let netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ netMarkerRefs, setHoverTarget, updateCanvasHover } = __require("src/web/hover-preview.js")); });
 let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => { ({ syncSnapPulse, annotationReach, cutAlong, withGestureOverlay } = __require("src/web/gesture-overlay.js")); });
@@ -35588,6 +35730,7 @@ function renderCanvas(modelKey) {
     tutorialTargets: tutorialTargetRects(),
     pageGuide: pageGuide ? { frame: circuitPageGuideFrame(circuit, pageGuide), view, caption: pageGuideCaption(pageGuide) } : null,
     cursor,
+    netLabelPaste: netLabelPastePreview(cursor),
     selection: [...multi],
     emphasis: equationEmphasis,
     diagnostic: diagnosticSelection,
@@ -36926,6 +37069,15 @@ function beginCopyDrag(grab, ev) {
   const { hit, startWorld, startClient } = grab;
   if (grab.label) {
     const member = selLabels.has(grab.label.id);
+    // A net label copied on its own carries only its name: the drag drops it
+    // on another wire, which that net then takes.
+    const label = circuit.labels.get(grab.label.id);
+    if (label?.netId && (!member || (!multi.size && [...selLabels].every((id) => circuit.labels.get(id)?.netId)))) {
+      beginNetLabelPaste(label.text, { once: true });
+      drag = { mode: 'netlabelpaste', startWorld, startClient, moved: true };
+      canvasMouseMove(ev);
+      return;
+    }
     drag = null;
     beginObjectMove(member ? [...multi] : [], member ? [...selLabels] : [grab.label.id], startWorld, startClient, { duplicate: true });
     canvasMouseMove(ev);
@@ -38178,6 +38330,11 @@ function canvasMouseMove(ev) {
     if (movedOut) beginCopyDrag(drag, ev);
     return;
   }
+  if (drag.mode === 'netlabelpaste') {
+    cursor = cursorWorld(w);
+    scheduleInteractionRender();
+    return;
+  }
   if (movedOut) lastSchematicComponentClick = null;
   if (drag.mode === 'blockresize') {
     if (!movedOut) return;
@@ -38909,6 +39066,8 @@ function finishCanvasMouseUp(ev) {
         cancelPreviewTransaction();
       }
     }
+  } else if (drag.mode === 'netlabelpaste') {
+    placeNetLabelAt(w);
   } else if (drag.mode === 'labelmove') {
     if (drag.modal) {
       if (!drag.moved) {
@@ -39748,6 +39907,7 @@ function toolSwitchForKey(key, shiftKey = false) {
 
 function activateLabelPlacement(kind) {
   leaveActiveInteraction();
+  clearNetLabelPaste();
   mode = 'normal';
   terminalSnap = false;
   pendingPlace = null;
@@ -44243,6 +44403,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+M', 'move selected objects without connected nets; stays armed'],
     ['c', 'copy a selected object or set; stays armed'],
     ['y / Ctrl/Cmd+C', 'copy the selected objects, also for another editor'],
+    ['copy a net label', 'copied alone it carries its name: paste (or Ctrl-drag) it onto a wire to give that net the name'],
     ['Ctrl/Cmd+Shift+C', 'copy selection (or whole drawing) as an image for other apps'],
     ['Ctrl/Cmd+V', 'paste objects copied here or in another editor at the cursor'],
     ['p', 'paste this editor\'s last copied set at the cursor'],

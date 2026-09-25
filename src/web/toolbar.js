@@ -175,6 +175,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Shift+M', 'move selected objects without connected nets; stays armed'],
     ['c', 'copy a selected object or set; stays armed'],
     ['y / Ctrl/Cmd+C', 'copy the selected objects, also for another editor'],
+    ['copy a net label', 'copied alone it carries its name: paste (or Ctrl-drag) it onto a wire to give that net the name'],
     ['Ctrl/Cmd+Shift+C', 'copy selection (or whole drawing) as an image for other apps'],
     ['Ctrl/Cmd+V', 'paste objects copied here or in another editor at the cursor'],
     ['p', 'paste this editor\'s last copied set at the cursor'],

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Circuit, Net } from '../src/core/model.js';
-import { resolveCopySelection } from '../src/core/selection.js';
+import { netLabelPasteKind, resolveCopySelection } from '../src/core/selection.js';
 import { selectionDrawing } from '../src/core/selection-drawing.js';
 import { addTerminalStubs } from '../src/core/stubs.js';
 
@@ -220,4 +220,35 @@ test('a selection keeps the net highlight colors of the document', async () => {
   assert.ok(count(whole) > 0, 'the highlighted net keeps its color');
   const segment = selectionDrawing(circuit, { wireKeys: new Set([`${net.id}:0:1`]) });
   assert.ok(count(segment) > 0, 'a partial wire keeps its color too');
+});
+
+test('a net label copied alone carries its name, never loose text', () => {
+  const { circuit, netLabel, annotation } = fixture();
+  const parts = resolveCopySelection(circuit, { labels: [netLabel, annotation] });
+  assert.deepEqual(parts.freeLabels, [annotation]);
+  assert.deepEqual(parts.netLabels, [netLabel]);
+  // With its wire it travels with the wire instead.
+  const whole = resolveCopySelection(circuit, { labels: [netLabel], netIds: [netLabel.netId] });
+  assert.deepEqual(whole.netLabels, []);
+});
+
+test('pasting a net name names an unnamed net, repeats its own, or would rename another', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  const net = circuit.connect('R1.b', 'R2.a');
+  assert.equal(netLabelPasteKind(net, 'VOUT'), 'name');
+  circuit.renameNet(net.id, 'VOUT');
+  assert.equal(netLabelPasteKind(net, ' VOUT '), 'same');
+  assert.equal(netLabelPasteKind(net, 'VIN'), 'rename');
+});
+
+test('a selected net label rides the selected piece of wire it sits on', () => {
+  const { circuit, net, netLabel } = fixture();
+  const parts = resolveCopySelection(circuit, { refs: ['R1'], labels: [netLabel], wireKeys: [`${net.id}:0:1`] });
+  assert.equal(parts.fragments.length, 1);
+  assert.deepEqual(parts.fragments[0].netLabels, [netLabel]);
+  assert.deepEqual(parts.netLabels, []);
+  const svg = selectionDrawing(circuit, { labels: [netLabel], wireKeys: [`${net.id}:0:1`] });
+  assert.ok(svg.includes(`data-label-id="${netLabel.id}"`));
 });

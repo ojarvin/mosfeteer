@@ -63,7 +63,7 @@ import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } fr
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
-import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt } from './annotation-tools.js';
+import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
 import { netMarkerRefs, setHoverTarget, updateCanvasHover } from './hover-preview.js';
 import { syncSnapPulse, annotationReach, cutAlong, withGestureOverlay } from './gesture-overlay.js';
@@ -2638,6 +2638,7 @@ export function renderCanvas(modelKey) {
     tutorialTargets: tutorialTargetRects(),
     pageGuide: pageGuide ? { frame: circuitPageGuideFrame(circuit, pageGuide), view, caption: pageGuideCaption(pageGuide) } : null,
     cursor,
+    netLabelPaste: netLabelPastePreview(cursor),
     selection: [...multi],
     emphasis: equationEmphasis,
     diagnostic: diagnosticSelection,
@@ -3976,6 +3977,15 @@ function beginCopyDrag(grab, ev) {
   const { hit, startWorld, startClient } = grab;
   if (grab.label) {
     const member = selLabels.has(grab.label.id);
+    // A net label copied on its own carries only its name: the drag drops it
+    // on another wire, which that net then takes.
+    const label = circuit.labels.get(grab.label.id);
+    if (label?.netId && (!member || (!multi.size && [...selLabels].every((id) => circuit.labels.get(id)?.netId)))) {
+      beginNetLabelPaste(label.text, { once: true });
+      drag = { mode: 'netlabelpaste', startWorld, startClient, moved: true };
+      canvasMouseMove(ev);
+      return;
+    }
     drag = null;
     beginObjectMove(member ? [...multi] : [], member ? [...selLabels] : [grab.label.id], startWorld, startClient, { duplicate: true });
     canvasMouseMove(ev);
@@ -5228,6 +5238,11 @@ export function canvasMouseMove(ev) {
     if (movedOut) beginCopyDrag(drag, ev);
     return;
   }
+  if (drag.mode === 'netlabelpaste') {
+    cursor = cursorWorld(w);
+    scheduleInteractionRender();
+    return;
+  }
   if (movedOut) lastSchematicComponentClick = null;
   if (drag.mode === 'blockresize') {
     if (!movedOut) return;
@@ -5959,6 +5974,8 @@ function finishCanvasMouseUp(ev) {
         cancelPreviewTransaction();
       }
     }
+  } else if (drag.mode === 'netlabelpaste') {
+    placeNetLabelAt(w);
   } else if (drag.mode === 'labelmove') {
     if (drag.modal) {
       if (!drag.moved) {
@@ -6798,6 +6815,7 @@ function toolSwitchForKey(key, shiftKey = false) {
 
 function activateLabelPlacement(kind) {
   leaveActiveInteraction();
+  clearNetLabelPaste();
   mode = 'normal';
   terminalSnap = false;
   pendingPlace = null;

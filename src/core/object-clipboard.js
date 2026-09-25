@@ -100,6 +100,7 @@ function bufferProblem(data) {
     if (!Array.isArray(data[key])) return `no ${key} list`;
   }
   if (!optional(data.style, isObject)) return 'a bad style';
+  if (!optional(data.netLabel, (label) => isObject(label) && text(label.text) && label.text.trim())) return 'a bad net label';
   return data.comps.map(componentProblem).find(Boolean)
     || data.labels.map(labelProblem).find(Boolean)
     || data.nets.map(netProblem).find(Boolean)

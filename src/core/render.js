@@ -2,7 +2,7 @@ import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.j
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
-import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, referenceMarkerInfo, stripMathDelimiters } from './model.js';
+import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { drawnNetPaths, switchState } from './beats.js';
@@ -1077,6 +1077,13 @@ export function editorOverlay(circuit, opts = {}) {
     const r = c.bboxWorld();
     parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c, opts.beatView?.defOf(c))}</g>`);
     parts.push(`<rect class="selection-outline" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
+
+  // A copied net label on its way to a wire: its name, just above the point
+  // it would attach to, faint until the cursor is on a wire it can name.
+  if (opts.netLabelPaste) {
+    const { text, x, y, onWire } = opts.netLabelPaste;
+    parts.push(`<g class="net-label-paste-preview" opacity="${onWire ? 0.8 : 0.35}" pointer-events="none">${labelTextEl(x, y - 16, parseLabelRuns(text), 'middle', 'label', 'var(--accent)')}</g>`);
   }
 
   for (const r of opts.layoutPreviewRects || []) {

@@ -1,4 +1,4 @@
-import { extractWireFragments } from './model.js';
+import { canonicalNetName, extractWireFragments } from './model.js';
 import { pointOnPath } from './wiring.js';
 
 /** Owned labels bring their component; other labels remain visual selections. */
@@ -54,10 +54,33 @@ export function resolveCopySelection(circuit, { refs = [], labels = [], netIds =
       }
       fragments.push(...islands);
     } else if (selected.length) {
-      for (const island of extractWireFragments(paths, selected, net.junctions)) fragments.push({ net, ...island });
+      // A selected net label rides the copied piece of wire it sits on.
+      const onNet = copy.labels.filter((label) => label.netId === net.id);
+      for (const island of extractWireFragments(paths, selected, net.junctions)) {
+        const netLabels = onNet.filter((label) => island.paths.some((path) => pointOnPath(label.anchorWorld(), path)));
+        fragments.push({ net, ...island, ...(netLabels.length ? { netLabels } : {}) });
+      }
     }
   }
-  // A net label that travels with its copied wire is not also a loose label.
+  // A net label never becomes loose text: it travels with its copied wire, or
+  // on its own it carries only its net's name (`netLabels`), which a paste
+  // attaches to another wire.
   const carried = new Set([...nets.map((net) => net.id), ...fragments.filter((fragment) => fragment.whole).map((fragment) => fragment.net.id)]);
-  return { comps, freeLabels: freeLabels.filter((label) => !carried.has(label.netId)), nets, fragments };
+  const riding = new Set(fragments.flatMap((fragment) => fragment.netLabels || []));
+  return {
+    comps,
+    freeLabels: freeLabels.filter((label) => !label.netId),
+    netLabels: freeLabels.filter((label) => label.netId && !carried.has(label.netId) && !riding.has(label)),
+    nets,
+    fragments,
+  };
+}
+
+/** What pasting a copied net label named `name` onto `net` does: 'same' adds
+ * another label of the net's own name, 'name' gives an unnamed net the name
+ * (joining it by name to every net called that), and 'rename' would rename a
+ * differently named net, which the editor confirms first. */
+export function netLabelPasteKind(net, name) {
+  if (!net.name) return 'name';
+  return canonicalNetName(net.name) === canonicalNetName(name) ? 'same' : 'rename';
 }

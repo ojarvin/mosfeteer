@@ -7,13 +7,15 @@ import { INTERFACE_PIN_TYPES, NET_HIGHLIGHT_COLORS, isReferenceMarker, reference
 import { cycleBeatHighlight, highlightsAt, setHighlightFrom } from '../core/beats.js';
 import { snap } from '../core/grid.js';
 import { pointOnPath } from '../core/wiring.js';
+import { netLabelPasteKind } from '../core/selection.js';
+import { confirmChoice } from './file-dialog.js';
 import { constrainAxis } from './interaction.js';
 import { noteTip } from './onboarding.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { inlineEditLabel } from './label-editor.js';
 import { activeBeatIndex } from './beats-ui.js';
 import { editor } from './editor-state.js';
-import { commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot } from './main.js';
+import { activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot } from './main.js';
 
 /** Return the drawable wire candidates under a label-placement click.  A
  * snapped crossing may belong to several physical nets; keep those identities
@@ -263,7 +265,82 @@ export function removeAllNetHighlights() {
   render();
 }
 
+// The name a pasted net label carries while the net label tool places it.
+// Cleared whenever a tool is picked, so plain Shift+L never inherits it.
+let pastedNetName = null;
+
+/** Paste a copied net label: the net label tool, carrying `name`, places it
+ * on the wires clicked until Esc. `once` ends after one placement (a drag). */
+export function beginNetLabelPaste(name, { once = false } = {}) {
+  activateNetLabel();
+  pastedNetName = { name, once };
+  hintLine(`NET LABEL: click a wire to name its net ${name}; Esc ends`);
+  render();
+  return true;
+}
+
+export function clearNetLabelPaste() {
+  pastedNetName = null;
+}
+
+export function pastingNetName() {
+  return editor.labelMode === 'net' ? pastedNetName?.name || null : null;
+}
+
+/** Where the pasted name would land under `world`, for the overlay preview. */
+export function netLabelPastePreview(world) {
+  const name = pastingNetName();
+  if (!name) return null;
+  const target = netLabelTargetAt(world);
+  const onWire = !!target && !target.ambiguous;
+  return { text: name, x: onWire ? target.point.x : snap(world.x), y: onWire ? target.point.y : snap(world.y), onWire };
+}
+
+/** Attach the pasted name to the wire at `world`: an unnamed net takes it, a
+ * net of that name gains another label, and a differently named net is
+ * renamed only once the user confirms. */
+async function pasteNetLabelAt(world, name) {
+  const target = netLabelTargetAt(world);
+  if (!target) {
+    hintLine('NET LABEL: place a net label on a wire');
+    return false;
+  }
+  if (target.ambiguous) {
+    logLine('NET LABEL: wire crossing is ambiguous — select/highlight one net first');
+    return false;
+  }
+  const { net, point } = target;
+  const kind = netLabelPasteKind(net, name);
+  if (kind === 'rename' && !await confirmChoice({
+    title: 'Rename net?',
+    message: `This wire is on net ${net.name}. Rename it to ${name}? Any net already named ${name} then connects to it.`,
+    confirmLabel: 'Rename',
+  })) return false;
+  let label = null;
+  commit(() => { label = editor.circuit.addNetLabel(net.id, { text: name, anchor: point }); });
+  if (!label) return false;
+  setSelection([]);
+  setLabelSelection([label.id]);
+  editor.selectedNets = new Set([net.id]);
+  logLine(kind === 'rename' ? `renamed net to "${name}" and placed its label`
+    : kind === 'name' ? `named ${net.id} "${name}" and placed its label` : `placed net label "${name}"`);
+  render();
+  return true;
+}
+
 export function placeNetLabelAt(world) {
+  const name = pastingNetName();
+  if (name) {
+    // A dragged label places once, hit or miss, then hands back to Select.
+    const once = !!pastedNetName.once;
+    pasteNetLabelAt(world, name).then(() => {
+      if (once) {
+        activateSelect();
+        render();
+      }
+    });
+    return true;
+  }
   const target = netLabelTargetAt(world);
   if (!target) {
     hintLine('NET LABEL: click a physical wire');

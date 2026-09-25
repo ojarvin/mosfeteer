@@ -13,7 +13,7 @@ export const DRAWING_EXPORT_OPTIONS = Object.freeze({
 });
 
 function schematicSubset(circuit, selection) {
-  const { comps, freeLabels, nets, fragments } = resolveCopySelection(circuit, selection);
+  const { comps, freeLabels, netLabels, nets, fragments } = resolveCopySelection(circuit, selection);
   const drawing = new Circuit();
   drawing.components = new Map(comps.map((comp) => [comp.refdes, comp]));
   drawing.nets = new Map(nets.map((net) => [net.id, net]));
@@ -23,8 +23,9 @@ function schematicSubset(circuit, selection) {
   const sourceOf = new Map(nets.map((net) => [net.id, net]));
   drawing.netHighlight = (net) => circuit.netHighlight(sourceOf.get(net?.id) || net);
   for (const [i, fragment] of fragments.entries()) {
-    // A wholly selected net keeps its id so its net labels still name it.
-    const keepId = fragment.whole && !drawing.nets.has(fragment.net.id);
+    // A wholly selected net, or a piece carrying net labels, keeps its id so
+    // those labels still name it.
+    const keepId = (fragment.whole || fragment.netLabels?.length) && !drawing.nets.has(fragment.net.id);
     const net = new Net(drawing, {
       id: keepId ? fragment.net.id : `${fragment.net.id}-selection-${i}`, name: fragment.net.name,
       style: fragment.net.style, drawOrder: fragment.net.drawOrder,
@@ -50,7 +51,8 @@ function schematicSubset(circuit, selection) {
     drawing.nets.set(net.id, net);
     sourceOf.set(net.id, fragment.net);
   }
-  const labelIds = new Set(freeLabels.map((label) => label.id));
+  // A net label selected alone is still part of the picture.
+  const labelIds = new Set([...freeLabels, ...netLabels].map((label) => label.id));
   drawing.labels = new Map([...circuit.labels].filter(([id, label]) =>
     labelIds.has(id) || (label.owner && drawing.components.has(label.owner)) ||
     (label.netId && drawing.nets.has(label.netId))));
