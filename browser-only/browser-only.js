@@ -12633,6 +12633,31 @@ function referenceMarkerIsLocal(component) {
 // path, every candidate produced while re-anchoring or translating a moved net
 // must satisfy the router's one-cell body-clearance policy. Endpoint re-anchors
 // intentionally use the move-specific pin-rectangle exception.
+/**
+ * The wire from a moved pin, kept in shape: `path` starts at the pin's old
+ * point and `cur` is where the pin is now. The leg at the pin slides along
+ * itself, and moves sideways only by stretching the segment after it; no
+ * segment may flip or vanish. Returns the new path, or null when the move
+ * cannot be taken up that way.
+ */
+function stretchedLeg(path, cur) {
+  const [p0, p1, p2] = path;
+  if (!p1) return null;
+  const horizontal = p0.y === p1.y && p0.x !== p1.x;
+  const vertical = p0.x === p1.x && p0.y !== p1.y;
+  if (!horizontal && !vertical) return null;
+  const across = horizontal ? cur.y - p0.y : cur.x - p0.x;
+  const q1 = horizontal ? { x: p1.x, y: p1.y + across } : { x: p1.x + across, y: p1.y };
+  const axisSign = (a, b) => (horizontal ? Math.sign(b.x - a.x) : Math.sign(b.y - a.y));
+  if (axisSign(p0, p1) !== axisSign(cur, q1)) return null;
+  if (across) {
+    if (!p2 || (horizontal ? p1.x !== p2.x : p1.y !== p2.y)) return null;
+    const crossSign = (a) => (horizontal ? Math.sign(p2.y - a.y) : Math.sign(p2.x - a.x));
+    if (!crossSign(p1) || crossSign(p1) !== crossSign(q1)) return null;
+  }
+  return [{ x: cur.x, y: cur.y }, q1, ...path.slice(2).map((p) => ({ x: p.x, y: p.y }))];
+}
+
 function automaticMovePathSafe(path, env) {
   if (!path || path.length < 2) return true;
   const moveOptions = { pinRects: env.pinRects || new Map() };
@@ -15741,35 +15766,13 @@ class Circuit {
     // Partial set moves preserve unselected-side wire bodies and re-anchor
     // only their boundary legs. Branches wholly inside the moved set translate
     // in _reroutePolyline when both endpoint terminals share one delta.
-    // A junction the moved component's own arms hold in place belongs to it:
-    // when more than half of the arms meeting there lead to terminals that
-    // moved by one delta, that meeting point moved too. Its drawn shape is
-    // built around the old point, and re-anchoring every arm back onto it is
-    // what strands a solder dot and the wire reaching it at the device's old
-    // position -- so lay this net out again from the terminals it now has.
-    // Carrying the old bodies across instead doubles an arm back along a row
-    // another arm has just moved onto, which is a same-net overlap.
-    if (moved && moved !== 'refresh' && moved.size > 0 && this._junctionsFollowMove(net, moved)) {
-      const previous = {
-        branches: net.branches?.map((p) => clonePath(p, net.allowDiagonal)) || null,
-        route: net.route?.length >= 2 ? clonePath(net.route, net.allowDiagonal) : null,
-        junctions: net.junctions.map((p) => ({ ...p })),
-      };
-      net.branches = null;
-      net.route = null;
-      net.junctions = [];
-      if (this._layoutFresh(net, net.anchorWorlds(), env)) {
-        this._resyncJunctions(net);
-        this._reanchorWireArrowheads(net, previousPaths, net.paths());
-        this._repairNetLabels(net);
-        this._completeComponentEdit(net.id);
-        return true;
-      }
-      // Unroutable fresh: keep what was drawn and re-anchor it as before.
-      net.branches = previous.branches;
-      net.route = previous.route;
-      net.junctions = previous.junctions;
-    }
+    // A junction whose moved arms cannot take the move up in their own legs
+    // (a diode loop, a bulk tie beside the pins) travels with them, and only
+    // its stationary arms re-anchor; one whose arms just lengthen or shorten
+    // (a tail node above a pair moved along its legs) stays where it is.
+    const following = moved && moved !== 'refresh' && moved.size > 0
+      ? this._followingJunctions(net, moved)
+      : new Map();
     if (net.branches && net.branches.length) {
       // A junction is where the arms happen to meet, not a place the net is
       // pinned to. Carrying the pre-move coordinates through a re-anchor makes
@@ -15779,7 +15782,12 @@ class Circuit {
       // `_resyncJunctions` records that below. A branch whose endpoints both
       // ride the moved component can then translate with it, as it should.
       if (moved && moved !== 'refresh' && moved.size > 0) net.junctions = [];
-      const rerouted = net.branches.map((b) => this._reroutePolyline(net, b, moved, env));
+      const rerouted = net.branches.map((b) => this._reroutePolyline(net, b, moved, env, following));
+      // Carrying the old bodies across can still double an arm back along a
+      // row another arm has just moved onto (a same-net overlap); only then
+      // lay the net out again from the terminals it now has.
+      if (following.size && (rerouted.some((b) => !b) || hasPositiveBranchOverlap(rerouted, net.allowDiagonal)) &&
+          this._layoutFollowedNetFresh(net, env, previousPaths)) return true;
       if (rerouted.some((b) => !b)) {
         return this._rerouteFailure(net, moved);
       }
@@ -15950,7 +15958,7 @@ class Circuit {
   }
 
   /** Re-anchor one drawn polyline after a component move (see rerouteNet). */
-  _reroutePolyline(net, poly, moved, env) {
+  _reroutePolyline(net, poly, moved, env, following = new Map()) {
     if (!poly || poly.length < 2) return poly;
     // A one-endpoint move creates a new connector between the stationary wire
     // body and the moved pin. Among equally safe routes, prefer its elbow near
@@ -15959,6 +15967,10 @@ class Circuit {
     const n = poly.length;
     const classify = (p) => {
       if (!moved) return null;
+      const junctionDelta = following.get(`${p.x},${p.y}`);
+      if (junctionDelta) {
+        return { refdes: null, cur: { x: p.x + junctionDelta.dx, y: p.y + junctionDelta.dy }, delta: junctionDelta, freshLeg: false };
+      }
       for (const [refdes, delta] of moved) {
         const c = this.components.get(refdes);
         if (!c) continue;
@@ -16060,8 +16072,10 @@ class Circuit {
       return leg && leg.length >= 1 ? leg : null;
     }
     if (a0) {
-      // If the moved pin remains on the old leg's axis, stretch or shrink that
-      // leg directly. Otherwise route a minimum safe connector to the body.
+      // Keep the wire's shape when its legs can take the move up; otherwise
+      // route a minimum safe connector to the body.
+      const stretched = safeCandidate(stretchedLeg(poly, a0.cur));
+      if (stretched) return stretched;
       const leg = endpointLeg(poly[0], poly[1], a0.cur, true);
       if (!leg || leg.length < 1) return null;
       const out = [...leg, ...poly.slice(1)];
@@ -16069,8 +16083,11 @@ class Circuit {
       return safeCandidate(out);
     }
     if (a1) {
-      // The path is stored in start-to-end order. Keep a collinear boundary
-      // leg straight; otherwise route forward from its old body endpoint.
+      // The path is stored in start-to-end order. Keep the wire's shape when
+      // its legs can take the move up; otherwise route forward from its old
+      // body endpoint.
+      const stretched = safeCandidate(stretchedLeg([...poly].reverse(), a1.cur)?.reverse());
+      if (stretched) return stretched;
       const leg = endpointLeg(poly[n - 1], poly[n - 2], a1.cur, false);
       if (!leg || leg.length < 1) return null;
       const out = [...poly.slice(0, n - 2), ...leg];
@@ -16142,16 +16159,18 @@ class Circuit {
     net.junctions = this._netJunctions(net, paths);
   }
 
-  /** Whether any junction of this net is held in place only by arms that have
-   *  moved. Each branch meeting the junction is one arm; follow it to its far
-   *  end and ask which terminal stood there *before* the move, since the
-   *  components have already been relocated by the time a net is rerouted.
-   *  More than half the arms ending on terminals that share one delta means
-   *  the node belongs to the moved set and travels with it. */
-  _junctionsFollowMove(net, moved) {
+  /** The junctions a move carries along, as "x,y" -> delta. Each branch
+   * meeting a junction is one arm; follow it to its far end and ask which
+   * terminal stood there *before* the move, since the components have already
+   * been relocated by the time a net is rerouted. A junction follows when more
+   * than half of its arms lead to terminals that moved by one delta and at
+   * least one of those arms cannot take the move up in its own legs
+   * (stretchedLeg). */
+  _followingJunctions(net, moved) {
+    const following = new Map();
     const paths = net.branches && net.branches.length ? net.branches : [];
-    if (!paths.length || !net.junctions.length) return false;
-    const deltaAt = new Map();
+    if (!paths.length || !net.junctions.length) return following;
+    const moveAt = new Map();
     for (const terminal of net.terminals) {
       const component = this.components.get(terminal.comp);
       if (!component) continue;
@@ -16159,29 +16178,59 @@ class Circuit {
       const delta = moved.get(terminal.comp) || null;
       const terminalMove = delta?.terminals?.get(terminal.term);
       const before = terminalMove?.before || (delta ? { x: now.x - delta.dx, y: now.y - delta.dy } : now);
-      deltaAt.set(`${before.x},${before.y}`, delta);
+      const fresh = !!terminalMove && (terminalMove.after.x - before.x !== delta.dx || terminalMove.after.y - before.y !== delta.dy);
+      moveAt.set(`${before.x},${before.y}`, delta && { delta, fresh });
     }
     for (const junction of net.junctions) {
       let arms = 0;
       let movedArms = 0;
       let delta = null;
       let consistent = true;
+      let rigid = true;
       for (const path of paths) {
-        const head = path[0];
-        const tail = path[path.length - 1];
-        const far = head.x === junction.x && head.y === junction.y ? tail
-          : tail.x === junction.x && tail.y === junction.y ? head
-            : null;
-        if (!far) continue;
+        const atHead = path[0].x === junction.x && path[0].y === junction.y;
+        const atTail = path.at(-1).x === junction.x && path.at(-1).y === junction.y;
+        if (!atHead && !atTail) continue;
+        const far = atHead ? path.at(-1) : path[0];
         arms += 1;
-        const armDelta = deltaAt.get(`${far.x},${far.y}`);
-        if (!armDelta) continue;
+        const move = moveAt.get(`${far.x},${far.y}`);
+        if (!move) continue;
         movedArms += 1;
-        if (!delta) delta = armDelta;
-        else if (delta.dx !== armDelta.dx || delta.dy !== armDelta.dy) consistent = false;
+        if (!delta) delta = move.delta;
+        else if (delta.dx !== move.delta.dx || delta.dy !== move.delta.dy) consistent = false;
+        const fromTerminal = atHead ? [...path].reverse() : path;
+        const after = { x: far.x + move.delta.dx, y: far.y + move.delta.dy };
+        if (move.fresh || !stretchedLeg(fromTerminal, after)) rigid = false;
       }
-      if (arms >= 2 && consistent && delta && movedArms * 2 > arms) return true;
+      if (arms >= 2 && consistent && delta && movedArms * 2 > arms && !rigid) {
+        following.set(`${junction.x},${junction.y}`, { dx: delta.dx, dy: delta.dy });
+      }
     }
+    return following;
+  }
+
+  /** Lay a net out again from its terminals when carrying its junctions along
+   * a move could not keep its drawn shape. Returns false (net untouched) when
+   * that is unroutable too. */
+  _layoutFollowedNetFresh(net, env, previousPaths) {
+    const previous = {
+      branches: net.branches?.map((p) => clonePath(p, net.allowDiagonal)) || null,
+      route: net.route?.length >= 2 ? clonePath(net.route, net.allowDiagonal) : null,
+      junctions: net.junctions.map((p) => ({ ...p })),
+    };
+    net.branches = null;
+    net.route = null;
+    net.junctions = [];
+    if (this._layoutFresh(net, net.anchorWorlds(), env)) {
+      this._resyncJunctions(net);
+      this._reanchorWireArrowheads(net, previousPaths, net.paths());
+      this._repairNetLabels(net);
+      this._completeComponentEdit(net.id);
+      return true;
+    }
+    net.branches = previous.branches;
+    net.route = previous.route;
+    net.junctions = previous.junctions;
     return false;
   }
 
