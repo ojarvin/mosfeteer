@@ -58,7 +58,13 @@ src/
 │   ├── persistence.js  Browser adapter over the document API.
 │   ├── file-dialog.js  In-app Open / Save as / workspace folder browser.
 │   ├── index.html      Single-page app entry.
-│   ├── main.js         Editor (input, render, undo/redo, ghost, wire drag).
+│   ├── main.js         Editor core: state, undo/redo, render, pointer and keyboard
+│   │                   input, selection, transforms, wire tools, boot.
+│   ├── editor-state.js The `editor` accessor split-out modules read state through.
+│   ├── elements.js     The page's fixed elements.
+│   ├── *-ui.js, …      Features split out of main.js: document-session, analysis-ui,
+│   │                   context-menu, side-panel, toolbar-ui, beats-ui, export-ui,
+│   │                   copy-paste, insert-menu, label-editor, style-controls, …
 │   └── style.css       Layout, dark mode, toolbars.
 └── cli/
     └── index.js        Thin HTTP client over the command endpoint.

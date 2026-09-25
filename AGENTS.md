@@ -304,6 +304,12 @@ runs; clicking a selected object again selects the next object stacked at that
 point (`nextStackedSelection`), and a press there drags the selected one.
 Component/managed-wire transactions are one undo entry.
 
+`src/web/main.js` owns the editor's state and its core interaction; feature
+modules split out of it reach that state through the `editor` accessor
+(`editor-state.js`) and import `main.js` only as `./main.js`, the URL the page
+loads. A module's `installX()` runs its load-time wiring where `main.js` calls
+it, so the call's position keeps the original load order.
+
 The browser exposes `window.__circuit()`, `window.__run(command)`, and
 `window.__load(state)` for isolated verification. Headless browser tests must
 use one persistent CDP connection, temporary ports/directories, real mouse
