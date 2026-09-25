@@ -266,6 +266,11 @@ serverTest('export writes the chosen formats into a folder and asks before repla
   assert.equal(replaced.status, 200);
   assert.match(await readFile(join(dir, 'amp.svg'), 'utf8'), /R2/);
 
+  // An image PDF uses its own fallback raster when given one.
+  const fallback = await app.request('/api/export', { method: 'POST', body: { dir, name: 'fallback', formats: ['pdf'], svg: EXPORT_SVG, pdfPng: TINY_PNG } });
+  assert.equal(fallback.status, 200);
+  assert.match((await readFile(join(dir, 'fallback.pdf'))).toString('latin1'), /\/Subtype\s*\/Image/);
+
   for (const invalid of [{ ...body, name: '../x' }, { ...body, formats: [] }, { ...body, dir: 'relative' }, { ...body, formats: ['png'], png: 'data:text/plain;base64,AA==' }]) {
     assert.equal((await app.request('/api/export', { method: 'POST', body: invalid })).status, 400);
   }

@@ -17,9 +17,12 @@ test('image clipboard starts its write synchronously with promised PNG and SVG t
     ClipboardItem: ClipboardItemStub,
     clipboard: { write(items) { payload = items[0]; return Promise.all(Object.values(payload.types)); } },
     embedFont: async (svg) => { prepared = true; await pending; return svg.replace('/>', '><style>font</style></svg>'); },
-    rasterize: async (svg, scale) => {
+    scale: 0.5,
+    dpi: 300,
+    rasterize: async (svg, scale, options) => {
       assert.match(svg, /<style>font/);
-      assert.equal(scale, 4);
+      assert.equal(scale, 0.5);
+      assert.deepEqual(options, { dpi: 300 });
       return pngUrl;
     },
   });

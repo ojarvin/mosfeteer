@@ -693,6 +693,11 @@ button:disabled {
   gap: 8px 18px;
 }
 
+/* The DPI choice reads as part of the PNG option before it. */
+.export-dialog .export-dpi {
+  margin-left: -10px;
+}
+
 .export-folder-row,
 .export-name-row {
   display: flex;

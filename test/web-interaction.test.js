@@ -49,12 +49,14 @@ test('export has a Ctrl/Cmd+E shortcut before focused-control handling', () => {
   assert.match(main, /ev\.key\.toLowerCase\(\) === 'e'[^\n]*!inlineInput[\s\S]*?ev\.preventDefault\(\);\s*exportCircuit\(\);/);
 });
 
-test('document raster export uses the 3x scale shown in the UI', () => {
+test('document raster export sizes PNGs by the chosen DPI and keeps a fine PDF fallback', () => {
   const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(main, /const EXPORT_PNG_SCALE = 3/);
-  assert.match(main, /svgToPngDataUrl\(svg, EXPORT_PNG_SCALE\)/);
-  assert.match(html, /PNG \(3×\)/);
+  assert.match(main, /svgToPngDataUrl\(svg, exportPngScale\(pngDpi\), \{ dpi: pngDpi \}\)/);
+  assert.match(main, /request\.pdfPng = await svgToPngDataUrl\(svg, PDF_FALLBACK_PNG_SCALE\)/);
+  assert.match(main, /pngRasterScale\(dpi, pageGuide\?\.textPt \?\? DEFAULT_EXPORT_TEXT_PT\)/);
+  assert.match(main, /writeDrawingToClipboard\(svg, \{ dpi, scale: exportPngScale\(dpi\) \}\)/);
+  assert.match(html, /<select name="pngDpi">[\s\S]*?value="300" selected/);
 });
 
 test('named net edits confirm virtual connections, and port names never repeat', () => {

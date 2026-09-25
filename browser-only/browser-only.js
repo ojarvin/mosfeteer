@@ -19014,6 +19014,85 @@ __exports.circuitPageGuideFrame = circuitPageGuideFrame;
 __exports.PAGE_GUIDES = PAGE_GUIDES;
 };
 
+__modules["src/core/png-export.js"] = function (__require, __exports) {
+let LABEL_FONT_SIZE; __bind(() => { ({ LABEL_FONT_SIZE } = __require("src/core/model.js")); });
+
+
+// PNG exports are sized by print resolution, not by screen pixels. The label
+// text is taken to land at a nominal point size (the page guide's, else
+// DEFAULT_EXPORT_TEXT_PT), which fixes the image's physical size; the chosen
+// DPI then sets its pixels. The PNG records that DPI, so apps that honour it
+// place the image at that size and its text at that point size.
+
+const PNG_DPI_CHOICES = Object.freeze([150, 300, 600]);
+const DEFAULT_PNG_DPI = 300;
+/** Label text size (pt) a PNG is sized for when no page guide is active. */
+const DEFAULT_EXPORT_TEXT_PT = 10;
+
+/** A stored DPI choice, normalized to one of PNG_DPI_CHOICES. */
+function normalizePngDpi(value) {
+  const dpi = Number(value);
+  return PNG_DPI_CHOICES.includes(dpi) ? dpi : DEFAULT_PNG_DPI;
+}
+
+/** Pixels per world unit for label text at `textPt` points printed at `dpi`. */
+function pngRasterScale(dpi, textPt = DEFAULT_EXPORT_TEXT_PT) {
+  return (dpi / 72) * (textPt / LABEL_FONT_SIZE);
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (const byte of bytes) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** A copy of PNG `bytes` whose pHYs chunk records `dpi`, replacing any
+ *  existing one; bytes that are not a PNG with an IHDR are returned as is. */
+function withPngDensity(bytes, dpi) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const type = (at) => String.fromCharCode(...bytes.subarray(at + 4, at + 8));
+  if (bytes.length < 33 || type(8) !== 'IHDR') return bytes;
+  // Drop any pHYs; a new one goes right after IHDR (it must precede IDAT).
+  const parts = [bytes.subarray(0, 33)];
+  for (let at = 33; at + 12 <= bytes.length;) {
+    const end = at + 12 + view.getUint32(at);
+    if (type(at) !== 'pHYs') parts.push(bytes.subarray(at, end));
+    at = end;
+  }
+  const perMetre = Math.round(dpi / 0.0254);
+  const chunk = new Uint8Array(21);
+  const out = new DataView(chunk.buffer);
+  out.setUint32(0, 9);
+  chunk.set([0x70, 0x48, 0x59, 0x73], 4); // 'pHYs'
+  out.setUint32(8, perMetre);
+  out.setUint32(12, perMetre);
+  chunk[16] = 1; // unit: metre
+  out.setUint32(17, crc32(chunk.subarray(4, 17)));
+  parts.splice(1, 0, chunk);
+  const result = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) { result.set(part, offset); offset += part.length; }
+  return result;
+}
+
+__exports.normalizePngDpi = normalizePngDpi;
+__exports.pngRasterScale = pngRasterScale;
+__exports.withPngDensity = withPngDensity;
+__exports.PNG_DPI_CHOICES = PNG_DPI_CHOICES;
+__exports.DEFAULT_PNG_DPI = DEFAULT_PNG_DPI;
+__exports.DEFAULT_EXPORT_TEXT_PT = DEFAULT_EXPORT_TEXT_PT;
+};
+
 __modules["src/core/render.js"] = function (__require, __exports) {
 let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js")); });
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
@@ -23657,6 +23736,8 @@ __exports.ANALYSIS_FORM_KEY = ANALYSIS_FORM_KEY;
 
 __modules["src/web/clipboard.js"] = function (__require, __exports) {
 let svgToPngDataUrl, withEmbeddedMathFont; __bind(() => { ({ svgToPngDataUrl, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
+let DEFAULT_PNG_DPI, pngRasterScale; __bind(() => { ({ DEFAULT_PNG_DPI, pngRasterScale } = __require("src/core/png-export.js")); });
+
 
 
 function pngDataUrlBlob(dataUrl) {
@@ -23668,8 +23749,11 @@ function pngDataUrlBlob(dataUrl) {
 }
 
 /** Start both clipboard payloads immediately; SVG is carried as plain text for
- * browsers without a portable SVG clipboard image type. */
+ * browsers without a portable SVG clipboard image type. The PNG is `scale`
+ * pixels per unit and records `dpi`, as a PNG export does. */
 function writeDrawingToClipboard(svg, {
+  dpi = DEFAULT_PNG_DPI,
+  scale = pngRasterScale(dpi),
   clipboard = globalThis.navigator?.clipboard,
   ClipboardItem = globalThis.ClipboardItem,
   embedFont = withEmbeddedMathFont,
@@ -23677,7 +23761,7 @@ function writeDrawingToClipboard(svg, {
 } = {}) {
   if (!clipboard?.write || !ClipboardItem) throw new Error('image clipboard is unavailable in this browser');
   const drawing = Promise.resolve().then(() => embedFont(svg));
-  const png = drawing.then((value) => rasterize(value, 4)).then(pngDataUrlBlob);
+  const png = drawing.then((value) => rasterize(value, scale, { dpi })).then(pngDataUrlBlob);
   const text = drawing.then((value) => new Blob([value], { type: 'text/plain' }));
   // A browser can reject the write before consuming either payload promise.
   // Keep preparation errors observed in that case as well.
@@ -23909,9 +23993,13 @@ __exports.commitFeedbackSvg = commitFeedbackSvg;
 
 __modules["src/web/drawing-export.js"] = function (__require, __exports) {
 let svgPixelSize; __bind(() => { ({ svgPixelSize } = __require("src/core/render.js")); });
+let withPngDensity; __bind(() => { ({ withPngDensity } = __require("src/core/png-export.js")); });
 
 
-async function svgToPngDataUrl(svg, scale = 4) {
+
+/** Rasterize `svg` at `scale` pixels per SVG unit; `dpi`, when given, is
+ *  recorded in the PNG so apps place it at its intended physical size. */
+async function svgToPngDataUrl(svg, scale = 4, { dpi = null } = {}) {
   const { width, height } = svgPixelSize(svg);
   const image = new Image();
   // A Blob URL gives SVGs an opaque origin. Chromium then taints the canvas
@@ -23931,7 +24019,17 @@ async function svgToPngDataUrl(svg, scale = 4) {
   context.fillStyle = '#fff';
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/png');
+  const png = canvas.toDataURL('image/png');
+  return dpi ? pngDataUrlWithDensity(png, dpi) : png;
+}
+
+function pngDataUrlWithDensity(url, dpi) {
+  const prefix = 'data:image/png;base64,';
+  if (!url.startsWith(prefix)) return url;
+  const bytes = withPngDensity(Uint8Array.from(atob(url.slice(prefix.length)), (char) => char.charCodeAt(0)), dpi);
+  let binary = '';
+  for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  return prefix + btoa(binary);
 }
 
 function applyExportDarkTheme(svg) {
@@ -25263,6 +25361,7 @@ let addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, introduc
 let TipBook; __bind(() => { ({ TipBook } = __require("src/web/tips.js")); });
 let TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns; __bind(() => { ({ TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
+let DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale; __bind(() => { ({ DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } = __require("src/core/png-export.js")); });
 let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
 let adaptCombinedReport; __bind(() => { ({ adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
 let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
@@ -25305,6 +25404,7 @@ let alignCompatible, alignFeatureAt, alignFeatures, alignToDelta, alignmentPlan,
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -26633,7 +26733,18 @@ function copySelectionSource() {
 let clipboardNotice = '';
 let clipboardNoticeTimer = null;
 let imageCopyInFlight = false;
-const EXPORT_PNG_SCALE = 3;
+// A PDF that falls back to an image keeps this fine raster whatever the PNG DPI.
+const PDF_FALLBACK_PNG_SCALE = 3;
+
+/** The remembered PNG resolution (export dialog), also used by copied images. */
+function exportPngDpi() {
+  try { return normalizePngDpi(JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null')?.pngDpi); } catch { return normalizePngDpi(null); }
+}
+
+/** PNG pixels per unit: label text at the page guide's size, else 10 pt, at `dpi`. */
+function exportPngScale(dpi) {
+  return pngRasterScale(dpi, pageGuide?.textPt ?? DEFAULT_EXPORT_TEXT_PT);
+}
 
 function reportImageCopy(text, error = false) {
   clipboardNotice = text;
@@ -26650,7 +26761,8 @@ async function copyAsImage() {
     // Capture the selected model synchronously; ClipboardItem's promised
     // payloads let the write start within this same user gesture.
     const svg = selectionDrawing(circuit, copySelectionSource());
-    const write = writeDrawingToClipboard(svg);
+    const dpi = exportPngDpi();
+    const write = writeDrawingToClipboard(svg, { dpi, scale: exportPngScale(dpi) });
     reportImageCopy('Copying image…');
     await write;
     reportImageCopy('Copied image — paste into another app.');
@@ -26666,7 +26778,7 @@ async function copyAsImage() {
  * for every beat as numbered files (`name-1`, `name-2`, ...). Beats share the
  * whole drawing's frame, so the files line up when stepped through.
  */
-async function runExport({ dir, name, formats, grid = false, dark = false, selection = null, beat = null }) {
+async function runExport({ dir, name, formats, grid = false, dark = false, pngDpi = normalizePngDpi(null), selection = null, beat = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
   const unsupported = formats.filter((format) => !supportedFormats.has(format));
   if (unsupported.length) {
@@ -26713,7 +26825,8 @@ async function runExport({ dir, name, formats, grid = false, dark = false, selec
       });
       const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
       const request = { dir, name: job.name, formats, svg };
-      if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
+      if (formats.includes('png')) request.png = await svgToPngDataUrl(svg, exportPngScale(pngDpi), { dpi: pngDpi });
+      if (formats.includes('pdf')) request.pdfPng = await svgToPngDataUrl(svg, PDF_FALLBACK_PNG_SCALE);
       let result;
       try {
         result = await persistence.exportFiles({ ...request, ...(overwrite ? { overwrite: true } : {}) }, { prepared });
@@ -26794,6 +26907,8 @@ function renderExportLocation() {
   const formats = [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => `.${input.value}`);
   const extensions = document.getElementById('export-extensions');
   if (extensions) extensions.textContent = formats.join(' ');
+  const dpi = exportForm.querySelector('select[name="pngDpi"]');
+  if (dpi) dpi.disabled = !formats.includes('.png');
   const submit = document.getElementById('export-submit');
   if (submit) submit.disabled = !formats.length || !exportFolder || !validDocumentName(document.getElementById('export-name')?.value);
 }
@@ -26808,6 +26923,8 @@ function exportCircuit() {
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  const dpiSelect = exportForm.querySelector('select[name="pngDpi"]');
+  if (dpiSelect) dpiSelect.value = String(normalizePngDpi(saved?.pngDpi));
   // Selection-only is offered per export, never remembered: a later export
   // with nothing selected must not silently shrink to a stale choice.
   const source = copySelectionSource();
@@ -40530,7 +40647,11 @@ exportForm?.addEventListener('submit', (event) => {
   const name = validDocumentName(document.getElementById('export-name')?.value);
   if (!formats.length || !name || !exportFolder) return;
   exportDialog.close();
-  const settings = { grid: exportGridInput?.checked === true, dark: exportDarkInput?.checked === true };
+  const settings = {
+    grid: exportGridInput?.checked === true,
+    dark: exportDarkInput?.checked === true,
+    pngDpi: normalizePngDpi(exportForm.querySelector('select[name="pngDpi"]')?.value),
+  };
   try {
     const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
     // Remember a folder only when it differs from the document's own folder.

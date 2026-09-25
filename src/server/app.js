@@ -383,8 +383,13 @@ export async function startApp({
     if (!formats.length) throw httpError('choose at least one export format');
     const svg = typeof body.svg === 'string' ? body.svg : '';
     if (!/^\s*<svg\b/i.test(svg)) throw httpError('export is missing its SVG rendering');
-    const pngMatch = typeof body.png === 'string' ? body.png.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/) : null;
-    const png = pngMatch ? Buffer.from(pngMatch[1], 'base64') : null;
+    const pngData = (value) => {
+      const match = typeof value === 'string' ? value.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/) : null;
+      return match ? Buffer.from(match[1], 'base64') : null;
+    };
+    const png = pngData(body.png);
+    // The PDF fallback raster may be finer than the PNG export's resolution.
+    const pdfPng = pngData(body.pdfPng) || png;
     if (formats.includes('png') && !png) throw httpError('export is missing its PNG rendering');
 
     const paths = Object.fromEntries(formats.map((format) => [format, join(dir, `${name}.${format}`)]));
@@ -407,9 +412,9 @@ export async function startApp({
       try {
         contents.pdf = await printSvgToPdf(svg, { browser: pdfBrowser });
       } catch (error) {
-        if (!png) throw httpError(`could not create PDF: ${error.message}`, 500);
+        if (!pdfPng) throw httpError(`could not create PDF: ${error.message}`, 500);
         const { width, height } = svgPixelSize(svg);
-        contents.pdf = pngToPdf(png, { widthPt: width * 0.75, heightPt: height * 0.75 });
+        contents.pdf = pngToPdf(pdfPng, { widthPt: width * 0.75, heightPt: height * 0.75 });
         notes.push(error.code === 'no-browser'
           ? 'PDF contains a high-resolution image because no Chrome, Chromium, Edge, or Brave browser was found for vector output.'
           : `PDF contains a high-resolution image because vector printing failed: ${error.message}`);

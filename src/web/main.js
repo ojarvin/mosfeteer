@@ -20,6 +20,7 @@ import { addBeat, beatTargetId, beatTitle, cycleBeatHighlight, highlightsAt, int
 import { TipBook } from './tips.js';
 import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
+import { DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } from '../core/png-export.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
 import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
@@ -1337,7 +1338,18 @@ function copySelectionSource() {
 let clipboardNotice = '';
 let clipboardNoticeTimer = null;
 let imageCopyInFlight = false;
-const EXPORT_PNG_SCALE = 3;
+// A PDF that falls back to an image keeps this fine raster whatever the PNG DPI.
+const PDF_FALLBACK_PNG_SCALE = 3;
+
+/** The remembered PNG resolution (export dialog), also used by copied images. */
+function exportPngDpi() {
+  try { return normalizePngDpi(JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null')?.pngDpi); } catch { return normalizePngDpi(null); }
+}
+
+/** PNG pixels per unit: label text at the page guide's size, else 10 pt, at `dpi`. */
+function exportPngScale(dpi) {
+  return pngRasterScale(dpi, pageGuide?.textPt ?? DEFAULT_EXPORT_TEXT_PT);
+}
 
 function reportImageCopy(text, error = false) {
   clipboardNotice = text;
@@ -1354,7 +1366,8 @@ async function copyAsImage() {
     // Capture the selected model synchronously; ClipboardItem's promised
     // payloads let the write start within this same user gesture.
     const svg = selectionDrawing(circuit, copySelectionSource());
-    const write = writeDrawingToClipboard(svg);
+    const dpi = exportPngDpi();
+    const write = writeDrawingToClipboard(svg, { dpi, scale: exportPngScale(dpi) });
     reportImageCopy('Copying image…');
     await write;
     reportImageCopy('Copied image — paste into another app.');
@@ -1370,7 +1383,7 @@ async function copyAsImage() {
  * for every beat as numbered files (`name-1`, `name-2`, ...). Beats share the
  * whole drawing's frame, so the files line up when stepped through.
  */
-async function runExport({ dir, name, formats, grid = false, dark = false, selection = null, beat = null }) {
+async function runExport({ dir, name, formats, grid = false, dark = false, pngDpi = normalizePngDpi(null), selection = null, beat = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
   const unsupported = formats.filter((format) => !supportedFormats.has(format));
   if (unsupported.length) {
@@ -1417,7 +1430,8 @@ async function runExport({ dir, name, formats, grid = false, dark = false, selec
       });
       const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
       const request = { dir, name: job.name, formats, svg };
-      if (formats.includes('png') || formats.includes('pdf')) request.png = await svgToPngDataUrl(svg, EXPORT_PNG_SCALE);
+      if (formats.includes('png')) request.png = await svgToPngDataUrl(svg, exportPngScale(pngDpi), { dpi: pngDpi });
+      if (formats.includes('pdf')) request.pdfPng = await svgToPngDataUrl(svg, PDF_FALLBACK_PNG_SCALE);
       let result;
       try {
         result = await persistence.exportFiles({ ...request, ...(overwrite ? { overwrite: true } : {}) }, { prepared });
@@ -1498,6 +1512,8 @@ function renderExportLocation() {
   const formats = [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => `.${input.value}`);
   const extensions = document.getElementById('export-extensions');
   if (extensions) extensions.textContent = formats.join(' ');
+  const dpi = exportForm.querySelector('select[name="pngDpi"]');
+  if (dpi) dpi.disabled = !formats.includes('.png');
   const submit = document.getElementById('export-submit');
   if (submit) submit.disabled = !formats.length || !exportFolder || !validDocumentName(document.getElementById('export-name')?.value);
 }
@@ -1512,6 +1528,8 @@ function exportCircuit() {
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  const dpiSelect = exportForm.querySelector('select[name="pngDpi"]');
+  if (dpiSelect) dpiSelect.value = String(normalizePngDpi(saved?.pngDpi));
   // Selection-only is offered per export, never remembered: a later export
   // with nothing selected must not silently shrink to a stale choice.
   const source = copySelectionSource();
@@ -15234,7 +15252,11 @@ exportForm?.addEventListener('submit', (event) => {
   const name = validDocumentName(document.getElementById('export-name')?.value);
   if (!formats.length || !name || !exportFolder) return;
   exportDialog.close();
-  const settings = { grid: exportGridInput?.checked === true, dark: exportDarkInput?.checked === true };
+  const settings = {
+    grid: exportGridInput?.checked === true,
+    dark: exportDarkInput?.checked === true,
+    pngDpi: normalizePngDpi(exportForm.querySelector('select[name="pngDpi"]')?.value),
+  };
   try {
     const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
     // Remember a folder only when it differs from the document's own folder.

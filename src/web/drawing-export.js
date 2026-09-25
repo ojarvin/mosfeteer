@@ -1,6 +1,9 @@
 import { svgPixelSize } from '../core/render.js';
+import { withPngDensity } from '../core/png-export.js';
 
-export async function svgToPngDataUrl(svg, scale = 4) {
+/** Rasterize `svg` at `scale` pixels per SVG unit; `dpi`, when given, is
+ *  recorded in the PNG so apps place it at its intended physical size. */
+export async function svgToPngDataUrl(svg, scale = 4, { dpi = null } = {}) {
   const { width, height } = svgPixelSize(svg);
   const image = new Image();
   // A Blob URL gives SVGs an opaque origin. Chromium then taints the canvas
@@ -20,7 +23,17 @@ export async function svgToPngDataUrl(svg, scale = 4) {
   context.fillStyle = '#fff';
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/png');
+  const png = canvas.toDataURL('image/png');
+  return dpi ? pngDataUrlWithDensity(png, dpi) : png;
+}
+
+function pngDataUrlWithDensity(url, dpi) {
+  const prefix = 'data:image/png;base64,';
+  if (!url.startsWith(prefix)) return url;
+  const bytes = withPngDensity(Uint8Array.from(atob(url.slice(prefix.length)), (char) => char.charCodeAt(0)), dpi);
+  let binary = '';
+  for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  return prefix + btoa(binary);
 }
 
 export function applyExportDarkTheme(svg) {

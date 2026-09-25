@@ -1,4 +1,5 @@
 import { svgToPngDataUrl, withEmbeddedMathFont } from './drawing-export.js';
+import { DEFAULT_PNG_DPI, pngRasterScale } from '../core/png-export.js';
 
 export function pngDataUrlBlob(dataUrl) {
   const prefix = 'data:image/png;base64,';
@@ -9,8 +10,11 @@ export function pngDataUrlBlob(dataUrl) {
 }
 
 /** Start both clipboard payloads immediately; SVG is carried as plain text for
- * browsers without a portable SVG clipboard image type. */
+ * browsers without a portable SVG clipboard image type. The PNG is `scale`
+ * pixels per unit and records `dpi`, as a PNG export does. */
 export function writeDrawingToClipboard(svg, {
+  dpi = DEFAULT_PNG_DPI,
+  scale = pngRasterScale(dpi),
   clipboard = globalThis.navigator?.clipboard,
   ClipboardItem = globalThis.ClipboardItem,
   embedFont = withEmbeddedMathFont,
@@ -18,7 +22,7 @@ export function writeDrawingToClipboard(svg, {
 } = {}) {
   if (!clipboard?.write || !ClipboardItem) throw new Error('image clipboard is unavailable in this browser');
   const drawing = Promise.resolve().then(() => embedFont(svg));
-  const png = drawing.then((value) => rasterize(value, 4)).then(pngDataUrlBlob);
+  const png = drawing.then((value) => rasterize(value, scale, { dpi })).then(pngDataUrlBlob);
   const text = drawing.then((value) => new Blob([value], { type: 'text/plain' }));
   // A browser can reject the write before consuming either payload promise.
   // Keep preparation errors observed in that case as well.
