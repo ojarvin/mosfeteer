@@ -75,7 +75,7 @@ import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatO
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback } from './commit-flash.js';
-import { appendMarkupText, renderComponents, renderNets, renderDetail, PANEL_COLLAPSED_KEY, collapsedPanels, toggleSidePanel, installSidePanel } from './side-panel.js';
+import { appendMarkupText, renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } from './side-panel.js';
 import { toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 
@@ -8781,9 +8781,6 @@ for (const rail of document.querySelectorAll('.mode-toolbar, .rail-flyout')) {
 
 // ----- side panel: collapsible sections, filter, resizable width ------------
 
-try {
-  for (const name of JSON.parse(localStorage.getItem(PANEL_COLLAPSED_KEY) || '[]')) collapsedPanels.add(name);
-} catch { /* storage unavailable */ }
 
 clearCheckButtonEl?.addEventListener('click', () => {
   clearCheckReport();

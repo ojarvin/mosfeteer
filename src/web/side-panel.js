@@ -635,6 +635,9 @@ export function toggleSidePanel() {
 }
 
 export function installSidePanel() {
+  try {
+    for (const name of JSON.parse(localStorage.getItem(PANEL_COLLAPSED_KEY) || '[]')) collapsedPanels.add(name);
+  } catch { /* storage unavailable */ }
   for (const toggle of document.querySelectorAll('.side-panel .panel-toggle')) {
     const section = toggle.closest('.panel-group');
     if (!section.dataset.panel) section.dataset.panel = toggle.getAttribute('aria-controls');

@@ -31270,7 +31270,7 @@ let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObject
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
-let appendMarkupText, renderComponents, renderNets, renderDetail, PANEL_COLLAPSED_KEY, collapsedPanels, toggleSidePanel, installSidePanel; __bind(() => { ({ appendMarkupText, renderComponents, renderNets, renderDetail, PANEL_COLLAPSED_KEY, collapsedPanels, toggleSidePanel, installSidePanel } = __require("src/web/side-panel.js")); });
+let appendMarkupText, renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel; __bind(() => { ({ appendMarkupText, renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } = __require("src/web/side-panel.js")); });
 let toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, selectedStyleSource, pasteStyle, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } = __require("src/web/insert-menu.js")); });
 /**
@@ -40035,9 +40035,6 @@ for (const rail of document.querySelectorAll('.mode-toolbar, .rail-flyout')) {
 
 // ----- side panel: collapsible sections, filter, resizable width ------------
 
-try {
-  for (const name of JSON.parse(localStorage.getItem(PANEL_COLLAPSED_KEY) || '[]')) collapsedPanels.add(name);
-} catch { /* storage unavailable */ }
 
 clearCheckButtonEl?.addEventListener('click', () => {
   clearCheckReport();
@@ -42420,6 +42417,9 @@ function toggleSidePanel() {
 }
 
 function installSidePanel() {
+  try {
+    for (const name of JSON.parse(localStorage.getItem(PANEL_COLLAPSED_KEY) || '[]')) collapsedPanels.add(name);
+  } catch { /* storage unavailable */ }
   for (const toggle of document.querySelectorAll('.side-panel .panel-toggle')) {
     const section = toggle.closest('.panel-group');
     if (!section.dataset.panel) section.dataset.panel = toggle.getAttribute('aria-controls');
