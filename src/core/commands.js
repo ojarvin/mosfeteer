@@ -176,7 +176,7 @@ const ISSUE_HINTS = {
   'unconnected-terminal': 'Connect this terminal with Wire/connect, or deliberately remove the unused component.',
   'component-overlap': 'Move one component at least one grid cell clear of the other component body.',
   'label-component-overlap': 'Move the label into open space; keep its anchor attached if it is an electrical net label.',
-  'label-overlap': 'Separate the labels or adjust their alignment so their boxes do not overlap.',
+  'label-overlap': 'Separate the labels or adjust their alignment so their text does not overlap.',
   'wire-through-body': 'Reroute the net around the component body; only a shared MOS gate bus may use the documented exception.',
   'managed-diagonal': 'Redraw this net with F3 set to orthogonal; reserve diagonal geometry for deliberate fixed routes.',
   'grid-violation': 'Move or edit the object onto the 40-unit grid.',
@@ -336,13 +336,16 @@ export function evaluate(circuit) {
     { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) },
     { x: Math.min(a.x + a.w, b.x + b.w), y: Math.min(a.y + a.h, b.y + b.h) },
   ];
+  // Overlaps are what the reader sees: a label's text against a part's
+  // strokes and shapes, or another label's text. Grid-rounded label boxes are placement
+  // aids and routinely overlap without anything touching.
   for (const label of labels) {
-    const labelBox = label.bbox();
+    const labelBox = label.inkRect();
     for (const comp of comps) {
       if (annotated(comp)) continue;
-      const compBox = comp.bboxWorld();
-      if (!rectsOverlap(labelBox, compBox)) continue;
-      const message = `label ${label.id} overlaps ${comp.refdes}(${comp.type}) bbox`;
+      if (!comp.inkTouches(labelBox)) continue;
+      const compBox = comp.inkRectWorld();
+      const message = `label ${label.id} overlaps ${comp.refdes}(${comp.type})`;
       labelComponentOverlaps.push(message);
       addIssue('label-component-overlap', message, {
         refs: [label.id, comp.refdes],
@@ -354,10 +357,10 @@ export function evaluate(circuit) {
   }
   for (let i = 0; i < labels.length; i++) {
     const a = labels[i];
-    const aBox = a.bbox();
+    const aBox = a.inkRect();
     for (let j = i + 1; j < labels.length; j++) {
       const b = labels[j];
-      const bBox = b.bbox();
+      const bBox = b.inkRect();
       if (!rectsOverlap(aBox, bBox)) continue;
       const refs = [a.id, b.id];
       const message = `labels ${refs.join('/')} overlap`;

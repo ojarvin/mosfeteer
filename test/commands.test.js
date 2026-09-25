@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runCommand, commandHelp, evaluate, splitArgs, parseArgs } from '../src/core/commands.js';
 import { Circuit } from '../src/core/model.js';
+import { rectsOverlap } from '../src/core/geometry.js';
 
 function fresh() {
   return new Circuit();
@@ -838,11 +839,29 @@ test('evaluate ignores visual arrow and box annotations', () => {
   assert.equal(rep.issues.some((issue) => issue.labelId === 'B1' || issue.labelId === 'A1'), false);
 });
 
-test('evaluate reports overlapping distinct label bboxes', () => {
+test('evaluate reports a label touching a part\'s strokes, not one in an empty corner of it', () => {
   const c = fresh();
+  c.addComponent('nmos', { refdes: 'M1', x: 400, y: 0 });
+  // Above the gate lead, left of the gate plate: inside the outline, touching nothing.
+  const corner = c.addLabel({ id: 'CORNER', text: 'V', x: 290, y: -60 });
+  assert.ok(rectsOverlap(corner.inkRect(), c.getComponent('M1').inkRectWorld()));
+  assert.equal(runCommand(c, 'eval').json.labelComponentOverlaps.length, 0);
+  // On the gate lead itself.
+  corner.moveTo(290, 0);
+  const rep = runCommand(c, 'eval').json;
+  assert.equal(rep.labelComponentOverlaps.length, 1);
+  assert.deepEqual(rep.issues.find((entry) => entry.kind === 'label-component-overlap').refs, ['CORNER', 'M1']);
+});
+
+test('evaluate reports labels whose text overlaps, not merely their boxes', () => {
+  const c = fresh();
+  // Boxes overlap, but the single letters stand clear of each other.
   c.addLabel({ id: 'L1', text: 'A', x: 0, y: 0 });
   c.addLabel({ id: 'L2', text: 'B', x: 40, y: 0 });
+  assert.ok(rectsOverlap(c.labels.get('L1').bbox(), c.labels.get('L2').bbox()));
+  assert.equal(runCommand(c, 'eval').json.labelOverlaps.length, 0);
 
+  c.labels.get('L2').setText('BBBB');
   const res = runCommand(c, 'eval');
   const rep = res.json;
   const issue = rep.issues.find((entry) => entry.kind === 'label-overlap');
@@ -850,7 +869,11 @@ test('evaluate reports overlapping distinct label bboxes', () => {
   assert.equal(rep.labelOverlaps.length, 1);
   assert.deepEqual(issue.refs, ['L1', 'L2']);
   assert.equal(issue.severity, 'error');
-  assert.deepEqual(issue.points, [{ x: 0, y: -40 }, { x: 40, y: 40 }]);
+  const [a, b] = [c.labels.get('L1').inkRect(), c.labels.get('L2').inkRect()];
+  assert.deepEqual(issue.points, [
+    { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) },
+    { x: Math.min(a.x + a.w, b.x + b.w), y: Math.min(a.y + a.h, b.y + b.h) },
+  ]);
   assert.match(res.text, /label overlaps/);
 });
 

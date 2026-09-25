@@ -1,4 +1,4 @@
-import { ceilGrid, floorGrid, GRID } from './grid.js';
+import { GRID } from './grid.js';
 import { LABEL_FONT_SIZE } from './model.js';
 
 // Page guides. A figure placed at 100% of a LaTeX column width is scaled so its
@@ -68,12 +68,13 @@ export function pageGuideCaption(guide) {
 /** The frame an export of `circuit` would get, with the same bounds and
  *  padding the drawing export uses; an empty drawing centres it on the origin. */
 export function circuitPageGuideFrame(circuit, guide, padding = GRID) {
-  const b = circuit.bounds(0);
+  // The same visible extent the export frames (render.js svgString).
+  const b = circuit.inkBounds(0);
   if (b.w <= 0 && b.h <= 0) return pageGuideFrame(guide, 0, 0);
   return {
-    ...pageGuideFrame(guide, floorGrid(b.x) - padding, ceilGrid(b.x + b.w) + padding),
+    ...pageGuideFrame(guide, Math.floor(b.x) - padding, Math.ceil(b.x + b.w) + padding),
     // The figure's vertical extent, so an overflow can be marked clear of it.
-    top: floorGrid(b.y) - padding,
-    bottom: ceilGrid(b.y + b.h) + padding,
+    top: Math.floor(b.y) - padding,
+    bottom: Math.ceil(b.y + b.h) + padding,
   };
 }

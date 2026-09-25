@@ -1,9 +1,9 @@
-import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectUnion, transformRect } from './geometry.js';
+import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
-import { LABEL_FONT_SIZES } from './style.js';
+import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } from './beats.js';
@@ -249,6 +249,94 @@ export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
 /** Gap between left/right aligned text and its box edge: a quarter grid cell. */
 export const LABEL_ALIGN_INSET = GRID / 4;
+
+const symbolInk = new WeakMap();
+const symbolInkPieces = new WeakMap();
+
+/** The local rectangles a symbol's strokes and shapes cover, one per path
+ * segment (a curve by its control points), polygon, circle, and rect, each
+ * reaching half its stroke past its points. Finer than symbolInkRect, for
+ * telling whether text touches the drawing or only sits in an empty corner
+ * of it. Cached per definition. */
+export function symbolInkParts(def) {
+  if (!def?.graphics?.length) return [];
+  if (symbolInkPieces.has(def)) return symbolInkPieces.get(def);
+  const parts = [];
+  const add = (g, pts) => {
+    const half = g.style ? strokeWidth({}, g.style) / 2 : 0;
+    const r = rectFromPoints(pts);
+    parts.push({ x: r.x - half, y: r.y - half, w: r.w + 2 * half, h: r.h + 2 * half });
+  };
+  for (const g of def.graphics) {
+    if (g.kind === 'path') {
+      // Absolute M/L/C/Z: a segment runs from the previous end point through
+      // the command's points (for C, its two control points and end point).
+      const commands = String(g.d).match(/[MLCZ][^MLCZ]*/gi) || [];
+      let start = null;
+      let last = null;
+      for (const command of commands) {
+        const type = command[0].toUpperCase();
+        const numbers = command.slice(1).match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+        const pts = [];
+        for (let i = 0; i + 1 < numbers.length; i += 2) pts.push({ x: numbers[i], y: numbers[i + 1] });
+        if (type === 'M') {
+          start = last = pts[0] || last;
+          for (const p of pts.slice(1)) { add(g, [last, p]); last = p; }
+        } else if (type === 'Z') {
+          if (last && start) add(g, [last, start]);
+          last = start;
+        } else if (last) {
+          if (type === 'C') {
+            for (let i = 0; i + 2 < pts.length; i += 3) { add(g, [last, pts[i], pts[i + 1], pts[i + 2]]); last = pts[i + 2]; }
+          } else {
+            for (const p of pts) { add(g, [last, p]); last = p; }
+          }
+        }
+      }
+    } else if (g.kind === 'polygon') {
+      add(g, g.points);
+    } else if (g.kind === 'circle' || g.kind === 'dot') {
+      add(g, [{ x: g.cx - g.r, y: g.cy - g.r }, { x: g.cx + g.r, y: g.cy + g.r }]);
+    } else if (g.kind === 'rect') {
+      add(g, [{ x: g.x, y: g.y }, { x: g.x + g.w, y: g.y + g.h }]);
+    }
+  }
+  symbolInkPieces.set(def, parts);
+  return parts;
+}
+
+/** The local rectangle a symbol's graphics cover: path points (absolute
+ * M/L/C, curve control points included), polygons, circles, rects, and text
+ * anchors. Null when it draws nothing. Cached per definition. */
+export function symbolInkRect(def) {
+  if (!def?.graphics?.length) return null;
+  if (symbolInk.has(def)) return symbolInk.get(def);
+  const points = [];
+  // A stroked outline reaches half its stroke past its points.
+  const stroked = (g, pts) => {
+    const half = g.style ? strokeWidth({}, g.style) / 2 : 0;
+    for (const p of pts) points.push({ x: p.x - half, y: p.y - half }, { x: p.x + half, y: p.y + half });
+  };
+  for (const g of def.graphics) {
+    if (g.kind === 'path') {
+      const numbers = String(g.d).match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+      const pts = [];
+      for (let i = 0; i + 1 < numbers.length; i += 2) pts.push({ x: numbers[i], y: numbers[i + 1] });
+      stroked(g, pts);
+    } else if (g.kind === 'polygon') {
+      stroked(g, g.points);
+    } else if (g.kind === 'circle' || g.kind === 'dot') {
+      stroked(g, [{ x: g.cx - g.r, y: g.cy - g.r }, { x: g.cx + g.r, y: g.cy + g.r }]);
+    } else if (g.kind === 'rect') {
+      stroked(g, [{ x: g.x, y: g.y }, { x: g.x + g.w, y: g.y + g.h }]);
+    } else if (g.kind === 'text') {
+      points.push({ x: g.x, y: g.y });
+    }
+  }
+  const rect = points.length ? rectFromPoints(points) : null;
+  symbolInk.set(def, rect);
+  return rect;
+}
 
 /** Label alignments. 'parent' is the owned-label default: text beside its
  * part aligns toward it, and the box keeps the edge facing the part fixed
@@ -886,6 +974,40 @@ export class LabelInstance {
    * aligned within the box (left/center/right) and vertically centered in it.
    * Returns {x, y, anchor} for an SVG <text> element.
    */
+  /**
+   * The rectangle the label visibly covers, for framing a drawing: the text
+   * itself rather than its grid-rounded box, and a shape's own geometry.
+   * A math label not yet measured by a browser falls back to its box.
+   */
+  inkRect() {
+    if (this.kind === 'arrow' || this.kind === 'line') {
+      return rectFromPoints(this.points?.length ? this.points : [this.anchor, this.end]);
+    }
+    if (this.kind === 'box') return rectFromPoints([this.anchor, this.end]);
+    const b = this.bbox();
+    const align = this.textAlign();
+    if (this.math) {
+      const measured = this._renderedTextBounds;
+      if (!measured) return b;
+      // Where mathLabelSvg's padded flex box puts the content.
+      const side = Math.max(6, Math.min(LABEL_ALIGN_INSET, b.w - measured.w - 6));
+      const x = align === 'left' ? b.x + side
+        : align === 'right' ? b.x + b.w - side - measured.w
+          : b.x + (b.w - measured.w) / 2;
+      return { x, y: b.y + (b.h - measured.h) / 2, w: measured.w, h: measured.h };
+    }
+    const { x, y, anchor } = this.textPos();
+    const w = this.textWidth();
+    const size = labelFontSize(this.style.width);
+    const lines = Math.max(1, this.text.split('\n').length);
+    // Capitals and superscripts above the baseline; descenders and the
+    // shifted subscripts below it.
+    const top = y - 0.75 * size;
+    const bottom = y + (lines - 1) * LABEL_FONT_SIZE + 0.3 * size;
+    const left = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+    return { x: left, y: top, w, h: bottom - top };
+  }
+
   textPos() {
     const b = this.bbox();
     const centerX = b.x + b.w / 2;
@@ -1275,6 +1397,20 @@ export class ComponentInstance {
 
   worldTerminals() {
     return this.terminalDefs.map((t) => ({ name: t.name, ...this.terminalWorld(t.name) }));
+  }
+
+  /** Whether `rect` (world) touches the drawn symbol: one of its strokes or
+   * shapes (symbolInkParts), not just the empty corners of its outline. */
+  inkTouches(rect) {
+    if (!rectsOverlap(rect, this.inkRectWorld())) return false;
+    if (this.type === 'block') return true;
+    return symbolInkParts(this.def).some((part) => rectsOverlap(rect, transformRect(this.transform, part)));
+  }
+
+  /** The rectangle the symbol is drawn in (symbolInkRect), in world space. */
+  inkRectWorld() {
+    if (this.type === 'block') return this.bboxWorld();
+    return transformRect(this.transform, symbolInkRect(this.def) || this.def.bbox);
   }
 
   bboxWorld() {
@@ -2979,6 +3115,7 @@ export class Circuit {
       if (excluded.has(n.id)) continue;
       wires.push(...this._explicitBranches(n));
     }
+    // Labels steer by their visible text, not their grid-rounded boxes.
     const labelRects = [];
     for (const l of this.labels.values()) {
       // Shape annotations are visual-only and must not influence routing.
@@ -2986,7 +3123,7 @@ export class Circuit {
       // The net being re-laid-out may pass through its own label. Other net
       // labels remain soft obstacles just like free annotations.
       if (l.isNetLabel() && excluded.has(l.netId)) continue;
-      labelRects.push(l.bbox());
+      labelRects.push(l.inkRect());
     }
     const env = { rects, pins, pinRects, gatePassages, wires, labelRects };
     this._routingEnvCache.set(key, env);
@@ -5800,6 +5937,24 @@ export class Circuit {
   // ----- queries used by renderer / agent ----------------------------
 
   /** Bounds of everything drawable (components + nets + labels), with margin. */
+  /** The drawing's visible extent: parts by their drawn symbols, wires, and
+   * labels by their text rather than their grid-rounded boxes
+   * (symbolInkRect, LabelInstance#inkRect). Used
+   * to frame exports and fit the view, so a label at the edge adds no
+   * empty cells. */
+  inkBounds(margin = 0) {
+    const rects = [];
+    for (const c of this.components.values()) rects.push(c.inkRectWorld());
+    for (const label of this.labels.values()) rects.push(label.inkRect());
+    for (const net of this.nets.values()) {
+      const pts = net.pathPoints();
+      if (pts.length) rects.push(rectFromPoints(pts));
+    }
+    if (rects.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+    const r = rectUnion(rects);
+    return { x: r.x - margin, y: r.y - margin, w: r.w + 2 * margin, h: r.h + 2 * margin };
+  }
+
   bounds(margin = 0) {
     const rects = [];
     for (const c of this.components.values()) rects.push(c.bboxWorld());

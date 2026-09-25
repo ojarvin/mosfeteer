@@ -102,9 +102,14 @@ test('no selection copies the entire drawing, using print-ready defaults', () =>
 test('bounds include owned labels and have explicit padding, even for flat wires and empty documents', () => {
   const circuit = new Circuit();
   circuit.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
-  const bounds = circuit.bounds();
+  const bounds = circuit.inkBounds();
+  // The owned label's text reaches above the part, but not its whole box.
+  assert.ok(bounds.y < circuit.getComponent('R1').bboxWorld().y);
+  assert.ok(bounds.y > circuit.labelOf('R1').bbox().y);
   const svg = selectionDrawing(circuit, { refs: ['R1'] }, { padding: 20 });
-  assert.ok(svg.includes(`viewBox="${bounds.x - 20} ${bounds.y - 20} ${bounds.w + 40} ${bounds.h + 40}"`));
+  const viewBox = svg.match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
+  const expected = [bounds.x - 20, bounds.y - 20, bounds.w + 40, bounds.h + 40];
+  viewBox.forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 0.01, `viewBox ${viewBox} ≈ ${expected}`));
   const empty = selectionDrawing(new Circuit(), {}, { padding: 0 });
   assert.match(empty, /width="1" height="1"/);
   assert.doesNotMatch(empty, /empty schematic/);

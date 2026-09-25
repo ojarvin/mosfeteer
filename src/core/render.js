@@ -651,7 +651,9 @@ export function svgString(circuit, opts = {}) {
   // Shape annotations and a few legacy texts keep a faint opacity instead.
   const shapeOpacity = (id) => labelOpacity(id) || (beatHiddenLabel(id) ? FADED : beat?.dimLabels.has(id) ? DIMMED : '');
   const refTextOpacity = (ref) => refOpacity(ref) || (beatHiddenRef(ref) ? FADED : beat?.dimRefs.has(ref) ? DIMMED : '');
-  const b = circuit.bounds(o.grid || o.background ? 0 : 20);
+  // A drawn grid frames on whole cells; otherwise the frame hugs what is
+  // visible, so a label at the edge does not add its box's empty cells.
+  const b = o.grid ? circuit.bounds(0) : circuit.inkBounds(o.background ? 0 : 20);
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
   if (empty && !vp) {
@@ -672,10 +674,12 @@ export function svgString(circuit, opts = {}) {
   // view (so free panning never rescales the drawing); without one, the view
   // auto-fits the circuit contents (exports / PNG).
   const pad = o.padding ?? (o.grid && !vp ? 0 : 40);
-  let x0 = vp ? vp.x : floorGrid(b.x) - pad;
-  const y0 = vp ? vp.y : floorGrid(b.y) - pad;
-  let x1 = vp ? vp.x + vp.w : ceilGrid(b.x + b.w) + pad;
-  const y1 = vp ? vp.y + vp.h : ceilGrid(b.y + b.h) + pad;
+  const lo = o.grid ? floorGrid : Math.floor;
+  const hi = o.grid ? ceilGrid : Math.ceil;
+  let x0 = vp ? vp.x : lo(b.x) - pad;
+  const y0 = vp ? vp.y : lo(b.y) - pad;
+  let x1 = vp ? vp.x + vp.w : hi(b.x + b.w) + pad;
+  const y1 = vp ? vp.y + vp.h : hi(b.y + b.h) + pad;
   // A page guide fixes the exported width, so the figure set at 100% column
   // width gets the guide's text size (see page-guide.js).
   const pageGuide = vp ? null : normalizePageGuide(o.pageGuide);

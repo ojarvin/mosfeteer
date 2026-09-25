@@ -4,6 +4,7 @@ import { editorOverlay, svgString, texToMathML, svgPixelSize, viewportFrame, vie
 import { Circuit, Net } from '../src/core/model.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 import { getSymbol } from '../src/core/components/index.js';
+import { GRID } from '../src/core/grid.js';
 
 import { strokeAttrs, setColorToken, resolveColor } from '../src/core/style.js';
 
@@ -25,6 +26,31 @@ test('an evaluation bar stays in the row so it stretches, with its condition at 
   assert.match(markup, /<\/mfrac><mo [^>]*stretchy="true"[^>]*minsize="2\.0em"[^>]*>\|<\/mo><msub><mspace depth="0\.6em"><\/mspace><mrow><msub>/);
   // Ordinary subscripts are unchanged.
   assert.match(markup, /<msub><mpadded depth="0"><mi>Z<\/mi><\/mpadded>/);
+});
+
+test('an export frames what is visible, not the grid-rounded label boxes', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('output', { refdes: 'VOUT', x: 400, y: 0 });
+  c.wireTo('R1.b', c.getComponent('VOUT').terminalWorld('p'));
+  const label = c.labelOf('VOUT');
+  label.setRenderedTextBounds(95, 50); // text a little over two cells: a four-cell box
+  const box = label.bbox();
+  const ink = label.inkRect();
+  assert.equal(box.w, 4 * GRID);
+  assert.ok(box.x + box.w - (ink.x + ink.w) > GRID / 2, 'the box runs well past the text');
+  const [x, , w] = svgString(c, { background: true, padding: GRID }).match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
+  assert.equal(x + w, Math.ceil(ink.x + ink.w) + GRID, 'the frame ends one padding past the text');
+  // Parts frame by their drawn symbol: a ground ends at its last bar (plus
+  // half its stroke), well inside its three-cell box.
+  const g = new Circuit();
+  g.addComponent('ground', { refdes: 'G1', x: 0, y: 0 });
+  const bar = g.getComponent('G1').inkRectWorld();
+  assert.ok(Math.abs(bar.y + bar.h - 90) < 1, `ground ink ends at ${bar.y + bar.h}`);
+  assert.equal(g.getComponent('G1').bboxWorld().h, 120);
+  // A drawn grid still frames whole cells.
+  const [gx, , gw] = svgString(c, { grid: true, background: true }).match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
+  assert.equal((gx + gw) % GRID, 0);
 });
 
 test('grid lines use the ordinary style throughout', () => {

@@ -88,7 +88,7 @@ export function selectionDrawing(document, selection = {}, options = {}) {
   const drawing = selectionSubset(document, selection);
   const padding = options.padding ?? GRID;
   if (!Number.isFinite(padding) || padding < 0) throw new Error('drawing padding must be a non-negative number');
-  const bounds = drawing.bounds();
+  const bounds = drawing.inkBounds();
   const viewport = {
     x: bounds.x - padding, y: bounds.y - padding,
     w: Math.max(1, bounds.w + padding * 2), h: Math.max(1, bounds.h + padding * 2),

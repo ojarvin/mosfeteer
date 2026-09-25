@@ -3810,7 +3810,7 @@ function fitView({ animate = false } = {}) {
     x1 = Math.max(x1, x);
     y1 = Math.max(y1, y);
   };
-  const b = circuit.bounds();
+  const b = circuit.inkBounds();
   if (b.w > 0 || b.h > 0) {
     add(b.x, b.y);
     add(b.x + b.w, b.y + b.h);

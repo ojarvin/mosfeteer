@@ -170,6 +170,12 @@ hover glows) in that color without changing their own styles.
 - Solid wires and terminal leads share square-capped `wire-ink` paths so
   terminal joints rasterize once. Per-segment wire elements remain transparent
   hit targets; ghost/dashed strokes retain their own painted elements.
+- Exports, the page guide, and fit-to-view frame the visible extent
+  (`Circuit#inkBounds`: drawn symbol graphics, wires, label text), not the
+  grid-rounded boxes, plus the export padding; only a drawn grid snaps the
+  frame to whole cells. Design Check's label overlaps compare label text with
+  other text and with a part's individual strokes (`inkTouches`), and labels
+  steer the router by their text; placement still uses the grid boxes.
 - An active page guide (`src/core/page-guide.js`, an app preference) pads a
   drawing export to its exact width, centred, so the figure at full column
   width gets the guide's text size. The editor draws the same frame.

@@ -1254,7 +1254,9 @@ test('label geometry and text edits invalidate routing obstacles', () => {
   let env = c._netEnv();
   label.moveTo(160, 0);
   assert.notStrictEqual(c._netEnv(), env);
-  assert.equal(c._netEnv().labelRects[0].x, 120);
+  // Labels steer the router by their visible text.
+  assert.deepEqual(c._netEnv().labelRects[0], label.inkRect());
+  assert.ok(label.inkRect().x > 120 && label.inkRect().x < 160);
 
   env = c._netEnv();
   label.setText('long label');
@@ -2702,8 +2704,8 @@ test('net-label anchors must be drawable, IDs are unique, and foreign labels rem
     labels: [{ id: 'DUP', text: 'a', anchor: { x: 0, y: 0 } }, { id: 'DUP', text: 'b', anchor: { x: 40, y: 0 } }],
   }), /label id/);
   const env = c._netEnv(a.id);
-  assert.equal(env.labelRects.some((r) => r.x === la.bbox().x && r.y === la.bbox().y), false);
-  assert.equal(env.labelRects.some((r) => r.x === lb.bbox().x && r.y === lb.bbox().y), true);
+  assert.equal(env.labelRects.some((r) => r.x === la.inkRect().x && r.y === la.inkRect().y), false);
+  assert.equal(env.labelRects.some((r) => r.x === lb.inkRect().x && r.y === lb.inkRect().y), true);
 });
 
 test('visual annotations are excluded from routing label obstacles', () => {
@@ -2714,7 +2716,7 @@ test('visual annotations are excluded from routing label obstacles', () => {
   const env = c._netEnv();
   assert.equal(env.labelRects.some((r) => r.x === c.labels.get('B1').bbox().x), false);
   assert.equal(env.labelRects.some((r) => r.x === c.labels.get('A1').bbox().x), false);
-  assert.equal(env.labelRects.some((r) => r.x === c.labels.get('L1').bbox().x), true);
+  assert.equal(env.labelRects.some((r) => r.x === c.labels.get('L1').inkRect().x), true);
 });
 
 test('managed net merges preserve labels and inherit the physical name', () => {
