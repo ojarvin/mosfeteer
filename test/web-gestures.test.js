@@ -273,6 +273,8 @@ test('small windows: rail follows canvas height, one-row toolbar, drawer panel',
   assert.match(css, /body\.side-panel-open \.side-panel \{\s*transform: none;/);
   assert.match(main, /else if \(key === 'P'\) toggleSidePanel\(\);/);
   assert.match(main, /window\.matchMedia\('\(max-width: 600px\)'\)/);
+  // Ctrl+F reveals a hidden panel before focusing its filter; inert fields take no focus.
+  assert.match(main, /if \(!sidePanelVisible\(\)\) setSidePanelVisible\(true\);\s*filter\.focus\(\);/);
 });
 
 test('Design check runs from its panel section and an always-visible status chip', async () => {

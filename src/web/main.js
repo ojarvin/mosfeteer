@@ -57,7 +57,7 @@ import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatO
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
-import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } from './side-panel.js';
+import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } from './side-panel.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
@@ -7089,6 +7089,8 @@ window.addEventListener('keydown', (ev) => {
     const filter = document.getElementById('panel-filter');
     if (filter && !filter.closest('[hidden]') && !inlineInput) {
       ev.preventDefault();
+      // A hidden panel is inert and cannot take focus; reveal it first.
+      if (!sidePanelVisible()) setSidePanelVisible(true);
       filter.focus();
       filter.select();
       return;

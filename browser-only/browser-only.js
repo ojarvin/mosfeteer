@@ -32534,7 +32534,7 @@ let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObject
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
-let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel } = __require("src/web/side-panel.js")); });
+let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } = __require("src/web/side-panel.js")); });
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
@@ -39626,6 +39626,8 @@ window.addEventListener('keydown', (ev) => {
     const filter = document.getElementById('panel-filter');
     if (filter && !filter.closest('[hidden]') && !inlineInput) {
       ev.preventDefault();
+      // A hidden panel is inert and cannot take focus; reveal it first.
+      if (!sidePanelVisible()) setSidePanelVisible(true);
       filter.focus();
       filter.select();
       return;
