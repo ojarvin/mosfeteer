@@ -10,28 +10,27 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, componentLabelText, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, parseLabelRuns, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, NET_HIGHLIGHT_COLORS, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, normalizeComponentRefdes, referenceMarkerInfo, referenceMarkerIsLocal, referenceMarkerNameConflicts, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames, symbolTypeNames } from '../core/components/index.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
 import { addTerminalStubs } from '../core/stubs.js';
-import { cycleBeatHighlight, highlightsAt, setHighlightFrom, switchPhase } from '../core/beats.js';
+import { cycleBeatHighlight, highlightsAt, setHighlightFrom } from '../core/beats.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { componentShapeSvg, editorOverlay, svgString } from '../core/render.js';
-import { resolveColor, themeInkSvg } from '../core/style.js';
+import { themeInkSvg } from '../core/style.js';
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
 import { loadDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { resolveCopySelection } from '../core/selection.js';
 import { encodeObjectClipboard, decodeObjectClipboard } from '../core/object-clipboard.js';
 import { applyTransform, distanceToSegment } from '../core/geometry.js';
-import { applyMarkup } from '../core/model.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { copyableLabelPayload, selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
-import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, componentPaletteItems, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
+import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, naturalCompare, placementSearchScore, withRecentType } from './toolbar.js';
 import { confirmChoice } from './file-dialog.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } from './interaction.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
@@ -44,21 +43,16 @@ import {
   componentContextMenuEl,
   componentsListEl,
   netsListEl,
-  detailEl,
   cmdInput,
   statusZoomEl,
   circuitNameEl,
   clearCheckButtonEl,
   helpDialog,
   helpSearch,
-  analysisDialog,
   modeToolbarEl,
   toolbarEl,
   railFlyoutProxyEl,
   railFlyoutEl,
-  panelFilterEl,
-  sidePanelEl,
-  sidePanelToggleEl,
   scrollSchemeButton,
   themeBtn,
   gridBtn,
@@ -76,12 +70,13 @@ import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSum
 import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, prefersReducedMotion, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi } from './analysis-ui.js';
 import { installModelFigure } from './model-figure.js';
-import { closeComponentContextMenu, appendContextItem, openComponentContextMenu, selectContextTarget, openContextMenuAt, installContextMenu } from './context-menu.js';
-import { bindInlineEditorKeys, boxState, restoreBoxState, inlineEditSchematicBlock, openComponentChildLabelEditor, openReferenceMarkerEditor, inlineEditLabel } from './label-editor.js';
-import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, plainMarkup, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi } from './beats-ui.js';
+import { closeComponentContextMenu, appendContextItem, openContextMenuAt, installContextMenu } from './context-menu.js';
+import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
+import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi } from './beats-ui.js';
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, playCommitFeedback, mountCommitFeedback } from './commit-flash.js';
+import { appendMarkupText, renderComponents, renderNets, renderDetail, PANEL_COLLAPSED_KEY, collapsedPanels, toggleSidePanel, installSidePanel } from './side-panel.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -103,6 +98,7 @@ Object.defineProperties(editor, {
   circuit: { get: () => circuit, set: (value) => { circuit = value; } },
   clipboardNotice: { get: () => clipboardNotice, set: (value) => { clipboardNotice = value; } },
   committedCanvasKey: { get: () => committedCanvasKey, set: (value) => { committedCanvasKey = value; } },
+  componentRangeAnchor: { get: () => componentRangeAnchor, set: (value) => { componentRangeAnchor = value; } },
   contextMenuDismiss: { get: () => contextMenuDismiss, set: (value) => { contextMenuDismiss = value; } },
   copyMode: { get: () => copyMode, set: (value) => { copyMode = value; } },
   copyPending: { get: () => copyPending, set: (value) => { copyPending = value; } },
@@ -127,7 +123,9 @@ Object.defineProperties(editor, {
   labelMode: { get: () => labelMode, set: (value) => { labelMode = value; } },
   lastCheckReport: { get: () => lastCheckReport, set: (value) => { lastCheckReport = value; } },
   lastCircuitTag: { get: () => lastCircuitTag, set: (value) => { lastCircuitTag = value; } },
+  lastComponentClick: { get: () => lastComponentClick, set: (value) => { lastComponentClick = value; } },
   lastLabelClick: { get: () => lastLabelClick, set: (value) => { lastLabelClick = value; } },
+  lastNetClick: { get: () => lastNetClick, set: (value) => { lastNetClick = value; } },
   lastSavedSnapshot: { get: () => lastSavedSnapshot, set: (value) => { lastSavedSnapshot = value; } },
   lastSeenRevision: { get: () => lastSeenRevision, set: (value) => { lastSeenRevision = value; } },
   latestSmallSignalModel: { get: () => latestSmallSignalModel, set: (value) => { latestSmallSignalModel = value; } },
@@ -138,8 +136,10 @@ Object.defineProperties(editor, {
   moveMode: { get: () => moveMode, set: (value) => { moveMode = value; } },
   movePending: { get: () => movePending, set: (value) => { movePending = value; } },
   multi: { get: () => multi, set: (value) => { multi = value; } },
+  netRangeAnchor: { get: () => netRangeAnchor, set: (value) => { netRangeAnchor = value; } },
   netWarnings: { get: () => netWarnings, set: (value) => { netWarnings = value; } },
   pageGuide: { get: () => pageGuide, set: (value) => { pageGuide = value; } },
+  panelStateKey: { get: () => panelStateKey, set: (value) => { panelStateKey = value; } },
   pendingFeedbackSnapshot: { get: () => pendingFeedbackSnapshot, set: (value) => { pendingFeedbackSnapshot = value; } },
   pendingPlace: { get: () => pendingPlace, set: (value) => { pendingPlace = value; } },
   presenter: { get: () => presenter, set: (value) => { presenter = value; } },
@@ -701,12 +701,12 @@ function transientCopyGhost() {
   return drag?.mode === 'copyghost' ? drag.ghost : null;
 }
 
-function isTransientCopyGhostRef(refdes) {
+export function isTransientCopyGhostRef(refdes) {
   const ghost = transientCopyGhost();
   return !!ghost && (ghost.refs.includes(refdes) || ghost.mirror?.refs?.includes(refdes));
 }
 
-function transientCopyGhostNetIds() {
+export function transientCopyGhostNetIds() {
   const ghost = transientCopyGhost();
   return new Set([...(ghost?.netIds || []), ...(ghost?.mirror?.netIds || [])]);
 }
@@ -762,7 +762,7 @@ function labels() {
   return labelCache.value;
 }
 
-function rangeValues(items, anchor, value, getValue) {
+export function rangeValues(items, anchor, value, getValue) {
   const end = items.findIndex((item) => getValue(item) === value);
   const start = items.findIndex((item) => getValue(item) === anchor);
   if (end < 0) return [];
@@ -3620,7 +3620,7 @@ function setHoverTarget(next, fromPanel = false) {
   scheduleInteractionRender();
 }
 
-function bindHoverPreview(row, target) {
+export function bindHoverPreview(row, target) {
   row.addEventListener('mouseenter', () => setHoverTarget(target(), true));
   row.addEventListener('mouseleave', () => { if (hoverFromPanel) setHoverTarget(null); });
 }
@@ -7332,513 +7332,7 @@ canvasEl.addEventListener(
   { passive: false }
 );
 
-let panelFilter = '';
-let lastRevealedRow = '';
-
-function panelFilterMatches(...values) {
-  if (!panelFilter) return true;
-  return values.some((value) => value && String(value).replace(/[_^{}]/g, '').toLowerCase().includes(panelFilter));
-}
-
-function setPanelCount(id, shown, total) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = shown === total ? String(total) : `${shown}/${total}`;
-}
-
-export function componentDisplayName(comp) {
-  if (isReferenceMarker(comp)) return comp.refdes;
-  // A switch's label is its phase; the panel names the switch itself.
-  if (switchPhase(comp)) return componentLabelText(comp.refdes);
-  return circuit.labelOf(comp.refdes)?.text || componentLabelText(comp.refdes);
-}
-
-/** Render `_{…}`/`^{…}` label markup as sub/superscript DOM text. */
-export function appendMarkupText(el, text) {
-  for (const run of parseLabelRuns(String(text))) {
-    const node = run.sub || run.super ? document.createElement(run.sub ? 'sub' : 'sup') : document.createTextNode(run.text);
-    if (run.sub || run.super) node.textContent = run.text;
-    el.appendChild(node);
-  }
-}
-
-/** Keep a newly selected row visible without jumping on unrelated re-renders. */
-function revealSelectedRow(row, key) {
-  if (key === lastRevealedRow) return;
-  lastRevealedRow = key;
-  requestAnimationFrame(() => row.isConnected && row.scrollIntoView({ block: 'nearest' }));
-}
-
-/** Arrow keys walk a side-panel listbox; Enter and Space activate the row. */
-function bindListboxRowKeys(listEl, row) {
-  row.addEventListener('keydown', (ev) => {
-    const step = ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1
-      : ev.key === 'ArrowUp' || ev.key === 'ArrowLeft' ? -1 : 0;
-    if (step) {
-      const rows = [...listEl.querySelectorAll('[role="option"]')];
-      rows[(rows.indexOf(row) + step + rows.length) % rows.length]?.focus();
-      ev.preventDefault();
-      return;
-    }
-    if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    ev.preventDefault();
-    row.click();
-  });
-}
-
-function renderComponents() {
-  componentsListEl.innerHTML = '';
-  componentsListEl.setAttribute('role', 'listbox');
-  componentsListEl.setAttribute('aria-label', 'Components');
-  componentsListEl.setAttribute('aria-multiselectable', 'true');
-  const allComps = componentPaletteItems(sortedComps())
-    .filter((comp) => !isTransientCopyGhostRef(comp.refdes));
-  const comps = allComps.filter((comp) => panelFilterMatches(componentDisplayName(comp), comp.refdes, comp.type));
-  setPanelCount('components-count', comps.length, allComps.length);
-  if (comps.length === 0) {
-    componentsListEl.innerHTML = `<div class="no-items">${allComps.length ? 'No matching components' : 'No components'}</div>`;
-    return;
-  }
-  const primaryRef = selected && multi.has(selected) ? selected : [...multi][0];
-  for (const comp of comps) {
-    const row = document.createElement('div');
-    row.className = 'row' + (multi.has(comp.refdes) ? ' selected' : '');
-    row.dataset.ref = comp.refdes;
-    row.dataset.refdes = comp.refdes;
-    bindHoverPreview(row, () => ({ kind: 'component', refdes: comp.refdes }));
-    row.dataset.type = comp.type;
-    row.setAttribute('role', 'option');
-    row.tabIndex = multi.has(comp.refdes) || (!multi.size && comp.refdes === comps[0]?.refdes) ? 0 : -1;
-    row.id = `component-option-${CSS.escape(comp.refdes)}`;
-    row.setAttribute('aria-selected', String(multi.has(comp.refdes)));
-
-    const ref = document.createElement('span');
-    ref.className = 'ref';
-    appendMarkupText(ref, componentDisplayName(comp));
-    ref.title = isReferenceMarker(comp)
-      ? 'Double-click to edit its label'
-      : comp.type === 'block'
-        ? 'Double-click to edit block text'
-        : 'Double-click to rename';
-
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    const analysisTags = [];
-    if (comp.analysis?.model === 'triode') analysisTags.push('triode');
-    if (comp.analysis?.role) analysisTags.push(comp.analysis.role);
-    if (comp.analysis?.resistance === 'infinite' || comp.analysis?.resistance === true) analysisTags.push('R=∞');
-    if (comp.analysis?.resistance === 'finite') analysisTags.push('finite R');
-    if (comp.analysis?.channelLengthModulation === 'ignore') analysisTags.push('r_o→∞');
-    if (comp.analysis?.channelLengthModulation === 'finite') analysisTags.push('finite r_o');
-    if (comp.analysis?.gmroLarge === true) analysisTags.push('g_mr_o≫1');
-    if (comp.analysis?.gmroLarge === false) analysisTags.push('finite g_mr_o');
-    if (comp.analysis?.ignoreBodyEffect === true) analysisTags.push('V_BS=0');
-    if (comp.analysis?.ignoreBodyEffect === false) analysisTags.push('body effect');
-    if (switchPhase(comp)) analysisTags.unshift(plainMarkup(switchPhase(comp)));
-    meta.textContent = `${comp.type}${analysisTags.map((tag) => ` · ${tag}`).join('')}`;
-
-    row.appendChild(ref);
-    row.appendChild(meta);
-
-    row.addEventListener('contextmenu', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      selectContextTarget({ kind: 'component', value: comp });
-      render();
-      openComponentContextMenu({ kind: 'component', value: comp }, ev.clientX, ev.clientY);
-    });
-
-    row.addEventListener('click', (ev) => {
-      cursor = { x: comp.transform.x, y: comp.transform.y };
-      const now = Date.now();
-      const prev = lastComponentClick;
-      const doubleClick =
-        !ev.shiftKey &&
-        prev &&
-        prev.refdes === comp.refdes &&
-        now - prev.at < 500 &&
-        Math.abs(ev.clientX - prev.x) <= 6 &&
-        Math.abs(ev.clientY - prev.y) <= 6;
-      lastComponentClick = { refdes: comp.refdes, x: ev.clientX, y: ev.clientY, at: now };
-      if (doubleClick) {
-        if (isReferenceMarker(comp)) openReferenceMarkerEditor(comp);
-        else if (comp.type === 'block') inlineEditSchematicBlock(comp);
-        else startComponentRename(comp, ref);
-        return;
-      }
-      if (ev.shiftKey) {
-        const refs = rangeValues(comps, componentRangeAnchor, comp.refdes, (item) => item.refdes);
-        const next = ev.ctrlKey || ev.metaKey ? new Set(multi) : new Set();
-        for (const refdes of (refs.length ? refs : [comp.refdes])) next.add(refdes);
-        setSelection([...next], comp.refdes);
-      } else if (ev.ctrlKey || ev.metaKey) {
-        const next = new Set(multi);
-        if (next.has(comp.refdes)) next.delete(comp.refdes); else next.add(comp.refdes);
-        setSelection([...next], next.has(comp.refdes) ? comp.refdes : [...next][0]);
-      } else {
-        setSelection([comp.refdes]);
-      }
-      if (!ev.shiftKey) componentRangeAnchor = comp.refdes;
-      netRangeAnchor = null;
-      render();
-    });
-    row.addEventListener('dblclick', () => {
-      // Native dblclick backup for browsers that deliver it (manual detection
-      // in the click handler covers row replacement during the first click).
-      if (isReferenceMarker(comp)) openReferenceMarkerEditor(comp);
-      else if (comp.type === 'block') inlineEditSchematicBlock(comp);
-      else startComponentRename(comp, ref);
-    });
-    bindListboxRowKeys(componentsListEl, row);
-
-    componentsListEl.appendChild(row);
-    if (comp.refdes === primaryRef) revealSelectedRow(row, `component:${primaryRef}`);
-  }
-}
-
-function renderNets() {
-  netsListEl.innerHTML = '';
-  netsListEl.setAttribute('role', 'listbox');
-  netsListEl.setAttribute('aria-label', 'Electrical nets');
-  netsListEl.setAttribute('aria-multiselectable', 'true');
-  const hiddenNetIds = transientCopyGhostNetIds();
-  const visibleGroupNets = (net) => namedGroupNets(net).filter((candidate) => !hiddenNetIds.has(candidate.id));
-  const allNets = visibleNets();
-  const nets = allNets.filter((net) => panelFilterMatches(net.name, net.id));
-  setPanelCount('nets-count', nets.length, allNets.length);
-  if (nets.length === 0) {
-    netsListEl.innerHTML = `<div class="no-items">${allNets.length ? 'No matching nets' : 'No nets'}</div>`;
-    return;
-  }
-  const primaryNet = nets.find((net) => visibleGroupNets(net).some((candidate) => selectedNets.has(candidate.id)));
-  for (const net of nets) {
-    const groupedNets = visibleGroupNets(net);
-    const groupedIds = groupedNets.map((candidate) => candidate.id);
-    const groupSelected = groupedIds.some((id) => selectedNets.has(id));
-    const row = document.createElement('div');
-    row.className = 'row' + (groupSelected ? ' selected' : '');
-    row.setAttribute('role', 'option');
-    row.tabIndex = groupSelected || (!selectedNets.size && net.id === nets[0]?.id) ? 0 : -1;
-    row.id = `net-option-${CSS.escape(net.id)}`;
-    row.dataset.netIds = groupedIds.join(' ');
-    bindHoverPreview(row, () => ({ kind: 'net', ids: groupedIds }));
-    row.setAttribute('aria-selected', String(groupSelected));
-
-    const ref = document.createElement('span');
-    ref.className = 'ref';
-    const highlight = circuit.netHighlight(net);
-    if (highlight) {
-      const dot = document.createElement('span');
-      dot.className = 'net-highlight-dot';
-      dot.style.setProperty('--net-highlight', resolveColor(highlight));
-      dot.title = `Highlighted ${highlight}`;
-      ref.appendChild(dot);
-    }
-    appendMarkupText(ref, net.name || net.id);
-    ref.title = 'Double-click to rename';
-
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    const terminalKeys = new Set(groupedNets.flatMap((grouped) => grouped.terminals.map((terminal) => `${terminal.comp}.${terminal.term}`)));
-    const pins = terminalKeys.size;
-    const analysisNet = groupedNets.find((grouped) => grouped.analysis?.acGround || grouped.analysis?.role) || net;
-    const analysisTag = analysisNet.analysis?.acGround ? ' · AC ground' : analysisNet.analysis?.role ? ` · ${analysisNet.analysis.role}` : '';
-    meta.textContent = `${pins} ${pins === 1 ? 'pin' : 'pins'}${analysisTag}`;
-    const wireLength = groupedNets.reduce((total, grouped) => total + grouped.length(), 0);
-    row.title = `${groupedNets.map((grouped) => grouped.id).join(', ')} · ${pins} ${pins === 1 ? 'terminal' : 'terminals'} · ${wireLength} units of wire${analysisNet.analysis?.acGround ? ' · DC bias / AC ground' : ''}`;
-
-    row.appendChild(ref);
-    row.appendChild(meta);
-
-    row.addEventListener('contextmenu', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      selectContextTarget({ kind: 'net', value: net });
-      render();
-      openComponentContextMenu({ kind: 'net', value: net }, ev.clientX, ev.clientY);
-    });
-
-    row.addEventListener('click', (ev) => {
-      clearDiagnosticFocus();
-      const now = Date.now();
-      const prev = lastNetClick;
-      // A plain click re-renders the list, replacing this row node before the
-      // browser can fire a native `dblclick` on it, so a fast second click at
-      // the same position is detected here manually (like labels and wires).
-      const doubleClick =
-        !ev.shiftKey &&
-        prev &&
-        prev.netId === net.id &&
-        now - prev.at < 500 &&
-        Math.abs(ev.clientX - prev.x) <= 6 &&
-        Math.abs(ev.clientY - prev.y) <= 6;
-      lastNetClick = { netId: net.id, x: ev.clientX, y: ev.clientY, at: now };
-      if (doubleClick) {
-        startNetRename(net, ref);
-        return;
-      }
-      if (ev.shiftKey) {
-        const ids = rangeValues(nets, netRangeAnchor, net.id, (item) => item.id);
-        const next = ev.ctrlKey || ev.metaKey ? new Set(selectedNets) : new Set();
-        for (const id of (ids.length ? ids : [net.id])) {
-          for (const grouped of visibleGroupNets(circuit.nets.get(id))) next.add(grouped.id);
-        }
-        selectedNets = next;
-      } else if (ev.ctrlKey || ev.metaKey) {
-        const next = new Set(selectedNets);
-        if (groupSelected) for (const id of groupedIds) next.delete(id);
-        else for (const id of groupedIds) next.add(id);
-        selectedNets = next;
-      } else {
-        selectedNets = new Set(groupedIds);
-      }
-      componentRangeAnchor = null;
-      if (!ev.shiftKey) netRangeAnchor = net.id;
-      const pt = net.points()[Math.floor(net.points().length / 2)];
-      if (pt) cursor = { x: pt.x, y: pt.y };
-      render();
-    });
-
-    row.addEventListener('dblclick', () => {
-      // Native dblclick backup for browsers that deliver it (the manual
-      // detection above covers the row-replacing re-render case).
-      startNetRename(net, ref);
-    });
-    bindListboxRowKeys(netsListEl, row);
-
-    netsListEl.appendChild(row);
-    if (net === primaryNet) revealSelectedRow(row, `net:${net.id}`);
-  }
-}
-
-/** Open the inline refdes editor for a component row. Invalid or occupied
- * names are rejected before commit, leaving the model and selection untouched. */
-/** Ctrl/Cmd+, and Ctrl/Cmd+. toggle sub/superscript markup in a plain name field. */
-function bindMarkupShortcuts(input) {
-  input.addEventListener('keydown', (ev) => {
-    if (!(ev.ctrlKey || ev.metaKey) || (ev.key !== ',' && ev.key !== '.')) return;
-    ev.preventDefault();
-    const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, ev.key === ',' ? '_' : '^');
-    if (!res) return;
-    input.value = res.text;
-    input.setSelectionRange(res.selStart, res.selEnd);
-  });
-}
-
-export function startComponentRename(comp, ref) {
-  if (!comp || inlineInput) return;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'rename-input';
-  const ordinaryInstance = !isReferenceMarker(comp);
-  // A switch's label is its phase; renaming here renames the switch.
-  const currentLabel = ordinaryInstance && !switchPhase(comp) ? circuit.labelOf(comp.refdes) : null;
-  input.value = currentLabel?.text || (ordinaryInstance ? componentLabelText(comp.refdes) : comp.refdes);
-  input.placeholder = input.value;
-  input.spellcheck = false;
-  bindMarkupShortcuts(input);
-  ref.replaceWith(input);
-  inlineInput = input;
-  input.focus();
-  input.select();
-  let closed = false;
-  let prompting = false;
-  const done = async (applyText) => {
-    if (closed || prompting) return;
-    const value = input.value.trim();
-    const next = normalizeComponentRefdes(value);
-    if (applyText && next && next !== comp.refdes && INTERFACE_PIN_TYPES.has(comp.type)) {
-      const conflicts = namedConnectionConflicts(value, { ownerRefdes: comp.refdes });
-      const portConflict = portNameConflict(conflicts, comp.refdes);
-      if (portConflict) {
-        reportPortNameConflict(portConflict, value);
-        input.focus();
-        input.select();
-        return;
-      }
-      if (conflicts.length) {
-        prompting = true;
-        const connect = await confirmNamedConnection(value, conflicts);
-        prompting = false;
-        if (!connect) {
-          input.focus();
-          input.select();
-          return;
-        }
-      }
-    }
-    closed = true;
-    inlineInput = null;
-    input.replaceWith(ref);
-    if (applyText && next && next !== comp.refdes &&
-        /^[A-Za-z][A-Za-z0-9_]*$/.test(next) && !circuit.components.has(next)) {
-      const previous = comp.refdes;
-      const displayLabel = value;
-      commit(() => circuit.renameComponent(previous, next, { displayLabel }));
-      if (componentRangeAnchor === previous) componentRangeAnchor = next;
-      if (selected === previous) selected = next;
-      if (multi.has(previous)) {
-        multi.delete(previous);
-        multi.add(next);
-      }
-    } else if (applyText && next && next !== comp.refdes) {
-      logLine(!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)
-        ? `Invalid component name "${value}".`
-        : `Component name "${next}" is already in use.`, 'error');
-    }
-    render();
-  };
-  bindInlineEditorKeys(input, done);
-}
-
-/** Open the inline rename <input> for a net's row (Enter/blur commits, Esc
- *  cancels). The net name is replaced in place so the row is not re-rendered
- *  mid-edit. */
-export function startNetRename(net, ref) {
-  selectedNets = new Set([net.id]);
-  netRangeAnchor = net.id;
-  componentRangeAnchor = null;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'rename-input';
-  input.value = net.name || '';
-  input.placeholder = net.id;
-  input.spellcheck = false;
-  bindMarkupShortcuts(input);
-  ref.replaceWith(input);
-  input.focus();
-  input.select();
-  let closed = false;
-  let prompting = false;
-  const done = async (applyText) => {
-    if (closed || prompting) return;
-    const v = input.value.trim();
-    if (applyText && v && v !== net.name) {
-      const conflicts = namedConnectionConflicts(v, { netId: net.id });
-      if (conflicts.length) {
-        prompting = true;
-        const connect = await confirmNamedConnection(v, conflicts);
-        prompting = false;
-        if (!connect) {
-          input.focus();
-          input.select();
-          return;
-        }
-      }
-    }
-    closed = true;
-    input.replaceWith(ref);
-    if (applyText && v && v !== net.name) {
-      // A sole port names its net, so this rename can rename that port too.
-      // Carry the selection across with it, exactly like a component rename.
-      const ports = net.terminals
-        .map(({ comp }) => circuit.components.get(comp))
-        .filter((component) => component && INTERFACE_PIN_TYPES.has(component.type));
-      const previous = ports.length === 1 ? ports[0].refdes : null;
-      commit(() => {
-        circuit.renameNet(net.id, v);
-        // A side-panel rename is an intentional editor action: promote any
-        // compatibility child label synthesized by the model to a real local
-        // reference label so the renamed rail no longer groups with VSS/VDD.
-        circuit._markReferenceLabelsLocal?.(net);
-      });
-      const renamed = previous && ports[0].refdes !== previous ? ports[0].refdes : null;
-      if (renamed) {
-        if (componentRangeAnchor === previous) componentRangeAnchor = renamed;
-        if (selected === previous) selected = renamed;
-        if (multi.has(previous)) {
-          multi.delete(previous);
-          multi.add(renamed);
-        }
-      }
-    }
-    render();
-  };
-  bindInlineEditorKeys(input, done, { multiline: false });
-}
-
-function renderDetail() {
-  detailEl.innerHTML = '';
-  const label = selectedLabel();
-  if (label) {
-    const a = label.anchorWorld();
-    const role = label.isNetLabel?.() ? 'Net label' : label.owner ? 'Instance label' : 'Annotation';
-    const rows = [['Role', role], ['Align', label.align], ['Anchor', `${a.x}, ${a.y}`]];
-    if (label.owner) rows.push(['Owner', label.owner]);
-    if (label.netId) rows.push(['Net', circuit.nets.get(label.netId)?.name || label.netId]);
-    detailEl.appendChild(detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
-    const list = document.createElement('dl');
-    list.className = 'detail-props';
-    for (const [key, value] of rows) {
-      const dt = document.createElement('dt');
-      dt.textContent = key;
-      const dd = document.createElement('dd');
-      dd.textContent = value;
-      list.append(dt, dd);
-    }
-    detailEl.appendChild(list);
-    return;
-  }
-
-  const comp = selectedComp();
-  if (!comp) {
-    detailEl.innerHTML = '<div class="no-items">Select a component or label to inspect it</div>';
-    return;
-  }
-  if (isTransientCopyGhostRef(comp.refdes)) {
-    detailEl.innerHTML = '<div class="no-items">Copy ghost — commit it to inspect its terminals</div>';
-    return;
-  }
-
-  detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${comp.type} · ${switchPhase(comp) ? `phase ${plainMarkup(comp.value)}` : comp.value}` : comp.type));
-  const table = document.createElement('table');
-  const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>Pin</th><th>Net</th><th>Position</th></tr>';
-  table.appendChild(thead);
-  const tbody = document.createElement('tbody');
-  for (const t of comp.worldTerminals()) {
-    const tr = document.createElement('tr');
-    const net = circuit.netOfTerminal(`${comp.refdes}.${t.name}`);
-    const nameTd = document.createElement('td');
-    nameTd.textContent = t.name;
-    nameTd.className = 'pin-name';
-    const netTd = document.createElement('td');
-    if (net) {
-      appendMarkupText(netTd, net.name || net.id);
-      netTd.className = 'net-label';
-      netTd.title = net.id;
-    } else {
-      netTd.textContent = 'unconnected';
-      netTd.className = 'off-grid';
-    }
-    const posTd = document.createElement('td');
-    posTd.textContent = `${t.x}, ${t.y}`;
-    if (t.x % GRID !== 0 || t.y % GRID !== 0) {
-      posTd.className = 'off-grid';
-      posTd.title = 'Off the placement grid';
-    }
-    tr.append(nameTd, netTd, posTd);
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-  detailEl.appendChild(table);
-}
-
-function detailHeader(name, kind) {
-  const header = document.createElement('div');
-  header.className = 'detail-header';
-  const title = document.createElement('span');
-  title.className = 'detail-name';
-  appendMarkupText(title, name);
-  header.appendChild(title);
-  if (kind) {
-    const meta = document.createElement('span');
-    meta.className = 'detail-kind';
-    meta.textContent = kind;
-    header.appendChild(meta);
-  }
-  return header;
-}
-
+installSidePanel();
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 
 function onWireKey(key) {
@@ -10107,104 +9601,9 @@ document.getElementById('style-panel')?.addEventListener('click', (ev) => handle
 
 // ----- side panel: collapsible sections, filter, resizable width ------------
 
-const PANEL_COLLAPSED_KEY = 'mosfeteer:panel-collapsed';
-const PANEL_WIDTH_KEY = 'mosfeteer:panel-width';
-const collapsedPanels = new Set();
 try {
   for (const name of JSON.parse(localStorage.getItem(PANEL_COLLAPSED_KEY) || '[]')) collapsedPanels.add(name);
 } catch { /* storage unavailable */ }
-
-function panelSection(name) {
-  return document.querySelector(`.side-panel [data-panel="${CSS.escape(name)}"]`);
-}
-
-export function setPanelCollapsed(name, collapsed) {
-  const section = panelSection(name);
-  if (!section) return;
-  section.classList.toggle('collapsed', collapsed);
-  section.querySelector('.panel-toggle')?.setAttribute('aria-expanded', String(!collapsed));
-  if (collapsed) collapsedPanels.add(name); else collapsedPanels.delete(name);
-  try { localStorage.setItem(PANEL_COLLAPSED_KEY, JSON.stringify([...collapsedPanels])); } catch { /* storage unavailable */ }
-}
-
-for (const toggle of document.querySelectorAll('.side-panel .panel-toggle')) {
-  const section = toggle.closest('.panel-group');
-  if (!section.dataset.panel) section.dataset.panel = toggle.getAttribute('aria-controls');
-  const name = section.dataset.panel;
-  setPanelCollapsed(name, collapsedPanels.has(name));
-  toggle.addEventListener('click', () => setPanelCollapsed(name, !section.classList.contains('collapsed')));
-}
-
-panelFilterEl?.addEventListener('input', () => {
-  panelFilter = panelFilterEl.value.trim().replace(/[_^{}]/g, '').toLowerCase();
-  panelStateKey = '';
-  render();
-});
-panelFilterEl?.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Escape') return;
-  ev.preventDefault();
-  ev.stopPropagation();
-  if (panelFilterEl.value) {
-    panelFilterEl.value = '';
-    panelFilterEl.dispatchEvent(new Event('input'));
-  } else {
-    canvasEl.focus();
-  }
-});
-
-/** Drag/keyboard width control on a panel's left edge, persisted per panel. */
-function bindPanelResizer(panel, handle, storageKey, cssVar, minWidth) {
-  if (!panel || !handle) return;
-  const setWidth = (width, persist = true) => {
-    if (width == null) {
-      panel.style.removeProperty(cssVar);
-      try { localStorage.removeItem(storageKey); } catch { /* storage unavailable */ }
-      return;
-    }
-    const max = Math.max(minWidth, Math.round(window.innerWidth * 0.6));
-    const next = Math.round(Math.min(max, Math.max(minWidth, width)));
-    panel.style.setProperty(cssVar, `${next}px`);
-    handle.setAttribute('aria-valuenow', String(next));
-    if (persist) {
-      try { localStorage.setItem(storageKey, String(next)); } catch { /* storage unavailable */ }
-    }
-  };
-  try {
-    const saved = Number(localStorage.getItem(storageKey));
-    if (saved) setWidth(saved, false);
-  } catch { /* storage unavailable */ }
-  handle.addEventListener('pointerdown', (ev) => {
-    if (ev.button !== 0) return;
-    ev.preventDefault();
-    handle.setPointerCapture(ev.pointerId);
-    const startX = ev.clientX;
-    const startWidth = panel.getBoundingClientRect().width;
-    panel.classList.add('resizing');
-    const move = (moveEv) => setWidth(startWidth + startX - moveEv.clientX, false);
-    const end = () => {
-      panel.classList.remove('resizing');
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', end);
-      handle.removeEventListener('pointercancel', end);
-      setWidth(panel.getBoundingClientRect().width);
-    };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', end);
-    handle.addEventListener('pointercancel', end);
-  });
-  handle.addEventListener('dblclick', () => setWidth(null));
-  handle.addEventListener('keydown', (ev) => {
-    const step = ev.shiftKey ? 64 : 16;
-    const width = panel.getBoundingClientRect().width;
-    if (ev.key === 'ArrowLeft') setWidth(width + step);
-    else if (ev.key === 'ArrowRight') setWidth(width - step);
-    else return;
-    ev.preventDefault();
-  });
-}
-
-bindPanelResizer(document.getElementById('side-panel'), document.getElementById('side-panel-resizer'), PANEL_WIDTH_KEY, '--side-panel-width', 180);
-bindPanelResizer(analysisDialog, document.getElementById('analysis-dock-resizer'), 'mosfeteer:analysis-width', '--analysis-dock-width', 300);
 
 clearCheckButtonEl?.addEventListener('click', () => {
   clearCheckReport();
@@ -10277,71 +9676,6 @@ for (const item of document.querySelectorAll('[data-proxy-for]')) {
 }
 
 // ----- side panel ----------------------------------------------------------------
-// One toggle (button or P) at every size. A wide window docks the panel and the
-// toggle collapses it, remembered per browser. A narrow window (see style.css)
-// slides it over the canvas as a drawer that starts closed and closes on a
-// canvas press or Escape.
-const narrowPanelQuery = window.matchMedia('(max-width: 600px)');
-const SIDE_PANEL_COLLAPSED_KEY = 'mosfeteer.sidePanelCollapsed';
-
-export function sidePanelVisible() {
-  return narrowPanelQuery.matches
-    ? document.body.classList.contains('side-panel-open')
-    : !document.body.classList.contains('side-panel-collapsed');
-}
-
-function syncSidePanelToggle() {
-  const visible = sidePanelVisible();
-  sidePanelToggleEl?.setAttribute('aria-expanded', String(visible));
-  sidePanelToggleEl?.setAttribute('aria-pressed', String(visible));
-  if (sidePanelToggleEl) sidePanelToggleEl.title = `${visible ? 'Hide' : 'Show'} the components, nets, and selection panel (Shift+P)`;
-  if (sidePanelEl) sidePanelEl.inert = !visible;
-}
-
-export function setSidePanelVisible(visible) {
-  if (narrowPanelQuery.matches) {
-    document.body.classList.toggle('side-panel-open', visible);
-  } else {
-    document.body.classList.toggle('side-panel-collapsed', !visible);
-    try { localStorage.setItem(SIDE_PANEL_COLLAPSED_KEY, visible ? '0' : '1'); } catch {}
-  }
-  syncSidePanelToggle();
-  // The canvas changes size when the docked panel collapses or returns.
-  requestAnimationFrame(() => render());
-}
-
-function toggleSidePanel() {
-  setSidePanelVisible(!sidePanelVisible());
-}
-
-try {
-  document.body.classList.toggle('side-panel-collapsed', localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) === '1');
-} catch {}
-narrowPanelQuery.addEventListener('change', () => {
-  document.body.classList.remove('side-panel-open');
-  syncSidePanelToggle();
-});
-syncSidePanelToggle();
-sidePanelToggleEl?.addEventListener('click', (ev) => {
-  toggleSidePanel();
-  if (ev.detail > 0) canvasEl.focus({ preventScroll: true });
-});
-// Focusing into the panel (Ctrl+F filter, Tab) reveals it; a canvas press or
-// Escape puts the drawer away again.
-sidePanelEl?.addEventListener('focusin', () => {
-  if (!sidePanelVisible()) setSidePanelVisible(true);
-});
-document.querySelector('.canvas-pane')?.addEventListener('pointerdown', (ev) => {
-  if (narrowPanelQuery.matches && document.body.classList.contains('side-panel-open') && ev.target !== sidePanelToggleEl && !sidePanelToggleEl?.contains(ev.target)) {
-    setSidePanelVisible(false);
-  }
-}, true);
-window.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Escape' || !narrowPanelQuery.matches || !document.body.classList.contains('side-panel-open')) return;
-  if (!sidePanelEl?.contains(document.activeElement)) return;
-  setSidePanelVisible(false);
-  canvasEl.focus({ preventScroll: true });
-});
 
 function dismissToolbarMenusOutside(ev) {
   for (const [button, menu] of toolbarMenus) {

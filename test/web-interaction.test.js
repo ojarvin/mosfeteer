@@ -979,14 +979,14 @@ test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
 
 test('transient copy ghosts stay out of side panels until committed', () => {
   const main = editorSource();
-  const components = main.slice(main.indexOf('function renderComponents('), main.indexOf('function renderNets('));
+  const components = functionSource('renderComponents', main);
   assert.match(components, /componentPaletteItems\(sortedComps\(\)\)[\s\S]*\.filter\(\(comp\) => !isTransientCopyGhostRef\(comp\.refdes\)\)/);
 
-  const nets = main.slice(main.indexOf('function renderNets('), main.indexOf('\n/** Open the inline refdes editor', main.indexOf('function renderNets(')));
+  const nets = functionSource('renderNets', main);
   assert.match(nets, /const visibleGroupNets =/);
   assert.match(nets, /const groupedNets = visibleGroupNets\(net\)/);
 
-  const detail = main.slice(main.indexOf('function renderDetail('), main.indexOf('// ----- insert-mode menu'));
+  const detail = functionSource('renderDetail', main);
   assert.match(detail, /isTransientCopyGhostRef\(comp\.refdes\)/);
 });
 

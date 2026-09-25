@@ -10,7 +10,8 @@ import { statusCheckEl, checkSummaryBodyEl, clearCheckButtonEl } from './element
 import { logLine } from './status-bar-ui.js';
 import { editor } from './editor-state.js';
 import { animateViewTo, maxViewW, minViewW, paneSize } from './canvas-view.js';
-import { render, setPanelCollapsed, setSidePanelVisible, sidePanelVisible } from './main.js';
+import { setPanelCollapsed, setSidePanelVisible, sidePanelVisible } from './side-panel.js';
+import { render } from './main.js';
 
 export function resetCheckState() {
   editor.lastCheckReport = null;

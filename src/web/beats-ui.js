@@ -13,7 +13,8 @@ import { logLine, hintLine } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { closeComponentContextMenu, appendContextItem } from './context-menu.js';
 import { editor } from './editor-state.js';
-import { appendMarkupText, commit, render, selectedComps, selectedLabels, setLabelSelection, setSelection } from './main.js';
+import { appendMarkupText } from './side-panel.js';
+import { commit, render, selectedComps, selectedLabels, setLabelSelection, setSelection } from './main.js';
 
 export function activeBeatIndex() {
   if (!editor.activeBeatId) return null;
