@@ -27822,25 +27822,34 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   if (state.source === 'symbols') return;
   const selected = state.selected === tile.id;
   const hovered = state.hover === tile.id;
-  // The pick is a dot at the design's top-left corner, the hover a faint
-  // frame: both mark a design without boxing in the drawing.
+  // The pick is a corner bracket hugging the design's top-left corner, the
+  // hover a faint frame. Both sit in the gap around the design, measured in
+  // drawing units, so they scale with the zoom and never reach a neighbour.
+  const k = scale();
+  const inset = ATLAS_GAP * 0.35 * k;
   if (hovered && !selected) {
     ctx.save();
     ctx.globalAlpha = 0.3;
     ctx.strokeStyle = palette.accent;
     ctx.lineWidth = 1;
-    ctx.strokeRect(rect.x - 6.5, rect.y - 6.5, rect.w + 13, rect.h + 13);
+    ctx.strokeRect(rect.x - inset, rect.y - inset, rect.w + 2 * inset, rect.h + 2 * inset);
     ctx.restore();
   }
   if (selected) {
-    ctx.fillStyle = palette.accent;
+    const arm = Math.min(ATLAS_GAP * 1.5, Math.min(tile.w, tile.h) * 0.25) * k;
+    ctx.save();
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = Math.max(1, Math.min(2.5, inset * 0.6));
+    ctx.lineCap = 'square';
     ctx.beginPath();
-    ctx.arc(rect.x - 8, rect.y - 8, 4, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(rect.x - inset, rect.y - inset + arm);
+    ctx.lineTo(rect.x - inset, rect.y - inset);
+    ctx.lineTo(rect.x - inset + arm, rect.y - inset);
+    ctx.stroke();
+    ctx.restore();
   }
   // The caption may run on into the gap after its tile; its size follows
   // the caption band, so zoomed far out it gives way instead of crowding.
-  const k = scale();
   const size = Math.min(13, ATLAS_CAPTION * k * 0.45);
   if (size < 7) return;
   const room = (tile.w + ATLAS_GAP * 0.8) * k;
